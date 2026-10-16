@@ -65,8 +65,8 @@ public final class IfaceMethodTable {
 
     /**
      * Installs a single method target (P3-M9, RC-6): used by the runtime to
-     * register Java-implemented methods (e.g. fmt.State for Fmt.handleMethods)
-     * that have no Go body in the export. Drops the itab cache.
+     * register Java-implemented methods (e.g. fmt.State) that have no Go
+     * body in the export. Drops the itab cache.
      *
      * @param descriptorName the concrete type's descriptor name
      * @param methodName the method name
@@ -171,7 +171,8 @@ public final class IfaceMethodTable {
 
     /**
      * Looks up a method target by (descriptor name, method name) (P3-M9,
-     * RC-6: public for Fmt.handleMethods).
+     * RC-6: public so runtime/launcher code can resolve installed method
+     * targets).
      *
      * @return the target, or null if not found
      */

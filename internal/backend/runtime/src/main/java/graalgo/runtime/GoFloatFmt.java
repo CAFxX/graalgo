@@ -20,7 +20,8 @@ package graalgo.runtime;
  *
  * <p>Special values: NaN → {@code "NaN"}, +Inf → {@code "+Inf"},
  * -Inf → {@code "-Inf"} (sign prefix applied by callers for the
- * {@code '+'} / {@code ' '} flags is handled in {@link Fmt}).
+ * {@code '+'} / {@code ' '} flags is handled by the caller —
+ * the real fmt package).
  */
 public final class GoFloatFmt {
     private GoFloatFmt() {}

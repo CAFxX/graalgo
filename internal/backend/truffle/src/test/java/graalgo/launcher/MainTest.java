@@ -357,8 +357,8 @@ public final class MainTest {
     }
 
     public void testFmtPointerStructValue() throws Exception {
-        // M8 fuzzer find: Println(&T{...}) printed "0x0" because the
-        // NodeFactory fmtcall metadata loop had no pointer branch, so
+        // M8 fuzzer find (pre-real-fmt): Println(&T{...}) printed "0x0" because
+        // the old NodeFactory fmtcall metadata loop had no pointer branch, so
         // elemKind was null and fmtPointer fell through to erased output.
         // gc prints &{1 2} (the referent's %v with & prefix).
         Path dir = Files.createTempDirectory("graalgo-main-test");

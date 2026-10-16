@@ -19,11 +19,16 @@ deliverable until the design lands.
 
 ## Phased removal order
 
-- **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+- **Phase 1 — in flight (2026-10-16).** Retire the highest-value synthetic
+  packages via root-cause fixes: `crypto/x509` (worktree `real-x509`),
+  `net`/`net/http` (worktree `real-nethttp`). Retires B-5 and the
+  time/math name-keyed predicates in B-3. Landed 2026-10-16: `fmt`
+  (B-1 retired — see [Retired](#retired)) and `reflect`
+  (`real-reflect2`: `d2804a52` + `e0fe2650` on master; the synthetic
+  `reflect`/`internal/reflectlite` registrations in
+  [synth_machinery.go](../../internal/frontend/synth_machinery.go) are
+  commented out as RETIRED — the `reflectop` intrinsic predicates remain
+  active and now serve the disk-imported real `reflect` package).
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -45,30 +50,8 @@ deliverable until the design lands.
 
 ### B-1. `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan` (Java reimplementations of `fmt`)
 
-- **What:** [FmtCallNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FmtCallNode.java)
-  is a custom wire node matching ~25 hardcoded `fmt.*` names
-  (`Print`/`Printf`/`Sprint`/`Errorf`/Append/Scan families/`FormatString`);
-  it delegates to
-  [graalgo/runtime/](../../internal/backend/runtime/src/main/java/graalgo/runtime/)
-  `Fmt`/`FmtScan` — Java reimplementations of stdlib `fmt` formatting and
-  scanning logic.
-  - **Frontend half (P1-N2, review-n1):** in
-    [internal/frontend/export.go](../../internal/frontend/export.go),
-    `exportCall` dispatches on the *identifier spelling*
-    (`pkgIdent.Name == "fmt"`) to `exportFmtCall`, which emits the
-    `"fmtcall"` wire node for the ten D4 overlay functions
-    (`fmtOverlayFuncs`) — instead of routing through the general
-    package-level call path. The spelling check (not the resolved package
-    path) is the name-keyed special case.
-- **Why:** the real `fmt` sources did not compile under graalgo, so
-  formatting was reimplemented in Java behind a name-keyed node.
-- **Root-cause fix:** make the real `fmt` package compile (fix the
-  compiler/runtime properly), then delete the node and the Java
-  reimplementations. In flight: worktrees `real-fmt2` and `real-fmt-rebase`
-  ("Retire synthetic fmt package — real fmt now compiles") — `real-fmt2`
-  already removes the frontend dispatch (`exportFmtCall` deleted there);
-  retire this entry when that lands on master.
-- **Phase:** 1.
+**RETIRED 2026-10-16** — see [Retired](#retired). Entry moved there with the
+retiring commits named.
 
 ### B-2. `NodeFactory.syncPrimitiveName` (name-keyed sync lowering)
 
@@ -120,14 +103,20 @@ deliverable until the design lands.
   disk importer + on-demand method indexing; the `time.Now` case needs a
   general eta-expansion for any selector-expr function value ("needs
   design" for the mechanism — the inventory entry is the deliverable now).
-  In flight: `real-reflect2` already drops stale synthetic-reflect entries;
-  `frontend-rewrite` (frontend-v2) replaces this machinery entirely
-  (Phase 4).
-- **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
+  `real-reflect2` landed 2026-10-16 (`d2804a52`, `e0fe2650`): the synthetic
+  reflect/reflectlite *sources* are retired, but the `reflectop` intrinsic
+  predicates (`isReflectIntrinsicFunc`, `reflectIntrinsicNames`) remain
+  active — they now serve the disk-imported real `reflect` package — and
+  retire with the machinery in Phase 3. `frontend-rewrite` (frontend-v2)
+  replaces this machinery entirely (Phase 4).
+- **Phase:** 1 (time/math predicates) → 2 (shrink) → 3 (delete).
 - **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
   the *declared view* of the already-inventoried dedicated stubs
   (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
-  `syntheticFmtPackage`, `syntheticUnsafePackage`) is NOT a new bridge.
+  `syntheticUnsafePackage` in
+  [synth_unsafe.go](../../internal/frontend/synth_unsafe.go)) is NOT a new
+  bridge. (`syntheticFmtPackage` was removed with the B-1 retirement —
+  see [Retired](#retired).)
   The mechanical gate flags `addFunc(` lines in `export.go`, but the
   overlay's existence is grandfathered by this entry — extending its
   declared API surface toward gc's documented API adds no new bridge
@@ -136,10 +125,11 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 140 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 140 generated files in [internal/frontend/](../../internal/frontend/)
+  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1; count
+  verified 2026-10-16 via `ls internal/frontend/synth_*.go | wc -l`) plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
@@ -152,11 +142,21 @@ deliverable until the design lands.
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
-  `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
-  general disk mechanism"), `real-nethttp` (`net`/`net/http`),
-  `real-reflect2` (`reflect`).
-- **Phase:** 1 (the four in-flight packages) → 2 (remainder).
+  decision. In flight: `real-x509` (`crypto/x509`, "remove synthetic
+  crypto/x509, route via general disk mechanism" — verified still in flight
+  2026-10-16: `syntheticCryptoX509Source` still registered),
+  `real-nethttp` (`net`/`net/http` — verified still in flight: `net` still
+  registered as `syntheticNetSource`).
+  Landed 2026-10-16: `real-fmt2` (`fmt` — B-1 retired, see
+  [Retired](#retired)) and `real-reflect2` (`reflect` — synthetic sources
+  retired, `d2804a52` + `e0fe2650` on master).
+  Known gap: the top-level tree retired `fmt`, but the `p3frontend` tree
+  still serves the synthetic fmt stub —
+  [importer.go](../../internal/frontend/p3frontend/importer.go)
+  `syntheticFmtPackage()` mirrors the frozen D4 fmt stub. The
+  retire-or-keep decision for this mirror is pending (tracked here, not a
+  new entry).
+- **Phase:** 1 (the two remaining in-flight packages) → 2 (remainder).
 
 ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
 
@@ -173,7 +173,8 @@ deliverable until the design lands.
   specifically why the JDK cannot cover a case, with differential tests vs
   gc `x509.ParseECPrivateKey` over P-224/256/384/521. In flight: worktree
   `real-x509` (coordinate — it retires synthetic `crypto/x509`, the Go-side
-  counterpart).
+  counterpart; verified still in flight 2026-10-16 — the synthetic
+  `crypto/x509` + `crypto/x509/pkix` registrations are still active).
 - **Phase:** 1.
 
 ### B-6. `unsafe.Add` always traps (bridge by omission)
@@ -258,6 +259,42 @@ extend these entries or add new ones without a fresh independent review.
 Entries move here when the bridge is gone (same change that removes the
 code, per [AGENTS.md](../../AGENTS.md) §7).
 
+- **2026-10-16 — B-1: `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan`
+  (Java reimplementations of `fmt`).** Retired by the real-fmt2 lane:
+  `ffc1a8bf` ("switch from synthetic fmt to real fmt from GOROOT") and
+  `a527063d` ("remove Java fmt implementation": deleted `Fmt.java`,
+  `FmtScan.java`, `FmtCallNode.java`, `FmtHandleMethods.java`,
+  `FmtMethodDispatch.java`, the `"fmtcall"` wire node registration, and the
+  `exportFmtCall` frontend dispatch), plus `c2c0718c` (follow-up:
+  `isGenericFunc` helper + golden regeneration). Entry moved here
+  2026-10-16 by the inventory-hygiene lane (MECH-2) — one day late; the
+  retiring change did not delete it per the inventory's own rule.
+  Verified 2026-10-16: no `FmtCallNode`/`exportFmtCall`/`fmtcall` in the
+  top-level frontend, no `Fmt*.java` in the backend. Residue cleaned in the
+  inventory pass: dangling `{@link Fmt}` javadoc in
+  [GoFloatFmt.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/GoFloatFmt.java)
+  and [Intrinsics.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Intrinsics.java),
+  stale `FmtCallNode`/`fmtcall` comments in
+  [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go),
+  [synth_math_big.go](../../internal/frontend/synth_math_big.go),
+  [MainTest.java](../../internal/backend/truffle/src/test/java/graalgo/launcher/MainTest.java),
+  and stale `Fmt.handleMethods` references in
+  [IfaceMethodTable.java](../../internal/backend/interop/src/main/java/graalgo/iface/IfaceMethodTable.java),
+  [synth_fmtstate.go](../../internal/frontend/synth_fmtstate.go),
+  [export.go](../../internal/frontend/export.go).
+  Known remaining fmt residue (NOT retired — separate work, tracked here):
+  the synthetic `internal/graalgo/fmtstate` package is still registered
+  and imported unconditionally during export, but its Java implementation
+  (`FmtHandleMethods`) was deleted — its continued necessity is an open
+  question; the `p3frontend` tree still serves the synthetic fmt stub
+  (`syntheticFmtPackage()` in
+  [importer.go](../../internal/frontend/p3frontend/importer.go)) —
+  retire-or-keep decision pending under B-4; and
+  [FreezeSignatureTest.java](../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java)
+  still references the deleted `graalgo.runtime.Fmt` class (7 `Fmt.class`
+  uses) — a latent compile break on the `make test` path, reported
+  2026-10-16 as a P0 for a remediation lane.
+
 - **2026-10-15 — stale `# BRIDGE` self-labels in module Makefiles.** The
   comments in
   [internal/backend/interop/Makefile](../../internal/backend/interop/Makefile)
@@ -274,7 +311,9 @@ code, per [AGENTS.md](../../AGENTS.md) §7).
   (the guarded `[ -x …/frontend/gofrontend ]` fallback resolves to the
   correct path by accident of layout; delete the comment or the dead
   block), and the dangling `internal/backend/runtime/corpus` symlink
-  (owned by the test-infra lane — delete symlink + comment).
+  (owned by the test-infra lane — delete symlink + comment). Verified
+  still present 2026-10-16 — not fixed by this lane (ownership: the
+  test-infra lane).
 - **2026-10-15 — banned `fmt.Fprint`→`w.Write` desugar.** Removed before
   this inventory was created (the real-`fmt` lane's template: kill the
   desugaring, make the real package work). Recorded here so the pattern is

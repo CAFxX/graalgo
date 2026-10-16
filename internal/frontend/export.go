@@ -1587,8 +1587,8 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M9 (RC-6): the fmt.State implementation (internal/graalgo/fmtstate)
-	// must be in the export so Fmt.handleMethods can box a PrinterState as
-	// fmt.State for fmt.Formatter dispatch. The package is synthetic-only
+	// must be in the export so a PrinterState can be boxed as fmt.State
+	// for fmt.Formatter dispatch. The package is synthetic-only
 	// (never imported by user code) and tiny, so import it unconditionally;
 	// importSyntheticPackage is idempotent.
 	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
