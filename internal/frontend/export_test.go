@@ -65,6 +65,47 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestCrossExportIdempotent (PKG-067): ExportFile must be idempotent
+// within one process. Pair-type synthesis used to insert __wsd_pair_*
+// names into the process-shared cached synthetic package scopes
+// (importSyntheticPackage swaps e.pkg to the synthetic package while
+// the synthetic packages are cached per process), so a program exported
+// after another one in the same process got its pair types renamed with
+// a _1 suffix (in-suite TestGolden/pkgvar_mrarg failed with "first diff
+// at line 22050"). Every non-bad_ testdata program is exported twice in
+// one process; each export must be byte-identical to its golden, which
+// was recorded in a fresh process.
+func TestCrossExportIdempotent(t *testing.T) {
+	files, err := filepath.Glob("testdata/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no testdata programs found")
+	}
+	for pass := 0; pass < 2; pass++ {
+		for _, f := range files {
+			base := strings.TrimSuffix(filepath.Base(f), ".go")
+			if strings.HasPrefix(base, "bad_") {
+				continue
+			}
+			out, err := ExportFile(f)
+			if err != nil {
+				t.Fatalf("pass %d: ExportFile(%s): %v", pass, f, err)
+			}
+			golden, compressed := goldenFile(base)
+			want, err := readGolden(t, golden, compressed)
+			if err != nil {
+				t.Fatalf("pass %d: read golden %s: %v", pass, golden, err)
+			}
+			if got := out + "\n"; got != string(want) {
+				t.Errorf("pass %d: %s not idempotent across exports in one process: first diff at line %d",
+					pass, f, firstDiffLine(got, string(want)))
+			}
+		}
+	}
+}
+
 // goldenFile resolves the golden for base: testdata/<base>.json, falling
 // back to testdata/<base>.json.gz when a compressed golden is registered.
 // The second return is true iff the .gz form exists; UPDATE_GOLDEN=1
