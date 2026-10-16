@@ -316,6 +316,12 @@ These changes bump to **`v2`** (and require a new/updated factory):
 `NodeFactory.buildProgram` rejects any document whose `frontend` is not
 `"v1"` with a `FrontendException` quoting this rule. The exporter stamps
 `frontendVersion` (`frontend/export.go`); the golden tests pin the wire bytes.
+Goldens live in [internal/frontend/testdata/](../../internal/frontend/testdata/) as `<name>.json`; one whose
+uncompressed export exceeds the GitHub API blob size limit (10MB) is stored
+gzip-compressed as `<name>.json.gz` instead (PKG-059: `mr_return_named`'s
+`encoding/json` import pulls ~45MB of stdlib type info into the export).
+`TestGolden` decompresses `.json.gz` transparently and `UPDATE_GOLDEN=1`
+re-writes the already-registered form.
 
 ## 9. Extending NodeFactory — WS D/E hook points
 
