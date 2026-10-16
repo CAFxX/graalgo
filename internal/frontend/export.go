@@ -625,8 +625,6 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	return failImporter{}.Import(path)
 }
 
-
-
 // runtimeStackMethod reports whether a MethodVal selection is one of the
 // synthetic runtime stack-inspection methods ((*Frames).Next,
 // (*Func).Name/Entry/FileLine), returning the method name. The check is
@@ -981,7 +979,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		synthFuncIDs: make(map[string]*funcDeclInfo),
 		// real-nethttp: linkname stub -> provider aliases.
 		linknameAlias: make(map[*types.Func]*funcDeclInfo),
-		sizes:        types.SizesFor("gc", "amd64"),
+		sizes:         types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
 		// WS G (P3-M9): track importPkgTree walks for idempotency.
@@ -2960,7 +2958,7 @@ type exporter struct {
 	// pair-returning convention. General mechanism: any linkname whose
 	// symbol resolves via synthFuncIDs gets an alias.
 	linknameAlias map[*types.Func]*funcDeclInfo
-	sizes        types.Sizes
+	sizes         types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
 	// typeSubst below.
@@ -9118,7 +9116,6 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	}), true, nil
 }
 
-
 // exportFuncCall exports a call to a named top-level function (M6, WS H).
 // Generic functions resolve to their monomorphized instantiation via
 // info.Instances; the call target is an "ident" node whose obj is the
@@ -9426,6 +9423,19 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 	case *ast.StarExpr:
 		// *p is addressable (it's a dereference of a pointer).
 		return true
+	case *ast.TypeAssertExpr:
+		// x.(T): a type assertion result is a copy and not addressable —
+		// except when T is a pointer type. &(x.(T).f) is valid Go when T
+		// is *S: the field is accessed through the pointer, addressing
+		// real memory (e.g. reflect's &mt.(*rtype).t). We detect this
+		// structurally via go/types: the assertion's type must be a
+		// *types.Pointer. This is general, not keyed on any type name.
+		if t := info.TypeOf(x); t != nil {
+			if _, isPtr := types.Unalias(t).(*types.Pointer); isPtr {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -11501,4 +11511,3 @@ func isCommaOkRhs(r ast.Expr) bool {
 	}
 	return false
 }
-
