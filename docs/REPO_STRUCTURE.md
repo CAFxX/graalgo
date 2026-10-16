@@ -66,8 +66,9 @@ Related: [Makefile](../Makefile) (root build entry point),
       [encode/](../internal/frontend/v2/encode/), decoded by
       [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
       in the Java backend; wire contract pinned by
-      `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side and
-      `BinaryDecoderTest` on the Java side; `make test-v2` runs its suite).
+      `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side
+      (`make test-v2`) and `BinaryDecoderTest` on the Java side
+      (`make test-ci` → truffle `smoke-v2`)).
   - The IR is the `frontend/v1` JSON wire format: specified in
     [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by

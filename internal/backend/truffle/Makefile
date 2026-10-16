@@ -89,7 +89,7 @@ P1_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
 # self-attack if deeper adversarial recursion lands.
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main test smoke smoke-test clean check
+.PHONY: all main test smoke smoke-test smoke-v2 clean check
 
 all: main
 
@@ -112,6 +112,39 @@ $(OUT_SMOKE)/.built: $(SRC_SMOKE) lib/SHA256SUMS.txt
 	mkdir -p $(OUT_SMOKE)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(CP)" -processorpath "$(CP)" -d $(OUT_SMOKE) $(SRC_SMOKE)
 	touch $(OUT_SMOKE)/.built
+
+# v2 wire-contract tests in the fast smoke path (per-push CI via the root
+# `test-ci` target): the Java side of the Go→Java binary interface
+# (BinaryDecoder + its golden tests). These previously ran only via
+# graalgo.test.Runner under the 30+-minute differential `make test`
+# (V2-11); a wire-format regression now fails the per-push gate instead of
+# hiding until the next full differential run.
+#
+# Fast at run time: no gofrontend, no corpus, no network — the decoder and
+# the runner are plain java.* only. The compile classpath is the full test
+# classpath so Truffle-dependent v2 tests compile here too when they land.
+#
+# WIRING HOOK (for the v2-factorytests lane): the runner takes an optional
+# class-name filter, so this target runs exactly the classes in
+# V2_WIRE_TESTS. To add a v2 test to the smoke path: register it in
+# graalgo.test.Runner TESTS (the existing convention), append its binary
+# class name to V2_WIRE_TESTS, and keep its sources under
+# src/test/java/graalgo/frontend/v2/ (picked up by the wildcard in
+# V2_WIRE_SRC). graalgo.frontend.v2.NodeFactoryV2Test plugs in here when
+# the v2-factorytests lane writes it — no Makefile restructuring needed.
+V2_WIRE_TESTS := graalgo.frontend.v2.BinaryDecoderTest
+V2_WIRE_SRC := src/main/java/graalgo/frontend/v2/BinaryDecoder.java \
+  $(wildcard src/test/java/graalgo/frontend/v2/*Test.java) \
+  src/test/java/graalgo/test/Runner.java
+OUT_V2WIRE := out/v2-wire-classes
+$(OUT_V2WIRE)/.built: $(V2_WIRE_SRC) $(RUNTIME_CLASSES)/.built $(OUT_MAIN)/.built lib/SHA256SUMS.txt
+	mkdir -p $(OUT_V2WIRE)
+	$(JAVAC) -version
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(OUT_V2WIRE) $(V2_WIRE_SRC)
+	touch $(OUT_V2WIRE)/.built
+
+smoke-v2: $(OUT_V2WIRE)/.built
+	$(JAVA) $(JAVA_FLAGS) -cp "$(OUT_V2WIRE):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner $(V2_WIRE_TESTS)
 
 # graalgo-run: frontend + Truffle AST execution for one Go file.
 # (graalgo.launcher.Main compiles in the runtime module's joint round.)

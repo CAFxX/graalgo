@@ -11,6 +11,9 @@ import java.util.List;
  *
  * <p>Exits 0 on all-pass, 1 on any failure. Dependency-free (no JUnit in the
  * pinned toolchain); new test classes register in TESTS below.
+ *
+ * <p>Optional args filter by test class (binary or simple name); a filter
+ * that runs zero tests exits 1 — a smoke target must never pass silently.
  */
 public final class Runner {
     private static final List<Class<?>> TESTS = new ArrayList<>();
@@ -42,10 +45,32 @@ public final class Runner {
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
     }
 
+    /**
+     * Optional class filter: with no args every registered test runs (the
+     * differential {@code make test} behavior); with args, only test classes
+     * whose binary or simple name matches one of the args run. This lets the
+     * fast smoke path run a subset (e.g. the v2 wire-contract tests) through
+     * the same red-green runner instead of a second runner.
+     */
+    private static boolean selected(Class<?> c, String[] args) {
+        if (args.length == 0) {
+            return true;
+        }
+        for (String a : args) {
+            if (c.getName().equals(a) || c.getSimpleName().equals(a)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static void main(String[] args) {
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {
+            if (!selected(c, args)) {
+                continue;
+            }
             for (Method m : c.getMethods()) {
                 if (!m.getName().startsWith("test") || m.getParameterCount() != 0
                         || !Modifier.isPublic(m.getModifiers())) {
@@ -62,6 +87,14 @@ public final class Runner {
                         + ": " + cause);
                 }
             }
+        }
+        // A filter that runs zero tests is a wiring bug, not a pass: fail
+        // loudly instead of reporting "0 tests, 0 failures" and letting a
+        // broken smoke target look green.
+        if (args.length > 0 && run == 0) {
+            System.out.println("FAIL: filter ran 0 tests: "
+                + String.join(" ", args));
+            System.exit(1);
         }
         System.out.println(run + " tests, " + failed + " failures");
         if (failed > 0) {

@@ -31,7 +31,8 @@
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
-#     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-ci   fast in-JVM tests (phase1 Truffle smoke tests + v2 Java
+#               wire-contract tests)
 #     test-regression
 #               regression tests for fixed PKGs
 #               ([test/regression/](test/regression/)): each
@@ -136,11 +137,14 @@ check:
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 
-# CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
-# Fast (<2 min) and dependency-free. The full differential corpora are
-# `make test` (see header comment).
+# CI-feasible tests: truffle module smoke tests (runtime + DSL processor)
+# plus the v2 Java wire-contract tests (BinaryDecoderTest via `smoke-v2` —
+# the Java mirror of the Go encoder goldens; a wire-format regression fails
+# the per-push gate instead of hiding until the 30+-minute differential).
+# Fast (<2 min) and dependency-free (no gofrontend, no corpus, no network).
+# The full differential corpora are `make test` (see header comment).
 test-ci: build
-	$(MAKE) -C internal/backend/truffle smoke-test
+	$(MAKE) -C internal/backend/truffle smoke-test smoke-v2
 
 # Regression tests for fixed PKGs ([test/regression/](test/regression/)):
 # each test/regression/<pkg>/ directory is a Go test package run through
@@ -184,7 +188,11 @@ test-p3frontend: generate
 # module (own go.mod) — parser, checker, emitter, and the Go→Java binary
 # encoder, including the byte-exact zigzag wire contract
 # (TestEncodeIntContract) and the cross-language golden document
-# (TestEncodeGoldenDoc, mirrored by BinaryDecoderTest on the Java side).
+# (TestEncodeGoldenDoc).
+# NOTE: the Java-side mirror of those goldens (BinaryDecoderTest) does NOT
+# run here — it runs in `test-ci` (internal/backend/truffle `smoke-v2`),
+# so a Go-encoder change that breaks the Java decoder fails the per-push
+# gate on both sides: test-v2 pins the Go side, test-ci pins the Java side.
 # In `all` (hence per-push CI): this module was previously invisible to CI
 # (R5-P1-2) and the R5-P1-1 zigzag corruption had no mechanical backstop.
 # /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
