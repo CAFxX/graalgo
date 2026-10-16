@@ -28,38 +28,31 @@ import (
 )
 
 
-// __tarIsLocal is a vendored copy of path/filepath.IsLocal (unix).
-// Reports whether path is local: empty is false, absolute is false,
-// any ".." element is false, etc. Purely lexical.
-func __tarIsLocal(path string) bool {
-	if path == "" {
+// __tarIsLocal is a vendored copy of internal/filepathlite.unixIsLocal
+// (go1.27.1): the lexical check archive/tar applies via filepath.IsLocal.
+// Empty and absolute paths are not local; a path containing "." or ".."
+// elements is Cleaned first, and only a cleaned path that still escapes
+// (exactly ".." or prefixed "../") is rejected.
+func __tarIsLocal(p string) bool {
+	if p == "" || p[0] == '/' {
 		return false
 	}
-	// Unix: absolute paths start with /
-	if path[0] == '/' {
-		return false
-	}
-	// Check for .. elements
-	for _, elem := range __tarSplitPath(path) {
-		if elem == ".." {
-			return false
+	hasDots := false
+	for q := p; q != ""; {
+		var part string
+		part, q, _ = strings.Cut(q, "/")
+		if part == "." || part == ".." {
+			hasDots = true
+			break
 		}
+	}
+	if hasDots {
+		p = path.Clean(p)
+	}
+	if p == ".." || strings.HasPrefix(p, "../") {
+		return false
 	}
 	return true
-}
-
-func __tarSplitPath(path string) []string {
-	var elems []string
-	start := 0
-	for i := 0; i <= len(path); i++ {
-		if i == len(path) || path[i] == '/' {
-			if i > start {
-				elems = append(elems, path[start:i])
-			}
-			start = i + 1
-		}
-	}
-	return elems
 }
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style

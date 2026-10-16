@@ -865,42 +865,39 @@ var tarinsecurepath = &__tarGodebugSetting{name: "tarinsecurepath"}'''
     # Inline filepath.IsLocal (from internal/filepathlite, unix)
     # Replace filepath.IsLocal with __tarIsLocal, and add the function
     src = src.replace('filepath.IsLocal(', '__tarIsLocal(')
-    # Add __tarIsLocal function (simplified unix version)
-    # Actually, let's use a simple implementation based on path/filepath docs:
-    # IsLocal reports whether path is local: not empty, not absolute, no .. elements, etc.
+    # Add __tarIsLocal: a faithful port of internal/filepathlite.unixIsLocal
+    # (go1.27.1). gc Cleans any path containing "." or ".." elements before
+    # the final escape check, so entries like "a/../b" and "a/.." are local;
+    # only a cleaned path that still escapes (".." or "../...") is rejected.
+    # The parameter is named `p` (not `path`) because this file imports the
+    # `path` package; tar names are slash-separated, so filepath Clean on a
+    # unix host is identical to path.Clean here.
     islocal_fn = '''
-// __tarIsLocal is a vendored copy of path/filepath.IsLocal (unix).
-// Reports whether path is local: empty is false, absolute is false,
-// any ".." element is false, etc. Purely lexical.
-func __tarIsLocal(path string) bool {
-\tif path == "" {
+// __tarIsLocal is a vendored copy of internal/filepathlite.unixIsLocal
+// (go1.27.1): the lexical check archive/tar applies via filepath.IsLocal.
+// Empty and absolute paths are not local; a path containing "." or ".."
+// elements is Cleaned first, and only a cleaned path that still escapes
+// (exactly ".." or prefixed "../") is rejected.
+func __tarIsLocal(p string) bool {
+\tif p == "" || p[0] == '/' {
 \t\treturn false
 \t}
-\t// Unix: absolute paths start with /
-\tif path[0] == '/' {
-\t\treturn false
-\t}
-\t// Check for .. elements
-\tfor _, elem := range __tarSplitPath(path) {
-\t\tif elem == ".." {
-\t\t\treturn false
+\thasDots := false
+\tfor q := p; q != ""; {
+\t\tvar part string
+\t\tpart, q, _ = strings.Cut(q, "/")
+\t\tif part == "." || part == ".." {
+\t\t\thasDots = true
+\t\t\tbreak
 \t\t}
+\t}
+\tif hasDots {
+\t\tp = path.Clean(p)
+\t}
+\tif p == ".." || strings.HasPrefix(p, "../") {
+\t\treturn false
 \t}
 \treturn true
-}
-
-func __tarSplitPath(path string) []string {
-\tvar elems []string
-\tstart := 0
-\tfor i := 0; i <= len(path); i++ {
-\t\tif i == len(path) || path[i] == '/' {
-\t\t\tif i > start {
-\t\t\t\telems = append(elems, path[start:i])
-\t\t\t}
-\t\t\tstart = i + 1
-\t\t}
-\t}
-\treturn elems
 }
 '''
     # Insert after imports (find first func/type/var declaration)
