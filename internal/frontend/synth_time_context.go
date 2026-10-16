@@ -907,8 +907,12 @@ func (t Time) UnixMicro() int64 { return t.unixnano / 1e3 }
 
 // Location exists so *Location-typed signatures type-check. Local is
 // accepted as UTC (ADR-0005: documented divergence until P3-M7).
+// offset records seconds east of UTC for zones built by FixedZone
+// (gc 1.27.1 semantics); zone arithmetic (Time.In/Zone/Location) stays
+// out of scope and fails fast there.
 type Location struct {
-	name string
+	name   string
+	offset int
 }
 
 var UTC *Location = &Location{name: "UTC"}
@@ -919,6 +923,30 @@ func (l *Location) String() string {
 		return "UTC"
 	}
 	return l.name
+}
+
+// unnamedFixedZones mirrors gc 1.27.1's cache (time/zoneinfo.go):
+// FixedZone("", k*3600) returns the same *Location for whole hours
+// k in -12..+14 (pointer identity is observable via ==).
+var unnamedFixedZones [27]*Location
+
+func init() {
+	for hr := -12; hr <= 14; hr++ {
+		unnamedFixedZones[hr+12] = &Location{offset: hr * 60 * 60}
+	}
+}
+
+// FixedZone returns a [Location] that always uses the given zone name
+// and offset (seconds east of UTC), matching gc 1.27.1 (time/zoneinfo.go)
+// including its unnamed whole-hour cache. (P0 fix 2026-10-16:
+// archive/zip's timeZone calls this; the missing declaration made the
+// synthetic archive/zip package fail type-check, panicking any user
+// import of archive/zip.)
+func FixedZone(name string, offset int) *Location {
+	if hour := offset / 60 / 60; name == "" && -12 <= hour && hour <= 14 && hour*60*60 == offset {
+		return unnamedFixedZones[hour+12]
+	}
+	return &Location{name: name, offset: offset}
 }
 
 func Parse(layout, value string) (Time, error) {

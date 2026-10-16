@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -333,5 +334,85 @@ func TestSyntheticRuntimeFuncSurface(t *testing.T) {
 	ptr, ok := ret.(*types.Pointer)
 	if !ok || ptr.Elem() != named {
 		t.Errorf("FuncForPC return wrong: %s (want *runtime.Func)", sig.Results())
+	}
+}
+
+// TestAllSyntheticPackagesTypeCheck is the P0 regression test for the
+// 2026-10-16 archive/zip outage: every synthetic package must type-check
+// standalone. A synthetic package referencing a symbol missing from another
+// synthetic package's surface (archive/zip's timeZone called the absent
+// time.FixedZone) makes buildSyntheticPackage panic, and the overlay
+// importer resolves user imports through getSyntheticPackage — so one
+// missing declaration crashed the frontend for ANY user program importing
+// the package. This test type-checks all syntheticSources entries so the
+// error class (synthetic->synthetic surface drift) cannot recur silently.
+// It is deliberately capable of failing: it failed on archive/zip before
+// time.FixedZone was added.
+func TestAllSyntheticPackagesTypeCheck(t *testing.T) {
+	paths := make([]string, 0, len(syntheticSources))
+	for path := range syntheticSources {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	var failed []string
+	for _, path := range paths {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					failed = append(failed, path+": panic: "+fmt.Sprint(r))
+				}
+			}()
+			sp := getSyntheticPackage(path)
+			if sp == nil || sp.pkg == nil {
+				failed = append(failed, path+": nil package")
+			}
+		}()
+	}
+	if len(failed) > 0 {
+		for _, f := range failed {
+			t.Logf("  %s", f)
+		}
+		t.Fatalf("%d synthetic packages do not type-check", len(failed))
+	}
+}
+
+// TestSyntheticTimeFixedZone pins the P0 fix: time.FixedZone exists with
+// gc 1.27.1's exact signature func(name string, offset int) *Location
+// (time/zoneinfo.go).
+func TestSyntheticTimeFixedZone(t *testing.T) {
+	sp := getSyntheticPackage("time")
+	obj := sp.pkg.Scope().Lookup("FixedZone")
+	if obj == nil {
+		t.Fatal("time.FixedZone missing from synthetic time surface")
+	}
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		t.Fatalf("time.FixedZone is %T, want *types.Func", obj)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		t.Fatalf("time.FixedZone type %v is not a signature", fn.Type())
+	}
+	params := sig.Params()
+	if params.Len() != 2 {
+		t.Fatalf("time.FixedZone has %d params, want 2", params.Len())
+	}
+	if types.TypeString(params.At(0).Type(), nil) != "string" {
+		t.Errorf("FixedZone param 0 type = %v, want string", params.At(0).Type())
+	}
+	if types.TypeString(params.At(1).Type(), nil) != "int" {
+		t.Errorf("FixedZone param 1 type = %v, want int", params.At(1).Type())
+	}
+	results := sig.Results()
+	if results.Len() != 1 {
+		t.Fatalf("time.FixedZone has %d results, want 1", results.Len())
+	}
+	ptr, ok := results.At(0).Type().(*types.Pointer)
+	if !ok {
+		t.Fatalf("FixedZone result type = %v, want *Location", results.At(0).Type())
+	}
+	named, ok := ptr.Elem().(*types.Named)
+	if !ok || named.Obj().Name() != "Location" || named.Obj().Pkg() != sp.pkg {
+		t.Errorf("FixedZone result type = %v, want *time.Location", results.At(0).Type())
 	}
 }
