@@ -42,6 +42,10 @@ import graalgo.p3unsafe.UnsafeStringDataNode;
 import graalgo.p3unsafe.UnsafeStringNode;
 import graalgo.p3unsafe.UnsafeTable;
 import graalgo.p3unsafe.UnsafeToPtrNode;
+import graalgo.rtmemstats.RuntimeGoRootNode;
+import graalgo.rtmemstats.RuntimeReadMemStatsNode;
+import graalgo.rtmemstats.RuntimeStackNode;
+import graalgo.rtmemstats.RuntimeVersionNode;
 import graalgo.rtstack.RuntimeCallerNode;
 import graalgo.rtstack.RuntimeCallersFramesNode;
 import graalgo.rtstack.RuntimeCallersNode;
@@ -165,6 +169,21 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> RuntimeFuncEntryNode.build(node, ctx, factory));
         factory.registerExprKind("runtimefuncfileline",
                 (node, ctx) -> RuntimeFuncFileLineNode.build(node, ctx, factory));
+        // PKG-051 (MemStats family): runtime.ReadMemStats/GOROOT/Version/
+        // Stack. The frontend has emitted these additive wire nodes since
+        // 6bd652f4 ("backend intrinsics to follow") but no backend handler
+        // was ever registered — any program reaching runtime.Version()
+        // (e.g. via runtime/debug.ReadBuildInfo) died with "unsupported
+        // expression kind". The handlers implement the real gc semantics
+        // against JVM telemetry (graalgo.rtmemstats).
+        factory.registerExprKind("runtimereadmemstats",
+                (node, ctx) -> RuntimeReadMemStatsNode.build(node, ctx, factory));
+        factory.registerExprKind("runtimegoroot",
+                (node, ctx) -> RuntimeGoRootNode.build(node, ctx));
+        factory.registerExprKind("runtimeversion",
+                (node, ctx) -> RuntimeVersionNode.build(node, ctx));
+        factory.registerExprKind("runtimestack",
+                (node, ctx) -> RuntimeStackNode.build(node, ctx, factory));
         // P3-M8: the synthetic unsafe wire kinds.
         factory.registerExprKind("unsafefromptr",
                 (node, ctx) -> UnsafeFromPtrNode.build(node, factory, ctx));

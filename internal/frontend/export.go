@@ -8342,7 +8342,8 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				// MemStats family (unblocks runtime/debug, hence Badger via
 				// testify): runtime.ReadMemStats, GOROOT, Version, Stack.
 				// Emitted as additive wire nodes; the backend implements
-				// them as intrinsics (see graalgo.runtime.MemStatsInterop).
+				// them as intrinsics (see graalgo.rtmemstats, registered
+				// in P3KindRegistrations and P3SyncMain).
 				if sel.Sel.Name == "ReadMemStats" {
 					if len(c.Args) != 1 {
 						return nil, fmt.Errorf("gofrontend: runtime.ReadMemStats takes one argument")
