@@ -56,6 +56,13 @@ Related: [Makefile](../Makefile) (root build entry point),
       the Go module dir).
     - [tools/](../internal/frontend/tools/) — `probe/` and
       `validate_frontend_v1.py` (wire-format validation).
+    - [testdata/](../internal/frontend/testdata/) — Go fixtures for the
+      frontend test suite (`bad_*` rejection cases, `TestGolden`
+      `.go`/`.json` pairs).
+    - [gen_synth_helper/](../internal/frontend/gen_synth_helper/) —
+      helper commands backing the `gen_synth_*.py` generators
+      ([extract_decls/](../internal/frontend/gen_synth_helper/extract_decls/):
+      top-level func-decl lister).
     - [parser/](../internal/frontend/parser/),
       [types/](../internal/frontend/types/),
       [desugar/](../internal/frontend/desugar/) — empty placeholders for the
@@ -170,7 +177,8 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [tools/](../tools/) — developer tooling (not the product):
   [stdlib-fork/](../tools/stdlib-fork/) and
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
-  tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
+  tooling), [stdlib-vendor/](../tools/stdlib-vendor/) (stdlib vendoring
+  pipeline), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
   [torture/](../tools/torture/) (scheduler torture),

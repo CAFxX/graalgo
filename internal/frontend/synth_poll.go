@@ -3,8 +3,10 @@ package main
 // P3-M9 (tier-4: net): synthetic `internal/poll` package.
 //
 // Real-Go source: adapted from gc go1.27.1
-// ($GOROOT/src/internal/poll/fd_poll_runtime.go + errno_unix.go), per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md:
+// ($GOROOT/src/internal/poll/fd_poll_runtime.go + errno_unix.go); the
+// socket path is wired to the netpoller runtime traps
+// (graalgo.p3net.GoNetpoll; the m9 net-fork-contract research note was
+// retired with the phases/ tree):
 //
 //   - fd_poll_runtime.go logic kept unmodified; only the declaration block
 //     is replaced with the single-result //go:linkname declarations (the

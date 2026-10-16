@@ -7,7 +7,7 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in phases/phase2/GODEBUG.md)
+#                documented in docs/arch/phases/phase2/GODEBUG.md)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)

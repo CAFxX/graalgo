@@ -14,8 +14,10 @@
 // the Err* sentinels, the File/ReadDirFile interfaces, and the FS
 // interface stub. Everything else in io/fs (Glob, ReadFile, WalkDir,
 // ReadDirFS, StatFS, Sub, ...) is OUT of M8 scope: it rides on the
-// synthetic os package once that lands (re-test trigger recorded in
-// phases/phase3/hidden_files/m8-analysis/os.md §6.8).
+// synthetic os package once that lands (re-test trigger from the retired
+// m8-analysis/os.md §6.8 — the synthetic os package has since landed as
+// synth_os.go; the remaining io/fs surface is tracked in
+// docs/arch/bridge-inventory.md B-4).
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no
 // unsafe). All functions are single-result, so no Appendix-M desugar

@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
  *       build-failure parity for {@code // errorcheck}, full run parity
  *       for {@code // run}); any divergence fails the test with the
  *       adapter's JSON report copied to
- *       {@code phases/phase1/hidden_files/m6_typeparam_divergences.json}.
+ *       {@code <repo>/.out/typeparam-divergences.json}.
  * </ul>
  *
  * <p>Red-green-first (SPEC §5.2): the oracle is stock gc at test time —
@@ -383,7 +383,8 @@ public final class TypeparamDifferentialTest {
     // -- Path-resolution unit tests --------------------------------------
     // The old repoRoot() stripped two levels off the raw cwd with no
     // validation; running the suite from any nonstandard directory
-    // (e.g. phases/phase1/frontend) silently produced a wrong root and a
+    // (e.g. phases/phase1/frontend in the old layout) silently produced
+    // a wrong root and a
     // confusing "No such file or directory" from the diffharness build.
     // These pin the robust resolution (red: the old code fails
     // testResolvePhase1DirFromSubdir).

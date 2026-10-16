@@ -2,7 +2,8 @@ package main
 
 // P3-M8 (wave 2): synthetic `sha256` package.
 // Software implementation only (no intrinsification).
-// See phases/phase3/hidden_files/m8-analysis/crypto.md.
+// (The m8-analysis research notes were retired with the phases/ tree;
+// the why-synthetic record is docs/arch/bridge-inventory.md B-4.)
 const syntheticSha256Source = `package sha256
 
 import (

@@ -1,7 +1,6 @@
 package vet
 
 import (
-	"go/token"
 	"strings"
 )
 
@@ -104,9 +103,6 @@ func runBuildTag(pass *Pass) []Diagnostic {
 		}
 		// Check placement: //go:build should be before package clause.
 		// (The parser already enforces this; we check // +build after package.)
-		if f.Package != token.NoPos {
-			_ = f.Package
-		}
 	}
 	return out
 }

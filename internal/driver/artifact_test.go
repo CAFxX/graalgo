@@ -195,10 +195,3 @@ func TestEmitBinaryRuns(t *testing.T) {
 		t.Errorf("user args not forwarded: %v", args)
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

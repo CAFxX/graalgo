@@ -3759,7 +3759,7 @@ public final class NodeFactory {
             }
             case "clear" -> {
                 // M9 acceptance: clear/min/max are outside the frozen v1
-                // builtin surface (see docs/freeze-stub.md "Builtin nodes").
+                // builtin surface (see docs/spec/freeze-stub.md "Builtin nodes").
                 // The exporter must fail fast with a clean WS G scope error
                 // instead of emitting a program that crashes at runtime.
                 throw new FrontendException(path + ": builtin \"" + builtin

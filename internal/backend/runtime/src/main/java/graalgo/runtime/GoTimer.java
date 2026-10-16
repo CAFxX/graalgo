@@ -39,10 +39,9 @@ import graalgo.sched.SchedulerCore;
  * dedicated {@link TimerChan} flavor of {@link GoChan}: the real
  * 1-slot buffer underneath keeps fire values deliverable (recv,
  * select, close-drain) while the observation probes are masked to 0.
- * Red-green evidence:
- * {@code phases/phase3/hidden_files/m2/redgreen.md}; the
- * {@code DIV-M3-1} re-test trigger is discharged by the differential
- * timer corpus (tm15) re-run.
+ * Red-green evidence: the m2 red-green notes were retired with the
+ * phases/ tree; the {@code DIV-M3-1} re-test trigger is discharged by
+ * the differential timer corpus (tm15) re-run.
  *
  * <p>verifies: GG-SCHED-0004 (timer slice)
  */

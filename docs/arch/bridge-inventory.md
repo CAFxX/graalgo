@@ -31,10 +31,12 @@ deliverable until the design lands.
   `syntheticSources`.
 - **Phase 3 — machinery deletion.** When the last synthetic package retires,
   delete the machinery wholesale: `syntheticSources` + the import overlay,
-  `overlayImporter`/`resolvePkgTree` package switches, the linkname
-  allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
+  `overlayImporter`/`dedicatedSyntheticStubs` package switches,
+  `resolvePkgTree`, the `LinknameIntrinsics` registry,
+  `isMultiResultSynthetic`/`multiResultSyntheticError`, the
   intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
-  `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
+  `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3. The 5
+  frozen same-FQN stubs (B-8) retire with the shadow mechanism itself.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
@@ -74,7 +76,7 @@ deliverable until the design lands.
 
 - **What:**
   [NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
-  `syncPrimitiveName` (~line 1908): matches `sync.Mutex`/`sync.Map`/
+  `syncPrimitiveName` (~line 1945): matches `sync.Mutex`/`sync.Map`/
   `sync/atomic.*` by package/name and lowers them to Java representations
   instead of compiling the real `sync` sources.
 - **Why:** the real `sync`/`sync/atomic` sources did not compile; the
@@ -89,20 +91,22 @@ deliverable until the design lands.
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
   - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
-    entries), `isMultiResultSynthetic` (~line 2113) /
-    `multiResultSyntheticError` (~line 2207) ~60-path chains,
-    `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
-    `isAliasIntrinsicFunc` (~line 2088), `isAbiFuncPCIntrinsicFunc`
-    (~line 1701);
+    entries), `isMultiResultSynthetic` (~line 2016) /
+    `multiResultSyntheticError` (~line 2110) ~60-path chains,
+    `isTimeIntrinsicFunc` (~line 1972), `isMathIntrinsicFunc` (~line 1977),
+    `isAliasIntrinsicFunc` (~line 1991), `isAbiFuncPCIntrinsicFunc`
+    (~line 1574);
   - [synth_reflect.go](../../internal/frontend/synth_reflect.go):
     `isReflectIntrinsicFunc` (~line 2898);
+  - [export.go](../../internal/frontend/export.go): `overlayImporter`
+    (~line 424) and the `dedicatedSyntheticStubs` `"runtime"`/`"fmt"`/
+    `"unsafe"` map (~line 429), the `LinknameIntrinsics` registry;
   - [diskimport.go](../../internal/frontend/diskimport.go):
-    `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
-    switches (~line 402) and the linkname package allowlist;
+    `resolvePkgTree` (~line 398);
   - [export.go](../../internal/frontend/export.go): `"syncop"` and
     `"runtimecaller"` custom wire nodes for stdlib functions, and the
     `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~line 210).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -116,10 +120,16 @@ deliverable until the design lands.
   (Phase 4).
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 143 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 143 generated files in [internal/frontend/](../../internal/frontend/)
+  (`synth_*.go`: 120 derived from go1.27.1 — verbatim or mechanically
+  adapted ports — plus 14 graalgo-authored and 9 `*_test.go` test files;
+  recount 2026-10-16 by header-provenance scan — authored =
+  `synth_machinery.go` (machinery), `synth_unsafe.go` (programmatic),
+  `synth_reflect.go` (frontend overlay), `synth_json.go` (clean-room),
+  `synth_fmtstate.go` + `synth_crypto_x509.go` (synthetic-only shims),
+  and 8 authored `crypto/internal/*` stubs) plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
@@ -183,14 +193,44 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+### B-8. Frozen same-FQN stubs in the truffle module (shims by the inventory's own definition)
+
+- **What:** 5 frozen stub classes under
+  [internal/backend/truffle/src/main/java/](../../internal/backend/truffle/src/main/java/)
+  that shadow the runtime module's real implementations at load via the
+  same-FQN overlay mechanism (see
+  [docs/REPO_STRUCTURE.md](../REPO_STRUCTURE.md) §internal/backend):
+  [graalgo/runtime/Netpoll.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Netpoll.java),
+  [graalgo/runtime/ChanOps.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java),
+  [graalgo/runtime/Scheduler.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Scheduler.java),
+  and
+  [graalgo/runtime/GcInterop.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java)
+  throw `UnsupportedOperationException` on every method, and
+  [graalgo/safepoint/Safepoint.java](../../internal/backend/truffle/src/main/java/graalgo/safepoint/Safepoint.java)
+  is a no-op. Frozen per the [freeze-stub contract](../spec/freeze-stub.md):
+  phase-1 files are immutable to later phases, so the gap is closed by the
+  phase-2/3 real implementations shadowing these classes on the launcher
+  classpath (verified: no stub has grown real behavior).
+- **Why:** the phase-1 truffle module had to compile and link before the
+  phase-2 runtime implementations existed; the stubs hold the FQNs the
+  frozen phase-1 code links against.
+- **Root-cause fix:** retire when the same-FQN shadow mechanism is deleted
+  (i.e. when the truffle module links directly against the runtime
+  module's classes and the shadow copies are removed) — then delete the 5
+  classes and this entry together.
+- **Phase:** 3 (machinery deletion).
+
 ## Adjudicated non-bridges
 
 Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
 false positives: additions the gate flags by pattern that an independent
 reviewer adjudicated as real implementations, not bridges. Each entry names
 the commit, the reviewer verdict, and the narrowly-scoped allowlist in the
-gate script (`ADJUDICATED_WIRE_NODES` / `ADJUDICATED_REGISTRATIONS`). Do NOT
-extend these entries or add new ones without a fresh independent review.
+gate script (`ADJUDICATED_WIRE_NODES` / `ADJUDICATED_REGISTRATIONS`). Every
+entry MUST cite a filed, independently-reviewable review record (a review
+doc under `docs/arch/reviews/` or a filed codebase-review report); an entry
+whose cited review cannot be produced is not grandfathered. Do NOT extend
+these entries or add new ones without a fresh independent review.
 
 - **2026-10-16 — `runtimenumgoroutine` wire node + `runtime.NumGoroutine`
   overlay declaration (PKG-023, commit `1d4e7964`).** The gate flags two
@@ -205,9 +245,18 @@ extend these entries or add new ones without a fresh independent review.
   implements it on the scheduler's live-goroutine counter
   ([SchedulerCore.numGoroutines()](../../internal/backend/runtime/src/main/java/graalgo/sched/SchedulerCore.java)),
   verified by `SchedulerCoreTest.testNumGoroutines` and
-  `TestRuntimeNumGoroutineExport`. Not a bridge: no synthetic stdlib logic,
-  no name-keyed special case — the same mechanism as the grandfathered
-  `runtimenumcpu`.
+  `TestRuntimeNumGoroutineExport`. Not a new bridge: no synthetic stdlib
+  logic — the frontend dispatch (`sel.Sel.Name == "NumGoroutine"` inside
+  `pkgIdent.Name == "runtime"`) extends the inventoried B-3 overlay
+  mechanism with a real backend, following the grandfathered
+  `runtimenumcpu` precedent.
+  - **Review record: MISSING.** The cited "Independent review of PKG-023:
+    CLEAN, no veto" appears only in the adjudication commit's own message
+    (`f7afb373`); no independent review record was found in the goal's
+    `hidden_files/codebase-review/`, `docs/arch/reviews/`, or the repo
+    (searched 2026-10-16). TODO(coordinator): produce and file the PKG-023
+    independent review — or re-run the adjudication with an independent
+    reviewer — before relying on this entry; do not invent a review.
 
 ## Retired
 

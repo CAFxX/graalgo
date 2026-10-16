@@ -9,9 +9,8 @@
 // synthetic declarations' bodies into the same wire document (shared
 // type/object tables) via exportSyntheticPackages.
 //
-// SCOPE (honest subset — the full rationale is in
-// phases/phase3/hidden_files/m7-enc-xml/redgreen.md and the source's own
-// M7 notes):
+// SCOPE (honest subset — the full rationale was in the retired
+// m7-enc-xml research notes (phases/ tree); the source's own M7 notes):
 //   - IN: the token stream — Decoder.Token/RawToken (desugared; see
 //     mrdesugar_m5.go mrXmlToken), the full XML grammar (byte-exact vs
 //     gc, error strings included), Encoder.EncodeToken over a Writer,

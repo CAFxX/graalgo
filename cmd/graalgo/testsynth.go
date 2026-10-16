@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/build"
@@ -1418,8 +1419,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	if _, err := tmp.WriteString(sb.String()); err != nil {
 		tmp.Close()
-		os.Remove(tmp.Name())
-		return "", err
+		// Join the cleanup error so a failed os.Remove cannot silently
+		// leave graalgo-test-*.go litter on the /tmp tmpfs.
+		return "", errors.Join(err, os.Remove(tmp.Name()))
 	}
 	tmp.Close()
 	return tmp.Name(), nil

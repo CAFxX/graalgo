@@ -188,7 +188,7 @@ test: build
 # [test/snapshots/README.md](test/snapshots/README.md) for the format.
 #
 # Backend: the product launcher P3SyncMain via
-# [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
+# [test/differential/backends-p3.json](test/differential/backends-p3.json)
 # (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
 # channel/scheduler support, so recording against it enshrines build
 # failures as the baseline and leaves P3SyncMain regressions invisible to
@@ -206,7 +206,7 @@ SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 # as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 # The diffharness resolves the graalgo backend launcher as
-# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
+# ${PHASE1_DIR}/graalgo-run (see test/differential/backends.json); the
 # product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
 # Both wrappers now live in internal/backend/.
 snapshot: build
