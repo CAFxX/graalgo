@@ -30,10 +30,14 @@ import java.util.concurrent.atomic.AtomicReference;
  *       {@link java.util.concurrent.atomic.AtomicReference}, so an owner
  *       racing a thief is safe. Stealing {@code private} is a deliberate
  *       JVM adaptation (see the field doc): gc's {@code getSlow} skips it
- *       because Ps are immortal; our threads are not. Locals of dead
- *       threads stay registered — their items remain stealable. The
- *       registry is bounded in practice by the scheduler's carrier pool
- *       plus the threads that touch the pool.</li>
+ *       because Ps are immortal; our threads are not, and under this
+ *       scheduler every goroutine is its own short-lived vthread that
+ *       terminates. Locals of dead threads are pruned (amortized, on the
+ *       pool-lock paths): their items are moved to the global queue —
+ *       remaining stealable, exactly as before — and the Local is dropped
+ *       from the registry. The registry is therefore bounded by the
+ *       threads currently alive plus a small pruning lag, not by every
+ *       thread that ever touched the pool.</li>
  *   <li>Victim cache + GC interaction: gc rotates primary→victim at each
  *       GC stop-the-world ({@code poolCleanup}); there is no STW hook on
  *       the JVM, so the victim holds {@link WeakReference}s. The JVM GC
@@ -91,17 +95,48 @@ public final class GoPool {
         /** Whether this Local is in {@link GoPool#allLocals}. Written
          * under the pool lock; the benign read race is idempotent. */
         boolean registered;
+        /**
+         * The owning thread, held weakly: a registered Local must never
+         * keep a dead thread alive. When the owner dies its items are
+         * harvested into the global queue by {@link GoPool#pruneDeadLocals}
+         * and the Local is dropped from {@link GoPool#allLocals}, so the
+         * registry stays bounded even when every goroutine is its own
+         * short-lived vthread.
+         */
+        final WeakReference<Thread> owner;
+
+        Local(Thread owner) {
+            this.owner = new WeakReference<>(owner);
+        }
     }
 
-    private final ThreadLocal<Local> locals = ThreadLocal.withInitial(Local::new);
+    private final ThreadLocal<Local> locals =
+            ThreadLocal.withInitial(() -> new Local(Thread.currentThread()));
 
     /** Pool-lock-guarded shared state. */
     private final Object lock = new Object();
-    /** All per-thread Locals ever used with this pool (gc's allPools). */
+    /**
+     * All per-thread Locals currently in use with this pool (gc's
+     * allPools). Locals of dead threads are harvested (their items moved
+     * to {@link #globalShared}, staying stealable) and dropped by
+     * {@link #pruneDeadLocals}, so this set does NOT grow without bound:
+     * it is bounded by the threads currently alive plus a small amortized
+     * pruning lag.
+     */
     private final Set<Local> allLocals =
             Collections.newSetFromMap(new IdentityHashMap<>());
     private final Deque<Object> globalShared = new ArrayDeque<>();
     private final Deque<WeakReference<Object>> victim = new ArrayDeque<>();
+
+    /**
+     * Lock acquisitions since the last prune pass (lock-guarded). A prune
+     * pass scans all of {@link #allLocals}, so it runs only every
+     * {@link #PRUNE_INTERVAL} lock acquisitions — amortized O(1) per op —
+     * while still guaranteeing that dead threads' Locals are reclaimed
+     * promptly (well within any workload that keeps touching the pool).
+     */
+    private long opsSincePrune;
+    private static final long PRUNE_INTERVAL = 64;
 
     /** The New field ({@code func() any} as a GoFunc, or null). */
     private volatile Object newFunc;
@@ -121,11 +156,73 @@ public final class GoPool {
         Local l = locals.get();
         if (!l.registered) {
             synchronized (lock) {
+                maybePrune();
                 allLocals.add(l);
                 l.registered = true;
             }
         }
         return l;
+    }
+
+    /**
+     * Amortized pruning: runs a {@link #pruneDeadLocals} pass every
+     * {@link #PRUNE_INTERVAL} lock acquisitions. Must be called with the
+     * pool lock held.
+     */
+    private void maybePrune() {
+        if (++opsSincePrune < PRUNE_INTERVAL) {
+            return;
+        }
+        opsSincePrune = 0;
+        pruneDeadLocals();
+    }
+
+    /**
+     * Drops Locals whose owning thread has died (a terminated thread can
+     * never touch its ThreadLocal again, so removal is race-free), after
+     * moving their items into the global queue — dead threads' items stay
+     * stealable, exactly as before, but the registry no longer leaks one
+     * entry per dead thread. Must be called with the pool lock held.
+     */
+    private void pruneDeadLocals() {
+        var it = allLocals.iterator();
+        while (it.hasNext()) {
+            Local o = it.next();
+            Thread t = o.owner.get();
+            if (t != null && t.isAlive()) {
+                continue;
+            }
+            Object x = o.privateSlot.getAndSet(null);
+            if (x != null) {
+                spillToGlobal(x);
+            }
+            while ((x = o.shared.pollFirst()) != null) {
+                spillToGlobal(x);
+            }
+            o.registered = false;
+            it.remove();
+        }
+    }
+
+    /**
+     * Moves x into the global queue, pushing the oldest global items into
+     * the weakly-held victim when the global cap is exceeded — memory
+     * stays bounded. Must be called with the pool lock held.
+     */
+    private void spillToGlobal(Object x) {
+        globalShared.addLast(x);
+        while (globalShared.size() > GLOBAL_SHARED_CAP) {
+            victim.addLast(new WeakReference<>(globalShared.pollFirst()));
+        }
+    }
+
+    /**
+     * Test-visible: the number of currently registered per-thread Locals.
+     */
+    int registeredLocalCount() {
+        synchronized (lock) {
+            return allLocals.size();
+        }
     }
 
     /**
@@ -146,12 +243,10 @@ public final class GoPool {
             return;
         }
         synchronized (lock) {
+            maybePrune();
             int n = l.shared.size() / 2;
             for (int i = 0; i < n; i++) {
-                globalShared.addLast(l.shared.pollFirst());
-            }
-            while (globalShared.size() > GLOBAL_SHARED_CAP) {
-                victim.addLast(new WeakReference<>(globalShared.pollFirst()));
+                spillToGlobal(l.shared.pollFirst());
             }
         }
         l.shared.addLast(x);
@@ -173,6 +268,9 @@ public final class GoPool {
             return x;
         }
         synchronized (lock) {
+            // Reclaim locals of dead threads first (amortized): their
+            // items were moved to the global queue, staying stealable.
+            maybePrune();
             // Slow path (gc's getSlow): steal from other threads'
             // shared queues, then their private slots (JVM adaptation —
             // see the privateSlot field doc), then the global spillover,

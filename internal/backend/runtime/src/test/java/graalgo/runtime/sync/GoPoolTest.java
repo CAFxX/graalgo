@@ -157,4 +157,45 @@ public final class GoPoolTest {
         }
         assertEquals(n, got.size(), "spill drain size");
     }
+
+    /**
+     * Registry boundedness (RT-4): many short-lived threads doing
+     * Get/Put must not grow the pool's per-thread registry without bound.
+     * After all worker threads have died, a prune pass (amortized on the
+     * pool-lock paths) must drop their Locals, keeping the registry near
+     * the live thread count. Fails against the pre-fix pool, whose
+     * registry kept one strong entry per thread forever.
+     *
+     * <p>Deterministic: each worker's get hits its own just-filled private
+     * slot, so no cross-thread stealing races; the 256 slow-path gets on
+     * the test thread guarantee several prune passes regardless of the
+     * amortized counter's phase; every worker is provably dead
+     * ({@code !isAlive()}), so the pruner cannot mistake one for alive.
+     */
+    public void testRegistryBoundedAfterThreadDeath() throws Exception {
+        GoPool pool = new GoPool();
+        int threads = 256;
+        Thread[] ts = new Thread[threads];
+        for (int i = 0; i < threads; i++) {
+            ts[i] = new Thread(() -> {
+                pool.put(new Object());
+                pool.get();
+            });
+            ts[i].start();
+        }
+        for (Thread t : ts) {
+            t.join(10_000);
+            assertTrue(!t.isAlive(), "worker thread terminated");
+        }
+        ts = null;
+        // Each get on the empty pool takes the slow path (a lock
+        // acquisition); a prune pass runs every 64 acquisitions, so 256
+        // iterations guarantee at least one pass.
+        for (int i = 0; i < 256; i++) {
+            assertTrue(pool.get() == null, "empty pool gets null");
+        }
+        int count = pool.registeredLocalCount();
+        assertTrue(count <= 4,
+                "registry bounded after thread death: registered=" + count);
+    }
 }
