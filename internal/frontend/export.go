@@ -6914,6 +6914,18 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 	e.chanSeq++
 	seq := e.chanSeq
 	vardecls := make([]*Node, 0, len(c.Args)+1)
+	// FE-11: `go <builtin>(args)` (go println("hello"), go panic("x"),
+	// ...) bypasses hoistGoFunValue — a builtin is not a function value
+	// (go/types types it Invalid), so there is nothing to hoist; the
+	// builtin marker rides on the inner call node via builtinCallNode,
+	// the same lowering exportCall uses for direct builtin calls. (The
+	// v1 builtin surface was already enforced by exportGoStmt's
+	// exportCall(s.Call) ahead of this.)
+	if funIdent, ok := c.Fun.(*ast.Ident); ok {
+		if b, ok := e.info.ObjectOf(funIdent).(*types.Builtin); ok {
+			return e.exportGoBuiltin(s, c, funIdent, b, seq, &vardecls)
+		}
+	}
 	// Hoist the function value FIRST (Go spec: the function value is
 	// evaluated before the arguments, all in the calling goroutine).
 	// P3-M5 remediation (reviewer1 P2-3): the old code evaluated the fun
@@ -6923,8 +6935,45 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 		return nil, err
 	}
 	// Hoist args.
-	tempNames := make([]string, 0, len(c.Args))
-	tempObjs := make([]int, 0, len(c.Args))
+	tempIdents, err := e.hoistGoArgs(s, c, seq, &vardecls)
+	if err != nil {
+		return nil, err
+	}
+	// Build the call f(temps) with the hoisted fun node.
+	callType, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	innerCall := e.node("call", s, map[string]any{
+		"fun": funNode, "args": tempIdents, "type": callType,
+	})
+	return e.goFunclitSpawn(s, innerCall, vardecls), nil
+}
+
+// exportGoBuiltin desugars `go <builtin>(args)` (args non-empty; the
+// no-arg case is exported directly by exportGoStmt via exportCall).
+// Semantics match exportGoWithArgs: the args are evaluated at go time in
+// the calling goroutine into hoisted __go_arg_* temps, and the inner
+// call is lowered by builtinCallNode — the single construction site for
+// builtin call nodes, shared with exportCall — so the factory's
+// buildBuiltinCall dispatches it exactly like a direct builtin call.
+func (e *exporter) exportGoBuiltin(s *ast.GoStmt, c *ast.CallExpr, fun *ast.Ident, b *types.Builtin, seq int, vardecls *[]*Node) (*Node, error) {
+	tempIdents, err := e.hoistGoArgs(s, c, seq, vardecls)
+	if err != nil {
+		return nil, err
+	}
+	inner, err := e.builtinCallNode(s, c, fun, b, tempIdents)
+	if err != nil {
+		return nil, err
+	}
+	return e.goFunclitSpawn(s, inner, *vardecls), nil
+}
+
+// hoistGoArgs evaluates a go statement's call arguments in the calling
+// goroutine (Go spec) into `__go_arg_<seq>_<i>` temps, appending the
+// vardecls to *vardecls and returning idents to the temps for the
+// funclit's inner call. Shared by exportGoWithArgs and exportGoBuiltin.
+func (e *exporter) hoistGoArgs(s *ast.GoStmt, c *ast.CallExpr, seq int, vardecls *[]*Node) ([]*Node, error) {
 	tempIdents := make([]*Node, 0, len(c.Args))
 	for i, arg := range c.Args {
 		tv, ok := e.info.Types[arg]
@@ -6945,27 +6994,24 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		vardecls = append(vardecls, e.node("vardecl", s, map[string]any{
+		*vardecls = append(*vardecls, e.node("vardecl", s, map[string]any{
 			"names": []string{name}, "objs": []int{oid},
 			"define": true, "type": nil, "values": []*Node{argx},
 		}))
-		tempNames = append(tempNames, name)
-		tempObjs = append(tempObjs, oid)
 		tempIdents = append(tempIdents, e.node("ident", s, map[string]any{
 			"name": name, "obj": oid, "type": tid,
 		}))
 	}
-	// Build the call f(temps) with the hoisted fun node.
-	callType, err := e.callType(c)
-	if err != nil {
-		return nil, err
-	}
-	innerCall := e.node("call", s, map[string]any{
-		"fun": funNode, "args": tempIdents, "type": callType,
-	})
+	return tempIdents, nil
+}
+
+// goFunclitSpawn wraps an inner call node in the zero-arg funclit spawn
+// shape `go func() { <inner> }()`, preceded by the hoist vardecls.
+// Shared by exportGoWithArgs and exportGoBuiltin.
+func (e *exporter) goFunclitSpawn(s *ast.GoStmt, inner *Node, vardecls []*Node) *Node {
 	// Funclit body: the call as an expression statement.
 	body := e.node("block", s, map[string]any{"stmts": []*Node{
-		e.node("exprstmt", s, map[string]any{"x": innerCall}),
+		e.node("exprstmt", s, map[string]any{"x": inner}),
 	}})
 	funclit := e.node("funclit", s, map[string]any{
 		"params": []*Node{}, "results": []*Node{}, "body": body,
@@ -6977,7 +7023,7 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 	gostmt := e.node("gostmt", s, map[string]any{"call": goCall})
 	// Block: hoists + gostmt.
 	stmts := append(vardecls, gostmt)
-	return e.node("block", s, map[string]any{"stmts": stmts}), nil
+	return e.node("block", s, map[string]any{"stmts": stmts})
 }
 
 // hoistGoFunValue evaluates the go statement's function value in the
@@ -7000,8 +7046,10 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 //   - Anything else: hoist the whole fun expression to `__go_fun_<seq>`
 //     (covers func-valued fields, index/call results, ...). Shapes whose
 //     fun expression cannot be exported (interface method values,
-//     synthetic time/timer methods, multi-result synthetics, builtins)
-//     keep their existing fail-fast via exportExpr.
+//     synthetic time/timer methods, multi-result synthetics)
+//     keep their existing fail-fast via exportExpr. (Builtin idents —
+//     `go println(args)` — never reach here: exportGoWithArgs routes them
+//     to exportGoBuiltin, since builtins have no function value to hoist.)
 //
 // (P3-M5 remediation, reviewer1 P2-3.)
 func (e *exporter) hoistGoFunValue(s *ast.GoStmt, c *ast.CallExpr, seq int, vardecls *[]*Node) (*Node, error) {
@@ -7024,8 +7072,10 @@ func (e *exporter) hoistGoFunValue(s *ast.GoStmt, c *ast.CallExpr, seq int, vard
 			return e.node("ident", s, map[string]any{"name": fun.Name, "obj": oid, "type": tid}), nil
 		}
 		if _, ok := obj.(*types.Var); !ok {
-			// Builtins, consts, typenames, ...: keep the historical
-			// fail-fast (previously "go func %q not declared").
+			// Builtins never reach here (exportGoWithArgs routes
+			// `go <builtin>(args)` to exportGoBuiltin). Consts,
+			// typenames, ...: keep the historical fail-fast
+			// (previously "go func %q not declared").
 			return nil, fmt.Errorf("gofrontend: go func %q not declared", fun.Name)
 		}
 		// Func variable: hoist its go-time value.
@@ -8789,10 +8839,6 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	default:
 		return nil, scopeErrorf("call to builtin %q is not supported in frontend/v1 scope (WS G intrinsic surface)", b.Name())
 	}
-	fun, err := e.exportIdent(funIdent)
-	if err != nil {
-		return nil, err
-	}
 	// M7: new(T) and make(T, ...) take a type as the first argument.
 	// The type is recorded in the result type id (via callType); only
 	// the value arguments are exported as expressions.
@@ -8810,6 +8856,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				}
 			}
 		}
+		return e.builtinCallNode(c, c, funIdent, b, args)
 	case "len", "cap":
 		// P3-M5 (WS E, ADR-0005 App C): len(cap)/cap(chan) lower to the
 		// additive "chanlen"/"chancap" nodes — the frozen LenNode rejects
@@ -8840,6 +8887,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		return e.builtinCallNode(c, c, funIdent, b, args)
 	case "make":
 		// make(T, len[, cap]): skip the type, export len/cap.
 		if len(c.Args) < 1 {
@@ -8861,6 +8909,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			}
 			args = append(args, x)
 		}
+		return e.builtinCallNode(c, c, funIdent, b, args)
 	case "min", "max":
 		// P4 (driver-harden): min/max lower to the additive "minmax" wire
 		// node — the frozen v1 builtin path rejects them (WS G), but real
@@ -8892,27 +8941,61 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		return e.node("clear", c, map[string]any{"x": x}), nil
+		return e.builtinCallNode(c, c, funIdent, b, []*Node{x})
 	default:
 		var err error
 		args, err = e.exportCallArgs(c)
 		if err != nil {
 			return nil, err
 		}
+		return e.builtinCallNode(c, c, funIdent, b, args)
+	}
+}
+
+// builtinCallNode assembles the wire node for a call to builtin b from
+// already-exported argument nodes. It is the single construction site
+// for builtin call nodes: exportCall uses it for direct builtin calls
+// (args exported from the call's AST args), and the go-statement desugar
+// (exportGoBuiltin) uses it for `go <builtin>(args)` (args are the
+// hoisted __go_arg_* temps, evaluated at go time in the calling
+// goroutine).
+//
+// The builtin marker rides on the call node, not on a hoisted fun temp:
+// builtins have no function value (go/types types them Invalid), so
+// hoisting one like hoistGoFunExpr would mint a bogus Invalid-typed temp
+// and lose the marker the factory's buildBuiltinCall dispatches on.
+//
+// clear keeps the dedicated "clear" wire node it has in exportCall — the
+// frozen v1 builtin path rejects builtin-marked clear calls (WS G).
+//
+// Only statement-legal builtins (print/println/panic/recover/copy/
+// delete/clear) can reach the go-statement path: go/types rejects
+// value-returning builtins in go statements ("go discards result of
+// len(...)") during the frontend's own type-check, before export.
+func (e *exporter) builtinCallNode(pos ast.Node, c *ast.CallExpr, fun *ast.Ident, b *types.Builtin, args []*Node) (*Node, error) {
+	if b.Name() == "clear" {
+		if len(args) != 1 {
+			return nil, scopeErrorf("clear requires exactly one argument")
+		}
+		return e.node("clear", pos, map[string]any{"x": args[0]}), nil
+	}
+	funNode, err := e.exportIdent(fun)
+	if err != nil {
+		return nil, err
 	}
 	typ, err := e.callType(c)
 	if err != nil {
 		return nil, err
 	}
 	fields := map[string]any{
-		"fun": fun, "args": args, "builtin": b.Name(), "type": typ,
+		"fun": funNode, "args": args, "builtin": b.Name(), "type": typ,
 	}
 	// M7: mark append(s, x...) spread; the factory expands the string
 	// into individual bytes.
 	if b.Name() == "append" && c.Ellipsis.IsValid() {
 		fields["ellipsis"] = true
 	}
-	return e.node("call", c, fields), nil
+	return e.node("call", pos, fields), nil
 }
 
 // exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to *addr: a

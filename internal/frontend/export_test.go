@@ -715,3 +715,273 @@ func main() {
 		}
 	}
 }
+
+// TestGoBuiltinCalls verifies FE-11: `go <builtin>(args)` — go
+// println("hello"), go print(...), go panic("x") — is legal Go (accepted
+// by the gc toolchain) and must export. Pre-fix, ExportFile failed in
+// hoistGoFunValue with `gofrontend: go func "println" not declared`.
+//
+// The desugar must reuse the shared builtin-call lowering
+// (builtinCallNode — the same path exportCall uses for direct builtin
+// calls): the builtin marker rides on the inner call node (that is what
+// the factory's buildBuiltinCall dispatches on), the args are hoisted to
+// __go_arg_* temps evaluated at go time in the calling goroutine, and no
+// __go_fun_ temp is hoisted — builtins have no function value (go/types
+// types them Invalid), so a fun temp would mint a bogus Invalid-typed
+// var and lose the marker.
+//
+// `go panic("x")` is asserted at export level only: running it would
+// (correctly, matching gc) crash the process with an unrecovered panic.
+func TestGoBuiltinCalls(t *testing.T) {
+	src := `package main
+
+func main() {
+	go println("hello")
+	go print("a", 1, true)
+	go panic("x")
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "gobuiltin.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	desugars := findGoDesugars(t, raw)
+	if len(desugars) != 3 {
+		t.Fatalf("found %d go-desugar blocks, want 3 (println, print, panic)", len(desugars))
+	}
+	want := []struct {
+		builtin string
+		nargs   int
+	}{
+		{"println", 1},
+		{"print", 3},
+		{"panic", 1},
+	}
+	for i, w := range want {
+		d := desugars[i]
+		if d.hoists != w.nargs {
+			t.Errorf("go %s: %d __go_arg_ hoists, want %d", w.builtin, d.hoists, w.nargs)
+		}
+		inner := d.inner
+		if inner["kind"] != "call" {
+			t.Errorf("go %s: inner node kind %v, want call", w.builtin, inner["kind"])
+			continue
+		}
+		f, _ := inner["fields"].(map[string]any)
+		if f["builtin"] != w.builtin {
+			t.Errorf("go %s: inner call builtin marker %v, want %q", w.builtin, f["builtin"], w.builtin)
+		}
+		fun, _ := f["fun"].(map[string]any)
+		ff, _ := fun["fields"].(map[string]any)
+		if fun["kind"] != "ident" || ff["builtin"] != w.builtin {
+			t.Errorf("go %s: inner call fun is not the builtin ident form: %v", w.builtin, f["fun"])
+		}
+		args, _ := f["args"].([]any)
+		if len(args) != w.nargs {
+			t.Errorf("go %s: inner call has %d args, want %d", w.builtin, len(args), w.nargs)
+			continue
+		}
+		for j, a := range args {
+			am, _ := a.(map[string]any)
+			af, _ := am["fields"].(map[string]any)
+			name, _ := af["name"].(string)
+			if am["kind"] != "ident" || !strings.HasPrefix(name, "__go_arg_") {
+				t.Errorf("go %s: inner call arg %d is not a __go_arg_ temp: %v", w.builtin, j, a)
+			}
+		}
+	}
+}
+
+// TestGoBuiltinClearCopyDelete covers the remaining statement-legal
+// builtins in `go <builtin>(args)` position (FE-11): go clear(m) must
+// lower to the dedicated "clear" wire node — the frozen v1 builtin path
+// rejects builtin-marked clear calls (WS G), exactly as exportCall does
+// for direct clear(m) — while go copy and go delete reuse the
+// builtin-marked call lowering.
+func TestGoBuiltinClearCopyDelete(t *testing.T) {
+	src := `package main
+
+func main() {
+	m := map[string]int{"k": 1}
+	s := []int{1, 2, 3}
+	d := []int{0, 0, 0}
+	clear(m)
+	go clear(m)
+	go copy(d, s)
+	go delete(m, "k")
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "gobuiltinclear.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	desugars := findGoDesugars(t, raw)
+	if len(desugars) != 3 {
+		t.Fatalf("found %d go-desugar blocks, want 3 (clear, copy, delete)", len(desugars))
+	}
+	// go clear(m): dedicated "clear" wire node, same kind as the direct
+	// clear(m) — not a builtin-marked call.
+	clearInner := desugars[0].inner
+	if clearInner["kind"] != "clear" {
+		t.Fatalf("go clear: inner node kind %v, want clear", clearInner["kind"])
+	}
+	cf, _ := clearInner["fields"].(map[string]any)
+	x, _ := cf["x"].(map[string]any)
+	xf, _ := x["fields"].(map[string]any)
+	xname, _ := xf["name"].(string)
+	if x["kind"] != "ident" || !strings.HasPrefix(xname, "__go_arg_") {
+		t.Errorf("go clear: x is not the hoisted __go_arg_ temp: %v", cf["x"])
+	}
+	if _, ok := cf["builtin"]; ok {
+		t.Errorf("go clear: clear node must not carry a builtin marker: %v", cf)
+	}
+	// The direct clear(m) in the same program must lower identically
+	// (same wire kind) — the go desugar reuses exportCall's lowering.
+	var directClear int
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "clear" {
+				directClear++
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	if directClear != 2 {
+		t.Errorf("found %d clear nodes, want 2 (direct clear(m) + go clear(m) via the same lowering)", directClear)
+	}
+	// go copy / go delete: builtin-marked inner calls.
+	for i, name := range []string{"copy", "delete"} {
+		inner := desugars[i+1].inner
+		if inner["kind"] != "call" {
+			t.Errorf("go %s: inner node kind %v, want call", name, inner["kind"])
+			continue
+		}
+		f, _ := inner["fields"].(map[string]any)
+		if f["builtin"] != name {
+			t.Errorf("go %s: inner call builtin marker %v, want %q", name, f["builtin"], name)
+		}
+	}
+}
+
+// goDesugar is one `go f(args)` desugar block: the __go_arg_* hoist
+// count and the funclit's inner call node.
+type goDesugar struct {
+	hoists int
+	inner  map[string]any
+}
+
+// findGoDesugars collects every go-desugar block in the export, in
+// source order: a block whose statements are __go_arg_* vardecls
+// followed by a gostmt whose call is the zero-arg funclit spawn. A
+// __go_fun_ temp is reported as an error — builtins have no function
+// value to hoist.
+func findGoDesugars(t *testing.T, raw map[string]any) []goDesugar {
+	t.Helper()
+	var out []goDesugar
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "block" {
+				if d, ok := asGoDesugar(t, v); ok {
+					out = append(out, d)
+				}
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	return out
+}
+
+func asGoDesugar(t *testing.T, blk map[string]any) (goDesugar, bool) {
+	t.Helper()
+	f, _ := blk["fields"].(map[string]any)
+	stmts, _ := f["stmts"].([]any)
+	if len(stmts) == 0 {
+		return goDesugar{}, false
+	}
+	last, _ := stmts[len(stmts)-1].(map[string]any)
+	if last["kind"] != "gostmt" {
+		return goDesugar{}, false
+	}
+	d := goDesugar{}
+	for _, st := range stmts[:len(stmts)-1] {
+		sm, ok := st.(map[string]any)
+		if !ok || sm["kind"] != "vardecl" {
+			return goDesugar{}, false
+		}
+		sf, _ := sm["fields"].(map[string]any)
+		names, _ := sf["names"].([]any)
+		for _, nm := range names {
+			s, _ := nm.(string)
+			switch {
+			case strings.HasPrefix(s, "__go_fun_"):
+				t.Errorf("go desugar hoisted a __go_fun_ temp %q: builtins have no function value to hoist", s)
+			case strings.HasPrefix(s, "__go_arg_"):
+				d.hoists++
+			default:
+				return goDesugar{}, false
+			}
+		}
+	}
+	// Drill gostmt -> call(fun=funclit) -> body block -> exprstmt -> inner.
+	gf, _ := last["fields"].(map[string]any)
+	call, _ := gf["call"].(map[string]any)
+	cf, _ := call["fields"].(map[string]any)
+	fun, _ := cf["fun"].(map[string]any)
+	if fun["kind"] != "funclit" {
+		return goDesugar{}, false
+	}
+	ff, _ := fun["fields"].(map[string]any)
+	body, _ := ff["body"].(map[string]any)
+	bf, _ := body["fields"].(map[string]any)
+	bstmts, _ := bf["stmts"].([]any)
+	if len(bstmts) != 1 {
+		return goDesugar{}, false
+	}
+	es, _ := bstmts[0].(map[string]any)
+	if es["kind"] != "exprstmt" {
+		return goDesugar{}, false
+	}
+	ef, _ := es["fields"].(map[string]any)
+	inner, _ := ef["x"].(map[string]any)
+	if inner == nil {
+		return goDesugar{}, false
+	}
+	d.inner = inner
+	return d, true
+}
