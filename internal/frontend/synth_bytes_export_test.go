@@ -55,6 +55,11 @@ func main() {
 		t.Fatal(err)
 	}
 	names := map[string]bool{}
+	// bytesNames attributes funcdecls to the synthetic bytes package by
+	// wire-doc pkgpath. The doc carries the whole transitive dependency
+	// closure (see the absent-check below), so bare names alone cannot
+	// attribute a declaration to bytes.
+	bytesNames := map[string]bool{}
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
@@ -63,6 +68,9 @@ func main() {
 				if f, ok := v["fields"].(map[string]any); ok {
 					if n, ok := f["name"].(string); ok {
 						names[n] = true
+						if p, ok := f["pkgpath"].(string); ok && p == "bytes" {
+							bytesNames[n] = true
+						}
 					}
 				}
 			}
@@ -88,15 +96,24 @@ func main() {
 			t.Errorf("wire doc missing funcdecl %q", want)
 		}
 	}
-	// Multi-result declarations are skipped at export (WS D).
+	// Multi-result declarations of the bytes package are skipped at export
+	// (WS D). They are checked by package, not by bare name: the wire doc
+	// now contains the whole transitive real-stdlib closure
+	// (fix-disk-sync-methods: synthetic io merges the real sync package,
+	// which pulls in internal/race — whose norace build legitimately
+	// exports no-op Read/Write funcdecls that sync's bodies call). A
+	// bare-name check false-positives on those; the M7 contract under test
+	// is that bytes' own multi-result members are never emitted, with call
+	// sites failing fast with the named M7 scope error (see
+	// TestSyntheticBytesCutFailsFast).
 	// Note: Cut, CutPrefix, CutSuffix, CutLast now have real implementations
 	// and are pair-transformed via the general userMRFuncs mechanism.
 	for _, absent := range []string{
 		"Read", "Write", "ReadByte", "ReadRune", "ReadBytes", "ReadString",
 		"Peek", "WriteString", "WriteRune", "ReadFrom", "WriteTo", "Seek", "ReadAt",
 	} {
-		if names[absent] {
-			t.Errorf("wire doc must not contain multi-result funcdecl %q", absent)
+		if bytesNames[absent] {
+			t.Errorf("wire doc must not contain multi-result funcdecl %q from package bytes", absent)
 		}
 	}
 }
