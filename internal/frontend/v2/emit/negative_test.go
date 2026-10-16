@@ -116,37 +116,6 @@ func main() {
 		want: "unsupported stmt",
 	},
 	{
-		name: "CompositeLit",
-		src: `package main
-func main() {
-	s := []int{1, 2, 3}
-	println(len(s))
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "IndexExpr",
-		src: `package main
-func main() {
-	s := []int{1, 2, 3}
-	println(s[0])
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "SliceExpr",
-		src: `package main
-func main() {
-	s := []int{1, 2, 3}
-	t := s[1:2]
-	println(len(t))
-}
-`,
-		want: "unsupported expr",
-	},
-	{
 		name: "StarExpr",
 		src: `package main
 func main() {
@@ -200,16 +169,6 @@ func main() {
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "KeyValueExpr",
-		src: `package main
-func main() {
-	m := map[string]int{"a": 1}
-	println(m["a"])
-}
 `,
 		want: "unsupported expr",
 	},

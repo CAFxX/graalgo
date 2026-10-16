@@ -170,7 +170,7 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
 	}
 	names := []string{}
-	objs := []int{}
+	objs := []any{}
 	var typ any
 	values := []any{}
 	for _, spec := range gd.Specs {
@@ -346,12 +346,124 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		return e.emitCall(ex)
 	case *ast.SelectorExpr:
 		return e.emitSelector(ex)
+	case *ast.CompositeLit:
+		return e.emitCompositeLit(ex)
+	case *ast.IndexExpr:
+		return e.emitIndex(ex)
+	case *ast.SliceExpr:
+		return e.emitSlice(ex)
 	default:
 		return nil, fmt.Errorf("emit: unsupported expr %T", x)
 	}
 }
 
+func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) {
+	var typ any
+	if c.Type != nil {
+		if tv, ok := e.info.Info.Types[c.Type]; ok {
+			typ = e.typeID(tv.Type)
+		}
+	}
+	elems := []any{}
+	for _, elt := range c.Elts {
+		// KeyValueExpr for keyed literals (e.g. Point{X:1}, map[string]int{"a":1}).
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			kn, err := e.emitExpr(kv.Key)
+			if err != nil {
+				return nil, err
+			}
+			vn, err := e.emitExpr(kv.Value)
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, map[string]any{
+				"kind": "keyvalue",
+				"fields": map[string]any{
+					"key":   kn,
+					"value": vn,
+					"type":  e.exprType(kv),
+				},
+			})
+			continue
+		}
+		en, err := e.emitExpr(elt)
+		if err != nil {
+			return nil, err
+		}
+		elems = append(elems, en)
+	}
+	return e.node("compositelit", c, map[string]any{
+		"type":  typ,
+		"elems": elems,
+	}), nil
+}
+
+func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
+	// Distinguish generic instantiation (id[int]) from index (s[0]).
+	// If X is a function (has a signature type), this is generics.
+	if tv, ok := e.info.Info.Types[ix.X]; ok && tv.Type != nil {
+		if _, isSig := tv.Type.(*types.Signature); isSig {
+			return nil, fmt.Errorf("emit: unsupported expr *ast.IndexExpr (generic instantiation)")
+		}
+	}
+	x, err := e.emitExpr(ix.X)
+	if err != nil {
+		return nil, err
+	}
+	index, err := e.emitExpr(ix.Index)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("index", ix, map[string]any{
+		"x":     x,
+		"index": index,
+		"type":  e.exprType(ix),
+	}), nil
+}
+
+func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
+	x, err := e.emitExpr(s.X)
+	if err != nil {
+		return nil, err
+	}
+	var low, high, max any
+	if s.Low != nil {
+		ln, err := e.emitExpr(s.Low)
+		if err != nil {
+			return nil, err
+		}
+		low = ln
+	}
+	if s.High != nil {
+		hn, err := e.emitExpr(s.High)
+		if err != nil {
+			return nil, err
+		}
+		high = hn
+	}
+	if s.Max != nil {
+		mn, err := e.emitExpr(s.Max)
+		if err != nil {
+			return nil, err
+		}
+		max = mn
+	}
+	return e.node("slice", s, map[string]any{
+		"x":    x,
+		"low":  low,
+		"high": high,
+		"max":  max,
+		"type": e.exprType(s),
+	}), nil
+}
+
 func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
+	// Blank identifier.
+	if id.Name == "_" {
+		return e.node("ident", id, map[string]any{
+			"name": "_",
+		}), nil
+	}
 	// Builtin?
 	if obj := e.info.Info.Uses[id]; obj != nil {
 		if _, ok := obj.(*types.Builtin); ok {
@@ -412,6 +524,10 @@ func (e *Emitter) emitBinary(b *ast.BinaryExpr) (map[string]any, error) {
 }
 
 func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
+	// Variadic spread (s...) is not yet supported.
+	if c.Ellipsis.IsValid() {
+		return nil, fmt.Errorf("emit: unsupported expr *ast.Ellipsis (variadic spread)")
+	}
 	fun, err := e.emitExpr(c.Fun)
 	if err != nil {
 		return nil, err
