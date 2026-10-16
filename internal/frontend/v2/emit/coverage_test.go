@@ -40,6 +40,7 @@ var handledNodes = map[string]bool{
 	"IncDecStmt": true,
 	"RangeStmt":  true,
 	"ReturnStmt": true,
+	"TypeSwitchStmt": true, // emitTypeSwitch
 
 	// Expressions.
 	"BasicLit":     true,
@@ -48,6 +49,7 @@ var handledNodes = map[string]bool{
 	"Ident":        true,
 	"ParenExpr":    true,
 	"SelectorExpr": true,
+	"TypeAssertExpr": true, // emitTypeAssert
 	"UnaryExpr":    true,
 
 	// Type expressions handled via go/types (not AST switch).
@@ -101,7 +103,7 @@ var loudlyRejected = map[string]bool{
 	"SelectStmt":    true,
 	"SendStmt":      true,
 	"SwitchStmt":    true,
-	"TypeSwitchStmt": true,
+	// TypeSwitchStmt is now handled (see handledNodes).
 	// Expressions not yet implemented.
 	"BadExpr":        true,
 	"CompositeLit":   true,
@@ -112,7 +114,7 @@ var loudlyRejected = map[string]bool{
 	"KeyValueExpr":   true,
 	"SliceExpr":      true,
 	"StarExpr":       true,
-	"TypeAssertExpr": true,
+	// TypeAssertExpr is now handled (see handledNodes).
 	// Declarations not yet implemented.
 	"BadDecl":   true,
 	"GenDecl":   true, // top-level; const/type/var handled selectively

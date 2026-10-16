@@ -36,13 +36,28 @@ for the design.
   PKG-011 cell identity, bug-038/041/042 fixes). Clean merge, no conflicts.
   Standing order: merge master at least hourly.
 
+## 2026-10-16 — Type assertions + type switches (v2-typeassert-fresh)
+
+- [x] `*ast.TypeAssertExpr` emitter (`emitTypeAssert`): `x.(T)` single-value
+      and comma-ok forms; `x.(type)` marker for type switches. Type via
+      go/types, no package-name special cases.
+- [x] `*ast.TypeSwitchStmt` emitter (`emitTypeSwitch`): handles the guard
+      specially (the `v` in `switch v := x.(type)` is a nil Defs entry in
+      go/types — each case has its own `v`). Emits guard `x.(type)`,
+      variable name, and per-case type lists + bodies.
+- [x] Coverage matrix updated: `TypeAssertExpr`, `TypeSwitchStmt` moved
+      from loudlyRejected to handled (20 handled, 23 rejected).
+- [x] Positive tests (`emit/typeassert_test.go`): single-value, comma-ok,
+      type switch with/without assignment, multiple types per case.
+- [x] `go test ./...` passes.
+
 ## Next
 
 - [ ] Differential test: programs built via v2 vs gc on the corpus
       (behavioral differentials; v2 emits no JSON, so there is no v1-JSON
       output to compare against)
 - [ ] More node kinds: composite literals, struct/array/map/slice types,
-      type assertions, type switches, go/defer, channels, interfaces
+      go/defer, channels, interfaces
 - [ ] Method declarations (currently only functions)
 - [ ] Package-level vars and init order (globals)
 - [ ] Generic instantiations

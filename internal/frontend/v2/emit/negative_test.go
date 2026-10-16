@@ -79,20 +79,6 @@ func main() {
 		want: "unsupported stmt",
 	},
 	{
-		name: "TypeSwitchStmt",
-		src: `package main
-func main() {
-	var x any = 1
-	switch v := x.(type) {
-	case int:
-		println(v)
-	default:
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
 		name: "LabeledStmt",
 		src: `package main
 func main() {
@@ -122,17 +108,6 @@ func main() {
 	x := 42
 	p := &x
 	println(*p)
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "TypeAssertExpr",
-		src: `package main
-func main() {
-	var x any = 42
-	y := x.(int)
-	println(y)
 }
 `,
 		want: "unsupported expr",

@@ -125,9 +125,117 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 		}), nil
 	case *ast.BranchStmt:
 		return e.node("branch", s, map[string]any{"tok": st.Tok.String()}), nil
+	case *ast.TypeSwitchStmt:
+		return e.emitTypeSwitch(st)
 	default:
 		return nil, fmt.Errorf("emit: unsupported stmt %T", s)
 	}
+}
+
+func (e *Emitter) emitTypeSwitch(st *ast.TypeSwitchStmt) (map[string]any, error) {
+	// Type switch: switch v := x.(type) { case T1: ... case T2: ... default: ... }
+	//
+	// The Assign is always `v := x.(type)` (or `x.(type)` without assignment).
+	// Each CaseClause.List contains the types for that case (nil = default).
+	// In each case body, the variable v has the case's type.
+
+	// Emit the guard. The Assign is `v := x.(type)` or `x.(type)`.
+	// SPECIAL: The `v` in the guard is NOT a real variable — go/types puts it
+	// in Defs with a nil object. Each case clause has its own `v` with the
+	// case's type. So we do NOT emit the guard via emitAssign (which would
+	// try to emit the `v` as an identifier). Instead, we emit just the
+	// `x.(type)` expression and record the variable name if present.
+	var guard any
+	var guardVar string
+	if st.Assign != nil {
+		if as, ok := st.Assign.(*ast.AssignStmt); ok {
+			// The RHS should be a single TypeAssertExpr with Type=nil (x.(type)).
+			if len(as.Rhs) == 1 {
+				if ta, ok := as.Rhs[0].(*ast.TypeAssertExpr); ok && ta.Type == nil {
+					// Emit the x part.
+					xn, err := e.emitExpr(ta.X)
+					if err != nil {
+						return nil, err
+					}
+					// Record the variable name if it's a define.
+					if as.Tok == token.DEFINE && len(as.Lhs) == 1 {
+						if id, ok := as.Lhs[0].(*ast.Ident); ok {
+							guardVar = id.Name
+						}
+					}
+					guard = e.node("typeassert", ta, map[string]any{
+						"x":    xn,
+						"type": nil, // x.(type) marker
+					})
+				} else {
+					return nil, fmt.Errorf("emit: typeswitch guard RHS is not x.(type)")
+				}
+			} else {
+				return nil, fmt.Errorf("emit: typeswitch guard has %d RHS, expected 1", len(as.Rhs))
+			}
+		} else if es, ok := st.Assign.(*ast.ExprStmt); ok {
+			// `switch x.(type)` without assignment.
+			if ta, ok := es.X.(*ast.TypeAssertExpr); ok && ta.Type == nil {
+				xn, err := e.emitExpr(ta.X)
+				if err != nil {
+					return nil, err
+				}
+				guard = e.node("typeassert", ta, map[string]any{
+					"x":    xn,
+					"type": nil,
+				})
+			} else {
+				return nil, fmt.Errorf("emit: typeswitch guard is not x.(type)")
+			}
+		} else {
+			return nil, fmt.Errorf("emit: unsupported typeswitch guard %T", st.Assign)
+		}
+	}
+
+	// Emit each case clause.
+	cases := []any{}
+	for _, stmt := range st.Body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			return nil, fmt.Errorf("emit: typeswitch body contains non-case %T", stmt)
+		}
+		// Case types: nil List means default.
+		var types []any
+		if cc.List != nil {
+			for _, texpr := range cc.List {
+				// Each is a type expression. Get the type via go/types.
+				if tv, ok := e.info.Info.Types[texpr]; ok && tv.Type != nil {
+					types = append(types, e.typeID(tv.Type))
+				} else {
+					// Fallback: emit the type expression as a node.
+					tn, err := e.emitExpr(texpr)
+					if err != nil {
+						return nil, err
+					}
+					types = append(types, tn)
+				}
+			}
+		}
+		// Case body.
+		body := []any{}
+		for _, s := range cc.Body {
+			sn, err := e.emitStmt(s)
+			if err != nil {
+				return nil, err
+			}
+			body = append(body, sn)
+		}
+		cases = append(cases, e.node("typecase", cc, map[string]any{
+			"types": types, // nil/empty = default
+			"body":  body,
+		}))
+	}
+
+	return e.node("typeswitch", st, map[string]any{
+		"guard": guard, // the `x.(type)` expression, or nil
+		"var":   guardVar, // the variable name (e.g. "v"), or "" if no assignment
+		"cases": cases,
+	}), nil
 }
 
 func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
@@ -352,9 +460,51 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		return e.emitIndex(ex)
 	case *ast.SliceExpr:
 		return e.emitSlice(ex)
+	case *ast.TypeAssertExpr:
+		return e.emitTypeAssert(ex)
 	default:
 		return nil, fmt.Errorf("emit: unsupported expr %T", x)
 	}
+}
+
+func (e *Emitter) emitTypeAssert(ta *ast.TypeAssertExpr) (map[string]any, error) {
+	// Type assertion: x.(T)
+	//
+	// - Single-value: y := x.(T) — panics if x is not of type T.
+	// - Two-value: v, ok := x.(T) — ok is false if x is not of type T.
+	// - x.(type) — only valid in a type switch; here we emit it as a
+	//   marker. The type switch handler processes it specially.
+	//
+	// The backend distinguishes single vs two-value by context (whether
+	// the result is used as one or two values). We record the asserted
+	// type; a nil type means `x.(type)`.
+
+	x, err := e.emitExpr(ta.X)
+	if err != nil {
+		return nil, err
+	}
+
+	var typ any
+	if ta.Type != nil {
+		// Regular type assertion: x.(T)
+		if tv, ok := e.info.Info.Types[ta.Type]; ok && tv.Type != nil {
+			typ = e.typeID(tv.Type)
+		} else {
+			// Fallback: shouldn't happen for well-typed code.
+			return nil, fmt.Errorf("emit: no type for type assertion %v", ta.Type)
+		}
+	} else {
+		// x.(type) — only valid inside a type switch. The type switch
+		// emitter handles this; if we see it here, it's a misuse, but
+		// we emit a marker rather than failing (the checker should have
+		// caught it).
+		typ = nil
+	}
+
+	return e.node("typeassert", ta, map[string]any{
+		"x":    x,
+		"type": typ, // nil for x.(type)
+	}), nil
 }
 
 func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) {
