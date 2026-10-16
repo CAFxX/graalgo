@@ -55,10 +55,10 @@ public final class RtMemStatsTest {
 
     /**
      * Builds a {@code runtime.MemStats}-shaped descriptor (field names and
-     * kinds mirror the synthetic runtime view's declaration) and checks
-     * the structural invariants of the JVM-telemetry fill.
+     * kinds mirror the synthetic runtime view's declaration), shared by
+     * the fill tests below.
      */
-    public void testFillMemStatsInvariants() {
+    private static GoStructDescriptor buildMemStatsDescriptor() {
         // name, kind, arrayLen (-1 = scalar), arrayElemKind
         String[][] spec = {
                 {"Alloc", "UINT64"}, {"TotalAlloc", "UINT64"}, {"Sys", "UINT64"},
@@ -93,6 +93,14 @@ public final class RtMemStatsTest {
         }
         GoStructDescriptor desc = GoStructDescriptor.layout(
                 "runtime.MemStats", names, kinds, lens, elemKinds);
+        return desc;
+    }
+
+    /**
+     * Checks the structural invariants of the JVM-telemetry fill.
+     */
+    public void testFillMemStatsInvariants() {
+        GoStructDescriptor desc = buildMemStatsDescriptor();
         GoStruct ms = GoStruct.zero(desc);
         RtMemStats.fillMemStats(ms);
 
@@ -118,6 +126,46 @@ public final class RtMemStatsTest {
         assertEq(0, get(ms, desc, "Lookups"), "Lookups must be 0");
         assertEq(0, get(ms, desc, "HeapReleased"), "HeapReleased must be 0");
         assertEq(0, get(ms, desc, "HeapObjects"), "HeapObjects must be 0");
+    }
+
+    /**
+     * Pins the documented DIV-M4-11 deviation: {@code TotalAlloc} is live
+     * heap-used, NOT the cumulative counter gc defines. Fails if the fill
+     * ever reports 0, a cumulative counter, or a monotonic max-seen
+     * accumulator for this field — any of which would silently change the
+     * documented semantics.
+     */
+    public void testTotalAllocIsLiveHeapUsed() {
+        GoStructDescriptor desc = buildMemStatsDescriptor();
+        GoStruct ms = GoStruct.zero(desc);
+        RtMemStats.fillMemStats(ms);
+
+        long totalAlloc = get(ms, desc, "TotalAlloc");
+        long heapAlloc = get(ms, desc, "HeapAlloc");
+        long alloc = get(ms, desc, "Alloc");
+        assertEq(heapAlloc, totalAlloc,
+                "TotalAlloc must equal live HeapAlloc (documented DIV-M4-11 deviation)");
+        assertEq(alloc, totalAlloc,
+                "TotalAlloc must equal live Alloc (documented DIV-M4-11 deviation)");
+    }
+
+    /**
+     * Pins the documented DIV-M4-11 deviation: {@code Mallocs}/
+     * {@code Frees} are always 0 — the JVM exposes no allocation counters.
+     * Consequence: {@code testing.AllocsPerRun} always returns 0 on this
+     * backend, so allocation-count assertions are vacuous here. Fails if
+     * the fill ever reports non-zero counts (or drops the fields), which
+     * would silently change the documented semantics.
+     */
+    public void testMallocsFreesAreAlwaysZero() {
+        GoStructDescriptor desc = buildMemStatsDescriptor();
+        GoStruct ms = GoStruct.zero(desc);
+        RtMemStats.fillMemStats(ms);
+
+        assertEq(0, get(ms, desc, "Mallocs"),
+                "Mallocs must be 0 always (documented DIV-M4-11 deviation)");
+        assertEq(0, get(ms, desc, "Frees"),
+                "Frees must be 0 always (documented DIV-M4-11 deviation)");
     }
 
     /** Reads a longs-carried field by name (fail loud on layout drift). */
