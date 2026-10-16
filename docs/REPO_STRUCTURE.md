@@ -60,6 +60,14 @@ Related: [Makefile](../Makefile) (root build entry point),
       [types/](../internal/frontend/types/),
       [desugar/](../internal/frontend/desugar/) — empty placeholders for the
       planned package split (blocked by an exporter/desugar import cycle).
+    - [v2/](../internal/frontend/v2/) — separate module (own `go.mod`): the
+      frontend v2 rewrite (parser → checker → emitter stages plus the
+      Go→Java binary interface in
+      [encode/](../internal/frontend/v2/encode/), decoded by
+      [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
+      in the Java backend; wire contract pinned by
+      `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side and
+      `BinaryDecoderTest` on the Java side; `make test-v2` runs its suite).
   - The IR is the `frontend/v1` JSON wire format: specified in
     [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by

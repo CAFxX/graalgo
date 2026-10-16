@@ -104,9 +104,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-ci test-regression
+all: generate build snapshot-check check test-v2 test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -179,6 +179,20 @@ test-regression: generate build graalgo
 # Add test-p3frontend to `all` once those are green.
 test-p3frontend: generate
 	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
+
+# Frontend v2 module tests: the [internal/frontend/v2](internal/frontend/v2)
+# module (own go.mod) — parser, checker, emitter, and the Go→Java binary
+# encoder, including the byte-exact zigzag wire contract
+# (TestEncodeIntContract) and the cross-language golden document
+# (TestEncodeGoldenDoc, mirrored by BinaryDecoderTest on the Java side).
+# In `all` (hence per-push CI): this module was previously invisible to CI
+# (R5-P1-2) and the R5-P1-1 zigzag corruption had no mechanical backstop.
+# /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
+V2_TMP := $(CURDIR)/internal/frontend/v2/.tmp
+test-v2:
+	mkdir -p $(V2_TMP) && \
+	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
+	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
