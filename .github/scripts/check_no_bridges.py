@@ -169,8 +169,8 @@ def check_no_bridges(diff):
         m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
         if m:
             node_kind = m.group(1)
-            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
-            if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
+            # Flag runtime*/fmt*/sync*/etc./time* node kinds (stdlib-specific)
+            if re.match(r'^(runtime|fmt|sync|os|net|time)[a-z]', node_kind):
                 # Adjudicated real implementations are not bridges.
                 if any(f_sub in fname and nk == node_kind
                        for f_sub, nk in ADJUDICATED_WIRE_NODES):

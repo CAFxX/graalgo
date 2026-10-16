@@ -22,7 +22,8 @@ deliverable until the design lands.
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
   packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
   `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
+  (worktree `real-nethttp` — retired 2026-10-16, commit `cc0a78f4`),
+  `reflect` (worktree `real-reflect2`). Retires
   B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
@@ -31,9 +32,10 @@ deliverable until the design lands.
   `syntheticSources`.
 - **Phase 3 — machinery deletion.** When the last synthetic package retires,
   delete the machinery wholesale: `syntheticSources` + the import overlay,
-  `overlayImporter`/`resolvePkgTree` package switches, the linkname
-  allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
-  intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
+  `overlayImporter`/`resolvePkgTree` (the synthetic/stub resolution chain),
+  `dedicatedSyntheticStubs`, `isMultiResultSynthetic`/
+  `multiResultSyntheticError`, the intrinsic predicates, the `"syncop"`/
+  `"runtimecaller"`/`time*`/`runtime*` intrinsic wire nodes, and
   `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
@@ -70,7 +72,8 @@ deliverable until the design lands.
 ### B-3. Frontend package-name-keyed special-case machinery
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
-  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
+  - [synth_machinery.go](../../internal/frontend/synth_machinery.go):
+    `syntheticSources` import overlay (~line 70, 130
     entries), `isMultiResultSynthetic` (~line 2113) /
     `multiResultSyntheticError` (~line 2207) ~60-path chains,
     `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
@@ -79,11 +82,51 @@ deliverable until the design lands.
   - [synth_reflect.go](../../internal/frontend/synth_reflect.go):
     `isReflectIntrinsicFunc` (~line 2898);
   - [diskimport.go](../../internal/frontend/diskimport.go):
-    `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
-    switches (~line 402) and the linkname package allowlist;
-  - [export.go](../../internal/frontend/export.go): `"syncop"` and
-    `"runtimecaller"` custom wire nodes for stdlib functions, and the
-    `time.Now` eta-expansion hardcoded by package+symbol name
+    `overlayImporter`/`resolvePkgTree` (~line 402) routes each import
+    through the general chain — the `syntheticSources` map, then the
+    general `isDedicatedSyntheticStub` predicate
+    ([export.go](../../internal/frontend/export.go):598, keyed on the
+    `dedicatedSyntheticStubs` map) for signature-only stub packages, then
+    the disk importer. The old `"runtime"`/`"fmt"`/`"unsafe"` package
+    switches and the linkname package allowlist are gone: `//go:linkname`
+    decls are lowered by the general `exportLinknameDecl` mechanism
+    ([export.go](../../internal/frontend/export.go):6184), which applies
+    uniformly to all bodyless functions (preserving type identity, failing
+    loudly if invoked);
+  - custom wire nodes for stdlib intrinsics, each matched by
+    package+symbol name:
+      - `"syncop"` — sync.Map / sync/atomic ops
+        ([export.go](../../internal/frontend/export.go):9090;
+        [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go):3278);
+      - `"runtimecaller"` — runtime.Caller
+        ([mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go):3183);
+      - `time*` — `time.Now`→`"timenow"`, `time.Sleep`→`"timesleep"`,
+        `time.After`→`"timeafter"`, `time.Tick`→`"timetick"`,
+        `time.NewTimer`/`time.NewTicker`→`"timenew"`,
+        `time.AfterFunc`→`"timeafterfunc"`
+        ([synth_machinery.go](../../internal/frontend/synth_machinery.go):1452–1499);
+        `Timer.C`/`Ticker.C` selection→`"timec"`
+        ([export.go](../../internal/frontend/export.go):11380);
+        `Timer`/`Ticker` `Stop`/`Reset`→`"timeop"`
+        ([synth_machinery.go](../../internal/frontend/synth_machinery.go):1768,
+        dispatched through `timeTimerTickerNamed`
+        ([synth_machinery.go](../../internal/frontend/synth_machinery.go):912,
+        use site [export.go](../../internal/frontend/export.go):8587));
+      - `runtime*` (all emitted in
+        [export.go](../../internal/frontend/export.go)) —
+        `runtime.NumCPU`→`"runtimenumcpu"` (line 8374),
+        `runtime.GOMAXPROCS`→`"runtimegomaxprocs"` (line 8390),
+        `runtime.ReadMemStats`→`"runtimereadmemstats"` (line 8436),
+        `runtime.GOROOT`→`"runtimegoroot"` (line 8446),
+        `runtime.Version`→`"runtimeversion"` (line 8456),
+        `runtime.Stack`→`"runtimestack"` (line 8470),
+        `runtime.Callers`→`"runtimecallers"` (line 8491),
+        `runtime.CallersFrames`→`"runtimecallersframes"` (line 8507),
+        `runtime.FuncForPC`→`"runtimefuncforpc"` (line 8523).
+        Adjudicated non-bridges (NOT part of this bridge):
+        `"runtimenumgoroutine"` (PKG-023) and `"runtimegosched"` (PKG-040)
+        — see "Adjudicated non-bridges" below.
+  - the `time.Now` eta-expansion hardcoded by package+symbol name
     ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
@@ -109,10 +152,11 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 140 tracked `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 140 tracked files in [internal/frontend/](../../internal/frontend/)
+  (`synth_*.go`: 132 non-test — ~24 authored, ~110 verbatim vendored from
+  go1.27.1 — plus 8 `*_test.go`) plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
@@ -127,8 +171,9 @@ deliverable until the design lands.
   mirrors retire with the top-level tree or via an explicit retire-or-keep
   decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
   `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
-  general disk mechanism"), `real-nethttp` (`net`/`net/http`),
-  `real-reflect2` (`reflect`).
+  general disk mechanism"), `real-reflect2` (`reflect`). Retired:
+  `real-nethttp` (`net`/`net/http`, 2026-10-16, commit `cc0a78f4`) — see
+  "Retired" below.
 - **Phase:** 1 (the four in-flight packages) → 2 (remainder).
 
 ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
@@ -261,3 +306,12 @@ code, per [AGENTS.md](../../AGENTS.md) §7).
   this inventory was created (the real-`fmt` lane's template: kill the
   desugaring, make the real package work). Recorded here so the pattern is
   not reintroduced.
+- **2026-10-16 — synthetic `net`/`net/http` (real-nethttp, commit
+  `cc0a78f4`).** The 1275-line synthetic `net/http` package is deleted
+  (`synth_net_http.go`, `synth_net_http_httptest.go`,
+  `synth_nethttp_desugar_test.go`); the real `net/http` from Go 1.27.1
+  GOROOT is now used via the general disk importer, with the API
+  divergences fixed in [synth_net.go](../../internal/frontend/synth_net.go),
+  [export.go](../../internal/frontend/export.go),
+  [synth_machinery.go](../../internal/frontend/synth_machinery.go), and
+  [synth_time_context.go](../../internal/frontend/synth_time_context.go).
