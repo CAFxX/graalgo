@@ -2,7 +2,6 @@ package graalgo.runtime;
 
 import com.oracle.truffle.api.nodes.Node;
 
-import graalgo.frontend.FmtCallNode;
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
@@ -16,39 +15,29 @@ import graalgo.values.GoKind;
  * A {@code DeferredCall} is that captured unit: {@link #invoke} performs
  * the deferred invocation.
  *
- * <p>Three kinds: {@link Kind#FUNC} (a {@link GoFunc} value),
- * {@link Kind#BUILTIN} (a builtin call by name: {@code println},
- * {@code print}, {@code panic}, {@code recover}), and {@link Kind#FMT}
- * (a deferred {@code fmt} overlay call: argument values captured at
- * defer time, formatting replayed at return/unwind time). The kind
+ * <p>Two kinds: {@link Kind#FUNC} (a {@link GoFunc} value),
+ * and {@link Kind#BUILTIN} (a builtin call by name: {@code println},
+ * {@code print}, {@code panic}, {@code recover}). The kind
  * drives {@code recover()} semantics: only a directly-deferred function
- * enables recovery; deferred builtins and fmt calls run with recovery
+ * enables recovery; deferred builtins run with recovery
  * disarmed (gc-verified).
  */
 public final class DeferredCall {
-    /** Whether the deferred call is a function value, a builtin, or a fmt call. */
-    public enum Kind { FUNC, BUILTIN, FMT }
+    /** Whether the deferred call is a function value or a builtin. */
+    public enum Kind { FUNC, BUILTIN }
 
     private final Kind kind;
     private final GoFunc func;
     private final Object[] args;
     private final GoKind[] argKinds;
     private final String builtinName;
-    // FMT-kind: the overlay function name plus the pre-built Fmt.Arg array
-    // (values evaluated at defer time, metadata from FmtCallNode). The
-    // formatting replays via FmtCallNode.executeFmt at return/unwind time.
-    private final String fmtFunc;
-    private final Fmt.Arg[] fmtArgs;
 
-    private DeferredCall(Kind kind, GoFunc func, Object[] args, GoKind[] argKinds, String builtinName,
-            String fmtFunc, Fmt.Arg[] fmtArgs) {
+    private DeferredCall(Kind kind, GoFunc func, Object[] args, GoKind[] argKinds, String builtinName) {
         this.kind = kind;
         this.func = func;
         this.args = args;
         this.argKinds = argKinds;
         this.builtinName = builtinName;
-        this.fmtFunc = fmtFunc;
-        this.fmtArgs = fmtArgs;
     }
 
     /**
@@ -87,16 +76,6 @@ public final class DeferredCall {
         return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name, null, null);
     }
 
-    /**
-     * A deferred {@code fmt} overlay call (M7). The {@code Fmt.Arg} array is
-     * built at defer time (values evaluated, metadata attached); the
-     * formatting replays via {@link FmtCallNode#executeFmt} at return/unwind
-     * time. Results are discarded (defer is statement position).
-     */
-    public static DeferredCall fmtCall(String funcName, Fmt.Arg[] fargs) {
-        return new DeferredCall(Kind.FMT, null, null, null, null, funcName, fargs);
-    }
-
     public Kind kind() {
         return kind;
     }
@@ -133,9 +112,6 @@ public final class DeferredCall {
                 GoCalls.invoke(func, args);
             }
             case BUILTIN -> invokeBuiltin();
-            // FMT: replay via the shared FmtCallNode dispatch; results are
-            // discarded (defer is statement position).
-            case FMT -> FmtCallNode.executeFmt(fmtFunc, fmtArgs);
         }
     }
 

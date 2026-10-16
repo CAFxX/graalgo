@@ -358,8 +358,6 @@ public final class NodeFactory {
         // M5 (WS F): defer/panic/recover/Goexit + function literals.
         registerStmtKind("defer", this::buildDefer);
         registerExprKind("funclit", this::buildFuncLit);
-        // M6 (WS H): the D4 fmt stub via the Phase-1 import overlay.
-        registerExprKind("fmtcall", this::buildFmtCall);
         // P3-M9 (WS D): implicit address-of for method receivers. When a
         // pointer-receiver method is called on an addressable value, the
         // exporter wraps the receiver in an "addrof" node (x.M() → (&x).M()).
@@ -3590,124 +3588,6 @@ public final class NodeFactory {
                 java.util.List.copyOf(kec), java.util.List.copyOf(nec));
     }
 
-    /**
-     * A call to one of the D4 {@code fmt} stub functions (M6, WS H — the
-     * Phase-1 import overlay; the wire {@code fmtcall} node is specified in
-     * docs/frontend-v1.md §6). Static per-argument type metadata comes from
-     * the wire type table; values are read from the children at runtime.
-     */
-    private GoExprNode buildFmtCall(Json.Object node, BuildCtx ctx) {
-        Json.Object f = fieldsOf(node, "fmtcall");
-        String path = "fmtcall.fields";
-        String func = f.string("func", path);
-        Json.Array argNodes = f.array("args", path);
-        int n = argNodes.size();
-        GoExprNode[] args = new GoExprNode[n];
-        GoKind[] kinds = new GoKind[n];
-        String[] typeNames = new String[n];
-        GoKind[] elemKinds = new GoKind[n];
-        String[] elemTypeNames = new String[n];
-        // M7-remediation (R2 P0-2): element kind/name chains for nested
-        // array/slice printing at arbitrary depth. The old single
-        // elemElemKind field structurally capped nesting at depth 2;
-        // walk the type table down to the scalar instead.
-        java.util.List<GoKind>[] elemKindChains = new java.util.List[n];
-        java.util.List<String>[] elemTypeNameChains = new java.util.List[n];
-        GoKind[] keyKinds = new GoKind[n];
-        String[] keyTypeNames = new String[n];
-        // M8 closeout: key kind/name chains for nested maps, parallel to the
-        // elem chains for nested arrays (see Fmt.Arg).
-        java.util.List<GoKind>[] keyKindChains = new java.util.List[n];
-        java.util.List<String>[] keyTypeNameChains = new java.util.List[n];
-        for (int i = 0; i < n; i++) {
-            String apath = path + ".args[" + i + "]";
-            args[i] = buildExpr(asObject(argNodes.get(i), apath), ctx);
-            int typeId = args[i].typeId();
-            if (typeId < 0) {
-                throw new FrontendException(apath + ": fmt argument without a type id (WS H)");
-            }
-            kinds[i] = kindOf(ctx, typeId, apath);
-            typeNames[i] = GoTypeStrings.of(ctx, typeId);
-            Json.Object entry = underlyingEntry(ctx, typeId, apath);
-            String k = entry.string("kind", apath);
-            Json.Object detail = entry.object("detail", apath);
-            if ("slice".equals(k) || "array".equals(k)) {
-                int elemId = detail.intValue("elem", apath);
-                elemKinds[i] = kindOf(ctx, elemId, apath);
-                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M7-remediation (R2 P0-2): element kind/name chains for nested
-                // printing at arbitrary depth (see walkElemChain).
-                ChainWalk w = walkElemChain(elemId, ctx, apath);
-                elemKindChains[i] = w.kinds();
-                elemTypeNameChains[i] = w.names();
-                keyKindChains[i] = java.util.List.of();
-                keyTypeNameChains[i] = java.util.List.of();
-            } else if ("map".equals(k)) {
-                int keyId = detail.intValue("key", apath);
-                int elemId = detail.intValue("elem", apath);
-                keyKinds[i] = kindOf(ctx, keyId, apath);
-                keyTypeNames[i] = GoTypeStrings.of(ctx, keyId);
-                elemKinds[i] = kindOf(ctx, elemId, apath);
-                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M8 closeout: key kind/name chains for nested maps, parallel to the
-                // elem chains for nested arrays (see walkMapChain).
-                MapChainWalk w = walkMapChain(elemId, ctx, apath);
-                keyKindChains[i] = w.keyKinds();
-                keyTypeNameChains[i] = w.keyNames();
-                elemKindChains[i] = w.elemKinds();
-                elemTypeNameChains[i] = w.elemNames();
-            } else if ("pointer".equals(k)) {
-                // M8 (fuzzer find): %v of a pointer to struct/array/slice/map
-                // prints &value (Go's printValue Pointer case), not the erased
-                // address. Thread the referent kind so fmtPointer takes the
-                // &-path; other referents keep the erased 0x0.
-                int elemId = detail.intValue("elem", apath);
-                elemKinds[i] = kindOf(ctx, elemId, apath);
-                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // P3-M10 (fix-fmt-funcs): pointer-to-composite (e.g. *[]byte
-                // scan destinations): populate the chains by walking the
-                // referent like the slice/map branches above; other
-                // referents keep empty chains.
-                Json.Object elemEntry = underlyingEntry(ctx, elemId, apath);
-                String ek = elemEntry.string("kind", apath);
-                if ("slice".equals(ek) || "array".equals(ek)) {
-                    ChainWalk w = walkElemChain(elemId, ctx, apath);
-                    elemKindChains[i] = w.kinds();
-                    elemTypeNameChains[i] = w.names();
-                    keyKindChains[i] = java.util.List.of();
-                    keyTypeNameChains[i] = java.util.List.of();
-                } else if ("map".equals(ek)) {
-                    MapChainWalk w = walkMapChain(elemId, ctx, apath);
-                    keyKindChains[i] = w.keyKinds();
-                    keyTypeNameChains[i] = w.keyNames();
-                    elemKindChains[i] = w.elemKinds();
-                    elemTypeNameChains[i] = w.elemNames();
-                } else {
-                    elemKindChains[i] = java.util.List.of();
-                    elemTypeNameChains[i] = java.util.List.of();
-                    keyKindChains[i] = java.util.List.of();
-                    keyTypeNameChains[i] = java.util.List.of();
-                }
-            } else {
-                elemKindChains[i] = java.util.List.of();
-                elemTypeNameChains[i] = java.util.List.of();
-                keyKindChains[i] = java.util.List.of();
-                keyTypeNameChains[i] = java.util.List.of();
-            }
-        }
-        // The wire "type" is null for the Print variants (results discarded,
-        // statement position only); a single id for the Sprint variants.
-        GoKind resultKind;
-        Json.Value t = f.opt("type");
-        if (t instanceof Json.Null || t == null) {
-            resultKind = GoKind.INTERFACE;
-        } else {
-            resultKind = kindOf(ctx, f.intValue("type", path), path);
-        }
-        return new FmtCallNode(func, args, kinds, typeNames, elemKinds, elemTypeNames,
-                elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames,
-                keyKindChains, keyTypeNameChains, resultKind);
-    }
 
     /**
      * Builtin call wiring (M6, WS H — integration of the WS G intrinsic
@@ -4030,14 +3910,6 @@ public final class NodeFactory {
         String path = "defer.fields";
         Json.Object call = f.object("call", path);
         String callKind = call.string("kind", path + ".call");
-        // Deferred fmt overlay call (M7, e.g. `defer fmt.Println(x)`): build
-        // the FmtCallNode; DeferNode evaluates its arguments now and replays
-        // the formatting at return/unwind time.
-        if ("fmtcall".equals(callKind)) {
-            FmtCallNode fmtCall = (FmtCallNode) buildFmtCall(call, ctx);
-            fmtCall.setSourceSection(sectionFor(node, "defer"));
-            return new DeferNode(fmtCall);
-        }
         Json.Object cf = call.object("fields", path + ".call");
         String cpath = path + ".call.fields";
         // Deferred builtin: pass the builtin name through; DeferNode builds
