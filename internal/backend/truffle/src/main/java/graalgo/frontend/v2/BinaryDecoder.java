@@ -1,6 +1,7 @@
 package graalgo.frontend.v2;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
@@ -61,6 +62,13 @@ public final class BinaryDecoder {
     private static final int TAG_LIST = 0x04;
     private static final int TAG_MAP = 0x05;
 
+    /**
+     * Read chunk size for length-prefixed payloads. The wire length is
+     * attacker-controlled, so buffers are never pre-sized from it; they
+     * grow in chunks of this size as real input arrives.
+     */
+    private static final int READ_CHUNK = 8192;
+
     private BinaryDecoder() {}
 
     /**
@@ -117,7 +125,12 @@ public final class BinaryDecoder {
      * @return null, Boolean, Long, String, List&lt;Object&gt;, or Map&lt;String, Object&gt;
      */
     public static Object decodeValue(DataInputStream in) throws IOException {
-        int tag = in.readUnsignedByte();
+        int tag;
+        try {
+            tag = in.readUnsignedByte();
+        } catch (EOFException e) {
+            throw new IOException("v2 binary: truncated value (missing tag byte)", e);
+        }
         switch (tag) {
             case TAG_NULL:
                 return null;
@@ -126,12 +139,7 @@ public final class BinaryDecoder {
             case TAG_INT:
                 return readZigzagVarint(in);
             case TAG_STRING: {
-                long len = readVarint(in);
-                if (len > Integer.MAX_VALUE) {
-                    throw new IOException("v2 binary: string too long: " + len);
-                }
-                byte[] bytes = new byte[(int) len];
-                in.readFully(bytes);
+                byte[] bytes = readSizedBytes(in, "string");
                 return new String(bytes, StandardCharsets.UTF_8);
             }
             case TAG_LIST: {
@@ -139,7 +147,10 @@ public final class BinaryDecoder {
                 if (count > Integer.MAX_VALUE) {
                     throw new IOException("v2 binary: list too long: " + count);
                 }
-                List<Object> list = new ArrayList<>((int) count);
+                // Never pre-size from the wire count: a few input bytes can
+                // claim up to 2^31-1 elements. The list grows as real
+                // elements decode; short input ends the loop at EOF below.
+                List<Object> list = new ArrayList<>();
                 for (long i = 0; i < count; i++) {
                     list.add(decodeValue(in));
                 }
@@ -152,12 +163,7 @@ public final class BinaryDecoder {
                 }
                 Map<String, Object> map = new LinkedHashMap<>();
                 for (long i = 0; i < count; i++) {
-                    long keyLen = readVarint(in);
-                    if (keyLen > Integer.MAX_VALUE) {
-                        throw new IOException("v2 binary: key too long: " + keyLen);
-                    }
-                    byte[] keyBytes = new byte[(int) keyLen];
-                    in.readFully(keyBytes);
+                    byte[] keyBytes = readSizedBytes(in, "map key");
                     String key = new String(keyBytes, StandardCharsets.UTF_8);
                     Object val = decodeValue(in);
                     map.put(key, val);
@@ -167,6 +173,38 @@ public final class BinaryDecoder {
             default:
                 throw new IOException(String.format("v2 binary: unknown tag 0x%02x", tag));
         }
+    }
+
+    /**
+     * Reads a length-prefixed byte string from the stream.
+     *
+     * <p>The claimed length is attacker-controlled (up to 2^31-1 from a few
+     * wire bytes), so the buffer is never pre-sized from it: bytes are read
+     * in fixed-size chunks and the buffer grows only as real input arrives.
+     * A claimed length that exceeds the remaining input fails with a decode
+     * error, never with an OutOfMemoryError.
+     */
+    private static byte[] readSizedBytes(DataInputStream in, String what) throws IOException {
+        long len = readVarint(in);
+        if (len > Integer.MAX_VALUE) {
+            throw new IOException("v2 binary: " + what + " too long: " + len);
+        }
+        long remaining = len;
+        ByteArrayOutputStream out =
+            new ByteArrayOutputStream((int) Math.min(remaining, READ_CHUNK));
+        byte[] chunk = new byte[READ_CHUNK];
+        while (remaining > 0) {
+            int n = (int) Math.min(remaining, READ_CHUNK);
+            try {
+                in.readFully(chunk, 0, n);
+            } catch (EOFException e) {
+                throw new IOException("v2 binary: truncated " + what
+                    + " (claimed " + len + " bytes, input ended early)", e);
+            }
+            out.write(chunk, 0, n);
+            remaining -= n;
+        }
+        return out.toByteArray();
     }
 
     /**

@@ -160,4 +160,65 @@ public final class BinaryDecoderTest {
         }
         throw new AssertionError("non-map top-level not rejected");
     }
+
+    // --- Untrusted-length hardening (V2-22) ---
+    //
+    // Lengths/counts on the wire are attacker-controlled: a few input bytes
+    // can claim a 2^31-1-byte string or a 2^31-1-element list. These inputs
+    // must fail with a clean decode IOException, never with OutOfMemoryError
+    // (or by allocating gigabytes before failing).
+
+    /** Wraps a raw value payload in header + map{"v": <value>}. */
+    private static byte[] valueDoc(String valueHex) {
+        return hex(MAGIC_HEX + VERSION_HEX + "0501" + "0176" + valueHex);
+    }
+
+    private static void expectCleanDecodeError(byte[] doc, String what) {
+        try {
+            BinaryDecoder.decodeDocument(doc);
+        } catch (IOException e) {
+            return; // clean decode error: the required behavior
+        }
+        throw new AssertionError(what + " not rejected");
+    }
+
+    public void testHugeStringLengthFailsCleanly() {
+        // TAG_STRING claiming 2^31-1 bytes, with zero payload bytes present.
+        expectCleanDecodeError(valueDoc("03" + "ffffffff07"), "huge string length");
+    }
+
+    public void testHugeListCountFailsCleanly() {
+        // TAG_LIST claiming 2^31-1 elements, with zero element bytes present.
+        expectCleanDecodeError(valueDoc("04" + "ffffffff07"), "huge list count");
+    }
+
+    public void testHugeMapKeyLengthFailsCleanly() {
+        // TAG_MAP with 1 entry whose key claims 2^31-1 bytes, none present.
+        expectCleanDecodeError(valueDoc("05" + "01" + "ffffffff07"), "huge map key length");
+    }
+
+    public void testTruncatedStringPayloadFailsCleanly() {
+        // TAG_STRING claiming 100 bytes, only 3 ("abc") present.
+        byte[] bad = valueDoc("03" + "64" + "616263");
+        try {
+            BinaryDecoder.decodeDocument(bad);
+        } catch (IOException e) {
+            check(e.getMessage().contains("truncated"),
+                "message names truncation, got: " + e.getMessage());
+            return;
+        }
+        throw new AssertionError("truncated string payload not rejected");
+    }
+
+    public void testEmptyContainersDecode() throws IOException {
+        // Positive control: legitimately empty shapes still decode fine.
+        Map<String, Object> s = BinaryDecoder.decodeDocument(valueDoc("03" + "00"));
+        check("".equals(s.get("v")), "empty string decodes");
+        @SuppressWarnings("unchecked")
+        List<Object> l = (List<Object>) BinaryDecoder.decodeDocument(
+            valueDoc("04" + "00")).get("v");
+        check(l.isEmpty(), "empty list decodes");
+        Map<String, Object> m = BinaryDecoder.decodeDocument(valueDoc("05" + "00"));
+        check(m.get("v") instanceof Map, "empty map decodes");
+    }
 }
