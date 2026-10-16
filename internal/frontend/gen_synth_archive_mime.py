@@ -837,6 +837,15 @@ PACKAGES = {
             'mime/multipart/writer.go',
             # Skip formdata.go (needs os file handling) and readmimeheader.go (check)
         ],
+        # Files whose imports count toward the emitted import block but whose
+        # bodies are NOT extracted: multipart_adapt pulls the Form family
+        # (Form, FileHeader, File, sectionReadCloser) from formdata.go
+        # verbatim instead of routing it through the multi-result machinery
+        # (the real (fh *FileHeader) Open() (File, error) body must survive
+        # intact — SYN-12).
+        'imports_only_files': [
+            'mime/multipart/formdata.go',
+        ],
         'const_name': 'syntheticMimeMultipartSource',
         'pkg_prefix': 'mp',
         'adapt': 'multipart_adapt',
@@ -957,6 +966,24 @@ func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMI
 // ErrMessageTooLarge is returned by ReadForm if the message is too large.
 var ErrMessageTooLarge = errors.New("multipart: message too large")
 '''
+    # SYN-12: the Form family (Form, FileHeader, File, sectionReadCloser)
+    # lives in formdata.go, which is excluded from the extraction file list
+    # (the ReadForm machinery needs unscoped os/file handling). Extract it
+    # verbatim from gc here instead of hard-coding a copy: the single
+    # mechanical adaptation is textproto.MIMEHeader -> __mpMIMEHeader, same
+    # as the stub block above. A missing marker fails loudly so a toolchain
+    # upgrade re-derives this instead of silently dropping it.
+    formdata_path = os.path.join(GOROOT, 'src', 'mime/multipart', 'formdata.go')
+    with open(formdata_path) as f:
+        formdata_src = f.read()
+    marker = '// Form is a parsed multipart form.'
+    idx = formdata_src.find(marker)
+    if idx < 0:
+        raise SystemExit(
+            'gen_synth: formdata.go Form-family marker not found; '
+            're-derive the SYN-12 extraction for the new toolchain')
+    src += '\n' + formdata_src[idx:].replace('textproto.MIMEHeader',
+                                            '__mpMIMEHeader')
     return src
 
 def qp_adapt(src, pkg_prefix):
@@ -973,6 +1000,13 @@ def process_package(pkg_path, cfg):
     table_entries = []
     seen_funcs = set()  # Deduplicate function names across files
     all_imports = set()
+
+    # Imports from imports_only_files count toward the emitted import block
+    # even though their bodies are not extracted (see PACKAGES entry).
+    for rel_file in cfg.get('imports_only_files', []):
+        full_path = os.path.join(GOROOT, 'src', rel_file)
+        with open(full_path, 'r') as f:
+            all_imports.update(extract_imports(f.read()))
 
     # Pre-pass: collect type names and build mr_map
     known_types = set()
