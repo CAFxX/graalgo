@@ -1124,6 +1124,8 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// P4 (generic MR): Maps *instantiation -> pair info for generic
 		// instantiations of multi-result templates.
 		instMRInfos: make(map[*instantiation]*userMRInfo),
+		// PKG-067: per-export pair-type name claims (see pairClaim).
+		pairTypeNames: make(map[pairClaim]bool),
 	}
 	// fileBases lists the input files in order; position "file" indices
 	// index into this array (frontend/v1 wire format).
@@ -3228,6 +3230,17 @@ type exporter struct {
 	// skipped (isTemplate), but each instantiation gets its own pair
 	// type synthesized from the substituted result types.
 	instMRInfos map[*instantiation]*userMRInfo
+	// PKG-067: pair-type name claims for this export. Synthesized pair
+	// types are emitted into the document's type table, never inserted
+	// into a package scope: importSyntheticPackage swaps e.pkg to the
+	// synthetic package, and the synthetic packages are cached per
+	// process (getSyntheticPackage), so inserting there polluted every
+	// later ExportFile in the process (e.g. __wsd_pair_Value_Recv
+	// became __wsd_pair_Value_Recv_1 on re-export). The claim key
+	// includes the *types.Package so naming matches the old per-scope
+	// bookkeeping exactly (two packages may independently claim the
+	// same base name, as before).
+	pairTypeNames map[pairClaim]bool
 	// P3-M9 (driver-harden): name-based fallback for synthetic MR funcs.
 	// Synthetic packages are type-checked separately from their callers,
 	// P3-M9 (WS D): the userMRInfo for the function whose body is
@@ -3249,6 +3262,15 @@ type userMRInfo struct {
 	pairType   *types.Named     // synthesized pair struct (fields f0, f1, ...)
 	pairFields []string         // field names in result order
 	origSig    *types.Signature // original multi-result signature
+}
+
+// pairClaim identifies one pair-type name claim: the package whose scope
+// the old code would have inserted into, plus the claimed name. The
+// package is part of the key so naming matches the old per-scope
+// bookkeeping exactly (PKG-067).
+type pairClaim struct {
+	pkg  *types.Package
+	name string
 }
 
 // M10 (P1-4): struct-nesting depth cap for offset computation.
@@ -5892,6 +5914,32 @@ func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []str
 	return e.synthesizePairTypeForSig(sig, name)
 }
 
+// claimPairTypeName returns a pair-type name unique to this export,
+// seeded by base. It is the single name-allocation mechanism for all
+// pair-type synthesis (synthesizePairTypeForSig, synthesizeInstPairType,
+// synthesizeFuncFieldPairType) — a general mechanism, never keyed on a
+// program, package, or symbol name.
+//
+// The claim is recorded in the exporter's own set, never in a package
+// scope. The package scope is consulted read-only so a synthesized name
+// can never collide with a real package member; it is never mutated, so
+// the process-shared cached synthetic packages (getSyntheticPackage)
+// stay pristine and repeated ExportFile calls in one process are
+// idempotent (PKG-067: the old Scope().Insert made the second export of
+// a program in one process rename __wsd_pair_Value_Recv to
+// __wsd_pair_Value_Recv_1).
+func (e *exporter) claimPairTypeName(base string) string {
+	name := base
+	for i := 1; ; i++ {
+		if !e.pairTypeNames[pairClaim{e.pkg, name}] && e.pkg.Scope().Lookup(name) == nil {
+			break
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+	e.pairTypeNames[pairClaim{e.pkg, name}] = true
+	return name
+}
+
 // synthesizePairTypeForSig synthesizes the pair struct type for a
 // multi-result signature (general mechanism, not tied to *types.Func).
 // Used for function literals assigned to variables (MR-closure-var) as
@@ -5914,18 +5962,11 @@ func (e *exporter) synthesizePairTypeForSig(sig *types.Signature, nameHint strin
 		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
 	}
 	st := types.NewStruct(fields, nil)
-	// Ensure uniqueness in case of collisions (e.g., generic instantiations).
-	base := nameHint
-	name := base
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	// PKG-067: claim the name in the exporter's own set; never insert
+	// into the (possibly process-shared) package scope.
+	name := e.claimPairTypeName(nameHint)
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return named, fieldNames, nil
 }
 
@@ -5961,17 +6002,11 @@ func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, err
 	if safeKey != "" {
 		name = fmt.Sprintf("%s_%s", name, safeKey)
 	}
-	// Ensure uniqueness in case of collisions.
-	base := name
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	// PKG-067: claim the name in the exporter's own set; never insert
+	// into the (possibly process-shared) package scope.
+	name = e.claimPairTypeName(name)
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return &userMRInfo{
 		pairType:   named,
 		pairFields: fieldNames,
