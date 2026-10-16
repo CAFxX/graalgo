@@ -7420,6 +7420,18 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 	if isCommaOkRecv(s) {
 		return e.exportRecvCommaOkDesugar(s, true)
 	}
+	// Defensive: same as exportAssign — a multi-target := with a single
+	// multi-result call RHS must have been desugared above.
+	if len(s.Lhs) > 1 && len(s.Rhs) == 1 {
+		if c, ok := unparen(s.Rhs[0]).(*ast.CallExpr); ok {
+			if tv, ok := e.info.Types[c]; ok {
+				if t, ok := tv.Type.(*types.Tuple); ok && t.Len() > 1 {
+					return nil, fmt.Errorf("gofrontend: multi-result call not desugared (classifier missed it): %s with %d targets, %d results",
+						types.ExprString(c.Fun), len(s.Lhs), t.Len())
+				}
+			}
+		}
+	}
 	names := make([]string, 0, len(s.Lhs))
 	objs := make([]int, 0, len(s.Lhs))
 	for _, lhs := range s.Lhs {
@@ -7568,6 +7580,22 @@ func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
 	// emittable — the frozen factory only knows index/typeassert).
 	if isCommaOkRecv(s) {
 		return e.exportRecvCommaOkDesugar(s, false)
+	}
+	// Defensive: a multi-target assign with a single RHS that is a
+	// multi-result call must have been desugared above. If it wasn't,
+	// the classifier missed it — fail fast with a clear error rather
+	// than emitting a broken wire node that the backend rejects with
+	// "assign.fields: lhs/rhs length mismatch". This is general (not
+	// name-keyed): it catches any unclassified multi-result call.
+	if len(s.Lhs) > 1 && len(s.Rhs) == 1 {
+		if c, ok := unparen(s.Rhs[0]).(*ast.CallExpr); ok {
+			if tv, ok := e.info.Types[c]; ok {
+				if t, ok := tv.Type.(*types.Tuple); ok && t.Len() > 1 {
+					return nil, fmt.Errorf("gofrontend: multi-result call not desugared (classifier missed it): %s with %d targets, %d results",
+						types.ExprString(c.Fun), len(s.Lhs), t.Len())
+				}
+			}
+		}
 	}
 	commaOk := len(s.Lhs) == 2 && len(s.Rhs) == 1 && isCommaOkRhs(s.Rhs[0])
 	lhs := make([]*Node, 0, len(s.Lhs))
