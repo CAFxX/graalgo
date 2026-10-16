@@ -66,17 +66,27 @@ Consequence: callers must not depend on reclamation having completed when
 `runtime.GC()` returns. The `NumForcedGC` memstat counts invocations, not
 completed cycles.
 
-### DIV-M4-4: unmappable `runtime.MemStats` fields are absent
+### DIV-M4-4: unmappable `runtime.MemStats` fields are absent — SUPERSEDED
 
-`GcInterop.memStats()` returns only fields with a JVM MXBean analog:
+**Status: SUPERSEDED by PKG-051 (2026-10-16).** `runtime.ReadMemStats` is
+now a live Go call path: the `runtimereadmemstats` additive wire node
+([`graalgo.rtmemstats`](../../../../internal/backend/interop/src/main/java/graalgo/rtmemstats/))
+populates the full `runtime.MemStats` struct from JVM MXBean telemetry,
+including the fields this entry recorded as absent. The "absence, not
+fabrication" stance is replaced by "present with documented deviations" —
+the field-level deviations are recorded in [DIV-M4-11](#div-m4-11-runtimereadmemstats-totalalloc-is-live-heap-used-not-cumulative-mallocsfrees-always-0),
+which is the authoritative statement for this surface. (The remainder of
+this entry is the pre-PKG-051 record.)
+
+`GcInterop.memStats()` returned only fields with a JVM MXBean analog:
 `HeapAlloc` (heap used), `HeapSys` (heap committed), `Sys`
 (heap+non-heap committed), `NumGC`, `PauseTotalNs`, `NumForcedGC`,
 `PauseNsLast` (most recent pause, ns). The allocator-internals fields
 (`BySize`, `HeapObjects`, `TotalAlloc`, `Mallocs`, `Frees`, `HeapIdle`,
 `HeapInuse`, `HeapReleased`, `StackInuse`, `StackSys`, `MSpanInuse`,
 `MSpanSys`, `MCacheInuse`, `MCacheSys`, `BuckHashSys`, `GCSys`, `OtherSys`,
-`NextGC`, `LastGC`, `GCCPUFraction`) have no MXBean analog and are absent
-from the map (not zero — absent, so consumers can distinguish).
+`NextGC`, `LastGC`, `GCCPUFraction`) had no MXBean analog and were absent
+from the map (not zero — absent, so consumers could distinguish).
 
 Rationale: a JVM heap has no spans/mcaches; fabricating the numbers would
 be worse than omitting them.
@@ -151,6 +161,52 @@ no JVM analog: `System.gc()` suggests collection but does not compel the OS
 to take pages back (heap shrinking is the collector's decision). Per ADR-0002
 D4 ("no JVM analog (`System.gc()` is not it)"), the stance is
 unsupported-with-justification. No Go call path is wired in P2-M4.
+
+### DIV-M4-11: `runtimereadmemstats` `TotalAlloc` is live heap-used, not cumulative; `Mallocs`/`Frees` always 0
+
+**This is the loudest accepted divergence on the `runtime.ReadMemStats`
+surface — read it before writing any memory-accounting code against
+graalgo.**
+
+`fillMemStats` (PKG-051, `runtimereadmemstats` wire node) maps the JVM
+heap MXBean onto `runtime.MemStats` as documented in the field-mapping
+JavaDoc of
+[`RtMemStats.fillMemStats`](../../../../internal/backend/interop/src/main/java/graalgo/rtmemstats/RtMemStats.java).
+Two fields break gc's contract in ways that are easy to misuse silently:
+
+1. **`TotalAlloc` is current heap-used, NOT cumulative.** gc defines
+   `TotalAlloc` as the cumulative count of bytes allocated for heap
+   objects — monotonic, never decreasing when objects are freed (gc
+   `src/runtime/mstats.go`). The JVM exposes no cumulative allocation
+   counter, so graalgo reports the live `heapUsed` figure instead: it is
+   equal to `Alloc`/`HeapAlloc`/`HeapInuse` at every sample and can
+   **decrease** after a GC cycle. The standard gc idiom
+   `m2.TotalAlloc - m1.TotalAlloc` ("bytes allocated between the two
+   calls") is **meaningless** on this backend — it measures the *change in
+   live heap*, not allocation volume. Deliberately *not* "fixed" with a
+   monotonic max-seen accumulator: a number that merely never decreases
+   would still be wrong (it is not allocation volume) while looking more
+   trustworthy — more misleading, not less. Pinned behavior is asserted by
+   `RtMemStatsTest.testTotalAllocIsLiveHeapUsed`.
+
+2. **`Mallocs`/`Frees` are pinned at 0, always.** The JVM has no
+   allocation-count counters. Consequence:
+   **`testing.AllocsPerRun` always returns 0 on this backend** (it is
+   computed as `m2.Mallocs - m1.Mallocs` per gc
+   `src/testing/allocs.go`), so any test asserting "this code allocates
+   fewer than N objects" **passes vacuously** — the assertion proves
+   nothing. Pinned behavior is asserted by
+   `RtMemStatsTest.testMallocsFreesAreAlwaysZero`.
+
+Rationale: the quantities are unmeasurable on the JVM; the fix is
+honesty, not approximation. Every other field's approximation is listed
+in the `fillMemStats` JavaDoc mapping; fields the JVM cannot observe at
+all report 0 and are enumerated there.
+
+**Re-test trigger:** if the JVM ever exposes cumulative allocation
+telemetry usable from `java.lang.management` (or JVMTI agent support
+lands in this backend), re-check whether `TotalAlloc`/`Mallocs`/`Frees`
+can be reported with the real gc semantics, and update this entry.
 
 ## Template for new entries
 

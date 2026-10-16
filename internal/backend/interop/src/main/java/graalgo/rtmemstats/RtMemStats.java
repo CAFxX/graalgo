@@ -84,8 +84,30 @@ final class RtMemStats {
      * equivalent):
      * <ul>
      *   <li>{@code Alloc}/{@code HeapAlloc}/{@code HeapInuse}: heap used.
-     *   <li>{@code TotalAlloc}: the JVM exposes no cumulative allocation
-     *       counter; heap used is the best available live figure.
+     *   <li>{@code TotalAlloc}: <strong>not cumulative</strong> — gc
+     *       defines it as the cumulative bytes allocated for heap objects
+     *       (monotonic, never decreases when objects are freed), but the
+     *       JVM exposes no cumulative allocation counter, so the current
+     *       heap-used figure is reported instead (equal to {@code Alloc}
+     *       at every sample, and it <em>can decrease</em> after a GC
+     *       cycle). The standard gc idiom {@code m2.TotalAlloc -
+     *       m1.TotalAlloc} ("bytes allocated between the two calls") is
+     *       <strong>meaningless</strong> on this backend — it measures the
+     *       change in live heap, not allocation volume. A monotonic
+     *       max-seen accumulator is deliberately <em>not</em> used: it
+     *       would still not be allocation volume while looking more
+     *       trustworthy. (Documented user-facing in
+     *       docs/arch/phases/phase2/DIVERGENCES.md, DIV-M4-11; the pinned
+     *       semantics are asserted by
+     *       {@code RtMemStatsTest.testTotalAllocIsLiveHeapUsed}.)
+     *   <li>{@code Lookups}/{@code Mallocs}/{@code Frees}: pinned at 0 —
+     *       the JVM exposes no allocation or pointer-lookup counters.
+     *       Consequence: <strong>{@code testing.AllocsPerRun} always
+     *       returns 0 on this backend</strong> (gc computes it as
+     *       {@code m2.Mallocs - m1.Mallocs}), so allocation-count
+     *       assertions pass vacuously. (Documented user-facing in
+     *       DIV-M4-11; pinned by
+     *       {@code RtMemStatsTest.testMallocsFreesAreAlwaysZero}.)
      *   <li>{@code Sys}: heap committed + non-heap committed.
      *   <li>{@code HeapSys}: heap committed; {@code HeapIdle}: committed
      *       minus used.
