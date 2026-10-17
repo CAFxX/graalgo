@@ -52,6 +52,25 @@ func NewImporter(l *Loader, mainDir string, fset *token.FileSet) *Importer {
 	}
 }
 
+// unsupportedImports mirrors the table of the same name in
+// internal/frontend/export.go: p3frontend is a separate module and cannot
+// import a main-only package, so the rejection reasons are duplicated
+// here; the table in export.go is canonical. Packages whose entire public
+// API requires unimplemented graalgo features are rejected at compile
+// time with a diagnostic naming the missing feature, instead of emitting
+// a compilable program that aborts at runtime.
+var unsupportedImports = map[string]string{
+	// RV-P1-01: testing/synctest's entire public API requires bubble
+	// semantics (fake-time scheduling with quiescence-gated clock
+	// advancement), which graalgo does not implement — any importing
+	// program would abort at runtime in synctest.Run. Tracked:
+	// work-registry item "synctest-bubbles".
+	"testing/synctest": "synctest bubbles (fake-time scheduling with " +
+		"quiescence-gated clock advancement) are not implemented; " +
+		"any synctest.Test would abort at runtime " +
+		"(tracked: work-registry item \"synctest-bubbles\")",
+}
+
 // Import implements types.Importer.
 func (imp *Importer) Import(path string) (*types.Package, error) {
 	if pkg, ok := imp.pkgs[path]; ok {
@@ -225,6 +244,14 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticEncodingPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "testing/synctest":
+		// RV-P1-01: scope exclusion, mirroring overlayImporter in
+		// internal/frontend/export.go. testing/synctest's entire
+		// public API requires bubble semantics (fake-time scheduling
+		// with quiescence-gated clock advancement), which graalgo does
+		// not implement.
+		return nil, fmt.Errorf("p3frontend: import %q: not supported by graalgo: %s",
+			path, unsupportedImports[path])
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {

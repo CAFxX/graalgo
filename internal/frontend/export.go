@@ -600,7 +600,34 @@ func isDedicatedSyntheticStub(path string) bool {
 	return ok
 }
 
+// unsupportedImports maps import paths to the compile-time rejection
+// reason for packages graalgo deliberately does not support (RV-P1-01
+// scope exclusion). A map — not a one-off `if` — so RV-P1-03's
+// scope-exclusion tracking has a single table to adopt for future
+// exclusions.
+var unsupportedImports = map[string]string{
+	// RV-P1-01: testing/synctest's entire public API requires bubble
+	// semantics (fake-time scheduling with quiescence-gated clock
+	// advancement), which graalgo does not implement — any importing
+	// program would abort at runtime in synctest.Run. Tracked:
+	// work-registry item "synctest-bubbles" (re-test trigger: gc's
+	// synctest corpus green under graalgo).
+	"testing/synctest": "synctest bubbles (fake-time scheduling with " +
+		"quiescence-gated clock advancement) are not implemented; " +
+		"any synctest.Test would abort at runtime " +
+		"(tracked: work-registry item \"synctest-bubbles\")",
+}
+
 func (overlayImporter) Import(path string) (*types.Package, error) {
+	// RV-P1-01: scope exclusion. Imports in unsupportedImports are
+	// rejected at compile time with a diagnostic naming the missing
+	// feature, instead of emitting a compilable program that aborts at
+	// runtime. This is a pure rejection at the type-check boundary
+	// (like the existing WS scope exclusions), not an overlay or
+	// workaround: it fakes no behavior and substitutes nothing.
+	if reason, ok := unsupportedImports[path]; ok {
+		return nil, fmt.Errorf("gofrontend: import %q: not supported by graalgo: %s", path, reason)
+	}
 	// The 2 packages with dedicated synthetic constructors (not in
 	// syntheticSources). sync and sync/atomic now resolve from disk (real packages).
 	if isDedicatedSyntheticStub(path) {

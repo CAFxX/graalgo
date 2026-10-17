@@ -17,7 +17,18 @@ import graalgo.values.GoString;
  * <p>graalgo does not implement synctest bubbles (consistent with the
  * existing {@code runtime_SemacquireWaitGroup} handling, which ignores
  * the synctest-durability flag). Every intrinsic below is therefore the
- * honest no-bubble answer:
+ * honest no-bubble answer.
+ *
+ * <p>RV-P1-01: the frontend rejects {@code import "testing/synctest"} at
+ * compile time (a pure rejection at the type-check boundary — the
+ * {@code unsupportedImports} table in {@code internal/frontend/export.go},
+ * mirrored in {@code p3frontend/importer.go} — tracked as work-registry
+ * item {@code "synctest-bubbles"}), so a bubble can never exist in a
+ * graalgo-compiled program: the no-bubble answers below are complete,
+ * not aspirational. {@code Run} and {@code inBubble} keep their runtime
+ * panics as unreachable defense-in-depth (reachable only via a direct
+ * {@code internal/synctest} import, which user code cannot express
+ * through the go command's internal-visibility rule).
  * <ul>
  *   <li>{@code IsInBubble} → false: no goroutine is ever in a bubble.
  *       This is also what makes the real {@code sync.WaitGroup}'s
@@ -43,7 +54,9 @@ import graalgo.values.GoString;
  *   <li>{@code Run} → Go panic: executing the function without a bubble
  *       would silently drop synctest's fake-time and deadlock-detection
  *       semantics, producing confusing test results. Failing loud is the
- *       honest contract; bubble support is future work.</li>
+ *       honest contract; bubble support is future work. Unreachable in
+ *       practice: {@code testing/synctest} is rejected at compile time
+ *       (RV-P1-01) — the panic stays as defense-in-depth.</li>
  * </ul>
  */
 public final class Synctest {
