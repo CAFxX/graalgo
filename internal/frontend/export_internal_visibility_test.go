@@ -81,12 +81,14 @@ func TestImportAdmittedInternalVisibility(t *testing.T) {
 		{"boring denied with empty importer", "crypto/internal/boring", "", false},
 		{"bytealg admitted from net (top-level internal root is GOROOT/src)", "internal/bytealg", netDir, true},
 		{"bytealg denied from user dir", "internal/bytealg", userDir, false},
-		// internal/graalgo/fmtstate is synthetic-only: no real stdlib
-		// counterpart on disk, so the visibility root is unresolvable
-		// and the gate fails closed — denied even from stdlib.
-		{"synthetic-only fmtstate denied from strings", "internal/graalgo/fmtstate", stringsDir, false},
-		{"synthetic-only fmtstate denied from GOROOT/src", "internal/graalgo/fmtstate", src, false},
-		{"synthetic-only fmtstate denied from user dir", "internal/graalgo/fmtstate", userDir, false},
+		// internal/graalgo/fmtstate is a retired remnant path (the P3-M9
+		// synthetic package was deleted with the synthetic-fmt retirement):
+		// no synthetic registration and no disk counterpart, so the
+		// visibility root is unresolvable and the gate fails closed —
+		// denied even from stdlib.
+		{"retired fmtstate path denied from strings", "internal/graalgo/fmtstate", stringsDir, false},
+		{"retired fmtstate path denied from GOROOT/src", "internal/graalgo/fmtstate", src, false},
+		{"retired fmtstate path denied from user dir", "internal/graalgo/fmtstate", userDir, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -239,7 +239,14 @@ code, per [AGENTS.md](../../AGENTS.md) §7).
   the frontend, and 5,091 lines of Java (`Fmt.java`, `FmtScan.java`,
   `FmtCallNode.java`, `FmtHandleMethods.java`, `FmtMethodDispatch.java` plus
   tests) deleted. `fmt.Append`/`Appendf`/`Appendln` verified working from
-  the real package.
+  the real package. Go-side remnant cleanup (RV-P1-06, 2026-10-17): the
+  orphaned `internal/graalgo/fmtstate` synthetic package deleted
+  (`internal/frontend/synth_fmtstate.go`, its `syntheticSources` entry,
+  the unconditional export import, and stale comments); the dangling
+  `FmtStateItabTest` test-runner registration removed; the stale
+  `Fmt.handleMethods` javadoc references in
+  [IfaceMethodTable.java](../../internal/backend/interop/src/main/java/graalgo/iface/IfaceMethodTable.java)
+  reworded.
 - **2026-10-15 — stale `# BRIDGE` self-labels in module Makefiles.** The
   comments in
   [internal/backend/interop/Makefile](../../internal/backend/interop/Makefile)

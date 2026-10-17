@@ -302,11 +302,6 @@ var syntheticSources = map[string]string{
 	"internal/poll":         syntheticPollSource,
 	"internal/nettrace":     syntheticNettraceSource,
 	"internal/singleflight": syntheticSingleflightSource,
-	// P3-M9 (RC-6): synthetic internal/graalgo/fmtstate package (real-Go
-	// source in synth_fmtstate.go): the fmt.State implementation used by
-	// Fmt.handleMethods for fmt.Formatter dispatch. Synthetic-only (not in
-	// the user import allow-list).
-	"internal/graalgo/fmtstate": syntheticFmtstateSource,
 	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
 	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go, generated
 	// by gen_synth_compress.py from gc 1.27.1). gzip/zlib import the
@@ -1068,10 +1063,10 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				// fail-fast and never emitted. Package-level multi-result
 				// funcs are still skipped (no methodIndex entry needed).
 				// P3-M9 (RC-6): bodyless multi-result methods carrying
-				// //go:linkname (e.g. fmtstate.PrinterState.Write) ARE
-				// emitted via exportLinknameDecl — they bind to Java
-				// intrinsics, not Go bodies, so the multi-result emission
-				// limit doesn't apply. Fall through to normal processing.
+				// //go:linkname ARE emitted via exportLinknameDecl —
+				// they bind to Java intrinsics, not Go bodies, so the
+				// multi-result emission limit doesn't apply. Fall through
+				// to normal processing.
 				// Gate-1 #2: synthetic functions NOT covered by static
 				// tables (e.g., regexp/syntax.leadingString) fall through
 				// to normal processing so they get the user pair-transform.
