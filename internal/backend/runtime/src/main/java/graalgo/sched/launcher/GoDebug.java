@@ -16,7 +16,7 @@ import graalgo.sched.SchedTrace;
  *
  * <p>Parses the {@code GODEBUG} environment variable against the versioned
  * knob registry ({@code graalgo/sched/godebug/registry.json}, versioned;
- * see {@code phases/phase2/GODEBUG.md}). Every knob is one of:
+ * see {@code docs/arch/phases/phase2/GODEBUG.md}). Every knob is one of:
  *
  * <ul>
  *   <li>EMULATED — graalgo implements gc-compatible observable behavior;
@@ -26,7 +26,7 @@ import graalgo.sched.SchedTrace;
  * </ul>
  *
  * <p>Deliberate divergences from gc (all documented in
- * {@code phases/phase2/DIVERGENCES.md}, DIV-M5-*):
+ * {@code docs/arch/phases/phase2/DIVERGENCES.md}, DIV-M5-*):
  *
  * <ul>
  *   <li>an <em>unknown</em> knob name is a hard error (gc silently ignores);

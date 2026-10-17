@@ -1,0 +1,31 @@
+# Review-trail gate — his 2026-10-15 direct order: independent review before
+# ANYTHING merges to master.
+#
+# Fails the push when any commit in the push delta lacks the review trailers
+# (`Reviewed-by:` + `Review-verdict: clean`). The convention is documented in
+# [docs/dev/review-trail.md](../docs/dev/review-trail.md); the check itself
+# lives in [.github/scripts/check_review_trail.py](../scripts/check_review_trail.py).
+#
+# Scope: pushes to master only. Lane branches (`wt/<chat>/<stream>`) carry
+# work-in-progress commits; the trailers are added after the independent
+# review, before the coordinator integrates. Direct pushes to other branches
+# are not the merge path and are not gated here.
+name: review-trail
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  review-trail:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The check diffs before..sha across the push delta; a shallow
+          # checkout may not contain `before`.
+          fetch-depth: 0
+
+      - name: Review-trail check (independent review before merge)
+        run: python3 .github/scripts/check_review_trail.py "${{ github.event.before }}" "${{ github.sha }}"

@@ -61,7 +61,10 @@ Related: [Makefile](../Makefile) (root build entry point),
       [desugar/](../internal/frontend/desugar/) — empty placeholders for the
       planned package split (blocked by an exporter/desugar import cycle).
     - [v2/](../internal/frontend/v2/) — separate module (own `go.mod`): the
-      frontend v2 rewrite (parser → checker → emitter stages plus the
+      frontend v2 rewrite (parser → checker → emitter stages, driven by
+      [driver/](../internal/frontend/v2/driver/) — the `gofrontend-v2`
+      pipeline driver — with progress tracked in
+      [PROGRESS.md](../internal/frontend/v2/PROGRESS.md); plus the
       Go→Java binary interface in
       [encode/](../internal/frontend/v2/encode/), decoded by
       [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
@@ -116,8 +119,9 @@ Related: [Makefile](../Makefile) (root build entry point),
       isolates (also the natural home of Phase 5's privileged runtime
       surface):
       [src/main/java/](../internal/backend/interop/src/main/java/) holds
-      phase-3 `graalgo.{iface,p3chan,p3crypto,p3link,p3math,p3net,p3os,
-      p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}` (stdlib bindings) plus
+      phase-3 `graalgo.{iface,p3abi,p3builtin,p3chan,p3crypto,p3link,p3math,
+      p3net,p3os,p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}` (stdlib
+      bindings, plus the ABI/builtin-function nodes in `p3abi`/`p3builtin`) plus
       [`graalgo.rtstack`](../internal/backend/interop/src/main/java/graalgo/rtstack/)
       (the synthetic `runtime` package's stack-inspection intrinsics:
       `Callers`/`Caller`/`CallersFrames`/`FuncForPC` and the
@@ -186,7 +190,11 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [tools/](../tools/) — developer tooling (not the product):
   [stdlib-fork/](../tools/stdlib-fork/) and
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
-  tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
+  tooling), [stdlib-vendor/](../tools/stdlib-vendor/) (stdlib vendoring
+  pipeline: copies `$GOROOT/src` to a pinned external dir and writes the
+  byte-deterministic manifest + version pin into
+  [stdlib-fork/](../tools/stdlib-fork/)),
+  [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
   [torture/](../tools/torture/) (scheduler torture),

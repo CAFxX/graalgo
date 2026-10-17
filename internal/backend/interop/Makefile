@@ -1,6 +1,6 @@
 # graalgo backend — interop module build (stdlib bindings: Go<->Java interop)
 #
-# Own javac module: phases/phase3's sync-bindings Java sources, relocated per
+# Own javac module: the phase-3 sync-bindings Java sources, relocated per
 # the Phase-4 repo restructure (lane 3):
 #   internal/backend/interop/src/main/java — graalgo.{iface,p3chan,p3crypto,
 #     p3link,p3math,p3net,p3os,p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}.
@@ -40,7 +40,7 @@ RUN_CP := $(OUT_MAIN):$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 # p3frontend Go sources and stdlib-fork tooling now live in their
-# Phase-4 homes (moved from phases/phase3 during the migration cleanup).
+# Phase-4 homes (moved from the phase-3 tree during the migration cleanup).
 P3FRONTEND := ../../frontend/p3frontend
 STDLIB_FORK := ../../../tools/stdlib-fork
 

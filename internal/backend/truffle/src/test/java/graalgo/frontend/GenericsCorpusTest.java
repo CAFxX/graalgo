@@ -29,8 +29,8 @@ import java.util.stream.Stream;
  * <p>Corpus conventions: {@code gn*.go} files, {@code // observe:} trailer,
  * the {@code x = x} no-op-use idiom. Every file carries
  * {@code // verifies: GG-0014} (the M6 monomorphization requirement).
- * Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * Run from the repo root ({@code make test}); override with
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0014 (M6: monomorphized generics — one RootNode per go/types
 // instantiation, functions and methods incl. generic methods — differential

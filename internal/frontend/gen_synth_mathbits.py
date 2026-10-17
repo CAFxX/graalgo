@@ -20,7 +20,7 @@
 #     single-result functions) is carried verbatim.
 #
 # Re-run: python3 gen_synth_mathbits.py > /dev/null (writes
-# phases/phase1/frontend/synth_mathbits.go in place). The script lives
+# internal/frontend/synth_mathbits.go in place). The script lives
 # next to the generated file; it is NOT shipped in corpus runs.
 import os
 import re, sys

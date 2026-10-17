@@ -2,7 +2,7 @@
 
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
 bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
-see `phases/phase3/hidden_files/m7-CHECKLIST.md`), differential vs stock
+), differential vs stock
 gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## Layout
@@ -101,7 +101,7 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-1 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m7-int/phases/phase3/hidden_files/m7-tmp/<pkg>
+export TMPDIR=$HOME/workspace/tmp-wave1-<pkg>
 export GOCACHE=$HOME/workspace/.gocache-m7-<pkg>
 ```
 

@@ -33,7 +33,7 @@ import java.util.stream.Stream;
  * <p>Corpus conventions (file list, {@code // observe:} trailer, the
  * {@code z = z} no-op-use idiom) are documented in
  * {@code corpus/straightline/README.md}. Run from the phase1 directory
- * ({@code make test}); override with {@code -Dgraalgo.phase1.dir=...}.
+ * ({@code make test}); override with {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0012 (M2: gofrontend emits typed AST; NodeFactory builds
 // straight-line programs end-to-end; every program's computed values are

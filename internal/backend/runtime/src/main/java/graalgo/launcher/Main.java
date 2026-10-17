@@ -482,7 +482,7 @@ public final class Main {
     /** M10 (self-attack): clean report for host-stack exhaustion. */
     private static void reportStackOverflow() {
         System.err.println("graalgo-run: stack overflow: host stack exhausted "
-                + "(see phases/phase1/docs/limitations.md)");
+                + "(see docs/arch/limitations.md)");
     }
 
     /**

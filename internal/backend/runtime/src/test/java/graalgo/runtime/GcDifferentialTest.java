@@ -12,7 +12,7 @@ import java.util.stream.Stream;
 /**
  * P2-M4 GC-interop differential tests (WS D; ADR-0002 D4).
  *
- * <p>Each test runs the Go program in {@code phases/phase2/corpus/gc/<name>.go}
+ * <p>Each test runs the Go program in {@code test/corpus/phase2/gc/<name>.go}
  * end-to-end through {@code SchedMain} (gofrontend → exporter with
  * {@code gcinterop:} markers → interpreter → {@link GcInterop}) as a
  * subprocess, and diffs stdout byte-for-byte against the gc-recorded

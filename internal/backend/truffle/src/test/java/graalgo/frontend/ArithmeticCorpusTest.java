@@ -34,8 +34,8 @@ import java.util.stream.Stream;
  * The graalgo path: {@code gofrontend} → {@link NodeFactory} → execute on a
  * manually created frame → per-kind frame-slot reads.
  *
- * <p>Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * <p>Run from the repo root ({@code make test}); override with
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0015 (M3: expressions + values differential-green on the
 // arithmetic corpus; every observed value asserted bit-identical to stock

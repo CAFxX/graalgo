@@ -60,7 +60,7 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   tool restriction), so these are `.scopelimited` + `nogc`. `internal/bytealg`
   has a synthetic adapter (`synth_bytealg.go`, portable real-Go impls,
   synthetic-only like `internal/reflectlite`); its correctness evidence is
-  the tier1d harness (`phases/phase3/hidden_files/m9-tmp/tier1d-harness/`),
+  the tier1d harness (research scratch, removed with the `phases/` layout),
   which runs the corpus program (self-checking against `bytes`/`strings`)
   under gc against the extracted synthetic source. `internal/cpu`,
   `internal/godebug`, `internal/bisect` have no adapter: cpu needs cpuid

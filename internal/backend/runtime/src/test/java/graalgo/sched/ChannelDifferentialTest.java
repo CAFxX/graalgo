@@ -14,7 +14,7 @@ import graalgo.runtime.PanicException;
  * P2-M2 channel differential tests (WS B; GG-0017 chan slice).
  *
  * <p>Each test is a mechanical Java translation of the Go program in
- * {@code phases/phase2/corpus/channels/<name>.go} (translation
+ * {@code test/corpus/phase2/channels/<name>.go} (translation
  * convention documented below), executed on the user-space scheduler.
  * Output is diffed byte-for-byte against the gc-recorded
  * {@code <name>.expected} file.

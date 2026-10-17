@@ -17,8 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#   `make all` = generate + build + snapshot-check + check + test-v2
+#                + test-ci + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -30,7 +30,11 @@
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
-#               grep gates + the gofrontend gofmt/vet/tests gate
+#               grep gates + the stale-phase-refs gate (no new references
+#               to the removed research-era layout) + the gofrontend
+#               gofmt/vet/tests gate
+#     test-v2   frontend v2 module suite (`internal/frontend/v2/`: parser,
+#               checker, emitter, binary-encoding contract tests)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -135,6 +139,8 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	@echo "== stale-phase-refs grep gate =="
+	@python3 .github/scripts/check_no_stale_phase_refs.py
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
@@ -173,8 +179,10 @@ test-regression: generate build graalgo
 #     semantics (sync lowering / M2 scope errors); route to the sync
 #     owner or review-d2-vettest (sync test infra).
 #   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner points at the removed phases/phase2 tree;
-#     rewire graalgoRun() to internal/backend/graalgo-run; route to
+#     differential runner points at the removed phase-2 tree
+#     (migration 2026-10-14; see the old → new mapping in
+#     docs/REPO_STRUCTURE.md); rewire graalgoRun() to
+#     internal/backend/graalgo-run; route to
 #     review-t2-testinfra (test infra) or the backend owner.
 # Add test-p3frontend to `all` once those are green.
 test-p3frontend: generate
@@ -227,10 +235,10 @@ test: build
 #
 # Backend: the product launcher P3SyncMain via
 # [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
-# (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
+# (NOT the truffle `graalgo-run` in `backends.json` — that frontend has no
 # channel/scheduler support, so recording against it enshrines build
 # failures as the baseline and leaves P3SyncMain regressions invisible to
-# the per-push gate). The phase-1 config is retained for the typeparam and
+# the per-push gate). The truffle config is retained for the typeparam and
 # srctest adapters (layer 2), which test the frontend.
 #
 # `make snapshot` RE-RECORDS the baseline: run only for a toolchain upgrade
@@ -244,9 +252,10 @@ SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 # as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 # The diffharness resolves the graalgo backend launcher as
-# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
-# product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
-# Both wrappers now live in internal/backend/.
+# ${PHASE1_DIR}/graalgo-run (see test/differential/backends.json — the
+# PHASE1_DIR name is legacy); the product launcher as
+# ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json). Both wrappers now live
+# in internal/backend/.
 snapshot: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \

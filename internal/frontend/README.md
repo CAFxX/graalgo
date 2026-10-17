@@ -3,7 +3,7 @@
 Type-checks a single-file Go program with the vendored `go/*` packages and
 emits the `frontend/v1` typed-AST JSON document to stdout.
 
-- Wire format: [`../../phases/phase1/docs/frontend-v1.md`](../../docs/arch/frontend-v1.md) (normative)
+- Wire format: [`docs/arch/frontend-v1.md`](../../docs/arch/frontend-v1.md) (normative)
 - Vendoring: [`VENDORING.md`](VENDORING.md) (pinned revision, re-vendor procedure)
 - Java consumer: `graalgo.frontend.NodeFactory` ([`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/))
 
@@ -55,7 +55,7 @@ owns the extension (e.g. `if` → WS E, imports → WS G).
 (worker-1 owns `make`/`out/` — verify to `/tmp` scratch, do not run `make`):
 
 ```sh
-CP=$(ls ../../phases/phase1/lib/*.jar | tr '\n' ':')
+CP=$(ls ../backend/truffle/lib/*.jar | tr '\n' ':')
 javac -Xlint:deprecation -Werror -cp "$CP" -d /tmp/wsB-classes ../backend/truffle/src/main/java/graalgo/frontend/*.java
 javac -Xlint:deprecation -Werror -cp "$CP:/tmp/wsB-classes" -d /tmp/wsB-classes javatest/NodeFactoryTest.java
 java --enable-native-access=ALL-UNNAMED -cp "/tmp/wsB-classes:$CP" NodeFactoryTest javatest/
@@ -72,4 +72,4 @@ registration) and `Json` unit checks.
 GG-0012/GG-0013/GG-0044 stay **locked**: WS B sources are landed and tested,
 but activation happens at M2 when `NodeFactory` builds straight-line programs
 end-to-end through the `graalgo-run` launcher (per PLAN.md). See
-[`../../phases/phase1/CHECKPOINT.md`](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).
+[`docs/arch/phases/phase1/CHECKPOINT.md`](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).

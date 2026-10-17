@@ -2,7 +2,7 @@
 
 Go programs exercising the P3-M2b `sync` Go bindings (ADR-0002),
 differential vs stock gc 1.27.1. Ports every leg of the Java-level
-`SyncStressTest` (`phases/phase2/src/test/java/graalgo/runtime/sync/`),
+`SyncStressTest` (`internal/backend/runtime/src/test/java/graalgo/runtime/sync/`),
 discharging the P2-M8 re-test trigger.
 
 ## Programs

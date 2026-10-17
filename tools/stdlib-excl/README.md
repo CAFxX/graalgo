@@ -49,7 +49,9 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 An explicit `--src` always wins. There are no silent fallbacks: every
 resolution announces where the tree came from.
 
-Wired into `make -C phases/phase3 check` (stdlib exclusion-list gate).
+Wired into `make check` via the interop module's check target
+([internal/backend/interop/Makefile](../../internal/backend/interop/Makefile):
+stdlib exclusion-list gate).
 
 ## measure
 

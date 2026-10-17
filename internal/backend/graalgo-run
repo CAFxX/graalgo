@@ -14,10 +14,6 @@
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-# BRIDGE (frontend lane): the gofrontend binary still builds at
-# phases/phase1/frontend until the frontend code-move lane relocates it to
-# internal/frontend/ (which the launcher's ToolPaths walk-up then finds on
-# its own). Until then, point the launcher at the current location.
 if [ -z "${GRAALGO_GOFRONTEND:-}" ] && [ -x "$HERE/../frontend/gofrontend" ]; then
   export GRAALGO_GOFRONTEND="$HERE/../frontend/gofrontend"
 fi

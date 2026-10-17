@@ -53,8 +53,9 @@ backends[0] (the reference); `run` compares every backend against the first.
 | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
 | `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | Phase-1 launcher; `GRAALGO_RUN=${PHASE1_DIR}/graalgo-run` |
 
-`PHASE1_DIR` is exported by `run.sh` (defaults to `<repo>/phases/phase1`);
-export it yourself for manual `diffharness` invocations. `gc-a` stays the
+`PHASE1_DIR` is exported by the Makefile snapshot targets (defaults to
+`<repo>/internal/backend`); export it yourself for manual `diffharness`
+invocations. `gc-a` stays the
 reference: `validate` still compares gc-b against gc-a only.
 
 M2 status (2026-10-04): the frontend path is real — graalgo's `--check`

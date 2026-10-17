@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Schema validator for the graalgo frontend/v1 JSON wire format.
 
-Enforces the contract documented in ../../../phases/phase1/docs/frontend-v1.md:
+Enforces the contract documented in ../../docs/arch/frontend-v1.md:
   - top-level document shape and "frontend": "v1" version pin
   - type-table entries: known kinds, required detail fields, in-range refs
   - object-table entries

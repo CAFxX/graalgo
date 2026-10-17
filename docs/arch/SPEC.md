@@ -1241,7 +1241,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | Dependency | Pin | Status |
 |---|---|---|
 | Go release tracked | go1.27.1 (re-vendored atomically per release, GG-0012) | `[VERIFIED]` current as of 2026-10-03 |
-| GraalVM/JDK distribution | Oracle GraalVM **25.0.4.1.1** (LTS line; jars re-pinned in [phases/phase1/lib/LIB.md](../../internal/backend/truffle/lib/LIB.md)) (GG-0027) | `[DECIDED]` 2026-10-04 — program owner: LTS line over the Innovation line (25.4.x); compiler/JIT deltas re-evaluated at Phase 5 |
+| GraalVM/JDK distribution | Oracle GraalVM **25.0.4.1.1** (LTS line; jars re-pinned in [internal/backend/truffle/lib/LIB.md](../../internal/backend/truffle/lib/LIB.md)) (GG-0027) | `[DECIDED]` 2026-10-04 — program owner: LTS line over the Innovation line (25.4.x); compiler/JIT deltas re-evaluated at Phase 5 |
 | `go/*` frontend API | additive-only per the Go 1 compatibility promise | `[VERIFIED]` |
 
 > Note on the former `[OPEN]` in this appendix: it was explicitly **not** a

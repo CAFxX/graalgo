@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </pre>
  *
  * <p>The format is graalgo-specific and documented in
- * {@code phases/phase2/GODEBUG.md}: gc's P/M fields have no counterpart in
+ * {@code docs/arch/phases/phase2/GODEBUG.md}: gc's P/M fields have no counterpart in
  * the park/queue/drainer design, so byte-identity with gc's
  * {@code SCHED ...ms: gomaxprocs=...} lines is not attempted. The emulated
  * observable behavior is "a periodic scheduler-state line on stderr".

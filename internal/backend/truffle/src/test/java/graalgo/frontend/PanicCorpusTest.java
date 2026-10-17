@@ -75,8 +75,8 @@ import java.util.stream.Stream;
  * <p>The {@code // panic:} trailer is additionally asserted equal to gc's
  * first stderr line, pinning the corpus documentation to the oracle.
  *
- * <p>Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * <p>Run from the repo root ({@code make test}); override with
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0019 (M5: defer/panic/recover/Goexit differential-green vs
 // stock gc — recovered programs assert every observed value bit-identical;

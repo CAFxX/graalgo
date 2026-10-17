@@ -19,6 +19,6 @@ This directory holds end-to-end proofs: real published Go modules compiled
 ## Status
 
 `run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
+(pre-`phases/`-removal classpaths, `P3SyncMain --gmp` legs). It needs updating to
 invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
 before it runs again — see the driver-hardening lane.

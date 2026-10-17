@@ -15,7 +15,7 @@
 //   - Client, Server, Dial, Listen (trap to Java SSLEngine)
 //   - Conn with Handshake, Read, Write, Close (trap to Java)
 //
-// Java delegation (phases/phase2/src/main/java/graalgo/runtime/TlsRuntime.java):
+// Java delegation (internal/backend/interop/src/main/java/graalgo/p3tls/TlsRuntime.java):
 //   - graalgo.tls.handshake, graalgo.tls.wrap, graalgo.tls.unwrap
 //   - graalgo.tls.newEngine (client/server SSLEngine creation)
 //   - Certificate parsing uses java.security.cert.CertificateFactory

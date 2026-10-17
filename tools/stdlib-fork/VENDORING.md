@@ -12,10 +12,10 @@ and the build-tag-filtered importer.
 |---|---|---|
 | Vendoring tool (Go, no external deps) | `tools/stdlib-vendor/` | yes |
 | Vendored stdlib tree (157M on disk for go1.27.1; 126 MiB file bytes) | `~/workspace/graalgo-stdlib/<goVersion>/` | **no** — external by design |
-| File manifest (path + SHA-256 + size + mode) | `phases/phase3/stdlib-fork/vendor-manifest.json` | yes (2.2M) |
-| Pinned Go version | `phases/phase3/stdlib-fork/pinned-version.txt` | yes |
-| Pinning decision | `phases/phase3/adr/ADR-0006-stdlib-vendoring.md` | yes |
-| Red-green evidence | `phases/phase3/stdlib-fork/REDGREEN.md` | yes |
+| File manifest (path + SHA-256 + size + mode) | `tools/stdlib-fork/vendor-manifest.json` | yes (2.2M) |
+| Pinned Go version | `tools/stdlib-fork/pinned-version.txt` | yes |
+| Pinning decision | `docs/dev/adr/ADR-0006-stdlib-vendoring.md` | yes |
+| Red-green evidence | `tools/stdlib-fork/REDGREEN.md` | yes |
 
 Current pin: **go1.27.1** (vendored 2026-10-07 from
 `/home/hatch/tools/go-1.27.1/src`, 12,018 files, 132,185,622 bytes).
@@ -68,7 +68,7 @@ Steps:
 3. **Diff the manifests** (old vs new). The manifest is deterministic,
    so the diff is exactly the upstream churn:
    ```sh
-   git -C ~/workspace/graalgo show HEAD:phases/phase3/stdlib-fork/vendor-manifest.json > /tmp/manifest-old.json
+   git -C ~/workspace/graalgo show HEAD:tools/stdlib-fork/vendor-manifest.json > /tmp/manifest-old.json
    # compare entry sets with jq/python: added / removed / modified paths
    ```
    Review the churn for anything touching the ~78 coupled packages or
@@ -81,8 +81,8 @@ Steps:
      ```sh
      cd ~/workspace/graalgo/tools/stdlib-linkdiff
      go run . --goroot ~/workspace/graalgo-stdlib/<new-version>/ \
-         --json ../../phases/phase3/stdlib-fork/linkname-trial-<new-version>.json \
-         --md ../../phases/phase3/stdlib-fork/linkname-trial-<new-version>.md
+         --json ../stdlib-fork/linkname-trial-<new-version>.json \
+         --md ../stdlib-fork/linkname-trial-<new-version>.md
      ```
      Triage per its README (skip-list size vs SPEC §3.6 kill trigger,
      `routes.txt` diff, provided-snapshot diff).
@@ -90,14 +90,14 @@ Steps:
      ```sh
      cd ~/workspace/graalgo/tools/stdlib-excl
      go run . measure --src ~/workspace/graalgo-stdlib/<new-version>/ \
-         --out ../../phases/phase3/stdlib-fork/coupled-packages-<new-version>.json \
+         --out ../stdlib-fork/coupled-packages-<new-version>.json \
          --go-version <new-version>
      ```
      Re-run the P3-D1 drift check against the new report.
    - the Plan 9 assembly inventory (P3-M6 asm strategy):
      ```sh
      cd ~/workspace/graalgo
-     python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --goroot <new-goroot>
+     python3 tools/stdlib-fork/gen-asm-inventory.py --goroot <new-goroot>
      ```
      The generator enumerates every `.s`/`.S`/`.sx` file, fails on any
      uncategorized file, and regenerates the JSON inventory, the
@@ -105,14 +105,14 @@ Steps:
      loader enforces. (Update the generator's pinned `VERSION`
      constant to the new release first -- it names the output files.)
      Verify with
-     `python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --check`.
+     `python3 tools/stdlib-fork/gen-asm-inventory.py --check`.
      Skipping this step leaves the loader enforcing the OLD
      version-pinned inventory: every new `.s` file fails the build as
      uncategorized.
    All three outputs must be re-baselined on the new tree before any
    frontend work consumes it.
 5. **Update the pin deliberately**: write the new version into
-   `phases/phase3/stdlib-fork/pinned-version.txt` and commit it together
+   `tools/stdlib-fork/pinned-version.txt` and commit it together
    with the new manifest. The tool intentionally does *not* move the pin
    on a `--allow-version-drift` run — the pin is a reviewed decision,
    not a side effect.

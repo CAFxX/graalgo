@@ -106,12 +106,12 @@ stored on the node and exposed via `getSourceSection()` override.
 
 - `src/test/java/graalgo/frontend/StraightLineCorpusTest.java`
   (`// verifies: GG-0012`): 12-program corpus
-  (`phases/phase1/corpus/straightline/`, conventions in its [README.md](README.md)),
+  (`test/corpus/phase1/straightline/`, conventions in its [README.md](README.md)),
   differential vs stock gc — the oracle injects `println(vars...)` and the
   test asserts frame-slot reads are bit-identical. Run via `make test`.
 - `src/test/java/graalgo/frontend/ArithmeticCorpusTest.java`
   (`// verifies: GG-0015`): 17-program corpus
-  (`phases/phase1/corpus/arithmetic/`, conventions in its [README.md](README.md)),
+  (`test/corpus/phase1/arithmetic/`, conventions in its [README.md](README.md)),
   differential vs stock gc with a type-aware oracle (ints decimal, floats
   by `math.Float32/64bits`, strings hex) and per-kind frame-slot reads.
 - `src/test/java/graalgo/values/ValuesTest.java`
@@ -119,7 +119,7 @@ stored on the node and exposed via `getSourceSection()` override.
   `GoConvert` matrices, including gc-probed edge cases.
 - `src/test/java/graalgo/frontend/PanicCorpusTest.java`
   (`// verifies: GG-0019`): 20-program corpus
-  (`phases/phase1/corpus/panic/`, conventions in its [README.md](README.md)),
+  (`test/corpus/phase1/panic/`, conventions in its [README.md](README.md)),
   differential vs stock gc — recovered programs assert post-defer values
   bit-identical (gc oracle via a `// probe`-anchored deferred `println`);
   fatal programs assert exit code 2, the normalized panic header block,

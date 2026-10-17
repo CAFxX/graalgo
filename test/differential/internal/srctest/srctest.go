@@ -1,5 +1,5 @@
 // Package srctest implements the GOROOT/test differential adapter
-// (conformance layer: phases/phase3/PLAN.md §5 layer 2, GG-0029/GG-0032).
+// (conformance layer: docs/arch/phases/phase3/PLAN.md §5 layer 2, GG-0029/GG-0032).
 //
 // Go's test/ tree (356 *.go files directly under GOROOT/test) is the
 // language spec-semantics anchor: conformance programs run by gc's own
@@ -8,7 +8,7 @@
 // harness backends. The phase-1 graalgo-run launcher is the frontend's
 // test consumer (same backend the typeparam adapter uses).
 //
-// Classification (phases/phase1/PLAN.md §5 item I: "GOROOT/test 356 files
+// Classification (docs/arch/phases/phase1/PLAN.md §5 item I: "GOROOT/test 356 files
 // via adapter (filtered: no imports beyond builtins; exclusions
 // versioned)"):
 //

@@ -45,6 +45,10 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   blindly: check `git status` for others' in-flight files first.
 - Every commit is pushed immediately after landing, and CI is watched to
   verdict (green or explained failure) before the lane is called done.
+- **Review trailers (his 2026-10-15 order, mechanically enforced):** every
+  commit merged to master carries `Reviewed-by:` + `Review-verdict: clean`
+  trailers from the independent review; CI fails pushes that lack them.
+  Convention: [docs/dev/review-trail.md](docs/dev/review-trail.md).
 
 ## 3. Correctness contract
 

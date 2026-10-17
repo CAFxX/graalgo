@@ -1,8 +1,7 @@
 # P3-M8 wave-2 differential corpus
 
 Go programs exercising the wave-2 synthetic stdlib packages (io, os,
-syscall, reflect, unsafe, crypto/* — see
-`phases/phase3/hidden_files/m8-analysis/`), differential vs stock gc
+syscall, reflect, unsafe, crypto/* — ), differential vs stock gc
 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 Pipelining note: wave 2 is built in parallel with the P3-M7 remediation
@@ -115,7 +114,7 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-2 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/<pkg>
+export TMPDIR=$HOME/workspace/tmp-wave2-<pkg>
 export GOCACHE=$HOME/workspace/.gocache-m8-<pkg>
 ```
 

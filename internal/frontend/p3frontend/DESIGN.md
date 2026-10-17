@@ -1,8 +1,8 @@
 # P3-M1 design — `p3frontend`: multi-file package compilation for frontend/v1
 
 **Status:** design accepted by implementer 2026-10-06; implementation follows
-this document. Normative parents: `phases/phase3/PLAN.md` §§2–5 (WS A),
-`phases/phase1/INTERFACE_FREEZE.md` (v1, in force), `phases/phase2/DONE-GATES.md`.
+this document. Normative parents: `docs/arch/phases/phase3/PLAN.md` §§2–5 (WS A),
+`docs/spec/INTERFACE_FREEZE.md` (v1, in force), `docs/arch/phases/phase2/DONE-GATES.md`.
 
 ## 1. Problem
 

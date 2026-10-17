@@ -65,12 +65,9 @@ RUN_CP := $(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
-# BRIDGE (frontend lane): subprocess tests (GcDifferentialTest, GoDebugTest)
-# resolve gofrontend via ToolPaths' walk-up, which no longer reaches
-# phases/phase1/frontend from the new class locations. Export the current
-# build location until the frontend lane moves it to internal/frontend/
-# (the walk-up then finds it unaided; a stale env var is skipped via the
-# isExecutable check).
+# Subprocess tests (GcDifferentialTest, GoDebugTest) resolve gofrontend via
+# ToolPaths' walk-up; export the explicit build location as a backstop
+# (a stale env var is skipped via the isExecutable check).
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
@@ -97,10 +94,6 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
 test: main $(OUT_TEST)/.built
-	# BRIDGE (test lane): the differential tests resolve corpus/… paths
-	# relative to the module working directory (as in the phase-2 tree).
-	# The ./corpus symlink points at phases/phase2/corpus until the test
-	# code-move lane relocates it to test/corpus/; repoint/remove then.
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
@@ -185,8 +178,7 @@ check: main $(OUT_TEST)/.built
 # P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
 # suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
 # before milestone sign-off.
-# BRIDGE (test lane): the corpora still live under phases/ until the test
-# code-move lane relocates them to test/corpus/; repoint P1_CORPUS/P2_CORPUS.
+# Conformance + test corpora (relocated to test/corpus/ in the migration).
 P1_CORPUS ?= ../../../test/corpus/phase1
 P2_CORPUS ?= ../../../test/corpus/phase2
 pin-audit: main $(OUT_TEST)/.built
@@ -199,7 +191,7 @@ pin-audit: main $(OUT_TEST)/.built
 	--out out/pinaudit-report.md
 
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
+# Takes ~10 min.
 torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
 

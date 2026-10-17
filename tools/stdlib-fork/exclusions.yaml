@@ -14,7 +14,8 @@
 # stdlib test binaries, whichever binds first. On go1.27.1 the 5% clause
 # binds: 274 test binaries -> floor(5*274/100) = 13. Enforced by
 # `stdlib-excl validate` (tools/stdlib-excl), wired into
-# `make -C phases/phase3 check`.
+# `make check` via the interop module's check target
+# (internal/backend/interop/Makefile: stdlib exclusion-list gate).
 #
 # v1 is the MECHANICS publication: entries are minimal and restricted to
 # packages with concrete, decided evidence (SPEC citations). Packages the

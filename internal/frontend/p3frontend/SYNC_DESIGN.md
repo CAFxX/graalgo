@@ -71,7 +71,7 @@ whose receiver unwraps (through pointers) to a sync named type:
   GoStatementNode's P2-M1 contract); the receiver is captured, which is
   identical to Go's address semantics even under races.
 
-## 4. p3frontend (`phases/phase3/src/p3frontend/`)
+## 4. p3frontend (`internal/frontend/p3frontend/`)
 
 - [importer.go](importer.go): mirrors the synthetic `sync` signatures for p3frontend's
   own type-check.
@@ -81,7 +81,7 @@ whose receiver unwraps (through pointers) to a sync named type:
 The `defer`/`go` desugars need no p3frontend work: they are standard
 `funclit`/`call`/`defer`/`gostmt` wire.
 
-## 5. Java (`graalgo.p3sync`, `phases/phase3/src/main/java`)
+## 5. Java (`graalgo.p3sync`, `internal/backend/interop/src/main/java`)
 
 - `nodes/SyncNewNode.java`, `nodes/SyncOpNode.java` (`verifies: GG-0017`):
   build the `GoMutex`/`GoRWMutex`/`GoWaitGroup`/`GoOnce` objects and
@@ -97,7 +97,8 @@ The `defer`/`go` desugars need no p3frontend work: they are standard
 
 ## 6. Semantics & divergences (all differential vs gc 1.27.1)
 
-Corpus `phases/phase3/corpus/sync/` (sy00–sy12), `run_differential.sh`:
+Corpus `test/corpus/sync/` (sy00–sy12), `run_differential.sh` (retired with
+the `phases/` layout; the corpus programs and `.expected` files remain):
 byte-identical stdout, equal exit codes, equal first stderr line for
 panic programs. 22/22 green.
 
