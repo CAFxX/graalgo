@@ -24,6 +24,9 @@ import graalgo.values.GoString;
  *   <li>one argument: returns it;</li>
  *   <li>integers (signed and unsigned): numeric fold;</li>
  *   <li>floats: NaN-propagating — any NaN argument yields NaN;</li>
+ *   <li>floats: signed-zero tie rule — {@code min} prefers {@code -0.0},
+ *       {@code max} prefers {@code +0.0} (IEEE total order on the non-NaN
+ *       range; observable via {@code math.Signbit}/{@code math.Float64bits});</li>
  *   <li>strings: byte-wise lexicographic (via {@link GoString#compareTo}).</li>
  * </ul>
  *
@@ -76,7 +79,11 @@ public final class MinMaxNode extends GoExprNode {
             if (Float.isNaN(v) || Float.isNaN(best)) {
                 return Float.NaN;
             }
-            if (isMin ? v < best : v > best) {
+            // RV-P0-08: Float.compare distinguishes -0.0f from +0.0f (IEEE
+            // total order on the non-NaN range), so min prefers -0.0f and
+            // max prefers +0.0f — gc parity. Plain < / > treats -0.0f == +0.0f
+            // and keeps the wrong zero.
+            if (isMin ? Float.compare(v, best) < 0 : Float.compare(v, best) > 0) {
                 best = v;
             }
         }
@@ -94,7 +101,11 @@ public final class MinMaxNode extends GoExprNode {
             if (Double.isNaN(v) || Double.isNaN(best)) {
                 return Double.NaN;
             }
-            if (isMin ? v < best : v > best) {
+            // RV-P0-08: Double.compare distinguishes -0.0 from +0.0 (IEEE
+            // total order on the non-NaN range), so min prefers -0.0 and
+            // max prefers +0.0 — gc parity. Plain < / > treats -0.0 == +0.0
+            // and keeps the wrong zero.
+            if (isMin ? Double.compare(v, best) < 0 : Double.compare(v, best) > 0) {
                 best = v;
             }
         }
