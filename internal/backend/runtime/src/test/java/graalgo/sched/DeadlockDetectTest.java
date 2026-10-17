@@ -420,4 +420,63 @@ public final class DeadlockDetectTest {
             SchedulerCore.install(prev);
         }
     }
+
+    // ---------- 10: C1 orphan — running at uninstall dies quietly ----------
+
+    /**
+     * RV-P1-19 (C1 orphan race, post-admission): a goroutine admitted and
+     * running guest code when the launcher uninstalls its scheduler (main
+     * returned with children in flight) must die quietly when it next
+     * touches the scheduler — never a loud "fatal internal error" (in a
+     * real process the JVM is exiting anyway; in-process hosts would see
+     * only stderr pollution). Deterministic: the orphan spins on a flag
+     * until the test thread has uninstalled, then touches the scheduler.
+     *
+     * <p>Red-green: without the {@code isOrphaned} guard in
+     * {@code recordCrash}, the {@code IllegalStateException} from the
+     * uninstalled scheduler is reported loudly and the stderr assertion
+     * fails.
+     */
+    public void testOrphanRunningAtUninstallDiesQuietly() throws Exception {
+        SchedulerCore schedA = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        SchedulerCore prev = SchedulerCore.install(schedA);
+        PrintStream origErr = System.err;
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
+        CountDownLatch admitted = new CountDownLatch(1);
+        AtomicBoolean release = new AtomicBoolean(false);
+        AtomicBoolean schedulerTouched = new AtomicBoolean(false);
+        try {
+            schedA.start();
+            schedA.drainer().setAdmissionListener(h -> admitted.countDown());
+            schedA.spawn(() -> {
+                // Scheduler-aware wait (never JVM-block inside a goroutine):
+                // spin until the test thread has uninstalled the scheduler.
+                while (!release.get()) {
+                    schedA.yieldCurrent();
+                }
+                // Now touch the scheduler: it is uninstalled, so this
+                // throws IllegalStateException("no SchedulerCore installed").
+                schedulerTouched.set(true);
+                SchedulerCore.current();
+            });
+            // Wait until the orphan is past the pre-admission guard and
+            // running guest code.
+            assertTrue(admitted.await(15, TimeUnit.SECONDS), "orphan admitted");
+            // The launcher exits (C1) and uninstalls the scheduler while
+            // the orphan is still running.
+            SchedulerCore.install(null);
+            release.set(true);
+            waitFor(() -> schedA.runnableCount() == 0,
+                    "orphan released its live count");
+            assertTrue(schedulerTouched.get(), "orphan touched the scheduler");
+            String err = errBuf.toString(StandardCharsets.UTF_8);
+            assertFalse(err.contains("fatal internal error"),
+                    "orphan died quietly, stderr was:\n" + err);
+            assertFalse(schedA.crashed(), "no internal-error crash recorded");
+        } finally {
+            System.setErr(origErr);
+            SchedulerCore.install(prev);
+        }
+    }
 }

@@ -570,7 +570,29 @@ public final class SchedulerCore {
         System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, pe.stackTop(), throwSec));
     }
 
+    /**
+     * RV-P1-19 (C1 orphan, post-admission): true when the launcher has
+     * exited and uninstalled this scheduler (or installed a foreign one)
+     * while one of its goroutines was still running. Such an orphan must
+     * die quietly: guest code must never run against a dead or foreign
+     * scheduler.
+     */
+    private boolean isOrphaned() {
+        return installed != SchedulerCore.this;
+    }
+
     private void recordCrash(String what, Throwable t) {
+        // RV-P1-19 (C1 orphan, post-admission): the launcher has exited
+        // and uninstalled this scheduler (or installed a foreign one)
+        // while one of its goroutines was still running. Such an orphan
+        // must die quietly and must not be counted as a crash: its
+        // scheduler is gone, so any scheduler interaction fails, and a
+        // loud crash report would be a false alarm (in a real process the
+        // JVM is exiting anyway; in-process hosts would see only stderr
+        // pollution).
+        if (isOrphaned()) {
+            return;
+        }
         crashCount.incrementAndGet();
         // M10 (self-attack D3): a class-loading failure while fds are
         // exhausted is resource exhaustion, not a logic bug. The JVM loads
