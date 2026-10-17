@@ -2,8 +2,8 @@
 #
 # Own javac module: phases/phase3's sync-bindings Java sources, relocated per
 # the Phase-4 repo restructure (lane 3):
-#   internal/backend/interop/src/main/java — graalgo.{iface,p3chan,p3crypto,
-#     p3link,p3math,p3net,p3os,p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}.
+#   internal/backend/interop/src/main/java — graalgo.{iface,p3chan,p3link,
+#     p3math,p3net,p3os,p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}.
 #
 # The truffle and runtime modules are consumed as FROZEN dependencies: this
 # module compiles against their out/classes and does not modify their
