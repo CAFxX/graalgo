@@ -133,7 +133,7 @@ The GG-0020 intrinsic surface is frozen in [docs/freeze-stub.md](freeze-stub.md)
 (§"GG-0020 intrinsic surface"; frozen 2026-10-04, amended to v2 by
 ADR-0008): `Intrinsics` (memory, slices, maps, itab, random,
 traceback), `BuiltinPrint.print/println`,
-`Fmt.sprintf/sprint/sprintln/print/printf/println/errorf`, `Timers`,
+`Timers`,
 `Scheduler.spawn/yield/park`, `Netpoll.init/open/close`,
 `ChanOps.send/recv/close`, `Panic.throwPanic/recover`,
 `safepoint.Safepoint.poll()`. The v2 slice-allocation signatures

@@ -102,23 +102,12 @@ public final class FreezeSignatureTest {
         FROZEN.add(new Sig(BuiltinPrint.class.getName(), "println",
             new Class<?>[]{BuiltinPrint.Arg[].class}, void.class));
 
-        // fmt stub (D4).
-        Class<?> goStr = graalgo.values.GoString.class;
-        Class<?> goIface = graalgo.values.GoInterface.class;
-        FROZEN.add(new Sig(Fmt.class.getName(), "sprintf",
-            new Class<?>[]{String.class, Fmt.Arg[].class}, goStr));
-        FROZEN.add(new Sig(Fmt.class.getName(), "sprint",
-            new Class<?>[]{Fmt.Arg[].class}, goStr));
-        FROZEN.add(new Sig(Fmt.class.getName(), "sprintln",
-            new Class<?>[]{Fmt.Arg[].class}, goStr));
-        FROZEN.add(new Sig(Fmt.class.getName(), "print",
-            new Class<?>[]{Fmt.Arg[].class}, int.class));
-        FROZEN.add(new Sig(Fmt.class.getName(), "printf",
-            new Class<?>[]{String.class, Fmt.Arg[].class}, int.class));
-        FROZEN.add(new Sig(Fmt.class.getName(), "println",
-            new Class<?>[]{Fmt.Arg[].class}, int.class));
-        FROZEN.add(new Sig(Fmt.class.getName(), "errorf",
-            new Class<?>[]{String.class, Fmt.Arg[].class}, goIface));
+        // fmt stub (D4) — RETIRED by real-fmt2 (bridge B-1, 2026-10-16):
+        // the real fmt package now compiles from GOROOT, so the seven
+        // Java stub signatures (Fmt.sprintf/sprint/sprintln/print/printf/
+        // println/errorf) no longer exist and are not frozen. fmt behavior
+        // is covered by the differential corpus (test/corpus/phase1/builtins/
+        // bi12_fmt_stub.go and the phase1 fmt cases) against gc.
 
         // Timers.
         FROZEN.add(new Sig(Timers.class.getName(), "nanotime", new Class<?>[]{},

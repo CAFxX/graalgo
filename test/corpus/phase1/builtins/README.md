@@ -20,7 +20,7 @@ gofrontend builtin emission, WS B/G), through graalgo for comparison.
 | bi09_new.go | new | allocates (non-nil) |
 | bi10_append_varieties.go | append forms | len 3, elems 1 2 3; t len 8; bytes "hi!!" (caps not asserted) |
 | bi11_panic.go | panic | panics "boom", exit 2, stderr |
-| bi12_fmt_stub.go | fmt D4 stub | Print/Printf/Println/Sprint/Sprintf/Sprintln/Errorf |
+| bi12_fmt_stub.go | fmt (real package from GOROOT; stub retired 2026-10-16) | Print/Printf/Println/Sprint/Sprintf/Sprintln/Errorf |
 | bi13_append_sizes.go | growth by elem size | len 10, valid caps, elems correct (exact caps compiler-dependent) |
 | bi14_map_lifecycle.go | map ops | make/assign/len/delete/lookup |
 | bi15_copy_counts.go | copy counts | n=3 (truncated); n2=5 |

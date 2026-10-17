@@ -20,7 +20,11 @@ not a parity claim.
   ported exactly), slicecopy, map ops, fastrand (wyrand port).
 - `BuiltinPrint`: `print`/`println` builtins → **stderr** (gc parity).
 - `Fmt`: the D4 `fmt` stub (7 pure functions) with verb-conformance matrix
-  (`corpus/fmt/matrix.tsv`, 122 rows vs gc). Replaceable-in-Phase-3.
+  (122 rows vs gc). **RETIRED 2026-10-16 (bridge B-1, real-fmt2):** the real
+  `fmt` package now compiles from GOROOT; the Java stub and its matrix test
+  were deleted. (The raw matrix data survives as an orphan at
+  `test/corpus/phase1/fmt/matrix.tsv` — no consumers; re-wire or delete
+  per the phase-3 fmt review.)
 - `GoFloatFmt`, `GoQuote`, `GoIsPrint`: ported gc formatting logic.
 - `Atomics`: JVM-backed atomics. `Timers.nanotime()`: `System.nanoTime()`.
 

@@ -35,8 +35,10 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
-        // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
-        TESTS.add(FmtStateItabTest.class);
+        // FmtStateItabTest removed with bridge B-1 (real-fmt2, 2026-10-16):
+        // it covered fmt.State itab fail-loud lookup against the deleted
+        // Java fmt backing. Equivalent coverage against the real fmt package
+        // needs re-triage by the phase-3 fmt review track.
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
         // isolation — identity-keyed, never structural.
         TESTS.add(graalgo.p3link.CondIsolationTest.class);

@@ -1345,8 +1345,9 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// P3-M9 (ecdsa-blockers): fmt.State.Precision/Width interface methods.
 	// The synthetic math/big Format methods call s.Precision()/s.Width();
 	// the pair types live in math/big (see synth_math_big.go). These are
-	// never dispatched at runtime (FmtCallNode formats directly); the
-	// entries exist so the frontend can classify the calls.
+	// never dispatched at runtime against the old stub path (FmtCallNode
+	// was deleted with bridge B-1, real-fmt2); the entries exist so the
+	// frontend can classify the calls.
 	{"math/big", "Precision", "fmtPrecisionPair", []string{"prec", "ok"}},
 	{"math/big", "Width", "fmtWidthPair", []string{"wid", "ok"}},
 	// P3-M9 (WS D): crypto/elliptic.unmarshaler interface (2-result).

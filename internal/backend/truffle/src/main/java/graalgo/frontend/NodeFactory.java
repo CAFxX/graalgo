@@ -1232,9 +1232,8 @@ public final class NodeFactory {
         // P3-M7: a pointer to a named type is named "*"+qualifiedName
         // (like gc's %T), not structural. Two distinct named types with
         // identical structure must not share a descriptor, and
-        // *errors.errorString must be recognizable by name (Fmt's
-        // errorString stand-in check). Pointers to unnamed types stay
-        // structural.
+        // *errors.errorString must be recognizable by name. Pointers to
+        // unnamed types stay structural.
         if ("pointer".equals(k)) {
             int elemId = resolveAlias(ctx, entry.object("detail", path).intValue("elem", path), path);
             Json.Object elemEntry = ctx.types.entry(elemId, path);
@@ -3524,8 +3523,9 @@ public final class NodeFactory {
     /**
      * P3-M10 (fix-fmt-funcs): walks a slice/array element type down to the
      * scalar, collecting the kind/name chain below the first element level
-     * (e.g. [2][2][2]int -&gt; kinds [ARRAY, INT32]). Factored out of
-     * {@link #buildFmtCall} so pointer-to-composite args (e.g. {@code *[]byte}
+     * (e.g. [2][2][2]int -&gt; kinds [ARRAY, INT32]). Factored out of the
+     * former {@code buildFmtCall} (removed with bridge B-1, real-fmt2) so
+     * pointer-to-composite args (e.g. {@code *[]byte}
      * scan destinations) get the same chains. Terminates: each step moves
      * to a strictly smaller type, and go/types rejects recursive array
      * types before export.
@@ -3555,7 +3555,8 @@ public final class NodeFactory {
      * P3-M10 (fix-fmt-funcs): walks a map element type down through nested
      * maps, collecting the (key, elem) kinds per level (e.g.
      * map[string]map[string]int -&gt; keyChain=[STRING], elemChain=[INT]).
-     * Factored out of {@link #buildFmtCall}; same termination argument as
+     * Factored out of the former {@code buildFmtCall} (removed with bridge
+     * B-1, real-fmt2); same termination argument as
      * {@link #walkElemChain}.
      */
     private record MapChainWalk(java.util.List<GoKind> keyKinds, java.util.List<String> keyNames,

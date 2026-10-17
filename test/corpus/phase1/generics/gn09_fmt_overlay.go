@@ -2,7 +2,8 @@ package main
 
 import "fmt"
 
-// The D4 fmt overlay (seven pure functions) via the Phase-1 import overlay.
+// fmt via the real package (compiled from GOROOT since real-fmt2
+// retired the D4 Java stub and its import overlay, 2026-10-16).
 
 func main() {
 	fmt.Println("hello", 42)

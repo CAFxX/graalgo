@@ -12,7 +12,7 @@ package graalgo.frontend;
  * reductions are order-independent by construction (commutative sums), so
  * gc's randomized iteration order can never cause a false mismatch.
  *
- * <p>Corpus: {@code corpus/composite/co*.go}, each ending with a
+ * <p>Corpus: {@code test/corpus/phase1/composite/co*.go}, each ending with a
  * {@code // observe:} trailer.
  */
 // verifies: GG-0014 (M4: composite types — literals, indexing, slicing,
@@ -26,7 +26,7 @@ public final class CompositeCorpusTest {
         try (java.util.stream.Stream<java.nio.file.Path> s =
                 java.nio.file.Files.list(java.nio.file.Path.of(
                         System.getProperty("graalgo.repo.dir", "."),
-                        "corpus", "composite"))) {
+                        "test", "corpus", "phase1", "composite"))) {
             n = s.map(p -> p.getFileName().toString())
                     .filter(x -> x.startsWith("co") && x.endsWith(".go"))
                     .count();
@@ -49,8 +49,8 @@ public final class CompositeCorpusTest {
 
     static void checkProgram(String base) throws Exception {
         java.nio.file.Path src = java.nio.file.Path.of(
-                System.getProperty("graalgo.repo.dir", "."), "corpus", "composite",
-                base + ".go");
+                System.getProperty("graalgo.repo.dir", "."), "test", "corpus",
+                "phase1", "composite", base + ".go");
         java.util.List<String> vars = ControlFlowCorpusTest.observeVars(src);
         long[] expected = ControlFlowCorpusTest.gcOracle(src, vars);
         long[] actual = ControlFlowCorpusTest.graalgoValues(src, vars);

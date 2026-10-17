@@ -2,7 +2,8 @@ package main
 
 import "fmt"
 
-// fmt stub (D4): the seven pure functions via the import overlay.
+// fmt via the real package (compiled from GOROOT since real-fmt2
+// retired the D4 Java stub, 2026-10-16): the seven pure functions.
 func main() {
 	fmt.Print("a", 1)
 	fmt.Printf("%d+%d=%d\n", 1, 2, 3)

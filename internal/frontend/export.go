@@ -1585,10 +1585,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M9 (RC-6): the fmt.State implementation (internal/graalgo/fmtstate)
-	// must be in the export so Fmt.handleMethods can box a PrinterState as
-	// fmt.State for fmt.Formatter dispatch. The package is synthetic-only
-	// (never imported by user code) and tiny, so import it unconditionally;
-	// importSyntheticPackage is idempotent.
+	// must be in the export for fmt.Formatter dispatch. The package is
+	// synthetic-only (never imported by user code) and tiny, so import it
+	// unconditionally; importSyntheticPackage is idempotent. (Its former
+	// Java method-table backing, Fmt.handleMethods, was deleted with
+	// bridge B-1, real-fmt2 — functional status owned by the phase-3
+	// fmt review.)
 	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
 		return "", err
 	}
@@ -6200,8 +6202,7 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	}
 	// P3-M9 (RC-6): //go:linkname on methods is allowed (previously M4
 	// scope). The receiver is passed as the first arg; intrinsics that
-	// don't need it (e.g. fmtstate.PrinterState methods, which operate on
-	// the thread-local Printer) ignore it.
+	// don't need it (e.g. fmtstate.PrinterState methods) ignore it.
 	if fi.isTemplate && symbol != "" {
 		return nil, scopeErrorf("//go:linkname on generic func %s is not in M4 scope", fd.Name.Name)
 	}
