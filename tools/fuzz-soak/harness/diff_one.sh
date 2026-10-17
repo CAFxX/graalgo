@@ -8,7 +8,11 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$(cd "$HERE/../.." && pwd)}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Repo root: tools/fuzz-soak/harness/diff_one.sh -> harness -> fuzz-soak
+# -> tools -> repo (three levels up; diff_one.sh sits one level deeper
+# than run_soak.sh, so this is ../../.. not ../..).
+GR="${GR:-$(cd "$HERE/../../.." && pwd)}"
 BACKEND="$GR/internal/backend"
 # Classpath order is load-bearing: interop FIRST, then runtime (so the
 # runtime module's same-FQN replacements shadow the truffle module's frozen
@@ -50,7 +54,12 @@ timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
 # 3. graalgo run (120s timeout; JVM startup dominates)
+# --sun-misc-unsafe-memory-access=allow: keep the JDK 25 Unsafe-deprecation
+# warnings off stderr — same flag as internal/backend/graalgo-sync-run, the
+# canonical launcher this script mirrors (Truffle uses Unsafe internally;
+# the warnings would otherwise pollute the program's stderr).
 timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
+    --sun-misc-unsafe-memory-access=allow \
     -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
     graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"

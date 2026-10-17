@@ -131,6 +131,14 @@ fi
 # build failure. N failing builds in a row means the harness is broken,
 # not the code — abort instead of spinning failing batches to the deadline.
 MAX_CONSEC_BUILD_FAILS="${SOAK_MAX_CONSEC_FAILS:-3}"
+# Validate once, loudly: a non-numeric value would make the `-ge`
+# comparison below error inside the `if` (treated as false), silently
+# disabling the consecutive-failure abort.
+case "$MAX_CONSEC_BUILD_FAILS" in
+  ''|*[!0-9]*)
+    echo "SOAK_MAX_CONSEC_FAILS must be a non-negative integer, got: '$MAX_CONSEC_BUILD_FAILS'" >&2
+    exit 2;;
+esac
 
 # Overnight soak: batches of BATCH seeds until the deadline.
 seed=0

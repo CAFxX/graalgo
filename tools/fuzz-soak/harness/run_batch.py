@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,27 @@ FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, **kw)
+
+
+def run_diff_capture(cmd, timeout):
+    """Run the differential shell command; on timeout kill the whole
+    process group, not just the direct bash child. shell=True's own
+    timeout kills bash, but an in-flight `go build` or JVM would
+    otherwise orphan and linger. Returns (stdout, stderr); raises
+    subprocess.TimeoutExpired (after the group is dead) on timeout."""
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+        raise
+    return out, err
 
 
 def main():
@@ -70,8 +92,6 @@ def main():
           flush=True)
     results = []
     results_path = os.path.join(outdir, "results.jsonl")
-    # Incremental writes: append as each completes (kill-resilient).
-    rf = open(results_path, "w")
 
     def run_one(s):
         workdir = os.path.join(outdir, "work", f"seed_{s:05d}")
@@ -81,8 +101,9 @@ def main():
             # 600s cap: diff_one.sh's own worst case is ~150s (gc build +
             # 10s gc run + 120s graalgo cap + JVM startup); the headroom is
             # for JVM startup under load.
-            r = sh(f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {args.gmp}",
-                   timeout=600)
+            out, err = run_diff_capture(
+                f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {args.gmp}",
+                timeout=600)
         except subprocess.TimeoutExpired:
             # The harness hung, not the program (the program itself is
             # capped at 120s inside diff_one.sh). Record it and keep the
@@ -92,21 +113,24 @@ def main():
             rec["seed"] = s
             return rec
         try:
-            rec = json.loads(r.stdout.strip().split("\n")[-1])
+            rec = json.loads(out.strip().split("\n")[-1])
         except Exception:
             rec = {"file": f"fuzz_{s:05d}", "result": "HARNESS_ERROR",
-                   "detail": r.stdout[-500:] + r.stderr[-500:]}
+                   "detail": out[-500:] + err[-500:]}
         rec["seed"] = s
         return rec
 
-    with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        for i, rec in enumerate(ex.map(run_one, seeds)):
-            results.append(rec)
-            rf.write(json.dumps(rec) + "\n")
-            rf.flush()
-            if (i + 1) % 10 == 0:
-                print(f"  {i+1}/{len(seeds)}", flush=True)
-    rf.close()
+    # Incremental writes: append as each completes (kill-resilient). The
+    # context manager closes the file on every path — an exception
+    # escaping the executor block used to leak the handle.
+    with open(results_path, "w") as rf:
+        with ThreadPoolExecutor(max_workers=args.jobs) as ex:
+            for i, rec in enumerate(ex.map(run_one, seeds)):
+                results.append(rec)
+                rf.write(json.dumps(rec) + "\n")
+                rf.flush()
+                if (i + 1) % 10 == 0:
+                    print(f"  {i+1}/{len(seeds)}", flush=True)
 
     # Dedup: group non-PASS by (result, signature).
     from collections import Counter, defaultdict

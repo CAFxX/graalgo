@@ -16,6 +16,7 @@ the shard writes CANARY_FAIL and exits nonzero (batch quarantined).
 """
 import json
 import os
+import signal
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -36,14 +37,41 @@ def sh(cmd, timeout=300):
                           timeout=timeout)
 
 
-def diff_one(gofile, workdir, gmp=1):
-    r = sh(f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {gmp}",
-           timeout=300)
+def run_diff_capture(cmd, timeout):
+    """Run the differential shell command; on timeout kill the whole
+    process group, not just the direct bash child. shell=True's own
+    timeout kills bash, but an in-flight `go build` or JVM would
+    otherwise orphan and linger. Returns (stdout, stderr); raises
+    subprocess.TimeoutExpired (after the group is dead) on timeout."""
+    p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
     try:
-        return json.loads(r.stdout.strip().split("\n")[-1])
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+        raise
+    return out, err
+
+
+def diff_one(gofile, workdir, gmp=1):
+    cmd = f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {gmp}"
+    try:
+        out, err = run_diff_capture(cmd, timeout=300)
+    except subprocess.TimeoutExpired:
+        # A hung seed must not kill the whole shard (same fix as the
+        # batch driver run_batch.py): record HARNESS_ERROR and continue.
+        return {"file": os.path.basename(gofile), "result": "HARNESS_ERROR",
+                "detail": "diff_one.sh timed out after 300s"}
+    try:
+        return json.loads(out.strip().split("\n")[-1])
     except Exception:
         return {"file": os.path.basename(gofile), "result": "HARNESS_ERROR",
-                "detail": (r.stdout + r.stderr)[-500:]}
+                "detail": (out + err)[-500:]}
 
 
 def main():

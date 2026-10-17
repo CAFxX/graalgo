@@ -107,8 +107,9 @@ The harness must prove it finds real bugs before scaling:
 Tenant `projects/graalgo-fuzz/` in CAFxX/fanout:
 
 - `Dockerfile`: Ubuntu + Go 1.27.1 + GraalVM JDK 25 + graalgo sources
-  (slim tarball: phase1/{src,lib,frontend}, phase2/src, phase3/src;
-  ~45MB, baked at image build). Driver + generator baked in.
+  (slim tarball: Makefile, go.mod, internal/backend/{truffle,runtime,interop},
+  internal/frontend, tools/fuzz-soak; ~45MB, baked at image build).
+  Driver + generator baked in.
 - `driver/fuzz_driver.py`: honors `$SHARD_IDX`/`$SHARD_COUNT`,
   `$OUT_DIR`; each shard generates `N` programs from disjoint seed
   ranges, runs the differential, writes `results.jsonl`.
