@@ -58,7 +58,9 @@
       "stderrFilters": [
         "^WARNING: A terminally deprecated method in sun\\.misc\\.Unsafe has been called$",
         "^WARNING: sun\\.misc\\.Unsafe::.*$",
-        "^WARNING: Please consider reporting this to the maintainers.*$"
+        "^WARNING: Please consider reporting this to the maintainers.*$",
+        "^.*graalgo\\.p3log\\.P3Log warn$",
+        "^WARNING: ifacemethod:.*$"
       ],
       "vars": {
         "GRAALGO_RUN": "${PHASE3_DIR}/graalgo-sync-run"
