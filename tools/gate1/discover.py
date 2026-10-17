@@ -7,7 +7,6 @@ the imports each test file needs. Output is JSON for the synthesizer.
 
 Usage: discover.py <package> [--goroot PATH]
 """
-import ast
 import json
 import os
 import re

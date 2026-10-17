@@ -9,15 +9,26 @@
 #
 #   bash tools/precommit-check.sh && git commit ...
 #
-# Scratch locations (hidden_files/, reviews/, research/) are exempt — work
-# logs and survey snapshots live there untracked by design.
-set -u
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# The guard FAILS CLOSED: if `git status` itself errors (not a repo, git
+# broken), the script exits non-zero — a pre-commit guard that reports
+# "clean" when it cannot run is worse than none. git's stderr is never
+# swallowed.
+#
+# Scratch locations (reviews/, research/) are exempt — work logs and survey
+# snapshots live there untracked by design. hidden_files/ is deliberately
+# NOT exempt: AGENTS.md §5 forbids it outright, so untracked sources there
+# must fail the guard.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
 cd "$ROOT" || exit 2
 
-untracked="$(git status --porcelain --untracked-files=all 2>/dev/null | grep '^??' | grep -E '\.(java|go)$' || true)"
-# Exempt scratch dirs.
-untracked="$(echo "$untracked" | grep -v -E 'hidden_files/|reviews/|research/' || true)"
+status_out="$(git status --porcelain --untracked-files=all)" || {
+    echo "PRECOMMIT FAIL: 'git status' failed (not a git repo, or git is broken); refusing to report clean." >&2
+    exit 2
+}
+untracked="$(printf '%s\n' "$status_out" | grep '^??' | grep -E '\.(java|go)$' || true)"
+# Exempt scratch dirs (NOT hidden_files/ — see header).
+untracked="$(printf '%s\n' "$untracked" | grep -v -E 'reviews/|research/' || true)"
 
 if [ -n "$untracked" ]; then
     echo "PRECOMMIT FAIL: untracked source files would be silently omitted from the commit:"

@@ -1,6 +1,17 @@
 // Command mutation runs curated source-level mutants against the test suite.
 // For each mutant it builds an overlay (Java) or a rebuilt binary (Go),
 // runs the full suite, and reports KILLED (suite red) or SURVIVED (suite green).
+//
+// Layout (post-migration): the Java backend lives under
+// internal/backend/{truffle,runtime}; the test runner is graalgo.test.Runner
+// with the shadow-order classpath overlay:test-classes:runtime:out/classes:
+// truffle:out/classes:jars (mirroring internal/backend/truffle/Makefile's
+// test target).
+//
+// Prerequisites: the backend must be built first (`make build` at the repo
+// root, plus the truffle test classes); the tool checks and fails loudly
+// otherwise. The JSON report is printed to stdout — per-run evidence is
+// not written into the repo tree.
 package main
 
 import (
@@ -30,6 +41,43 @@ type Result struct {
 	DurationSec int64  `json:"duration_sec"`
 }
 
+// backendDirs locates the post-migration backend build outputs.
+type backendDirs struct {
+	truffle     string // internal/backend/truffle
+	runtime     string // internal/backend/runtime
+	runtimeOut  string // internal/backend/runtime/out/classes
+	truffleOut  string // internal/backend/truffle/out/classes
+	truffleTest string // internal/backend/truffle/out/test-classes
+}
+
+func backendLayout(repo string) backendDirs {
+	truffle := filepath.Join(repo, "internal", "backend", "truffle")
+	runtime := filepath.Join(repo, "internal", "backend", "runtime")
+	return backendDirs{
+		truffle:     truffle,
+		runtime:     runtime,
+		runtimeOut:  filepath.Join(runtime, "out", "classes"),
+		truffleOut:  filepath.Join(truffle, "out", "classes"),
+		truffleTest: filepath.Join(truffle, "out", "test-classes"),
+	}
+}
+
+// checkPrereqs fails loudly unless the backend (including test classes) is
+// built. Running mutants against a half-built tree would report every
+// mutant KILLED for the wrong reason.
+func checkPrereqs(bd backendDirs) {
+	missing := []string{}
+	for _, d := range []string{bd.runtimeOut, bd.truffleOut, bd.truffleTest} {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			missing = append(missing, d)
+		}
+	}
+	if len(missing) > 0 {
+		fatal(fmt.Errorf("backend not built, missing:\n  %s\nbuild it first: `make build` at the repo root, then `make -C internal/backend/truffle test` (compiles out/test-classes as part of its build)",
+			strings.Join(missing, "\n  ")))
+	}
+}
+
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "usage: mutation <repo> <mutants.json>\n")
@@ -49,10 +97,15 @@ func main() {
 		fatal(err)
 	}
 
+	bd := backendLayout(repo)
+	checkPrereqs(bd)
+
 	workdir, err := os.MkdirTemp("", "mutation-*")
 	if err != nil {
 		fatal(err)
 	}
+	// Every run copies a full frontend tree here; never leak it.
+	defer os.RemoveAll(workdir)
 	fmt.Printf("workdir: %s\n", workdir)
 
 	var results []Result
@@ -60,7 +113,7 @@ func main() {
 	// R1#5, R2#6: baseline control — the clean tree must be green,
 	// otherwise every mutant is trivially "killed".
 	fmt.Printf("running baseline control...\n")
-	baselineVerdict, baselineDetail := runTestSuite(repo, workdir, nil)
+	baselineVerdict, baselineDetail := runTestSuite(repo, bd, workdir, nil)
 	if baselineVerdict != "SURVIVED" {
 		fatal(fmt.Errorf("baseline not green: %s (%s)", baselineVerdict, baselineDetail))
 	}
@@ -68,7 +121,7 @@ func main() {
 
 	for _, m := range spec.Mutants {
 		start := time.Now()
-		verdict, detail := runMutant(repo, workdir, m)
+		verdict, detail := runMutant(repo, bd, workdir, m)
 		results = append(results, Result{
 			ID:          m.ID,
 			Description: m.Description,
@@ -79,18 +132,17 @@ func main() {
 		fmt.Printf("[%s] %s: %s (%s)\n", m.ID, verdict, m.Description, detail)
 	}
 
-	// Write report (R2#6: persist to hidden_files, not just /tmp)
-	report, _ := json.MarshalIndent(results, "", "  ")
-	os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644)
-	fmt.Printf("\nreport: %s/report.json\n", workdir)
-
-	// Also copy to the repo's hidden_files for durability
-	persistDir := "/home/hatch/workspace/graalgo/phases/phase1/hidden_files/mutation"
-	os.MkdirAll(persistDir, 0755)
-	ts := time.Now().Format("20060102-150405")
-	persistPath := filepath.Join(persistDir, "report-"+ts+".json")
-	os.WriteFile(persistPath, report, 0644)
-	fmt.Printf("persisted: %s\n", persistPath)
+	// Write report.json into the workdir and print the full JSON report
+	// to stdout: the workdir is removed on exit, so stdout is the durable
+	// record. (Per-run evidence is never written into the repo tree.)
+	report, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		fatal(fmt.Errorf("marshal report: %w", err))
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644); err != nil {
+		fatal(fmt.Errorf("write report: %w", err))
+	}
+	fmt.Printf("\nreport JSON:\n%s\n", report)
 
 	// Summary
 	killed, survived, errors := 0, 0, 0
@@ -107,7 +159,7 @@ func main() {
 	fmt.Printf("killed=%d survived=%d errors=%d\n", killed, survived, errors)
 }
 
-func runMutant(repo, workdir string, m Mutant) (string, string) {
+func runMutant(repo string, bd backendDirs, workdir string, m Mutant) (string, string) {
 	mdir := filepath.Join(workdir, m.ID)
 	if err := os.MkdirAll(mdir, 0755); err != nil {
 		return "ERROR", err.Error()
@@ -129,12 +181,12 @@ func runMutant(repo, workdir string, m Mutant) (string, string) {
 	mutated := strings.Replace(string(orig), m.Old, m.New, 1)
 
 	if m.Lang == "java" {
-		return runJavaMutant(repo, mdir, m, mutated)
+		return runJavaMutant(repo, bd, mdir, m, mutated)
 	}
-	return runGoMutant(repo, mdir, m, mutated)
+	return runGoMutant(repo, bd, mdir, m, mutated)
 }
 
-func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
+func runJavaMutant(repo string, bd backendDirs, mdir string, m Mutant, mutated string) (string, string) {
 	// Write mutated file to overlay source tree (mirror repo-relative path)
 	overlaySrc := filepath.Join(mdir, "src", m.File)
 	if err := os.MkdirAll(filepath.Dir(overlaySrc), 0755); err != nil {
@@ -144,28 +196,31 @@ func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string)
 		return "ERROR", err.Error()
 	}
 
-	// Compile single file against out/classes
+	// Compile single file against the built backend classes. Classpath
+	// order mirrors the build: runtime classes (joint round, holds the
+	// real classes) before the truffle module's classes.
 	overlayClasses := filepath.Join(mdir, "classes")
-	os.MkdirAll(overlayClasses, 0755)
-	phase1 := filepath.Join(repo, "phases/phase1")
-	cp := fmt.Sprintf("%s/out/classes:%s", phase1, jarCP(phase1))
+	if err := os.MkdirAll(overlayClasses, 0755); err != nil {
+		return "ERROR", err.Error()
+	}
+	cp := strings.Join([]string{bd.runtimeOut, bd.truffleOut, jarCP(bd.truffle)}, ":")
 	cmd := exec.Command(javaBin(),
 		"-Xlint:deprecation", "-Werror",
 		"-cp", cp,
 		"-d", overlayClasses,
 		overlaySrc)
-	cmd.Dir = phase1
+	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "ERROR", fmt.Sprintf("javac: %v\n%s", err, out)
 	}
 
 	// Run test suite with overlay first in classpath
-	return runTestSuite(repo, mdir, map[string]string{
+	return runTestSuite(repo, bd, mdir, map[string]string{
 		"CLASSPATH_OVERLAY": overlayClasses,
 	})
 }
 
-func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
+func runGoMutant(repo string, bd backendDirs, mdir string, m Mutant, mutated string) (string, string) {
 	// For Go exporter: copy the frontend dir, apply mutation, build
 	frontSrc := filepath.Join(repo, "internal", "frontend")
 	frontDst := filepath.Join(mdir, "frontend")
@@ -188,25 +243,29 @@ func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
 	}
 
 	// Run test suite with GRAALGO_GOFRONTEND pointing to mutated binary
-	return runTestSuite(repo, mdir, map[string]string{
+	return runTestSuite(repo, bd, mdir, map[string]string{
 		"GRAALGO_GOFRONTEND": bin,
 	})
 }
 
-func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string) {
-	phase1 := filepath.Join(repo, "phases/phase1")
-	// Build classpath: overlay (if any) : out/test : out/classes : jars
+func runTestSuite(repo string, bd backendDirs, mdir string, extraEnv map[string]string) (string, string) {
+	// Classpath mirrors internal/backend/truffle/Makefile's test target:
+	// overlay (if any) : test classes : runtime classes (replacements
+	// shadow stubs) : truffle classes : jars.
 	cp := ""
 	if ov, ok := extraEnv["CLASSPATH_OVERLAY"]; ok {
 		cp = ov + ":"
 	}
-	cp += fmt.Sprintf("%s/out/test:%s/out/classes:%s", phase1, phase1, jarCP(phase1))
+	cp += strings.Join([]string{bd.truffleTest, bd.runtimeOut, bd.truffleOut, jarCP(bd.truffle)}, ":")
 
 	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test).
+	// -Dgraalgo.repo.dir lets the differential tests locate the corpus,
+	// as in the Makefile's test target.
 	cmd := exec.Command(javaRunBin(),
 		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
+		"-Dgraalgo.repo.dir="+repo,
 		"-cp", cp, "graalgo.test.Runner")
-	cmd.Dir = phase1
+	cmd.Dir = repo
 	cmd.Env = os.Environ()
 	for k, v := range extraEnv {
 		if k == "CLASSPATH_OVERLAY" {
@@ -214,9 +273,13 @@ func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string
 		}
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	// Log output
+	// Log output. If the log cannot be created, stdout/stderr would be
+	// silently discarded and kill-attribution destroyed — fail loudly.
 	logPath := filepath.Join(mdir, "test.log")
-	logFile, _ := os.Create(logPath)
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return "ERROR", fmt.Sprintf("create log %s: %v", logPath, err)
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -273,9 +336,9 @@ func goBin() string {
 	return "/home/hatch/tools/go/bin/go"
 }
 
-func jarCP(phase1 string) string {
-	// Match Makefile CP: lib/*.jar
-	jars, _ := filepath.Glob(filepath.Join(phase1, "lib", "*.jar"))
+func jarCP(truffleDir string) string {
+	// Match the backend Makefiles: lib/*.jar under the truffle module.
+	jars, _ := filepath.Glob(filepath.Join(truffleDir, "lib", "*.jar"))
 	return strings.Join(jars, ":")
 }
 

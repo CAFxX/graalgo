@@ -12,6 +12,12 @@ package main
 // <workdir>/regressions/fuzz_<seed>.go (minimized divergences).
 // Per-seed scratch lives under <workdir>/scratch/ and is removed after each
 // program (only divergences are kept).
+//
+// Error policy: this tool's job is durable evidence. A corrupt state file,
+// a lost journal write, or an unwritable regression is never silently
+// swallowed — such failures are fatal and loud. A broken backend binary
+// yields HARNESS_ERROR verdicts and fails the run at the end, so a dead
+// harness can never masquerade as a clean or divergent soak.
 
 import (
 	"bufio"
@@ -40,21 +46,43 @@ type journalEntry struct {
 
 var stopFlag atomic.Bool
 
-func loadState(workdir string) state {
+// fatalf reports an unrecoverable tool failure loudly and exits non-zero.
+// Used for evidence-integrity failures (state/journal/regression writes),
+// never for per-seed program verdicts.
+func fatalf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "fuzz: fatal: "+format+"\n", args...)
+	os.Exit(1)
+}
+
+func loadState(workdir string) (state, error) {
 	st := state{Counts: map[string]int64{}}
 	data, err := os.ReadFile(filepath.Join(workdir, "state.json"))
-	if err == nil {
-		json.Unmarshal(data, &st)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return st, nil
+		}
+		return st, fmt.Errorf("read state.json: %w", err)
+	}
+	// A corrupt state file must never silently reset the counters —
+	// resuming from zero would rerun seeds and double-count verdicts.
+	if err := json.Unmarshal(data, &st); err != nil {
+		return st, fmt.Errorf("corrupt state.json: %w", err)
 	}
 	if st.Counts == nil {
 		st.Counts = map[string]int64{}
 	}
-	return st
+	return st, nil
 }
 
-func saveState(workdir string, st state) {
-	data, _ := json.Marshal(st)
-	os.WriteFile(filepath.Join(workdir, "state.json"), data, 0644)
+func saveState(workdir string, st state) error {
+	data, err := json.Marshal(st)
+	if err != nil {
+		return fmt.Errorf("marshal state: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "state.json"), data, 0644); err != nil {
+		return fmt.Errorf("write state.json: %w", err)
+	}
+	return nil
 }
 
 func cmdGen() {
@@ -67,10 +95,14 @@ func cmdGen() {
 // oneSeed runs a single seed end-to-end and returns the verdict + note.
 func oneSeed(workdir string, seed int64, doMin bool, journal *bufio.Writer, jmu *sync.Mutex) verdict {
 	scratch := filepath.Join(workdir, "scratch", fmt.Sprintf("s%d", seed))
-	os.MkdirAll(scratch, 0755)
+	if err := os.MkdirAll(scratch, 0755); err != nil {
+		fatalf("scratch mkdir for seed %d: %v", seed, err)
+	}
 	defer os.RemoveAll(scratch)
 	src := filepath.Join(scratch, "main.go")
-	os.WriteFile(src, []byte(generate(seed)), 0644)
+	if err := os.WriteFile(src, []byte(generate(seed)), 0644); err != nil {
+		fatalf("write seed %d: %v", seed, err)
+	}
 
 	gc := runGC(scratch, src)
 	gr := runGraal(scratch, src)
@@ -80,20 +112,40 @@ func oneSeed(workdir string, seed int64, doMin bool, journal *bufio.Writer, jmu 
 		note = fmt.Sprintf("gc(exit=%d) vs graal(exit=%d) stdout_eq=%v",
 			gc.exit, gr.exit, gc.stdout == gr.stdout)
 		if doMin {
-			minprog, probes := minimize(scratch, seed)
-			name := saveRegression(workdir, seed, minprog)
+			minprog, probes, err := minimize(scratch, seed)
+			if err != nil {
+				fatalf("minimize seed %d: %v", seed, err)
+			}
+			name, err := saveRegression(workdir, seed, minprog)
+			if err != nil {
+				fatalf("save regression seed %d: %v", seed, err)
+			}
 			note += fmt.Sprintf(" minimized->%s probes=%d", name, probes)
 		}
 	} else if v == vScopeReject {
 		note = "fail-fast scope error"
 	} else if v == vGCInvalid {
 		note = "gc rejected (generator bug)"
+	} else if v == vHarnessError {
+		note = fmt.Sprintf("harness error: backend binary failed to start (%s)", graalgoRun)
+	}
+	data, err := json.Marshal(journalEntry{Seed: seed, Verdict: v.String(), Note: note})
+	if err != nil {
+		fatalf("journal marshal seed %d: %v", seed, err)
 	}
 	jmu.Lock()
-	data, _ := json.Marshal(journalEntry{Seed: seed, Verdict: v.String(), Note: note})
-	journal.Write(data)
-	journal.WriteByte('\n')
-	journal.Flush() // M8: flush per entry for crash safety and live monitoring
+	if _, err := journal.Write(data); err != nil {
+		jmu.Unlock()
+		fatalf("journal write seed %d: %v", seed, err)
+	}
+	if err := journal.WriteByte('\n'); err != nil {
+		jmu.Unlock()
+		fatalf("journal write seed %d: %v", seed, err)
+	}
+	if err := journal.Flush(); err != nil {
+		jmu.Unlock()
+		fatalf("journal flush seed %d: %v", seed, err)
+	}
 	jmu.Unlock()
 	return v
 }
@@ -108,9 +160,16 @@ func cmdRun() {
 	doMin := fs.Bool("min", true, "minimize divergences")
 	fs.Parse(os.Args[2:])
 
-	os.MkdirAll(*workdir, 0755)
-	os.MkdirAll(filepath.Join(*workdir, "scratch"), 0755)
-	st := loadState(*workdir)
+	if err := os.MkdirAll(*workdir, 0755); err != nil {
+		fatalf("workdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(*workdir, "scratch"), 0755); err != nil {
+		fatalf("scratch dir: %v", err)
+	}
+	st, err := loadState(*workdir)
+	if err != nil {
+		fatalf("%v", err)
+	}
 	next := *start
 	if *resume && st.NextSeed > next {
 		next = st.NextSeed
@@ -121,8 +180,7 @@ func cmdRun() {
 	jf, err := os.OpenFile(filepath.Join(*workdir, "journal.jsonl"),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "journal:", err)
-		os.Exit(1)
+		fatalf("journal open: %v", err)
 	}
 	defer jf.Close()
 	journal := bufio.NewWriter(jf)
@@ -156,8 +214,12 @@ func cmdRun() {
 				st.NextSeed = s + 1
 				done++
 				if done%25 == 0 {
-					journal.Flush()
-					saveState(*workdir, st)
+					if err := journal.Flush(); err != nil {
+						fatalf("journal flush: %v", err)
+					}
+					if err := saveState(*workdir, st); err != nil {
+						fatalf("%v", err)
+					}
 					el := time.Since(t0).Round(time.Second)
 					fmt.Fprintf(os.Stderr, "[%s] %d/%d %v\n", el, done, end-next, st.Counts)
 				}
@@ -174,9 +236,17 @@ feed:
 	}
 	close(seeds)
 	wg.Wait()
-	journal.Flush()
-	saveState(*workdir, st)
+	if err := journal.Flush(); err != nil {
+		fatalf("journal flush: %v", err)
+	}
+	if err := saveState(*workdir, st); err != nil {
+		fatalf("%v", err)
+	}
 	fmt.Fprintf(os.Stderr, "done: %v\n", st.Counts)
+	if n := st.Counts[vHarnessError.String()]; n > 0 {
+		fmt.Fprintf(os.Stderr, "fuzz: %d seed(s) hit HARNESS_ERROR — the backend binary failed to start (%s); this run's results are invalid\n", n, graalgoRun)
+		os.Exit(2)
+	}
 }
 
 // cmdRegress re-runs every saved regression and reports any that no longer
@@ -192,16 +262,24 @@ func cmdRegress() {
 		return
 	}
 	scratch := filepath.Join(*workdir, "scratch", "regress")
-	os.MkdirAll(scratch, 0755)
+	if err := os.MkdirAll(scratch, 0755); err != nil {
+		fatalf("scratch mkdir: %v", err)
+	}
 	defer os.RemoveAll(scratch)
 	for _, e := range ents {
 		if filepath.Ext(e.Name()) != ".go" {
 			continue
 		}
 		src := filepath.Join(dir, e.Name())
-		data, _ := os.ReadFile(src)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "regress: read %s: %v\n", e.Name(), err)
+			continue
+		}
 		tmp := filepath.Join(scratch, "main.go")
-		os.WriteFile(tmp, data, 0644)
+		if err := os.WriteFile(tmp, data, 0644); err != nil {
+			fatalf("regress: write scratch for %s: %v", e.Name(), err)
+		}
 		gc := runGC(scratch, tmp)
 		gr := runGraal(scratch, tmp)
 		v := compare(gc, gr)

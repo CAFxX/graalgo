@@ -1,3 +1,3 @@
-module graalgo.tools/mutation
+module graalgo/tools/mutation
 
 go 1.24

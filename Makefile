@@ -131,10 +131,20 @@ build:
 graalgo:
 	$(GO) build -o graalgo ./cmd/graalgo/
 
+# Stale phases/ gate: the 2026-10-14 phases/ removal broke every tool that
+# hard-coded a phases/phase[123] path, silently (nothing referenced them).
+# This gate fails the build if any tool *code* references the removed tree
+# again. Scope is behavioral files (*.go, *.py, *.sh, Dockerfiles): docs
+# (.md/.txt) and historical data may cite the old layout — e.g. the
+# old→new mapping tables — and are owned by doc updates, not this gate.
 check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	@echo "== stale phases/ reference gate (tools/) =="
+	@if grep -rn -I --include='*.go' --include='*.py' --include='*.sh' --include='Dockerfile*' -E 'phases/phase[123]' tools/; then \
+		echo "STALE-PHASES GATE FAILED: tools/ code references the removed phases/ tree"; exit 1; fi
+	@echo "stale-phases gate clean"
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

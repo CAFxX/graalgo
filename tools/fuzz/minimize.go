@@ -14,14 +14,16 @@ import (
 )
 
 // divergesOn reports whether the assembled program still diverges.
-func divergesOn(workdir, prog string) bool {
+// A write failure is returned as an error: treating it as "no longer
+// diverges" would silently accept a broken minimization.
+func divergesOn(workdir, prog string) (bool, error) {
 	src := filepath.Join(workdir, "min.go")
 	if err := os.WriteFile(src, []byte(prog), 0644); err != nil {
-		return false
+		return false, err
 	}
 	gc := runGC(workdir, src)
 	gr := runGraal(workdir, src)
-	return compare(gc, gr) == vDiverged
+	return compare(gc, gr) == vDiverged, nil
 }
 
 func assemble(pre string, stmts []string, post string) string {
@@ -36,16 +38,21 @@ func assemble(pre string, stmts []string, post string) string {
 
 // minimize runs ddmin over the statement list. Returns the minimized program
 // and the number of backend-pair probes used.
-func minimize(workdir string, seed int64) (string, int) {
+func minimize(workdir string, seed int64) (string, int, error) {
 	pre, stmts, post := generateParts(seed)
 	probes := 0
+	var firstErr error
 	test := func(ss []string) bool {
 		probes++
-		return divergesOn(workdir, assemble(pre, ss, post))
+		ok, err := divergesOn(workdir, assemble(pre, ss, post))
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		return err == nil && ok
 	}
 	// sanity: the full program must diverge
 	if !test(stmts) {
-		return assemble(pre, stmts, post), probes
+		return assemble(pre, stmts, post), probes, firstErr
 	}
 	// ddmin: repeatedly try removing chunks
 	n := 2
@@ -85,15 +92,20 @@ func minimize(workdir string, seed int64) (string, int) {
 			}
 		}
 	}
-	return assemble(pre, stmts, post), probes
+	return assemble(pre, stmts, post), probes, firstErr
 }
 
-// saveRegression writes the minimized program to the regressions directory
-// and records it in regressions.json.
-func saveRegression(workdir string, seed int64, prog string) string {
+// saveRegression writes the minimized program to the regressions directory.
+// A lost regression is a lost bug report — the error is returned, never
+// swallowed.
+func saveRegression(workdir string, seed int64, prog string) (string, error) {
 	dir := filepath.Join(workdir, "regressions")
-	os.MkdirAll(dir, 0755)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("mkdir regressions: %w", err)
+	}
 	name := fmt.Sprintf("fuzz_%d.go", seed)
-	os.WriteFile(filepath.Join(dir, name), []byte(prog), 0644)
-	return name
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(prog), 0644); err != nil {
+		return "", fmt.Errorf("write regression %s: %w", name, err)
+	}
+	return name, nil
 }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# godebug-diff: differential tool for P2-M5 (WS E) EMULATED GODEBUG knobs.
+# godebug-diff: differential tool for the (WS E) EMULATED GODEBUG knobs.
 #
 # For each EMULATED knob, runs a probe program under stock gc (go run) and
 # under graalgo (SchedMain) with the same GODEBUG setting, then diffs the
@@ -7,27 +7,43 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in phases/phase2/GODEBUG.md)
+#                documented in GODEBUG.md under docs/arch/)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)
 #   panicnil     byte-identical stdout (recover() returns nil, like gc)
 #
+# The graalgo leg runs through internal/backend/runtime's `run` make target
+# (SchedMain), so the classpath and launcher flags stay defined in exactly
+# one place — the module Makefile — instead of being duplicated here.
+#
 # Usage: ./godebug-diff.sh [--keep]   (run from this directory)
 # Exit 0 iff every knob diffs as expected. Writes REPORT.md on success.
-set -u
+#
+# Shell hygiene: `set -uo pipefail` (no -e: non-zero probe exits are data,
+# captured explicitly). Every cd/subshell path computation and mktemp is
+# checked; a scratch dir is always cleaned up via trap.
+set -uo pipefail
 
-P2="$(cd "$(dirname "$0")/../../phases/phase2" && pwd)"
-GRAALGO="$P2"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+REPO="$(cd -- "$SCRIPT_DIR/../.." && pwd)" || exit 1
+RT="$REPO/internal/backend/runtime"
+[ -d "$RT" ] || { echo "godebug-diff: backend runtime dir missing: $RT" >&2; exit 1; }
 GO="$HOME/tools/go/bin/go"
-GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-JAVA="$GRAALVM_HOME/bin/java"
-CORPUS="$P2/corpus/godebug"
-WORK="$(mktemp -d)"
+CORPUS="$REPO/test/corpus/phase2/godebug"
+[ -d "$CORPUS" ] || { echo "godebug-diff: corpus dir missing: $CORPUS" >&2; exit 1; }
+WORK="$(mktemp -d)" || { echo "godebug-diff: mktemp failed" >&2; exit 1; }
+[ -n "$WORK" ] && [ -d "$WORK" ] || { echo "godebug-diff: mktemp produced no directory" >&2; exit 1; }
 KEEP="${1:-}"
 
-CP="$P2/out/classes:$P2/../phase1/out/classes:$(echo $P2/../phase1/lib/*.jar | tr ' ' ':')"
-JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
+cleanup() {
+    if [ -z "${KEEP:-}" ]; then
+        rm -rf -- "${WORK:-}"
+    else
+        echo "work dir kept: ${WORK:-}"
+    fi
+}
+trap cleanup EXIT
 
 pass=0
 fail=0
@@ -41,8 +57,9 @@ run_gc() { # $1=godebug $2=probe -> stdout/stderr/exit in $WORK/gc.{out,err,exit
 
 run_gr() { # $1=godebug $2=probe
     local gd="$1" probe="$2"
-    GODEBUG="$gd" "$JAVA" $JAVA_FLAGS -cp "$CP" \
-        graalgo.sched.launcher.SchedMain --gmp=2 "$CORPUS/$probe" \
+    # -s: make must not echo the recipe — its stdout is the probe's stdout,
+    # diffed byte-exact below.
+    GODEBUG="$gd" make -s -C "$RT" run ARGS="--gmp=2 $CORPUS/$probe" \
         >"$WORK/gr.out" 2>"$WORK/gr.err"
     echo "$?" >"$WORK/gr.exit"
 }
@@ -64,8 +81,8 @@ check() { # $1=knob $2=ok(0/1) $3=detail
     fi
 }
 
-echo "== building phase2 =="
-make -C "$P2" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
+echo "== building backend runtime module =="
+make -C "$RT" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
 
 # --- schedtrace ---
 # Strengthened comparator: requires >=3 lines with STRICTLY INCREASING
@@ -159,11 +176,5 @@ echo "== $pass passed, $fail failed =="
     echo "Result: $pass passed, $fail failed"
 } > REPORT.md
 echo "wrote REPORT.md"
-
-if [ -z "$KEEP" ]; then
-    rm -rf "$WORK"
-else
-    echo "work dir kept: $WORK"
-fi
 
 [ "$fail" = "0" ]

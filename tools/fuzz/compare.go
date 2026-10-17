@@ -10,6 +10,9 @@ package main
 //   GC_INVALID   — gc rejected the program (generator bug, not counted)
 //   TRACE_DIFF   — only panic-trace formatting differs (known 27_panic_trace
 //                  limitation: PC offsets/paths/qualifiers)
+//   HARNESS_ERROR — a backend binary failed to start (missing/unexecutable);
+//                  the harness is broken, so no verdict about the program
+//                  can be drawn — this must never masquerade as DIVERGED.
 
 import (
 	"regexp"
@@ -24,6 +27,7 @@ const (
 	vScopeReject
 	vGCInvalid
 	vTraceDiff
+	vHarnessError
 )
 
 func (v verdict) String() string {
@@ -38,6 +42,8 @@ func (v verdict) String() string {
 		return "GC_INVALID"
 	case vTraceDiff:
 		return "TRACE_DIFF"
+	case vHarnessError:
+		return "HARNESS_ERROR"
 	}
 	return "?"
 }
@@ -83,6 +89,12 @@ func firstLine(s string) string {
 
 // compare runs the full verdict logic for one program.
 func compare(gc, gr runResult) verdict {
+	if gc.harnessErr || gr.harnessErr {
+		// A backend binary failed to start (missing/unexecutable): the
+		// harness is broken. This is not evidence about the program —
+		// never classify it as a divergence.
+		return vHarnessError
+	}
 	if !gc.buildOK {
 		return vGCInvalid
 	}
