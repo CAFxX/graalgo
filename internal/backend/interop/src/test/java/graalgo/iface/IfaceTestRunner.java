@@ -35,6 +35,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // RV-P1-23 (2026-10-17): split-domain counted handles — the
+        // UnsafeTable leak falsifier (T1) plus counted-domain semantics.
+        TESTS.add(graalgo.p3unsafe.UnsafeTableLeakTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         TESTS.add(FmtStateItabTest.class);
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
