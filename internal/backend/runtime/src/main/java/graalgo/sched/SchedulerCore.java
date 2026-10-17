@@ -45,6 +45,16 @@ public final class SchedulerCore {
     private static volatile SchedulerCore installed;
 
     /**
+     * RV-P1-19: the scheduler that owns the current thread, for scheduler
+     * vthreads only (set at spawn, cleared on vthread exit). Lets the
+     * static {@link #current()} detect a C1 orphan whose own scheduler is
+     * no longer installed and fail fast instead of returning a foreign
+     * scheduler (whose drainer the orphan would then corrupt with phantom
+     * tokens).
+     */
+    private static final ThreadLocal<SchedulerCore> threadScheduler = new ThreadLocal<>();
+
+    /**
      * Installs the launcher-wide scheduler. Returns the previous one.
      */
     public static SchedulerCore install(SchedulerCore next) {
@@ -55,7 +65,13 @@ public final class SchedulerCore {
 
     /**
      * The installed scheduler; fail-fast when none (a loud error beats
-     * silently running unscheduled).
+     * silently running unscheduled) — and fail-fast when the calling
+     * thread is a scheduler vthread whose own scheduler is not the
+     * installed one (RV-P1-19 C1 orphan vs a foreign scheduler: returning
+     * the foreign scheduler would let the orphan corrupt its accounting —
+     * phantom PARKED tokens drive inflight negative and trip the
+     * drainer's corruption halt. The vthread wrapper catches the throw
+     * and dies quietly via {@link #recordCrash} + {@link #isOrphaned}).
      */
     public static SchedulerCore current() {
         SchedulerCore sc = installed;
@@ -63,6 +79,12 @@ public final class SchedulerCore {
             throw new IllegalStateException(
                     "graalgo.sched: no SchedulerCore installed (SchedMain installs one; "
                     + "plain Phase-1 runs must not reach scheduler entry points)");
+        }
+        SchedulerCore own = threadScheduler.get();
+        if (own != null && own != sc) {
+            throw new IllegalStateException(
+                    "graalgo.sched: scheduler vthread running against a foreign "
+                    + "scheduler (C1 orphan): its own scheduler is no longer installed");
         }
         return sc;
     }
@@ -99,13 +121,15 @@ public final class SchedulerCore {
     private final Object quiescenceLock = new Object();
 
     /**
-     * Spawns in flight (RV-P1-19): incremented at {@link #spawn} entry,
-     * decremented after the INIT token is offered. Closes the window
-     * between {@code vthread.start()} and the INIT offer when the
-     * spawner is a foreign (test/launcher) thread rather than an
-     * admitted goroutine — an admitted spawner already holds
-     * {@code inflight > 0} for the whole call. Read by the drainer's
-     * deadlock detector: a spawn in progress suppresses the report.
+     * Spawns in flight (RV-P1-19): a defense-in-depth counter for the
+     * drainer's deadlock detector — a spawn in progress suppresses the
+     * report. Production {@link #spawn} does NOT hold this counter: it
+     * increments {@code liveGoroutines} before {@code vthread.start()},
+     * so the newcomer is visible in the live count throughout the
+     * start→INIT-offer window (a spawner-held hold is unsound: a goroutine
+     * fast enough to exit before {@code spawn()} returns would have its
+     * EXIT evaluation suppressed by the still-held counter). Only the
+     * white-box unit test adjusts it, via {@link #addSpawnInflightForTest}.
      */
     private final AtomicInteger spawnInflight = new AtomicInteger();
 
@@ -448,6 +472,7 @@ public final class SchedulerCore {
         long t = armPark(h);
         Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {
             currentHandle.set(h);
+            threadScheduler.set(SchedulerCore.this);
             h.thread = Thread.currentThread();
             GoroutineState state = new GoroutineState();
             GoroutineState prev = GoroutineState.install(state);
@@ -500,6 +525,7 @@ public final class SchedulerCore {
                 }
                 GoroutineState.restore(prev);
                 currentHandle.remove();
+                threadScheduler.remove();
                 synchronized (quiescenceLock) {
                     if (liveGoroutines.decrementAndGet() == 0) {
                         quiescenceLock.notifyAll();
@@ -679,18 +705,14 @@ public final class SchedulerCore {
      * that currently exist", {@code src/runtime/debug.go}).
      *
      * <p>Definition (graalgo): a goroutine exists from the moment
-     * {@link #spawn} returns (the count increments immediately after the
-     * vthread starts) until its body completes (the count decrements in
-     * the vthread's {@code finally} block, before the EXIT token is
-     * offered). Blocked/parked goroutines — channel waits, mutexes,
-     * timers, scheduler parks — count, exactly like gc, which counts
-     * waiting goroutines. The main goroutine counts: launchers run main
-     * via {@code spawn}, so a fresh program observes 1, like gc.
-     *
-     * <p>The only window the count misses is the instant between
-     * {@code vthread.start()} and the increment; no "created but not
-     * started" goroutine is observable to Go code, matching gc where a
-     * goroutine exists from {@code newproc} on.
+     * {@link #spawn} is entered (the count increments before the vthread
+     * starts, so the newcomer is visible throughout the
+     * start→INIT-offer window) until its body completes (the count
+     * decrements in the vthread's {@code finally} block, before the EXIT
+     * token is offered). Blocked/parked goroutines — channel waits,
+     * mutexes, timers, scheduler parks — count, exactly like gc, which
+     * counts waiting goroutines. The main goroutine counts: launchers
+     * run main via {@code spawn}, so a fresh program observes 1, like gc.
      */
     public int numGoroutines() {
         return liveGoroutines.get();
@@ -764,8 +786,13 @@ public final class SchedulerCore {
                 suppressor != null ? suppressor : () -> false;
     }
 
-    /** True while the external suppressor reports blocked progress. */
-    boolean deadlockSuppressed() {
+    /**
+     * True while the external deadlock suppressor reports blocked progress
+     * (RV-P1-19). Public for the netpoll wiring test and embedders: the gc
+     * p6 quirk (a live netpoller suppresses the deadlock report) is wired
+     * by {@code GoNetpoll.pollServerInit} via {@link #setDeadlockSuppressor}.
+     */
+    public boolean deadlockSuppressed() {
         return deadlockSuppressor.getAsBoolean();
     }
 
@@ -778,9 +805,11 @@ public final class SchedulerCore {
     /**
      * Adjusts the spawn-in-flight counter; white-box deadlock-detector
      * tests only. Simulates a foreign-thread spawn in progress across a
-     * drainer evaluation — the real {@link #spawn} holds the counter
-     * across the vthread.start()→INIT-offer window, which no test can
-     * pause inside deterministically.
+     * drainer evaluation. Production {@link #spawn} deliberately does NOT
+     * hold this counter (it increments {@code liveGoroutines} before
+     * {@code vthread.start()} instead — a spawner-held hold is unsound,
+     * see the field doc); the counter exists only so the detector's
+     * suppression clause stays exercised.
      */
     void addSpawnInflightForTest(int delta) {
         spawnInflight.addAndGet(delta);
