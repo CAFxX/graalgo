@@ -730,8 +730,29 @@ public final class Intrinsics {
      */
     public static String renderGoStack(long goroutineId, GoStackFrame top,
             SourceSection throwSiteOverride) {
+        return renderGoStack(goroutineId, "running", top, throwSiteOverride);
+    }
+
+    /**
+     * Renders a Go stack like {@link #renderGoStack(long, GoStackFrame,
+     * SourceSection)} but with a caller-supplied wait-state label in the
+     * header ({@code goroutine <id> [<label>]:}). Used by the deadlock
+     * detector's per-goroutine dump (RV-P1-19), whose labels are
+     * park-reason approximations (see
+     * {@code Drainer.deadlockLabel}): {@code select}, {@code chan wait},
+     * {@code sleep}, {@code syscall}, {@code IO wait}, {@code waiting}.
+     *
+     * @param goroutineId the id to print (gc: the main goroutine is 1)
+     * @param stateLabel the wait-state label (gc's bracketed state)
+     * @param top the innermost frame (null renders an empty stack)
+     * @param throwSiteOverride source section for the innermost frame
+     *        (the panic throw site), or null to use the frame's own
+     */
+    public static String renderGoStack(long goroutineId, String stateLabel,
+            GoStackFrame top, SourceSection throwSiteOverride) {
         StringBuilder sb = new StringBuilder();
-        sb.append("goroutine ").append(goroutineId).append(" [running]:\n");
+        sb.append("goroutine ").append(goroutineId)
+                .append(" [").append(stateLabel).append("]:\n");
         GoStackFrame f = top;
         boolean first = true;
         while (f != null && !f.isEmpty()) {

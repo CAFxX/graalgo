@@ -63,6 +63,21 @@ public final class GoroutineHandle {
     public volatile long parkStartNanos;
 
     /**
+     * Park-time Go-stack snapshot (RV-P1-19): the head of the
+     * goroutine's {@code GoStackFrame} chain, captured in
+     * {@link SchedulerCore#parkCurrent} on the owning vthread just
+     * before the park becomes visible, cleared on resume. Read by the
+     * drainer's deadlock detector to render the per-goroutine dump —
+     * {@code GoroutineState} is vthread-ThreadLocal, so the detector
+     * cannot walk another vthread's live stack. The chain is never
+     * mutated while its owner is parked (mutations happen only on the
+     * owning vthread during execution), and the detector renders only
+     * while every goroutine is parked with the drainer lock held, so
+     * no mutation can interleave. One volatile write per park.
+     */
+    public volatile graalgo.runtime.GoStackFrame parkedGoStack;
+
+    /**
      * JFR I/O tracking (P2-M6): nanos at {@code ioEnter}, for the full
      * syscall-duration park event emitted at {@code ioExit}.
      */

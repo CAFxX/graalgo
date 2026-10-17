@@ -221,6 +221,18 @@ public final class GoNetpoll {
     }
 
     /**
+     * True once the netpoller thread has been started (RV-P1-19).
+     * The deadlock detector suppresses while this is true: gc parity
+     * quirk (probe p6) — once gc's netpoller thread exists it keeps
+     * {@code run > 0} forever, so {@code checkdead} never fires again
+     * in that process. Wired into the scheduler by the P3 launcher via
+     * {@code SchedulerCore.setDeadlockSuppressor}.
+     */
+    public static boolean pollerThreadStarted() {
+        return pollerThread != null;
+    }
+
+    /**
      * Test hook: run on the waiter thread after the pre-wait
      * {@code checkErr} passes but before the waiter slot is claimed.
      * Lets tests force the close-vs-wait interleaving deterministically
@@ -251,6 +263,18 @@ public final class GoNetpoll {
                         .start(() -> pollLoop(sel));
                 t.setPriority(Thread.MAX_PRIORITY);
                 pollerThread = t;
+                // RV-P1-19: gc-faithful netpoll quirk (probe p6) — once
+                // this thread exists, gc's checkdead never fires. Wire
+                // the deadlock detector's suppressor on the current
+                // scheduler so every consumer (P3 launcher, tests,
+                // embedders) gets the quirk automatically. No scheduler
+                // installed (bare interop use): nothing to suppress on.
+                try {
+                    SchedulerCore.current()
+                            .setDeadlockSuppressor(GoNetpoll::pollerThreadStarted);
+                } catch (IllegalStateException ignored) {
+                    // No scheduler installed.
+                }
             } catch (IOException e) {
                 INIT.set(false);
                 throw new IllegalStateException("graalgo-netpoll: Selector.open failed", e);

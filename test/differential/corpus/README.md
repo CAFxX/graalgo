@@ -68,6 +68,15 @@ Coverage map:
 | 48  | range_over_func_edge | range-over-func exits: return/goto/labels,       |
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
+| 49  | deadlock_select      | RV-P1-19: `select {}` → fatal deadlock, exit 2   |
+| 50  | deadlock_chan_send   | RV-P1-19: unbuffered send, no receiver → fatal   |
+|     |                      | deadlock, exit 2                                 |
+| 51  | deadlock_mutex       | RV-P1-19: deterministic lock-order deadlock →    |
+|     |                      | fatal deadlock, exit 2                           |
+| 52  | main_returns_early   | RV-P1-19: main returns, blocked child abandoned  |
+|     |                      | → exit 0 (gc probe p2)                           |
+| 53  | timer_then_block     | RV-P1-19: pending timer suppresses the report;   |
+|     |                      | sleep fires → exit 0 (gc probe p5)               |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,
