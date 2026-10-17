@@ -199,13 +199,19 @@ pin-audit: main $(OUT_TEST)/.built
 	--out out/pinaudit-report.md
 
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
+# Takes ~10 min. Logs under out/torture/logs/ (gitignored).
 torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
 
-# P2-M8 GOMAXPROCS matrix (differential vs gc).
+# P2-M8 GOMAXPROCS matrix (differential vs gc). Needs the gofrontend
+# binary (internal/frontend/build.sh); logs under out/torture/gmp-matrix/.
 gmp-matrix: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/gmp_matrix.sh
+
+# P2-M8 stress-corpus differential (Go runtime/context patterns vs gc).
+# Needs the gofrontend binary; logs under out/torture/stress-differential/.
+stress-differential: main $(OUT_TEST)/.built
+	bash ../../../tools/torture/stress_differential.sh
 
 clean:
 	rm -rf out

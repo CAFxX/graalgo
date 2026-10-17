@@ -1,34 +1,56 @@
 #!/bin/bash
 # P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path.
 #
-# Runs every leg, archives logs to hidden_files/torture/logs/, prints a
-# summary. Exit 0 iff every leg passes. A single failing leg is a bug to
-# fix; systematic divergence across legs is the kill trigger (PLAN.md §7).
-set -u
+# Runs every leg, archives logs to internal/backend/runtime/out/torture/logs/
+# (gitignored via out/), prints a summary. Exit 0 iff every leg passes.
+# A single failing leg is a bug to fix; systematic divergence across legs
+# is the kill trigger (PLAN.md §7).
+#
+# Prerequisites: the backend runtime module built
+#   make -C internal/backend/runtime main
+# (the `torture` make target in that module builds it first).
+set -euo pipefail
 cd "$(dirname "$0")/../.." || exit 1
+RT="internal/backend/runtime"
 
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
-OUTDIR="hidden_files/torture/logs"
-mkdir -p "$OUTDIR"
 JAVA="$GRAALVM_HOME/bin/java"
+[ -x "$JAVA" ] || { echo "ERROR: no java at $JAVA (set GRAALVM_HOME)" >&2; exit 1; }
+
+# Classpath mirrors the runtime module's TEST_CP (see
+# internal/backend/runtime/Makefile): test classes first, then main
+# classes, the truffle module's classes (the 8 frozen stubs — shadowed by
+# the phase-2 replacements that come earlier on the classpath), the
+# interop module's classes, then the truffle lib jars.
+TRUFFLE="internal/backend/truffle"
+for d in "$RT/out/test-classes" "$RT/out/classes" "$TRUFFLE/out/classes"; do
+  [ -d "$d" ] || { echo "ERROR: $d missing — build the backend first: make -C $RT main" >&2; exit 1; }
+done
+[ -d "$TRUFFLE/lib" ] || { echo "ERROR: $TRUFFLE/lib missing" >&2; exit 1; }
+CP="$RT/out/test-classes:$RT/out/classes:$TRUFFLE/out/classes:internal/backend/interop/out/classes:$TRUFFLE/lib/*"
+# Same JVM flags as the runtime module's own test invocations.
+JAVA_FLAGS=(--enable-native-access=ALL-UNNAMED -Xss32m)
+
+OUTDIR="$RT/out/torture/logs"
+mkdir -p "$OUTDIR" || { echo "ERROR: cannot create $OUTDIR" >&2; exit 1; }
 
 # leg <logname> <JFLAGS> -- <LEG> [leg args...]
 leg() {
   local logname="$1"; shift
   local jflags=()
-  while [ "$1" != "--" ]; do
+  while [ "${1:-}" != "--" ]; do
     jflags+=("$1"); shift
   done
   shift # drop --
   local legname="$1"; shift
   local log="$OUTDIR/$logname.log"
   echo "--- leg $logname ($legname $*) ---"
-  timeout 300 "$JAVA" "${jflags[@]}" -cp "$CP" \
+  local rc=0
+  timeout 300 "$JAVA" "${JAVA_FLAGS[@]}" "${jflags[@]}" -cp "$CP" \
     graalgo.sched.torture.TortureBattery "$legname" "$@" \
-    > "$log" 2>&1
-  local rc=$?
-  grep -E "^(F[0-9]|RESULT)" "$log" | tail -4
+    > "$log" 2>&1 || rc=$?
+  # Display-only pipeline: must not gate the verdict under pipefail.
+  grep -E "^(F[0-9]|RESULT)" "$log" | tail -4 || true
   if [ $rc -ne 0 ]; then
     echo "LEG $logname FAILED (exit $rc); log: $log"
     return 1
