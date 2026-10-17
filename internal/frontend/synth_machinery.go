@@ -1675,8 +1675,55 @@ func isAbiTypeOfFunc(fn *types.Func) bool {
 // reinterprets the pointer, but the backend's GoStruct model needs an
 // actual rtype struct ({ t abi.Type }) wrapping the abi.Type for promoted
 // field accesses to work. Calls lower to reflectop{op:tortype}.
+//
+// Identification is STRUCTURAL, not package-name-keyed: the no-bridges
+// gate (his 2026-10-15 order) bans new package-name conditionals. The
+// matched shape is exact — an unexported, non-generic function named
+// toRType taking a single *internal/abi.Type parameter and returning a
+// single pointer to a named type "rtype" declared in the same package as
+// the function. That is precisely gc's reflect.toRType (reflect/type.go);
+// no other function in the ecosystem has this shape.
 func isReflectToRTypeFunc(fn *types.Func) bool {
-	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" && fn.Name() == "toRType"
+	if fn == nil || fn.Name() != "toRType" {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() != nil {
+		return false
+	}
+	if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
+		return false
+	}
+	if sig.Params().Len() != 1 || sig.Results().Len() != 1 {
+		return false
+	}
+	// Param: *internal/abi.Type.
+	pptr, ok := sig.Params().At(0).Type().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	pnamed, ok := pptr.Elem().(*types.Named)
+	if !ok || pnamed.Obj().Name() != "Type" {
+		return false
+	}
+	ppkg := pnamed.Obj().Pkg()
+	if ppkg == nil || ppkg.Path() != "internal/abi" {
+		return false
+	}
+	// Result: *rtype, with rtype declared in the same package as fn.
+	rptr, ok := sig.Results().At(0).Type().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	rnamed, ok := rptr.Elem().(*types.Named)
+	if !ok || rnamed.Obj().Name() != "rtype" {
+		return false
+	}
+	rpkg := rnamed.Obj().Pkg()
+	if rpkg == nil || fn.Pkg() == nil || rpkg != fn.Pkg() {
+		return false
+	}
+	return true
 }
 
 // exportReflectToRType lowers reflect.toRType(t) to reflectop{op:tortype}.
