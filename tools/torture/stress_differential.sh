@@ -61,6 +61,9 @@ differential() {
   local grc=0 gcrc=0
   timeout 180 "$SYNC_RUN" --gmp=2 "$GR/$prog" \
     > "$OUTDIR/$name.graalgo.stdout" 2> "$OUTDIR/$name.graalgo.stderr" || grc=$?
+  # Strip the JVM's _JAVA_OPTIONS "Picked up" notice (launcher chatter on
+  # stderr); any other stderr output is program output and is compared.
+  sed -i '/^Picked up _JAVA_OPTIONS/d' "$OUTDIR/$name.graalgo.stderr"
   timeout 120 "$GO" run "$prog" \
     > "$OUTDIR/$name.gc.stdout" 2> "$OUTDIR/$name.gc.stderr" || gcrc=$?
   local ok=1

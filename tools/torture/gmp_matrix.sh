@@ -66,9 +66,12 @@ cell() {
   # The corpus prints via the println builtin, which writes to stderr on
   # both gc and graalgo — so the differential comparison is on stderr.
   # (JVM/launcher warnings would also land on stderr and fail the cell;
-  # that is intended: toolchain noise is a signal, not to be filtered.)
+  # that is intended: toolchain noise is a signal, not to be filtered.
+  # The _JAVA_OPTIONS "Picked up" notice is the sole exception: it is
+  # JVM-launcher chatter, stripped before comparison.)
   timeout 180 "$SYNC_RUN" --gmp="$gmp" "$GR/$prog" \
     > "$OUTDIR/${wl}_${tag}.graalgo.stdout" 2> "$OUTDIR/${wl}_${tag}.graalgo.stderr" || grc=$?
+  sed -i '/^Picked up _JAVA_OPTIONS/d' "$OUTDIR/${wl}_${tag}.graalgo.stderr"
   # gc
   GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
     > "$OUTDIR/${wl}_${tag}.gc.stdout" 2> "$OUTDIR/${wl}_${tag}.gc.stderr" || gcrc=$?
