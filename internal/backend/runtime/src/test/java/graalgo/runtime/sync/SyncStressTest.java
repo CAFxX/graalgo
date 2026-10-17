@@ -266,4 +266,46 @@ public final class SyncStressTest {
             SchedulerCore.install(null);
         }
     }
+
+    /**
+     * RV-P1-18: a throwing {@code SchedulerCore.current()} must not strand
+     * the once in RUNNING. The scheduler handle is resolved BEFORE the
+     * IDLE->RUNNING transition, so {@code doOnce} from a scheduler-less
+     * thread throws {@code IllegalStateException} while the once stays IDLE
+     * and retryable. Against the bug (handle resolved after the CAS), the
+     * retry deadlocks: state is stuck RUNNING, so the retrying goroutine
+     * parks forever and the latch below times out.
+     */
+    public void testOnceThrowingHandleLeavesOnceRetryable() throws Exception {
+        // Narrowest seam for a throwing current(): no scheduler installed
+        // on this thread. Deterministic regardless of runner ordering.
+        SchedulerCore.install(null);
+        GoOnce once = new GoOnce();
+        boolean threw = false;
+        try {
+            once.doOnce(() -> { throw new AssertionError("action must not run"); });
+        } catch (IllegalStateException e) {
+            threw = true;
+        }
+        assertTrue(threw, "doOnce on a scheduler-less thread must throw IllegalStateException");
+        assertTrue(!once.isDone(), "once must not be DONE after the throwing handle");
+        // The once must still be usable: a scheduler goroutine retries and
+        // runs the action exactly once.
+        SchedulerCore sched = newScheduler(4);
+        try {
+            AtomicInteger runs = new AtomicInteger(0);
+            CountDownLatch done = new CountDownLatch(1);
+            sched.spawn(() -> {
+                once.doOnce(runs::incrementAndGet);
+                done.countDown();
+            });
+            assertTrue(done.await(30, TimeUnit.SECONDS),
+                "retry doOnce timed out: once stranded in RUNNING deadlocks later callers");
+            sched.awaitQuiescence();
+            assertEquals(1, runs.get(), "retryable once must run the action exactly once");
+            assertTrue(once.isDone(), "once must report done after the retry");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
 }
