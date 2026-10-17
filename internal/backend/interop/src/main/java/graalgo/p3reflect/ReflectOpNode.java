@@ -496,8 +496,8 @@ public final class ReflectOpNode extends GoExprNode {
         return ReflectValues.pack(desc, ptrTok, p, ReflectValues.FLAG_ADDR);
     }
 
-    /** Zero D5 value for a token. */
-    private static Object zeroFor(long tok) {
+    /** Zero D5 value for a token. Package-visible for AllocIntrinsics. */
+    static Object zeroFor(long tok) {
         TypeInfo t = ReflectTypes.table().info(tok);
         return switch (t.kind) {
             case BOOL -> Boolean.FALSE;

@@ -50,7 +50,10 @@ func TestIntrinsicTableMechanical(t *testing.T) {
 		"sync.throw",
 		"sync.fatal",
 		"runtime.fastrand",
-		"runtime.rand", // RV-P1-02: registered for internal/sync's hashTrieMap seed
+		"runtime.rand",                    // RV-P1-02: registered for internal/sync's hashTrieMap seed
+		"internal/reflectlite.unsafe_New", // RV-P1-02 F4: allocator intrinsic
+		"reflect.unsafe_New",              // RV-P1-02 F4: allocator intrinsic
+		"reflect.unsafe_NewArray",         // RV-P1-02 F4: allocator intrinsic
 	} {
 		if !linknameIntrinsicSymbols[sym] {
 			t.Errorf("linknameIntrinsicSymbols[%q] = false; want true", sym)
@@ -244,5 +247,25 @@ func main() {
 `
 	if _, err := ExportFile(writeSyncProg(t, src)); err != nil {
 		t.Fatalf("sync/atomic program should export, got: %v", err)
+	}
+}
+
+// TestAllocatorIntrinsicsRegistered: references to the RV-P1-02 F4
+// allocator linkname symbols (internal/reflectlite.unsafe_New,
+// reflect.unsafe_New, reflect.unsafe_NewArray) are accepted at export
+// (not rejected with [RV-P1-02]). Full stdlib export needs additional
+// intrinsics beyond F4's scope (typedmemmove, ifaceE2I, chan/map ops);
+// those remain honestly rejected until their lanes land.
+func TestAllocatorIntrinsicsRegistered(t *testing.T) {
+	cases := []struct{ sym, sig string }{
+		{"internal/reflectlite.unsafe_New", "func myAlloc(unsafe.Pointer) unsafe.Pointer"},
+		{"reflect.unsafe_New", "func myAlloc(unsafe.Pointer) unsafe.Pointer"},
+		{"reflect.unsafe_NewArray", "func myAlloc(unsafe.Pointer, int) unsafe.Pointer"},
+	}
+	for _, c := range cases {
+		src := "package main\n\nimport \"unsafe\"\n\n//go:linkname myAlloc " + c.sym + "\n" + c.sig + "\n\nfunc main() {}\n"
+		if _, err := ExportFile(writeSyncProg(t, src)); err != nil {
+			t.Errorf("linkname symbol %q should export, got: %v", c.sym, err)
+		}
 	}
 }

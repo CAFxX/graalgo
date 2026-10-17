@@ -242,7 +242,7 @@ var runtimeProvidedLinknames = map[string]string{
 }
 
 // linknameIntrinsicSymbols is the set of linkname symbols
-// with a registered backend intrinsic (155 entries,
+// with a registered backend intrinsic (158 entries,
 // scraped from LinknameIntrinsics.java). A reference to a
 // linkname function whose symbol is neither in this set
 // nor provided by a compiled Go function is rejected at
@@ -364,6 +364,7 @@ var linknameIntrinsicSymbols = map[string]bool{
 	"internal/poll.runtime_pollUnblock":            true,
 	"internal/poll.runtime_pollWait":               true,
 	"internal/poll.runtime_pollWaitCanceled":       true,
+	"internal/reflectlite.unsafe_New":              true,
 	"internal/sync.fatal":                          true,
 	"internal/sync.runtime_SemacquireMutex":        true,
 	"internal/sync.runtime_Semrelease":             true,
@@ -380,6 +381,8 @@ var linknameIntrinsicSymbols = map[string]bool{
 	"internal/synctest.inBubble":                   true,
 	"internal/synctest.isAssociated":               true,
 	"internal/synctest.release":                    true,
+	"reflect.unsafe_New":                           true,
+	"reflect.unsafe_NewArray":                      true,
 	"runtime.fastrand":                             true,
 	"runtime.fastrandn":                            true,
 	"runtime.nanotime":                             true,

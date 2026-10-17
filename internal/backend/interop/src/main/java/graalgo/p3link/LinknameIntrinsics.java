@@ -13,6 +13,7 @@ import graalgo.p3os.GoOs;
 import graalgo.p3net.GoHttp;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
+import graalgo.p3reflect.AllocIntrinsics;
 import graalgo.p3tls.TlsRuntime;
 import graalgo.p3unsafe.UnsafeTable;
 import graalgo.p3x509.GoX509;
@@ -84,6 +85,24 @@ public final class LinknameIntrinsics {
         // linkname by sync's map seed). Implemented via fastrandn.
         Linknames.register("runtime.randn",
                 args -> Intrinsics.fastrandn(((Number) args[0]).intValue()), 1);
+        // RV-P1-02 (F4): the allocator intrinsics. gc's
+        // internal/reflectlite.unsafe_New and reflect.unsafe_New are
+        // bodyless runtime linknames (provided by runtime/reflect_unsafe_New
+        // and runtime/reflectlite_unsafe_New via provider-side //go:linkname
+        // in src/runtime/malloc.go); reflect.unsafe_NewArray likewise.
+        // Whole-package export of the real reflect/reflectlite packages
+        // references them, so without a backend intrinsic the
+        // reference-site rejection fires for every program importing
+        // errors/bytes/strconv/io/os/strings/reflect. gc semantics:
+        // unsafe_New(t) allocates a zeroed object of type t;
+        // unsafe_NewArray(t, n) a zeroed [n]t. See AllocIntrinsics for the
+        // D5 mapping and the *abi.Type carrier contract.
+        Linknames.register("internal/reflectlite.unsafe_New",
+                args -> AllocIntrinsics.unsafeNew(args[0]), 1);
+        Linknames.register("reflect.unsafe_New",
+                args -> AllocIntrinsics.unsafeNew(args[0]), 1);
+        Linknames.register("reflect.unsafe_NewArray",
+                args -> AllocIntrinsics.unsafeNewArray(args[0], args[1]), 2);
         Linknames.register("runtime.nanotime", args -> Timers.nanotime(), 0);
         // Intrinsic → Go helper by symbol name. D5: name arrives as
         // GoString; the single any-typed argument passes through boxed.
