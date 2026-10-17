@@ -2,7 +2,8 @@ package main
 
 // exec.go — backend execution for the M8 fuzzer.
 //
-// Two backends: stock gc (~/tools/go) and graalgo-run (phases/phase1).
+// Two backends: stock gc (~/tools/go) and graalgo-run
+// (internal/backend/graalgo-run, the backend launcher wrapper).
 // Each run captures build success, exit code, stdout, stderr.
 
 import (
@@ -14,8 +15,26 @@ import (
 	"time"
 )
 
+// repoRoot locates the graalgo repo root: $GR wins (the same convention as
+// tools/fuzz-soak), else walk up from the fuzz binary
+// (tools/fuzz/fuzz -> tools/fuzz -> tools -> repo). The last-resort default
+// mirrors the canonical checkout path; it is only reached when neither the
+// env var nor the executable location resolves.
+func repoRoot() string {
+	if gr := os.Getenv("GR"); gr != "" {
+		return gr
+	}
+	if exe, err := os.Executable(); err == nil {
+		if rp, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = rp
+		}
+		return filepath.Dir(filepath.Dir(filepath.Dir(exe)))
+	}
+	return os.ExpandEnv("$HOME/workspace/graalgo")
+}
+
 var goBin = os.ExpandEnv("$HOME/tools/go/bin/go")
-var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/phases/phase1/graalgo-run")
+var graalgoRun = filepath.Join(repoRoot(), "internal/backend/graalgo-run")
 
 type runResult struct {
 	buildOK   bool
