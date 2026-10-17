@@ -101,7 +101,7 @@ public final class AtomicCellFieldAddrTest {
     public void testFieldAddrOnStructStillYieldsFieldPointer() {
         GoStructDescriptor desc = new GoStructDescriptor("S", List.of(
                 new GoStructDescriptor.Field("v", GoKind.INT32,
-                        false, 0, 0, null, null, null)));
+                        false, 0, 0, null, null, null, false)));
         GoStruct s = new GoStruct(desc, new long[0], new Object[]{null});
         FieldAddrNode n = new FieldAddrNode(
                 constBase(s, GoKind.STRUCT), new int[]{0}, GoKind.INT32);
