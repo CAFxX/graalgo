@@ -77,8 +77,20 @@ def main():
         workdir = os.path.join(outdir, "work", f"seed_{s:05d}")
         os.makedirs(workdir, exist_ok=True)
         gofile = os.path.join(progdir, f"fuzz_{s:05d}.go")
-        r = sh(f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {args.gmp}",
-               timeout=300)
+        try:
+            # 600s cap: diff_one.sh's own worst case is ~150s (gc build +
+            # 10s gc run + 120s graalgo cap + JVM startup); the headroom is
+            # for JVM startup under load.
+            r = sh(f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {args.gmp}",
+                   timeout=600)
+        except subprocess.TimeoutExpired:
+            # The harness hung, not the program (the program itself is
+            # capped at 120s inside diff_one.sh). Record it and keep the
+            # batch alive — a traceback here would discard the whole batch.
+            rec = {"file": f"fuzz_{s:05d}", "result": "HARNESS_ERROR",
+                   "detail": "diff_one.sh timed out after 600s"}
+            rec["seed"] = s
+            return rec
         try:
             rec = json.loads(r.stdout.strip().split("\n")[-1])
         except Exception:

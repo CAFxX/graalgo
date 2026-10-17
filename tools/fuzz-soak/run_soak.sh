@@ -40,9 +40,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     # ${2:?...} guards: with set -u, a missing value must fail with a
     # clear message, not an "unbound variable" abort (T17).
-    --hours) HOURS="${2:---hours requires a value}"; shift 2;;
-    --seeds) SEEDS="${2:---seeds requires a value}"; shift 2;;
-    --out) OUT="${2:---out requires a value}"; shift 2;;
+    --hours) HOURS="${2:?--hours requires a value}"; shift 2;;
+    --seeds) SEEDS="${2:?--seeds requires a value}"; shift 2;;
+    --out) OUT="${2:?--out requires a value}"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -138,7 +138,11 @@ batch=0
 consec_build_fails=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
-  if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
+  # NOTE: no `!` on the condition — `$?` after `if ! cmd` is the *inverted*
+  # status, so the real exit code would be lost. Read it in the else branch.
+  if run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
+    consec_build_fails=0
+  else
     rc=$?
     if [ "$rc" -eq 3 ]; then
       consec_build_fails=$((consec_build_fails + 1))
@@ -151,8 +155,6 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
       consec_build_fails=0
       echo "batch $batch failed (rc=$rc); continuing with next batch"
     fi
-  else
-    consec_build_fails=0
   fi
   if ! minimize_findings "$OUT/batch-$batch"; then
     echo "MINIMIZATION FAILED for batch $batch (see above)" >&2
