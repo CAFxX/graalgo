@@ -1,9 +1,11 @@
 package graalgo.p3reflect;
 
+import graalgo.p3unsafe.BaseHandleProvider;
 import graalgo.p3unsafe.UnsafeTable;
 import graalgo.values.GoKind;
 import graalgo.values.GoSlice;
 import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 
 /**
  * Reference keys and handle helpers for the reflect package (P3-M8, wave 2).
@@ -45,7 +47,7 @@ public final class ReflectRefs {
     }
 
     /** Base key type for derived references. */
-    public abstract static class Ref {
+    public abstract static class Ref implements BaseHandleProvider {
         /** The referent this reference denotes (resolved live). */
         public abstract Object referent();
     }
@@ -81,6 +83,11 @@ public final class ReflectRefs {
         /** The base handle (denotes the containing struct). */
         public long base() {
             return base;
+        }
+
+        @Override
+        public long[] baseHandles() {
+            return new long[]{base};
         }
 
         @Override
@@ -127,6 +134,11 @@ public final class ReflectRefs {
         }
 
         @Override
+        public long[] baseHandles() {
+            return new long[]{base};
+        }
+
+        @Override
         public boolean equals(Object o) {
             return o instanceof ArrayElemRef other && base == other.base && index == other.index;
         }
@@ -170,6 +182,11 @@ public final class ReflectRefs {
         }
 
         @Override
+        public long[] baseHandles() {
+            return new long[]{base};
+        }
+
+        @Override
         public boolean equals(Object o) {
             return o instanceof SliceElemRef other && base == other.base && index == other.index;
         }
@@ -184,14 +201,105 @@ public final class ReflectRefs {
     // Handle helpers.
     // ------------------------------------------------------------------
 
-    /** Interns a referent object by identity (null → 0). */
+    /**
+     * Interns a referent object by identity in the <em>uncounted</em> domain
+     * (null → 0). Only for handles with no Java-level owner — currently
+     * just {@code mapIterInit}'s {@code MapIterState} (RV-P1-23 §2c), whose
+     * bare-long handle is stored in a Go struct field the worker cannot
+     * hook. Everything else packs Values via the counted forms below.
+     */
     public static long intern(Object referent) {
         return UnsafeTable.current().intern(referent);
     }
 
-    /** Interns a derived-reference key by value (null → 0). */
-    public static long internRef(Ref ref) {
-        return UnsafeTable.current().internEqual(ref);
+    /**
+     * Packs a reflect.Value whose handle lives in the counted domain
+     * (RV-P1-23): interns {@code referent} (by identity, or by value for
+     * {@link Ref} keys), registers this Value as an owner of the handle's
+     * counted closure (the handle plus its transitive {@code Ref} bases —
+     * gc keeps the parent object alive through the child's pointer), and
+     * arms a Cleaner action releasing the closure when the Value struct
+     * dies. {@code null} referents pack handle 0 with no registration
+     * (like the zero Value).
+     */
+    public static GoStruct packCounted(GoStructDescriptor desc, long typ, Object referent, long flag) {
+        UnsafeTable t = UnsafeTable.current();
+        long handle = referent instanceof Ref
+                ? t.internEqualCounted(referent)
+                : t.internCounted(referent);
+        GoStruct v = ReflectValues.pack(desc, typ, handle, flag);
+        if (handle != 0) {
+            long[] closure = t.countedClosure(handle);
+            for (long h : closure) {
+                t.addCountedOwner(h);
+            }
+            t.registerCountedRelease(v, closure);
+        }
+        return v;
+    }
+
+    /**
+     * Packs a reflect.Value reusing a live handle (RV-P1-23) — e.g.
+     * {@code Elem} on a pointer reuses the parent's handle to denote the
+     * pointee storage. Registers an additional counted owner (+ closure)
+     * instead of interning. The handle may be uncounted (a shared
+     * unsafe-domain handle): then the closure is empty and nothing is
+     * registered.
+     */
+    public static GoStruct packCountedExisting(GoStructDescriptor desc, long typ, long handle, long flag) {
+        UnsafeTable t = UnsafeTable.current();
+        GoStruct v = ReflectValues.pack(desc, typ, handle, flag);
+        if (handle != 0) {
+            long[] closure = t.countedClosure(handle);
+            for (long h : closure) {
+                t.addCountedOwner(h);
+            }
+            t.registerCountedRelease(v, closure);
+        }
+        return v;
+    }
+
+    /**
+     * Packs a reflect.Value around an unsafe-domain handle (RV-P1-23 §2c) —
+     * exactly one producer ({@code reflectNewAt}): the handle came from Go
+     * as an {@code unsafe.Pointer}, so the Value takes no counted
+     * ownership; the unsafe entry's lifetime governs.
+     */
+    public static GoStruct packShared(GoStructDescriptor desc, long typ, long handle, long flag) {
+        return ReflectValues.pack(desc, typ, handle, flag);
+    }
+
+    /**
+     * The {@link GoStructDescriptor.CopyHook} for the reflect.Value
+     * descriptor (registered by {@code ReflectTypes.install}): a copied
+     * Value is a new counted owner of its handle closure, with its own
+     * Cleaner action. Handle 0 (zero Value) and empty closures (shared
+     * unsafe-domain handles) register nothing. Runs with no installed
+     * table only for hand-built structs in tests — there is no table to
+     * register with, so it returns quietly (the copy's handle cannot
+     * resolve without its run's table anyway).
+     */
+    static void onValueCopied(GoStruct original, GoStruct copy) {
+        long handle = ReflectValues.parts(copy).ptr();
+        if (handle == 0) {
+            return;
+        }
+        UnsafeTable t;
+        try {
+            t = UnsafeTable.current();
+        } catch (IllegalStateException e) {
+            return;
+        }
+        long[] closure = t.countedClosure(handle);
+        for (long h : closure) {
+            t.addCountedOwner(h);
+        }
+        t.registerCountedRelease(copy, closure);
+    }
+
+    /** The copy hook installed on the reflect.Value descriptor. */
+    public static GoStructDescriptor.CopyHook valueCopyHook() {
+        return ReflectRefs::onValueCopied;
     }
 
     /** Resolves a handle to its referent (unknown → UnsafeEscapeException). */
