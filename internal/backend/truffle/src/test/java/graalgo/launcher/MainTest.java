@@ -147,6 +147,42 @@ public final class MainTest {
         }
     }
 
+    public void testGoStatementRunsOnScheduler() throws Exception {
+        // CF1 (review P1): graalgo-run installs the user-space scheduler,
+        // so a `go` statement spawns onto it instead of failing fast with
+        // "no SchedulerCore installed". The launcher awaits quiescence, so
+        // the goroutine's output is observed deterministically.
+        Path dir = Files.createTempDirectory("graalgo-gostmt-test");
+        Path prog = dir.resolve("gostmt.go");
+        Files.writeString(prog,
+                "package main\n\nfunc greet() { println(\"from goroutine\") }\n\n"
+                        + "func main() { go greet() }\n",
+                StandardCharsets.UTF_8);
+        final int[] code = new int[1];
+        PrintStream oldOut = System.out;
+        PrintStream oldErr = System.err;
+        ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(outBuf, true, StandardCharsets.UTF_8));
+        System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
+        try {
+            code[0] = Main.run(new String[] {prog.toString()});
+        } finally {
+            System.setOut(oldOut);
+            System.setErr(oldErr);
+        }
+        assertEq(Main.EXIT_OK, code[0], "go statement exit code");
+        String err = errBuf.toString(StandardCharsets.UTF_8);
+        // The builtin println writes to stderr (gc-accurate) — the
+        // goroutine's output lands in errBuf, never outBuf.
+        if (!err.contains("from goroutine")) {
+            throw new AssertionError("goroutine output missing on stderr, got <" + err + ">");
+        }
+        if (err.contains("no SchedulerCore installed")) {
+            throw new AssertionError("CF1: scheduler not installed under graalgo-run");
+        }
+    }
+
     public void testMissingFile() throws Exception {
         final int[] code = new int[1];
         captureStderr(() -> {
