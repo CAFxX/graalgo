@@ -11518,13 +11518,12 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// Registry-driven (P1-N3, review-n1): every package with a synthetic
 	// source resolves through the overlay importer, so qualified
 	// const/var idents lower through exportSyntheticQualified. This
-	// replaces the hand-maintained 115-name chain, which had drifted: 18
+	// replaces the hand-maintained 115-name chain, which had drifted: 17
 	// syntheticSources entries were missing from it (net, net/http,
 	// net/http/httptest, net/netip, net/textproto, net/url, archive/tar,
 	// archive/zip, mime, mime/multipart, mime/quotedprintable,
 	// internal/reflectlite, iter, internal/byteorder, internal/poll,
-	// internal/nettrace, internal/singleflight,
-	// internal/graalgo/fmtstate).
+	// internal/nettrace, internal/singleflight).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
