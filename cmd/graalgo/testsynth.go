@@ -19,11 +19,12 @@ import (
 )
 
 // discoverTests returns the names of the test functions in a _test.go
-// file, mirroring `go test` selection semantics: a test is a function
-// named TestXxx where Xxx is non-empty and its first rune is not
-// lowercase, with signature func TestXxx(t *testing.T) and no results.
-// TestMain is the test binary's entry point, never a test; helpers,
-// benchmarks, fuzz targets, and examples are never selected.
+// file, mirroring `go test` selection semantics (cmd/go/internal/load):
+// a test is a function named TestXxx where Xxx is empty or its first
+// rune is not lowercase, with signature func TestXxx(t *testing.T) and
+// no results. TestMain is the test binary's entry point, never a test;
+// helpers, benchmarks, fuzz targets, and examples are never selected.
+// Methods are never tests under `go test` and are never selected here.
 //
 // The *testing.T check resolves through the file's own import bindings
 // (the local name of the "testing" import, usually "testing"), not by
@@ -48,13 +49,12 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
-		// Like `go test`: the suffix after "Test" must be non-empty and
-		// its first rune must not be lowercase (so "Test" and "Testx"
-		// are helpers, not tests).
+		// Like `go test` (cmd/go/internal/load.isTest): a name is a test
+		// when the rune after "Test" is not lowercase — and bare "Test"
+		// is a test too ("Test" is ok). DecodeRuneInString on the empty
+		// suffix yields RuneError, which is not lowercase, so the empty
+		// suffix needs no special case.
 		suffix := name[len("Test"):]
-		if suffix == "" {
-			continue
-		}
 		if r, _ := utf8.DecodeRuneInString(suffix); unicode.IsLower(r) {
 			continue
 		}
@@ -62,9 +62,14 @@ func discoverTests(path string) ([]string, error) {
 		if fn.Type.TypeParams != nil && len(fn.Type.TypeParams.List) > 0 {
 			continue
 		}
-		// Exactly one parameter of type *testing.T, no results.
+		// Exactly one parameter of type *testing.T, no results. A field
+		// binding several names (func TestXxx(t, u *testing.T)) is
+		// rejected by `go test` loudly (cmd/go/internal/load.isTestFunc:
+		// len(Names) > 1 fails checkTestFunc for the whole binary), so
+		// it is never selected here.
 		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 ||
-			!isTestingTParam(fn.Type.Params.List[0].Type, testingName) {
+			!isTestingTParam(fn.Type.Params.List[0].Type, testingName) ||
+			hasMultiNameParam(fn.Type.Params) {
 			continue
 		}
 		if fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
@@ -93,6 +98,15 @@ func testingLocalName(f *ast.File) string {
 // isTestingTParam reports whether expr denotes *<testingName>.T, i.e.
 // the parameter type `go test` requires. Dot and blank imports of
 // "testing" bind no usable qualifier, so they never match.
+//
+// Accepted divergence from `go test`: under `import . "testing"`,
+// `go test` runs func TestXxx(t *T) (cmd/go/internal/load.isTestFunc
+// accepts the bare *T through its *ast.Ident arm), but this mirror does
+// not select it. The *testing.T check is deliberately resolved through
+// the file's own import bindings — that is what makes it precise — and
+// a dot import binds no qualifier to resolve through. Dot-importing
+// "testing" in a test file is rare; the divergence is deliberate, not
+// an oversight.
 func isTestingTParam(expr ast.Expr, testingName string) bool {
 	if testingName == "" || testingName == "." || testingName == "_" {
 		return false
@@ -107,6 +121,22 @@ func isTestingTParam(expr ast.Expr, testingName string) bool {
 	}
 	qual, ok := sel.X.(*ast.Ident)
 	return ok && qual.Name == testingName && sel.Sel.Name == "T"
+}
+
+// hasMultiNameParam reports whether any parameter field binds more than
+// one name, as in func TestXxx(t, u *testing.T). Every field is checked,
+// not just the first, so the rule survives any future relaxation of the
+// single-field requirement in discoverTests.
+func hasMultiNameParam(fl *ast.FieldList) bool {
+	if fl == nil {
+		return false
+	}
+	for _, field := range fl.List {
+		if len(field.Names) > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every

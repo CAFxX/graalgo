@@ -2,9 +2,13 @@ package driver
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -264,4 +268,57 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestWireProtocolVersionMatchesFrontend pins the driver's expected wire
+// protocol version to the version the frontend actually emits.
+// internal/frontend is a separate Go module (graalgo-frontend), so the
+// constant cannot be shared by import; instead this test extracts the
+// frontendVersion literal from the frontend's source with go/ast and
+// asserts equality with wireProtocolVersion. A version bump on either
+// side without the other fails loudly here instead of drifting silently
+// (docs/arch/frontend-v1.md §8 governs bumps).
+func TestWireProtocolVersionMatchesFrontend(t *testing.T) {
+	// Tests run with the package directory as the working directory.
+	const frontendSrc = "../frontend/export.go"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, frontendSrc, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", frontendSrc, err)
+	}
+	var emitted string
+	found := false
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if name.Name != "frontendVersion" || i >= len(vs.Values) {
+					continue
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("frontendVersion in %s is not a string literal", frontendSrc)
+				}
+				v, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("unquote frontendVersion: %v", err)
+				}
+				emitted, found = v, true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("const frontendVersion not found in %s", frontendSrc)
+	}
+	if emitted != wireProtocolVersion {
+		t.Errorf("wire protocol version skew: frontend emits %q, driver expects %q",
+			emitted, wireProtocolVersion)
+	}
 }

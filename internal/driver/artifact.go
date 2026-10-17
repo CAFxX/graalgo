@@ -15,9 +15,12 @@ import (
 )
 
 // wireProtocolVersion is the frontend wire protocol version this driver
-// expects. It must track internal/frontend's frontendVersion
-// (docs/frontend-v1.md §8 governs version bumps): a skew between the
+// expects. It must equal internal/frontend's frontendVersion
+// (docs/arch/frontend-v1.md §8 governs version bumps): a skew between the
 // two means the embedded JSON is not what the backend understands.
+// internal/frontend is a separate Go module (graalgo-frontend), so the
+// constant cannot be shared by import; the equality is pinned by
+// TestWireProtocolVersionMatchesFrontend instead of by comment alone.
 const wireProtocolVersion = "v1"
 
 // Artifact describes the executable artifact `graalgo build` emits.
@@ -131,7 +134,7 @@ func validateWireJSON(wire []byte) error {
 	var doc struct {
 		// The "frontend" field carries the protocol version (Doc.Frontend
 		// in internal/frontend). Checking only this field is deliberate:
-		// it is the field the version contract (docs/frontend-v1.md §8)
+		// it is the field the version contract (docs/arch/frontend-v1.md §8)
 		// is anchored on; full schema validation belongs to the
 		// frontend's own --check gate.
 		Frontend string `json:"frontend"`

@@ -970,9 +970,16 @@ func TestB(t *testing.T) {
 
 // TestDiscoverTestsMirrorsGoTest is the C6 regression test: discovery
 // must select exactly what `go test` would — func TestXxx(t *testing.T)
-// with a non-empty suffix whose first rune is not lowercase — and
-// nothing else. In particular TestMain (the test binary's entry point),
-// helpers with wrong-typed parameters, and bare `Test` are never tests.
+// where Xxx is empty or starts with a non-lowercase rune — and nothing
+// else. In particular TestMain (the test binary's entry point), TestXxx
+// methods (never tests under `go test`), helpers with wrong-typed
+// parameters, and multi-name parameters are never tests; bare `Test` IS
+// a test.
+//
+// Known accepted divergence: under `import . "testing"`, `go test` runs
+// func TestXxx(t *T), but this mirror deliberately does not select it
+// (see isTestingTParam); a dot import binds no qualifier for the
+// import-binding resolution to see through.
 func TestDiscoverTestsMirrorsGoTest(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "go.mod", "module example.com/discover\n\ngo 1.21\n")
@@ -994,17 +1001,22 @@ func TestTwoParams(t *testing.T, extra int) {}
 func TestNoParams()                        {}
 func TestReturns(t *testing.T) int         { return 0 }
 func TestGeneric[T any](t *testing.T)      {}
+func TestTwoNames(t, u *testing.T)         {}
 func BenchmarkBig(b *testing.B)            {}
 func FuzzIt(f *testing.F)                  {}
 func Example_output()                      {}
 func helper(x int)                         {}
+
+type suite struct{}
+
+func (s *suite) TestMethod(t *testing.T) {}
 `)
 	testFile := filepath.Join(root, "a_test.go")
 	tests, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"TestReal", "TestUnicodeÅ", "Test123", "TestXxx_suffix"}
+	want := []string{"TestReal", "TestUnicodeÅ", "Test123", "TestXxx_suffix", "Test"}
 	if !reflect.DeepEqual(tests, want) {
 		t.Fatalf("discoverTests = %v, want %v", tests, want)
 	}
@@ -1019,7 +1031,7 @@ func helper(x int)                         {}
 			t.Errorf("driver does not call selected test %s exactly once", n)
 		}
 	}
-	for _, n := range []string{"TestMain", "TestHelper", "Testlower", "TestReturns", "TestGeneric", "TestTwoParams", "TestNoParams"} {
+	for _, n := range []string{"TestMain", "TestHelper", "Testlower", "TestReturns", "TestGeneric", "TestTwoParams", "TestNoParams", "TestTwoNames", "TestMethod"} {
 		if strings.Contains(src, n+"(tt)") {
 			t.Errorf("driver calls unselected function %s", n)
 		}
