@@ -165,17 +165,12 @@ func main() {
 // design (the graalgo runtime prints JVM Unsafe warnings on stderr), so the
 // comparison is the first `panic:` line by design, not the full stderr.
 func TestTwoPackageDifferential(t *testing.T) {
-	// BLOCKED (tracked, not silent): the graalgo leg needs the backend to
-	// accept the real GOROOT fmt tree that the frozen exporter now merges
-	// from disk (real-fmt2). Every fmt-importing program currently fails
-	// the backend AST build with "assign.fields: lhs/rhs length mismatch"
-	// from fmt/scan.go:189's 3-target interface-method assignment
-	// (r, size, err = s.rs.ReadRune()). Owner: the active
-	// graalgo/fix-multival-rhs lane (work registry); see also the
-	// real-fmt2 branch (402e7ff3: N-result interface MR desugar in
-	// assignment position, pending review+merge). Delete this Skip once
-	// that fix is integrated and this test goes green.
-	t.Skip("blocked on graalgo/fix-multival-rhs: backend rejects multi-valued RHS assigns (fmt/scan.go:189); fix pending on real-fmt2 (402e7ff3)")
+	// Was blocked on the backend rejecting the real GOROOT fmt tree's
+	// multi-valued RHS assigns (fmt/scan.go:189: r, size, err =
+	// s.rs.ReadRune() -> "assign.fields: lhs/rhs length mismatch"). Root
+	// cause fixed by 6812e97e (N-target multi-result interface method
+	// assignment desugar, cherry-picked into this branch): the exporter now
+	// desugars N-target interface calls via classifyUserIfaceMultiResultCall.
 	twopkg := filepath.Join("testdata", "twopkg")
 	mainDir := filepath.Join(twopkg, "main")
 
@@ -338,13 +333,9 @@ func TestDeterministic(t *testing.T) {
 // merge prints main.T), so the test asserts the exact expected output in
 // addition to gc-vs-graalgo byte equality.
 func TestEmbeddedFieldRebinding(t *testing.T) {
-	// BLOCKED (tracked, not silent): same backend blocker as
-	// TestTwoPackageDifferential — the graalgo leg fails the AST build on
-	// the real GOROOT fmt tree ("assign.fields: lhs/rhs length mismatch",
-	// fmt/scan.go:189). Owner: the active graalgo/fix-multival-rhs lane
-	// (work registry); fix pending on real-fmt2 (402e7ff3). Delete this
-	// Skip once that fix is integrated and this test goes green.
-	t.Skip("blocked on graalgo/fix-multival-rhs: backend rejects multi-valued RHS assigns (fmt/scan.go:189); fix pending on real-fmt2 (402e7ff3)")
+	// Was blocked on the same backend multi-valued-RHS-assign rejection as
+	// TestTwoPackageDifferential (fmt/scan.go:189). Root cause fixed by
+	// 6812e97e (cherry-picked into this branch); see that test's comment.
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"go.mod": "module example.com/embed\n\ngo 1.27\n",

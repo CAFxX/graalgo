@@ -169,12 +169,12 @@ test-regression: generate build graalgo
 # differential tests need the backend classes (built by `build`).
 #
 # In `all` (hence per-push CI): this module's ~60 tests never ran in CI
-# before (E6). Two tests are skipped with tracked blockers, not silently:
-# TestTwoPackageDifferential and TestEmbeddedFieldRebinding exercise the
-# graalgo leg via internal/backend/graalgo-sync-run and are blocked on the
-# active graalgo/fix-multival-rhs lane (the backend AST build rejects the
-# real GOROOT fmt tree's multi-valued RHS assigns, e.g. fmt/scan.go:189;
-# fix pending on the real-fmt2 branch) — each Skip carries the reference.
+# before (E6). All four formerly-parked failures are fixed for real:
+# the two sync tests were rewritten for the real-sync2 mechanism, and
+# TestTwoPackageDifferential + TestEmbeddedFieldRebinding were unblocked by
+# the N-target multi-result interface method assignment desugar fix
+# (6812e97e, cherry-picked into this branch) — the backend no longer rejects
+# the real GOROOT fmt tree's multi-valued RHS assigns (fmt/scan.go:189).
 # /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
 P3FE_TMP := $(CURDIR)/internal/frontend/p3frontend/.tmp
 test-p3frontend: generate build
