@@ -11,7 +11,32 @@ import (
 // and runs vet on the given Go files.
 func runVetOnModule(t *testing.T, goMod string, files map[string]string, targets ...string) string {
 	t.Helper()
+	// A fixture with no go.mod models a module-free directory: the
+	// stdversion analyzer (like go vet) inherits the enclosing module's
+	// go directive by walking up from the file. Callers may route temp
+	// dirs inside the repo (the test-go Makefile target sets TMPDIR and
+	// GOTMPDIR — the latter is what testing.T.TempDir honors — to a
+	// repo-local dir, keeping go test temps off the 512M /tmp), which
+	// would nest the fixture inside this repo's own go.mod and silently
+	// break the "no module" premise — so force the OS default temp dir
+	// here. The env is cleared on every call, not just the module-free
+	// one: testing.T.TempDir creates one parent per test (cached across
+	// calls) from the env at first-call time, then numbered children
+	// under it — clearing only the goMod=="" call would still leave the
+	// parent inside the repo (created by an earlier goMod!="" call).
+	// The fixtures are a few bytes, cleaned up by t.TempDir; not
+	// a /tmp bulk write.
+	oldTmp, hadTmp := os.LookupEnv("TMPDIR")
+	oldGoTmp, hadGoTmp := os.LookupEnv("GOTMPDIR")
+	os.Unsetenv("TMPDIR")
+	os.Unsetenv("GOTMPDIR")
 	dir := t.TempDir()
+	if hadTmp {
+		os.Setenv("TMPDIR", oldTmp)
+	}
+	if hadGoTmp {
+		os.Setenv("GOTMPDIR", oldGoTmp)
+	}
 	if goMod != "" {
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
 			t.Fatal(err)
