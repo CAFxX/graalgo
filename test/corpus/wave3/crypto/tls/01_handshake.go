@@ -95,7 +95,7 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}) {
+func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}, echoPrinted chan<- struct{}) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -132,9 +132,16 @@ func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}) 
 		panic("server write: " + err.Error())
 	}
 	fmt.Println("server: echo-ok")
+	// Release the client's final print (see runClient): without this,
+	// main can return (exiting the process) before this print lands, and
+	// the echo-ok/echo-match order would race. (nil in standalone server
+	// mode.)
+	if echoPrinted != nil {
+		close(echoPrinted)
+	}
 }
 
-func runClient(port string, printed chan<- struct{}) {
+func runClient(port string, printed chan<- struct{}, echoPrinted <-chan struct{}) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -158,6 +165,11 @@ func runClient(port string, printed chan<- struct{}) {
 	if err != nil {
 		panic("client read: " + err.Error())
 	}
+	// Deterministic tail: the server's echo-ok print always precedes ours
+	// (nil in standalone client mode, where no barrier exists).
+	if echoPrinted != nil {
+		<-echoPrinted
+	}
 	fmt.Println("client: echo-match:", string(buf[:n]) == msg)
 }
 
@@ -175,12 +187,12 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready, nil)
+		go runServer(port, ready, nil, nil)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port, nil)
+		runClient(port, nil, nil)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -193,12 +205,16 @@ func main() {
 		ready := make(chan string, 1)
 		// clientPrinted is the print-ordering barrier: the server waits on
 		// it before its handshake-ok print; the client closes it after its
-		// own handshake-ok prints. This replaces the removed 10s sleep in
-		// the synthetic crypto/tls Handshake() with explicit
-		// synchronization (no sleep-based ordering hacks).
+		// own handshake-ok prints. echoPrinted is the tail barrier: the
+		// client waits on it before its echo-match print; the server
+		// closes it after its echo-ok print, so main cannot exit before
+		// the server's final print lands. Together they replace the
+		// removed 10s sleep in the synthetic crypto/tls Handshake() with
+		// explicit synchronization (no sleep-based ordering hacks).
 		clientPrinted := make(chan struct{})
-		go runServer(ephemPort, ready, clientPrinted)
+		echoPrinted := make(chan struct{})
+		go runServer(ephemPort, ready, clientPrinted, echoPrinted)
 		<-ready
-		runClient(ephemPort, clientPrinted)
+		runClient(ephemPort, clientPrinted, echoPrinted)
 	}
 }
