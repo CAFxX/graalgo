@@ -68,6 +68,29 @@ public final class SchedulerCore {
     }
 
     /**
+     * The installed scheduler, or null when none is installed.
+     * Blocking-syscall wrappers (GoOs) use this together with
+     * {@link #currentGoroutineOrNull()} to bracket only on-goroutine
+     * calls; off-goroutine callers (tests, launchers) take the plain
+     * blocking path instead of failing fast.
+     */
+    public static SchedulerCore installedOrNull() {
+        return installed;
+    }
+
+    /**
+     * The calling thread's goroutine handle, or null when the caller is
+     * not a scheduler goroutine (or no scheduler is installed). Unlike
+     * {@link #currentGoroutine()}, this never throws: it is the
+     * non-fail-fast probe for code paths that must work both on and off
+     * goroutines.
+     */
+    public static GoroutineHandle currentGoroutineOrNull() {
+        SchedulerCore sc = installed;
+        return sc == null ? null : sc.currentHandle.get();
+    }
+
+    /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
@@ -346,8 +369,10 @@ public final class SchedulerCore {
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
      * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * {@code RuntimeException}s, assertion failures, and stack overflows
+     * are recorded loudly (the launcher exits 1). Any other
+     * {@code Error} is recorded the same way; {@code ThreadDeath} is
+     * never swallowed (the thread was asked to die).
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
@@ -380,7 +405,23 @@ public final class SchedulerCore {
                 } else {
                     recordCrash("internal error", e);
                 }
+            } catch (AssertionError e) {
+                // R2 P1-4: assertions fire in real code (netpoll wait
+                // bookkeeping, drainer invariants). An uncaught
+                // AssertionError previously escaped this chain entirely:
+                // neither panicked() nor crashed() was set and the
+                // launcher could exit 0 on a loud failure.
+                recordCrash("assertion failure", e);
             } catch (RuntimeException e) {
+                recordCrash("internal error", e);
+            } catch (Error e) {
+                if (isThreadDeath(e)) {
+                    // Never swallow: the thread was asked to die. The
+                    // finally below still runs scheduler bookkeeping.
+                    throw e;
+                }
+                // R2 P1-4: any other Error (e.g. OutOfMemoryError) is a
+                // loud internal failure, not a silent exit-0.
                 recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.
@@ -405,6 +446,17 @@ public final class SchedulerCore {
         }
         drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
         return h;
+    }
+
+    /**
+     * Whether {@code e} is a {@link ThreadDeath}: the thread was asked
+     * to die (deprecated {@code Thread.stop()}) and the death must not
+     * be swallowed into a crash record. The suppression is scoped to
+     * this one reference (the type is deprecated for removal).
+     */
+    @SuppressWarnings("removal")
+    private static boolean isThreadDeath(Error e) {
+        return e instanceof ThreadDeath;
     }
 
     private final AtomicInteger panicCount = new AtomicInteger();

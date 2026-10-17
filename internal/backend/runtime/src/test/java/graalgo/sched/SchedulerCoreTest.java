@@ -55,6 +55,81 @@ public final class SchedulerCoreTest {
         }
     }
 
+    // ---------- spawn failure discipline (R2 P1-4) ----------
+
+    /**
+     * R2 P1-4: an uncaught AssertionError in a goroutine is a loud crash
+     * (launcher exits 1), not a silent exit 0. Red-green: the old catch
+     * chain had no AssertionError arm, so neither panicked() nor
+     * crashed() was set.
+     */
+    public void testSpawnRecordsAssertionErrorAsCrash() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            CountDownLatch ran = new CountDownLatch(1);
+            sched.spawn(() -> {
+                ran.countDown();
+                throw new AssertionError("simulated invariant failure");
+            });
+            assertTrue(ran.await(30, TimeUnit.SECONDS), "goroutine never ran");
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "AssertionError must set crashed()");
+            assertTrue(!sched.panicked(), "AssertionError is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * R2 P1-4: any other Error (e.g. OutOfMemoryError) is recorded as an
+     * internal crash, not swallowed into a silent exit 0.
+     */
+    public void testSpawnRecordsErrorAsCrash() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            CountDownLatch ran = new CountDownLatch(1);
+            sched.spawn(() -> {
+                ran.countDown();
+                throw new UnknownError("simulated error");
+            });
+            assertTrue(ran.await(30, TimeUnit.SECONDS), "goroutine never ran");
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "Error must set crashed()");
+            assertTrue(!sched.panicked(), "Error is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * R2 P1-4 negative: ThreadDeath is never swallowed into a crash
+     * record — the thread was asked to die. Red-green: without the
+     * ThreadDeath rethrow arm, the generic Error arm would record it.
+     */
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal
+    public void testSpawnRethrowsThreadDeath() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            CountDownLatch ran = new CountDownLatch(1);
+            sched.spawn(() -> {
+                ran.countDown();
+                throw new ThreadDeath();
+            });
+            assertTrue(ran.await(30, TimeUnit.SECONDS), "goroutine never ran");
+            sched.awaitQuiescence();
+            assertTrue(!sched.crashed(), "ThreadDeath must not be recorded as a crash");
+            assertTrue(!sched.panicked(), "ThreadDeath is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
     // ---------- numGoroutines (PKG-023: runtime.NumGoroutine) ----------
 
     /**

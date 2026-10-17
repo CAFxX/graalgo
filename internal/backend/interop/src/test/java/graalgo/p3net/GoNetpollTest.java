@@ -965,4 +965,53 @@ public final class GoNetpollTest {
             teardown(prev);
         }
     }
+
+    /**
+     * R2 P1-7: the launcher's per-program reset (P3SyncMain, next to
+     * {@code GoOs.init}) clears the net layer's cookie namespaces, so a
+     * second in-process program cannot alias the first program's
+     * sockets. Red-green: without the reset, the restarted GoOs cookie
+     * numbers still resolve into the previous run's {@code BY_SOCK}
+     * descs (stale {@code NEXT_CTX} ids keep incrementing too).
+     *
+     * <p>Uses raw socket()+pollOpen (no bind): only the cookie/desc
+     * namespaces matter here.
+     */
+    public void testPerProgramResetClearsNetState() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            // "Program 1": open + poll-register a socket.
+            long sock1 = GoNet.socket(2, 1, 0);
+            assertTrue(sock1 >= 16, "program 1 socket cookie: " + sock1);
+            long ctx1 = GoNetpoll.pollOpen(sock1);
+            assertTrue(ctx1 != 0, "program 1 pollOpen");
+            java.nio.channels.Channel orphan = GoOs.socketChannel(sock1);
+            assertTrue(orphan != null, "program 1 channel resolvable");
+            assertTrue(GoNetpoll.descCount() > 0, "program 1 registered a desc");
+            assertTrue(GoNet.sockState(sock1) != null, "program 1 socket state");
+
+            // "Between programs": exactly what P3SyncMain now does per run.
+            GoOs.init(new String[0]);
+            GoNet.resetForProgramRun();
+            GoNetpoll.resetForProgramRun();
+
+            assertEq(0, GoNetpoll.descCount(), "descs cleared between programs");
+            assertTrue(GoNet.sockState(sock1) == null, "socket state cleared");
+
+            // "Program 2": cookie namespaces restart (ctx ids from 1)
+            // and a fresh pollOpen works on a fresh selector/poller.
+            GoNetpoll.pollServerInit();
+            long sock2 = GoNet.socket(2, 1, 0);
+            assertTrue(sock2 >= 16, "program 2 socket cookie: " + sock2);
+            long ctx2 = GoNetpoll.pollOpen(sock2);
+            assertEq(1, ctx2, "ctx ids restart per program run");
+            closeSock(sock2, ctx2);
+
+            // Program 1's socket was orphaned by the reset (its handle
+            // table entry is gone); close the channel directly.
+            orphan.close();
+        } finally {
+            teardown(prev);
+        }
+    }
 }

@@ -25,10 +25,18 @@ public final class GoWaitGroup {
         if (next < 0) {
             throw new IllegalStateException("sync: negative WaitGroup counter");
         }
+        // R2 P1-2 (mirrors the GoOnce P2-M10 fix): resolve the scheduler
+        // BEFORE mutating the counter. If the caller is not on a
+        // scheduler (current() throws), the throw lands before
+        // counter = next — instead of stranding parked waiters behind a
+        // counter that already reads 0. Resolution is conditional on
+        // next == 0: Add with a nonzero result needs no scheduler (the
+        // unpark loop below is the only scheduler use), so plain
+        // setup-time Add calls keep working scheduler-less.
+        SchedulerCore sched = next == 0 ? SchedulerCore.current() : null;
         counter = next;
         if (next == 0) {
             // Wake all waiters; done() does the same.
-            SchedulerCore sched = SchedulerCore.current();
             while (!waiters.isEmpty()) {
                 sched.unpark(waiters.pollFirst());
             }

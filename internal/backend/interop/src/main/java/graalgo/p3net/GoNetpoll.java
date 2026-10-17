@@ -88,9 +88,10 @@ import graalgo.sched.SchedulerCore;
  * readiness that arrives before the park is absorbed by the drainer's
  * unpark-before-parked stash — no wakeup is lost in either order.
  *
- * <p>Like {@link GoOs}, state is per-program-run; {@link #resetForTest}
- * tears it down for tests (closes the selector, stopping the poller
- * thread; the next {@code runtime_pollServerInit} starts a fresh one).
+ * <p>Like {@link GoOs}, state is per-program-run;
+ * {@link #resetForProgramRun} tears it down between in-process program
+ * runs (and for tests): closes the selector, stopping the poller thread;
+ * the next {@code runtime_pollServerInit} starts a fresh one.
  */
 public final class GoNetpoll {
     private GoNetpoll() {}
@@ -195,8 +196,17 @@ public final class GoNetpoll {
     /** Last poller-thread failure, for tests (no stdout/stderr in library code). */
     private static volatile Throwable lastPollerError;
 
-    /** Test hook: tears down all poller state (closes the selector). */
-    public static synchronized void resetForTest() {
+    /**
+     * Per-program-run reset: tears down all poller state (closes the
+     * selector; the poller thread exits on ClosedSelectorException and a
+     * fresh one is created by the next {@code pollServerInit}).
+     * Called by the launcher between in-process program runs (P3SyncMain,
+     * next to {@code GoOs.init}) and by tests. Without it, the cookie
+     * namespaces ({@code DESCS}, {@code BY_SOCK}, {@code NEXT_CTX})
+     * persist across programs while GoOs restarts its cookie numbering —
+     * new sockets alias stale descs (R2 P1-7).
+     */
+    public static synchronized void resetForProgramRun() {
         INIT.set(false);
         Selector sel = selector;
         selector = null;
@@ -213,6 +223,11 @@ public final class GoNetpoll {
                 // Best effort; the poller thread exits on ClosedSelectorException.
             }
         }
+    }
+
+    /** Test hook: per-program-run reset. */
+    public static void resetForTest() {
+        resetForProgramRun();
     }
 
     /** Test hook: the last unexpected poller-thread failure, if any. */
@@ -282,7 +297,7 @@ public final class GoNetpoll {
         REG_Q.offer(task);
         Selector sel = selector;
         if (sel == null) {
-            // resetForTest raced us (test-only; production never resets).
+            // resetForProgramRun raced us (only between in-process program runs or in tests).
             dropDesc(pd);
             LAST_OPEN_ERRNO.set(GoOs.EINVAL);
             return 0;
@@ -517,7 +532,7 @@ public final class GoNetpoll {
             REG_Q.offer(task);
             Selector sel = selector;
             if (sel == null) {
-                // resetForTest raced us (test-only; production never resets).
+                // resetForProgramRun raced us (only between in-process program runs or in tests).
                 dropDesc(pd);
                 return -GoOs.EINVAL;
             }

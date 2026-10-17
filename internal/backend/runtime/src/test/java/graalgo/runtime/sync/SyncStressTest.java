@@ -217,6 +217,30 @@ public final class SyncStressTest {
         assertTrue(panicked, "negative WaitGroup counter must panic");
     }
 
+    /**
+     * R2 P1-2: add() that reaches zero with no scheduler installed must
+     * throw BEFORE mutating the counter (mirrors the GoOnce P2-M10 fix).
+     * Red-green: against the old order (counter = next before
+     * SchedulerCore.current()) the counter reads 0 after the throw,
+     * stranding any parked waiter; against the fixed order it is
+     * untouched, so a later legitimate done() still wakes the waiter.
+     */
+    public void testWaitGroupAddToZeroWithoutSchedulerDoesNotMutate() {
+        SchedulerCore.install(null);
+        GoWaitGroup wg = new GoWaitGroup();
+        wg.add(1); // nonzero result: no scheduler needed, works scheduler-less
+        assertEquals(1, wg.count(), "setup add");
+        boolean threw = false;
+        try {
+            wg.done(); // next == 0 -> current() must throw before the mutation
+        } catch (IllegalStateException e) {
+            threw = true;
+        }
+        assertTrue(threw, "done() to zero with no scheduler must throw");
+        assertEquals(1, wg.count(),
+                "counter must be unmutated when scheduler resolution throws");
+    }
+
     /** Zero-counter await returns immediately (no park). */
     public void testWaitGroupZeroAwaitImmediate() throws Exception {
         SchedulerCore sched = newScheduler(4);

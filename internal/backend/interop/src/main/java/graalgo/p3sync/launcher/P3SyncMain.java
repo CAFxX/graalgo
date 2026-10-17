@@ -41,6 +41,8 @@ import graalgo.rtstack.RuntimeFuncFileLineNode;
 import graalgo.rtstack.RuntimeFuncForPCNode;
 import graalgo.rtstack.RuntimeFuncNameNode;
 import graalgo.p3link.LinknameIntrinsics;
+import graalgo.p3net.GoNet;
+import graalgo.p3net.GoNetpoll;
 import graalgo.p3os.GoOs;
 import graalgo.p3sync.nodes.AtomicAddrNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
@@ -504,6 +506,15 @@ public final class P3SyncMain {
             goArgv[i + 1] = goArgs.get(i);
         }
         GoOs.init(goArgv);
+        // R2 P1-7: GoOs.init restarts the os cookie namespace; the net
+        // layer's per-program-run state (GoNet socket states, GoNetpoll
+        // descs/cookie map/ctx ids/selector/poller thread) must restart
+        // with it, or a new program's sockets alias the previous
+        // program's stale descs. This is the single choke point for all
+        // in-process program runs (graalgo run/test, diffharness,
+        // FastCycleDaemon).
+        GoNet.resetForProgramRun();
+        GoNetpoll.resetForProgramRun();
 
         // Install the scheduler and run main as the first goroutine
         // (SchedMain's flow, verbatim).

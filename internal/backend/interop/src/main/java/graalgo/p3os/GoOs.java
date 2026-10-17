@@ -9,6 +9,7 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.Pipe;
 import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.SelectableChannel;
 import java.nio.channels.WritableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
@@ -43,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -675,6 +677,81 @@ public final class GoOs {
         return 0;
     }
 
+    /**
+     * Slot-releasing bracket for blocking syscalls (R2 P1-5).
+     *
+     * <p>SPEC §3.5 / GG-SCHED-0004 `[DECIDED]`: "All blocking in the
+     * runtime/stdlib adaptation layer SHALL go through scheduler-aware
+     * primitives" — blocking I/O uses the slot-releasing wrapper
+     * ({@code ioEnter} releases the in-flight slot, {@code ioExit}
+     * re-acquires it), so a goroutine blocked in file/pipe I/O does not
+     * count against the GOMAXPROCS cap and cannot starve runnable
+     * goroutines (gc entersyscall parity).
+     *
+     * <p>Design decision (this lane's deliverable): wire the discipline
+     * at the blocking-syscall sites ({@link #read}, {@link #write},
+     * {@link #readAt}, {@link #writeAt}, {@link #truncate},
+     * {@link #sync}) rather than scoping the docs to netpoller paths —
+     * the machinery (drainer IO lanes, {@code GoroutineHandle.inIo},
+     * JFR I/O events, {@code IoSlotsTest}) exists precisely for this,
+     * and leaving it with zero consumers would be dead machinery.
+     * Metadata syscalls (stat/open/close/mkdir/...) are excluded: they
+     * cannot block indefinitely (the same cut gc makes).
+     *
+     * <p>Use via try-with-resources so the pairing is exception-safe
+     * (the drainer fail-fasts on an unpaired {@code ioEnter} at goroutine
+     * exit — a missed {@code ioExit} would be a loud halt, never silent
+     * corruption).
+     */
+    private static final class IoBracket implements AutoCloseable {
+        private final SchedulerCore sched;
+
+        private IoBracket(SchedulerCore s) {
+            sched = s;
+            if (s != null) {
+                s.ioEnter();
+            }
+        }
+
+        @Override
+        public void close() {
+            if (sched != null) {
+                sched.ioExit();
+            }
+        }
+
+        /**
+         * Opens the bracket for a blocking syscall on {@code ch}, or a
+         * no-op bracket when bracketing cannot apply:
+         *
+         * <ul>
+         *   <li>non-blocking {@link SelectableChannel} (sockets are
+         *   always non-blocking underneath — readiness waits park via
+         *   the netpoller instead; bracketing would add a drainer
+         *   round-trip to every non-blocking read for zero benefit).
+         *   Blocking mode is fixed at registration and never toggled
+         *   afterwards, so the check is stable;</li>
+         *   <li>caller not on a scheduler goroutine (tests, launchers,
+         *   scheduler-less Phase-1 runs): the plain blocking call, as
+         *   before — no fail-fast, no behavior change off-goroutine.</li>
+         * </ul>
+         */
+        static IoBracket enter(ChannelHandle ch) {
+            return new IoBracket(ioSchedulerFor(ch));
+        }
+
+        private static SchedulerCore ioSchedulerFor(ChannelHandle ch) {
+            if (ch.ch instanceof SelectableChannel sc && !sc.isBlocking()) {
+                return null;
+            }
+            SchedulerCore s = SchedulerCore.installedOrNull();
+            if (s == null || SchedulerCore.currentGoroutineOrNull() == null) {
+                return null;
+            }
+            return s;
+        }
+    }
+
     /** graalgo.os.read — exactly one channel read (R2). */
     public static long read(Object hArg, Object bArg) {
         ChannelHandle ch = channelHandle(num(hArg));
@@ -689,15 +766,18 @@ public final class GoOs {
         if (!(ch.ch instanceof ReadableByteChannel)) {
             return -EBADF;
         }
-        try {
-            int n = ((ReadableByteChannel) ch.ch).read(bb);
-            if (n < 0) {
-                return 0; // EOF
+        // R2 P1-5: release the in-flight slot across the blocking read.
+        try (IoBracket io = IoBracket.enter(ch)) {
+            try {
+                int n = ((ReadableByteChannel) ch.ch).read(bb);
+                if (n < 0) {
+                    return 0; // EOF
+                }
+                goBufBack(bArg, bb, n);
+                return (long) n + 1;
+            } catch (IOException e) {
+                return -errno(e);
             }
-            goBufBack(bArg, bb, n);
-            return (long) n + 1;
-        } catch (IOException e) {
-            return -errno(e);
         }
     }
 
@@ -715,23 +795,27 @@ public final class GoOs {
             return -EBADF;
         }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
-        try {
-            int n = wch.write(bb);
-            return (long) n + 1;
-        } catch (IOException e) {
-            if (errno(e) == EPIPE) {
-                // R7: gc raises SIGPIPE (death) only for fd 1/2; other
-                // fds get EPIPE as an error. Match: SIGPIPE dance only
-                // for stdio handles, error return otherwise.
-                if (ch.kind == KIND_STDIO) {
-                    onEpipe(wch, bb);
-                    // Still alive: the signal path was unavailable — loud
-                    // fallback (R7): surface EPIPE; the SIGPIPE corpus
-                    // program then fails loudly instead of drifting.
+        // R2 P1-5: release the in-flight slot across the blocking write
+        // (the EPIPE/SIGPIPE retry below stays inside the bracket).
+        try (IoBracket io = IoBracket.enter(ch)) {
+            try {
+                int n = wch.write(bb);
+                return (long) n + 1;
+            } catch (IOException e) {
+                if (errno(e) == EPIPE) {
+                    // R7: gc raises SIGPIPE (death) only for fd 1/2; other
+                    // fds get EPIPE as an error. Match: SIGPIPE dance only
+                    // for stdio handles, error return otherwise.
+                    if (ch.kind == KIND_STDIO) {
+                        onEpipe(wch, bb);
+                        // Still alive: the signal path was unavailable — loud
+                        // fallback (R7): surface EPIPE; the SIGPIPE corpus
+                        // program then fails loudly instead of drifting.
+                    }
+                    return -EPIPE;
                 }
-                return -EPIPE;
+                return -errno(e);
             }
-            return -errno(e);
         }
     }
 
@@ -771,17 +855,20 @@ public final class GoOs {
             return -EBADF;
         }
         ByteBuffer bb = goBuf(bArg);
-        try {
-            int n = fc.read(bb, num(posArg));
-            if (n < 0) {
-                return 0; // EOF
+        // R2 P1-5: release the in-flight slot across the blocking read.
+        try (IoBracket io = IoBracket.enter(ch)) {
+            try {
+                int n = fc.read(bb, num(posArg));
+                if (n < 0) {
+                    return 0; // EOF
+                }
+                goBufBack(bArg, bb, n);
+                return (long) n + 1;
+            } catch (IOException e) {
+                return -errno(e);
+            } catch (IllegalArgumentException e) {
+                return -EINVAL;
             }
-            goBufBack(bArg, bb, n);
-            return (long) n + 1;
-        } catch (IOException e) {
-            return -errno(e);
-        } catch (IllegalArgumentException e) {
-            return -EINVAL;
         }
     }
 
@@ -796,17 +883,20 @@ public final class GoOs {
         }
         ByteBuffer bb = goBuf(bArg);
         long pos = num(posArg);
-        try {
-            int n = fc.write(bb, pos);
-            return (long) n + 1;
-        } catch (IOException e) {
-            if (errno(e) == EPIPE) {
-                onEpipe(fc, bb);
-                return -EPIPE;
+        // R2 P1-5: release the in-flight slot across the blocking write.
+        try (IoBracket io = IoBracket.enter(ch)) {
+            try {
+                int n = fc.write(bb, pos);
+                return (long) n + 1;
+            } catch (IOException e) {
+                if (errno(e) == EPIPE) {
+                    onEpipe(fc, bb);
+                    return -EPIPE;
+                }
+                return -errno(e);
+            } catch (IllegalArgumentException e) {
+                return -EINVAL;
             }
-            return -errno(e);
-        } catch (IllegalArgumentException e) {
-            return -EINVAL;
         }
     }
 
@@ -892,13 +982,16 @@ public final class GoOs {
         if (size < 0) {
             return -EINVAL;
         }
-        try {
-            ftruncate(fc, size);
-            return 0;
-        } catch (IOException e) {
-            return -errno(e);
-        } catch (IllegalArgumentException e) {
-            return -EINVAL;
+        // R2 P1-5: the extension path does a real (blocking) write.
+        try (IoBracket io = IoBracket.enter(ch)) {
+            try {
+                ftruncate(fc, size);
+                return 0;
+            } catch (IOException e) {
+                return -errno(e);
+            } catch (IllegalArgumentException e) {
+                return -EINVAL;
+            }
         }
     }
 
@@ -938,11 +1031,14 @@ public final class GoOs {
         if (ch == null || !(ch.ch instanceof FileChannel fc)) {
             return -EINVAL;
         }
-        try {
-            fc.force(true);
-            return 0;
-        } catch (IOException e) {
-            return -errno(e);
+        // R2 P1-5: fsync blocks; release the in-flight slot across it.
+        try (IoBracket io = IoBracket.enter(ch)) {
+            try {
+                fc.force(true);
+                return 0;
+            } catch (IOException e) {
+                return -errno(e);
+            }
         }
     }
 

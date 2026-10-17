@@ -353,11 +353,32 @@ public final class TimerHeap {
                     // our trySend never blocks). Lock order throughout is
                     // heap → owner → chan (leaf); trySend/unpark never
                     // block and never acquire heap/owner locks.
-                    fireChanLocked(e);
+                    //
+                    // R2 P1-6: a stray throwable here must not kill the
+                    // timer thread — that would stall every
+                    // sleep/timer/ticker forever, silently. Loud, then
+                    // continue (poller discipline, same as the callback
+                    // guard in fireNonChan below); only this fire is lost.
+                    try {
+                        fireChanLocked(e);
+                    } catch (Throwable t) {
+                        System.err.println(
+                                "graalgo-timer: FATAL channel fire failure, timer dropped: " + t);
+                        t.printStackTrace(System.err);
+                    }
                     continue;
                 }
             }
-            fireNonChan(e);
+            // R2 P1-6: same containment for the sleep/callback fire
+            // (fireNonChan already guards the callback body; this covers
+            // the unpark and any other stray throwable).
+            try {
+                fireNonChan(e);
+            } catch (Throwable t) {
+                System.err.println(
+                        "graalgo-timer: FATAL sleep fire failure: " + t);
+                t.printStackTrace(System.err);
+            }
         }
     }
 

@@ -80,7 +80,8 @@ import graalgo.values.GoSlice;
  * = completion pending (the netpoller drives {@code OP_CONNECT};
  * failure surfaces through {@code getsockopt(SO_ERROR)}, gc parity).
  *
- * <p>State is per-program-run like {@link GoOs}: {@link #resetForTest}
+ * <p>State is per-program-run like {@link GoOs}: {@link #resetForProgramRun}
+ * clears it between in-process program runs (and for tests).
  * clears it (tests); the launcher path relies on one program per JVM.
  */
 public final class GoNet {
@@ -171,9 +172,20 @@ public final class GoNet {
 
     private static final ConcurrentHashMap<Long, SockState> STATES = new ConcurrentHashMap<>();
 
-    /** Clears per-run socket state (tests). The GoOs handle table is reset separately. */
-    public static void resetForTest() {
+    /**
+     * Per-program-run reset: clears socket state. Called by the launcher
+     * between in-process program runs (P3SyncMain, next to
+     * {@code GoOs.init}) and by tests. Without it, a second program run
+     * in the same JVM reuses GoOs cookie numbers that still map to the
+     * previous run's socket state (R2 P1-7).
+     */
+    public static void resetForProgramRun() {
         STATES.clear();
+    }
+
+    /** Test hook: per-program-run reset. */
+    public static void resetForTest() {
+        resetForProgramRun();
     }
 
     // ------------------------------------------------------------------

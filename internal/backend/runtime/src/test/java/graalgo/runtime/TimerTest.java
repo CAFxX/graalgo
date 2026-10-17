@@ -470,6 +470,32 @@ public final class TimerTest {
                 "timer thread died after throwing callback");
     }
 
+    // R2 P1-6: a throwing channel fire does not kill the timer thread —
+    // the next timer still fires. (fireChanLocked runs inside the heap
+    // lock with no guard of its own; the loop-level containment must
+    // catch the stray throwable, or every sleep/timer/ticker stalls
+    // forever.) Red-green: without the containment the AssertionError
+    // kills the single timer thread and the second timer never fires.
+    public void testThrowingChannelFireDoesNotKillTimerThread() throws Exception {
+        AtomicBoolean secondRan = new AtomicBoolean();
+        withScheduler(1, () -> {
+            TimerHeap heap = sched.timerHeap();
+            GoChan bad = new GoChan(1, null) {
+                @Override
+                boolean trySend(Object v, SchedulerCore s) {
+                    throw new AssertionError("simulated fire failure");
+                }
+            };
+            GoTimer owner = GoTimer.newTimer(60_000_000_000L);
+            heap.addChan(System.nanoTime(), bad, owner, 0, owner.generationLocked());
+            Timers.startTimer(System.nanoTime() + 150_000_000L,
+                    () -> secondRan.set(true));
+            Thread.sleep(600);
+        });
+        assertTrue(secondRan.get(),
+                "timer thread died after throwing channel fire");
+    }
+
     // P2-7: Netpoll deletion pin — all five methods throw UOE with the
     // GG-0018 message (netpoller deleted; blocking I/O uses ioEnter/ioExit).
     public void testNetpollDeletion() throws Exception {
