@@ -45,6 +45,7 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        TESTS.add(graalgo.frontend.AbiFuncPCBuilderTest.class);
     }
 
     private IfaceTestRunner() {}
