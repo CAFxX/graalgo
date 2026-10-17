@@ -1855,6 +1855,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// P4 (WS D, general interface MR): user-defined (or
+				// otherwise unlisted) interfaces with multi-result
+				// methods — mirrors the exportIfaceMethodCall chain
+				// (export.go). Without this, an N-target assignment of
+				// a general interface multi-result call (e.g.
+				// r, size, err = s.rs.ReadRune() in real fmt's scan.go,
+				// reached via the real-fmt2 GOROOT import) escapes the
+				// desugar and emits a wire-contract-violating
+				// assign{lhs:N, rhs:1}, which the backend fail-fasts
+				// ("assign.fields: lhs/rhs length mismatch"). Last in
+				// the chain: the whitelist/disk classifiers above keep
+				// precedence.
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
