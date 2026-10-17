@@ -169,12 +169,16 @@ test-regression: generate build graalgo
 # differential tests need the backend classes (built by `build`).
 #
 # In `all` (hence per-push CI): this module's ~60 tests never ran in CI
-# before (E6). All four formerly-parked failures are fixed for real:
-# the two sync tests were rewritten for the real-sync2 mechanism, and
-# TestTwoPackageDifferential + TestEmbeddedFieldRebinding were unblocked by
-# the N-target multi-result interface method assignment desugar fix
-# (6812e97e, cherry-picked into this branch) — the backend no longer rejects
-# the real GOROOT fmt tree's multi-valued RHS assigns (fmt/scan.go:189).
+# before (E6). Status of the four formerly-parked failures:
+# - TestSyncExportDir, TestSyncExtendedSurfaceExportParity: FIXED for real
+#   (rewritten for the real-sync2 mechanism) and verified passing.
+# - TestTwoPackageDifferential, TestEmbeddedFieldRebinding: frontend blockers
+#   FIXED (repoRoot path; 6812e97e N-target interface MR desugar absorbed with
+#   red-green regression tests), but SKIPPED with tracked ticket: the graalgo
+#   leg hits a backend RUNTIME NPE (GoStruct null) executing the merged fmt
+#   tree — a Java backend runtime bug out of this frontend/test lane's scope,
+#   needs a backend lane. Each Skip carries the reference. Unskip when the
+#   backend runs fmt-importing programs cleanly.
 # /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
 P3FE_TMP := $(CURDIR)/internal/frontend/p3frontend/.tmp
 test-p3frontend: generate build
