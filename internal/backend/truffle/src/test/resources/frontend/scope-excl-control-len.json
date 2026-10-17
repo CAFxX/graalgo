@@ -1,0 +1,230 @@
+{
+  "frontend": "v1",
+  "generator": {
+    "tool": "gofrontend",
+    "version": "0.7.0",
+    "goroot": "go1.27.1"
+  },
+  "package": {
+    "name": "main",
+    "files": [
+      "e4_len.go"
+    ],
+    "lang": "go1.27"
+  },
+  "types": [
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "slice",
+      "detail": {
+        "elem": 3
+      }
+    },
+    {
+      "kind": "basic",
+      "detail": {
+        "class": "int",
+        "name": "int",
+        "untyped": false
+      }
+    }
+  ],
+  "objects": [
+    {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    }
+  ],
+  "funcs": [
+    {
+      "kind": "funcdecl",
+      "pos": {
+        "file": 0,
+        "line": 3,
+        "col": 1,
+        "off": 14,
+        "len": 44
+      },
+      "fields": {
+        "body": {
+          "kind": "block",
+          "pos": {
+            "file": 0,
+            "line": 3,
+            "col": 13,
+            "off": 26,
+            "len": 32
+          },
+          "fields": {
+            "stmts": [
+              {
+                "kind": "exprstmt",
+                "pos": {
+                  "file": 0,
+                  "line": 3,
+                  "col": 15,
+                  "off": 28,
+                  "len": 28
+                },
+                "fields": {
+                  "x": {
+                    "kind": "call",
+                    "pos": {
+                      "file": 0,
+                      "line": 3,
+                      "col": 15,
+                      "off": 28,
+                      "len": 28
+                    },
+                    "fields": {
+                      "args": [
+                        {
+                          "kind": "call",
+                          "pos": {
+                            "file": 0,
+                            "line": 3,
+                            "col": 23,
+                            "off": 36,
+                            "len": 19
+                          },
+                          "fields": {
+                            "args": [
+                              {
+                                "kind": "complit",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 3,
+                                  "col": 27,
+                                  "off": 40,
+                                  "len": 14
+                                },
+                                "fields": {
+                                  "keyed": false,
+                                  "type": 2,
+                                  "values": [
+                                    {
+                                      "kind": "basiclit",
+                                      "pos": {
+                                        "file": 0,
+                                        "line": 3,
+                                        "col": 33,
+                                        "off": 46,
+                                        "len": 1
+                                      },
+                                      "fields": {
+                                        "const": "1",
+                                        "f32bits": 1065353216,
+                                        "f64bits": 4607182418800017408,
+                                        "type": 3,
+                                        "value": "1"
+                                      }
+                                    },
+                                    {
+                                      "kind": "basiclit",
+                                      "pos": {
+                                        "file": 0,
+                                        "line": 3,
+                                        "col": 36,
+                                        "off": 49,
+                                        "len": 1
+                                      },
+                                      "fields": {
+                                        "const": "2",
+                                        "f32bits": 1073741824,
+                                        "f64bits": 4611686018427387904,
+                                        "type": 3,
+                                        "value": "2"
+                                      }
+                                    },
+                                    {
+                                      "kind": "basiclit",
+                                      "pos": {
+                                        "file": 0,
+                                        "line": 3,
+                                        "col": 39,
+                                        "off": 52,
+                                        "len": 1
+                                      },
+                                      "fields": {
+                                        "const": "3",
+                                        "f32bits": 1077936128,
+                                        "f64bits": 4613937818241073152,
+                                        "type": 3,
+                                        "value": "3"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ],
+                            "builtin": "len",
+                            "fun": {
+                              "kind": "ident",
+                              "pos": {
+                                "file": 0,
+                                "line": 3,
+                                "col": 23,
+                                "off": 36,
+                                "len": 3
+                              },
+                              "fields": {
+                                "builtin": "len",
+                                "name": "len"
+                              }
+                            },
+                            "type": 3
+                          }
+                        }
+                      ],
+                      "builtin": "println",
+                      "fun": {
+                        "kind": "ident",
+                        "pos": {
+                          "file": 0,
+                          "line": 3,
+                          "col": 15,
+                          "off": 28,
+                          "len": 7
+                        },
+                        "fields": {
+                          "builtin": "println",
+                          "name": "println"
+                        }
+                      },
+                      "type": null
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "name": "main",
+        "obj": 0,
+        "params": [],
+        "pkgpath": "main",
+        "sig": 1
+      }
+    }
+  ],
+  "globals": []
+}

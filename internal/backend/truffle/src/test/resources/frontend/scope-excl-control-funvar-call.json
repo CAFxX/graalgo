@@ -1,0 +1,359 @@
+{
+  "frontend": "v1",
+  "generator": {
+    "tool": "gofrontend",
+    "version": "0.7.0",
+    "goroot": "go1.27.1"
+  },
+  "package": {
+    "name": "main",
+    "files": [
+      "e3_funvar_call.go"
+    ],
+    "lang": "go1.27"
+  },
+  "types": [
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [
+          {
+            "name": "x",
+            "type": 3
+          }
+        ],
+        "results": [
+          {
+            "name": "",
+            "type": 3
+          }
+        ],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "basic",
+      "detail": {
+        "class": "int",
+        "name": "int",
+        "untyped": false
+      }
+    }
+  ],
+  "objects": [
+    {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "f",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "x",
+      "type": 3,
+      "param": true,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "",
+      "type": 3,
+      "param": true,
+      "instof": 0,
+      "typeargs": null
+    }
+  ],
+  "funcs": [
+    {
+      "kind": "funcdecl",
+      "pos": {
+        "file": 0,
+        "line": 3,
+        "col": 1,
+        "off": 14,
+        "len": 70
+      },
+      "fields": {
+        "body": {
+          "kind": "block",
+          "pos": {
+            "file": 0,
+            "line": 3,
+            "col": 13,
+            "off": 26,
+            "len": 58
+          },
+          "fields": {
+            "stmts": [
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 4,
+                  "col": 2,
+                  "off": 29,
+                  "len": 37
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "f"
+                  ],
+                  "objs": [
+                    1
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "funclit",
+                      "pos": {
+                        "file": 0,
+                        "line": 4,
+                        "col": 7,
+                        "off": 34,
+                        "len": 32
+                      },
+                      "fields": {
+                        "body": {
+                          "kind": "block",
+                          "pos": {
+                            "file": 0,
+                            "line": 4,
+                            "col": 23,
+                            "off": 50,
+                            "len": 16
+                          },
+                          "fields": {
+                            "stmts": [
+                              {
+                                "kind": "return",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 4,
+                                  "col": 25,
+                                  "off": 52,
+                                  "len": 12
+                                },
+                                "fields": {
+                                  "results": [
+                                    {
+                                      "kind": "binary",
+                                      "pos": {
+                                        "file": 0,
+                                        "line": 4,
+                                        "col": 32,
+                                        "off": 59,
+                                        "len": 5
+                                      },
+                                      "fields": {
+                                        "op": "+",
+                                        "type": 3,
+                                        "x": {
+                                          "kind": "ident",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 4,
+                                            "col": 32,
+                                            "off": 59,
+                                            "len": 1
+                                          },
+                                          "fields": {
+                                            "name": "x",
+                                            "obj": 2,
+                                            "type": 3
+                                          }
+                                        },
+                                        "y": {
+                                          "kind": "basiclit",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 4,
+                                            "col": 36,
+                                            "off": 63,
+                                            "len": 1
+                                          },
+                                          "fields": {
+                                            "const": "1",
+                                            "f32bits": 1065353216,
+                                            "f64bits": 4607182418800017408,
+                                            "type": 3,
+                                            "value": "1"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "params": [
+                          {
+                            "kind": "param",
+                            "pos": {
+                              "file": 0,
+                              "line": 4,
+                              "col": 7,
+                              "off": 34,
+                              "len": 15
+                            },
+                            "fields": {
+                              "name": "x",
+                              "obj": 2,
+                              "type": 3
+                            }
+                          }
+                        ],
+                        "results": [
+                          {
+                            "kind": "param",
+                            "pos": {
+                              "file": 0,
+                              "line": 4,
+                              "col": 7,
+                              "off": 34,
+                              "len": 15
+                            },
+                            "fields": {
+                              "name": "",
+                              "obj": 3,
+                              "type": 3
+                            }
+                          }
+                        ],
+                        "type": 2
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "exprstmt",
+                "pos": {
+                  "file": 0,
+                  "line": 5,
+                  "col": 2,
+                  "off": 68,
+                  "len": 14
+                },
+                "fields": {
+                  "x": {
+                    "kind": "call",
+                    "pos": {
+                      "file": 0,
+                      "line": 5,
+                      "col": 2,
+                      "off": 68,
+                      "len": 14
+                    },
+                    "fields": {
+                      "args": [
+                        {
+                          "kind": "call",
+                          "pos": {
+                            "file": 0,
+                            "line": 5,
+                            "col": 10,
+                            "off": 76,
+                            "len": 5
+                          },
+                          "fields": {
+                            "args": [
+                              {
+                                "kind": "basiclit",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 5,
+                                  "col": 12,
+                                  "off": 78,
+                                  "len": 2
+                                },
+                                "fields": {
+                                  "const": "41",
+                                  "f32bits": 1109655552,
+                                  "f64bits": 4630967054332067840,
+                                  "type": 3,
+                                  "value": "41"
+                                }
+                              }
+                            ],
+                            "fun": {
+                              "kind": "ident",
+                              "pos": {
+                                "file": 0,
+                                "line": 5,
+                                "col": 10,
+                                "off": 76,
+                                "len": 1
+                              },
+                              "fields": {
+                                "name": "f",
+                                "obj": 1,
+                                "type": 2
+                              }
+                            },
+                            "type": 3
+                          }
+                        }
+                      ],
+                      "builtin": "println",
+                      "fun": {
+                        "kind": "ident",
+                        "pos": {
+                          "file": 0,
+                          "line": 5,
+                          "col": 2,
+                          "off": 68,
+                          "len": 7
+                        },
+                        "fields": {
+                          "builtin": "println",
+                          "name": "println"
+                        }
+                      },
+                      "type": null
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "name": "main",
+        "obj": 0,
+        "params": [],
+        "pkgpath": "main",
+        "sig": 1
+      }
+    }
+  ],
+  "globals": []
+}

@@ -1,0 +1,294 @@
+{
+ "frontend": "v1",
+ "generator": {
+  "tool": "gofrontend",
+  "version": "0.7.0",
+  "goroot": "go1.27.1"
+ },
+ "package": {
+  "name": "main",
+  "files": [
+   "e5_single_result.go"
+  ],
+  "lang": "go1.27"
+ },
+ "types": [
+  {
+   "kind": "signature",
+   "detail": {
+    "params": [],
+    "results": [
+     {
+      "name": "",
+      "type": 1
+     }
+    ],
+    "variadic": false
+   }
+  },
+  {
+   "kind": "basic",
+   "detail": {
+    "class": "int",
+    "name": "int",
+    "untyped": false
+   }
+  },
+  {
+   "kind": "signature",
+   "detail": {
+    "params": [],
+    "results": [],
+    "variadic": false
+   }
+  },
+  {
+   "kind": "signature",
+   "detail": {
+    "params": [],
+    "results": [
+     {
+      "name": "",
+      "type": 1
+     }
+    ],
+    "variadic": false
+   }
+  },
+  {
+   "kind": "signature",
+   "detail": {
+    "params": [],
+    "results": [],
+    "variadic": false
+   }
+  }
+ ],
+ "objects": [
+  {
+   "kind": "func",
+   "name": "one",
+   "type": 0,
+   "param": false,
+   "instof": 0,
+   "typeargs": null
+  },
+  {
+   "kind": "func",
+   "name": "main",
+   "type": 2,
+   "param": false,
+   "instof": 0,
+   "typeargs": null
+  },
+  {
+   "kind": "var",
+   "name": "",
+   "type": 1,
+   "param": true,
+   "instof": 0,
+   "typeargs": null
+  }
+ ],
+ "funcs": [
+  {
+   "kind": "funcdecl",
+   "pos": {
+    "file": 0,
+    "line": 3,
+    "col": 1,
+    "off": 14,
+    "len": 28
+   },
+   "fields": {
+    "body": {
+     "kind": "block",
+     "pos": {
+      "file": 0,
+      "line": 3,
+      "col": 16,
+      "off": 29,
+      "len": 13
+     },
+     "fields": {
+      "stmts": [
+       {
+        "kind": "return",
+        "pos": {
+         "file": 0,
+         "line": 3,
+         "col": 18,
+         "off": 31,
+         "len": 9
+        },
+        "fields": {
+         "results": [
+          {
+           "kind": "basiclit",
+           "pos": {
+            "file": 0,
+            "line": 3,
+            "col": 25,
+            "off": 38,
+            "len": 2
+           },
+           "fields": {
+            "const": "42",
+            "f32bits": 1109917696,
+            "f64bits": 4631107791820423168,
+            "type": 1,
+            "value": "42"
+           }
+          },
+          {
+           "kind": "basiclit",
+           "pos": {
+            "file": 0,
+            "line": 3,
+            "col": 25,
+            "off": 38,
+            "len": 2
+           },
+           "fields": {
+            "const": "42",
+            "f32bits": 1109917696,
+            "f64bits": 4631107791820423168,
+            "type": 1,
+            "value": "42"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "name": "one",
+    "obj": 0,
+    "params": [],
+    "pkgpath": "main",
+    "results": [
+     {
+      "kind": "param",
+      "pos": {
+       "file": 0,
+       "line": 3,
+       "col": 1,
+       "off": 14,
+       "len": 14
+      },
+      "fields": {
+       "name": "",
+       "obj": 2,
+       "type": 1
+      }
+     }
+    ],
+    "sig": 3
+   }
+  },
+  {
+   "kind": "funcdecl",
+   "pos": {
+    "file": 0,
+    "line": 5,
+    "col": 1,
+    "off": 44,
+    "len": 30
+   },
+   "fields": {
+    "body": {
+     "kind": "block",
+     "pos": {
+      "file": 0,
+      "line": 5,
+      "col": 13,
+      "off": 56,
+      "len": 18
+     },
+     "fields": {
+      "stmts": [
+       {
+        "kind": "exprstmt",
+        "pos": {
+         "file": 0,
+         "line": 5,
+         "col": 15,
+         "off": 58,
+         "len": 14
+        },
+        "fields": {
+         "x": {
+          "kind": "call",
+          "pos": {
+           "file": 0,
+           "line": 5,
+           "col": 15,
+           "off": 58,
+           "len": 14
+          },
+          "fields": {
+           "args": [
+            {
+             "kind": "call",
+             "pos": {
+              "file": 0,
+              "line": 5,
+              "col": 23,
+              "off": 66,
+              "len": 5
+             },
+             "fields": {
+              "args": [],
+              "fun": {
+               "kind": "ident",
+               "pos": {
+                "file": 0,
+                "line": 5,
+                "col": 23,
+                "off": 66,
+                "len": 3
+               },
+               "fields": {
+                "name": "one",
+                "obj": 0,
+                "type": 0
+               }
+              },
+              "type": 1
+             }
+            }
+           ],
+           "builtin": "println",
+           "fun": {
+            "kind": "ident",
+            "pos": {
+             "file": 0,
+             "line": 5,
+             "col": 15,
+             "off": 58,
+             "len": 7
+            },
+            "fields": {
+             "builtin": "println",
+             "name": "println"
+            }
+           },
+           "type": null
+          }
+         }
+        }
+       }
+      ]
+     }
+    },
+    "name": "main",
+    "obj": 1,
+    "params": [],
+    "pkgpath": "main",
+    "sig": 4
+   }
+  }
+ ],
+ "globals": []
+}
