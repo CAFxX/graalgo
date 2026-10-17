@@ -598,3 +598,71 @@ func main() {
 		t.Fatalf("want 2 ifacemethod Read nodes (bare statements), got %d", reads)
 	}
 }
+
+// TestD1IfaceMultiResultDesugarUnlisted: an N-target assignment whose RHS
+// is an unlisted multi-result interface method must desugar via
+// classifyMultiResultCall (pair temp + field extractions), not leak a raw
+// multi-result ifacemethod node into the assign wire node.
+//
+// Regression test for the conformance red-master: once the abifuncpc
+// registration was fixed, 8 GOROOT/test programs failed with
+// "assign.fields: lhs/rhs length mismatch". The culprit was
+// fmt/scan.go's `r, size, err = s.rs.ReadRune()` — io.RuneReader.ReadRune
+// is not in the m8IfaceMultiResultMethods whitelist, so
+// classifyMultiResultCall (backing exportMultiResultDesugar) missed it
+// while exportIfaceMethodCall classified it via the general
+// classifyUserIfaceMultiResultCall fallback. The raw 3-target/1-rhs
+// assign leaked into the wire and the backend rejected it.
+func TestD1IfaceMultiResultDesugarUnlisted(t *testing.T) {
+	const src = `package main
+
+type R interface {
+	ReadRune() (rune, int, error)
+}
+
+type B struct{}
+
+func (B) ReadRune() (rune, int, error) { return 'a', 1, nil }
+
+func main() {
+	var rr R = B{}
+	var r rune
+	var size int
+	var err error
+	r, size, err = rr.ReadRune()
+	println(r, size, err == nil)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	for _, f := range doc["funcs"].([]any) {
+		fm, _ := f.(map[string]any)
+		fl, _ := fm["fields"].(map[string]any)
+		if fl["name"] != "main" {
+			continue
+		}
+		// Negative: no raw multi-result assign may leak into the wire.
+		for _, n := range findAllKind(fm, "assign") {
+			ff := n["fields"].(map[string]any)
+			lhs := ff["lhs"].([]any)
+			rhs := ff["rhs"].([]any)
+			commaOk := len(lhs) == 2 && len(rhs) == 1
+			if !commaOk && len(lhs) != len(rhs) {
+				t.Fatalf("raw multi-result assign leaked into wire: lhs=%d rhs=%d", len(lhs), len(rhs))
+			}
+		}
+		// Positive: the desugared pair temp must be present.
+		found := false
+		for _, n := range findAllKind(fm, "vardecl") {
+			ff := n["fields"].(map[string]any)
+			names, _ := ff["names"].([]any)
+			for _, nm := range names {
+				if s, ok := nm.(string); ok && len(s) > 7 && s[:7] == "__p5mr_" {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("no desugared __p5mr_N pair temp found; the unlisted multi-result ifacemethod call was not desugared")
+		}
+	}
+}
