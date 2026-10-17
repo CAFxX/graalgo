@@ -45,6 +45,10 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // rev3-exitcode (P1): os.Exit must propagate the guest exit code to
+        // the host process status — subprocess tests (System.exit would
+        // kill the in-JVM runner).
+        TESTS.add(graalgo.p3os.OsExitCodeTest.class);
     }
 
     private IfaceTestRunner() {}
