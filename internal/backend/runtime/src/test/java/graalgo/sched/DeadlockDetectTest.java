@@ -458,10 +458,16 @@ public final class DeadlockDetectTest {
         CountDownLatch admitted = new CountDownLatch(1);
         AtomicBoolean release = new AtomicBoolean(false);
         AtomicBoolean schedulerTouched = new AtomicBoolean(false);
+        AtomicBoolean guestRunning = new AtomicBoolean(false);
         try {
             schedA.start();
             schedA.drainer().setAdmissionListener(h -> admitted.countDown());
             schedA.spawn(() -> {
+                // First statement: proves the vthread is past the
+                // pre-admission guard and in guest code (the admission
+                // listener fires on the drainer thread while the vthread
+                // is still parked in awaitAck — it cannot prove this).
+                guestRunning.set(true);
                 // Scheduler-aware wait (never JVM-block inside a goroutine):
                 // spin until the test thread has uninstalled the scheduler.
                 while (!release.get()) {
@@ -473,8 +479,10 @@ public final class DeadlockDetectTest {
                 SchedulerCore.current();
             });
             // Wait until the orphan is past the pre-admission guard and
-            // running guest code.
+            // running guest code (not just admitted — the listener fires
+            // before the vthread wakes).
             assertTrue(admitted.await(15, TimeUnit.SECONDS), "orphan admitted");
+            waitFor(() -> guestRunning.get(), "orphan in guest code");
             // The launcher exits (C1) and uninstalls the scheduler while
             // the orphan is still running.
             SchedulerCore.install(null);
@@ -519,11 +527,17 @@ public final class DeadlockDetectTest {
         AtomicBoolean release = new AtomicBoolean(false);
         AtomicReference<Throwable> observedThrow = new AtomicReference<>();
         AtomicReference<SchedulerCore> gotScheduler = new AtomicReference<>();
+        AtomicBoolean guestRunning = new AtomicBoolean(false);
         SchedulerCore schedB = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         try {
             schedA.start();
             schedA.drainer().setAdmissionListener(h -> admitted.countDown());
             schedA.spawn(() -> {
+                // First statement: proves the vthread is past the
+                // pre-admission guard and in guest code (the admission
+                // listener fires on the drainer thread while the vthread
+                // is still parked in awaitAck — it cannot prove this).
+                guestRunning.set(true);
                 // Scheduler-aware wait (never JVM-block inside a goroutine):
                 // spin until the test thread has installed the foreign scheduler.
                 while (!release.get()) {
@@ -538,8 +552,10 @@ public final class DeadlockDetectTest {
                 }
             });
             // Wait until the orphan is past the pre-admission guard and
-            // running guest code.
+            // running guest code (not just admitted — the listener fires
+            // before the vthread wakes).
             assertTrue(admitted.await(15, TimeUnit.SECONDS), "orphan admitted");
+            waitFor(() -> guestRunning.get(), "orphan in guest code");
             // A foreign scheduler is installed while the orphan still runs.
             schedB.start();
             SchedulerCore.install(schedB);
