@@ -2958,7 +2958,16 @@ type exporter struct {
 	// pair-returning convention. General mechanism: any linkname whose
 	// symbol resolves via synthFuncIDs gets an alias.
 	linknameAlias map[*types.Func]*funcDeclInfo
-	sizes         types.Sizes
+	// RV-P1-02: lazily-built qualified-name set ("pkgpath.name") of the
+	// bodied, non-linkname functions known to this export — the
+	// compile-time approximation of the backend's bindGo namespace (see
+	// compiledGoSymbols in asmstub.go). The two lengths fingerprint the
+	// build inputs; the set is rebuilt when funcByObj/synthFuncIDs grows
+	// (imported packages join during body export).
+	goSyms       map[string]bool
+	goSymsNFunc  int
+	goSymsNSynth int
+	sizes        types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
 	// typeSubst below.
@@ -6183,20 +6192,32 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 
 // exportLinknameDecl emits a bodyless function (P3-M4, WS C, ADR-0004 D1)
 // as a funcdecl with no "body". A bodyless function carrying //go:linkname
-// gets the additive "linkname" field and the factory builds a
-// LinknameRootNode dispatching by symbol name. A bodyless function WITHOUT
-// the directive (typically an assembly implementation in a .s file that
-// graalgo does not process) gets the additive "unimplemented" field; the
-// factory builds a stub that panics if called. This is general: it applies
-// uniformly to all bodyless functions, preserving their type identity so
-// references and value positions work, while failing loudly (never
-// silently) if the unimplemented function is actually invoked.
+// — or provided by the GOROOT runtime via a provider-side //go:linkname
+// directive (generated table runtimeProvidedLinknames, RV-P1-02) — gets the
+// additive "linkname" field and the factory builds a LinknameRootNode
+// dispatching by symbol name. A bodyless function with no linkname symbol
+// (typically an assembly implementation in a .s file that graalgo does not
+// process) is truly unimplemented: the declaration keeps its type identity
+// in the frontend but emits no wire funcdecl (returns (nil, nil), the
+// established skip signal); any reference to it fails at export time via
+// checkBodylessReference [RV-P1-02]. This is general: it applies uniformly
+// to all bodyless functions, and a missing implementation can never become
+// a runtime panic on a compilable program.
 func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	pkgPath := funcPkgPath(e, fi)
-	symbol, err := linknameDirective(fd, pkgPath)
+	// RV-P1-02: single source of truth with checkBodylessReference —
+	// the declaration site and every reference site classify the
+	// bodyless function identically.
+	symbol, err := classifyBodyless(fi, pkgPath)
 	if err != nil {
 		return nil, err
+	}
+	if symbol == "" {
+		// Truly unimplemented: no wire funcdecl. The backend has no stub
+		// for it anymore (UnimplementedRootNode deleted); references fail
+		// at export with [RV-P1-02].
+		return nil, nil
 	}
 	// P3-M9 (RC-6): //go:linkname on methods is allowed (previously M4
 	// scope). The receiver is passed as the first arg; intrinsics that
@@ -6224,85 +6245,27 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	if len(results) > 0 {
 		fields["results"] = results
 	}
-	if symbol == "" {
-		// No //go:linkname: check if this is a runtime-provided function
-		// (Go pattern: package P declares `func runtime_X(...)`, and the
-		// runtime package provides it via //go:linkname). These are not
-		// assembly — they're intrinsics that the backend must implement.
-		// Emit as a linkname so the backend dispatches to the Java
-		// intrinsic instead of panicking on "unimplemented".
-		if fi.obj != nil && fi.obj.Name() != "" {
-			funcName := fi.obj.Name()
-			if len(funcName) > 8 && funcName[:8] == "runtime_" && pkgPath != "runtime" {
-				// Runtime-provided intrinsic: symbol is pkgpath.name
-				// (e.g., "sync.runtime_Semacquire"). The backend's
-				// Linknames.dispatch will fail fast if no intrinsic
-				// is registered for the symbol.
-				symbol = pkgPath + "." + funcName
+	fields["linkname"] = symbol
+	// real-nethttp: if the linkname symbol resolves to a compiled
+	// funcdecl (via synthFuncIDs), alias the stub to the provider so
+	// calls lower to a direct provider call. This makes multi-result
+	// linkname targets (e.g. net/textproto.readMIMEHeader) work through
+	// the normal pair-returning convention. The symbol is either
+	// pkgpath.name (two-field form) or a bare name (single-field form,
+	// which is a provider declaration, not a consumer).
+	//
+	// RV-P1-02: the old fallback for multi-result linkname consumers
+	// without a provider (emit as "unimplemented" panic stub) is gone.
+	// A linkname symbol with no provider is a reference-site export
+	// error (checkBodylessReference), not a panic stub: the declaration
+	// still exports, so the package export succeeds, and only actual
+	// references fail — at compile time.
+	if strings.Contains(symbol, ".") {
+		if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
+			if e.linknameAlias == nil {
+				e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
 			}
-		}
-	}
-	if symbol == "" {
-		// No //go:linkname and not a runtime-provided intrinsic:
-		// assembly-implemented (or otherwise bodyless) function.
-		// Mark unimplemented; the backend panics if called. The
-		// multi-result WS D restriction does not apply: no body is built.
-		fields["unimplemented"] = true
-		// ASM Phase 1: a multi-result unimplemented function still
-		// needs a userMRFuncs entry so its callers get the pair
-		// transform and compile. The stub panics if invoked, so the
-		// pair is never constructed at runtime — but callers like
-		// internal/cpu.doinit (which multi-assigns cpuid results)
-		// must type-check. This is general: any bodyless function
-		// with N>1 results gets it automatically.
-		if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
-			if _, ok := e.userMRFuncs[fi.obj]; !ok {
-				pairType, fieldNames, err := e.synthesizeUserPairType(fi)
-				if err != nil {
-					return nil, err
-				}
-				e.userMRFuncs[fi.obj] = &userMRInfo{
-					pairType:   pairType,
-					pairFields: fieldNames,
-					origSig:    fi.sig,
-				}
-			}
-		}
-	} else {
-		fields["linkname"] = symbol
-		// real-nethttp: if the linkname symbol resolves to a compiled
-		// funcdecl (via synthFuncIDs), alias the stub to the provider so
-		// calls lower to a direct provider call. This makes multi-result
-		// linkname targets (e.g. net/textproto.readMIMEHeader) work through
-		// the normal pair-returning convention. The symbol is either
-		// pkgpath.name (two-field form) or a bare name (single-field form,
-		// which is a provider declaration, not a consumer).
-		//
-		// P4 (real-reflect): multi-result linkname consumers (e.g.
-		// reflect's badlinkname_rtype_FieldByName, which has 2 results)
-		// are only an error when no provider is found. With a provider,
-		// calls lower directly to it via linknameAlias. Without a
-		// provider, the backend's LinknameRootNode cannot handle
-		// multi-result dispatch, so emit as unimplemented (panic stub)
-		// rather than failing the entire package export. This is
-		// general: it applies to any bodyless multi-result linkname,
-		// not just reflect's shims.
-		hasProvider := false
-		if strings.Contains(symbol, ".") {
-			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
-				if e.linknameAlias == nil {
-					e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
-				}
-				e.linknameAlias[fi.obj] = providerFi
-				hasProvider = true
-			}
-		}
-		if len(results) > 1 && !hasProvider {
-			// No provider to alias to: mark unimplemented so the
-			// backend panics if called, instead of failing export.
-			// This matches the bodyless-no-linkname path above.
-			fields["unimplemented"] = true
-			delete(fields, "linkname")
+			e.linknameAlias[fi.obj] = providerFi
 		}
 	}
 	return e.node("funcdecl", fd, fields), nil
@@ -8354,6 +8317,11 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 	if !ok {
 		return fmt.Errorf("gofrontend: unknown function %s", obj.Name())
 	}
+	// RV-P1-02: function values are references too — a value of a
+	// bodyless function with no backend implementation fails at export.
+	if err := e.checkBodylessReference(fi); err != nil {
+		return err
+	}
 	if fi.recv != nil {
 		return scopeErrorf("method value %s (bound receiver) is not supported in frontend/v1 scope (WS H)", id.Name)
 	}
@@ -9145,9 +9113,16 @@ type atomicWordOp struct {
 // atomicWordOps is the package-level atomic word/bool surface lowered to
 // the atomicaddr+syncop wire nodes (fix-linkname, Caddy/godebug lane).
 // gc's exact function names (verified against
-// ~/tools/go-1.27.1/src/sync/atomic/doc.go). The Pointer/Value
-// package funcs, and anything else stay M4: the caller fails fast with
-// the named scope error.
+// ~/tools/go-1.27.1/src/sync/atomic/doc.go).
+//
+// RV-P1-02: SwapPointer/CompareAndSwapPointer ride the Uintptr machinery:
+// unsafe.Pointer is D5-boxed as Long (GoKind.UNSAFE_POINTER maps to
+// FrameSlotKind.Long), so pointer-sized atomic ops are exactly 64-bit
+// integer ops on the address bits; the atomicaddr "int64" cell views the
+// *unsafe.Pointer address as a LongCell. This is what lets
+// atomic.Pointer[T].Swap/CompareAndSwap (which call these unqualified
+// from sync/atomic's own bodies) compile instead of hitting the
+// reference-site rejection.
 var atomicWordOps = map[string]atomicWordOp{
 	"LoadInt32":             {"Load", "atomic.Int32", "int32", 0},
 	"StoreInt32":            {"Store", "atomic.Int32", "int32", 1},
@@ -9189,10 +9164,64 @@ var atomicWordOps = map[string]atomicWordOp{
 	"AndUintptr": {"And", "atomic.Uintptr", "int64", 1},
 	"OrUintptr":  {"Or", "atomic.Uintptr", "int64", 1},
 	// Note: no Bool entries — gc has no package-level bool atomics.
+	// RV-P1-02: package-level pointer ops. unsafe.Pointer is D5-boxed
+	// as Long, so these are exactly the Uintptr ops on the address
+	// bits (the atomicaddr "int64" cell views *unsafe.Pointer as a
+	// LongCell). Called unqualified from sync/atomic's own bodies
+	// (Pointer[T].Swap/CompareAndSwap, Value methods); without this
+	// lowering those references would hit [RV-P1-02] and `import
+	// "sync/atomic"` would not compile.
+	"SwapPointer":           {"Swap", "atomic.Uintptr", "int64", 1},
+	"CompareAndSwapPointer": {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
 	// PKG-012: internal/runtime/atomic (used by sync.Pool via rtatomic).
 	// Functionally identical to the sync/atomic uintptr ops.
 	"LoadAcquintptr":  {"Load", "atomic.Uintptr", "int64", 0},
 	"StoreReluintptr": {"Store", "atomic.Uintptr", "int64", 1},
+	// RV-P1-02: internal/runtime/atomic's own bodyless stubs (stubs.go),
+	// called unqualified from the package's typed wrappers (types.go:
+	// Int32.Load calls Loadint32, etc.). gc's exact names; mapped to the
+	// same atomicaddr+syncop lowerings as their sync/atomic counterparts.
+	// "uint" is 64 bits on the amd64 target; Casp1 compares pointers as
+	// address bits (the unsafe.Pointer-as-Long D5 model).
+	"Cas":          {"CompareAndSwap", "atomic.Uint32", "int32", 2},
+	"Casp1":        {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	"Casint32":     {"CompareAndSwap", "atomic.Int32", "int32", 2},
+	"Casint64":     {"CompareAndSwap", "atomic.Int64", "int64", 2},
+	"Casuintptr":   {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	"Storeint32":   {"Store", "atomic.Int32", "int32", 1},
+	"Storeint64":   {"Store", "atomic.Int64", "int64", 1},
+	"Storeuintptr": {"Store", "atomic.Uintptr", "int64", 1},
+	"Loaduintptr":  {"Load", "atomic.Uintptr", "int64", 0},
+	"Loaduint":     {"Load", "atomic.Uintptr", "int64", 0},
+	"Loadint32":    {"Load", "atomic.Int32", "int32", 0},
+	"Loadint64":    {"Load", "atomic.Int64", "int64", 0},
+	"Xaddint32":    {"Add", "atomic.Int32", "int32", 1},
+	"Xaddint64":    {"Add", "atomic.Int64", "int64", 1},
+	"Xchgint32":    {"Swap", "atomic.Int32", "int32", 1},
+	"Xchgint64":    {"Swap", "atomic.Int64", "int64", 1},
+	// RV-P1-02: casPointer (types.go: UnsafePointer.CompareAndSwap).
+	// Bodyless; maps to the Uintptr CAS lowering (pointer as Long).
+	"casPointer":   {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	// RV-P1-02 (cont.): the remaining bodyless funcs from atomic_amd64.go,
+	// referenced from the typed wrappers in types.go. The 32/64-bit ops
+	// map to the same syncop lowerings; the 8-bit and And/Or ops are
+	// desugared by exportRtAtomic8Op/exportRtAtomicRMW below.
+	"Xadd":        {"Add", "atomic.Uint32", "int32", 1},
+	"Xadd64":      {"Add", "atomic.Uint64", "int64", 1},
+	"Xadduintptr": {"Add", "atomic.Uintptr", "int64", 1},
+	"Xchg":        {"Swap", "atomic.Uint32", "int32", 1},
+	"Xchg64":      {"Swap", "atomic.Uint64", "int64", 1},
+	"Xchguintptr": {"Swap", "atomic.Uintptr", "int64", 1},
+	"Cas64":       {"CompareAndSwap", "atomic.Uint64", "int64", 2},
+	"CasRel":      {"CompareAndSwap", "atomic.Uint32", "int32", 2},
+	"Store":       {"Store", "atomic.Uint32", "int32", 1},
+	"Store64":     {"Store", "atomic.Uint64", "int64", 1},
+	"StoreRel":    {"Store", "atomic.Uint32", "int32", 1},
+	"StoreRel64":  {"Store", "atomic.Uint64", "int64", 1},
+	"StorepNoWB":  {"Store", "atomic.Uintptr", "int64", 1},
+	"Load":        {"Load", "atomic.Uint32", "int32", 0},
+	"Load64":      {"Load", "atomic.Uint64", "int64", 0},
+	"Loadp":       {"Load", "atomic.Uintptr", "int64", 0},
 }
 
 // exportAtomicWordOp lowers a package-level sync/atomic word/bool call
@@ -9235,7 +9264,16 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 // exportAtomicStorePointerStmt lowers a bare-statement
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
 // of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
+// RV-P1-02: also matches the unqualified form (StorePointer called from
+// sync/atomic's own bodies, e.g. Pointer[T].Store, Value.Store), resolved
+// by object rather than by selector syntax.
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
+	if id := callTargetIdent(c.Fun); id != nil {
+		if obj, ok := e.info.Uses[id].(*types.Func); ok && obj.Pkg() != nil &&
+			obj.Pkg().Path() == "sync/atomic" && obj.Name() == "StorePointer" {
+			return e.lowerAtomicStorePointer(s, c)
+		}
+	}
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
 		return nil, false, nil
@@ -9254,6 +9292,12 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
 		return nil, false, nil
 	}
+	return e.lowerAtomicStorePointer(s, c)
+}
+
+// lowerAtomicStorePointer is the shared lowering for exportAtomicStorePointerStmt.
+// s is the statement/expression node for position info.
+func (e *exporter) lowerAtomicStorePointer(s ast.Node, c *ast.CallExpr) (*Node, bool, error) {
 	if len(c.Args) != 2 {
 		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
 	}
@@ -9275,6 +9319,100 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	}), true, nil
 }
 
+// exportRtAtomic8Op lowers the 8-bit bodyless ops from
+// internal/runtime/atomic (Store8, And8, Or8) to plain deref operations.
+// The backend's syncop has no 8-bit cell; these desugar to *ptr = val,
+// *ptr = *ptr & val, *ptr = *ptr | val. Scoped divergence: atomicity
+// without gc's guarantee (single-threaded code is exactly correct).
+// Returns (nil, false, nil) if name is not an 8-bit op.
+func (e *exporter) exportRtAtomic8Op(c *ast.CallExpr, name string) (*Node, bool, error) {
+	var op string
+	switch name {
+	case "Store8":
+		op = ""
+	case "And8":
+		op = "&"
+	case "Or8":
+		op = "|"
+	default:
+		return nil, false, nil
+	}
+	if len(c.Args) != 2 {
+		return nil, true, fmt.Errorf("gofrontend: internal/runtime/atomic.%s takes 2 arguments", name)
+	}
+	px, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, true, err
+	}
+	vx, err := e.exportExpr(c.Args[1])
+	if err != nil {
+		return nil, true, err
+	}
+	tid, err := e.typeID(types.Typ[types.Uint8])
+	if err != nil {
+		return nil, true, err
+	}
+	lhs := e.node("deref", c, map[string]any{"x": px, "type": tid})
+	rhs := vx
+	if op != "" {
+		rhs = e.node("binary", c, map[string]any{
+			"op": op, "x": e.node("deref", c, map[string]any{"x": px, "type": tid}),
+			"y": vx, "type": tid,
+		})
+	}
+	return e.node("assign", c, map[string]any{
+		"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{rhs},
+	}), true, nil
+}
+
+// exportRtAtomicRMWOp lowers the And/Or bodyless ops from
+// internal/runtime/atomic (And, Or, And32, Or32, And64, Or64,
+// Anduintptr, Oruintptr) to *ptr = *ptr & val / *ptr = *ptr | val.
+// The backend's syncop has no And/Or; these desugar to plain RMW.
+// Scoped divergence: atomicity without gc's guarantee.
+// Returns (nil, false, nil) if name is not an And/Or op.
+func (e *exporter) exportRtAtomicRMWOp(c *ast.CallExpr, name string, fn *types.Func) (*Node, bool, error) {
+	var op string
+	switch name {
+	case "And", "And32":
+		op = "&"
+	case "Or", "Or32":
+		op = "|"
+	case "And64", "Anduintptr":
+		op = "&"
+	case "Or64", "Oruintptr":
+		op = "|"
+	default:
+		return nil, false, nil
+	}
+	if len(c.Args) != 2 {
+		return nil, true, fmt.Errorf("gofrontend: internal/runtime/atomic.%s takes 2 arguments", name)
+	}
+	px, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, true, err
+	}
+	vx, err := e.exportExpr(c.Args[1])
+	if err != nil {
+		return nil, true, err
+	}
+	// The element type is the pointer's base type.
+	sig := fn.Type().(*types.Signature)
+	ptrType := sig.Params().At(0).Type().(*types.Pointer)
+	elemTid, err := e.typeID(ptrType.Elem())
+	if err != nil {
+		return nil, true, err
+	}
+	lhs := e.node("deref", c, map[string]any{"x": px, "type": elemTid})
+	rhs := e.node("binary", c, map[string]any{
+		"op": op, "x": e.node("deref", c, map[string]any{"x": px, "type": elemTid}),
+		"y": vx, "type": elemTid,
+	})
+	return e.node("assign", c, map[string]any{
+		"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{rhs},
+	}), true, nil
+}
+
 // exportFuncCall exports a call to a named top-level function (M6, WS H).
 // Generic functions resolve to their monomorphized instantiation via
 // info.Instances; the call target is an "ident" node whose obj is the
@@ -9285,7 +9423,15 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// atomicaddr+syncop wire nodes, like the qualified atomic.StoreUint64
 	// form. Intercepted before the funcByObj lookup (the bodyless funcs
 	// have no Go implementation to call).
+	// RV-P1-02: LoadPointer likewise (e.g. LoadPointer in
+	// Pointer[T].Load and Value.Load, called unqualified from
+	// sync/atomic's own bodies) — like the qualified form, it lowers to
+	// a plain deref read. Without this, the intra-package references
+	// would hit checkBodylessReference below.
 	if fn.Pkg() != nil && fn.Pkg().Path() == "sync/atomic" {
+		if fn.Name() == "LoadPointer" {
+			return e.exportAtomicLoadPointer(c)
+		}
 		if n, handled, err := e.exportAtomicWordOp(c, fn.Name()); handled {
 			return n, err
 		}
@@ -9296,6 +9442,25 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// Go implementation to call.
 	if fn.Pkg() != nil && fn.Pkg().Path() == "internal/runtime/atomic" {
 		if n, handled, err := e.exportAtomicWordOp(c, fn.Name()); handled {
+			return n, err
+		}
+		// RV-P1-02: the 8-bit bodyless ops (atomic_amd64.go: Store8,
+		// And8, Or8, Xchg8) have no syncop backend lowering; desugar to
+		// plain deref operations. Scoped divergence: atomicity without
+		// gc's guarantee, like the Pointer ops above.
+		if n, handled, err := e.exportRtAtomic8Op(c, fn.Name()); handled {
+			return n, err
+		}
+		// RV-P1-02: the And/Or bodyless ops (no syncop backend support);
+		// desugar to plain RMW.
+		if n, handled, err := e.exportRtAtomicRMWOp(c, fn.Name(), fn); handled {
+			return n, err
+		}
+		// RV-P1-02: storePointer is a //go:linkname to a runtime-provided
+		// (assembly) symbol; lower to *ptr = new like StorePointer.
+		// Scoped divergence: atomicity without gc's guarantee.
+		if fn.Name() == "storePointer" {
+			n, _, err := e.lowerAtomicStorePointer(c, c)
 			return n, err
 		}
 	}
@@ -9380,6 +9545,15 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	}
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
+	}
+	// RV-P1-02: reference-site rejection for bodyless functions with no
+	// backend implementation. Placed after the lowering interceptors
+	// above (they implement their targets: atomic word ops, time/math/
+	// reflect/alias/abi intrinsics) and after the linknameAlias
+	// substitution (aliased stubs resolve to their provider, which is
+	// what gets checked).
+	if err := e.checkBodylessReference(fi); err != nil {
+		return nil, err
 	}
 	var fnSig *types.Signature
 	if sig, ok := fn.Type().(*types.Signature); ok {
@@ -9684,6 +9858,11 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 			})
 		}
 		return e.exportIfaceFallbackCall(c, sel, selection, recv, mc.ifaceFallback)
+	}
+	// RV-P1-02: method calls are references too. (Interface-dispatch
+	// calls resolve dynamically and cannot be checked statically.)
+	if err := e.checkBodylessReference(mc.decl); err != nil {
+		return nil, err
 	}
 	// P3-M9: variadic method calls pack trailing args into a slice literal
 	// (the spread form passes the slice directly and needs no packing).

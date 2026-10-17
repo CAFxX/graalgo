@@ -104,7 +104,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth gen-linkname-tables build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -116,9 +116,16 @@ all: generate build snapshot-check check test-v2 test-ci test-regression
 gen-synth:
 	GO="$(GO)" python3 internal/frontend/run_gen_synth.py
 
+# Regenerate the linkname provider/intrinsic tables
+# (internal/frontend/zz_linkname_tables.go) from the go1.27.1 runtime
+# sources and LinknameIntrinsics.java (RV-P1-02). Committed and CI-pinned
+# via `git diff --exit-code` like the synth generators above.
+gen-linkname-tables:
+	GO="$(GO)" python3 internal/frontend/gen_linkname_tables.py
+
 # Force-regenerate the gofrontend binary and overlay.json from the
 # vendored frontend sources (internal/frontend/*.go + internal/frontend/go overlay).
-generate: gen-synth
+generate: gen-synth gen-linkname-tables
 	cd internal/frontend && ./build.sh build
 
 build:

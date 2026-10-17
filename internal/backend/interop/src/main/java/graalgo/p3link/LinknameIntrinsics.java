@@ -73,6 +73,17 @@ public final class LinknameIntrinsics {
         Linknames.register("runtime.fastrand", args -> Intrinsics.fastrand(), 0);
         Linknames.register("runtime.fastrandn",
                 args -> Intrinsics.fastrandn(((Number) args[0]).intValue()), 1);
+        // RV-P1-02: runtime.rand (uint64, used via linkname by
+        // internal/sync's hashTrieMap seed). gc's rand() is a chacha8
+        // draw; the observable contract is "a random uint64", which the
+        // wyrand-based fastrand64 satisfies. Registered so the
+        // runtime-provided service resolves on the linkname path instead
+        // of failing reference-site rejection.
+        Linknames.register("runtime.rand", args -> Intrinsics.fastrand64(), 0);
+        // RV-P1-02: runtime.randn (int n -> int in [0,n), used via
+        // linkname by sync's map seed). Implemented via fastrandn.
+        Linknames.register("runtime.randn",
+                args -> Intrinsics.fastrandn(((Number) args[0]).intValue()), 1);
         Linknames.register("runtime.nanotime", args -> Timers.nanotime(), 0);
         // Intrinsic → Go helper by symbol name. D5: name arrives as
         // GoString; the single any-typed argument passes through boxed.

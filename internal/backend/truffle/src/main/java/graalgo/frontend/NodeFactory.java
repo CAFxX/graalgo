@@ -641,19 +641,21 @@ public final class NodeFactory {
                 mainKinds = Map.copyOf(ctx.kindsByName);
             } else {
                 // P3-M4 (WS C, ADR-0004): a funcdecl carrying "linkname"
-                // (exporter-validated //go:linkname on a bodyless function)
-                // builds a LinknameRootNode dispatching by symbol name
-                // instead of a Go body. Old consumers fail fast on the
+                // (exporter-validated //go:linkname on a bodyless function,
+                // or a runtime-provided symbol from the generated provider
+                // table) builds a LinknameRootNode dispatching by symbol
+                // name instead of a Go body. Old consumers fail fast on the
                 // missing "body" field (additive wire data, freeze §2.3).
                 //
-                // A funcdecl carrying "unimplemented" (bodyless function
-                // without //go:linkname, typically an assembly
-                // implementation) builds an UnimplementedRootNode that
-                // panics if called. This is general: it applies uniformly
-                // to all bodyless functions, preserving type identity
-                // while failing loudly on invocation.
+                // RV-P1-02: bodyless functions with no linkname symbol are
+                // truly unimplemented. The frontend emits no funcdecl for
+                // them at all and rejects every reference (call, function
+                // value, go/defer) at export time, so the backend never
+                // needs a stub: a missing implementation can no longer
+                // become a runtime panic on a compilable program. (The old
+                // "unimplemented" wire field and UnimplementedRootNode are
+                // deleted.)
                 Json.Value linkname = fields.opt("linkname");
-                Json.Value unimplemented = fields.opt("unimplemented");
                 RootCallTarget target;
                 if (linkname instanceof Json.Str sym) {
                     // P3-M4: the declared result type decides whether the
@@ -671,15 +673,6 @@ public final class NodeFactory {
                         }
                     }
                     LinknameRootNode root = new LinknameRootNode(sym.value(), name, boxResult);
-                    root.setSourceSection(sectionFor(fn, "funcdecl"));
-                    target = root.getCallTarget();
-                } else if (unimplemented instanceof Json.Bool b && b.value()) {
-                    // Bodyless function without //go:linkname: build a
-                    // stub that panics if called. The pkgpath field
-                    // identifies the declaring package for the message.
-                    String pkgPath = fields.opt("pkgpath") instanceof Json.Str ps
-                            ? ps.value() : "";
-                    UnimplementedRootNode root = new UnimplementedRootNode(name, pkgPath);
                     root.setSourceSection(sectionFor(fn, "funcdecl"));
                     target = root.getCallTarget();
                 } else {

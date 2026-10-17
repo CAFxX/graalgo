@@ -286,7 +286,10 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// declarations (`!purego`) using Go's own general mechanism for "no
 	// assembly" — upstream-validated, no per-package lists. Bodyless
 	// functions with no pure-Go fallback (e.g. internal/cpu.cpuid) get
-	// the general "unimplemented" marker (exportLinknameDecl); they are
+	// RV-P1-02: bodyless functions with no pure-Go fallback (e.g.
+	// internal/cpu.cpuid) and no runtime provider are truly
+	// unimplemented: exportLinknameDecl emits no wire funcdecl for them,
+	// and any reference fails at export time with [RV-P1-02]. They are
 	// never invoked because graalgo's runtime does not call
 	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
 	// forcing callers onto their generic paths.
