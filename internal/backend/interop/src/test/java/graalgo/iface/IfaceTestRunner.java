@@ -48,6 +48,9 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // RV-P0-08 remediation (2026-10-17): min/max signed-zero tie rule,
+        // NaN propagation, infinities; int/string regression pins.
+        TESTS.add(graalgo.p3builtin.nodes.MinMaxNodeTest.class);
         // fix-redmaster-r39: provenance-preserving byte derivation
         // (UnsafeTable.derive) soundness — a derivation can only ever
         // view its own base referent, never alias another live object.
