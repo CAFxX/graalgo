@@ -10,6 +10,7 @@ import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 
+import graalgo.p3reflect.ReflectMisuseException;
 import graalgo.p3reflect.ReflectOpNode;
 import graalgo.p3reflect.ReflectRefs;
 import graalgo.p3reflect.ReflectTypes;
@@ -21,13 +22,15 @@ import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 
 /**
- * R2 (review P1-8): reflect misuse must surface as a Go panic (ADR-0002
- * D4), never as an {@code IllegalStateException} "internal error". A
- * program hitting an unsupported {@code reflect.Value.Convert} got exit
- * 1; gc panics (exit 2) — a differential-corpus-visible divergence. The
- * fix translates the node's {@code IllegalStateException} misuse signal
- * into a Go panic at the reflect node boundary (the
- * {@code SyncOpNode.panicOnMisuse} pattern).
+ * R2 (review P1-8), remediated per the REJECT verdict: the reflect node's
+ * boundary translates ONLY {@link ReflectMisuseException} — genuine guest
+ * misuse, where gc would panic (ADR-0002 D4) — into a Go panic. Plain
+ * {@code IllegalStateException}s (frontend/backend contract violations,
+ * unimplemented-feature markers) must escape as internal errors, never as
+ * guest-recoverable panics.
+ *
+ * <p>A program hitting an unsupported {@code reflect.Value.Convert} got
+ * exit 1; gc panics (exit 2) — a differential-corpus-visible divergence.
  *
  * <p>Package placement is deliberate: the builders take a
  * {@link NodeFactory.BuildCtx} whose constructor is package-private, so
@@ -44,7 +47,6 @@ public final class ReflectConvertMisuseTest {
     private static final int T_STRING = 1;
     private static final int T_UNSAFEPTR = 2;
     private static final int T_VALUE_STRUCT = 3;
-    private static final int T_VALUE_NAMED = 4;
 
     private static final String TYPES_JSON = "["
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"int\",\"name\":\"int\",\"untyped\":false}},"
@@ -120,13 +122,20 @@ public final class ReflectConvertMisuseTest {
     }
 
     /** Builds a {@code reflectop/convert} node over the given constants. */
-    private GoExprNode convertNode(GoStruct value, long toTok) {
+    private GoExprNode convertNode(Object value, GoKind valueKind, long toTok) {
         constNodes.clear();
-        constNodes.add(new ConstNode(value, GoKind.INTERFACE));
+        constNodes.add(new ConstNode(value, valueKind));
         constNodes.add(new ConstNode(toTok, GoKind.INT64));
         String wire = "{\"kind\":\"reflectop\",\"pos\":" + POS + ",\"fields\":{\"op\":\"convert\","
                 + "\"args\":[{\"kind\":\"testconst\",\"pos\":" + POS + ",\"fields\":{\"idx\":0}},"
                 + "{\"kind\":\"testconst\",\"pos\":" + POS + ",\"fields\":{\"idx\":1}}]}}";
+        return ReflectOpNode.build((Json.Object) Json.parse(wire), ctx, factory);
+    }
+
+    /** Builds a {@code reflectop} node for a raw op string (test scaffolding). */
+    private GoExprNode rawOpNode(String op) {
+        String wire = "{\"kind\":\"reflectop\",\"pos\":" + POS
+                + ",\"fields\":{\"op\":\"" + op + "\",\"args\":[]}}";
         return ReflectOpNode.build((Json.Object) Json.parse(wire), ctx, factory);
     }
 
@@ -140,37 +149,51 @@ public final class ReflectConvertMisuseTest {
 
     /**
      * R2 positive: string -&gt; int is not a valid reflect conversion (gc
-     * panics). The node must raise a Go panic carrying the misuse text —
-     * never let the {@code IllegalStateException} escape (exit 1).
+     * panics). The node must raise a Go panic carrying gc's VERBATIM
+     * message (gc 1.27.1 reflect/value.go:
+     * {@code "reflect.Value.Convert: value of type string cannot be
+     * converted to type int"}) — never let the misuse exception escape as
+     * an internal error (exit 1).
+     *
+     * <p>Non-tautological: fails if the translation is removed (the
+     * {@code ReflectMisuseException} would escape and hit the
+     * {@code IllegalStateException} catch-all below), and fails if the
+     * message regresses from gc's text (exact equality, not
+     * {@code contains}).
      */
     public void testUnsupportedConvertPanicsAsGoPanic() {
         newBuild();
         long strTok = ReflectTypes.table().tokForKind(GoKind.STRING);
         long intTok = ReflectTypes.table().tokForKind(GoKind.INT64);
         GoStruct strVal = valueOf(new GoString("s".getBytes(StandardCharsets.UTF_8)), strTok);
-        GoExprNode node = convertNode(strVal, intTok);
+        GoExprNode node = convertNode(strVal, GoKind.INTERFACE, intTok);
         try {
             node.executeObject(newFrame());
             throw new AssertionError("unsupported reflect conversion must panic");
         } catch (PanicException pe) {
             String msg = panicMessage(pe);
-            assertTrue(msg.contains("reflect: convert"),
-                    "panic must carry the conversion misuse text, got: " + msg);
+            assertTrue(
+                    msg.equals("reflect.Value.Convert: value of type string cannot be converted to type int"),
+                    "panic must carry gc's verbatim Convert message, got: " + msg);
         } catch (IllegalStateException ise) {
             throw new AssertionError(
-                    "R2: IllegalStateException escaped the reflect node boundary: " + ise.getMessage());
+                    "R2: misuse exception escaped the reflect node boundary: " + ise.getMessage());
         }
     }
 
     /**
      * R2 negative: int -&gt; int64 is a valid conversion — no panic, and a
      * well-formed Value comes back.
+     *
+     * <p>Non-tautological: fails if the boundary over-translates (a valid
+     * conversion raising any panic) or if the conversion corrupts the
+     * value.
      */
     public void testSupportedConvertReturnsValue() {
         newBuild();
         long intTok = ReflectTypes.table().tokForKind(GoKind.INT64);
         GoStruct intVal = valueOf(42L, intTok);
-        GoExprNode node = convertNode(intVal, intTok);
+        GoExprNode node = convertNode(intVal, GoKind.INTERFACE, intTok);
         Object out;
         try {
             out = node.executeObject(newFrame());
@@ -184,25 +207,90 @@ public final class ReflectConvertMisuseTest {
     }
 
     /**
-     * R2 positive (boundary): an unknown reflect op also surfaces as a Go
-     * panic with the misuse text, not an escaped
-     * {@code IllegalStateException}.
+     * F1 (REJECT remediation), inverted boundary: an unknown reflect op is
+     * a frontend/backend contract violation (op strings are build-time
+     * constants), NOT guest misuse. The plain {@code IllegalStateException}
+     * must escape as an internal error — it must NOT become a Go panic,
+     * and it must NOT be classified as {@link ReflectMisuseException}.
+     *
+     * <p>Non-tautological: fails if the catch is widened back to
+     * {@code IllegalStateException} (the panic branch fires), and fails if
+     * the site is ever reclassified as misuse (the misuse branch fires).
      */
-    public void testUnknownOpPanicsAsGoPanic() {
+    public void testUnknownOpEscapesAsInternalError() {
         newBuild();
-        String wire = "{\"kind\":\"reflectop\",\"pos\":" + POS
-                + ",\"fields\":{\"op\":\"bogus-op\",\"args\":[]}}";
-        GoExprNode node = ReflectOpNode.build((Json.Object) Json.parse(wire), ctx, factory);
+        GoExprNode node = rawOpNode("bogus-op");
         try {
             node.executeObject(newFrame());
-            throw new AssertionError("unknown reflect op must panic");
+            throw new AssertionError("unknown reflect op must fail");
         } catch (PanicException pe) {
-            String msg = panicMessage(pe);
-            assertTrue(msg.contains("reflect: unknown op"),
-                    "panic must carry the unknown-op text, got: " + msg);
-        } catch (IllegalStateException ise) {
             throw new AssertionError(
-                    "R2: IllegalStateException escaped the reflect node boundary: " + ise.getMessage());
+                    "F1: internal contract violation must not become a Go panic, got: "
+                            + panicMessage(pe));
+        } catch (ReflectMisuseException rme) {
+            throw new AssertionError(
+                    "F1: unknown op is not guest misuse: " + rme.getMessage());
+        } catch (IllegalStateException ise) {
+            assertTrue(ise.getMessage() != null && ise.getMessage().contains("reflect: unknown op"),
+                    "internal error must carry the unknown-op text, got: " + ise.getMessage());
+        }
+    }
+
+    /**
+     * F1 negative: a misshaped Value argument (a raw Long where the
+     * frontend always builds a Value struct) breaches the backend's
+     * argument contract. The plain {@code IllegalStateException} from
+     * {@code asValue} must escape as an internal error — never a Go panic.
+     *
+     * <p>Non-tautological: fails if the boundary catches broad
+     * {@code IllegalStateException} again (the panic branch fires).
+     */
+    public void testMisshapedValueArgEscapesAsInternalError() {
+        newBuild();
+        long intTok = ReflectTypes.table().tokForKind(GoKind.INT64);
+        // Not a Value struct: the frontend/backend boxing contract breach.
+        GoExprNode node = convertNode(42L, GoKind.INT64, intTok);
+        try {
+            node.executeObject(newFrame());
+            throw new AssertionError("misshaped Value argument must fail");
+        } catch (PanicException pe) {
+            throw new AssertionError(
+                    "F1: backend contract breach must not become a Go panic, got: "
+                            + panicMessage(pe));
+        } catch (ReflectMisuseException rme) {
+            throw new AssertionError(
+                    "F1: contract breach is not guest misuse: " + rme.getMessage());
+        } catch (IllegalStateException ise) {
+            assertTrue(ise.getMessage() != null && ise.getMessage().contains("reflect: expected Value"),
+                    "internal error must carry the asValue text, got: " + ise.getMessage());
+        }
+    }
+
+    /**
+     * F1 negative: {@code sliceat} is an unimplemented backend feature
+     * ("needs type synthesis"). A missing feature must surface as an
+     * honest internal error — it must NEVER become a guest-recoverable Go
+     * panic.
+     *
+     * <p>Non-tautological: fails if the site is ever reclassified as
+     * misuse (either the panic or the misuse branch fires).
+     */
+    public void testSliceAtEscapesAsInternalError() {
+        newBuild();
+        GoExprNode node = rawOpNode("sliceat");
+        try {
+            node.executeObject(newFrame());
+            throw new AssertionError("unimplemented sliceat must fail");
+        } catch (PanicException pe) {
+            throw new AssertionError(
+                    "F1: unimplemented feature must not become a Go panic, got: "
+                            + panicMessage(pe));
+        } catch (ReflectMisuseException rme) {
+            throw new AssertionError(
+                    "F1: unimplemented feature is not guest misuse: " + rme.getMessage());
+        } catch (IllegalStateException ise) {
+            assertTrue(ise.getMessage() != null && ise.getMessage().contains("needs type synthesis"),
+                    "internal error must carry the sliceat text, got: " + ise.getMessage());
         }
     }
 }

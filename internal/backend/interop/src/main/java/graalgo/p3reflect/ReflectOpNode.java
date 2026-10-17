@@ -92,12 +92,22 @@ public final class ReflectOpNode extends GoExprNode {
      * in primitive frame slots, so a blind {@code executeObject} throws
      * {@code FrameSlotTypeException}.
      *
-     * <p>R2 (P1-8): the dispatch's {@code IllegalStateException} misuse
-     * signal (which carries gc's message text, e.g. {@code "reflect:
-     * convert ... not supported"}) is translated into a Go panic
-     * (ADR-0002 D4) — the {@code SyncOpNode.panicOnMisuse} pattern. A
-     * guest hitting an unsupported conversion must see gc's conversion
-     * panic (exit 2), not an "internal error" (exit 1).
+     * <p>R2 (P1-8, remediated per the REJECT verdict): only the dispatch's
+     * {@link ReflectMisuseException} — thrown solely at genuine
+     * guest-misuse sites, i.e. where gc would panic (ADR-0002 D4) — is
+     * translated into a Go panic at the reflect node boundary (the
+     * {@code SyncOpNode.panicOnMisuse} pattern). Plain
+     * {@code IllegalStateException}s — frontend/backend contract
+     * violations, representation invariants, and unimplemented-feature
+     * markers such as {@code sliceat} — are NOT caught: a backend bug must
+     * surface as an honest internal error (exit 1), never as a
+     * guest-recoverable panic carrying implementation jargon.
+     *
+     * <p>Message fidelity: only the {@code convert} site emits gc's verbatim
+     * message ({@code "reflect.Value.Convert: value of type string cannot
+     * be converted to type int64"}, gc 1.27.1 reflect/value.go). The other
+     * misuse sites carry graalgo-worded messages — a scoped, documented
+     * divergence from D4's gc-message requirement, not yet reworded.
      */
     private Object dispatchBoxed(VirtualFrame frame) {
         Object[] argv = new Object[args.length];
@@ -106,10 +116,13 @@ public final class ReflectOpNode extends GoExprNode {
         }
         try {
             return dispatch(op, argv);
-        } catch (IllegalStateException e) {
+        } catch (ReflectMisuseException e) {
             // The message must be a D5 GoString, not a Java String —
             // PanicRendering renders Java Strings as "(?) 0xADDR".
-            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)), null, null, this);
+            // String.valueOf: ISE permits a null message; the boundary must
+            // not NPE if a site ever throws without one.
+            String text = String.valueOf(e.getMessage());
+            Panic.throwPanic(new GoString(text.getBytes(StandardCharsets.UTF_8)), null, null, this);
             throw new AssertionError("unreachable: Panic.throwPanic returned");
         }
     }
@@ -184,11 +197,18 @@ public final class ReflectOpNode extends GoExprNode {
         if (o instanceof Integer n) {
             return n.longValue();
         }
+        // INTERNAL (not guest misuse): the frontend always emits type
+        // tokens as Long/Integer; anything else is a backend boxing
+        // contract breach. Must stay plain ISE (internal error), never a
+        // Go panic.
         throw new IllegalStateException("reflect: expected type token, got " + o);
     }
 
     private static GoStruct asValue(Object o) {
         if (!(o instanceof GoStruct s)) {
+            // INTERNAL (not guest misuse): the frontend always builds
+            // reflect.Value structs; anything else is a backend contract
+            // breach. Must stay plain ISE (internal error).
             throw new IllegalStateException("reflect: expected Value, got " + o);
         }
         return s;
@@ -335,7 +355,9 @@ public final class ReflectOpNode extends GoExprNode {
             case INT64, UINT64, FLOAT64 -> 64;
             case COMPLEX64 -> 64;
             case COMPLEX128 -> 128;
-            default -> throw new IllegalStateException("reflect: bits of " + t.kind);
+            // Guest misuse (gc: "reflect: Bits of non-arithmetic Type"): the
+            // kind check is semantic, matching gc's panic condition.
+            default -> throw new ReflectMisuseException("reflect: bits of " + t.kind);
         };
     }
 
@@ -450,6 +472,9 @@ public final class ReflectOpNode extends GoExprNode {
             case "makeslice" -> makeSlice(asTok(argv[0]), asInt(argv[1]), asInt(argv[2]));
             case "makemap" -> makeMap(asTok(argv[0]));
             case "makechan" -> makeChan(asTok(argv[0]), asInt(argv[1]));
+            // INTERNAL (not guest misuse): unimplemented backend feature.
+            // A missing feature must surface as an honest internal error,
+            // never as a guest-recoverable Go panic.
             case "sliceat" -> throw new IllegalStateException("reflect: SliceAt needs type synthesis");
             case "send" -> {
                 chanSend(asValue(argv[0]), asValue(argv[1]));
@@ -474,6 +499,9 @@ public final class ReflectOpNode extends GoExprNode {
                 mapIterReset(asTok(argv[0]), asValue(argv[1]));
                 yield null;
             }
+            // INTERNAL (not guest misuse): op strings are frontend
+            // build-time constants; an unknown one is a frontend/backend
+            // contract breach. Must stay plain ISE (internal error).
             default -> throw new IllegalStateException("reflect: unknown op " + op);
         };
     }
@@ -528,6 +556,8 @@ public final class ReflectOpNode extends GoExprNode {
             case SLICE, MAP, POINTER, CHAN, FUNC, UNSAFE_POINTER, INTERFACE -> null;
             case ARRAY -> ReflectValues.newArray(t.elem.kind, t.arrayLen);
             case STRUCT -> zeroStruct(t);
+            // INTERNAL defensive: the switch covers every GoKind, so the
+            // default is unreachable. Plain ISE (internal error).
             default -> throw new IllegalStateException("reflect: zero of " + t.kind);
         };
     }
@@ -629,6 +659,9 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectTypes.FieldInfo f = t.fields.get(i);
         Object base = ReflectRefs.denotedValue(p.ptr(), GoKind.STRUCT);
         if (!(base instanceof GoStruct s)) {
+            // INTERNAL (not guest misuse): the type token says struct but
+            // the denoted D5 value is not a GoStruct — a backend
+            // representation invariant breach. Plain ISE (internal error).
             throw new IllegalStateException("reflect: field base is not a struct");
         }
         long flag = 0;
@@ -683,7 +716,7 @@ public final class ReflectOpNode extends GoExprNode {
                 long uint8Tok = ReflectTypes.table().tokForKind(GoKind.UINT8);
                 return ReflectValues.pack(desc, uint8Tok, h, 0);
             }
-            default -> throw new IllegalStateException("reflect: index of " + t.kind);
+            default -> throw new ReflectMisuseException("reflect: index of " + t.kind);
         }
     }
 
@@ -772,7 +805,7 @@ public final class ReflectOpNode extends GoExprNode {
                         | (p.flag() & ReflectValues.FLAG_RO);
                 return ReflectValues.pack(desc, t.elem.tok, h, flag);
             }
-            default -> throw new IllegalStateException("reflect: elem of " + t.kind);
+            default -> throw new ReflectMisuseException("reflect: elem of " + t.kind);
         }
     }
 
@@ -789,12 +822,13 @@ public final class ReflectOpNode extends GoExprNode {
             case POINTER -> {
                 // Pointer to array.
                 if (t.elem.kind != GoKind.ARRAY) {
-                    throw new IllegalStateException(
+                    // Guest misuse (gc: ValueError "reflect.Value.Len").
+                    throw new ReflectMisuseException(
                             "reflect: call of reflect.Value.Len on ptr to non-array Value");
                 }
                 yield t.elem.arrayLen;
             }
-            default -> throw new IllegalStateException("reflect: len of " + t.kind);
+            default -> throw new ReflectMisuseException("reflect: len of " + t.kind);
         };
     }
 
@@ -808,12 +842,13 @@ public final class ReflectOpNode extends GoExprNode {
             case CHAN -> graalgo.runtime.ChanOps.cap((graalgo.runtime.ChanOps.Chan) d5);
             case POINTER -> {
                 if (t.elem.kind != GoKind.ARRAY) {
-                    throw new IllegalStateException(
+                    // Guest misuse (gc: ValueError "reflect.Value.Cap").
+                    throw new ReflectMisuseException(
                             "reflect: call of reflect.Value.Cap on ptr to non-array Value");
                 }
                 yield t.elem.arrayLen;
             }
-            default -> throw new IllegalStateException("reflect: cap of " + t.kind);
+            default -> throw new ReflectMisuseException("reflect: cap of " + t.kind);
         };
     }
 
@@ -912,6 +947,10 @@ public final class ReflectOpNode extends GoExprNode {
             ReflectValues.arraySet(arr, kind, slice.offset() + sr.index(), boxed);
             return;
         }
+        // INTERNAL (not guest misuse): the ref shapes are backend-internal
+        // (the frontend's __mustBeAssignable guard already panicked in Go
+        // code for unaddressable values). An unknown ref is a backend
+        // invariant breach — plain ISE (internal error), never a Go panic.
         throw new IllegalStateException("reflect: cannot store through " + ref);
     }
 
@@ -925,6 +964,10 @@ public final class ReflectOpNode extends GoExprNode {
             c.value = newSlice;
             return;
         }
+        // INTERNAL (not guest misuse): addressability is enforced by the
+        // frontend's __mustBeAssignable guard (Go panic, gc's message); a
+        // non-Cell handle here is a backend representation breach. Plain
+        // ISE (internal error).
         throw new IllegalStateException("reflect: SetBytes through non-cell");
     }
 
@@ -974,6 +1017,8 @@ public final class ReflectOpNode extends GoExprNode {
                     ReflectValues.arraySet(dst, t.elem.kind, i, ev);
                 }
             }
+            // INTERNAL defensive: callers (reflectSet/setZero) guarantee
+            // STRUCT/ARRAY, so the default is unreachable. Plain ISE.
             default -> throw new IllegalStateException(
                     "reflect: Set of " + t.kind + " through non-cell");
         }
@@ -1044,6 +1089,10 @@ public final class ReflectOpNode extends GoExprNode {
         if (d5 != null && d5.getClass() == byte[].class) {
             return d5;
         }
+        // INTERNAL (not guest misuse): the frontend guards the kind
+        // (panicking in Go with gc's "reflect.Value.Bytes of non-byte
+        // slice"); a non-byte D5 here is a backend representation breach.
+        // Plain ISE (internal error).
         throw new IllegalStateException("reflect: Bytes of non-byte slice");
     }
 
@@ -1100,8 +1149,17 @@ public final class ReflectOpNode extends GoExprNode {
             long cp = ((Number) d5).longValue();
             return GoString.fromRune((int) cp);
         }
-        throw new IllegalStateException(
-                "reflect: convert " + fk + " to " + tk + " not supported");
+        // Guest misuse: no conversion rule applies. gc 1.27.1
+        // (reflect/value.go, Convert) panics with exactly:
+        //   "reflect.Value.Convert: value of type <from> cannot be converted to type <to>"
+        // Type names come from ReflectTypes.typeString — the codebase's
+        // gc-exact Type.String() rendering (basic types render the wire
+        // name verbatim, which is gc's spelling, e.g. "string", "int64";
+        // named types render the wire qualified name, per typeString's
+        // documented semantics).
+        throw new ReflectMisuseException(
+                "reflect.Value.Convert: value of type " + ReflectTypes.typeString(from.tok)
+                        + " cannot be converted to type " + ReflectTypes.typeString(to.tok));
     }
 
     private static boolean isNumericKind(GoKind k) {
@@ -1146,6 +1204,8 @@ public final class ReflectOpNode extends GoExprNode {
         return switch (tk) {
             case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> Integer.valueOf((int) lv);
             case INT64, UINT64 -> Long.valueOf(lv);
+            // INTERNAL defensive: callers guarantee numeric fk/tk, so the
+            // default is unreachable. Plain ISE (internal error).
             default -> throw new IllegalStateException("reflect: numeric convert to " + tk);
         };
     }
@@ -1166,6 +1226,8 @@ public final class ReflectOpNode extends GoExprNode {
             case FLOAT64 -> Double.valueOf(dv);
             case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> Integer.valueOf((int) dv);
             case INT64, UINT64 -> Long.valueOf((long) dv);
+            // INTERNAL defensive: callers guarantee numeric tk, so the
+            // default is unreachable. Plain ISE (internal error).
             default -> throw new IllegalStateException("reflect: fromDouble " + tk);
         };
     }
@@ -1198,7 +1260,7 @@ public final class ReflectOpNode extends GoExprNode {
                 long h = ReflectRefs.intern(new GoString(sub));
                 return ReflectValues.pack(desc, p.typ(), h, flag);
             }
-            default -> throw new IllegalStateException("reflect: slice of " + t.kind);
+            default -> throw new ReflectMisuseException("reflect: slice of " + t.kind);
         }
     }
 
@@ -1428,11 +1490,16 @@ public final class ReflectOpNode extends GoExprNode {
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object ref = ReflectRefs.resolve(p.ptr());
         if (!(ref instanceof Cell c)) {
+            // INTERNAL (not guest misuse): cell provenance is a backend
+            // representation decision (the frontend's __mustBeAssignable
+            // guard already panicked in Go for unaddressable values).
+            // Plain ISE (internal error).
             throw new IllegalStateException("reflect: Grow of non-cell slice");
         }
         GoSlice s = (GoSlice) c.value;
         if (n < 0) {
-            throw new IllegalStateException("reflect.Value.Grow: negative len");
+            // Guest misuse; gc-verbatim (gc 1.27.1 reflect/value.go).
+            throw new ReflectMisuseException("reflect.Value.Grow: negative len");
         }
         if (s.len() + n > s.cap()) {
             int newCap = Math.max(s.len() + n, s.cap() * 2);
@@ -1446,11 +1513,13 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         Object ref = ReflectRefs.resolve(p.ptr());
         if (!(ref instanceof Cell c)) {
+            // INTERNAL (not guest misuse): see reflectGrow. Plain ISE.
             throw new IllegalStateException("reflect: SetLen of non-cell slice");
         }
         GoSlice s = (GoSlice) c.value;
         if (n < 0 || n > s.cap()) {
-            throw new IllegalStateException("reflect: slice length out of range in SetLen");
+            // Guest misuse; gc-verbatim (gc 1.27.1 reflect/value.go).
+            throw new ReflectMisuseException("reflect: slice length out of range in SetLen");
         }
         c.value = new GoSlice(s.array(), s.offset(), n, s.cap());
     }
@@ -1459,11 +1528,13 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         Object ref = ReflectRefs.resolve(p.ptr());
         if (!(ref instanceof Cell c)) {
+            // INTERNAL (not guest misuse): see reflectGrow. Plain ISE.
             throw new IllegalStateException("reflect: SetCap of non-cell slice");
         }
         GoSlice s = (GoSlice) c.value;
         if (n < s.len() || n > s.cap()) {
-            throw new IllegalStateException("reflect: slice capacity out of range in SetCap");
+            // Guest misuse; gc-verbatim (gc 1.27.1 reflect/value.go).
+            throw new ReflectMisuseException("reflect: slice capacity out of range in SetCap");
         }
         c.value = new GoSlice(s.array(), s.offset(), s.len(), n);
     }
@@ -1780,6 +1851,10 @@ public final class ReflectOpNode extends GoExprNode {
                 return f;
             }
         }
+        // INTERNAL (not guest misuse): the names are backend string
+        // literals used to pack StructField/Method descriptors; a miss
+        // means the descriptor layout and the literal disagree — a backend
+        // bug. Plain ISE (internal error).
         throw new IllegalStateException("reflect: no field " + name);
     }
 
