@@ -81,9 +81,9 @@ public final class UnsafeOps {
 
     private static void checkCarrier(Object array, GoKind elemKind, String op, Node site) {
         if (array.getClass() != expectedArrayClass(elemKind)) {
-            Panic.throwPanic("unsafe." + op + ": cannot view "
+            Panic.throwPanic(GoString.fromUtf8("unsafe." + op + ": cannot view "
                     + array.getClass().getSimpleName() + " as []" + elemKind
-                    + " (D5: the handle model cannot reinterpret memory)",
+                    + " (D5: the handle model cannot reinterpret memory)"),
                     null, null, site);
         }
     }
@@ -110,14 +110,14 @@ public final class UnsafeOps {
      */
     public static GoSlice slice(Object referent, long len, GoKind elemKind, Node site) {
         if (len < 0) {
-            Panic.throwPanic("runtime error: unsafe.Slice: len out of range", null, null, site);
+            Panic.throwPanic(GoString.fromUtf8("runtime error: unsafe.Slice: len out of range"), null, null, site);
         }
         // P3-M10: cell-pointer scalars arrive as bare boxes; open them to
         // their stable carrier before the shape dispatch.
         referent = openScalar(referent);
         if (referent == null) {
             if (len != 0) {
-                Panic.throwPanic("runtime error: unsafe.Slice: ptr is nil and len is not zero",
+                Panic.throwPanic(GoString.fromUtf8("runtime error: unsafe.Slice: ptr is nil and len is not zero"),
                         null, null, site);
             }
             return null;
@@ -138,13 +138,13 @@ public final class UnsafeOps {
             baseOffset = 0;
             cap = arrayLength(array);
         } else {
-            Panic.throwPanic("unsafe.Slice: unsupported referent shape "
-                    + referent.getClass().getSimpleName(), null, null, site);
+            Panic.throwPanic(GoString.fromUtf8("unsafe.Slice: unsupported referent shape "
+                    + referent.getClass().getSimpleName()), null, null, site);
             throw new AssertionError("unreachable");
         }
         checkCarrier(array, elemKind, "Slice", site);
         if (len > cap) {
-            Panic.throwPanic("unsafe.Slice: len out of range", null, null, site);
+            Panic.throwPanic(GoString.fromUtf8("unsafe.Slice: len out of range"), null, null, site);
         }
         return new GoSlice(array, baseOffset, (int) len, cap);
     }
@@ -167,13 +167,13 @@ public final class UnsafeOps {
      */
     public static GoString stringOf(Object referent, long len, Node site) {
         if (len < 0) {
-            Panic.throwPanic("runtime error: unsafe.String: len out of range", null, null, site);
+            Panic.throwPanic(GoString.fromUtf8("runtime error: unsafe.String: len out of range"), null, null, site);
         }
         // P3-M10: see slice() — cell-pointer scalars arrive as bare boxes.
         referent = openScalar(referent);
         if (referent == null) {
             if (len != 0) {
-                Panic.throwPanic("runtime error: unsafe.String: ptr is nil and len is not zero",
+                Panic.throwPanic(GoString.fromUtf8("runtime error: unsafe.String: ptr is nil and len is not zero"),
                         null, null, site);
             }
             return GoString.EMPTY;
@@ -185,7 +185,7 @@ public final class UnsafeOps {
         if (referent instanceof GoString gs) {
             byte[] bytes = gs.bytes();
             if (n > bytes.length) {
-                Panic.throwPanic("unsafe.String: len out of range", null, null, site);
+                Panic.throwPanic(GoString.fromUtf8("unsafe.String: len out of range"), null, null, site);
             }
             byte[] out = new byte[n];
             System.arraycopy(bytes, 0, out, 0, n);
@@ -203,13 +203,13 @@ public final class UnsafeOps {
             array = referent;
             baseOffset = 0;
         } else {
-            Panic.throwPanic("unsafe.String: unsupported referent shape "
-                    + referent.getClass().getSimpleName(), null, null, site);
+            Panic.throwPanic(GoString.fromUtf8("unsafe.String: unsupported referent shape "
+                    + referent.getClass().getSimpleName()), null, null, site);
             throw new AssertionError("unreachable");
         }
         if (array instanceof byte[] bytes) {
             if (n > bytes.length - baseOffset) {
-                Panic.throwPanic("unsafe.String: len out of range", null, null, site);
+                Panic.throwPanic(GoString.fromUtf8("unsafe.String: len out of range"), null, null, site);
             }
             byte[] out = new byte[n];
             System.arraycopy(bytes, baseOffset, out, 0, n);
@@ -217,7 +217,7 @@ public final class UnsafeOps {
         }
         if (array instanceof int[] ints) {
             if (n > ints.length - baseOffset) {
-                Panic.throwPanic("unsafe.String: len out of range", null, null, site);
+                Panic.throwPanic(GoString.fromUtf8("unsafe.String: len out of range"), null, null, site);
             }
             byte[] out = new byte[n];
             for (int i = 0; i < n; i++) {
@@ -225,9 +225,9 @@ public final class UnsafeOps {
             }
             return new GoString(out);
         }
-        Panic.throwPanic("unsafe.String: cannot view "
+        Panic.throwPanic(GoString.fromUtf8("unsafe.String: cannot view "
                 + array.getClass().getSimpleName()
-                + " as bytes (D5: the handle model cannot reinterpret memory)",
+                + " as bytes (D5: the handle model cannot reinterpret memory)"),
                 null, null, site);
         throw new AssertionError("unreachable");
     }
