@@ -47,6 +47,20 @@ func Analyzers() []*Analyzer {
 // best-effort basis: if type checking fails, analyzers still run on the
 // AST with whatever type info was gathered.
 func Run(paths []string) ([]Diagnostic, error) {
+	pass, err := checkPaths(paths)
+	if err != nil {
+		return nil, err
+	}
+	var out []Diagnostic
+	for _, a := range analyzers {
+		out = append(out, a.Run(pass)...)
+	}
+	return SortDiagnostics(out), nil
+}
+
+// checkPaths parses and type-checks the named Go source files, returning
+// the Pass shared by all analyzers.
+func checkPaths(paths []string) (*Pass, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
 	for _, path := range paths {
@@ -79,12 +93,7 @@ func Run(paths []string) ([]Diagnostic, error) {
 	pkg, _ := conf.Check("vetpkg", fset, files, info)
 	// Type errors are tolerated: analyzers use best-effort info.
 
-	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
-	var out []Diagnostic
-	for _, a := range analyzers {
-		out = append(out, a.Run(pass)...)
-	}
-	return SortDiagnostics(out), nil
+	return &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}, nil
 }
 
 // position returns the source position of n.

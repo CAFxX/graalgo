@@ -199,6 +199,14 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		return ""
 	}
 	t := tv.Type
+	if t == types.Typ[types.Invalid] {
+		return "" // Probably a type-check problem; mirrors go vet.
+	}
+	// Mirrors go vet: a fmt.Formatter handles every verb, and any
+	// interface value might hold one.
+	if isFormatter(t) {
+		return ""
+	}
 	basic, isBasic := t.Underlying().(*types.Basic)
 
 	switch v.verb {
@@ -216,17 +224,13 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 			return "expects floating point"
 		}
 	case 's', 'q':
-		if isBasic && basic.Kind() == types.String {
-			break
+		if !isStringLike(t) {
+			return "expects string or []byte"
 		}
-		if t.String() == "[]byte" || t.String() == "[]uint8" {
-			break
-		}
-		return "expects string or []byte"
 	case 'v':
 		// %v accepts anything.
 	case 't':
-		if !isBasic || basic.Kind() != types.Bool {
+		if !isBasic || !isBoolKind(basic.Kind()) {
 			return "expects boolean"
 		}
 	case 'p':
@@ -237,6 +241,103 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		// Anything goes.
 	}
 	return ""
+}
+
+// isStringLike reports whether t is printable with %s or %q, mirroring
+// go vet: a string, a []byte (or [N]byte, or a defined type with one of
+// those underlying types), a fmt.Formatter, or a type convertible to
+// error / with a String() string method.
+func isStringLike(t types.Type) bool {
+	if isFormatter(t) {
+		return true
+	}
+	if isStringerOrError(t) {
+		return true
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		return u.Kind() == types.String || u.Kind() == types.UntypedString
+	case *types.Slice:
+		return isByteElem(u.Elem())
+	case *types.Array:
+		return isByteElem(u.Elem())
+	}
+	return false
+}
+
+func isByteElem(elem types.Type) bool {
+	b, ok := elem.Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Uint8
+}
+
+// errorIface is the underlying interface of the universe error type.
+var errorIface = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
+
+// isFormatter reports whether t implements fmt.Formatter, mirroring go
+// vet: a Format(f fmt.State, verb rune) method (found via the method set,
+// so embedding works), or any interface type (whose dynamic value might
+// be a Formatter).
+func isFormatter(t types.Type) bool {
+	// If the type is an interface, the value it holds might satisfy
+	// fmt.Formatter.
+	if _, ok := t.Underlying().(*types.Interface); ok {
+		return true
+	}
+	obj, _, _ := types.LookupFieldOrMethod(t, false, nil, "Format")
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+	return sig.Params().Len() == 2 &&
+		sig.Results().Len() == 0 &&
+		isNamedType(sig.Params().At(0).Type(), "fmt", "State") &&
+		types.Identical(sig.Params().At(1).Type(), types.Typ[types.Rune])
+}
+
+// isStringerOrError reports whether t is convertible to error or has a
+// String() string method, mirroring go vet's isConvertibleToString.
+func isStringerOrError(t types.Type) bool {
+	if b, ok := t.(*types.Basic); ok && b.Kind() == types.UntypedNil {
+		return false
+	}
+	if types.ConvertibleTo(t, errorIface) {
+		return true // via .Error()
+	}
+	obj, _, _ := types.LookupFieldOrMethod(t, false, nil, "String")
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+	return sig.Params().Len() == 0 &&
+		sig.Results().Len() == 1 &&
+		sig.Results().At(0).Type() == types.Typ[types.String]
+}
+
+// isNamedType reports whether t is the package-level named type
+// pkgPath.name. (Mirrors x/tools' typesinternal.IsTypeNamed, minus alias
+// handling: under this module's go1.21 language version the type checker
+// never produces alias nodes, so there is nothing to unalias.)
+// Checking for the named type fmt.State is not name-keyed special-casing:
+// a method only implements fmt.Formatter if its parameter is exactly
+// fmt.State — that is the definition of the interface.
+func isNamedType(t types.Type, pkgPath, name string) bool {
+	named, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Pkg() == nil {
+		return false
+	}
+	return obj.Name() == name && obj.Pkg().Path() == pkgPath
 }
 
 func isIntKind(k types.BasicKind) bool {
@@ -250,5 +351,13 @@ func isIntKind(k types.BasicKind) bool {
 }
 
 func isFloatKind(k types.BasicKind) bool {
-	return k == types.Float32 || k == types.Float64
+	switch k {
+	case types.Float32, types.Float64, types.UntypedFloat:
+		return true
+	}
+	return false
+}
+
+func isBoolKind(k types.BasicKind) bool {
+	return k == types.Bool || k == types.UntypedBool
 }
