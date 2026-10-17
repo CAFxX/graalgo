@@ -5990,6 +5990,27 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		// //go:linkname binds to an intrinsic by symbol name.
 		return e.exportLinknameDecl(fi)
 	}
+	// fix-redmaster-buildok (r5): internal/abi.TypeOf has a body, but the
+	// body uses unsafe interface reinterpretation which cannot work on
+	// graalgo. Replace the body with the "abitypeof" intrinsic, so
+	// function values and indirect calls work. Direct call sites are
+	// intercepted (see exportAbiTypeOfIntrinsic).
+	if fi.obj != nil && isAbiTypeOfFunc(fi.obj) {
+		return e.exportAbiTypeOfDecl(fi)
+	}
+	// fix-redmaster-buildok (r5): reflect.toRType has a body, but the body
+	// reinterprets *abi.Type as *rtype via unsafe.Pointer. Replace with
+	// reflectop{op:tortype} which builds a proper rtype struct.
+	if fi.obj != nil && isReflectToRTypeFunc(fi.obj) {
+		// Emit a funcdecl whose body is the tortype reflectop applied to
+		// the single param.
+		return e.exportReflectToRTypeDecl(fi)
+	}
+	// fix-redmaster-buildok (r5): internal/abi.NoEscape is semantically
+	// identity; replace the body (which traps under D5) with the param.
+	if fi.obj != nil && isAbiNoEscapeFunc(fi.obj) {
+		return e.exportAbiNoEscapeDecl(fi)
+	}
 	params := []*Node{}
 	if fi.recv != nil {
 		rp, err := e.exportParamVar(fd, fi.recv)
@@ -9332,6 +9353,27 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// exportAbiFuncPCDecl).
 	if isAbiFuncPCIntrinsicFunc(fn) {
 		return e.exportAbiFuncPCIntrinsic(c, fn.Name())
+	}
+	// fix-redmaster-buildok (r5): internal/abi.TypeOf uses unsafe interface
+	// reinterpretation which cannot work on graalgo. Lower to the
+	// "abitypeof" wire node (materialized *abi.Type). Intercepted before
+	// the funcByObj lookup; the declaration emits a synthesized intrinsic
+	// body (see exportAbiTypeOfDecl).
+	if isAbiTypeOfFunc(fn) {
+		return e.exportAbiTypeOfIntrinsic(c)
+	}
+	// fix-redmaster-buildok (r5): reflect.toRType reinterprets *abi.Type as
+	// *rtype via unsafe.Pointer; the backend needs an actual rtype struct.
+	// Lower to reflectop{op:tortype}. Intercepted before the funcByObj
+	// lookup.
+	if isReflectToRTypeFunc(fn) {
+		return e.exportReflectToRType(c)
+	}
+	// fix-redmaster-buildok (r5): internal/abi.NoEscape is semantically the
+	// identity function (escape-analysis hint); its body traps under D5.
+	// Lower to the argument itself. Intercepted before the funcByObj lookup.
+	if isAbiNoEscapeFunc(fn) {
+		return e.exportAbiNoEscape(c)
 	}
 	// real-nethttp: //go:linkname consumer stubs alias to their provider.
 	// A call to the stub lowers to a direct call to the provider funcdecl,

@@ -443,6 +443,11 @@ public final class P3SyncMain {
             // Phase-1/Phase-2 change.
             factory.registerExprKind("abifuncpc",
                     (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
+            // fix-redmaster-buildok (r5): the "abitypeof" wire node for the
+            // internal/abi.TypeOf intrinsic (materialized *abi.Type).
+            // Public extension hook — no Phase-1/Phase-2 change.
+            factory.registerExprKind("abitypeof",
+                    (node, ctx) -> graalgo.p3abi.AbiTypeOfNode.build(node, factory, ctx));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).
