@@ -380,6 +380,8 @@ public final class SchedulerCore {
                 } else {
                     recordCrash("internal error", e);
                 }
+            } catch (Error e) {
+                recordCrash("internal error", e);
             } catch (RuntimeException e) {
                 recordCrash("internal error", e);
             } finally {

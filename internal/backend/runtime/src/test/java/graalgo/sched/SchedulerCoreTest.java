@@ -1,5 +1,8 @@
 package graalgo.sched;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -481,6 +484,172 @@ public final class SchedulerCoreTest {
         } finally {
             SchedulerCore.install(null);
         }
+    }
+
+    // ---------- uncaught Error discipline (RV-P1-20) ----------
+
+    /**
+     * Spawns one goroutine whose body throws {@code e}, awaits
+     * quiescence, and returns everything the scheduler printed to
+     * stderr while the goroutine ran. The crash/panic flags are
+     * written into {@code crashed}/{@code panicked}.
+     *
+     * <p>Capture is race-free: {@code recordCrash} runs on the
+     * goroutine's vthread before its EXIT token, and
+     * {@code awaitQuiescence} returns only after the live count hits
+     * zero, so every crash line is in the buffer when this returns.
+     */
+    private static String spawnThrowing(Error e, AtomicBoolean crashed,
+            AtomicBoolean panicked) throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        PrintStream oldErr = System.err;
+        System.setErr(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        try {
+            sched.spawn(() -> {
+                throw e;
+            });
+            sched.awaitQuiescence();
+            crashed.set(sched.crashed());
+            panicked.set(sched.panicked());
+        } finally {
+            System.setErr(oldErr);
+            SchedulerCore.install(null);
+        }
+        return buf.toString(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * SchedMain's exit mapping, duplicated for tests: panic -> 2,
+     * internal crash -> 1, clean -> 0. An uncaught Error must produce
+     * a nonzero exit, never a silent exit 0.
+     */
+    private static int launcherExitFor(boolean panicked, boolean crashed) {
+        return panicked ? 2 : crashed ? 1 : 0;
+    }
+
+    /**
+     * verifies: GG-0017 (Goexit/panic/crash discipline) + RV-P1-20.
+     * An AssertionError escaping a goroutine body is recorded as an
+     * internal crash (the launcher exits 1), not swallowed into an
+     * exit 0 with a raw JVM stack trace.
+     * Red-green: fails pre-fix (crashed()==false, exit 0).
+     */
+    public void testSpawnedAssertionErrorIsInternalCrash() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(new AssertionError("synthetic assert"), crashed, panicked);
+        assertTrue(crashed.get(), "AssertionError recorded as crash");
+        assertTrue(!panicked.get(), "AssertionError is not a Go panic");
+        assertEquals(1, launcherExitFor(panicked.get(), crashed.get()),
+                "launcher exits 1 on internal crash");
+        assertTrue(err.contains("fatal internal error"),
+                "stderr names it an internal error: " + err);
+        assertTrue(err.contains("AssertionError"),
+                "stderr names the error class: " + err);
+    }
+
+    /**
+     * verifies: GG-0017 + RV-P1-20. An OutOfMemoryError escaping a
+     * goroutine body takes the generic Error path: recorded as an
+     * internal crash, launcher exits 1.
+     * Red-green: fails pre-fix (crashed()==false).
+     */
+    public void testSpawnedOutOfMemoryErrorIsInternalCrash() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(new OutOfMemoryError("synthetic oom"), crashed, panicked);
+        assertTrue(crashed.get(), "OutOfMemoryError recorded as crash");
+        assertTrue(!panicked.get(), "OutOfMemoryError is not a Go panic");
+        assertTrue(err.contains("fatal internal error"),
+                "stderr names it an internal error: " + err);
+    }
+
+    /**
+     * verifies: GG-0017 + RV-P1-20. A plain LinkageError (superclass of
+     * the two special-cased LinkageError subtypes, but not itself
+     * special-cased) takes the generic Error path.
+     * Red-green: fails pre-fix (crashed()==false).
+     */
+    public void testSpawnedLinkageErrorIsInternalCrash() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(new LinkageError("synthetic linkage"), crashed, panicked);
+        assertTrue(crashed.get(), "LinkageError recorded as crash");
+        assertTrue(err.contains("fatal internal error"),
+                "stderr names it an internal error: " + err);
+    }
+
+    /**
+     * verifies: GG-0017 + RV-P1-20. A ThreadDeath escaping a goroutine
+     * body takes the generic Error path (nothing in the scheduler uses
+     * Thread.stop(), so no stop-based mechanism can be disturbed).
+     * Red-green: fails pre-fix (crashed()==false).
+     */
+    @SuppressWarnings("removal") // ThreadDeath is deprecated for removal; the
+    // test needs a genuine ThreadDeath instance on the generic Error path.
+    public void testSpawnedThreadDeathIsInternalCrash() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(new ThreadDeath(), crashed, panicked);
+        assertTrue(crashed.get(), "ThreadDeath recorded as crash");
+        assertTrue(err.contains("fatal internal error"),
+                "stderr names it an internal error: " + err);
+    }
+
+    /**
+     * verifies: GG-0017. The StackOverflowError special case is
+     * unchanged: still reported as "stack overflow" (not the generic
+     * "internal error"), launcher exits 1.
+     */
+    public void testSpawnedStackOverflowErrorKeepsSpecialCase() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(new StackOverflowError("synthetic soe"), crashed, panicked);
+        assertTrue(crashed.get(), "StackOverflowError recorded as crash");
+        assertTrue(err.contains("fatal stack overflow"),
+                "stderr keeps the stack-overflow message: " + err);
+        assertTrue(!err.contains("fatal internal error"),
+                "stack overflow is not relabeled internal error: " + err);
+        assertEquals(1, launcherExitFor(panicked.get(), crashed.get()),
+                "launcher exits 1 on stack overflow");
+    }
+
+    /**
+     * verifies: GG-0017. The NoClassDefFoundError special case is
+     * unchanged: a non-cascade instance is reported as "internal
+     * error" exactly as before.
+     */
+    public void testSpawnedNoClassDefFoundErrorKeepsInternalError() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(new NoClassDefFoundError("synthetic ncdfe"),
+                crashed, panicked);
+        assertTrue(crashed.get(), "NoClassDefFoundError recorded as crash");
+        assertTrue(err.contains("fatal internal error"),
+                "stderr keeps the internal-error message: " + err);
+        assertTrue(!err.contains("fatal stack overflow"),
+                "non-cascade NCDFE is not relabeled stack overflow: " + err);
+    }
+
+    /**
+     * verifies: GG-0017. The ExceptionInInitializerError special case
+     * is unchanged: a non-cascade instance is reported as "internal
+     * error" exactly as before.
+     */
+    public void testSpawnedExceptionInInitializerErrorKeepsInternalError() throws Exception {
+        AtomicBoolean crashed = new AtomicBoolean();
+        AtomicBoolean panicked = new AtomicBoolean();
+        String err = spawnThrowing(
+                new ExceptionInInitializerError(new RuntimeException("synthetic cause")),
+                crashed, panicked);
+        assertTrue(crashed.get(), "ExceptionInInitializerError recorded as crash");
+        assertTrue(err.contains("fatal internal error"),
+                "stderr keeps the internal-error message: " + err);
+        assertTrue(!err.contains("fatal stack overflow"),
+                "non-cascade EIIE is not relabeled stack overflow: " + err);
     }
 
     /**
