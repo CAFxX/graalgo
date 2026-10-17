@@ -260,11 +260,14 @@ public final class AtomicOpNode extends GoExprNode {
                 return Atomics.loadPointer(cellRef(frame));
             }
             case "atomic.Value.Store" -> {
-                Atomics.storePointer(cellRef(frame), args[0].executeObject(frame));
+                // RV-P0-07: gc's type-consistency panics (nil store,
+                // inconsistent-type store) live in Atomics.storeGoValue.
+                Atomics.storeGoValue(cellRef(frame), args[0].executeObject(frame));
                 return null;
             }
             case "atomic.Value.Swap" -> {
-                return Atomics.swapPointer(cellRef(frame), args[0].executeObject(frame));
+                // RV-P0-07: same, via Atomics.swapGoValue.
+                return Atomics.swapGoValue(cellRef(frame), args[0].executeObject(frame));
             }
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a void op");
