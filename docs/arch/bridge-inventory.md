@@ -65,6 +65,19 @@ deliverable until the design lands.
   ([FieldAddrNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FieldAddrNode.java)).
   `sync.Pool`/`sync.Map` keep their Java objects. Full deletion of the
   method awaits those.
+- **Restoration note (RV-P0 fix-p0-atomic-lowering, 2026-10-17):** the
+  *frontend* half of this bridge's mechanism was accidentally deleted by
+  88b24cac (2026-10-15) and is now restored: method calls on the real
+  `sync/atomic` wrapper types lower to `"syncop"`/`"syncnew"` wire nodes
+  again (keyed on package path `"sync/atomic"` + type name, not on the
+  retired synthetic identities). The real `Value`/`Pointer[T]` method
+  bodies remain uncompilable (unsafe.Pointer `efaceWords`
+  reinterpretation vs the `AtomicReference` cell model, bodyless pointer
+  asm callees, `runtime_procPin` linknames); the true root-cause fix is
+  the Phase-4 byte-addressed value model (or documented trap contract),
+  which resolves `unsafe.Add`/raw-word access generally. This is not a
+  new bridge: no new wire nodes, no new synthetic packages, no new runtime
+  surface — it re-emits wire shapes the backend already builds.
 - **Phase:** 3 (after the last synthetic package that depends on it retires).
 
 ### B-3. Frontend package-name-keyed special-case machinery
