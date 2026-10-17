@@ -64,9 +64,24 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if pkg := fn.Pkg(); pkg != nil {
 		pkgpath = pkg.Path()
 	}
+	// Method receiver (P1-V4): taken from the checked signature, which
+	// also covers unnamed receivers (func (T) M()) that have no AST name.
+	// Plain functions get a nil recv.
+	var recv any
+	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
+		r := sig.Recv()
+		rid := e.declareObject(r)
+		recv = e.node("param", fd.Recv, map[string]any{
+			"name": r.Name(),
+			"obj":  rid,
+			"type": e.typeID(r.Type()),
+			"recv": true,
+		})
+	}
 	fields := map[string]any{
 		"name":    fn.Name(),
 		"sig":     sig,
+		"recv":    recv,
 		"params":  params,
 		"body":    body,
 		"pkgpath": pkgpath,
@@ -169,40 +184,61 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 	if !ok || gd.Tok != token.VAR {
 		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
 	}
-	names := []string{}
-	objs := []any{}
-	var typ any
-	values := []any{}
+	specs := []any{}
 	for _, spec := range gd.Specs {
-		vs := spec.(*ast.ValueSpec)
-		if vs.Type != nil {
-			if tv, ok := e.info.Info.Types[vs.Type]; ok {
-				typ = e.typeID(tv.Type)
-			}
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return nil, fmt.Errorf("emit: unsupported spec %T in var decl", spec)
 		}
-		for _, name := range vs.Names {
-			names = append(names, name.Name)
-			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
-			} else {
-				objs = append(objs, -1)
-			}
+		sn, err := e.emitValueSpec(vs)
+		if err != nil {
+			return nil, err
 		}
-		for _, v := range vs.Values {
-			vn, err := e.emitExpr(v)
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, vn)
+		specs = append(specs, sn)
+	}
+	return e.node("vardecl", st, map[string]any{"specs": specs}), nil
+}
+
+// emitValueSpec emits one *ast.ValueSpec with its own per-spec type entry
+// (P1-V6): var (a int; b string) must not share one type across specs.
+// Shared by function-local var DeclStmts and top-level globals so both
+// carry identical per-spec shape.
+func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
+	var typ any
+	if vs.Type != nil {
+		if tv, ok := e.info.Info.Types[vs.Type]; ok && tv.Type != nil {
+			typ = e.typeID(tv.Type)
 		}
 	}
-	return e.node("vardecl", st, map[string]any{
+	names := []any{}
+	for _, name := range vs.Names {
+		entry := map[string]any{"name": name.Name}
+		if name.Name == "_" {
+			// Blank: no object; -1 marks the slot (same convention as
+			// docs/arch/frontend-v1.md §5a).
+			entry["obj"] = -1
+		} else {
+			obj := e.info.Info.Defs[name]
+			if obj == nil {
+				return nil, fmt.Errorf("emit: no object for %s", name.Name)
+			}
+			entry["obj"] = e.declareObject(obj)
+		}
+		names = append(names, entry)
+	}
+	values := []any{}
+	for _, v := range vs.Values {
+		vn, err := e.emitExpr(v)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, vn)
+	}
+	return map[string]any{
 		"names":  names,
-		"objs":   objs,
-		"define": false,
 		"type":   typ,
 		"values": values,
-	}), nil
+	}, nil
 }
 
 func (e *Emitter) emitIf(st *ast.IfStmt) (map[string]any, error) {
@@ -283,20 +319,13 @@ func (e *Emitter) emitFor(st *ast.ForStmt) (map[string]any, error) {
 }
 
 func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
-	var key, value any
-	if st.Key != nil {
-		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
-			}
-		}
+	key, err := e.emitRangeTarget(st.Key, st.Tok == token.DEFINE)
+	if err != nil {
+		return nil, err
 	}
-	if st.Value != nil {
-		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
-			}
-		}
+	value, err := e.emitRangeTarget(st.Value, st.Tok == token.DEFINE)
+	if err != nil {
+		return nil, err
 	}
 	x, err := e.emitExpr(st.X)
 	if err != nil {
@@ -313,6 +342,26 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 		"x":      x,
 		"body":   body,
 	}), nil
+}
+
+// emitRangeTarget emits one range-clause target: nil for an absent target
+// or `_`; otherwise the assignable expression node. Non-Ident targets
+// (m[k], s.f — P1-V7) are emitted as expressions, never silently dropped.
+// A target kind the expression emitter rejects (e.g. *p, whose StarExpr is
+// loudly rejected) fails loudly here via emitExpr.
+func (e *Emitter) emitRangeTarget(x ast.Expr, define bool) (any, error) {
+	if x == nil {
+		return nil, nil
+	}
+	if id, ok := x.(*ast.Ident); ok && id.Name == "_" {
+		return nil, nil
+	}
+	if id, ok := x.(*ast.Ident); ok && define {
+		if obj := e.info.Info.Defs[id]; obj != nil {
+			e.declareObject(obj)
+		}
+	}
+	return e.emitExpr(x)
 }
 
 func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
@@ -528,13 +577,30 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 	if c.Ellipsis.IsValid() {
 		return nil, fmt.Errorf("emit: unsupported expr *ast.Ellipsis (variadic spread)")
 	}
+	// Builtin make/new take a *type* as their first argument (e.g.
+	// make(chan int, 1)): it is emitted via the type table, never via
+	// emitExpr — whose value switch has no type-expression cases. (Keyed
+	// on go/types Builtin objects, i.e. language semantics, not on any
+	// package or symbol name.)
+	firstArgIsType := false
+	if id, ok := c.Fun.(*ast.Ident); ok {
+		if b, ok := e.info.Info.Uses[id].(*types.Builtin); ok && (b.Name() == "make" || b.Name() == "new") {
+			firstArgIsType = true
+		}
+	}
 	fun, err := e.emitExpr(c.Fun)
 	if err != nil {
 		return nil, err
 	}
 	args := []any{}
-	for _, a := range c.Args {
-		an, err := e.emitExpr(a)
+	for i, a := range c.Args {
+		var an any
+		var err error
+		if i == 0 && firstArgIsType {
+			an, err = e.emitTypeNode(a)
+		} else {
+			an, err = e.emitExpr(a)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -558,19 +624,51 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 	}), nil
 }
 
+// emitTypeNode emits a type expression appearing in a value position
+// (builtin make/new's type argument) via the type table.
+func (e *Emitter) emitTypeNode(x ast.Expr) (map[string]any, error) {
+	tv, ok := e.info.Info.Types[x]
+	if !ok || tv.Type == nil {
+		return nil, fmt.Errorf("emit: no type for type expression %T", x)
+	}
+	return e.node("typename", x, map[string]any{"type": e.typeID(tv.Type)}), nil
+}
+
 func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
-	// Method call or field access — go/types Selection tells us.
+	// Method call or field access — go/types Selection tells us which.
+	// The selection is load-bearing for the backend: it distinguishes
+	// method values from field accesses and carries the embedding index
+	// path plus the implicit &/*-adjustment flag (P1-V3).
 	if sel, ok := e.info.Info.Selections[s]; ok {
-		// Method or field selection.
 		x, err := e.emitExpr(s.X)
 		if err != nil {
 			return nil, err
 		}
-		_ = sel
+		var kind string
+		switch sel.Kind() {
+		case types.MethodVal:
+			kind = "methodval"
+		case types.MethodExpr:
+			kind = "methodexpr"
+		default:
+			kind = "field"
+		}
+		index := make([]any, len(sel.Index()))
+		for i, ix := range sel.Index() {
+			index[i] = ix
+		}
+		var obj any
+		if o := sel.Obj(); o != nil {
+			obj = e.declareObject(o)
+		}
 		return e.node("selector", s, map[string]any{
-			"x":    x,
-			"sel":  s.Sel.Name,
-			"type": e.exprType(s),
+			"x":        x,
+			"sel":      s.Sel.Name,
+			"kind":     kind,
+			"index":    index,
+			"indirect": sel.Indirect(),
+			"obj":      obj,
+			"type":     e.exprType(s),
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).

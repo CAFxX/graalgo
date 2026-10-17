@@ -15,11 +15,18 @@
 package emit
 
 import (
+	"fmt"
 	"go/ast"
+	"go/types"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"graalgo-frontend-v2/checker"
+	"graalgo-frontend-v2/parser"
 )
 
 // handledNodes is the set of concrete go/ast types the emitter supports.
@@ -27,7 +34,12 @@ import (
 // This list is checked mechanically against go/ast — it cannot drift.
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
-	"FuncDecl": true, // emitFuncDecl
+	"FuncDecl": true, // emitFuncDecl (methods included; see recv field)
+	"GenDecl":  true, // top-level var/const/type specs emitted (P1-V1);
+	// import decls skipped — resolution is the checker's job (ImportSpec);
+	// const/type GenDecls *inside* functions still fail loudly.
+	"TypeSpec":  true, // handled via GenDecl (named type registered in type table)
+	"ValueSpec": true, // handled via GenDecl / DeclStmt (emitValueSpec)
 
 	// Statements.
 	"AssignStmt": true,
@@ -38,16 +50,20 @@ var handledNodes = map[string]bool{
 	"ForStmt":    true,
 	"IfStmt":     true,
 	"IncDecStmt": true,
-	"RangeStmt":  true,
+	"RangeStmt":  true, // arbitrary assignable targets (P1-V7)
 	"ReturnStmt": true,
 
 	// Expressions.
 	"BasicLit":     true,
 	"BinaryExpr":   true,
 	"CallExpr":     true,
+	"CompositeLit": true, // emitCompositeLit (was wrongly listed as rejected)
 	"Ident":        true,
+	"IndexExpr":    true, // emitIndex; generic instantiation fails loudly
+	"KeyValueExpr": true, // handled inside emitCompositeLit (keyed elements)
 	"ParenExpr":    true,
-	"SelectorExpr": true,
+	"SelectorExpr": true, // with go/types Selection (P1-V3)
+	"SliceExpr":    true, // emitSlice (was wrongly listed as rejected)
 	"UnaryExpr":    true,
 
 	// Type expressions handled via go/types (not AST switch).
@@ -58,6 +74,9 @@ var handledNodes = map[string]bool{
 
 // typeExprNodes are AST type expressions that never reach emitExpr's switch
 // because they are handled via go/types type IDs. They are covered.
+// (The one expression position where a type expression appears — builtin
+// make/new's type argument — is routed explicitly to the type table in
+// emitCall; see TestMakeNewTypeArgs.)
 var typeExprNodes = map[string]bool{
 	"ArrayType":     true,
 	"ChanType":      true,
@@ -90,34 +109,29 @@ var nonNodeTypes = map[string]string{
 }
 
 // loudlyRejected are node kinds the emitter explicitly rejects with an
-// "unsupported" error. The negative test below proves each one fails.
+// "unsupported" error. TestEveryLoudlyRejectedErrors below proves each one
+// fails through the emitter's own dispatch — membership here is a promise
+// the test enforces, not a comment.
 var loudlyRejected = map[string]bool{
 	// Statements not yet implemented.
-	"BadStmt":       true,
-	"DeferStmt":     true,
-	"EmptyStmt":     true,
-	"GoStmt":        true,
-	"LabeledStmt":   true,
-	"SelectStmt":    true,
-	"SendStmt":      true,
-	"SwitchStmt":    true,
+	"BadStmt":        true,
+	"DeferStmt":      true,
+	"EmptyStmt":      true,
+	"GoStmt":         true,
+	"LabeledStmt":    true,
+	"SelectStmt":     true,
+	"SendStmt":       true,
+	"SwitchStmt":     true,
 	"TypeSwitchStmt": true,
 	// Expressions not yet implemented.
 	"BadExpr":        true,
-	"CompositeLit":   true,
 	"Ellipsis":       true,
 	"FuncLit":        true,
-	"IndexExpr":      true,
 	"IndexListExpr":  true, // generics instantiation
-	"KeyValueExpr":   true,
-	"SliceExpr":      true,
 	"StarExpr":       true,
 	"TypeAssertExpr": true,
 	// Declarations not yet implemented.
-	"BadDecl":   true,
-	"GenDecl":   true, // top-level; const/type/var handled selectively
-	"TypeSpec":  true,
-	"ValueSpec": true,
+	"BadDecl": true,
 	// Clauses (only appear inside switch/select).
 	"CaseClause": true,
 	"CommClause": true,
@@ -311,4 +325,131 @@ func TestCoverageMatrix(t *testing.T) {
 	t.Logf("coverage: %d structural", len(structuralNodes))
 	t.Logf("coverage: %d non-Node types (documented)", len(nonNodeTypes))
 	t.Logf("coverage: %d loudly rejected (not yet implemented)", len(loudlyRejected))
+}
+
+// TestCoverageBucketsExclusive asserts the five classification buckets are
+// pairwise disjoint: a node kind in two buckets is a matrix bug, and would
+// let a "handled" claim mask a missing rejection proof (or vice versa).
+func TestCoverageBucketsExclusive(t *testing.T) {
+	boolBuckets := map[string]map[string]bool{
+		"handled":        handledNodes,
+		"typeExpr":       typeExprNodes,
+		"loudlyRejected": loudlyRejected,
+	}
+	strBuckets := map[string]map[string]string{
+		"structural": structuralNodes,
+		"nonNode":    nonNodeTypes,
+	}
+	seen := map[string]string{}
+	for bucket, m := range boolBuckets {
+		for name := range m {
+			if prev, ok := seen[name]; ok {
+				t.Errorf("coverage: %s in both %q and %q buckets", name, prev, bucket)
+			}
+			seen[name] = bucket
+		}
+	}
+	for bucket, m := range strBuckets {
+		for name := range m {
+			if prev, ok := seen[name]; ok {
+				t.Errorf("coverage: %s in both %q and %q buckets", name, prev, bucket)
+			}
+			seen[name] = bucket
+		}
+	}
+}
+
+// rejectedParents maps clause node kinds to the only parents that can
+// contain them. Clauses never reach the emitter's dispatch directly; they
+// are rejected because their parents are.
+var rejectedParents = map[string][]string{
+	"CaseClause": {"SwitchStmt", "TypeSwitchStmt"},
+	"CommClause": {"SelectStmt"},
+}
+
+// TestEveryLoudlyRejectedErrors is the mechanical proof behind the
+// loudlyRejected bucket: every entry must actually produce an "unsupported"
+// error through the emitter's own dispatch. If a construct starts being
+// handled, this test fails until its matrix entry moves to handledNodes.
+// (The table-driven negative_test.go covers the same rejections through
+// full realistic programs; this test covers the bucket exhaustively,
+// including Bad* nodes that cannot arise from a well-typed program.)
+func TestEveryLoudlyRejectedErrors(t *testing.T) {
+	e := testEmitter(t)
+	names := make([]string, 0, len(loudlyRejected))
+	for name := range loudlyRejected {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			err := probeRejected(e, name)
+			if err == nil {
+				t.Fatalf("%s: in loudlyRejected but the emitter accepts it — move it to handledNodes", name)
+			}
+			if !strings.Contains(err.Error(), "unsupported") {
+				t.Fatalf("%s: rejection error %q does not say 'unsupported' (must fail loudly, not crash)", name, err.Error())
+			}
+		})
+	}
+}
+
+// probeRejected drives one rejected node kind through the emitter dispatch
+// matching its syntactic category. Zero-value nodes suffice: the dispatch
+// switches on the concrete type before touching any field, so reaching the
+// default case proves the kind is rejected.
+func probeRejected(e *Emitter, name string) error {
+	n := astNodeByName(name)
+	if n == nil {
+		return fmt.Errorf("probe: no AST node named %s", name)
+	}
+	switch n := n.(type) {
+	case ast.Stmt:
+		_, err := e.emitStmt(n)
+		return err
+	case ast.Expr:
+		_, err := e.emitExpr(n)
+		return err
+	case ast.Decl:
+		return e.declareTopDecl(n)
+	default:
+		// Clauses are only reachable inside switch/select bodies, which
+		// are themselves loudly rejected (probed above as statements).
+		parents, ok := rejectedParents[name]
+		if !ok || len(parents) == 0 {
+			return fmt.Errorf("probe: %s is not a stmt/expr/decl and has no rejected parents", name)
+		}
+		for _, p := range parents {
+			if !loudlyRejected[p] {
+				return fmt.Errorf("probe: %s reachable via %s which is not loudly rejected", name, p)
+			}
+		}
+		return fmt.Errorf("emit: unsupported clause %s (rejected via parent)", name)
+	}
+}
+
+// testEmitter builds an Emitter over a trivial valid package, for
+// dispatch-level probes that do not need a full program.
+func testEmitter(t *testing.T) *Emitter {
+	t.Helper()
+	dir := t.TempDir()
+	fn := filepath.Join(dir, "p.go")
+	if err := os.WriteFile(fn, []byte("package p\nfunc f() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pres, err := parser.ParseFiles([]string{fn})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cres, err := checker.Check(pres.Fset, pres.Pkg, &checker.Config{GoVersion: "go1.27"})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	return &Emitter{
+		fset:    cres.Fset,
+		info:    cres,
+		files:   pres.Files,
+		typeIDs: make(map[types.Type]int),
+		objIDs:  make(map[types.Object]int),
+	}
 }
