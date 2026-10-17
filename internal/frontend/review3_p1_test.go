@@ -275,6 +275,64 @@ func main() {
 	}
 }
 
+// TestFuncLocalVarFuncAliasNotShadowed pins the independent-review
+// VETO fix on review3-frontend: a FUNCTION-LOCAL `var lstat = os.Lstat`
+// must NOT be recorded as a var-func alias. Alias recording is
+// package-level only; the alias path hardwires the call to the
+// originally-aliased func (here __lstat) and silently ignores a later
+// reassignment (lstat = os.Stat), which gc honors. Before the fix the
+// call desugared through the __lstat alias; after the fix it goes
+// through the variable (var-link path), matching base/gc behavior.
+func TestFuncLocalVarFuncAliasNotShadowed(t *testing.T) {
+	doc := exportFuncValueProg(t, `package main
+
+import "os"
+
+func main() {
+	var lstat = os.Lstat
+	lstat = os.Stat
+	fi, err := lstat("/tmp")
+	println(fi.Name(), err == nil)
+}
+`)
+	body := funcBodyByName(t, doc, "main")
+	// The alias path hardwires the call to the __lstat helper. That call
+	// fun ident must not appear anywhere in main: the call must go
+	// through the (reassigned) variable.
+	foundVarCall := false
+	for _, n := range findAllKind(body, "call") {
+		fun, _ := n["fields"].(map[string]any)["fun"].(map[string]any)
+		if fun == nil || fun["kind"] != "ident" {
+			continue
+		}
+		name, _ := fun["fields"].(map[string]any)["name"].(string)
+		if name == "__lstat" {
+			t.Fatal("call desugared through the __lstat alias, shadowing " +
+				"the reassigned function-local variable (silent miscompile)")
+		}
+		if name == "lstat" {
+			foundVarCall = true
+		}
+	}
+	if !foundVarCall {
+		t.Fatal("no call through the lstat variable: reassignment not respected")
+	}
+	// The local variable must still be declared (var-link path, like
+	// base) — the alias machinery must not have consumed it.
+	foundLocal := false
+	for _, n := range findAllKind(body, "vardecl") {
+		for _, nm := range n["fields"].(map[string]any)["names"].([]any) {
+			if nm == "lstat" {
+				foundLocal = true
+			}
+		}
+	}
+	if !foundLocal {
+		t.Fatal("no local vardecl for lstat: the alias machinery consumed " +
+			"the function-local declaration")
+	}
+}
+
 // TestAtomicPointerOpsRenamedImport pins that the P1-F2 lowering also
 // applies under a renamed sync/atomic import (resolved-object
 // discrimination, R2-P1-1).

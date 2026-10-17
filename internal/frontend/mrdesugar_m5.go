@@ -4119,7 +4119,11 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 // (classifyMultiResultCall + userMRInfoForVar). Local `x := pkg.F`
 // initializers are eta-expanded in place to a FuncLit wrapper (an
 // ordinary multi-result closure, which the existing machinery already
-// handles). Method values keep their existing path (Selections non-nil
+// handles). Function-local `var x = pkg.F` is deliberately NOT
+// aliased: it keeps the base var-link behavior, so a later
+// reassignment of the variable is respected at call sites (alias
+// recording would hardwire the call to the originally-aliased func).
+// Method values keep their existing path (Selections non-nil
 // skips them). This covers any package-qualified multi-result function
 // (synthetic Appendix-M tables, the disk MR table, user pair-transforms)
 // — not just os.Lstat.
@@ -4137,12 +4141,27 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 	varLits := make(map[*types.Var]*ast.FuncLit)
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
-		// Collect ValueSpecs to remove (can't modify during Inspect).
+		// Collect package-level ValueSpecs to alias+remove with a direct
+		// loop over f.Decls — NOT ast.Inspect. The alias mechanism is
+		// package-level only: function-local ValueSpecs are excluded on
+		// purpose. A whole-file Inspect would record a local
+		// `var x = pkg.F` as an alias, and classifyVarFuncAlias (checked
+		// before the var-link path) would then hardwire call sites to
+		// the originally-aliased func, silently ignoring a later
+		// reassignment of the variable. Function-local specs keep the
+		// base var-link behavior (reassignment respected).
 		var toRemove []*ast.ValueSpec
-		ast.Inspect(f, func(n ast.Node) bool {
-			switch n := n.(type) {
-			case *ast.ValueSpec:
-				for i, v := range n.Values {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, v := range vs.Values {
 					sel, ok := unparen(v).(*ast.SelectorExpr)
 					if !ok {
 						continue
@@ -4162,13 +4181,17 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 						continue
 					}
 					// Record alias and mark for removal.
-					if i < len(n.Names) {
-						if vr, ok := info.Defs[n.Names[i]].(*types.Var); ok {
+					if i < len(vs.Names) {
+						if vr, ok := info.Defs[vs.Names[i]].(*types.Var); ok {
 							aliases[vr] = obj
 						}
 					}
-					toRemove = append(toRemove, n)
+					toRemove = append(toRemove, vs)
 				}
+			}
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
 			case *ast.AssignStmt:
 				if n.Tok != token.DEFINE {
 					return true
