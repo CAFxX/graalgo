@@ -127,7 +127,11 @@ func oneSeed(workdir string, seed int64, doMin bool, journal *bufio.Writer, jmu 
 	} else if v == vGCInvalid {
 		note = "gc rejected (generator bug)"
 	} else if v == vHarnessError {
-		note = fmt.Sprintf("harness error: backend binary failed to start (%s)", graalgoRun)
+		if gr.harnessErr {
+			note = fmt.Sprintf("harness error: graalgo backend binary failed to start (%s)", graalgoRun)
+		} else {
+			note = fmt.Sprintf("harness error: gc binary failed to start (%s)", goBin)
+		}
 	}
 	data, err := json.Marshal(journalEntry{Seed: seed, Verdict: v.String(), Note: note})
 	if err != nil {
