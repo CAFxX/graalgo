@@ -8,8 +8,8 @@ T17 (shell hygiene).
 | Script | What it does |
 |---|---|
 | [run_battery.sh](run_battery.sh) | Runs every `TortureBattery` leg (F1/F3/F4/F5/F5b/F6) with several scheduler configs; exit 0 iff all legs pass |
-| [gmp_matrix.sh](gmp_matrix.sh) | GOMAXPROCS × workload matrix (`{1,2,4,N}` × `{compute,mixed}`): each [corpus](corpus/) program runs under graalgo (`--gmp=N`) and under `gc` (`GOMAXPROCS=N`); stdout compared byte-for-byte |
-| [stress_differential.sh](stress_differential.sh) | Runs each [corpus](corpus/) program under graalgo and `gc`; `exact` mode compares stdout byte-for-byte, `completion` mode only requires clean completion on both |
+| [gmp_matrix.sh](gmp_matrix.sh) | GOMAXPROCS × workload matrix (`{1,2,4,N}` × `{compute,mixed}`): each [corpus](corpus/) program runs under graalgo (`--gmp=N`) and under `gc` (`GOMAXPROCS=N`); stderr compared byte-for-byte (corpus prints via `println`) |
+| [stress_differential.sh](stress_differential.sh) | Runs each [corpus](corpus/) program under graalgo and `gc`; `exact` mode compares stderr byte-for-byte, `completion` mode only requires clean completion on both |
 
 ## Layout
 

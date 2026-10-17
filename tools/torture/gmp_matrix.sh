@@ -4,7 +4,8 @@
 # Matrix: GOMAXPROCS in {1, 2, 4, N} x workload in {compute, mixed}.
 # (N = host CPUs; 4 on a 2-CPU VM exercises the oversubscription clamp.)
 # Each cell: run under graalgo (--gmp=N) and under gc (GOMAXPROCS=N),
-# compare stdout byte-for-byte. Any systematic divergence is a
+# compare stderr byte-for-byte (the corpus prints via the println builtin,
+# which writes to stderr on both). Any systematic divergence is a
 # kill-criterion trigger (PLAN.md risk: "in-flight-cap economics").
 #
 # Channel-heavy cells are Java-level (TortureBattery F1); Go channel ops
