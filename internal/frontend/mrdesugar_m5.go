@@ -1855,6 +1855,18 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// P4 (WS D, general interface MR): unlisted interfaces with
+				// multi-result methods (e.g. io.RuneReader.ReadRune).
+				// Mirrors the expression-position fallback in
+				// exportIfaceMethodCall: synthesize the interface pair
+				// on first use; the itab dispatches to the concrete
+				// type's pair-returning __-helper. Without this, a
+				// statement-position multi-result call on an unlisted
+				// interface method falls through and emits an invalid
+				// assign node (lhs/rhs arity mismatch).
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
