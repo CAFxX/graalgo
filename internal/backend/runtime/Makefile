@@ -204,13 +204,17 @@ torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
 
 # P2-M8 GOMAXPROCS matrix (differential vs gc). Needs the gofrontend
-# binary (internal/frontend/build.sh); logs under out/torture/gmp-matrix/.
+# binary (internal/frontend/build.sh); the interop module (product launcher)
+# is built first. Logs under out/torture/gmp-matrix/.
 gmp-matrix: main $(OUT_TEST)/.built
+	$(MAKE) -C ../interop main
 	bash ../../../tools/torture/gmp_matrix.sh
 
 # P2-M8 stress-corpus differential (Go runtime/context patterns vs gc).
-# Needs the gofrontend binary; logs under out/torture/stress-differential/.
+# Needs the gofrontend binary; the interop module (product launcher)
+# is built first. Logs under out/torture/stress-differential/.
 stress-differential: main $(OUT_TEST)/.built
+	$(MAKE) -C ../interop main
 	bash ../../../tools/torture/stress_differential.sh
 
 clean:

@@ -23,11 +23,20 @@ T17 (shell hygiene).
 ## Prerequisites
 
 - GraalVM at `$GRAALVM_HOME` (default `~/tools/graalvm-jdk-25`).
-- The backend runtime module built: `make -C ../../internal/backend/runtime main`
-  (or run the make targets below, which build it first).
+- The backend modules built:
+  `make -C ../../internal/backend/truffle main` (runtime + truffle classes),
+  `make -C ../../internal/backend/interop main` (product-launcher classes)
+  — or run the make targets below, which build what they need.
 - For the two differential scripts: the `gofrontend` binary built
   (see [internal/frontend/build.sh](../../internal/frontend/build.sh)) and
   stock Go at `$GO` (default `~/tools/go/bin/go`).
+- Go programs run through the product launcher
+  (`internal/backend/graalgo-sync-run`, P3SyncMain): it drives the same
+  `SchedulerCore` under test with channels/select and the full stdlib
+  surface. The raw scheduler entry point
+  (`graalgo.sched.launcher.SchedMain`) cannot run real Go programs on the
+  current base (its Truffle `NodeFactory` lacks the `ifacemethod`/`makechan`
+  hooks), so the differential scripts deliberately do not use it.
 
 ## Make targets
 

@@ -9,17 +9,27 @@
 # (gitignored via out/). The Go corpus lives in tools/torture/corpus/
 # (committed).
 #
-# Prerequisites: the backend runtime module and the gofrontend binary built:
-#   make -C internal/backend/runtime main
-#   (see internal/frontend/build.sh for gofrontend)
+# Go programs run through the product launcher internal/backend/graalgo-sync-run
+# (P3SyncMain): it drives the same SchedulerCore under test and supports
+# channels/select and the full stdlib surface. The raw scheduler entry point
+# (graalgo.sched.launcher.SchedMain) cannot run real Go programs on this base
+# (its Truffle NodeFactory lacks the ifacemethod/makechan hooks) — using it
+# here would fail every program for the wrong reason.
+#
+# Prerequisites: the backend modules built:
+#   make -C internal/backend/truffle main     # runtime + truffle classes
+#   make -C internal/backend/interop main     # product launcher classes
+#   (see internal/frontend/build.sh for the gofrontend binary)
 set -euo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 GR="$PWD"
-RT="internal/backend/runtime"
 
-GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-JAVA="$GRAALVM_HOME/bin/java"
-[ -x "$JAVA" ] || { echo "ERROR: no java at $JAVA (set GRAALVM_HOME)" >&2; exit 1; }
+SYNC_RUN="internal/backend/graalgo-sync-run"
+[ -x "$SYNC_RUN" ] || { echo "ERROR: $SYNC_RUN missing/not executable" >&2; exit 1; }
+[ -d internal/backend/interop/out/classes ] || {
+  echo "ERROR: interop classes missing — build first: make -C internal/backend/interop main" >&2; exit 1; }
+[ -d internal/backend/runtime/out/classes ] || {
+  echo "ERROR: runtime classes missing — build first: make -C internal/backend/truffle main" >&2; exit 1; }
 GO="${GO:-$HOME/tools/go/bin/go}"
 [ -x "$GO" ] || { echo "ERROR: no go at $GO (set GO)" >&2; exit 1; }
 # gofrontend resolution mirrors graalgo.launcher.ToolPaths: an explicit
@@ -28,19 +38,15 @@ GOFRONTEND="${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}"
 [ -x "$GOFRONTEND" ] || { echo "ERROR: gofrontend not executable at $GOFRONTEND — build it (see internal/frontend/build.sh)" >&2; exit 1; }
 export GRAALGO_GOFRONTEND="$GOFRONTEND"
 
-# Classpath mirrors the runtime module's TEST_CP (see
-# internal/backend/runtime/Makefile).
-TRUFFLE="internal/backend/truffle"
-for d in "$RT/out/test-classes" "$RT/out/classes" "$TRUFFLE/out/classes"; do
-  [ -d "$d" ] || { echo "ERROR: $d missing — build the backend first: make -C $RT main" >&2; exit 1; }
-done
-[ -d "$TRUFFLE/lib" ] || { echo "ERROR: $TRUFFLE/lib missing" >&2; exit 1; }
-CP="$RT/out/test-classes:$RT/out/classes:$TRUFFLE/out/classes:internal/backend/interop/out/classes:$TRUFFLE/lib/*"
-JAVA_FLAGS=(--enable-native-access=ALL-UNNAMED -Xss32m)
-
 CORPUS="tools/torture/corpus"
-OUTDIR="$RT/out/torture/stress-differential"
+OUTDIR="internal/backend/runtime/out/torture/stress-differential"
 mkdir -p "$OUTDIR" || { echo "ERROR: cannot create $OUTDIR" >&2; exit 1; }
+# Keep the JVM's temp files out of /tmp (small shared tmpfs); the launcher
+# honors TMPDIR for -Djava.io.tmpdir.
+export TMPDIR="$OUTDIR"
+# Cap the per-program JVM heap: the box is memory-tight and an uncapped
+# truffle JVM risks the OOM killer (observed SIGKILL, exit 137).
+export _JAVA_OPTIONS="-Xmx1g"
 
 PASS=0; FAIL=0; FAILED=""
 
@@ -50,8 +56,7 @@ differential() {
   local prog="$CORPUS/$name.go"
   [ -f "$prog" ] || { echo "ERROR: corpus program missing: $prog" >&2; exit 1; }
   local grc=0 gcrc=0
-  timeout 180 "$JAVA" "${JAVA_FLAGS[@]}" -cp "$CP" \
-    graalgo.sched.launcher.SchedMain --gmp=2 "$prog" \
+  timeout 180 "$SYNC_RUN" --gmp=2 "$GR/$prog" \
     > "$OUTDIR/$name.graalgo.out" 2> "$OUTDIR/$name.graalgo.err" || grc=$?
   timeout 120 "$GO" run "$prog" \
     > "$OUTDIR/$name.gc.out" 2> "$OUTDIR/$name.gc.err" || gcrc=$?
