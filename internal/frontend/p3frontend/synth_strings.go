@@ -14,14 +14,45 @@ package p3frontend
 // Deliberate omissions (inexpressible in the synthetic source; documented
 // in the phase-1 header): ToUpperSpecial/ToLowerSpecial/ToTitleSpecial
 // (need unicode.SpecialCase), Replacer.WriteString and Reader.WriteTo
-// (need io.Writer), Lines/SplitSeq/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
-// (need iter.Seq). Title is present with exact gc signature and a
+// (need io.Writer), Lines/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
+// (need iter.Seq). SplitSeq is present: it landed in the phase-1
+// synthetic source and the mirror provides iter.Seq via
+// syntheticIterPackage. Title is present with exact gc signature and a
 // fail-fast body (deprecated; needs unicode tables).
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
 )
+
+// syntheticIterPackage mirrors the frozen exporter's synthetic "iter"
+// (internal/frontend/synth_reflect.go: syntheticIterSource): the single
+// generic type Seq[V any] = func(yield func(V) bool). The phase-1
+// synthetic strings source imports it (SplitSeq landed there), and the
+// drift test type-checks that source with the test importer — so the
+// mirror needs the same package to render identical types.
+func syntheticIterPackage() *types.Package {
+	iterPkg := types.NewPackage("iter", "iter")
+	anyT := types.Universe.Lookup("any").Type()
+	boolT := types.Typ[types.Bool]
+
+	vName := types.NewTypeName(token.NoPos, nil, "V", nil)
+	vParam := types.NewTypeParam(vName, anyT)
+	// Underlying: func(yield func(V) bool).
+	yieldSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, nil, "V", vParam)),
+		types.NewTuple(types.NewParam(token.NoPos, nil, "", boolT)), false)
+	seqName := types.NewTypeName(token.NoPos, iterPkg, "Seq", nil)
+	seqNamed := types.NewNamed(seqName,
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewParam(token.NoPos, nil, "yield", yieldSig)),
+			nil, false), nil)
+	seqNamed.SetTypeParams([]*types.TypeParam{vParam})
+	iterPkg.Scope().Insert(seqName)
+	iterPkg.MarkComplete()
+	return iterPkg
+}
 
 // syntheticStringsPackage mirrors the P3-M7 synthetic "strings".
 func syntheticStringsPackage() *types.Package {
@@ -185,6 +216,20 @@ func syntheticStringsPackage() *types.Package {
 	insertFunc("SplitAfterN",
 		[]*types.Var{newParam("s", stringT), newParam("sep", stringT), newParam("n", intT)},
 		[]*types.Var{newParam("", strSlice)}, false)
+
+	// SplitSeq(s, sep string) iter.Seq[string] — landed in the phase-1
+	// synthetic source (the synthetic "iter" package provides Seq).
+	// The remaining iter.Seq members (Lines, SplitAfterSeq, FieldsSeq,
+	// FieldsFuncSeq) are still omitted — see the header comment.
+	iterSeqName := syntheticIterPackage().Scope().Lookup("Seq")
+	iterSeqString, err := types.Instantiate(types.NewContext(),
+		iterSeqName.Type().(*types.Named), []types.Type{stringT}, true)
+	if err != nil {
+		panic(fmt.Sprintf("syntheticStringsPackage: instantiate iter.Seq[string]: %v", err))
+	}
+	insertFunc("SplitSeq",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("", iterSeqString)}, false)
 
 	// Case mapping.
 	for _, name := range []string{"ToUpper", "ToLower", "ToTitle", "Title", "TrimSpace", "Clone"} {

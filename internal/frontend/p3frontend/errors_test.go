@@ -82,8 +82,9 @@ func (rejectImports) Import(path string) (*types.Package, error) {
 }
 
 // syntheticStdImporter returns a types.Importer resolving the synthetic
-// "errors" and "io" packages for drift tests whose phase-1 sources import
-// them (P3-M8: bytes/strings import io; io itself imports errors and the
+// "errors", "io" and "iter" packages for drift tests whose phase-1 sources
+// import them (P3-M8: bytes/strings import io; strings also imports the
+// synthetic iter since SplitSeq landed; io itself imports errors and the
 // real sync). The importer is self-referential (declared with var, not
 // :=, so the closure sees it). Shared by bytes_test.go and
 // strings_test.go — one place to extend when the import graph grows.
@@ -109,6 +110,14 @@ func syntheticStdImporter(t *testing.T) types.Importer {
 			// frontend; real sync is a superset and the drift comparison
 			// never observes it (every sync use is unexported).
 			return importer.Default().Import("sync")
+		}
+		if path == "iter" {
+			// The phase-1 synthetic strings source imports the synthetic
+			// "iter" (SplitSeq landed there); its source lives in the
+			// frozen exporter's synth_reflect.go.
+			return phase1SyntheticPackageForTest(t,
+				"../synth_reflect.go",
+				"syntheticIterSource", "iter", imp), nil
 		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", path)
 	})
