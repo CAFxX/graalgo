@@ -8,6 +8,7 @@ import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
+import graalgo.values.AbiTypeRef;
 
 /**
  * {@code *T → unsafe.Pointer} (P3-M8): the {@code "unsafefromptr"} wire
@@ -54,6 +55,12 @@ public final class UnsafeFromPtrNode extends GoExprNode {
         // distinct allocations share one handle.
         if (gp.isNil()) {
             return 0;
+        }
+        if (gp.referent() instanceof AbiTypeRef ar) {
+            // P3-M10 (eface): a *abi.Type is the canonical reflect token.
+            // unsafe.Pointer of it must yield the token the
+            // __reflect_t* intrinsics accept — not a fresh handle.
+            return ar.tok();
         }
         if (gp.isCellPointer()) {
             return UnsafeTable.current().intern(gp.cell());

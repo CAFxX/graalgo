@@ -8,6 +8,8 @@ import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
+import graalgo.values.AbiTypeRef;
+import graalgo.values.EfaceRef;
 
 /**
  * Field selector {@code x.f} (M4, WS E).
@@ -58,7 +60,28 @@ public final class SelectorNode extends GoExprNode {
      */
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site) {
         for (int idx : selpath) {
+            if (o instanceof EfaceRef er) {
+                // P3-M10: *(*abi.EmptyInterface)(unsafe.Pointer(&iface)) —
+                // the synthesized eface view (see UnsafeToPtrNode). Field
+                // 0 is Type (*abi.Type), field 1 is Data (unsafe.Pointer).
+                o = er.field(idx);
+                continue;
+            }
             o = deref(o, site);
+            if (o instanceof AbiTypeRef ar) {
+                // P3-M10: field selection on a *abi.Type (or *abi.PtrType,
+                // ...) produced by unsafe reinterpretation. The fields are
+                // precomputed from the type table at ref creation. (Checked
+                // after deref: the ref is usually behind a GoPointer.)
+                o = ar.field(idx);
+                continue;
+            }
+            if (o == null) {
+                // A typed-nil interface's data (or any other null) reached
+                // a struct field selection: gc's nil-dereference panic,
+                // never a Java NPE.
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+            }
             GoStruct s = (GoStruct) o;
             if (s.descriptor().field(idx).inLongs()) {
                 o = Long.valueOf(s.getLong(idx));
