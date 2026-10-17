@@ -8,7 +8,7 @@
     },
     {
       "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
+      "reason": "M10 F-1 (scheduler lost partial sums 32/34 vs 36) FIXED in ecb7f97c - RangeConcurrentRegressionTest pins it. Still excluded: program fails to BUILD - multi-result call in multi-variable assign not supported (backend: assign.fields lhs/rhs length mismatch; e.g. synthetic __ss_ReadRune: r,size,err = rs.ReadRune()). Current blocker needs a tracked bug ID - flagged to coordinator (see rev-scheduler-exclusion lane report)."
     },
     {
       "program": "17_generics",
