@@ -37,13 +37,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (wt.py integrate + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # The no-bridges gate diffs the push's whole range on direct
+          # master pushes (wt.py integrate + push, no PR) via
+          # NO_BRIDGES_PUSH_BASE below — a shallow checkout has neither the
+          # base nor HEAD~1 and the gate would fail loudly instead of
+          # inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py
+        env:
+          # Push events: inspect the whole pushed range, not just the tip
+          # commit — wt.py integrate ff-merges whole lane branches, so
+          # HEAD~1...HEAD would let all but the tip escape inspection.
+          # Empty on PR/schedule/dispatch runs (no `before` there); the gate
+          # falls back to origin/master...HEAD for those.
+          NO_BRIDGES_PUSH_BASE: ${{ github.event.before }}
+
+      - name: No-bridges gate self-tests
+        run: python3 .github/scripts/test_check_no_bridges.py
 
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1

@@ -33,8 +33,10 @@ deliverable until the design lands.
   delete the machinery wholesale: `syntheticSources` + the import overlay,
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
   allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
-  intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
-  `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
+  intrinsic predicates, the stdlib-intrinsic wire nodes enumerated in B-3
+  (`time*`/`runtime*`/`unsafe*` families plus `syncop`, `atomicaddr`,
+  `reflectop`, `abifuncpc`), and `NodeFactory.syncPrimitiveName`. Retires
+  B-2 and the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
@@ -81,10 +83,23 @@ deliverable until the design lands.
   - [diskimport.go](../../internal/frontend/diskimport.go):
     `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
     switches (~line 402) and the linkname package allowlist;
-  - [export.go](../../internal/frontend/export.go): `"syncop"` and
-    `"runtimecaller"` custom wire nodes for stdlib functions, and the
-    `time.Now` eta-expansion hardcoded by package+symbol name
+  - [export.go](../../internal/frontend/export.go) and
+    [synth_machinery.go](../../internal/frontend/synth_machinery.go):
+    custom wire nodes for stdlib intrinsics — the `time*` family
+    (`timenew`, `timenow`, `timeop`, `timeafter`, `timetick`, `timesleep`,
+    `timeafterfunc`, `timec`), the `runtime*` family (`runtimeversion`,
+    `runtimestack`, `runtimereadmemstats`, `runtimenumcpu`,
+    `runtimenumgoroutine`, `runtimegosched`, `runtimegoroot`,
+    `runtimegomaxprocs`, `runtimefuncforpc`, `runtimecallersframes`,
+    `runtimecallers`), the `unsafe*` family (`unsafeadd`, `unsafeslice`,
+    `unsafeslicedata`, `unsafestring`, `unsafestringdata`,
+    `unsafefromptr`, `unsafetooptr`, `unsafefromuint`), plus `syncop`,
+    `atomicaddr`, `reflectop`, `abifuncpc` (the backend registers the
+    `runtimecaller` spelling for `runtime.Caller`); and the `time.Now`
+    eta-expansion hardcoded by package+symbol name
     ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    The `runtimenumgoroutine`/`runtimegosched` additions are adjudicated
+    non-bridges (see below), not part of this entry.
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -225,6 +240,30 @@ extend these entries or add new ones without a fresh independent review.
   bridge: no synthetic stdlib logic, no name-keyed special case — the
   call interception reuses the existing general runtime-overlay guard
   block, exactly like `NumGoroutine`.
+
+## Frozen API contracts (not bridges)
+
+Intentional Phase-1 API-contract stubs — not fail-fast bodges. Each file
+freezes signatures a later phase owns; every method throws
+`UnsupportedOperationException` with a phase-scoped message and the file
+header marks it STUB. The no-bridges gate's Java fail-fast-stub scan
+grandfathers exactly these files
+([check_no_bridges.py](../../.github/scripts/check_no_bridges.py)
+`FROZEN_JAVA_STUB_FILES`); a new `throw new
+UnsupportedOperationException` anywhere else fails the gate.
+
+- [Netpoll.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Netpoll.java) —
+  frozen netpoller API contract (WS G, GG-0020, STUB).
+- [ChanOps.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java) —
+  frozen channel/select intrinsic surface (WS G, GG-0020, STUB).
+- [Scheduler.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Scheduler.java) —
+  frozen scheduler-glue intrinsic surface (WS G, GG-0020, STUB).
+- [GcInterop.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java) —
+  Phase-1 stub of the Go-observable GC surface (P2-M4, ADR-0002 D4); the
+  Phase-2 module shadows it with the real implementation.
+- [Safepoint.java](../../internal/backend/runtime/src/main/java/graalgo/safepoint/Safepoint.java) —
+  GC safepoint seam (PLAN.md D8, GG-0017); a no-op without a scheduler
+  (Phase-1 parity), replaced by the Phase-2 implementation.
 
 ## Retired
 
