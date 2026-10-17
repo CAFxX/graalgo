@@ -118,10 +118,10 @@ func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}) 
 	// prints its line only after the client has printed its own — an
 	// explicit channel barrier, not a timing assumption. (A 10s
 	// time.Sleep used to sit in the library's server handshake for this;
-	// removed as RV-P0-01.)
-	if clientPrinted != nil {
-		<-clientPrinted
-	}
+	// removed as RV-P0-01.) The barrier channel is never nil: callers
+	// pass a real channel (pre-closed when there is no in-process peer),
+	// because a nil channel comparison does not survive the frontend.
+	<-clientPrinted
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
 	n, err := tlsConn.Read(buf)
@@ -146,10 +146,9 @@ func runClient(port string, clientPrinted chan<- struct{}) {
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
 	// Release the server's handshake-ok print (see runServer): the client
-	// always prints first, in both differential legs.
-	if clientPrinted != nil {
-		close(clientPrinted)
-	}
+	// always prints first, in both differential legs. The channel is
+	// never nil (see runServer), so this close is unconditional.
+	close(clientPrinted)
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -176,12 +175,19 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready, nil)
+		// No in-process client: hand the server a pre-closed barrier so
+		// its unconditional receive returns immediately. (A nil channel
+		// would need a nil check, which the frontend cannot type.)
+		barrier := make(chan struct{})
+		close(barrier)
+		go runServer(port, ready, barrier)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port, nil)
+		// No in-process server: the client's close is unobserved but harmless.
+		barrier := make(chan struct{})
+		runClient(port, barrier)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -193,8 +199,8 @@ func main() {
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
 		// clientPrinted orders the two handshake-ok prints deterministically
-		// (server waits for the client's line); nil in server/client modes
-		// where the peer is a separate process.
+		// (server waits for the client's line). In server/client modes the
+		// barrier is a pre-closed / unobserved real channel (never nil).
 		clientPrinted := make(chan struct{})
 		go runServer(ephemPort, ready, clientPrinted)
 		<-ready
