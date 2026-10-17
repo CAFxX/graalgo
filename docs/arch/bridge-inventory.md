@@ -28,7 +28,9 @@ deliverable until the design lands.
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
   shrinks the B-3 predicate chains, the `mrdesugar` pair tables, and
-  `syntheticSources`.
+  `syntheticSources`. B-8 (the `graalgo test` `testing` overlay +
+  `graalgoT` shim in `cmd/`) retires here too, when real `testing`
+  compiles from GOROOT via the general disk importer.
 - **Phase 3 — machinery deletion.** When the last synthetic package retires,
   delete the machinery wholesale: `syntheticSources` + the import overlay,
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
@@ -175,6 +177,45 @@ deliverable until the design lands.
   through the backend so `runtime.Callers` walks the actual guest stack;
   then delete the synthetic intrinsics.
 - **Phase:** 4.
+
+### B-8. `graalgo test` driver `testing` import overlay + `graalgoT` shim
+
+- **What:** [cmd/graalgo/testsynth.go](../../cmd/graalgo/testsynth.go):
+  - the synthesized test driver drops every `import "testing"`
+    (`collectImports`, ~line 559: `if path == "testing" { continue }`);
+  - a synthetic `testing.T` replacement, `graalgoT` (the
+    `testShimTemplate` const, ~line 63), is inlined into every driver, and
+    `*testing.T` parameters are rewritten to `*graalgoT` (`rewriteParam`,
+    ~line 1813);
+  - diagnostic calls (`Errorf`, `Fatalf`, …) are rewritten to
+    position-capturing `graalgoErrorf`/`graalgoFatalf` variants
+    (`rewriteTestCalls`, ~line 416).
+- **Why:** the driver is compiled by graalgo itself, and the real
+  `testing` package does not compile under graalgo yet — without the shim
+  no `graalgo test` run could execute at all. The shim is an honest
+  workaround, not a destination ([AGENTS.md](../../AGENTS.md) §4).
+- **Root-cause fix:** compile the real `testing` package from GOROOT via
+  the general disk importer (the same bar as the B-4 synthetic packages);
+  then delete the import drop, the `graalgoT` template, and the call
+  rewriting, and drive tests through real `*testing.T`/`testing.M`. Until
+  then, the entry points the driver cannot run (`TestMain`, `Benchmark*`,
+  `Fuzz*`, `Example*` — collected as `skippedEntry` by `discoverTests`,
+  ~line 26, and warned about loudly on stderr by the test runner,
+  [test.go](../../cmd/graalgo/test.go)) are reported, never silently
+  dropped (RV2-P1-01: warn, not fail — failing would make `graalgo test`
+  unusable on any benchmark-/example-bearing package).
+- **Gate:** the no-bridges gate
+  ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py)) check
+  2 (package-name conditionals) now covers `cmd/`: `"testing"` was added
+  to the stdlib list, and the old test-file exclusion (a `/test`
+  substring check that accidentally covered
+  `cmd/graalgo/testsynth.go`) was tightened to genuine test files
+  (`*_test.go`, `test_*.go`, dirs literally named `test`) — 2026-10-17.
+  The inventoried conditional above is grandfathered (the gate fails only
+  on *added* lines).
+- **Phase:** with the B-4 per-package retirements — when real `testing`
+  compiles from GOROOT, this retires in the same change. No separate
+  phased track (the driver lives in `cmd/`, not `internal/frontend/`).
 
 ## Adjudicated non-bridges
 

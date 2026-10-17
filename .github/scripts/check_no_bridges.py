@@ -89,6 +89,20 @@ def get_diff():
             return result.stdout, name
     return "", ""
 
+def is_test_file(fname):
+    """True for genuine test files and test harnesses: *_test.go,
+    test_*.go, or anything under a directory literally named "test".
+
+    A file merely containing "test" in its name (e.g.
+    cmd/graalgo/testsynth.go) is NOT a test file — the old "/test"
+    substring check accidentally excluded it and hid its name-keyed
+    conditionals from this gate (RV2-P1-01).
+    """
+    base = fname.rsplit("/", 1)[-1]
+    if base.endswith("_test.go") or base.startswith("test_"):
+        return True
+    return "test" in fname.split("/")[:-1]
+
 def check_no_bridges(diff):
     errors = []
     added_lines = []
@@ -121,7 +135,7 @@ def check_no_bridges(diff):
     # 2. Package-name conditionals (stdlib names)
     stdlib_pkgs = ["fmt", "sync", "os", "net", "http", "runtime", "reflect", "time",
                    "strings", "bytes", "strconv", "sort", "math", "encoding", "crypto",
-                   "syscall", "unsafe", "io", "bufio", "context", "errors"]
+                   "syscall", "unsafe", "io", "bufio", "context", "errors", "testing"]
     for fname, line in added_lines:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
@@ -134,11 +148,11 @@ def check_no_bridges(diff):
             ]
             for pat in patterns:
                 if re.search(pat, line):
-                    # Allow in test files and docs. ("_test." covers
+                    # Allow in test files and docs. ("_test.go" covers
                     # *_test.go harnesses, e.g. drift-test importers that
                     # resolve synthetic import paths like the pre-existing
                     # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
+                    if not is_test_file(fname):
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 

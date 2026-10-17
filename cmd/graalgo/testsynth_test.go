@@ -66,7 +66,7 @@ func TestParent(t *testing.T) {
 }
 `)
 	testFile := filepath.Join(sub, "sub_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestNotSelected(t *testing.T) {
 }
 `)
 	testFile := filepath.Join(root, "a_test.go")
-	if _, err := discoverTests(testFile); err != nil {
+	if _, _, err := discoverTests(testFile); err != nil {
 		t.Fatal(err)
 	}
 	// Select only TestUsed; TestNotSelected's import must be pruned even
@@ -154,7 +154,7 @@ import (
 func TestBlank(t *testing.T) {}
 `)
 	testFile := filepath.Join(root, "a_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestDot(t *testing.T) {
 }
 `)
 	testFile := filepath.Join(root, "dot_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestExternal(t *testing.T) {
 }
 `)
 	for _, tf := range []string{filepath.Join(root, "m_test.go"), filepath.Join(root, "e_test.go")} {
-		tests, err := discoverTests(tf)
+		tests, _, err := discoverTests(tf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -303,11 +303,11 @@ func TestB(t *testing.T) {
 	}
 }
 `)
-	testsA, err := discoverTests(filepath.Join(root, "a_test.go"))
+	testsA, _, err := discoverTests(filepath.Join(root, "a_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	testsB, err := discoverTests(filepath.Join(root, "b_test.go"))
+	testsB, _, err := discoverTests(filepath.Join(root, "b_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestQual(t *testing.T) {
 }
 `)
 	testFile := filepath.Join(root, "q_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestUsesIt(t *testing.T) {
 		t.Fatalf("resolveImportPkgName = %q, want sortlike", got)
 	}
 	testFile := filepath.Join(root, "u_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestDotDep(t *testing.T) {
 }
 `)
 	testFile := filepath.Join(root, "a_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,7 +497,7 @@ func ExampleNothing() {
 	// Output:
 }
 `)
-	tests, err := discoverTests(filepath.Join(root, "p_test.go"))
+	tests, _, err := discoverTests(filepath.Join(root, "p_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,11 +551,11 @@ func TestExternal(t *testing.T) {
 	}
 }
 `)
-	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	testsW, _, err := discoverTests(filepath.Join(root, "w_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	testsE, _, err := discoverTests(filepath.Join(root, "e_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,11 +627,11 @@ func TestExternal(t *testing.T) {
 	}
 }
 `)
-	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	testsW, _, err := discoverTests(filepath.Join(root, "w_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	testsE, _, err := discoverTests(filepath.Join(root, "e_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,11 +698,11 @@ func TestExternal(t *testing.T) {
 	}
 }
 `)
-	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	testsW, _, err := discoverTests(filepath.Join(root, "w_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	testsE, _, err := discoverTests(filepath.Join(root, "e_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,11 +750,11 @@ var extRan = false
 
 func TestSame(t *testing.T) { extRan = true }
 `)
-	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	testsW, _, err := discoverTests(filepath.Join(root, "w_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	testsE, _, err := discoverTests(filepath.Join(root, "e_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -817,11 +817,11 @@ func TestExternal(t *testing.T) {
 	}
 }
 `)
-	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	testsW, _, err := discoverTests(filepath.Join(root, "w_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	testsE, _, err := discoverTests(filepath.Join(root, "e_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -896,7 +896,7 @@ func TestSelected(t *testing.T) {
 var HasVX = hasVX
 `)
 	testFile := filepath.Join(root, "p_test.go")
-	tests, err := discoverTests(testFile)
+	tests, _, err := discoverTests(testFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -940,7 +940,7 @@ func TestB(t *testing.T) {
 	}
 }
 `)
-	testsB, err := discoverTests(filepath.Join(root, "b_test.go"))
+	testsB, _, err := discoverTests(filepath.Join(root, "b_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -964,5 +964,129 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestDiscoverTestsReportsSkippedEntryPoints is the RV2-P1-01 regression
+// test: TestMain, Benchmark, Fuzz and Example entry points must be
+// reported as skipped (not silently dropped), and TestMain must NOT be
+// returned as a runnable test (the driver has no testing.M — emitting it
+// would reference the dropped "testing" import and fail the driver
+// build). Fails if any entry point is misclassified or missing.
+func TestDiscoverTestsReportsSkippedEntryPoints(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "p.go", "package p\n")
+	writeFile(t, root, "p_test.go", `package p
+
+import "testing"
+
+func TestMain(m *testing.M) {}
+
+func TestReal(t *testing.T) {}
+
+func BenchmarkParse(b *testing.B) {}
+
+func FuzzParse(f *testing.F) {}
+
+func ExampleNothing() {}
+
+func helper() {}
+`)
+	tests, skipped, err := discoverTests(filepath.Join(root, "p_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestReal" {
+		t.Errorf("runnable tests = %v, want [TestReal] (TestMain must not be runnable)", tests)
+	}
+	want := map[string]string{
+		"TestMain":       "TestMain",
+		"BenchmarkParse": "Benchmark",
+		"FuzzParse":      "Fuzz",
+		"ExampleNothing": "Example",
+	}
+	if len(skipped) != len(want) {
+		t.Fatalf("skipped = %v, want %d entries %v", skipped, len(want), want)
+	}
+	for _, s := range skipped {
+		kind, ok := want[s.name]
+		if !ok {
+			t.Errorf("unexpected skipped entry %q", s.name)
+			continue
+		}
+		if s.kind != kind {
+			t.Errorf("skipped %q kind = %q, want %q", s.name, s.kind, kind)
+		}
+		if s.file != filepath.Join(root, "p_test.go") {
+			t.Errorf("skipped %q file = %q, want the test file", s.name, s.file)
+		}
+	}
+}
+
+// TestDiscoverTestsQuietWithoutEntryPoints proves the diagnostic stays
+// quiet when there is nothing to report: a plain test file yields no
+// skipped entries. (The positive twin of
+// TestDiscoverTestsReportsSkippedEntryPoints.)
+func TestDiscoverTestsQuietWithoutEntryPoints(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "p.go", "package p\n")
+	writeFile(t, root, "p_test.go", `package p
+
+import "testing"
+
+func TestA(t *testing.T) {}
+
+func TestB(t *testing.T) {}
+`)
+	tests, skipped, err := discoverTests(filepath.Join(root, "p_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 2 {
+		t.Errorf("runnable tests = %v, want [TestA TestB]", tests)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %v, want none (stays quiet)", skipped)
+	}
+}
+
+// TestSkippedEntryWarningNamesEntryPoint proves the user-facing
+// diagnostic names the file, the function, and the kind: a green run can
+// never be mistaken for having executed it. Fails if any of those is
+// missing from the message.
+func TestSkippedEntryWarningNamesEntryPoint(t *testing.T) {
+	e := skippedEntry{file: "pkg/p_test.go", name: "BenchmarkParse", kind: "Benchmark"}
+	msg := skippedEntryWarning(e)
+	for _, want := range []string{"warning", "pkg/p_test.go", "BenchmarkParse", "Benchmark"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("warning %q does not contain %q", msg, want)
+		}
+	}
+}
+
+// TestSkippedWarningVisible pins the -run suppression rule: benchmarks,
+// fuzz tests and examples are deselected by -run without warning (like
+// `go test -run`); TestMain is always reported because `go test` runs it
+// even under -run.
+func TestSkippedWarningVisible(t *testing.T) {
+	cases := []struct {
+		filtered bool
+		kind     string
+		want     bool
+	}{
+		{false, "TestMain", true},
+		{false, "Benchmark", true},
+		{false, "Fuzz", true},
+		{false, "Example", true},
+		{true, "TestMain", true},
+		{true, "Benchmark", false},
+		{true, "Fuzz", false},
+		{true, "Example", false},
+	}
+	for _, c := range cases {
+		if got := skippedWarningVisible(c.filtered, c.kind); got != c.want {
+			t.Errorf("skippedWarningVisible(filtered=%v, %q) = %v, want %v",
+				c.filtered, c.kind, got, c.want)
+		}
 	}
 }

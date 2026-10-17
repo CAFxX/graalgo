@@ -206,13 +206,24 @@ func (r *testRunner) runPackage(dir string) bool {
 	}
 
 	// Discover the selected tests of every file, applying the -run
-	// filter (regex, like `go test`).
+	// filter (regex, like `go test`). Entry points the driver cannot run
+	// (TestMain, Benchmark, Fuzz, Example) are warned about loudly on
+	// stderr — a warn, not a failure: failing would make `graalgo test`
+	// unusable on any benchmark-/example-bearing package, and `go test`
+	// itself degrades to warnings rather than failures when it runs a
+	// subset. The warning names every skipped entry point so a green run
+	// is never mistaken for a complete one (RV2-P1-01).
 	var ftList []fileTests
 	for _, tf := range runnableTests {
-		tests, err := discoverTests(tf)
+		tests, skipped, err := discoverTests(tf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
 			return false
+		}
+		for _, s := range skipped {
+			if skippedWarningVisible(r.runRe != nil, s.kind) {
+				fmt.Fprintln(os.Stderr, skippedEntryWarning(s))
+			}
 		}
 		var selected []string
 		for _, t := range tests {

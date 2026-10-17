@@ -16,20 +16,29 @@ import (
 	"strings"
 )
 
-// discoverTests returns the names of TestXxx functions in a _test.go file.
-func discoverTests(path string) ([]string, error) {
+// discoverTests returns the names of TestXxx functions in a _test.go file
+// plus the entry points it cannot run. TestMain is deliberately excluded
+// from the runnable set even though its name starts with "Test": the
+// driver has no testing.M (the graalgoT shim replaces only testing.T —
+// B-8 in docs/arch/bridge-inventory.md), so emitting TestMain would
+// reference the dropped "testing" import and fail the driver build. It is
+// reported as skipped instead, so the runner can warn loudly (RV2-P1-01).
+func discoverTests(path string) (tests []string, skipped []skippedEntry, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
-	var tests []string
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Recv != nil {
 			continue
 		}
 		name := fn.Name.Name
+		if kind := entryPointKind(name); kind != "" {
+			skipped = append(skipped, skippedEntry{file: path, name: name, kind: kind})
+			continue
+		}
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
@@ -39,7 +48,7 @@ func discoverTests(path string) ([]string, error) {
 		}
 		tests = append(tests, name)
 	}
-	return tests, nil
+	return tests, skipped, nil
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -296,6 +305,64 @@ func testShimSource(verbose bool) string {
 type fileTests struct {
 	file  string
 	tests []string
+}
+
+// skippedEntry records a test entry point (TestMain, Benchmark, Fuzz,
+// Example) that the synthesized driver cannot run. These are collected by
+// discoverTests and reported loudly by the test runner: silently dropping
+// them would present a partial run as a green full run (RV2-P1-01).
+type skippedEntry struct {
+	file string // _test.go file declaring the entry point
+	name string // function name, e.g. "BenchmarkParse"
+	kind string // "TestMain", "Benchmark", "Fuzz" or "Example"
+}
+
+// entryPointKind classifies a top-level function name into a test entry
+// point kind the driver cannot run, or "" if it is not such an entry
+// point. The categories are go test's own entry-point contract (TestMain,
+// Benchmark, Fuzz, Example); matching them is implementing the contract,
+// not special-casing a test name.
+func entryPointKind(name string) string {
+	if name == "TestMain" {
+		return "TestMain"
+	}
+	for _, p := range []struct {
+		prefix, kind string
+	}{
+		{"Benchmark", "Benchmark"},
+		{"Fuzz", "Fuzz"},
+		{"Example", "Example"},
+	} {
+		if strings.HasPrefix(name, p.prefix) {
+			return p.kind
+		}
+	}
+	return ""
+}
+
+// skippedWarningVisible reports whether a skipped entry point of the given
+// kind must be reported when the run was filtered by -run. Benchmarks,
+// fuzz tests and examples are deselected by -run without warning (like
+// `go test -run`); TestMain is always reported because `go test` runs it
+// even under -run, so skipping it is always a silent behavior delta.
+func skippedWarningVisible(runFiltered bool, kind string) bool {
+	if kind == "TestMain" {
+		return true
+	}
+	return !runFiltered
+}
+
+// skippedEntryWarning formats the loud diagnostic for one skipped entry
+// point. It names the file, the function, and the kind, so a green run
+// can never be mistaken for having executed it.
+func skippedEntryWarning(e skippedEntry) string {
+	reason := map[string]string{
+		"TestMain":  "TestMain is not supported: the graalgo test harness invokes each test directly instead of via testing.M",
+		"Benchmark": "benchmarks are not executed by graalgo test",
+		"Fuzz":      "fuzz tests are not executed by graalgo test",
+		"Example":   "examples are not executed by graalgo test",
+	}[e.kind]
+	return fmt.Sprintf("graalgo test: warning: %s: %s: %s entry point not run (%s)", e.file, e.name, e.kind, reason)
 }
 
 // testCallRewrites maps testing.T diagnostic methods to the shim's
