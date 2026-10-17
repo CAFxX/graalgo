@@ -3,10 +3,13 @@
 // Deterministic by construction: concurrent results are reduced to
 // order-independent checks (every Load sees a consistently-typed value,
 // no torn reads, no panics).
+//
+// Uses the println builtin (not fmt): the real fmt package does not yet
+// build through the backend (pre-existing comma-ok/multi-result assign
+// export gap, unrelated to sync/atomic).
 package main
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 )
@@ -15,32 +18,32 @@ func main() {
 	// 1. atomic.Value Store/Load round-trip; dynamic type preserved.
 	var v atomic.Value
 	v.Store("hello")
-	fmt.Println(v.Load().(string))
+	println(v.Load().(string))
 	// Load before any Store is nil (no panic).
 	var v0 atomic.Value
-	fmt.Println(v0.Load() == nil)
+	println(v0.Load() == nil)
 
 	// 2. Int64: Swap/CAS old-value semantics, Add, And, Or.
 	var i atomic.Int64
 	i.Store(3)
-	fmt.Println(i.Swap(10))                         // 3
-	fmt.Println(i.CompareAndSwap(10, 20), i.Load()) // true 20
-	fmt.Println(i.CompareAndSwap(10, 30), i.Load()) // false 20
+	println(i.Swap(10))                         // 3
+	println(i.CompareAndSwap(10, 20), i.Load()) // true 20
+	println(i.CompareAndSwap(10, 30), i.Load()) // false 20
 	i.Add(5)
-	fmt.Println(i.Load())  // 25
-	fmt.Println(i.And(12)) // 25 (old value; i becomes 8)
-	fmt.Println(i.Or(3))   // 8 (old value; i becomes 11)
+	println(i.Load())  // 25
+	println(i.And(12)) // 25 (old value; i becomes 8)
+	println(i.Or(3))   // 8 (old value; i becomes 11)
 
 	// 3. atomic.Pointer[T]: nil *T before Store; round-trip; Swap/CAS.
 	type node struct{ n int }
 	var p atomic.Pointer[node]
-	fmt.Println(p.Load() == nil)
+	println(p.Load() == nil)
 	n := &node{n: 7}
 	p.Store(n)
-	fmt.Println(p.Load() == n, p.Load().n)
+	println(p.Load() == n, p.Load().n)
 	old := p.Swap(&node{n: 8})
-	fmt.Println(old == n, p.Load().n)
-	fmt.Println(p.CompareAndSwap(p.Load(), &node{n: 9}), p.Load().n)
+	println(old == n, p.Load().n)
+	println(p.CompareAndSwap(p.Load(), &node{n: 9}), p.Load().n)
 
 	// 4. Cross-goroutine: N goroutines Store same-typed values; every
 	// Load must see a consistently-typed, in-range value.
@@ -62,16 +65,16 @@ func main() {
 		}
 	}
 	wg.Wait()
-	fmt.Println("bad:", bad)
-	fmt.Println(cv.Load().(int)%100 == 0)
+	println("bad:", bad)
+	println(cv.Load().(int)%100 == 0)
 
 	// 5. Remaining kind coverage: Uint32, Bool, Uintptr.
 	var u atomic.Uint32
 	u.Store(1)
-	fmt.Println(u.Add(2), u.Load())
+	println(u.Add(2), u.Load())
 	var b atomic.Bool
-	fmt.Println(b.CompareAndSwap(false, true), b.Load())
+	println(b.CompareAndSwap(false, true), b.Load())
 	var up atomic.Uintptr
 	up.Store(5)
-	fmt.Println(up.Load())
+	println(up.Load())
 }
