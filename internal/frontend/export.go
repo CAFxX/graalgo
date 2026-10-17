@@ -625,6 +625,95 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	return failImporter{}.Import(path)
 }
 
+// atomicWrapperNames are the P3-M4 (WS C, ADR-0004) sync/atomic wrapper
+// types bound to the phase-1 JVM atomics (graalgo.runtime.Atomics), plus
+// the P3-M10 generic/noCopy additions: Pointer[T] (the generic typed
+// pointer wrapper) and Value (the any-typed wrapper). Instantiations
+// (Pointer[string], ...) are *types.Named with type args; Obj().Name()
+// is the bare name, so the name check below still matches.
+var atomicWrapperNames = map[string]bool{
+	"Int64": true, "Uint64": true, "Int32": true, "Uint32": true, "Bool": true, "Uintptr": true,
+	"Pointer": true, "Value": true,
+}
+
+// atomicOpsInScope is the supported method set per sync/atomic wrapper
+// (ADR-0004 D2). P3-M4 originally rejected And/Or with a named M4 scope
+// error; the backend AtomicOpNode implements And/Or for all int/uint
+// wrappers (RESULT_KINDS + executeLong arms), so the scope is extended to
+// include them (DESIGN-RV-P0-atomic-lowering §5.5, option B). Bool,
+// Pointer[T] and Value have no And/Or in gc (nor Add on Pointer/Value),
+// so they stay out of scope exactly as gc defines the method sets.
+var atomicOpsInScope = map[string]map[string]bool{
+	"Int64":   {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true, "And": true, "Or": true},
+	"Uint64":  {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true, "And": true, "Or": true},
+	"Int32":   {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true, "And": true, "Or": true},
+	"Uint32":  {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true, "And": true, "Or": true},
+	"Bool":    {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
+	"Uintptr": {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true, "And": true, "Or": true},
+	// P3-M10: Pointer[T] and Value have no Add/And/Or in gc
+	// (pointer/any arithmetic is meaningless); the four reference ops
+	// are in scope.
+	"Pointer": {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
+	"Value":   {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
+}
+
+// atomicWrapperNamed reports whether t is exactly one of the eight
+// sync/atomic wrapper named types from the REAL sync/atomic package
+// (disk-imported since 503608ea): package path "sync/atomic" + type name.
+// No pointer dereference (a *atomic.Value is not a wrapper). Type aliases
+// (type V = atomic.Value) unwrap to the real *types.Named via unaliasType
+// — the alias IS the wrapper. Instantiations (Pointer[string]) are
+// *types.Named with type args; Obj().Name() is the bare "Pointer". A user
+// type with the same name in another package never matches (package-path
+// check). Mirrors the timeTimerTickerNamedExact precedent
+// (synth_machinery.go), which keys the real "time" package the same way
+// for the real time.Timer/time.Ticker types.
+func atomicWrapperNamed(t types.Type) *types.Named {
+	nt, ok := unaliasType(t).(*types.Named)
+	if !ok {
+		return nil
+	}
+	obj := nt.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" {
+		return nil
+	}
+	if !atomicWrapperNames[obj.Name()] {
+		return nil
+	}
+	return nt
+}
+
+// atomicWrapperRecv is atomicWrapperNamed after one pointer dereference,
+// for method-call receivers (all atomic methods have pointer receivers;
+// the Go value IS the Java atomic cell, so &/* is a no-op at the value
+// level — the ADR-0002 D2/D1 value model).
+func atomicWrapperRecv(t types.Type) *types.Named {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	return atomicWrapperNamed(t)
+}
+
+// atomicOpTypeName returns the syncop "synctyp" for a sync/atomic wrapper
+// named type: the "atomic."-qualified name ("atomic.Int64").
+// Instantiations (Pointer[string]) are *types.Named with type args;
+// Obj().Name() is the bare name, so no suffix stripping is needed here
+// (the backend's `[`-strip is for its JSON type names).
+func atomicOpTypeName(nt *types.Named) string {
+	return "atomic." + nt.Obj().Name()
+}
+
+// atomicOpInScope reports whether op is in the supported method set for
+// the sync/atomic wrapper nt (ADR-0004 D2), failing fast with a named M4
+// scope error otherwise.
+func atomicOpInScope(nt *types.Named, op string) error {
+	typeName := nt.Obj().Name()
+	if !atomicOpsInScope[typeName][op] {
+		return scopeErrorf("sync/atomic.%s.%s is not in M4 scope", typeName, op)
+	}
+	return nil
+}
+
 // runtimeStackMethod reports whether a MethodVal selection is one of the
 // synthetic runtime stack-inspection methods ((*Frames).Next,
 // (*Func).Name/Entry/FileLine), returning the method name. The check is
@@ -2837,6 +2926,23 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				e.mrHoistPre = e.mrHoistPre[:preBase]
 				initNode = x
 			} else {
+				// RV-P0 (fix-p0-atomic-lowering): package-level
+				// `var v atomic.Value` (no init) normalizes to an implicit
+				// syncnew — gc's ready-to-use zero value — mirroring the
+				// local-var path. Without it the factory's struct zero
+				// (GoStruct) would be installed and every method call
+				// would CCE.
+				if v, ok := e.info.Defs[n].(*types.Var); ok {
+					if nt := atomicWrapperNamed(v.Type()); nt != nil {
+						tid, err := e.typeID(v.Type())
+						if err != nil {
+							return nil, err
+						}
+						initNode = e.node("syncnew", vs, map[string]any{
+							"synctyp": atomicOpTypeName(nt), "type": tid,
+						})
+					}
+				}
 			}
 			if n.Name == "_" {
 				// Blank: no variable, but the initializer is evaluated
@@ -3024,6 +3130,10 @@ type exporter struct {
 	// have no syntheticPackage, and enumerateInstantiations assumes
 	// every importedSynthetic key resolves via getSyntheticPackage.
 	importedPkgTree map[string]bool
+	// RV-P0 (fix-p0-atomic-lowering): sequence counter for synthetic
+	// temporaries hoisted by exportAtomicGoStmt (__sync_go_arg<seq>_<i>);
+	// keeps the names unique across go statements in one export.
+	syncGoSeq int
 	// P3-M5 (WS E, ADR-0005 App C): sequence counter for synthetic
 	// temporaries created by the channel-ops lowering (__rng_*,
 	// __select_blank_*, __close_*); keeps the names unique across
@@ -6892,6 +7002,24 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	if c, ok := isCloseCall(e.info, s.Call); ok {
 		return e.exportCloseDeferGo(s, c, true)
 	}
+	// RV-P0 (fix-p0-atomic-lowering): `defer v.Store(x)` on a sync/atomic
+	// wrapper — the frozen buildDefer only understands funclit/ident/
+	// builtin deferred calls, so a deferred atomic method call desugars
+	// to
+	//   defer func(__sync_recv, __sync_arg0, ...) {
+	//       __sync_recv.Op(__sync_arg0, ...)
+	//   }(recv, args...)
+	// The receiver and arguments are evaluated at defer time (Go
+	// semantics); the call runs at return/unwind. Param passing (not
+	// capture) so a receiver reassigned before return still stores into
+	// the deferred-time object.
+	if sel, ok := unwrapSelector(s.Call.Fun); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if nt := atomicWrapperRecv(selection.Recv()); nt != nil {
+				return e.exportAtomicDefer(s, sel, selection, nt)
+			}
+		}
+	}
 	// PKG-040: `defer runtime.Gosched()` desugars through a funclit (the
 	// "runtimegosched" wire node is a statement, not a call).
 	if c, ok := isGoschedCall(e.info, s.Call); ok {
@@ -6960,6 +7088,135 @@ func (e *exporter) exportDeferMultiResultCall(s *ast.DeferStmt, plan *mrPlan) (*
 	return deferNode, nil
 }
 
+// exportAtomicDefer desugars `defer v.Op(args)` on a sync/atomic wrapper
+// (see exportDeferStmt). The returned node is a "defer" wrapping a "call"
+// of a synthesized funclit — all additive v1 wire, no factory change.
+//
+// Receiver semantics (verified against gc 1.27.1): a method with pointer
+// receiver called on a value-typed receiver R uses &R — the ADDRESS — so
+// a reassigned R still stores into the current object. The desugar
+// therefore CAPTURES a value-typed ident receiver in the closure body
+// (evaluated at return time, like &R). A pointer-typed receiver (or a
+// non-ident receiver, i.e. a temporary that cannot be reassigned) is
+// passed as a param, evaluated at defer time. Args are always params
+// (evaluated at defer time, Go semantics).
+func (e *exporter) exportAtomicDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, selection *types.Selection, nt *types.Named) (*Node, error) {
+	c := s.Call
+	typeName := nt.Obj().Name()
+	op := sel.Sel.Name
+	if err := atomicOpInScope(nt, op); err != nil {
+		return nil, err
+	}
+	argNodes, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	// The method's *types.Func gives the declared parameter types.
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync/atomic method %s.%s is not a *types.Func", typeName, op)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync/atomic method %s.%s has non-signature type", typeName, op)
+	}
+	recvType := e.info.Types[sel.X].Type
+	if recvType == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for sync/atomic defer receiver")
+	}
+	// Value-typed ident receiver: capture (address semantics).
+	// Otherwise: evaluate at defer time via a param.
+	_, recvIsPtr := recvType.(*types.Pointer)
+	_, recvIsIdent := sel.X.(*ast.Ident)
+	captureRecv := !recvIsPtr && recvIsIdent
+	var recvNode *Node
+	var recvParam *Node
+	var recvIdent *Node
+	outerArgs := []*Node{}
+	if captureRecv {
+		// The original receiver expression goes in the body and is
+		// captured by the closure — no param, no outer arg.
+		recvNode, err = e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		recvNode, err = e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+		outerArgs = append(outerArgs, recvNode)
+		v := types.NewParam(token.NoPos, nil, "__sync_recv", recvType)
+		id, err := e.defVar(v, true)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(recvType)
+		if err != nil {
+			return nil, err
+		}
+		recvParam = e.node("param", c, map[string]any{
+			"name": "__sync_recv", "obj": id, "type": tid,
+		})
+		recvIdent = e.node("ident", c, map[string]any{
+			"name": "__sync_recv", "obj": id, "type": tid,
+		})
+	}
+	// Args are always params (evaluated at defer time).
+	params := []*Node{}
+	idents := []*Node{}
+	if recvParam != nil {
+		params = append(params, recvParam)
+		idents = append(idents, recvIdent)
+	}
+	if sig.Params().Len() != len(argNodes) {
+		return nil, fmt.Errorf("gofrontend: sync/atomic.%s.%s arity mismatch (internal error)", typeName, op)
+	}
+	for i := range argNodes {
+		v := types.NewParam(token.NoPos, nil, fmt.Sprintf("__sync_arg%d", i), sig.Params().At(i).Type())
+		id, err := e.defVar(v, true)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(sig.Params().At(i).Type())
+		if err != nil {
+			return nil, err
+		}
+		name := fmt.Sprintf("__sync_arg%d", i)
+		params = append(params, e.node("param", c, map[string]any{
+			"name": name, "obj": id, "type": tid,
+		}))
+		idents = append(idents, e.node("ident", c, map[string]any{
+			"name": name, "obj": id, "type": tid,
+		}))
+		outerArgs = append(outerArgs, argNodes[i])
+	}
+	// Body receiver: the captured original, or the param ident.
+	bodyRecv := recvNode
+	if recvIdent != nil {
+		bodyRecv = recvIdent
+	}
+	// Body args: param idents (skip the receiver's if present).
+	bodyArgs := idents
+	if recvParam != nil {
+		bodyArgs = idents[1:]
+	}
+	inner := e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": atomicOpTypeName(nt),
+		"recv": bodyRecv, "args": bodyArgs, "type": nil,
+	})
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": params, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", c, map[string]any{
+		"fun": funclit, "args": outerArgs, "type": nil,
+	})
+	return e.node("defer", s, map[string]any{"call": call}), nil
+}
+
 // exportGoStmt exports `go f(args)` (P2-M1, WS A). The call is exported as
 // a call node; the Phase-2 factory builds a GoStatementNode that evaluates
 // the function value in the spawning goroutine and hands it to the
@@ -6971,6 +7228,21 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	// funclit with the channel hoisted (go-time evaluation).
 	if c, ok := isCloseCall(e.info, s.Call); ok {
 		return e.exportCloseDeferGo(s, c, false)
+	}
+	// RV-P0 (fix-p0-atomic-lowering): `go v.Store(x)` — GoStatementNode
+	// only builds zero-arg spawns (P2-M1), so a direct atomic method
+	// go-statement desugars via exportAtomicGoStmt: the receiver/args are
+	// evaluated at go-statement time into hoisted temporaries (Go spec:
+	// "the function value and parameters are evaluated as usual in the
+	// calling goroutine"), then a zero-arg funclit spawn runs the syncop
+	// against them. A value-typed ident receiver is captured by reference
+	// (gc's &v address semantics).
+	if sel, ok := unwrapSelector(s.Call.Fun); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if nt := atomicWrapperRecv(selection.Recv()); nt != nil {
+				return e.exportAtomicGoStmt(s, sel, selection, nt)
+			}
+		}
 	}
 	// PKG-040: `go runtime.Gosched()` desugars through a funclit (the
 	// "runtimegosched" wire node is a statement, not a call).
@@ -6993,8 +7265,8 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	// P3-M5 (WS E): `go f(args)` with args desugars through a funclit.
 	// GoStatementNode (P2-M1) only builds zero-arg spawns; the function
 	// value and args are evaluated at go time (Go spec) into hoisted
-	// temps, then a zero-arg funclit runs the call. (`go close(ch)` is
-	// handled above.)
+	// temps, then a zero-arg funclit runs the call. (Specific cases like
+	// `go close(ch)` and atomic wrapper methods are handled above.)
 	if len(s.Call.Args) > 0 {
 		return e.exportGoWithArgs(s)
 	}
@@ -7211,6 +7483,7 @@ func (e *exporter) hoistGoFunValue(s *ast.GoStmt, c *ast.CallExpr, seq int, vard
 		return e.hoistGoFunExpr(s, c.Fun, seq, vardecls)
 	case *ast.SelectorExpr:
 		if selection, ok := e.info.Selections[fun]; ok && selection.Kind() == types.MethodVal &&
+			atomicWrapperRecv(selection.Recv()) == nil &&
 			timeTimerTickerNamed(selection.Recv()) == nil &&
 			recvIface(selection.Recv()) == nil &&
 			!isMultiResultSyntheticFunc(selection.Obj()) {
@@ -7287,6 +7560,128 @@ func isMultiResultSyntheticFunc(obj types.Object) bool {
 	return ok && isMultiResultSynthetic(f)
 }
 
+// exportAtomicGoStmt desugars `go v.Op(args)` on a sync/atomic wrapper
+// (see exportGoStmt): a block that first hoists every argument into a
+// synthetic temporary (`__sync_go_arg<seq>_<i> := <arg>`, via defVar + a
+// vardecl node like exportDefine) — the Go spec evaluates the function
+// value and parameters in the calling goroutine — then a zero-arg funclit
+// spawn (GoStatementNode's P2-M1 contract) whose body references the
+// temporaries. The temporaries are never reassigned, so the closure's
+// by-reference capture reads the go-time values. All additive v1 wire, no
+// factory change.
+//
+// Receiver: a value-typed ident receiver keeps the current behavior —
+// captured by reference in the body (gc's &v address semantics, cf.
+// exportAtomicDefer). A pointer-typed or non-ident receiver is hoisted
+// into a `__sync_go_recv<seq>` temporary the same way as the args (same
+// evaluation-timing rule).
+func (e *exporter) exportAtomicGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, selection *types.Selection, nt *types.Named) (*Node, error) {
+	c := s.Call
+	typeName := nt.Obj().Name()
+	op := sel.Sel.Name
+	if err := atomicOpInScope(nt, op); err != nil {
+		return nil, err
+	}
+	argNodes, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	// The method's *types.Func gives the declared parameter types for the
+	// synthetic temporaries.
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync/atomic method %s.%s is not a *types.Func", typeName, op)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync/atomic method %s.%s has non-signature type", typeName, op)
+	}
+	if sig.Params().Len() != len(argNodes) {
+		return nil, fmt.Errorf("gofrontend: sync/atomic.%s.%s arity mismatch (internal error)", typeName, op)
+	}
+	recvType := e.info.Types[sel.X].Type
+	if recvType == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for sync/atomic go receiver")
+	}
+	_, recvIsPtr := recvType.(*types.Pointer)
+	_, recvIsIdent := sel.X.(*ast.Ident)
+	captureRecv := !recvIsPtr && recvIsIdent
+
+	seq := e.syncGoSeq
+	e.syncGoSeq++
+
+	names := []string{}
+	objs := []int{}
+	values := []*Node{}
+	// hoist evaluates val now (go-statement time) into a synthetic
+	// temporary and returns an ident node referencing it for the body.
+	hoist := func(tag string, i int, typ types.Type, val *Node) (*Node, error) {
+		name := fmt.Sprintf("__sync_go_%s%d_%d", tag, seq, i)
+		v := types.NewVar(token.NoPos, nil, name, typ)
+		id, err := e.defVar(v, false)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(typ)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+		objs = append(objs, id)
+		values = append(values, val)
+		return e.node("ident", c, map[string]any{
+			"name": name, "obj": id, "type": tid,
+		}), nil
+	}
+
+	var bodyRecv *Node
+	if captureRecv {
+		// Value-typed ident: captured by reference (&v address semantics).
+		bodyRecv, err = e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		recvNode, err := e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+		bodyRecv, err = hoist("recv", 0, recvType, recvNode)
+		if err != nil {
+			return nil, err
+		}
+	}
+	bodyArgs := make([]*Node, len(argNodes))
+	for i := range argNodes {
+		bodyArgs[i], err = hoist("arg", i, sig.Params().At(i).Type(), argNodes[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	inner, err := e.exportAtomicOpCallNodes(c, sel, nt, bodyRecv, bodyArgs)
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", c, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
+	spawn := e.node("gostmt", s, map[string]any{"call": call})
+	stmts := []*Node{spawn}
+	if len(names) > 0 {
+		hoistDecl := e.node("vardecl", s, map[string]any{
+			"names": names, "objs": objs, "define": true, "type": nil, "values": values,
+		})
+		stmts = []*Node{hoistDecl, spawn}
+	}
+	return e.node("block", s, map[string]any{"stmts": stmts}), nil
+}
+
 // stmtOwner attributes an unsupported statement to its workstream.
 func stmtOwner(s ast.Stmt) string {
 	switch s.(type) {
@@ -7315,6 +7710,8 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		objs := []int{}
 		var typ any
 		values := make([]*Node, 0)
+		var typeTid int
+		var typeIsAtomic *types.Named
 		var typeIsTimer *types.Named
 		hasType := false
 		if vs.Type != nil {
@@ -7323,8 +7720,11 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 				return nil, err
 			}
 			typ = tid
-			hasType = true
+			typeTid, hasType = tid, true
 			if tv, ok := e.info.Types[vs.Type]; ok && tv.Type != nil {
+				// RV-P0 (fix-p0-atomic-lowering): the sync/atomic
+				// wrappers share the D3 zero-value normalization.
+				typeIsAtomic = atomicWrapperNamed(tv.Type)
 				// P3-M5 (WS E, ADR-0005 D1): time.Timer/Ticker value
 				// positions are not in M5 scope (checked below).
 				typeIsTimer = timeTimerTickerNamedExact(tv.Type)
@@ -7396,6 +7796,19 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		// zero Timer is uninitialized; use time.NewTimer/NewTicker.
 		if hasType && typeIsTimer != nil {
 			return nil, timerScopeErrorf(typeIsTimer, "var declaration")
+		}
+		// RV-P0 (fix-p0-atomic-lowering): `var v atomic.Value` (no init)
+		// normalizes to an implicit syncnew per name — gc's ready-to-use
+		// zero value. The factory's struct zero would be an unusable
+		// empty struct (and inconsistent with the cell the method
+		// lowering expects), so the exporter supplies the init. One
+		// syncnew per name: each variable is a distinct cell.
+		if hasType && typeIsAtomic != nil && len(vs.Values) == 0 {
+			for range vs.Names {
+				values = append(values, e.node("syncnew", vs, map[string]any{
+					"synctyp": atomicOpTypeName(typeIsAtomic), "type": typeTid,
+				}))
+			}
 		}
 		vardecls = append(vardecls, e.node("vardecl", vs, map[string]any{
 			"names": names, "objs": objs, "define": false, "type": typ, "values": values,
@@ -8673,7 +9086,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// go/types to a (possibly instantiated) method.
 		// Real sync/sync/atomic methods compile normally via
 		// exportMethodCall (503608ea retired the synthetic overlay and
-		// its syncop lowering).
+		// its syncop lowering) — except the sync/atomic wrapper methods,
+		// which lower to "syncop" wire nodes via exportAtomicOpCall below
+		// (RV-P0 fix-p0-atomic-lowering: the real bodies are not
+		// compilable).
 		// P3-M5 (WS E, ADR-0005 D1): time.X(...) package-level calls are
 		// intercepted above (exportSyntheticPkgCall); the real-Go
 		// package-level functions (time.Since/Until/ParseDuration,
@@ -8720,6 +9136,18 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				default:
 					return nil, scopeErrorf("runtime.%s is multi-result: use an N-target assignment (frame, more := frames.Next(); file, line := fn.FileLine(pc)) in frontend/v1 scope (WS D)", mname)
 				}
+			}
+			// RV-P0 (fix-p0-atomic-lowering): method calls on the real
+			// sync/atomic wrapper types lower to additive "syncop" wire
+			// nodes, bypassing exportMethodCall's WS D no-implicit-& rule
+			// (every atomic method has a pointer receiver; the Go value
+			// IS the Java atomic cell, so the distinction is a no-op at
+			// the value level). The real method bodies are not compilable
+			// (unsafe.Pointer efaceWords reinterpretation, bodyless asm
+			// callees, runtime_procPin linknames) and must never be
+			// reached.
+			if nt := atomicWrapperRecv(selection.Recv()); nt != nil {
+				return e.exportAtomicOpCall(c, sel, nt)
 			}
 			// P3-M5 (WS E, ADR-0005 D1): (*time.Timer).Stop/Reset and
 			// (*time.Ticker).Stop/Reset lower to additive "timeop" wire
@@ -8999,8 +9427,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	switch b.Name() {
 	case "new":
 		// new(T): no value arguments; the pointer type is the result.
+		// RV-P0 (fix-p0-atomic-lowering): new(atomic.X) constructs the
+		// Java atomic cell directly.
 		if len(c.Args) == 1 {
 			if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
+				if nt := atomicWrapperNamed(tv.Type); nt != nil {
+					ntyp, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("syncnew", c, map[string]any{
+						"synctyp": atomicOpTypeName(nt), "type": ntyp,
+					}), nil
+				}
 				// P3-M5 (WS E, ADR-0005 D1): new(time.Timer/Ticker) is
 				// not in M5 scope (gc's zero Timer is uninitialized).
 				if nt := timeTimerTickerNamedExact(tv.Type); nt != nil {
@@ -9773,6 +10212,96 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	return e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv, "type": sigID}), nil
 }
 
+// exportPrimMethodValue lowers a method value x.M on a sync/atomic
+// wrapper (RV-P0 fix-p0-atomic-lowering) to a funclit capturing the
+// receiver and performing the syncop. The general methodValueNode path
+// cannot serve these: the real methods have no compilable funcdecl, and
+// pointer-receiver methods on value receivers need gc's implicit & —
+// which is a no-op at the value level anyway (the Go value IS the Java
+// atomic cell, ADR-0002 D1), so the receiver is used directly. The
+// receiver is hoisted (evaluated once, Go semantics) via mrHoistPre.
+// Returns handled=false when the selection is not a sync/atomic wrapper
+// method.
+func (e *exporter) exportPrimMethodValue(x *ast.SelectorExpr, sel *types.Selection, recv *Node, t int) (*Node, bool, error) {
+	nt := atomicWrapperRecv(sel.Recv())
+	if nt == nil {
+		return nil, false, nil
+	}
+	fn, ok := sel.Obj().(*types.Func)
+	if !ok {
+		return nil, false, nil
+	}
+	if err := atomicOpInScope(nt, fn.Name()); err != nil {
+		return nil, true, err
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, true, fmt.Errorf("gofrontend: primitive method %s has non-signature type", fn.Name())
+	}
+	if sig.Results().Len() > 1 {
+		return nil, true, scopeErrorf("method value %s is multi-result: not supported in frontend/v1 scope (WS D)", fn.Name())
+	}
+	// Hoist the receiver: evaluated once at method-value creation.
+	recvType := sel.Recv()
+	recvTid, err := e.typeID(recvType)
+	if err != nil {
+		return nil, true, err
+	}
+	e.chanSeq++
+	recvName := fmt.Sprintf("__primrecv_%d", e.chanSeq)
+	recvVar := types.NewVar(token.NoPos, nil, recvName, recvType)
+	recvID, err := e.defVar(recvVar, false)
+	if err != nil {
+		return nil, true, err
+	}
+	e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", x, map[string]any{
+		"names": []string{recvName}, "objs": []int{recvID},
+		"define": true, "type": nil, "values": []*Node{recv},
+	}))
+	recvIdent := e.node("ident", x, map[string]any{
+		"name": recvName, "obj": recvID, "type": recvTid,
+	})
+	// Funclit params/results from the method signature (minus receiver).
+	params, err := e.exportSignatureVars(x, sig.Params())
+	if err != nil {
+		return nil, true, err
+	}
+	results, err := e.exportSignatureVars(x, sig.Results())
+	if err != nil {
+		return nil, true, err
+	}
+	var args = make([]*Node, 0, len(params))
+	for _, p := range params {
+		args = append(args, e.node("ident", x, map[string]any{
+			"name": p.Fields["name"], "obj": p.Fields["obj"], "type": p.Fields["type"],
+		}))
+	}
+	var resultTyp any
+	if sig.Results().Len() == 1 {
+		resultTyp, err = e.typeID(sig.Results().At(0).Type())
+		if err != nil {
+			return nil, true, err
+		}
+	}
+	op := e.node("syncop", x, map[string]any{
+		"op": fn.Name(), "synctyp": atomicOpTypeName(nt),
+		"recv": recvIdent, "args": args, "type": resultTyp,
+	})
+	var body *Node
+	if sig.Results().Len() == 0 {
+		body = e.node("block", x, map[string]any{
+			"stmts": []*Node{e.node("exprstmt", x, map[string]any{"x": op})},
+		})
+	} else {
+		body = e.node("block", x, map[string]any{
+			"stmts": []*Node{e.node("return", x, map[string]any{"results": []*Node{op}})},
+		})
+	}
+	return e.node("funclit", x, map[string]any{
+		"params": params, "results": results, "body": body, "type": t,
+	}), true, nil
+}
+
 // methodValueNode exports a method value x.M in value position (selection
 // kind MethodVal) as a "methodvalue" wire node (P3-M9, WS H follow-up).
 // It mirrors methodRefNode's resolution exactly — resolveMethodCall,
@@ -9785,6 +10314,14 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 // The "type" field is the method value's static func type (no receiver),
 // from the selector expression's type.
 func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	// RV-P0 (fix-p0-atomic-lowering): method values on sync/atomic
+	// wrappers lower to a capturing funclit (the real methods have no
+	// compilable funcdecl, and pointer-receiver methods on value
+	// receivers need gc's implicit & — a no-op at the value level since
+	// the Go value IS the Java atomic cell).
+	if n, handled, err := e.exportPrimMethodValue(sel, selection, recv, t); handled {
+		return n, err
+	}
 	var mtargs []types.Type
 	if ii, ok := e.info.Instances[sel.Sel]; ok {
 		mtargs = typeList(ii.TypeArgs)
@@ -10895,6 +11432,46 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	}), nil
 }
 
+// exportAtomicOpCall exports a method call on a real sync/atomic wrapper
+// (RV-P0 fix-p0-atomic-lowering) as an additive "syncop" wire node. The
+// receiver evaluates to the Java atomic cell itself (ADR-0002 D1: the Go
+// value IS the object), so the pointer/value receiver distinction is a
+// no-op at the value level — this deliberately bypasses exportMethodCall's
+// WS D no-implicit-& rule, which would reject v.Store(x) on an addressable
+// value despite every atomic method having a pointer receiver.
+// Out-of-scope methods fail fast here with a named M4 scope error
+// (ADR-0004 D6).
+func (e *exporter) exportAtomicOpCall(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
+	if err := atomicOpInScope(nt, sel.Sel.Name); err != nil {
+		return nil, err
+	}
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.exportAtomicOpCallNodes(c, sel, nt, recv, args)
+}
+
+// exportAtomicOpCallNodes builds the "syncop" wire node from pre-exported
+// receiver/argument nodes. exportAtomicOpCall is the thin wrapper for the
+// direct-call path; exportAtomicGoStmt pre-exports hoisted go-time
+// temporaries and calls this directly so the syncop body references the
+// temporaries instead of the original expressions.
+func (e *exporter) exportAtomicOpCallNodes(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named, recv *Node, args []*Node) (*Node, error) {
+	op := sel.Sel.Name
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": atomicOpTypeName(nt), "recv": recv, "args": args, "type": typ,
+	}), nil
+}
+
 // exportTypeConversion exports a Go conversion T(x) as a "convert" node
 // (M3, WS D). Factored so qualified conversions (time.Duration(5)) share
 // the unqualified path.
@@ -11242,6 +11819,19 @@ func (e *exporter) exportCompositeLit(l *ast.CompositeLit) (*Node, error) {
 // the enclosing UnaryExpr).
 func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, error) {
 	if tv, ok := e.info.Types[l]; ok && tv.Type != nil {
+		// RV-P0 (fix-p0-atomic-lowering): a composite literal of a
+		// sync/atomic wrapper constructs the Java atomic cell directly —
+		// gc's ready-to-use zero value. (Elements are impossible: the
+		// fields are unexported, so go/types rejects any; the guard is
+		// defense in depth.)
+		if nt := atomicWrapperNamed(tv.Type); nt != nil {
+			if len(l.Elts) > 0 {
+				return nil, scopeErrorf("sync/atomic.%s literal with elements is not in M4 scope", nt.Obj().Name())
+			}
+			return e.node("syncnew", l, map[string]any{
+				"synctyp": atomicOpTypeName(nt), "type": t,
+			}), nil
+		}
 		// P3-M5 (WS E, ADR-0005 D1): time.Timer{}/time.Ticker{} literals
 		// are not in M5 scope (gc's zero Timer is uninitialized; use
 		// time.NewTimer/time.NewTicker).
