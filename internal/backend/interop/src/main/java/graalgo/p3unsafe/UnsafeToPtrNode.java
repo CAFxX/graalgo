@@ -132,10 +132,10 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * go/types positions in the GOROOT {@code internal/abi} structs
      * (go1.27):
      * <ul>
-     *   <li>{@code internal/abi.Type}: 0 ({@code Size_}), 3 ({@code TFlag}),
-     *       4 ({@code Align_}), 5 ({@code FieldAlign_}), 6 ({@code Kind_}).
-     *       {@code PtrBytes} (1) and {@code Hash} (2) are not derivable
-     *       from the type table — fail loud, never a wrong zero.</li>
+     *   <li>{@code internal/abi.Type}: 0 ({@code Size_}), 1 ({@code PtrBytes}),
+     *       3 ({@code TFlag}), 4 ({@code Align_}), 5 ({@code FieldAlign_}),
+     *       6 ({@code Kind_}). {@code Hash} (2) is not derivable from the
+     *       type table — fail loud, never a wrong zero.</li>
      *   <li>{@code internal/abi.PtrType}: field 1 ({@code Elem}) → *abi.Type of the element.</li>
      * </ul>
      */
@@ -148,6 +148,9 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 // PtrBytes (1), Hash (2), TFlag (3), Align_ (4),
                 // FieldAlign_ (5), Kind_ (6), ...
                 fields.put(0, info.size);
+                // PtrBytes: non-zero iff the type can contain pointers
+                // (drives abi.Type.Pointers()). Conservative: over-approximate.
+                fields.put(1, containsPointers(info, new java.util.HashSet<>()) ? 8L : 0L);
                 // TFlagNamed = 1<<2 (go1.27): set iff the type is named.
                 fields.put(3, info.isNamed() ? 4L : 0L);
                 fields.put(4, (long) info.align);
@@ -170,6 +173,36 @@ public final class UnsafeToPtrNode extends GoExprNode {
                     "unsupported abi view: " + view);
         }
         return new AbiTypeRef(tok, view, fields);
+    }
+
+    /**
+     * True iff a type can contain Go pointers (drives {@code abi.Type.Pointers}
+     * via the {@code PtrBytes} field). Conservative: over-approximates —
+     * saying "has pointers" when unsure is safe (D5 has no precise GC);
+     * saying "no pointers" when wrong would corrupt reflect.
+     * Cycle-safe via the visited token set.
+     */
+    private static boolean containsPointers(ReflectTypes.TypeInfo info, java.util.Set<Long> seen) {
+        if (info == null || !seen.add(info.tok)) {
+            return true; // null or cycle: conservative
+        }
+        switch (info.kind) {
+            case POINTER, MAP, CHAN, FUNC, INTERFACE, SLICE, STRING, UNSAFE_POINTER:
+                return true;
+            case STRUCT:
+                if (info.fields != null) {
+                    for (ReflectTypes.FieldInfo f : info.fields) {
+                        if (containsPointers(f.type, seen)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            case ARRAY:
+                return containsPointers(info.elem, seen);
+            default:
+                return false; // basic types
+        }
     }
 
     /**
