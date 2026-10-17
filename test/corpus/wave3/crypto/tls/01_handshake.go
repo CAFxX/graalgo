@@ -95,7 +95,7 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string) {
+func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -112,6 +112,16 @@ func runServer(port string, ready chan<- string) {
 		panic("server handshake: " + err.Error())
 	}
 	cs := tlsConn.ConnectionState()
+	// Deterministic differential output: the server's handshake (no-op
+	// peer verify) finishes before the client's (x509 chain build), so
+	// the two "handshake-ok" lines would race without this. The server
+	// prints its line only after the client has printed its own — an
+	// explicit channel barrier, not a timing assumption. (A 10s
+	// time.Sleep used to sit in the library's server handshake for this;
+	// removed as RV-P0-01.)
+	if clientPrinted != nil {
+		<-clientPrinted
+	}
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
 	n, err := tlsConn.Read(buf)
@@ -125,7 +135,7 @@ func runServer(port string, ready chan<- string) {
 	fmt.Println("server: echo-ok")
 }
 
-func runClient(port string) {
+func runClient(port string, clientPrinted chan<- struct{}) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -135,6 +145,11 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	// Release the server's handshake-ok print (see runServer): the client
+	// always prints first, in both differential legs.
+	if clientPrinted != nil {
+		close(clientPrinted)
+	}
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -161,12 +176,12 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready)
+		go runServer(port, ready, nil)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port)
+		runClient(port, nil)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,8 +192,12 @@ func main() {
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(ephemPort, ready)
+		// clientPrinted orders the two handshake-ok prints deterministically
+		// (server waits for the client's line); nil in server/client modes
+		// where the peer is a separate process.
+		clientPrinted := make(chan struct{})
+		go runServer(ephemPort, ready, clientPrinted)
 		<-ready
-		runClient(ephemPort)
+		runClient(ephemPort, clientPrinted)
 	}
 }
