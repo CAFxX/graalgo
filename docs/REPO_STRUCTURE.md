@@ -189,6 +189,7 @@ Related: [Makefile](../Makefile) (root build entry point),
   tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
+  [torture/](../tools/torture/) (scheduler torture),
   [godebug-diff/](../tools/godebug-diff/),
   [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
   [req/](../tools/req/) (requirements CLI), and
@@ -232,7 +233,7 @@ new locations.
 | `phases/phase3/stdlib-fork/` (tooling) | [tools/stdlib-fork/](../tools/stdlib-fork/) (landed 2026-10-14) |
 | `phases/phase3/fuzzing/` | [tools/fuzz-soak/](../tools/fuzz-soak/) (landed 2026-10-14) |
 | `phases/phase1/corpus/`, `phases/phase2/corpus/` | [test/corpus/phase1/](../test/corpus/phase1/), [test/corpus/phase2/](../test/corpus/phase2/) (landed 2026-10-14) |
-| `phases/phase2/tools/torture/` | removed 2026-10-17 — dead wrapper scripts (pointed at the removed `phases/` layout and an uncommitted corpus; the battery itself lives on as `graalgo.sched.torture.TortureBattery` with a `main()`) |
+| `phases/phase2/tools/torture/` | [tools/torture/](../tools/torture/) (landed 2026-10-14) |
 | `modprobe/` | [test/e2e/](../test/e2e/) (landed 2026-10-14; harness, uuid cases, bug log) |
 | `SPEC.md`, `PHASES.md`, `FEASIBILITY.md` | [docs/arch/](../docs/arch/) (one consolidated arch doc) |
 | `adr/` | [docs/dev/adr/](../docs/dev/adr/) (landed 2026-10-14) |
