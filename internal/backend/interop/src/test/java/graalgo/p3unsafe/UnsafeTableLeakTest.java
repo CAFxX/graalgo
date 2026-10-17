@@ -77,20 +77,24 @@ public final class UnsafeTableLeakTest {
     }
 
     /**
-     * T1 — leak falsifier. 50k counted Values are dropped; the counted
-     * domain must quiesce to zero. Pre-fix (old intern+pack API) this stays
-     * stuck at 50000 — the demonstrated leak.
+     * T1 — leak falsifier. 50k counted Values are created (held, so no
+     * release can fire mid-loop — a GC during the loop must not move the
+     * count), then all dropped; the counted domain must quiesce to zero.
+     * Pre-fix (old intern+pack API) this stays stuck at 50000 — the
+     * demonstrated leak.
      */
     public void testCountedHandlesAreReleased() {
         UnsafeTable.install();
         UnsafeTable t = UnsafeTable.current();
         GoStructDescriptor desc = valueDescriptor();
-        for (int i = 0; i < 50000; i++) {
-            // The Value is dropped immediately: no live owner remains.
-            ReflectRefs.packCounted(desc, 1, new ReflectRefs.Cell(i), 0);
+        GoStruct[] held = new GoStruct[50000];
+        for (int i = 0; i < held.length; i++) {
+            // Held: every Value is a live owner, so the count is exact.
+            held[i] = ReflectRefs.packCounted(desc, 1, new ReflectRefs.Cell(i), 0);
         }
         assertTrue(t.liveCounted() == 50000,
                 "T1: expected 50000 live counted handles, got " + t.liveCounted());
+        held = null; // drop all owners at once
         awaitCounted(t, 0, "T1");
     }
 
