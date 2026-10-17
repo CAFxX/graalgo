@@ -41,11 +41,13 @@ ADJUDICATED_WIRE_NODES = {
     # runtimenumcpu precedent (backend NumGoroutineNode on the scheduler's
     # live-goroutine counter), not a new bridge.
     ("internal/frontend/export.go", "runtimenumgoroutine"),
-    # PKG-040 (lane commit 19786941 + coordinator adjudication, 2026-10-16;
-    # independent review CLEAN, no veto): "runtimegosched" is a real implementation
-    # following the runtimenumgoroutine precedent (backend GoschedNode on
-    # the scheduler's voluntary-yield primitive SchedulerCore.yieldCurrent),
-    # not a new bridge.
+    # PKG-040 (lane commit d1d7cbed — pre-rebase 19786941; independent
+    # review 2026-10-17, REVIEW-PKG040-CLEAN: CLEAN, no veto; the 2026-10-16
+    # coordinator adjudication (4f6e7c85) was not independent and is
+    # superseded): "runtimegosched" is a real implementation following the
+    # runtimenumgoroutine precedent (backend GoschedNode on the scheduler's
+    # voluntary-yield primitive SchedulerCore.yieldCurrent), not a new
+    # bridge.
     ("internal/frontend/export.go", "runtimegosched"),
 }
 ADJUDICATED_REGISTRATIONS = {
@@ -54,14 +56,18 @@ ADJUDICATED_REGISTRATIONS = {
     # veto): addFunc("NumGoroutine", ...) declares genuine stdlib surface in
     # the synthetic runtime package; the backend implements it for real.
     ("internal/frontend/export.go", "NumGoroutine"),
-    # PKG-040 (lane commit 19786941 + coordinator adjudication, 2026-10-16;
-    # independent review CLEAN, no veto): the Gosched overlay declaration (provided by
-    # PKG-038 on master; the lane's duplicate declaration was dropped at
-    # integration) is genuine stdlib surface — gc 1.27.1 src/runtime/proc.go
-    # — and the backend implements it for real via GoschedNode. The
-    # registerStmtKind("runtimegosched", ...) P3 registrations are the
-    # public register-kind hook (no Phase-1 factory change), not synthetic
-    # stdlib logic.
+    # PKG-040 registration entry: the addFunc("Gosched", ...) overlay
+    # declaration was introduced by PKG-038 (commit f7903db5 "Fix PKG-038:
+    # complete the synthetic runtime package view"), not PKG-040 — the
+    # lane's duplicate declaration was dropped at integration (1b4e7c71).
+    # It is genuine stdlib surface — gc 1.27.1 src/runtime/proc.go — and
+    # the backend implements it for real via GoschedNode. Covered by the
+    # independent review 2026-10-17 (REVIEW-PKG040-CLEAN: CLEAN, no veto),
+    # which explicitly audited the Gosched declaration; the 2026-10-16
+    # coordinator adjudication (4f6e7c85) was not independent and is
+    # superseded. The registerStmtKind("runtimegosched", ...) P3
+    # registrations are the public register-kind hook (no Phase-1 factory
+    # change), not synthetic stdlib logic.
     ("internal/frontend/export.go", "Gosched"),
 }
 

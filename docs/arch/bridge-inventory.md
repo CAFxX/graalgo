@@ -203,13 +203,16 @@ extend these entries or add new ones without a fresh independent review.
   `runtimenumcpu`.
 
 - **2026-10-16 — `runtimegosched` wire node + `runtime.Gosched` overlay
-  declaration (PKG-040, lane commit `19786941` + coordinator adjudication).** The gate
+  declaration (PKG-040, lane commit `d1d7cbed` — pre-rebase `19786941` —
+  + coordinator adjudication `4f6e7c85`).** The gate
   flags the additive `\"runtimegosched\"` wire node in
   [internal/frontend/export.go](../../internal/frontend/export.go); the
   `addFunc(\"Gosched\", ...)` overlay declaration was provided by PKG-038
   (master `bfc4b8e6`) and the lane's duplicate was dropped at integration.
-  Independent review: CLEAN, no veto — adjudicated a mechanical false
-  positive. This is a real implementation following the
+  Independent review 2026-10-17 (REVIEW-PKG040-CLEAN): CLEAN, no veto —
+  adjudicated a mechanical false positive. Note: the 2026-10-16 coordinator
+  adjudication (`4f6e7c85`) was not an independent review and is superseded
+  by this review. This is a real implementation following the
   `runtimenumgoroutine` precedent: the frontend lowers calls to the
   additive STATEMENT wire node (Gosched returns no value, so bare
   statements return it unwrapped per the `chanclose` precedent, and
