@@ -160,7 +160,10 @@ public final class ReflectValues {
     /** Unboxes a Value struct to its D5 value (no RO check; synthetic Go checks). */
     public static Object unbox(GoStruct v) {
         ValueParts p = parts(v);
-        return ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.load(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        java.lang.ref.Reference.reachabilityFence(v);
+        return d5;
     }
 
     // ------------------------------------------------------------------

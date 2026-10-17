@@ -87,7 +87,12 @@ public final class GoStruct {
 
     /** Shallow carrier copy (fields alias) — not Go assignment semantics. */
     public GoStruct copy() {
-        return new GoStruct(descriptor, longs, objects);
+        GoStruct c = new GoStruct(descriptor, longs, objects);
+        GoStructDescriptor.CopyHook hook = descriptor.copyHook();
+        if (hook != null) {
+            hook.onCopied(this, c);
+        }
+        return c;
     }
 
     /**
@@ -113,7 +118,14 @@ public final class GoStruct {
             }
             objs[f.index()] = v;
         }
-        return new GoStruct(descriptor, longs, objs);
+        GoStruct c = new GoStruct(descriptor, longs, objs);
+        // RV-P1-23: a copied struct is a new owner of whatever the
+        // original owned (e.g. a copied reflect.Value owns its handles).
+        GoStructDescriptor.CopyHook hook = descriptor.copyHook();
+        if (hook != null) {
+            hook.onCopied(this, c);
+        }
+        return c;
     }
 
     /**

@@ -138,6 +138,33 @@ public final class GoStructDescriptor {
         return layout(typeName, names, kinds, lens, elemKinds);
     }
 
+    /**
+     * Copy-notification hook (RV-P1-23): fired by {@link GoStruct#deepCopy()}
+     * and {@link GoStruct#copy()} after the copy is built. {@code null} by
+     * default — the check is a single null test, so unregistered
+     * descriptors pay nothing on the copy path.
+     *
+     * <p>This is a general mechanism: {@code p3reflect} registers it on the
+     * {@code reflect.Value} descriptor so every copied Value becomes a
+     * registered owner of its counted {@code UnsafeTable} handles.
+     */
+    public interface CopyHook {
+        /** Called with the original struct and its fresh copy. */
+        void onCopied(GoStruct original, GoStruct copy);
+    }
+
+    private volatile CopyHook copyHook;
+
+    /** The registered copy hook, or {@code null} when none is registered. */
+    public CopyHook copyHook() {
+        return copyHook;
+    }
+
+    /** Registers (or clears, with {@code null}) the copy hook. */
+    public void setCopyHook(CopyHook hook) {
+        this.copyHook = hook;
+    }
+
     public String typeName() {
         return typeName;
     }

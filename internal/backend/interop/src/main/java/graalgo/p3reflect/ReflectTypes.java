@@ -218,6 +218,12 @@ public final class ReflectTypes {
         installed = build(doc, types, functions);
         cacheTypes(types);
         captureDescriptors(types);
+        // RV-P1-23: every copied reflect.Value becomes a registered owner
+        // of its counted UnsafeTable handles (split-domain release). The
+        // hook is a single null-checked field — zero cost when unset.
+        if (valueDesc != null) {
+            valueDesc.setCopyHook(ReflectRefs.valueCopyHook());
+        }
     }
 
     /** The current run's table; fails fast when no run is installed. */
