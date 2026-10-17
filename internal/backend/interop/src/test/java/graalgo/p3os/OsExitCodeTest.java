@@ -35,11 +35,12 @@ public final class OsExitCodeTest {
             return;
         }
         // Hermetic scratch: the sanctioned $TMPDIR (never /tmp), falling
-        // back to a directory under the working directory.
+        // back to the module's gitignored out/test-tmp (never the repo
+        // tree root — untracked debris breaks the pristine-tree gates).
         String tmpdir = System.getenv("TMPDIR");
         Path base = tmpdir != null
                 ? Path.of(tmpdir, "junit")
-                : Path.of(System.getProperty("user.dir"), "junit-scratch");
+                : Path.of(System.getProperty("user.dir"), "out", "test-tmp", "junit");
         Files.createDirectories(base);
         scratch = Files.createTempDirectory(base, "osexit-");
         launcher = findLauncher();
@@ -71,11 +72,9 @@ public final class OsExitCodeTest {
         cmd.add(src.toString());
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(scratch.toFile());
-        // Keep the child JVM off /tmp too.
-        String tmpdir = System.getenv("TMPDIR");
-        if (tmpdir != null) {
-            pb.environment().put("TMPDIR", tmpdir);
-        }
+        // Keep the child JVM off /tmp too: always propagate a TMPDIR (the
+        // scratch base), since the launcher maps it to -Djava.io.tmpdir.
+        pb.environment().put("TMPDIR", scratch.getParent().toString());
         pb.environment().put("GRAALGO_GOFRONTEND",
                 launcher.getParent().resolve("../frontend/gofrontend").normalize().toString());
         pb.redirectErrorStream(true);
