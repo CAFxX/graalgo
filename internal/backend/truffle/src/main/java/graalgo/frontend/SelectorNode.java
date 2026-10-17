@@ -60,14 +60,17 @@ public final class SelectorNode extends GoExprNode {
      */
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site) {
         for (int idx : selpath) {
+            o = deref(o, site);
             if (o instanceof EfaceRef er) {
                 // P3-M10: *(*abi.EmptyInterface)(unsafe.Pointer(&iface)) —
                 // the synthesized eface view (see UnsafeToPtrNode). Field
                 // 0 is Type (*abi.Type), field 1 is Data (unsafe.Pointer).
+                // Checked after deref like AbiTypeRef: the view is usually
+                // behind the *abi.EmptyInterface GoPointer (p.Type must
+                // work as well as (*p).Type).
                 o = er.field(idx);
                 continue;
             }
-            o = deref(o, site);
             if (o instanceof AbiTypeRef ar) {
                 // P3-M10: field selection on a *abi.Type (or *abi.PtrType,
                 // ...) produced by unsafe reinterpretation. The fields are

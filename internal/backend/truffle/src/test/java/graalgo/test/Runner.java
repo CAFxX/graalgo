@@ -32,6 +32,9 @@ public final class Runner {
         TESTS.add(graalgo.values.ValuesTest.class);
         TESTS.add(graalgo.values.CallSiteProbesTest.class);
         TESTS.add(graalgo.values.CellIdentityTest.class);
+        // rev3-exitcode (P1): unsafe-reinterpretation views for internal/abi
+        // (EfaceRef/AbiTypeRef) in SelectorNode.readFieldPath.
+        TESTS.add(graalgo.values.EfaceViewTest.class);
         TESTS.add(graalgo.runtime.FmtVerbMatrixTest.class);
         TESTS.add(graalgo.runtime.FreezeSignatureTest.class);
         TESTS.add(graalgo.frontend.SectionClampTest.class);
