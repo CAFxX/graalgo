@@ -10,6 +10,11 @@ package graalgo.values;
  * including itself — matching Go. {@link GoString} compares byte-wise.
  * Values of different carrier classes are never equal (a Go map has a
  * single static key type, so this only arises from misuse).
+ *
+ * <p>Hash/equal contract: IEEE {@code ==} equates {@code +0.0} and
+ * {@code -0.0}, so {@link #hash} normalizes signed zeros before hashing
+ * (scalars, float array elements, and complex components alike); equal
+ * keys always hash equal.
  */
 public final class GoEquality {
     private GoEquality() {}
@@ -154,6 +159,28 @@ public final class GoEquality {
         return false;
     }
 
+    /**
+     * Hash of a float64 map-key component, consistent with {@link #equal}:
+     * IEEE {@code ==} equates {@code +0.0} and {@code -0.0}, so signed
+     * zeros are normalized to {@code +0.0} before hashing. NaN needs no
+     * normalization — it never equals anything (including itself), so its
+     * canonical hash is a mere collision, never a contract break.
+     */
+    private static int hashDouble(double v) {
+        if (v == 0) {
+            v = 0.0; // normalize -0.0
+        }
+        return Double.hashCode(v);
+    }
+
+    /** As {@link #hashDouble}, for float32 map-key components. */
+    private static int hashFloat(float v) {
+        if (v == 0) {
+            v = 0.0f; // normalize -0.0f
+        }
+        return Float.hashCode(v);
+    }
+
     /** Hash consistent with {@link #equal}: equal keys hash equal. */
     public static int hash(Object key) {
         if (key instanceof Long l) {
@@ -163,10 +190,10 @@ public final class GoEquality {
             return Integer.hashCode(i);
         }
         if (key instanceof Double d) {
-            return Double.hashCode(d);
+            return hashDouble(d);
         }
         if (key instanceof Float f) {
-            return Float.hashCode(f);
+            return hashFloat(f);
         }
         if (key instanceof Boolean b) {
             return Boolean.hashCode(b);
@@ -199,30 +226,44 @@ public final class GoEquality {
             return java.util.Arrays.hashCode(ia);
         }
         if (key instanceof double[] da) {
-            return java.util.Arrays.hashCode(da);
+            // P3-M9 (arrdispatch): [N]float64 carrier hash; element hashes
+            // go through hashDouble so that equal (+0.0/-0.0) elements
+            // hash equal. This is exactly Arrays.hashCode(double[])'s
+            // 31*h+c accumulation, with signed-zero normalization.
+            int h = 1;
+            for (double v : da) {
+                h = 31 * h + hashDouble(v);
+            }
+            return h;
         }
         if (key instanceof float[] fa) {
-            // P3-M9 (arrdispatch): [N]float32 carrier hash.
-            return java.util.Arrays.hashCode(fa);
+            // P3-M9 (arrdispatch): [N]float32 carrier hash; as above.
+            int h = 1;
+            for (float v : fa) {
+                h = 31 * h + hashFloat(v);
+            }
+            return h;
         }
         if (key instanceof GoComplex32[] ca) {
             // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
-            // with equal above (null elements hash as the zero value).
+            // with equal above (null elements hash as the zero value;
+            // signed-zero components normalized via hashFloat).
             int h = 1;
             for (GoComplex32 c : ca) {
                 GoComplex32 z = c == null ? GoComplex32.ZERO : c;
-                h = 31 * h + Float.hashCode(z.re());
-                h = 31 * h + Float.hashCode(z.im());
+                h = 31 * h + hashFloat(z.re());
+                h = 31 * h + hashFloat(z.im());
             }
             return h;
         }
         if (key instanceof GoComplex64[] ca) {
-            // P3-M9 (arrdispatch): [N]complex128 carrier hash.
+            // P3-M9 (arrdispatch): [N]complex128 carrier hash; signed-zero
+            // components normalized via hashDouble.
             int h = 1;
             for (GoComplex64 c : ca) {
                 GoComplex64 z = c == null ? GoComplex64.ZERO : c;
-                h = 31 * h + Double.hashCode(z.re());
-                h = 31 * h + Double.hashCode(z.im());
+                h = 31 * h + hashDouble(z.re());
+                h = 31 * h + hashDouble(z.im());
             }
             return h;
         }
