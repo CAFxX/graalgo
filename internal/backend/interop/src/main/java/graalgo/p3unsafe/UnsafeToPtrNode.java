@@ -128,9 +128,14 @@ public final class UnsafeToPtrNode extends GoExprNode {
 
     /**
      * Builds the {@link AbiTypeRef} for a token under an abi struct view,
-     * precomputing the struct fields the abi code reads:
+     * precomputing the struct fields the abi code reads. Field indices are
+     * go/types positions in the GOROOT {@code internal/abi} structs
+     * (go1.27):
      * <ul>
-     *   <li>{@code internal/abi.Type}: field 6 ({@code Kind_}) → Kind ordinal.</li>
+     *   <li>{@code internal/abi.Type}: 0 ({@code Size_}), 3 ({@code TFlag}),
+     *       4 ({@code Align_}), 5 ({@code FieldAlign_}), 6 ({@code Kind_}).
+     *       {@code PtrBytes} (1) and {@code Hash} (2) are not derivable
+     *       from the type table — fail loud, never a wrong zero.</li>
      *   <li>{@code internal/abi.PtrType}: field 1 ({@code Elem}) → *abi.Type of the element.</li>
      * </ul>
      */
@@ -139,12 +144,21 @@ public final class UnsafeToPtrNode extends GoExprNode {
         ReflectTypes.TypeInfo info = ReflectTypes.table().info(tok);
         switch (view) {
             case "internal/abi.Type" -> {
-                // abi.Type.Kind_ is field index 6 (Size_, PtrBytes, Hash,
-                // TFlag, Align_, FieldAlign_, Kind_, ...).
+                // abi.Type layout (internal/abi/type.go): Size_ (0),
+                // PtrBytes (1), Hash (2), TFlag (3), Align_ (4),
+                // FieldAlign_ (5), Kind_ (6), ...
+                fields.put(0, info.size);
+                // TFlagNamed = 1<<2 (go1.27): set iff the type is named.
+                fields.put(3, info.isNamed() ? 4L : 0L);
+                fields.put(4, (long) info.align);
+                fields.put(5, (long) info.align);
                 fields.put(6, (long) ReflectTypes.kindOrdinal(info));
             }
             case "internal/abi.PtrType" -> {
-                // abi.PtrType{Type, Elem}: Elem is field index 1.
+                // abi.PtrType{Type, Elem}: field 0 is the embedded
+                // internal/abi.Type (promoted fields like Kind_ select
+                // through it), field 1 is Elem.
+                fields.put(0, abiTypeRef(tok, "internal/abi.Type"));
                 ReflectTypes.TypeInfo elem = info.elem;
                 if (elem == null) {
                     throw new IllegalStateException(
