@@ -70,13 +70,13 @@ public final class EfaceViewTest {
     }
 
     public void testNilInterfaceView() {
-        // A nil interface viewed as eface: Type is nil *abi.Type, Data is 0.
+        // A nil interface viewed as eface: Type is nil *abi.Type, Data is nil.
         EfaceRef ef = new EfaceRef(null, null);
         Object t = SelectorNode.readFieldPath(new GoPointer(ef), new int[]{0}, false);
         assertTrue(t instanceof GoPointer && ((GoPointer) t).isNil(),
                 "nil-iface .Type not a nil pointer: " + t);
         Object d = SelectorNode.readFieldPath(new GoPointer(ef), new int[]{1}, false);
-        assertEq(0L, (Long) d, "nil-iface .Data");
+        assertTrue(d == null, "nil-iface .Data not null: " + d);
     }
 
     public void testAbiTypeRefBehindPointer() {
