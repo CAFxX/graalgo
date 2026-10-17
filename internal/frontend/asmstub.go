@@ -95,9 +95,6 @@ func (e *exporter) checkBodylessReference(fi *funcDeclInfo) error {
 	if fi == nil || fi.fd == nil || fi.fd.Body != nil {
 		return nil
 	}
-	if false {
-		println("placeholder")
-	}
 	pkgPath := funcPkgPath(e, fi)
 	symbol, err := classifyBodyless(fi, pkgPath)
 	if err != nil {

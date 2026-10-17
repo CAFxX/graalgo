@@ -9201,7 +9201,7 @@ var atomicWordOps = map[string]atomicWordOp{
 	"Xchgint64":    {"Swap", "atomic.Int64", "int64", 1},
 	// RV-P1-02: casPointer (types.go: UnsafePointer.CompareAndSwap).
 	// Bodyless; maps to the Uintptr CAS lowering (pointer as Long).
-	"casPointer":   {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	"casPointer": {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
 	// RV-P1-02 (cont.): the remaining bodyless funcs from atomic_amd64.go,
 	// referenced from the typed wrappers in types.go. The 32/64-bit ops
 	// map to the same syncop lowerings; the 8-bit and And/Or ops are

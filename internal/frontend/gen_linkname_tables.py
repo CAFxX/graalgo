@@ -32,6 +32,7 @@ Environment:
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -69,6 +70,23 @@ def java_unescape(s):
             out.append(c)
             i += 1
     return "".join(out)
+
+
+def gofmt_path(go):
+    """Locate the gofmt binary for the pinned toolchain.
+
+    The generator must emit gofmt-clean output: CI's `gofmt -l` gate (via
+    `make check`) fails on a dirty generated file, and `make all`'s
+    `git diff --exit-code` pins the committed output byte-for-byte. Rather
+    than hand-aligning map values, run the pinned toolchain's own gofmt
+    over the emitted file — a fixed point, so generation stays idempotent.
+    """
+    resolved = shutil.which(go)
+    if resolved:
+        cand = os.path.join(os.path.dirname(resolved), "gofmt")
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return "gofmt"
 
 
 def main():
@@ -144,6 +162,12 @@ def main():
         for sym in intrinsics:
             out.write("\t%s: true,\n" % json.dumps(sym))
         out.write("}\n")
+    gofmt = gofmt_path(go)
+    r = subprocess.run([gofmt, "-w", OUT_PATH],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit("gen_linkname_tables: gofmt failed: %s\n%s%s"
+                         % (gofmt, r.stdout, r.stderr))
     print("gen_linkname_tables: %d provider symbols, %d intrinsic symbols -> %s"
           % (len(providers), len(intrinsics), OUT_PATH))
 
