@@ -1,4 +1,4 @@
-package graalgo.sched.launcher;
+package graalgo.p3sync.launcher;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -11,9 +11,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * RV-P1-19 launcher tests (design §6.2): {@code SchedMain.run} in-process
- * (no {@code System.exit}), stderr captured, Go sources written under
- * {@code out/test-tmp} (never {@code /tmp} — shared 512M tmpfs).
+ * RV-P1-19 launcher tests (design §6.2): {@code P3SyncMain.run}
+ * in-process (no {@code System.exit}), stderr captured, Go sources
+ * written under {@code out/test-tmp} (never {@code /tmp} — shared 512M
+ * tmpfs).
+ *
+ * <p>Why {@code P3SyncMain} and not {@code SchedMain}: the phase-2
+ * {@code SchedMain} frontend never registered the {@code select} /
+ * {@code makechan} / {@code send} / {@code recv} wire-kind hooks, so it
+ * cannot even parse the deadlock programs (it fails in AST building,
+ * long before the scheduler). {@code P3SyncMain} is the product
+ * launcher — the same backend the differential corpus runs against —
+ * and carries the identical C1/C2/C3 deadlock contract, so the exit
+ * codes and gc-identical fatal lines are asserted here.
  *
  * <p>Each run executes on a watchdog thread: a broken detector/launcher
  * must fail loudly (timeout → assertion), never hang the suite.
@@ -54,7 +64,7 @@ public final class DeadlockLauncherTest {
     }
 
     /**
-     * Runs {@code SchedMain.run} on {@code program} (written to a temp
+     * Runs {@code P3SyncMain.run} on {@code program} (written to a temp
      * .go file) with stderr captured. Watchdog: 120s, then loud failure.
      */
     private static RunResult runGo(String name, String program) throws Exception {
@@ -69,7 +79,7 @@ public final class DeadlockLauncherTest {
         Thread t = Thread.ofPlatform().daemon(true).name("deadlock-launcher-" + name)
                 .start(() -> {
                     try {
-                        code.set(SchedMain.run(
+                        code.set(P3SyncMain.run(
                                 new String[]{"--gmp=2", goFile.toString()}));
                     } catch (Throwable th) {
                         thrown.set(th);
@@ -81,10 +91,10 @@ public final class DeadlockLauncherTest {
             System.setErr(origErr);
         }
         if (t.isAlive()) {
-            throw new AssertionError(name + ": SchedMain.run hung (watchdog 120s)");
+            throw new AssertionError(name + ": P3SyncMain.run hung (watchdog 120s)");
         }
         if (thrown.get() != null) {
-            throw new AssertionError(name + ": SchedMain.run threw", thrown.get());
+            throw new AssertionError(name + ": P3SyncMain.run threw", thrown.get());
         }
         return new RunResult(code.get(), errBuf.toString(StandardCharsets.UTF_8));
     }

@@ -425,9 +425,24 @@ public final class SchedulerCore {
             h.thread = Thread.currentThread();
             GoroutineState state = new GoroutineState();
             GoroutineState prev = GoroutineState.install(state);
+            boolean started = false;
             try {
                 // Wait for the drainer's first admission.
                 awaitAck(h, t);
+                if (installed != SchedulerCore.this) {
+                    // RV-P1-19 (C1 orphan): the launcher exited and
+                    // uninstalled this scheduler before our first
+                    // admission (main returned with children still in
+                    // flight). Die quietly: the finally below releases
+                    // the admission slot and the live count on our own
+                    // drainer. Guest code must never run against a dead
+                    // or foreign scheduler — its PARKED token would
+                    // corrupt that scheduler's in-flight accounting
+                    // (inflight goes negative, tripping the drainer's
+                    // corruption halt).
+                    return;
+                }
+                started = true;
                 // P2-M6: the initial admission is not a park (no reason
                 // was noted, so parkResumed emitted nothing); the
                 // goroutine genuinely starts here.
@@ -452,7 +467,11 @@ public final class SchedulerCore {
                 recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.
-                JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
+                // (A C1 orphan never started: no start/end events, but
+                // the admission slot and live count are still released.)
+                if (started) {
+                    JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
+                }
                 GoroutineState.restore(prev);
                 currentHandle.remove();
                 synchronized (quiescenceLock) {

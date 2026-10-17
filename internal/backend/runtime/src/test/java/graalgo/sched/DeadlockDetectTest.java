@@ -354,7 +354,7 @@ public final class DeadlockDetectTest {
         try {
             AtomicBoolean release = new AtomicBoolean(false);
             sched.spawn(() -> graalgo.runtime.Panic.throwPanic(
-                    graalgo.runtime.GoStrings.of("boom")));
+                    graalgo.values.GoString.fromUtf8("boom")));
             GoroutineHandle h = sched.spawn(() -> {
                 while (!release.get()) {
                     sched.yieldCurrent();
@@ -372,6 +372,48 @@ public final class DeadlockDetectTest {
         } finally {
             System.setErr(origErr);
             SchedulerCore.install(null);
+        }
+    }
+
+    // ---------- 9: C1 orphan — admitted after uninstall dies quietly ----------
+
+    /**
+     * RV-P1-19 (C1 orphan race): a goroutine spawned but not yet admitted
+     * when the launcher uninstalls its scheduler (main returned with
+     * children in flight) must die quietly on first admission — never run
+     * guest code against a dead or foreign scheduler (its PARKED token
+     * would corrupt that scheduler's in-flight accounting, tripping the
+     * drainer's corruption halt). Deterministic: the drainer is started
+     * only after the uninstall, so the orphan window is staged, not
+     * raced.
+     */
+    public void testOrphanAdmittedAfterUninstallDiesQuietly() throws Exception {
+        SchedulerCore schedA = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        SchedulerCore prev = SchedulerCore.install(schedA);
+        AtomicBoolean ran = new AtomicBoolean(false);
+        try {
+            // Spawn while the drainer is down: the vthread blocks in
+            // awaitAck (first admission), never reaching guest code.
+            schedA.spawn(() -> ran.set(true));
+            // The launcher exits (C1) and uninstalls the scheduler
+            // before the first admission.
+            SchedulerCore.install(null);
+            // Now start the drainer: INIT is routed, the orphan is
+            // admitted, sees its scheduler gone, and dies quietly.
+            schedA.start();
+            waitFor(() -> schedA.runnableCount() == 0,
+                    "orphan released its live count");
+            // The admission slot must be balanced too: after the EXIT is
+            // routed, the parked map is empty and an admission happened.
+            waitFor(() -> schedA.drainer().parkedCountForTest() == 0
+                            && schedA.drainer().admissions() >= 1,
+                    "orphan EXIT routed");
+            assertFalse(ran.get(), "orphan body never ran");
+            assertFalse(schedA.crashed(), "no internal-error crash recorded");
+            assertFalse(schedA.panicked(), "no panic recorded");
+            assertFalse(schedA.isDeadlocked(), "no deadlock recorded");
+        } finally {
+            SchedulerCore.install(prev);
         }
     }
 }
