@@ -22,7 +22,11 @@ public final class GoPointer {
     // P3-M9 (WS D): cell pointer for &x where x is a variable (or field)
     // whose storage is a GoCell. referent() reads the cell's current value
     // and setReferent() writes it, so *p = v is observable through the
-    // variable and vice versa. A cell pointer is never nil.
+    // variable and vice versa. A cell pointer is never nil (the pointer
+    // itself); its referent may be Java null when the cell's storage holds
+    // null — e.g. an opaque sync-primitive struct field left null by
+    // GoStruct.zero's carve-out (RV-P0 runtime-npe). Selector sites convert
+    // a null referent to Go's nil-dereference panic, never a JVM NPE.
     private final GoCell cell;
 
     public GoPointer(Object referent) {

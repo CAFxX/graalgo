@@ -3815,9 +3815,10 @@ public final class NodeFactory {
             // zero-initialize each element (Go zero value), not leave nulls.
             GoStructDescriptor ultimateDesc =
                     ek == GoKind.STRUCT ? structDescriptorFor(ctx, eid, path) : null;
-            // P3-M9: the referent zero comes from the recursive zero
-            // template (nested struct/array fields materialized), not
-            // the shallow descriptor-only GoStruct.zero.
+            // P3-M9, RV-P0 runtime-npe: the referent zero comes from the
+            // recursive zero template (nested struct/array fields
+            // materialized, live sync-primitive carriers) — GoStruct.zero
+            // leaves opaque-primitive fields null (no live carriers).
             return new NewNode(elemKind, desc, arrayLens, ek, ultimateDesc,
                     zeroTemplateOrNull(elemKind, elemId, ctx, path));
         }
@@ -5743,8 +5744,10 @@ public final class NodeFactory {
      * Recursive zero template for STRUCT/ARRAY kinds, null for all other
      * kinds (P3-M9): nodes that materialize a zero of the kind at runtime
      * (new(), map-index misses, lenient type asserts, nil) carry this
-     * template and deep-copy it per evaluation — the descriptor-only
-     * GoStruct.zero leaves nested struct fields null.
+     * template and deep-copy it per evaluation — GoStruct.zero's
+     * opaque-primitive carve-out leaves sync-primitive fields null
+     * (RV-P0 runtime-npe), so the template (with live carriers) stays the
+     * fully-materialized zero.
      */
     private Object zeroTemplateOrNull(GoKind kind, int typeId, BuildCtx ctx, String path) {
         return (kind == GoKind.STRUCT || kind == GoKind.ARRAY)

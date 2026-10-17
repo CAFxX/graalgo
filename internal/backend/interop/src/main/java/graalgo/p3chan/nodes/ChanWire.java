@@ -230,8 +230,9 @@ final class ChanWire {
      * Fresh struct zero template with recursively zeroed nested
      * struct/array fields (mirrors
      * {@code NodeFactory.structZeroTemplate}'s recursion; a plain
-     * {@code GoStruct.zero} would leave nested struct fields null,
-     * diverging from gc's fully-zeroed value).
+     * {@code GoStruct.zero} leaves opaque sync-primitive fields null
+     * (RV-P0 runtime-npe carve-out), diverging from gc's fully-zeroed
+     * value).
      */
     private static GoStruct structZeroTemplate(NodeFactory.BuildCtx ctx, int typeId, String path) {
         int sid = structEntryId(ctx, typeId, path);

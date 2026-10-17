@@ -2,6 +2,8 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
@@ -27,6 +29,19 @@ public final class SelectorWriteNode extends GoStmtNode {
         this.fieldKind = fieldKind;
     }
 
+    /**
+     * RV-P0 runtime-npe (Layer 2): {@code deref} can yield Java null
+     * without panicking (a cell pointer over a null struct field;
+     * typed-nil interface data). A null struct reference at a selector
+     * site is always a Go nil-dereference — never a JVM NPE.
+     */
+    private GoStruct nullCheckedStruct(Object o) {
+        if (o == null) {
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+        }
+        return (GoStruct) o;
+    }
+
     @Override
     public void executeVoid(VirtualFrame frame) {
         Object o = obj.executeObject(frame);
@@ -34,10 +49,10 @@ public final class SelectorWriteNode extends GoStmtNode {
         // pointer-to-struct fields — always objects-carried.
         for (int d = 0; d < selpath.length - 1; d++) {
             o = SelectorNode.deref(o, this);
-            o = ((GoStruct) o).getObject(selpath[d]);
+            o = nullCheckedStruct(o).getObject(selpath[d]);
         }
         o = SelectorNode.deref(o, this);
-        GoStruct s = (GoStruct) o;
+        GoStruct s = nullCheckedStruct(o);
         int idx = selpath[selpath.length - 1];
         GoStructDescriptor.Field f = s.descriptor().field(idx);
         Object b = Boxing.copyForAssign(fieldKind, Boxing.box(fieldKind, value, frame));

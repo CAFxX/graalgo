@@ -29,7 +29,8 @@ public final class IndexNode extends GoExprNode {
     /**
      * Recursive zero template for STRUCT/ARRAY element kinds (null
      * otherwise): an absent map key must yield the fully recursive zero
-     * value — GoStruct.zero would leave nested struct fields null (P3-M9).
+     * value — including live sync-primitive carriers, which GoStruct.zero's
+     * opaque-primitive carve-out leaves null (RV-P0 runtime-npe).
      */
     private final Object zeroTemplate;
 

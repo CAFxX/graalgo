@@ -45,8 +45,9 @@ public final class TypeAssertNode extends GoExprNode {
     /**
      * Recursive zero template for STRUCT/ARRAY asserted kinds (null
      * otherwise): the lenient (comma-ok) failure value must be the fully
-     * recursive zero — GoStruct.zero would leave nested struct fields
-     * null (P3-M9).
+     * recursive zero — including live sync-primitive carriers, which
+     * GoStruct.zero's opaque-primitive carve-out leaves null
+     * (RV-P0 runtime-npe).
      */
     private final Object zeroTemplate;
 

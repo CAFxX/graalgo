@@ -60,6 +60,14 @@ public final class SelectorNode extends GoExprNode {
         for (int idx : selpath) {
             o = deref(o, site);
             GoStruct s = (GoStruct) o;
+            if (s == null) {
+                // RV-P0 runtime-npe (Layer 2): deref can yield Java null
+                // without panicking (a cell pointer over a null struct
+                // field; typed-nil interface data). A null struct reference
+                // at a selector site is always a Go nil-dereference —
+                // never a JVM NPE.
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+            }
             if (s.descriptor().field(idx).inLongs()) {
                 o = Long.valueOf(s.getLong(idx));
             } else {

@@ -26,27 +26,106 @@ public final class GoStruct {
         this.objects = objects.clone();
     }
 
-    /** The Go zero value for the described struct type. */
+    /**
+     * The Go zero value for the described struct type.
+     *
+     * <p>Nested STRUCT-kind fields are materialized recursively via the
+     * per-field {@code structDesc} (RV-P0 runtime-npe fix): a Go struct
+     * value's nested struct field is never absent, so Java {@code null}
+     * must not double as "Go zero struct value" (it remains the carrier
+     * for Go nil — pointers, interfaces, maps, slices, chans, funcs — and
+     * for the opaque-primitive carve-out below).
+     */
     public static GoStruct zero(GoStructDescriptor descriptor) {
-        Object[] objects = new Object[descriptor.objectsCount()];
-        for (int i = 0; i < descriptor.fields().size(); i++) {
-            GoStructDescriptor.Field f = descriptor.field(i);
-            if (!f.inLongs() && f.kind() == GoKind.STRING) {
-                objects[f.index()] = GoString.EMPTY;
-            } else if (!f.inLongs() && f.kind() == GoKind.ARRAY && f.arrayLen() >= 0 && f.arrayElemKind() != null) {
-                // P3-M8b: Go new(T) gives zero-valued arrays, not null.
-                // Pre-allocate so d.h[0]=x doesn't NPE. P3-M9: struct array
-                // elements are zero-filled via the element descriptor (same
-                // root cause as the make([]T,n) slice fix in Intrinsics).
-                objects[f.index()] = graalgo.frontend.Boxing.newArray(
-                        f.arrayElemKind(), f.arrayElemDesc(), f.arrayLen());
-            } else if (!f.inLongs() && f.kind().isComplexKind()) {
-                // WS G: a complex field's zero value is (0+0i), not nil.
-                objects[f.index()] = f.kind() == GoKind.COMPLEX64
-                        ? GoComplex32.ZERO : GoComplex64.ZERO;
+        return zero(descriptor, new java.util.IdentityHashMap<>());
+    }
+
+    private static GoStruct zero(GoStructDescriptor descriptor,
+            java.util.IdentityHashMap<GoStructDescriptor, Boolean> visiting) {
+        // Go forbids value-recursive struct types, but descriptors can be
+        // built programmatically (reflect/interop); fail loud instead of
+        // StackOverflowError (mirrors the frontend template's M10 guard).
+        if (visiting.put(descriptor, Boolean.TRUE) != null) {
+            throw new IllegalStateException(
+                    "cyclic struct type graph at " + descriptor.typeName() + " (GoStruct.zero)");
+        }
+        try {
+            Object[] objects = new Object[descriptor.objectsCount()];
+            for (int i = 0; i < descriptor.fields().size(); i++) {
+                GoStructDescriptor.Field f = descriptor.field(i);
+                if (f.inLongs()) {
+                    continue;
+                }
+                if (f.kind() == GoKind.STRING) {
+                    objects[f.index()] = GoString.EMPTY;
+                } else if (f.kind() == GoKind.ARRAY && f.arrayLen() >= 0 && f.arrayElemKind() != null) {
+                    // P3-M8b: Go new(T) gives zero-valued arrays, not null.
+                    // Pre-allocate so d.h[0]=x doesn't NPE. P3-M9: struct array
+                    // elements are zero-filled via the element descriptor (same
+                    // root cause as the make([]T,n) slice fix in Intrinsics).
+                    // The per-element GoStruct.zero calls recurse for nested
+                    // struct elements (RV-P0 runtime-npe).
+                    objects[f.index()] = graalgo.frontend.Boxing.newArray(
+                            f.arrayElemKind(), f.arrayElemDesc(), f.arrayLen());
+                } else if (f.kind().isComplexKind()) {
+                    // WS G: a complex field's zero value is (0+0i), not nil.
+                    objects[f.index()] = f.kind() == GoKind.COMPLEX64
+                            ? GoComplex32.ZERO : GoComplex64.ZERO;
+                } else if (f.kind() == GoKind.STRUCT && f.structDesc() != null
+                        && !isOpaquePrimitive(f.structDesc())) {
+                    // RV-P0 runtime-npe: the zero value of a nested struct
+                    // field is a zero struct, never Java null (null made
+                    // &z.Nested a cell pointer over nothing, NPEing the
+                    // selector sites). Opaque sync primitives are carved
+                    // out (below); a null structDesc keeps legacy behavior.
+                    objects[f.index()] = zero(f.structDesc(), visiting);
+                }
+            }
+            return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);
+        } finally {
+            visiting.remove(descriptor);
+        }
+    }
+
+    /**
+     * Whether the nested struct descriptor denotes an opaque sync primitive
+     * whose live Java carrier is owned by the frontend template mechanism
+     * ({@code sync.Pool}, {@code sync.Map}, {@code sync/atomic.*}) — mirrors
+     * {@code NodeFactory.syncPrimitiveName}'s recognition set (minus alias
+     * resolution, which needs the frontend type table). The frontend remains
+     * the recognition authority for template building. Fabricating an empty
+     * {@code GoStruct} for such a field would be a subtler wrong value than
+     * leaving it null.
+     */
+    private static boolean isOpaquePrimitive(GoStructDescriptor d) {
+        String name = d.typeName();
+        if (name == null) {
+            return false; // programmatic descriptor without a name: not opaque
+        }
+        // Strip generic instantiation suffix: Pointer[T] -> Pointer.
+        int br = name.indexOf('[');
+        if (br >= 0) {
+            name = name.substring(0, br);
+        }
+        if ("sync.Pool".equals(name) || "sync.Map".equals(name)) {
+            return true;
+        }
+        if (name.startsWith("sync/atomic.")) {
+            switch (name.substring("sync/atomic.".length())) {
+                case "Int64":
+                case "Uint64":
+                case "Uintptr":
+                case "Int32":
+                case "Uint32":
+                case "Bool":
+                case "Pointer":
+                case "Value":
+                    return true;
+                default:
+                    return false;
             }
         }
-        return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);
+        return false;
     }
 
     public GoStructDescriptor descriptor() {

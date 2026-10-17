@@ -30,7 +30,10 @@ public final class GoStructDescriptor {
      * zero-valued arrays, not null). structDesc is the nested struct
      * descriptor for STRUCT-kind fields (null otherwise) — used by
      * Intrinsics.structSizeBytes to compute ABI sizes of nested structs
-     * (P3-M4 scope extension: nested structs are no longer fail-fast).
+     * (P3-M4 scope extension: nested structs are no longer fail-fast),
+     * and by GoStruct.zero to recursively materialize nested struct
+     * fields (RV-P0 runtime-npe; opaque sync primitives are carved out
+     * and stay null).
      */
     public record Field(String name, GoKind kind, boolean inLongs, int index, int arrayLen,
                         GoKind arrayElemKind, GoStructDescriptor arrayElemDesc,
