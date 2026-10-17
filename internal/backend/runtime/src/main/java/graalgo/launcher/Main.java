@@ -39,6 +39,11 @@ import java.util.ServiceLoader;
  * arrive with WS F/G). Computed values are observable in tests via
  * frame-slot reads (the {@code --dump-vars} debug aid prints them); the WS G
  * {@code println} intrinsic becomes the program-observable channel.
+ *
+ * <p>CF1: {@code main} runs as the first goroutine on an installed
+ * user-space {@code SchedulerCore} (the SchedMain/P3SyncMain flow), so
+ * {@code go} statements spawn onto the scheduler. The previous
+ * scheduler is restored on exit.
  */
 public final class Main {
     private Main() {}
@@ -202,71 +207,107 @@ public final class Main {
             // M9 (WS L): enable call-site polymorphism recording for this run.
             graalgo.values.CallSiteProbes.setEnabled(true);
         }
-        int exitCode = EXIT_OK;
+        // CF1 (review P1): install the user-space scheduler and run main as
+        // the first goroutine — the SchedMain/P3SyncMain flow. Without an
+        // installed SchedulerCore, a `go` statement fails fast with
+        // "no SchedulerCore installed"; the Phase-3 PLAN §5 graduation
+        // direction is for graalgo-run to execute main on the scheduler.
+        // Main's exit-code/reporting contract below is unchanged, only
+        // moved inside the spawned goroutine.
+        assertSchedulerOverlay();
+        graalgo.sched.SchedulerCore sched = new graalgo.sched.SchedulerCore(
+                Runtime.getRuntime().availableProcessors(),
+                graalgo.sched.SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        graalgo.sched.SchedulerCore prev = graalgo.sched.SchedulerCore.install(sched);
+        sched.start();
+        final int[] exitCode = {EXIT_OK};
         try {
-            if (dumpVars) {
-                VirtualFrame frame = Truffle.getRuntime()
-                        .createVirtualFrame(new Object[0], program.descriptor());
-                program.root().execute(frame);
-                Map<String, GoKind> kinds = program.kindsByName();
-                program.slotsByName().entrySet().stream()
-                        .sorted(Map.Entry.comparingByKey())
-                        .forEach(e -> {
-                            int slot = e.getValue();
-                            Object v = switch (kinds.getOrDefault(e.getKey(), GoKind.INT64).slotKind()) {
-                                case Int -> frame.getInt(slot);
-                                case Long -> frame.getLong(slot);
-                                case Float -> frame.getFloat(slot);
-                                case Double -> frame.getDouble(slot);
-                                case Boolean -> frame.getBoolean(slot);
-                                case Byte -> frame.getByte(slot);
-                                case Object -> frame.getObject(slot);
-                                case Illegal, Static -> throw new FrontendException(
-                                        "--dump-vars: variable " + e.getKey() + " has no readable slot kind");
-                            };
-                            System.out.println(e.getKey() + "=" + v);
-                        });
-            } else {
-                program.root().getCallTarget().call();
-            }
-            exitCode = EXIT_OK;
-        } catch (graalgo.runtime.PanicException pe) {
-            // M5 (WS F): uncaught Go panic → gc-comparable output, exit 2.
-            reportPanic(pe);
-            exitCode = EXIT_PANIC;
-        } catch (graalgo.runtime.Goexit g) {
-            // M5 (WS F): Goexit in main = gc's fatal deadlock (exit 2).
-            // (Exit 0 applies to non-main goroutines, Phase 2.)
-            System.err.println("fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
-            System.err.println();
-            System.err.println("goroutine 1 [running]:");
-            System.err.println("main.main()");
-            exitCode = EXIT_PANIC;
-        } catch (RuntimeException e) {
-            // M2 stand-in: Go panics (incl. divide-by-zero) surface here until
-            // WS F maps them to Go panic values.
-            System.err.println("graalgo-run: execution failed: " + e);
-            exitCode = EXIT_INPUT_ERROR;
-        } catch (StackOverflowError soe) {
-            // M10 (self-attack): guest recursion burns host stack (-Xss32m,
-            // M5 stance). Catching here — after the stack unwound — reports
-            // a clean stack-overflow instead of the JVM's raw trace plus the
-            // Truffle exception-profiling cascade. gc also aborts (exit 2)
-            // on runaway recursion; the depth limit itself is documented.
-            reportStackOverflow();
-            exitCode = EXIT_PANIC;
-        } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
-            // M10 (self-attack): Truffle's exception profiler can itself
-            // blow the exhausted stack while handling a StackOverflowError,
-            // masking it as a class-init failure. Unwrap the cascade;
-            // rethrow anything else.
-            if (isStackOverflowCascade(e)) {
-                reportStackOverflow();
-                exitCode = EXIT_PANIC;
-            } else {
-                throw e;
-            }
+            sched.spawn(() -> {
+                try {
+                    if (dumpVars) {
+                        VirtualFrame frame = Truffle.getRuntime()
+                                .createVirtualFrame(new Object[0], program.descriptor());
+                        program.root().execute(frame);
+                        Map<String, GoKind> kinds = program.kindsByName();
+                        program.slotsByName().entrySet().stream()
+                                .sorted(Map.Entry.comparingByKey())
+                                .forEach(e -> {
+                                    int slot = e.getValue();
+                                    Object v = switch (kinds.getOrDefault(e.getKey(), GoKind.INT64).slotKind()) {
+                                        case Int -> frame.getInt(slot);
+                                        case Long -> frame.getLong(slot);
+                                        case Float -> frame.getFloat(slot);
+                                        case Double -> frame.getDouble(slot);
+                                        case Boolean -> frame.getBoolean(slot);
+                                        case Byte -> frame.getByte(slot);
+                                        case Object -> frame.getObject(slot);
+                                        case Illegal, Static -> throw new FrontendException(
+                                                "--dump-vars: variable " + e.getKey() + " has no readable slot kind");
+                                    };
+                                    System.out.println(e.getKey() + "=" + v);
+                                });
+                    } else {
+                        program.root().getCallTarget().call();
+                    }
+                    exitCode[0] = EXIT_OK;
+                } catch (graalgo.runtime.PanicException pe) {
+                    // M5 (WS F): uncaught Go panic → gc-comparable output, exit 2.
+                    reportPanic(pe);
+                    exitCode[0] = EXIT_PANIC;
+                } catch (graalgo.runtime.Goexit g) {
+                    // M5 (WS F): Goexit in main = gc's fatal deadlock (exit 2)
+                    // iff no other goroutine is live; otherwise main just dies
+                    // (gc parity — with the scheduler installed, other
+                    // goroutines can now be live, which was impossible before).
+                    if (sched.runnableCount() > 1) {
+                        return;
+                    }
+                    System.err.println("fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
+                    System.err.println();
+                    System.err.println("goroutine 1 [running]:");
+                    System.err.println("main.main()");
+                    exitCode[0] = EXIT_PANIC;
+                } catch (RuntimeException e) {
+                    // M2 stand-in: Go panics (incl. divide-by-zero) surface here until
+                    // WS F maps them to Go panic values.
+                    System.err.println("graalgo-run: execution failed: " + e);
+                    exitCode[0] = EXIT_INPUT_ERROR;
+                } catch (StackOverflowError soe) {
+                    // M10 (self-attack): guest recursion burns host stack (-Xss32m,
+                    // M5 stance). Catching here — after the stack unwound — reports
+                    // a clean stack-overflow instead of the JVM's raw trace plus the
+                    // Truffle exception-profiling cascade. gc also aborts (exit 2)
+                    // on runaway recursion; the depth limit itself is documented.
+                    reportStackOverflow();
+                    exitCode[0] = EXIT_PANIC;
+                } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
+                    // M10 (self-attack): Truffle's exception profiler can itself
+                    // blow the exhausted stack while handling a StackOverflowError,
+                    // masking it as a class-init failure. Unwrap the cascade;
+                    // rethrow anything else.
+                    if (isStackOverflowCascade(e)) {
+                        reportStackOverflow();
+                        exitCode[0] = EXIT_PANIC;
+                    } else {
+                        throw e;
+                    }
+                }
+            });
+            sched.awaitQuiescence();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            System.err.println("graalgo-run: interrupted while awaiting quiescence");
+            return EXIT_INPUT_ERROR;
+        } finally {
+            graalgo.sched.SchedulerCore.install(prev);
         }
+        if (sched.panicked()) {
+            return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
+        }
+        if (sched.crashed()) {
+            return EXIT_INPUT_ERROR; // internal error, already reported on stderr
+        }
+        int exitCodeOut = exitCode[0];
         if (dumpPoly != null) {
             // M9 (WS L): report the call-site polymorphism snapshot. The
             // program's own output already went to stdout; the snapshot goes
@@ -300,7 +341,7 @@ public final class Main {
                 }
             }
         }
-        return exitCode;
+        return exitCodeOut;
     }
 
     /**
@@ -457,6 +498,30 @@ public final class Main {
         System.err.println("graalgo-run: " + msg);
         usage();
         return EXIT_INPUT_ERROR;
+    }
+
+    /**
+     * Fail-fast that the scheduler overlay is active (P2-D8, the
+     * SchedMain/P3SyncMain check): the {@code graalgo.runtime.Scheduler}
+     * on the classpath must be the runtime module's replacement, i.e.
+     * runtime/out/classes precedes truffle/out/classes. With the wrong
+     * order the frozen Phase-1 stub would throw UOE on first use — and
+     * worse, the Phase-1 static {@code GoroutineState} holder would be
+     * silently shared across goroutines. Never silent.
+     */
+    private static void assertSchedulerOverlay() {
+        try {
+            if (!graalgo.runtime.Scheduler.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Scheduler.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 Scheduler stub loaded instead of the runtime "
+                            + "overlay; runtime/out/classes must precede truffle/out/classes "
+                            + "on the classpath",
+                    e);
+        }
     }
 
     private static void usage() {
