@@ -25,6 +25,7 @@ import graalgo.frontend.GoStmtNode;
 import graalgo.frontend.IfNode;
 import graalgo.frontend.IncDecNode;
 import graalgo.frontend.IndexNode;
+import graalgo.frontend.IndexWriteNode;
 import graalgo.frontend.LenNode;
 import graalgo.frontend.MakeNode;
 import graalgo.frontend.NewNode;
@@ -70,13 +71,34 @@ import java.util.Map;
  * </pre>
  *
  * <p>Node kinds from the v2 emitter (see {@code emit/nodes.go}):
- * funcdecl, block, exprstmt, return, assign, vardecl, if, for, range,
- * incdec, branch, ident, basiclit, binary, unary, paren, call, selector,
- * pkgref, param.
+ * statements: funcdecl, block, exprstmt, assign, vardecl, return, if, for,
+ * range, incdec, branch;
+ * expressions: ident, basiclit, binary, unary, paren, call, selector,
+ * pkgref, compositelit, index, slice, typename;
+ * declarations: param, global.
  *
- * <p>All emitter kinds are implemented. The factory reuses the existing
- * Truffle node classes from {@code graalgo.frontend} (the same nodes v1
- * uses) — no new node types, no special cases.
+ * <p>Wire shapes (format version 2; see {@link BinaryDecoder}):
+ * <ul>
+ *   <li>vardecl: one node per ValueSpec, flat fields
+ *       {names: [string], objs: [objid|-1], define, type, values: [expr]}
+ *       (the v1-pinned shape);
+ *   <li>global: a package-level var spec; the same flat fields as vardecl.
+ *       Emitted into the document's {@code globals} list, which this
+ *       factory does not yet consume (tracked);
+ *   <li>range: {key, value: target|null, define, x, body}, where a target
+ *       is an expression node ({@code ident}|{@code index}|{@code selector})
+ *       or null (absent or {@code _}); index/selector targets lower to a
+ *       hidden iteration-temp slot plus a per-iteration lvalue write;
+ *   <li>typename: a type-table reference ({type}) used as make/new's type
+ *       argument; skipped when building builtin-call args (type-level
+ *       metadata, not a runtime value);
+ *   <li>selector: {x, sel, kind: field|methodval|methodexpr, index,
+ *       indirect, obj, type}.
+ * </ul>
+ *
+ * <p>The factory reuses the existing Truffle node classes from
+ * {@code graalgo.frontend} (the same nodes v1 uses) — no new node types,
+ * no special cases.
  */
 public final class NodeFactoryV2 {
 
@@ -157,7 +179,6 @@ public final class NodeFactoryV2 {
             }
             return slot;
         }
-
         /** Looks up the GoKind for an object id. */
         GoKind kindForObj(int objId, String where) {
             GoKind kind = objToKind.get(objId);
@@ -165,6 +186,25 @@ public final class NodeFactoryV2 {
                 throw new FrontendException(where + ": no kind for object id " + objId);
             }
             return kind;
+        }
+    }
+
+    /**
+     * One resolved range-clause target. {@code slot} is the frame slot the
+     * Range*Node writes each iteration ({@code -1} = absent target);
+     * {@code kind} is the iteration value's kind in that slot; {@code write}
+     * is the per-iteration lvalue write ({@code temp -> m[k]/s.f}) for
+     * non-ident targets, or null for plain variable targets.
+     */
+    private static final class RangeTarget {
+        final int slot;
+        final GoKind kind;
+        final GoStmtNode write;
+
+        RangeTarget(int slot, GoKind kind, GoStmtNode write) {
+            this.slot = slot;
+            this.kind = kind;
+            this.write = write;
         }
     }
 
@@ -615,36 +655,41 @@ public final class NodeFactoryV2 {
 
     /**
      * Builds a range statement.
-     * Fields: {key: objid|null, value: objid|null, define, x: expr, body: block}
+     * Fields: {key: target|null, value: target|null, define, x: expr, body: block}
+     * where a target is an expression node ({kind: "ident"|"index"|"selector",
+     * fields: ...}) or null (absent or {@code _}).
+     *
+     * <p>Ident targets follow the declared-variable path (declared on {@code :=},
+     * slot lookup otherwise). Index/selector targets ({@code m[k]}, {@code s.f} —
+     * assignable expressions the old obj-id shape could not represent) lower to
+     * a hidden iteration-temp slot plus a per-iteration lvalue write prepended
+     * to the body: Go assigns the iteration values "as in an assignment
+     * statement", with the lvalue re-evaluated each iteration.
      */
     @SuppressWarnings("unchecked")
     private GoStmtNode buildRange(Map<String, Object> fields, String where, V2Scope scope) {
-        // Declare key/value if define.
         Object defineObj = fields.get("define");
         boolean define = Boolean.TRUE.equals(defineObj);
-        Object keyObj = fields.get("key");
-        Object valueObj = fields.get("value");
-
-        if (define) {
-            if (keyObj instanceof Long) {
-                int keyId = ((Long) keyObj).intValue();
-                GoKind k = goKindForObj(scope.types, scope.objects, keyId, where);
-                String kname = objName(scope.objects, keyId);
-                scope.declareObj(keyId, kname, k);
-            }
-            if (valueObj instanceof Long) {
-                int valueId = ((Long) valueObj).intValue();
-                GoKind k = goKindForObj(scope.types, scope.objects, valueId, where);
-                String vname = objName(scope.objects, valueId);
-                scope.declareObj(valueId, vname, k);
-            }
-        }
 
         Object xObj = fields.get("x");
         if (!(xObj instanceof Map)) {
             throw new FrontendException(where + ": range.x must be a map");
         }
         Map<String, Object> xMap = (Map<String, Object>) xObj;
+
+        // Dispatch on the type of x (before building anything: target
+        // resolution declares := idents, which the body references).
+        Map<String, Object> xfields = getMap(xMap, "fields", where + ".x.fields");
+        Object xTypeIdObj = xfields.get("type");
+        GoKind xkind = goKindForTypeId(scope.types, xTypeIdObj, where + ".x");
+
+        // Resolve key/value targets to slots (and lvalue writes, if any).
+        // Ident targets are declared here, before the body is built.
+        RangeTarget key = resolveRangeTarget(fields.get("key"), true, define,
+            xkind, xTypeIdObj, where + ".key", scope);
+        RangeTarget value = resolveRangeTarget(fields.get("value"), false, define,
+            xkind, xTypeIdObj, where + ".value", scope);
+
         GoExprNode x = buildExpr(xMap, where + ".x", scope);
 
         Object bodyObj = fields.get("body");
@@ -653,24 +698,24 @@ public final class NodeFactoryV2 {
         }
         GoStmtNode body = buildStmt((Map<String, Object>) bodyObj, where + ".body", scope);
 
-        // Dispatch on the type of x.
-        Map<String, Object> xfields = getMap(xMap, "fields", where + ".x.fields");
-        GoKind xkind = goKindForTypeId(scope.types, xfields.get("type"), where + ".x");
+        // Lvalue targets (m[k], s.f): the Range*Node writes the iteration
+        // value into the hidden temp slot first, each iteration; the
+        // prepended write then assigns temp -> lvalue before the body runs.
+        // Key is assigned before value (Go's left-to-right order).
+        if (key.write != null || value.write != null) {
+            List<GoStmtNode> stmts = new ArrayList<>();
+            if (key.write != null) {
+                stmts.add(key.write);
+            }
+            if (value.write != null) {
+                stmts.add(value.write);
+            }
+            stmts.add(body);
+            body = new BlockNode(stmts.toArray(new GoStmtNode[0]));
+        }
 
-        // Get slots and kinds for key/value.
-        int keySlot = -1, valueSlot = -1;
-        GoKind keyKind = GoKind.INT64, valueKind = GoKind.INTERFACE;
-        boolean keyBoxed = false, valueBoxed = false;
-        if (keyObj instanceof Long) {
-            int keyId = ((Long) keyObj).intValue();
-            keySlot = scope.slotForObj(keyId, where);
-            keyKind = scope.kindForObj(keyId, where);
-        }
-        if (valueObj instanceof Long) {
-            int valueId = ((Long) valueObj).intValue();
-            valueSlot = scope.slotForObj(valueId, where);
-            valueKind = scope.kindForObj(valueId, where);
-        }
+        int keySlot = key.slot, valueSlot = value.slot;
+        GoKind keyKind = key.kind, valueKind = value.kind;
 
         // Allocate hidden slots for range iteration state (v1 pattern).
         int startedSlot = scope.frames.addSlot(FrameSlotKind.Boolean, "rangestarted$", null);
@@ -680,7 +725,7 @@ public final class NodeFactoryV2 {
             case INT64, UNTYPED_INT -> {
                 int boundSlot = scope.frames.addSlot(FrameSlotKind.Long, "rangebound$", null);
                 int indexSlot = scope.frames.addSlot(FrameSlotKind.Long, "rangeindex$", null);
-                repeating = new RangeIntNode(x, body, keySlot, keyKind, keyBoxed, define,
+                repeating = new RangeIntNode(x, body, keySlot, keyKind, false, define,
                     startedSlot, boundSlot, indexSlot);
             }
             case SLICE -> {
@@ -715,6 +760,167 @@ public final class NodeFactoryV2 {
         return new RangeStmtNode(null, loop);
     }
 
+    /**
+     * Resolves one range-clause target to a {@link RangeTarget}.
+     *
+     * <ul>
+     *   <li>null (absent or {@code _}) → absent slot, no write;
+     *   <li>{@code ident} → the declared-variable path: declared on
+     *       {@code :=}, slot lookup otherwise (loud if undeclared);
+     *   <li>{@code index}/{@code selector} (e.g. {@code m[k]}, {@code s.f}) →
+     *       a hidden iteration-temp slot plus a per-iteration lvalue write.
+     *       {@code :=} with a non-Ident target is rejected by go/types
+     *       ("cannot declare ..."), so define here is a loud internal
+     *       error, never a silent miscompile.
+     * </ul>
+     */
+    @SuppressWarnings("unchecked")
+    private RangeTarget resolveRangeTarget(Object targetObj, boolean isKey, boolean define,
+            GoKind xkind, Object xTypeIdObj, String where, V2Scope scope) {
+        if (targetObj == null) {
+            return new RangeTarget(-1, GoKind.INT64, null);
+        }
+        if (!(targetObj instanceof Map)) {
+            throw new FrontendException(where + ": range target must be a map or null");
+        }
+        Map<String, Object> target = (Map<String, Object>) targetObj;
+        String tkind = getString(target, "kind", where);
+        Map<String, Object> tfields = getMap(target, "fields", where + ".fields");
+        if ("ident".equals(tkind)) {
+            Object objIdObj = tfields.get("obj");
+            if (!(objIdObj instanceof Long)) {
+                throw new FrontendException(where + ": ident target without obj");
+            }
+            int objId = ((Long) objIdObj).intValue();
+            if (define) {
+                GoKind k = goKindForObj(scope.types, scope.objects, objId, where);
+                scope.declareObj(objId, objName(scope.objects, objId), k);
+            }
+            int slot = scope.slotForObj(objId, where);
+            GoKind k = scope.kindForObj(objId, where);
+            return new RangeTarget(slot, k, null);
+        }
+        if (define) {
+            throw new FrontendException(where + ": cannot declare non-ident range target");
+        }
+        if (!"index".equals(tkind) && !"selector".equals(tkind)) {
+            throw new FrontendException(where + ": unsupported range target kind \"" + tkind + "\"");
+        }
+        GoKind iterKind = rangeIterKind(scope.types, xTypeIdObj, xkind, isKey, where);
+        int tmpSlot = scope.frames.addSlot(iterKind.slotKind(), "range$tmp$", null);
+        GoExprNode tmpRead = new VarReadNode(iterKind, tmpSlot);
+        GoStmtNode write = buildRangeLvalueWrite(target, tkind, tfields, tmpRead, where, scope);
+        return new RangeTarget(tmpSlot, iterKind, write);
+    }
+
+    /**
+     * The iteration value kind for a range over x's type: the key kind for
+     * the key target, the value kind for the value target. Named types
+     * resolve to their underlying type (mirroring goKindForTypeId).
+     */
+    @SuppressWarnings("unchecked")
+    private static GoKind rangeIterKind(List<Object> types, Object xTypeIdObj, GoKind xkind,
+            boolean isKey, String where) {
+        switch (xkind) {
+            case INT64, UNTYPED_INT -> {
+                if (!isKey) {
+                    throw new FrontendException(where + ": range over int has no value");
+                }
+                return GoKind.INT64;
+            }
+            case STRING -> {
+                // Key: byte index; value: rune (int32 carrier).
+                return isKey ? GoKind.INT64 : GoKind.INT32;
+            }
+            case SLICE, ARRAY, MAP -> {
+                Map<String, Object> tm = resolveUnderlyingType(types, xTypeIdObj, where);
+                String k = (String) tm.get("kind");
+                Map<String, Object> detail = getMap(tm, "detail", where + ".detail");
+                if ("slice".equals(k) || "array".equals(k)) {
+                    return isKey ? GoKind.INT64 : goKindForTypeId(types, detail.get("elem"), where);
+                }
+                if ("map".equals(k)) {
+                    return isKey ? goKindForTypeId(types, detail.get("key"), where)
+                                 : goKindForTypeId(types, detail.get("elem"), where);
+                }
+                throw new FrontendException(where + ": cannot iterate " + k);
+            }
+            default -> throw new FrontendException(
+                where + ": range over " + xkind + " not yet supported in v2");
+        }
+    }
+
+    /**
+     * Follows named→underlying links until a concrete type-table entry is
+     * reached.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> resolveUnderlyingType(List<Object> types,
+            Object typeIdObj, String where) {
+        Object cur = typeIdObj;
+        for (int depth = 0; depth < 32; depth++) {
+            if (!(cur instanceof Long)) {
+                throw new FrontendException(where + ": bad type id " + cur);
+            }
+            int id = ((Long) cur).intValue();
+            if (id < 0 || id >= types.size() || !(types.get(id) instanceof Map)) {
+                throw new FrontendException(where + ": bad type id " + id);
+            }
+            Map<String, Object> tm = (Map<String, Object>) types.get(id);
+            if (!"named".equals(tm.get("kind"))) {
+                return tm;
+            }
+            Map<String, Object> detail = (Map<String, Object>) tm.get("detail");
+            if (detail == null || !(detail.get("underlying") instanceof Long)) {
+                throw new FrontendException(where + ": named type without underlying");
+            }
+            cur = detail.get("underlying");
+        }
+        throw new FrontendException(where + ": type alias cycle");
+    }
+
+    /**
+     * Builds the per-iteration lvalue write for a non-ident range target:
+     * {@code m[k] = tmp} / {@code s.f = tmp}. The iteration value is read
+     * from the hidden temp slot; the lvalue subtrees are rebuilt from the
+     * target node so they are re-evaluated each iteration, matching Go's
+     * "assigned as in an assignment statement".
+     */
+    @SuppressWarnings("unchecked")
+    private GoStmtNode buildRangeLvalueWrite(Map<String, Object> target, String tkind,
+            Map<String, Object> tfields, GoExprNode tmpRead, String where, V2Scope scope) {
+        if ("index".equals(tkind)) {
+            Object xObj = tfields.get("x");
+            Object indexObj = tfields.get("index");
+            if (!(xObj instanceof Map) || !(indexObj instanceof Map)) {
+                throw new FrontendException(where + ": index x/index must be maps");
+            }
+            Map<String, Object> xMap = (Map<String, Object>) xObj;
+            GoExprNode container = buildExpr(xMap, where + ".x", scope);
+            GoExprNode index = buildExpr((Map<String, Object>) indexObj, where + ".index", scope);
+            Map<String, Object> xfields = getMap(xMap, "fields", where + ".x.fields");
+            GoKind containerKind = goKindForTypeId(scope.types, xfields.get("type"), where + ".x");
+            GoKind elemKind = goKindForTypeId(scope.types, tfields.get("type"), where);
+            return new IndexWriteNode(container, index, tmpRead, containerKind, elemKind);
+        }
+        // Selector target: field only. Method values are not assignable
+        // (go/types rejects `s.M = ...` for a method M before we get here).
+        String selKind = (String) tfields.get("kind");
+        if (!"field".equals(selKind)) {
+            throw new FrontendException(where + ": non-field selector as range target");
+        }
+        Object xObj = tfields.get("x");
+        if (!(xObj instanceof Map)) {
+            throw new FrontendException(where + ": selector.x must be a map");
+        }
+        Map<String, Object> xMap = (Map<String, Object>) xObj;
+        GoExprNode obj = buildExpr(xMap, where + ".x", scope);
+        String sel = getString(tfields, "sel", where);
+        GoKind fieldKind = goKindForTypeId(scope.types, tfields.get("type"), where);
+        int fieldIndex = findFieldIndex(scope.types, xMap, sel, where);
+        return new SelectorWriteNode(obj, tmpRead, new int[]{fieldIndex}, fieldKind);
+    }
+
     @SuppressWarnings("unchecked")
     private static String objName(List<Object> objects, int objId) {
         if (objId < 0 || objId >= objects.size()) {
@@ -741,26 +947,15 @@ public final class NodeFactoryV2 {
         if (!(typeIdObj instanceof Long)) {
             throw new FrontendException(where + ": selector.x has no type");
         }
-        int typeId = ((Long) typeIdObj).intValue();
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
-        // Handle pointer to struct: dereference.
+        // Resolve named types to their underlying type (a selector on a
+        // named struct, the common case, carries the named type id).
+        Map<String, Object> typeMap = resolveUnderlyingType(types, typeIdObj, where);
+        // Handle pointer to struct: dereference, then resolve named again.
         String kind = (String) typeMap.get("kind");
         if ("pointer".equals(kind)) {
-            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
-            Object elemObj = detail.get("elem");
-            if (elemObj instanceof Long) {
-                typeId = ((Long) elemObj).intValue();
-                t = types.get(typeId);
-                typeMap = (Map<String, Object>) t;
-                kind = (String) typeMap.get("kind");
-            }
+            Map<String, Object> detail = getMap(typeMap, "detail", where + ".detail");
+            typeMap = resolveUnderlyingType(types, detail.get("elem"), where);
+            kind = (String) typeMap.get("kind");
         }
         if (!"struct".equals(kind)) {
             throw new FrontendException(where + ": selector on non-struct type " + kind);
@@ -1052,7 +1247,16 @@ public final class NodeFactoryV2 {
             if (!(a instanceof Map)) {
                 throw new FrontendException(where + ".args[" + i + "]: must be a map");
             }
-            args.add(buildExpr((Map<String, Object>) a, where + ".args[" + i + "]", scope));
+            Map<String, Object> amap = (Map<String, Object>) a;
+            // "typename" args (make/new's type argument) are type-level
+            // metadata, not runtime values: they carry no value to evaluate.
+            // The make/new branches below derive everything from the call's
+            // own type field, so the typename node is skipped, not built.
+            // A typename anywhere else still hits buildExpr's loud default.
+            if ("typename".equals(getString(amap, "kind", where + ".args[" + i + "]"))) {
+                continue;
+            }
+            args.add(buildExpr(amap, where + ".args[" + i + "]", scope));
         }
 
         switch (builtin) {

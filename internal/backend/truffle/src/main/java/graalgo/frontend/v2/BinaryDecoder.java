@@ -52,8 +52,15 @@ public final class BinaryDecoder {
      * Current wire format version. Bump on any incompatible change, in
      * lockstep with the Go encoder's formatVersion
      * (internal/frontend/v2/encode/encode.go).
+     *
+     * <p>v2: range key/value are expression nodes (ident/index/selector
+     * maps) or null (was: Long obj ids); vardecl is one flat node per
+     * ValueSpec ({names:[string], objs:[objid|-1], define, type,
+     * values:[expr]}); new node kinds "global" (package-level var spec,
+     * vardecl-like fields) and "typename" (make/new type argument);
+     * selector nodes carry kind/index/indirect/obj (V3).
      */
-    private static final long FORMAT_VERSION = 1;
+    private static final long FORMAT_VERSION = 2;
 
     private static final int TAG_NULL = 0x00;
     private static final int TAG_BOOL = 0x01;

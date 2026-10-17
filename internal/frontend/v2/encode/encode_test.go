@@ -177,7 +177,7 @@ func TestEncodeGoldenDoc(t *testing.T) {
 	t.Logf("golden doc hex: %s", got)
 	// Keys sort: "big" < "l" < "neg" < "s".
 	want := "67326269" + // magic "g2bi"
-		"01" + // version 1
+		"02" + // version 2
 		"0504" + // map, 4 entries
 		"03626967" + "02ffffffffffffffffff01" + // "big": uint64(1)<<63 → zigzag 0xFF..FF
 		"016c" + "0402" + "0202" + "030374776f" + // "l": [1, "two"]

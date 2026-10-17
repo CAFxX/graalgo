@@ -131,8 +131,7 @@ func globalFirstName(g map[string]any) string {
 	if len(names) == 0 {
 		return ""
 	}
-	nm, _ := names[0].(map[string]any)
-	s, _ := nm["name"].(string)
+	s, _ := names[0].(string)
 	return s
 }
 
@@ -466,7 +465,9 @@ func main() {
 }
 
 // TestVarDeclPerSpecTypes (P1-V6): var (a int; b string) gives each spec
-// its own type entry. Pre-fix, the whole node shared the last spec's type.
+// its own vardecl node with its own type entry, in the v1-pinned flat
+// shape ({names, objs, define, type, values}). Pre-fix, the whole GenDecl
+// shared the last spec's type in one merged node.
 func TestVarDeclPerSpecTypes(t *testing.T) {
 	src := `package main
 
@@ -480,19 +481,26 @@ func main() {
 `
 	doc := emitDoc(t, src)
 	vds := nodesOfKind(doc, "vardecl")
-	if len(vds) != 1 {
-		t.Fatalf("vardecl nodes = %d, want 1", len(vds))
+	if len(vds) != 2 {
+		t.Fatalf("vardecl nodes = %d, want 2 (one per ValueSpec)", len(vds))
 	}
-	specs, _ := nodeFields(vds[0])["specs"].([]any)
-	if len(specs) != 2 {
-		t.Fatalf("vardecl specs = %d, want 2", len(specs))
+	// Each node is flat: names/objs parallel lists, its own type.
+	types := []int{}
+	for i, vd := range vds {
+		f := nodeFields(vd)
+		names, _ := f["names"].([]any)
+		objs, _ := f["objs"].([]any)
+		if len(names) != 1 || len(objs) != 1 {
+			t.Fatalf("vardecl %d: names=%v objs=%v, want 1 name + 1 obj", i, names, objs)
+		}
+		if _, ok := f["specs"]; ok {
+			t.Fatalf("vardecl %d: merged \"specs\" shape must not be emitted", i)
+		}
+		tid, _ := f["type"].(int)
+		types = append(types, tid)
 	}
-	s0, _ := specs[0].(map[string]any)
-	s1, _ := specs[1].(map[string]any)
-	t0, _ := s0["type"].(int)
-	t1, _ := s1["type"].(int)
-	if t0 == t1 {
-		t.Fatalf("both specs share type id %d (the P1-V6 bug)", t0)
+	if types[0] == types[1] {
+		t.Fatalf("both specs share type id %d (the P1-V6 bug)", types[0])
 	}
 	// Pin the actual types: spec 0 is int, spec 1 is string.
 	isBasic := func(id int, name string) bool {
@@ -506,11 +514,11 @@ func main() {
 		n, _ := m["detail"].(map[string]any)["name"].(string)
 		return n == name
 	}
-	if !isBasic(t0, "int") {
-		t.Fatalf("spec 0 type is not int (id %d)", t0)
+	if !isBasic(types[0], "int") {
+		t.Fatalf("spec 0 type is not int (id %d)", types[0])
 	}
-	if !isBasic(t1, "string") {
-		t.Fatalf("spec 1 type is not string (id %d)", t1)
+	if !isBasic(types[1], "string") {
+		t.Fatalf("spec 1 type is not string (id %d)", types[1])
 	}
 }
 

@@ -184,25 +184,37 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 	if !ok || gd.Tok != token.VAR {
 		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
 	}
-	specs := []any{}
+	// One vardecl node per ValueSpec in the v1-pinned flat shape
+	// (internal/frontend/vardecl_multispec_test.go: "must emit one vardecl
+	// node per spec, not a single merged node"). A merged node cannot carry
+	// per-spec types (P1-V6), and the merged "specs" shape diverged from the
+	// wire shape NodeFactoryV2.buildVarDecl implements — the flat per-spec
+	// node keeps the Java decoder working with zero churn.
+	vardecls := []any{}
 	for _, spec := range gd.Specs {
 		vs, ok := spec.(*ast.ValueSpec)
 		if !ok {
 			return nil, fmt.Errorf("emit: unsupported spec %T in var decl", spec)
 		}
-		sn, err := e.emitValueSpec(vs)
+		fields, err := e.emitValueSpec(vs)
 		if err != nil {
 			return nil, err
 		}
-		specs = append(specs, sn)
+		vardecls = append(vardecls, e.node("vardecl", vs, fields))
 	}
-	return e.node("vardecl", st, map[string]any{"specs": specs}), nil
+	if len(vardecls) == 1 {
+		return vardecls[0].(map[string]any), nil
+	}
+	return e.node("block", st, map[string]any{"stmts": vardecls}), nil
 }
 
-// emitValueSpec emits one *ast.ValueSpec with its own per-spec type entry
-// (P1-V6): var (a int; b string) must not share one type across specs.
-// Shared by function-local var DeclStmts and top-level globals so both
-// carry identical per-spec shape.
+// emitValueSpec emits one *ast.ValueSpec's flat field map, shared by
+// function-local vardecl nodes and top-level global nodes:
+// {names: [string], objs: [objid|-1], define: false, type, values: [expr]}.
+// This is the v1-pinned vardecl shape (see export.go's per-spec vardecl);
+// each spec carries its own type entry (P1-V6): var (a int; b string) must
+// not share one type across specs. Blank names ("_") carry obj -1, the
+// frontend-v1.md §5a convention.
 func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 	var typ any
 	if vs.Type != nil {
@@ -211,20 +223,18 @@ func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 		}
 	}
 	names := []any{}
+	objs := []any{}
 	for _, name := range vs.Names {
-		entry := map[string]any{"name": name.Name}
+		names = append(names, name.Name)
 		if name.Name == "_" {
-			// Blank: no object; -1 marks the slot (same convention as
-			// docs/arch/frontend-v1.md §5a).
-			entry["obj"] = -1
-		} else {
-			obj := e.info.Info.Defs[name]
-			if obj == nil {
-				return nil, fmt.Errorf("emit: no object for %s", name.Name)
-			}
-			entry["obj"] = e.declareObject(obj)
+			objs = append(objs, -1)
+			continue
 		}
-		names = append(names, entry)
+		obj := e.info.Info.Defs[name]
+		if obj == nil {
+			return nil, fmt.Errorf("emit: no object for %s", name.Name)
+		}
+		objs = append(objs, e.declareObject(obj))
 	}
 	values := []any{}
 	for _, v := range vs.Values {
@@ -236,6 +246,8 @@ func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 	}
 	return map[string]any{
 		"names":  names,
+		"objs":   objs,
+		"define": false,
 		"type":   typ,
 		"values": values,
 	}, nil

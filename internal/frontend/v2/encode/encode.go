@@ -60,7 +60,14 @@ const formatMagic = "g2bi"
 // formatVersion is the current wire format version. Bump on any
 // incompatible change; the Java decoder rejects unknown versions loudly.
 // Keep in lockstep with BinaryDecoder.FORMAT_VERSION.
-const formatVersion = 1
+//
+// v2: range key/value are expression nodes (ident/index/selector maps) or
+// null (was: Long obj ids); vardecl is one flat node per ValueSpec
+// ({names:[string], objs:[objid|-1], define, type, values:[expr]});
+// new node kinds "global" (package-level var spec, vardecl-like fields)
+// and "typename" (make/new type argument); selector nodes carry
+// kind/index/indirect/obj (V3).
+const formatVersion = 2
 
 // Encode serializes a Document into the v2 binary format.
 func Encode(doc *emit.Document) ([]byte, error) {

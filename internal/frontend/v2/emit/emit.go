@@ -214,8 +214,9 @@ func (e *Emitter) declareTopDecl(d ast.Decl) error {
 
 // emitGlobals emits package-level var specs in Go initialization order
 // (see orderGlobalSpecs). One "global" node per spec; the fields are the
-// shared emitValueSpec shape (names with object ids, per-spec type,
-// initializer expressions).
+// shared emitValueSpec flat shape ({names: [string], objs: [objid|-1],
+// define: false, type, values: [expr]}), identical to a function-local
+// vardecl node's fields.
 func (e *Emitter) emitGlobals(specs []*ast.ValueSpec) ([]any, error) {
 	ordered, err := e.orderGlobalSpecs(specs)
 	if err != nil {

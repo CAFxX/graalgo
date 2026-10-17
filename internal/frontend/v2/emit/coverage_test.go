@@ -74,9 +74,10 @@ var handledNodes = map[string]bool{
 
 // typeExprNodes are AST type expressions that never reach emitExpr's switch
 // because they are handled via go/types type IDs. They are covered.
-// (The one expression position where a type expression appears — builtin
-// make/new's type argument — is routed explicitly to the type table in
-// emitCall; see TestMakeNewTypeArgs.)
+// (Type expressions in value positions — builtin make/new's type argument,
+// and conversion operands like []byte("s") — are routed explicitly; see
+// TestMakeNewTypeArgs. Conversions still fail loudly in emitExpr pending
+// conversion support.)
 var typeExprNodes = map[string]bool{
 	"ArrayType":     true,
 	"ChanType":      true,
