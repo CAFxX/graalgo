@@ -74,7 +74,9 @@ func phase1SyntheticPackageForTest(t *testing.T, srcFile, constName, path string
 }
 
 // rejectImports is a types.Importer for self-contained synthetic sources
-// (errors, sort): any import is a test failure.
+// (sort): any import is a test failure. (errors used to qualify but now
+// imports the synthetic internal/reflectlite, so its drift test uses
+// syntheticStdImporter instead.)
 type rejectImports struct{}
 
 func (rejectImports) Import(path string) (*types.Package, error) {
@@ -118,6 +120,14 @@ func syntheticStdImporter(t *testing.T) types.Importer {
 			return phase1SyntheticPackageForTest(t,
 				"../synth_reflect.go",
 				"syntheticIterSource", "iter", imp), nil
+		}
+		if path == "internal/reflectlite" {
+			// The phase-1 synthetic errors source imports
+			// internal/reflectlite; the frozen exporter retired the
+			// synthetic reflectlite and resolves the REAL GOROOT
+			// package via the disk importer (synth_machinery.go) —
+			// so the test imports the real package too.
+			return importer.Default().Import("internal/reflectlite")
 		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", path)
 	})
@@ -175,7 +185,7 @@ func TestErrorsSyntheticSignatures(t *testing.T) {
 	}
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../synth_errors.go", "syntheticErrorsSource",
-		"errors", rejectImports{})
+		"errors", syntheticStdImporter(t))
 
 	// Full exported-scope drift check (names + rendered types).
 	assertScopeMatchesPhase1(t, "errors", mirror, phase1)
