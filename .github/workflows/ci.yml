@@ -22,7 +22,8 @@
 #                               vs gc (`e2e-modules.yml`)
 # The full differential suite (`make test`, 30+ min) is excluded from
 # per-push CI by design — it runs in local verification and the weekly
-# full-suite job. This is documented, not skipped.
+# full-suite job, together with the 8 corpus differentials
+# (`make test-corpus`, E4). This is documented, not skipped.
 name: ci
 
 on:
@@ -118,3 +119,9 @@ jobs:
 
       - name: make test (full differential suite)
         run: make test
+
+      - name: make test-corpus (8 corpus differentials, E4)
+        # The hand-curated corpora (test/corpus/*/run_differential.sh),
+        # gc-vs-graalgo via the product launcher. `make test` above built
+        # the backend (test-corpus: build is a no-op re-entry).
+        run: make test-corpus

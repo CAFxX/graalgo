@@ -107,7 +107,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-go test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-go test-corpus test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-go test-ci test-regression
 
@@ -236,6 +236,18 @@ test: build
 	$(MAKE) -C internal/backend/truffle test
 	$(MAKE) -C internal/backend/runtime test
 	$(MAKE) -C internal/backend/interop test
+
+# Corpus differentials (E4): the 8 hand-curated corpora
+# (test/corpus/{atomic,fastrand,iface,map,slice,sync,timectx,traceback}),
+# each a gc-vs-graalgo differential via the product launcher
+# (internal/backend/graalgo-sync-run). Needs `build` first (the runners
+# fail fast with the fix otherwise). Weekly in CI (the `full-suite` job),
+# not per-push — same cadence class as `test`.
+test-corpus: build
+	for c in atomic fastrand iface map slice sync timectx traceback; do \
+		echo "=== corpus $$c ==="; \
+		./test/corpus/$$c/run_differential.sh || exit 1; \
+	done
 
 # Behavior snapshots (M10 WS I): graalgo's observable behavior on the
 # differential corpus ([test/differential/corpus/](test/differential/corpus/)),

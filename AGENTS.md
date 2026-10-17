@@ -10,9 +10,10 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
 - `make all` — the per-push gate: regenerate generated artifacts
   (`generate`), compile everything (`build`), verify behavior snapshots
   (`snapshot-check`), run the grep/format gates (`check`), run the fast
-  in-JVM tests (`test-ci`). Then CI runs `git diff --exit-code`: if `make
-  all` regenerates any tracked file differently from what's committed, the
-  build fails. **Push only after `make all` is green locally.**
+  in-JVM tests (`test-ci`), run the Go unit tests (`test-go`). Then CI runs
+  `git diff --exit-code`: if `make all` regenerates any tracked file
+  differently from what's committed, the build fails. **Push only after
+  `make all` is green locally.**
 - `make check` — placeholder / debug-leftover / netpoller / exclusion-list
   grep gates + gofrontend gofmt/vet/tests.
 - `make test` — the full differential suite (30+ minutes). Not per-push;
