@@ -65,6 +65,397 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
+# Complete stdlib import-path list (P1-2 gate hardening, 2026-10-17).
+# Enumerated from the Go 1.27.1 GOROOT (~/tools/go/src): every directory
+# containing a non-test .go file whose package clause names the directory,
+# plus bare top-level roots that only group subpackages (archive, compress,
+# ...), plus "internal". When the Go floor moves, regenerate with:
+#   find ~/tools/go/src -maxdepth 4 -type d \( -name testdata -o -path "*/cmd*" \
+#     -o -path "*/vendor*" \) -prune -o -type d -print
+# and keep directories whose package clause matches the directory base name.
+STDLIB_PATHS = frozenset([
+    "archive",
+    "archive/tar",
+    "archive/zip",
+    "arena",
+    "bufio",
+    "builtin",
+    "bytes",
+    "cmp",
+    "compress",
+    "compress/bzip2",
+    "compress/flate",
+    "compress/gzip",
+    "compress/lzw",
+    "compress/zlib",
+    "container",
+    "container/heap",
+    "container/list",
+    "container/ring",
+    "context",
+    "crypto",
+    "crypto/aes",
+    "crypto/boring",
+    "crypto/cipher",
+    "crypto/des",
+    "crypto/dsa",
+    "crypto/ecdh",
+    "crypto/ecdsa",
+    "crypto/ed25519",
+    "crypto/elliptic",
+    "crypto/fips140",
+    "crypto/hkdf",
+    "crypto/hmac",
+    "crypto/hpke",
+    "crypto/internal/boring",
+    "crypto/internal/boring/bbig",
+    "crypto/internal/boring/bcache",
+    "crypto/internal/boring/sig",
+    "crypto/internal/boring/syso",
+    "crypto/internal/constanttime",
+    "crypto/internal/cryptotest",
+    "crypto/internal/cryptotest/wycheproof",
+    "crypto/internal/cryptotest/x509limbo",
+    "crypto/internal/entropy",
+    "crypto/internal/fips140",
+    "crypto/internal/fips140/aes",
+    "crypto/internal/fips140/alias",
+    "crypto/internal/fips140/bigmod",
+    "crypto/internal/fips140/check",
+    "crypto/internal/fips140/drbg",
+    "crypto/internal/fips140/ecdh",
+    "crypto/internal/fips140/ecdsa",
+    "crypto/internal/fips140/ed25519",
+    "crypto/internal/fips140/edwards25519",
+    "crypto/internal/fips140/hkdf",
+    "crypto/internal/fips140/hmac",
+    "crypto/internal/fips140/mldsa",
+    "crypto/internal/fips140/mlkem",
+    "crypto/internal/fips140/nistec",
+    "crypto/internal/fips140/pbkdf2",
+    "crypto/internal/fips140/rsa",
+    "crypto/internal/fips140/sha256",
+    "crypto/internal/fips140/sha3",
+    "crypto/internal/fips140/sha512",
+    "crypto/internal/fips140/ssh",
+    "crypto/internal/fips140/subtle",
+    "crypto/internal/fips140/tls12",
+    "crypto/internal/fips140/tls13",
+    "crypto/internal/fips140cache",
+    "crypto/internal/fips140deps/byteorder",
+    "crypto/internal/fips140deps/cpu",
+    "crypto/internal/fips140deps/godebug",
+    "crypto/internal/fips140deps/time",
+    "crypto/internal/fips140hash",
+    "crypto/internal/fips140only",
+    "crypto/internal/impl",
+    "crypto/internal/rand",
+    "crypto/internal/randutil",
+    "crypto/internal/sysrand",
+    "crypto/md5",
+    "crypto/mldsa",
+    "crypto/mlkem",
+    "crypto/mlkem/mlkemtest",
+    "crypto/pbkdf2",
+    "crypto/rand",
+    "crypto/rc4",
+    "crypto/rsa",
+    "crypto/sha1",
+    "crypto/sha256",
+    "crypto/sha3",
+    "crypto/sha512",
+    "crypto/subtle",
+    "crypto/tls",
+    "crypto/tls/fipsonly",
+    "crypto/tls/internal/fips140tls",
+    "crypto/x509",
+    "crypto/x509/internal/macos",
+    "crypto/x509/pkix",
+    "database",
+    "database/sql",
+    "database/sql/driver",
+    "database/sql/internal",
+    "debug",
+    "debug/buildinfo",
+    "debug/dwarf",
+    "debug/elf",
+    "debug/gosym",
+    "debug/macho",
+    "debug/pe",
+    "debug/plan9obj",
+    "embed",
+    "encoding",
+    "encoding/ascii85",
+    "encoding/asn1",
+    "encoding/base32",
+    "encoding/base64",
+    "encoding/binary",
+    "encoding/csv",
+    "encoding/gob",
+    "encoding/hex",
+    "encoding/json",
+    "encoding/json/internal",
+    "encoding/json/internal/jsonflags",
+    "encoding/json/internal/jsonopts",
+    "encoding/json/internal/jsontest",
+    "encoding/json/internal/jsonwire",
+    "encoding/json/jsontext",
+    "encoding/pem",
+    "encoding/xml",
+    "errors",
+    "expvar",
+    "flag",
+    "fmt",
+    "go",
+    "go/ast",
+    "go/build",
+    "go/build/constraint",
+    "go/constant",
+    "go/doc",
+    "go/doc/comment",
+    "go/format",
+    "go/importer",
+    "go/internal/gccgoimporter",
+    "go/internal/gcimporter",
+    "go/parser",
+    "go/printer",
+    "go/scanner",
+    "go/token",
+    "go/types",
+    "hash",
+    "hash/adler32",
+    "hash/crc32",
+    "hash/crc64",
+    "hash/fnv",
+    "hash/maphash",
+    "html",
+    "html/template",
+    "image",
+    "image/color",
+    "image/color/palette",
+    "image/draw",
+    "image/gif",
+    "image/internal/imageutil",
+    "image/jpeg",
+    "image/png",
+    "index",
+    "index/suffixarray",
+    "internal",
+    "internal/abi",
+    "internal/asan",
+    "internal/bisect",
+    "internal/buildcfg",
+    "internal/bytealg",
+    "internal/byteorder",
+    "internal/cfg",
+    "internal/cgrouptest",
+    "internal/chacha8rand",
+    "internal/coverage",
+    "internal/coverage/calloc",
+    "internal/coverage/cfile",
+    "internal/coverage/cformat",
+    "internal/coverage/cmerge",
+    "internal/coverage/decodecounter",
+    "internal/coverage/decodemeta",
+    "internal/coverage/encodecounter",
+    "internal/coverage/encodemeta",
+    "internal/coverage/pods",
+    "internal/coverage/rtcov",
+    "internal/coverage/slicereader",
+    "internal/coverage/slicewriter",
+    "internal/coverage/stringtab",
+    "internal/coverage/uleb128",
+    "internal/cpu",
+    "internal/dag",
+    "internal/diff",
+    "internal/exportdata",
+    "internal/filepathlite",
+    "internal/fmtsort",
+    "internal/fuzz",
+    "internal/gate",
+    "internal/goarch",
+    "internal/godebug",
+    "internal/godebugs",
+    "internal/goexperiment",
+    "internal/goos",
+    "internal/goroot",
+    "internal/gover",
+    "internal/goversion",
+    "internal/lazyregexp",
+    "internal/lazytemplate",
+    "internal/msan",
+    "internal/nettest",
+    "internal/nettrace",
+    "internal/obscuretestdata",
+    "internal/oserror",
+    "internal/pkgbits",
+    "internal/platform",
+    "internal/poll",
+    "internal/profile",
+    "internal/profilerecord",
+    "internal/race",
+    "internal/reflectlite",
+    "internal/routebsd",
+    "internal/runtime/atomic",
+    "internal/runtime/cgobench",
+    "internal/runtime/cgroup",
+    "internal/runtime/exithook",
+    "internal/runtime/gc",
+    "internal/runtime/gc/scan",
+    "internal/runtime/maps",
+    "internal/runtime/math",
+    "internal/runtime/pprof/label",
+    "internal/runtime/startlinetest",
+    "internal/runtime/sys",
+    "internal/runtime/syscall/linux",
+    "internal/runtime/syscall/windows",
+    "internal/saferio",
+    "internal/singleflight",
+    "internal/strconv",
+    "internal/stringslite",
+    "internal/sync",
+    "internal/synctest",
+    "internal/syscall/execenv",
+    "internal/syscall/unix",
+    "internal/syscall/windows",
+    "internal/syscall/windows/registry",
+    "internal/syscall/windows/sysdll",
+    "internal/sysinfo",
+    "internal/syslist",
+    "internal/testenv",
+    "internal/testhash",
+    "internal/testlog",
+    "internal/testpty",
+    "internal/trace",
+    "internal/trace/internal/testgen",
+    "internal/trace/internal/tracev1",
+    "internal/trace/raw",
+    "internal/trace/testtrace",
+    "internal/trace/tracev2",
+    "internal/trace/traceviewer",
+    "internal/trace/traceviewer/format",
+    "internal/trace/version",
+    "internal/txtar",
+    "internal/types/errors",
+    "internal/unsafeheader",
+    "internal/xcoff",
+    "internal/zstd",
+    "io",
+    "io/fs",
+    "io/ioutil",
+    "iter",
+    "log",
+    "log/internal",
+    "log/slog",
+    "log/slog/internal",
+    "log/slog/internal/benchmarks",
+    "log/slog/internal/buffer",
+    "log/syslog",
+    "maps",
+    "math",
+    "math/big",
+    "math/big/internal/asmgen",
+    "math/bits",
+    "math/cmplx",
+    "math/rand",
+    "mime",
+    "mime/multipart",
+    "mime/quotedprintable",
+    "net",
+    "net/http",
+    "net/http/cgi",
+    "net/http/cookiejar",
+    "net/http/fcgi",
+    "net/http/httptest",
+    "net/http/httptrace",
+    "net/http/httputil",
+    "net/http/internal",
+    "net/http/internal/ascii",
+    "net/http/internal/http2",
+    "net/http/internal/httpcommon",
+    "net/http/internal/httpsfv",
+    "net/http/internal/testcert",
+    "net/http/pprof",
+    "net/internal/cgotest",
+    "net/internal/socktest",
+    "net/mail",
+    "net/netip",
+    "net/rpc",
+    "net/rpc/jsonrpc",
+    "net/smtp",
+    "net/textproto",
+    "net/url",
+    "os",
+    "os/exec",
+    "os/exec/internal/fdtest",
+    "os/signal",
+    "os/user",
+    "path",
+    "path/filepath",
+    "plugin",
+    "reflect",
+    "reflect/internal/example1",
+    "reflect/internal/example2",
+    "regexp",
+    "regexp/syntax",
+    "runtime",
+    "runtime/_mkmalloc/astutil",
+    "runtime/asan",
+    "runtime/cgo",
+    "runtime/coverage",
+    "runtime/debug",
+    "runtime/metrics",
+    "runtime/msan",
+    "runtime/pprof",
+    "runtime/race",
+    "runtime/race/internal/amd64v1",
+    "runtime/race/internal/amd64v3",
+    "runtime/secret",
+    "runtime/trace",
+    "simd",
+    "simd/archsimd",
+    "simd/archsimd/_gen/sgutil",
+    "simd/archsimd/_gen/unify",
+    "simd/archsimd/internal/test_helpers",
+    "simd/internal/bridge",
+    "slices",
+    "sort",
+    "strconv",
+    "strings",
+    "structs",
+    "sync",
+    "sync/atomic",
+    "syscall",
+    "syscall/js",
+    "testing",
+    "testing/cryptotest",
+    "testing/fstest",
+    "testing/internal/testdeps",
+    "testing/iotest",
+    "testing/quick",
+    "testing/slogtest",
+    "testing/synctest",
+    "text",
+    "text/scanner",
+    "text/tabwriter",
+    "text/template",
+    "text/template/parse",
+    "time",
+    "time/tzdata",
+    "unicode",
+    "unicode/utf16",
+    "unicode/utf8",
+    "unique",
+    "unsafe",
+    "uuid",
+    "weak",
+])
+
+# Base package names: "net/http" -> "http". Quoting the full import path in
+# a conditional is still a conditional on the base package name, so the
+# gate tests both the full path and the base.
+STDLIB_BASES = frozenset(p.rsplit("/", 1)[-1] for p in STDLIB_PATHS)
+
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
 
@@ -88,6 +479,18 @@ def get_diff():
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout, name
     return "", ""
+
+def _is_stdlib_prefixed(node_kind):
+    """True if node_kind starts with a stdlib package base name followed by
+    a lowercase letter (the stdlib-specific wire-node naming shape, e.g.
+    "runtimenumcpu", "tlsverify", "cryptox509")."""
+    for base in STDLIB_BASES:
+        if node_kind.startswith(base):
+            rest = node_kind[len(base):]
+            if rest and "a" <= rest[0] <= "z":
+                return True
+    return False
+
 
 def check_no_bridges(diff):
     errors = []
@@ -118,29 +521,30 @@ def check_no_bridges(diff):
     for f in new_synth:
         errors.append(f"NEW SYNTHETIC FILE: {f} — synthetic stdlib packages are banned")
 
-    # 2. Package-name conditionals (stdlib names)
-    stdlib_pkgs = ["fmt", "sync", "os", "net", "http", "runtime", "reflect", "time",
-                   "strings", "bytes", "strconv", "sort", "math", "encoding", "crypto",
-                   "syscall", "unsafe", "io", "bufio", "context", "errors"]
+    # 2. Package-name conditionals (stdlib names). Matches full import paths
+    #    ("net/http") as well as bare base names ("http"): each quoted path in
+    #    a name-comparison context (==, !=, case) is tested as the full path
+    #    AND as its base, so quoting "a/b" instead of "b" does not evade the
+    #    gate. (P1-2: the old 20-entry bare-name list missed `== "net/http"`,
+    #    `case "encoding/json"`, and every package not on the list, e.g.
+    #    "slices".)
+    cond_re = re.compile(r'[=!]=\s*"([^"]+)"|case\s*"([^"]+)"')
     for fname, line in added_lines:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
-        # Match: if pkg == "fmt", case "sync", pkg.Name == "os", etc.
-        for pkg in stdlib_pkgs:
-            patterns = [
-                rf'==\s*"{pkg}"',
-                rf'case\s*"{pkg}"',
-                rf'Name\s*==\s*"{pkg}"',
-            ]
-            for pat in patterns:
-                if re.search(pat, line):
-                    # Allow in test files and docs. ("_test." covers
-                    # *_test.go harnesses, e.g. drift-test importers that
-                    # resolve synthetic import paths like the pre-existing
-                    # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
-                        errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
-                        break
+        # Allow in test files and docs. ("_test." covers *_test.go harnesses,
+        # e.g. drift-test importers that resolve synthetic import paths like
+        # the pre-existing `if path == "bytes"` stubs.)
+        if "/test" in fname or "test_" in fname or "_test." in fname:
+            continue
+        hit = None
+        for m in cond_re.finditer(line):
+            path = m.group(1) or m.group(2)
+            if path in STDLIB_PATHS or path.rsplit("/", 1)[-1] in STDLIB_BASES:
+                hit = path
+                break
+        if hit:
+            errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
 
     # 3. New panic stubs. The old regex only caught literal "not implemented"/
     #    "unsupported"/"todo" messages; fail-fast stubs also hide behind bare
@@ -162,15 +566,22 @@ def check_no_bridges(diff):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
 
-    # 4. New wire node kinds for stdlib
+    # 4. New wire node kinds for stdlib. Flags any new node kind in
+    #    export.go that starts with a stdlib package base name ("tlsverify"
+    #    via crypto/tls, "cryptox509" via crypto, "nethttpserver" via
+    #    net/http, ...). The old 5-prefix heuristic (runtime|fmt|sync|os|net)
+    #    missed every other stdlib root (P1-2).
+    #    NOTE: generic AST node names that collide with a stdlib base
+    #    (e.g. a hypothetical "gostart", like the existing "gostmt"/"timec"/
+    #    "syncop") fail LOUD here and need an adjudication entry — that is
+    #    intentional: a human decides, the gate never guesses.
     for fname, line in added_lines:
         if not fname or "export.go" not in fname:
             continue
         m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
         if m:
             node_kind = m.group(1)
-            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
-            if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
+            if _is_stdlib_prefixed(node_kind):
                 # Adjudicated real implementations are not bridges.
                 if any(f_sub in fname and nk == node_kind
                        for f_sub, nk in ADJUDICATED_WIRE_NODES):

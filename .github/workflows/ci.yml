@@ -45,6 +45,12 @@ jobs:
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py
 
+      - name: No-bridges gate self-test
+        # The gate is itself tested: positive cases include the proven
+        # 2026-10-17 review bypasses, each non-tautological (fails on the
+        # pre-hardening script).
+        run: python3 .github/scripts/check_no_bridges_test.py
+
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
         with:
