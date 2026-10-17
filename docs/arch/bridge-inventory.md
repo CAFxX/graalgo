@@ -39,7 +39,9 @@ deliverable until the design lands.
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
   byte-addressed value model (or documented trap contract) resolves
-  `unsafe.Add`. Retires B-6, B-7.
+  `unsafe.Add`. Retires B-6, B-7, B-8 (B-8 as a group: the same-FQN
+  overlay retires only when the compile cycle no longer needs the
+  shadows).
 
 ## Active bridges
 
@@ -175,6 +177,56 @@ deliverable until the design lands.
   through the backend so `runtime.Callers` walks the actual guest stack;
   then delete the synthetic intrinsics.
 - **Phase:** 4.
+
+### B-8. Eight same-FQN shadow classes in the truffle module (compile-time stubs)
+
+- **What:** 8 classes under
+  [internal/backend/truffle/src/main/java/](../../internal/backend/truffle/src/main/java/)
+  whose fully-qualified names collide with the real classes in
+  [internal/backend/runtime/src/main/java/](../../internal/backend/runtime/src/main/java/):
+  - 4 frozen fail-fast stubs (every method throws
+    `UnsupportedOperationException`):
+    [Netpoll.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Netpoll.java),
+    [ChanOps.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java),
+    [Scheduler.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Scheduler.java),
+    [GcInterop.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java);
+  - 2 no-op / partial stubs:
+    [Safepoint.java](../../internal/backend/truffle/src/main/java/graalgo/safepoint/Safepoint.java)
+    (`poll()` no-op),
+    [Timers.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Timers.java)
+    (`nanotime()` real, `sleep`/`startTimer`/`stopTimer` throw);
+  - 2 forked implementations with documented deltas:
+    [Panic.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Panic.java)
+    (lacks the runtime copy's `GODEBUG=panicnil` knob),
+    [GoroutineState.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GoroutineState.java)
+    (single static holder vs the runtime copy's `ThreadLocal`
+    vthread-scoped holder).
+- **Why:** the truffle↔runtime compile cycle — the runtime module compiles
+  the joint round first and the truffle module compiles its 8 same-FQN
+  classes against it (documented in
+  [docs/REPO_STRUCTURE.md](../../docs/REPO_STRUCTURE.md)). The launchers
+  [graalgo-run](../../internal/backend/graalgo-run) and
+  [graalgo-sync-run](../../internal/backend/graalgo-sync-run) put
+  `runtime/out/classes` *before* `truffle/out/classes` on the classpath, so
+  the runtime classes shadow the truffle copies — the ordering is
+  load-bearing. The shadows are compile-time API contracts, never the
+  runtime implementation; but they are exactly what the 2026-10-15 bridge
+  definition names ("fail-fast stubs", "shims"). A classpath-ordering
+  regression has no mechanical test — a flipped order surfaces as cryptic
+  "Phase 2" stub throws (the stale "Phase 2" messages were reworded to name
+  the launch bug in 2026-10-17).
+- **Root-cause fix:** needs design — eliminate the same-FQN overlay so the
+  truffle module compiles against the runtime module's real classes instead
+  of same-FQN shadows (e.g. restructure the compile cycle, or formalize a
+  compile-only API jar), or document why the cycle requires the shims.
+  Partial guard exists:
+  [PanicOverlayDriftTest](../../internal/backend/runtime/src/test/java/graalgo/runtime/PanicOverlayDriftTest.java)
+  reflectively asserts signature parity between the two `Panic` copies;
+  extend it to all 8 classes and add a launch-order assertion. Retire as a
+  group — deleting individual shadows without fixing the cycle breaks the
+  truffle module's standalone compilation.
+- **Phase:** 4 (needs design; the extended parity/order test is the
+  stopgap).
 
 ## Adjudicated non-bridges
 

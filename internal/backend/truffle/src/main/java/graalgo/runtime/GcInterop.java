@@ -1,15 +1,25 @@
 package graalgo.runtime;
 
 /**
- * Go-observable GC surface (P2-M4, ADR-0002 D4).
+ * Compile-time Go-observable GC surface (P2-M4, ADR-0002 D4; bridge B-8,
+ * inventoried in {@code docs/arch/bridge-inventory.md}).
  *
- * <p><strong>Phase-1 stub.</strong> Every method throws
- * {@link UnsupportedOperationException}; the Phase-2 module shadows this
- * class with the real implementation (same fully-qualified name, phase-2
- * classes first on the classpath — the documented overlay mechanism).
- * The signatures are the contract (they mirror gc's {@code runtime}
- * package surface added to the synthetic import overlay); bodies are
- * INTERNAL per freeze §1.
+ * <p>This class exists so the truffle module compiles against the GC
+ * interop surface despite the truffle&#8596;runtime compile cycle (the
+ * runtime module compiles the joint round first; the truffle module then
+ * compiles this same-FQN class against it). The real implementation lives
+ * in the runtime module ({@code graalgo.runtime.GcInterop} in
+ * {@code internal/backend/runtime}: single shared
+ * {@code java.lang.ref.Cleaner} for {@code SetFinalizer},
+ * {@code Reference.reachabilityFence} for {@code KeepAlive},
+ * {@code System.gc()} + MXBean poll wait for {@code GC}, per ADR-0002 D4).
+ * At launch, {@code internal/backend/graalgo-run} puts
+ * {@code runtime/out/classes} <em>before</em> {@code truffle/out/classes} on
+ * the classpath, so the real implementation shadows this class — this stub
+ * is only ever loaded if the launcher classpath order is violated (a launch
+ * bug). Every method throws {@link UnsupportedOperationException}; the
+ * signatures are the contract (they mirror gc's {@code runtime} package
+ * surface added to the synthetic import overlay).
  */
 public final class GcInterop {
     private GcInterop() {}

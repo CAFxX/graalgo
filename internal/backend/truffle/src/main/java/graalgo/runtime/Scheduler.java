@@ -3,13 +3,20 @@ package graalgo.runtime;
 import graalgo.values.GoFunc;
 
 /**
- * Frozen scheduler-glue intrinsic surface (WS G, GG-0020, STUB).
+ * Compile-time scheduler-glue intrinsic surface (WS G, GG-0020; bridge B-8,
+ * inventoried in {@code docs/arch/bridge-inventory.md}).
  *
- * <p>Phase 2 owns goroutine scheduling; these signatures are frozen now
- * so Phase-2 code and the Phase-1 AST build against the same contract.
- * Every method throws {@link UnsupportedOperationException} with a
- * Phase-2 message until Phase 2 implements it. (Goexit/defer/panic
- * machinery itself is worker-F's, WS F, GG-0019.)
+ * <p>This class exists so the truffle module compiles against the scheduler
+ * surface despite the truffle&#8596;runtime compile cycle (the runtime module
+ * compiles the joint round first; the truffle module then compiles this
+ * same-FQN class against it). The real scheduler glue lives in the runtime
+ * module ({@code graalgo.runtime.Scheduler} in {@code internal/backend/runtime}).
+ * At launch, {@code internal/backend/graalgo-run} puts
+ * {@code runtime/out/classes} <em>before</em> {@code truffle/out/classes} on
+ * the classpath, so the real implementation shadows this class — this stub
+ * is only ever loaded if the launcher classpath order is violated (a launch
+ * bug). Every method throws {@link UnsupportedOperationException}. (Goexit/
+ * defer/panic machinery itself is worker-F's, WS F, GG-0019.)
  */
 public final class Scheduler {
     private Scheduler() {}

@@ -3,11 +3,29 @@ package graalgo.runtime;
 /**
  * Goroutine-local execution state: the defer chain, the in-flight panic,
  * the recover-allowed flag, and the Go call stack (M5, WS F; SPEC §3.5).
+ * Same-FQN shadow (bridge B-8, inventoried in
+ * {@code docs/arch/bridge-inventory.md}).
  *
- * <p>Phase 1 runs a single main goroutine, so one static holder is installed
- * by {@code GoRootNode} on entry and restored on exit. Phase 2 replaces the
- * static holder with virtual-thread-scoped holders (SPEC §3.5:432–433); the
- * instance itself is already per-goroutine, so only the lookup changes.
+ * <p>This is a <em>forked</em> implementation of the goroutine-state holder:
+ * the instance API is the real one, but the <em>lookup</em> here is a single
+ * static holder (correct for a single main goroutine only). The runtime
+ * module carries the same fully-qualified name
+ * ({@code graalgo.runtime.GoroutineState} in
+ * {@code internal/backend/runtime}) with the production lookup: a
+ * {@code ThreadLocal} holder scoped to the current virtual thread
+ * (SPEC §3.5:432–433).
+ *
+ * <p>Same-FQN overlay mechanism: the truffle module compiles this class as
+ * part of its own source set (the runtime module compiles the joint round
+ * first; the truffle module then compiles these same-FQN classes against
+ * it). At launch, {@code internal/backend/graalgo-run} puts
+ * {@code runtime/out/classes} <em>before</em> {@code truffle/out/classes} on
+ * the classpath, so the runtime module's {@code ThreadLocal}-scoped copy
+ * shadows this file's single-holder copy — this static-holder lookup is only
+ * ever used if the launcher classpath order is violated (a launch bug), in
+ * which case multi-goroutine execution would observe shared holder state.
+ * The instance API is byte-identical between the two copies; only the
+ * lookup differs, exactly as the frozen surface (freeze §3.5) prescribes.
  */
 public final class GoroutineState {
     private final DeferChain deferChain = new DeferChain();
@@ -77,8 +95,11 @@ public final class GoroutineState {
     }
 
     // ------------------------------------------------------------------
-    // Phase-1 holder: exactly one goroutine (main). Phase 2 scopes this
-    // per virtual thread; every other class goes through current().
+    // Lookup (this copy only): a single static holder. Correct for a single
+    // main goroutine only — the runtime module's same-FQN copy provides the
+    // production ThreadLocal vthread-scoped holder and shadows this file at
+    // launch (see the class javadoc). Every other class goes through
+    // current().
     // ------------------------------------------------------------------
 
     private static GoroutineState current;

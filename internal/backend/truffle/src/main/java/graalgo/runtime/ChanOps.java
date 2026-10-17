@@ -1,13 +1,20 @@
 package graalgo.runtime;
 
 /**
- * Frozen channel/select intrinsic surface (WS G, GG-0020, STUB).
+ * Compile-time channel/select intrinsic surface (WS G, GG-0020; bridge B-8,
+ * inventoried in {@code docs/arch/bridge-inventory.md}).
  *
- * <p>Channels are Phase 2 (no goroutines in Phase 1); these signatures
- * freeze the contract now. Every method throws
- * {@link UnsupportedOperationException} with a Phase-2 message until
- * implemented. The {@code len} builtin on channels is a factory scope
- * error naming Phase 2 (it type-checks but has no Phase-1 lowering).
+ * <p>This class exists so the truffle module compiles against the channel
+ * surface despite the truffle&#8596;runtime compile cycle (the runtime module
+ * compiles the joint round first; the truffle module then compiles this
+ * same-FQN class against it). The real channel/select implementation lives
+ * in the runtime module ({@code graalgo.runtime.ChanOps} in
+ * {@code internal/backend/runtime}). At launch,
+ * {@code internal/backend/graalgo-run} puts {@code runtime/out/classes}
+ * <em>before</em> {@code truffle/out/classes} on the classpath, so the real
+ * implementation shadows this class — this stub is only ever loaded if the
+ * launcher classpath order is violated (a launch bug). Every method throws
+ * {@link UnsupportedOperationException}.
  */
 public final class ChanOps {
     private ChanOps() {}

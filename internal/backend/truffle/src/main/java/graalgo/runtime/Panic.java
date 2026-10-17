@@ -6,25 +6,29 @@ import graalgo.values.GoKind;
 import graalgo.values.GoTypeDescriptor;
 
 /**
- * Go's {@code panic} / {@code recover} (M5, WS F; GG-0019).
+ * Go's {@code panic} / {@code recover} (M5, WS F; GG-0019). Same-FQN shadow
+ * (bridge B-8, inventoried in {@code docs/arch/bridge-inventory.md}).
  *
- * <p>Replaces the WS-G local verification stub (which carried this exact
- * frozen surface): panic is now the real {@link PanicException}-based
- * mechanism with deferred-call unwinding and lazy traces.
+ * <p>This is a <em>forked</em> implementation of the panic mechanism used by
+ * the truffle module's compiled code: panic is the real
+ * {@link PanicException}-based mechanism with deferred-call unwinding and
+ * lazy traces. The runtime module carries the same fully-qualified name
+ * ({@code graalgo.runtime.Panic} in {@code internal/backend/runtime}) with
+ * one additive delta: the {@code GODEBUG=panicnil} knob (a nil panic value
+ * is not wrapped in {@code *PanicNilError}, restoring the pre-Go-1.21
+ * semantics). With the flag off (default), the runtime copy's behavior is
+ * exactly this file's gc &#8805;1.21 behavior.
  *
- * <p>The frozen cross-workstream surface (verbatim):
- * <ul>
- *   <li>{@link #throwPanic(Object)} — throws the panic exception carrying
- *       the Go value;
- *   <li>{@link #recover()} — returns the in-flight panic value, or Go nil
- *       if none (callable only from deferred frames; defined behavior
- *       elsewhere = nil).
- * </ul>
- *
- * <p>The additive overload {@link #throwPanic(Object, Object, String, Node)}
- * carries the dynamic-type descriptor, the Go-syntax type name, and the
- * throw site for {@code printpanicval}-compatible rendering and
- * {@code recover()} boxing; it does not change the frozen signatures.
+ * <p>Same-FQN overlay mechanism: the truffle module compiles this class as
+ * part of its own source set (the runtime module compiles the joint round
+ * first; the truffle module then compiles these same-FQN classes against
+ * it). At launch, {@code internal/backend/graalgo-run} puts
+ * {@code runtime/out/classes} <em>before</em> {@code truffle/out/classes} on
+ * the classpath, so the runtime module's copy — including the panicnil
+ * knob — shadows this file's. The signatures are the frozen contract; a
+ * {@code PanicOverlayDriftTest} reflectively asserts signature parity
+ * between the two copies, so a change here that desyncs the overlay fails
+ * the suite instead of silently diverging.
  */
 public final class Panic {
     private Panic() {}
