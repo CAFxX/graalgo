@@ -65,6 +65,10 @@ public final class DeadlockDetectTest {
     private static SchedulerCore newScheduler() {
         SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         sched.start();
+        // These tests exercise the detector itself: arm it. (It defaults
+        // to disarmed so other features' unit tests — which routinely
+        // stage transient all-parked states — are unaffected.)
+        sched.setDeadlockDetectionEnabled(true);
         SchedulerCore.install(sched);
         return sched;
     }

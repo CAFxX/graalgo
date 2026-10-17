@@ -277,7 +277,11 @@ public final class Drainer {
 
     /**
      * Deadlock detector (RV-P1-19). Called under {@link #lock} after
-     * every route+admit+check, when the inbox is empty.
+     * every route+admit+check, when the inbox is empty — but only
+     * evaluated when the launcher armed it via
+     * {@link SchedulerCore#setDeadlockDetectionEnabled(boolean)}
+     * (in-JVM unit tests of other features leave it disarmed, so their
+     * transient all-parked states are not misreported).
      *
      * <p>The drainer is the single thread that observes every scheduler
      * state transition under one lock — the structural analogue of gc
@@ -328,7 +332,9 @@ public final class Drainer {
      * stays with the launcher (library/test friendly).
      */
     private void checkDeadlock() {
-        if (!inbox.isEmpty() || sched.isDeadlocked()) {
+        if (!sched.deadlockDetectionEnabled()
+                || !inbox.isEmpty()
+                || sched.isDeadlocked()) {
             return;
         }
         int live = sched.runnableCount();

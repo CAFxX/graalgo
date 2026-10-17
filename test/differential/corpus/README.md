@@ -71,8 +71,9 @@ Coverage map:
 | 49  | deadlock_select      | RV-P1-19: `select {}` → fatal deadlock, exit 2   |
 | 50  | deadlock_chan_send   | RV-P1-19: unbuffered send, no receiver → fatal   |
 |     |                      | deadlock, exit 2                                 |
-| 51  | deadlock_mutex       | RV-P1-19: deterministic lock-order deadlock →    |
-|     |                      | fatal deadlock, exit 2                           |
+| 51  | deadlock_chan_crossed | RV-P1-19: crossed recv/recv channel deadlock → |
+|     |                      | fatal deadlock, exit 2 (sync.Mutex variant     |
+|     |                      | deferred: pre-existing GoPointer CCE in sync)  |
 | 52  | main_returns_early   | RV-P1-19: main returns, blocked child abandoned  |
 |     |                      | → exit 0 (gc probe p2)                           |
 | 53  | timer_then_block     | RV-P1-19: pending timer suppresses the report;   |
