@@ -834,9 +834,9 @@ PACKAGES = {
     'mime/multipart': {
         'files': [
             'mime/multipart/multipart.go',
+            'mime/multipart/readmimeheader.go',
             'mime/multipart/formdata.go',
             'mime/multipart/writer.go',
-            # Skip readmimeheader.go (check)
         ],
         'const_name': 'syntheticMimeMultipartSource',
         'pkg_prefix': 'mp',
@@ -931,7 +931,14 @@ def mime_adapt(src, pkg_prefix):
     return src
 
 def multipart_adapt(src, pkg_prefix):
-    """Adapt multipart source: stub godebug and textproto."""
+    """Adapt multipart source: stub godebug.
+
+    MIME header parsing uses the real net/textproto synthetic package:
+    mime/multipart/readmimeheader.go (included in the file list) declares
+    //go:linkname readMIMEHeader net/textproto.readMIMEHeader, and the
+    exporter's linknameAlias lowers the populateHeaders call to textproto's
+    pair-transformed implementation (P3-M9 mrUser). No textproto stubbing.
+    """
     src = src.replace(
         'var multipartmaxheaders = godebug.New("multipartmaxheaders")',
         '''type __mpGodebugSetting struct{ name string }
@@ -944,25 +951,6 @@ var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
         '\tmultipartfiles    = godebug.New("#multipartfiles") // TODO: document and remove #\n\tmultipartmaxparts = godebug.New("multipartmaxparts")',
         '\tmultipartfiles    = &__mpGodebugSetting{name: "#multipartfiles"}\n\tmultipartmaxparts = &__mpGodebugSetting{name: "multipartmaxparts"}'
     )
-    src = src.replace('textproto.MIMEHeader', '__mpMIMEHeader')
-    src += '''
-type __mpMIMEHeader map[string][]string
-func (__mpMIMEHeader) Get(key string) string { return "" }
-func (__mpMIMEHeader) Del(key string) {}
-func (h __mpMIMEHeader) Set(key, value string) { h[key] = []string{value} }
-type __mpTextprotoReader struct{}
-func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
-func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {
-    panic("multipart.readMIMEHeader: not in M9 scope")
-}
-'''
-    src = src.replace('textproto.NewReader(', '__mpNewTextprotoReader(')
-    # Add ErrMessageTooLarge (from skipped formdata.go)
-    if 'ErrMessageTooLarge' in src and 'var ErrMessageTooLarge' not in src:
-        src += '''
-// ErrMessageTooLarge is returned by ReadForm if the message is too large.
-var ErrMessageTooLarge = errors.New("multipart: message too large")
-'''
     return src
 
 def qp_adapt(src, pkg_prefix):

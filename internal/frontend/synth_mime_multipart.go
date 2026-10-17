@@ -22,6 +22,7 @@ import (
 	"math"
 	"mime"
 	"mime/quotedprintable"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"slices"
@@ -70,7 +71,7 @@ type Part struct {
 	// The headers of the body, if any, with the keys canonicalized
 	// in the same fashion that the Go http.Request headers are.
 	// For example, "foo-bar" changes case to "Foo-Bar"
-	Header __mpMIMEHeader
+	Header textproto.MIMEHeader
 
 	mr *Reader
 
@@ -217,7 +218,7 @@ func newPart(mr *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) 
 
 
 func (p *Part) populateHeaders(maxMIMEHeaderSize, maxMIMEHeaders int64) error {
-	r := __mpNewTextprotoReader(p.mr.bufReader)
+	r := textproto.NewReader(p.mr.bufReader)
 	header, err := readMIMEHeader(r, maxMIMEHeaderSize, maxMIMEHeaders)
 	if err == nil {
 		p.Header = header
@@ -626,6 +627,17 @@ func skipLWSPChar(b []byte) []byte {
 
 
 
+// Copyright 2023 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+
+
+// readMIMEHeader is defined in package [net/textproto].
+//
+//go:linkname readMIMEHeader net/textproto.readMIMEHeader
+func readMIMEHeader(r *textproto.Reader, maxMemory, maxHeaders int64) (textproto.MIMEHeader, error)
+
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -857,7 +869,7 @@ func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
 
 
 
-func mimeHeaderSize(h __mpMIMEHeader) (size int64) {
+func mimeHeaderSize(h textproto.MIMEHeader) (size int64) {
 	size = 400
 	for k, vs := range h {
 		size += int64(len(k))
@@ -902,7 +914,7 @@ func (f *Form) RemoveAll() error {
 // A FileHeader describes a file part of a multipart request.
 type FileHeader struct {
 	Filename string
-	Header   __mpMIMEHeader
+	Header   textproto.MIMEHeader
 	Size     int64
 
 	content   []byte
@@ -1066,7 +1078,7 @@ type __mpWriterCreatePartPair struct {
 	f1 error
 }
 
-func __mpWriterCreatePart(w *Writer, header __mpMIMEHeader) __mpWriterCreatePartPair {
+func __mpWriterCreatePart(w *Writer, header textproto.MIMEHeader) __mpWriterCreatePartPair {
 
 	if w.lastpart != nil {
 		if err := w.lastpart.close(); err != nil {
@@ -1097,7 +1109,7 @@ func __mpWriterCreatePart(w *Writer, header __mpMIMEHeader) __mpWriterCreatePart
 	return __mpWriterCreatePartPair{f0: p, f1: nil}
 }
 
-func (w *Writer) CreatePart(header __mpMIMEHeader) (io.Writer, error) {
+func (w *Writer) CreatePart(header textproto.MIMEHeader) (io.Writer, error) {
 	panic("mime/multipart.CreatePart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
@@ -1132,7 +1144,7 @@ type __mpWriterCreateFormFilePair struct {
 
 func __mpWriterCreateFormFile(w *Writer, fieldname string, filename string) __mpWriterCreateFormFilePair {
 
-	h := make(__mpMIMEHeader)
+	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", FileContentDisposition(fieldname, filename))
 	h.Set("Content-Type", "application/octet-stream")
 	__mrtmp1 := __mpWriterCreatePart(w, h); return __mpWriterCreateFormFilePair{__mrtmp1.f0, __mrtmp1.f1}
@@ -1153,7 +1165,7 @@ type __mpWriterCreateFormFieldPair struct {
 
 func __mpWriterCreateFormField(w *Writer, fieldname string) __mpWriterCreateFormFieldPair {
 
-	h := make(__mpMIMEHeader)
+	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition",
 		fmt.Sprintf("form-data; name=\"%s\"", escapeQuotes(fieldname)))
 	__mrtmp1 := __mpWriterCreatePart(w, h); return __mpWriterCreateFormFieldPair{__mrtmp1.f0, __mrtmp1.f1}
@@ -1238,15 +1250,5 @@ func (p *part) Write(d []byte) (n int, err error) {
 }
 
 
-
-type __mpMIMEHeader map[string][]string
-func (__mpMIMEHeader) Get(key string) string { return "" }
-func (__mpMIMEHeader) Del(key string) {}
-func (h __mpMIMEHeader) Set(key, value string) { h[key] = []string{value} }
-type __mpTextprotoReader struct{}
-func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
-func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {
-    panic("multipart.readMIMEHeader: not in M9 scope")
-}
 
 `

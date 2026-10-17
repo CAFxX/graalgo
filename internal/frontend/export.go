@@ -6181,6 +6181,40 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 	return ""
 }
 
+// registerLinknameAlias registers the consumer→provider alias for a
+// bodyless //go:linkname declaration (two-field symbol form, e.g.
+// net/textproto.readMIMEHeader). It is idempotent and safe to call
+// before any body export: call sites can appear in functions declared
+// earlier in source order than the stub (e.g.
+// multipart.populateHeaders calls the readMIMEHeader stub declared in
+// readmimeheader.go), so the alias must resolve during
+// classifyMultiResultCall/exportFuncCall regardless of decl order.
+// Returns true when a provider was found and aliased.
+// General mechanism: any linkname whose symbol resolves via synthFuncIDs
+// gets an alias (exportLinknameDecl calls this too).
+func (e *exporter) registerLinknameAlias(fi *funcDeclInfo) bool {
+	if fi == nil || fi.obj == nil || fi.fd == nil || fi.fd.Body != nil {
+		return false
+	}
+	pkgPath := funcPkgPath(e, fi)
+	symbol, err := linknameDirective(fi.fd, pkgPath)
+	if err != nil || symbol == "" {
+		return false
+	}
+	if !strings.Contains(symbol, ".") {
+		return false
+	}
+	providerFi, ok := e.synthFuncIDs[symbol]
+	if !ok || providerFi == nil {
+		return false
+	}
+	if e.linknameAlias == nil {
+		e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
+	}
+	e.linknameAlias[fi.obj] = providerFi
+	return true
+}
+
 // exportLinknameDecl emits a bodyless function (P3-M4, WS C, ADR-0004 D1)
 // as a funcdecl with no "body". A bodyless function carrying //go:linkname
 // gets the additive "linkname" field and the factory builds a
@@ -6287,16 +6321,11 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// rather than failing the entire package export. This is
 		// general: it applies to any bodyless multi-result linkname,
 		// not just reflect's shims.
-		hasProvider := false
-		if strings.Contains(symbol, ".") {
-			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
-				if e.linknameAlias == nil {
-					e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
-				}
-				e.linknameAlias[fi.obj] = providerFi
-				hasProvider = true
-			}
-		}
+		//
+		// The alias is (re-)registered here but is also pre-registered
+		// for all synthetic decls before body export (exportSyntheticBodies),
+		// so call-site classification sees it regardless of decl order.
+		hasProvider := e.registerLinknameAlias(fi)
 		if len(results) > 1 && !hasProvider {
 			// No provider to alias to: mark unimplemented so the
 			// backend panics if called, instead of failing export.

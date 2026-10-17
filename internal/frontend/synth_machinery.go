@@ -1400,6 +1400,17 @@ func (e *exporter) exportSyntheticBodies(doc *Doc) error {
 			}
 		}
 	}
+	// Pre-register //go:linkname consumer→provider aliases before any
+	// synthetic body exports. Call sites can appear in functions declared
+	// earlier in source order than the stub (e.g. multipart.populateHeaders
+	// calls the readMIMEHeader stub declared in readmimeheader.go), so the
+	// alias must resolve during classifyMultiResultCall/exportFuncCall
+	// regardless of decl order. Idempotent: exportLinknameDecl re-registers.
+	for _, g := range e.synthGroups {
+		for _, fi := range g.fis {
+			e.registerLinknameAlias(fi)
+		}
+	}
 	for _, g := range e.synthGroups {
 		savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
 		savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs

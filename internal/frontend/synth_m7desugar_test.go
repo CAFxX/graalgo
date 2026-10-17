@@ -93,6 +93,48 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 	}
 }
 
+// m7MultipartTable pins all 15 mime/multipart m7MultiResultFuncs entries:
+// the read path (RV-P0-04: stickyErrorReader.Read, newPart, Part.Read,
+// partReader.Read, scanUntilBoundary, NextPart, NextRawPart, nextPart),
+// the form-data path (ReadForm, readForm, FileHeader.Open), and the write
+// path (Writer.CreatePart/CreateFormFile/CreateFormField, part.Write).
+// Field names must match the generated __mp*Pair structs exactly:
+// synthPairField fails the export loudly on a name mismatch, so a typo
+// here (e.g. {"n","_"} for stickyErrorReader.Read, fixed from the
+// committed {"n","f1"}) breaks the desugar at export time.
+var m7MultipartTable = []m7StrconvJsonExpect{
+	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "f1"}},
+	{"mime/multipart", "newPart", "", "__mpnewPart", "__mpnewPartPair", []string{"f0", "f1"}},
+	{"mime/multipart", "Read", "Part", "__mpPartRead", "__mpPartReadPair", []string{"n", "err"}},
+	{"mime/multipart", "Read", "partReader", "__mppartReaderRead", "__mppartReaderReadPair", []string{"f0", "f1"}},
+	{"mime/multipart", "scanUntilBoundary", "", "__mpscanUntilBoundary", "__mpscanUntilBoundaryPair", []string{"f0", "f1"}},
+	{"mime/multipart", "NextPart", "Reader", "__mpReaderNextPart", "__mpReaderNextPartPair", []string{"f0", "f1"}},
+	{"mime/multipart", "NextRawPart", "Reader", "__mpReaderNextRawPart", "__mpReaderNextRawPartPair", []string{"f0", "f1"}},
+	{"mime/multipart", "nextPart", "Reader", "__mpReadernextPart", "__mpReadernextPartPair", []string{"f0", "f1"}},
+	{"mime/multipart", "ReadForm", "Reader", "__mpReaderReadForm", "__mpReaderReadFormPair", []string{"f0", "f1"}},
+	{"mime/multipart", "readForm", "Reader", "__mpReaderreadForm", "__mpReaderreadFormPair", []string{"f0", "err"}},
+	{"mime/multipart", "Open", "FileHeader", "__mpFileHeaderOpen", "__mpFileHeaderOpenPair", []string{"f0", "f1"}},
+	{"mime/multipart", "CreatePart", "Writer", "__mpWriterCreatePart", "__mpWriterCreatePartPair", []string{"f0", "f1"}},
+	{"mime/multipart", "CreateFormFile", "Writer", "__mpWriterCreateFormFile", "__mpWriterCreateFormFilePair", []string{"f0", "f1"}},
+	{"mime/multipart", "CreateFormField", "Writer", "__mpWriterCreateFormField", "__mpWriterCreateFormFieldPair", []string{"f0", "f1"}},
+	{"mime/multipart", "Write", "part", "__mppartWrite", "__mppartWritePair", []string{"n", "err"}},
+}
+
+func TestM7MultipartDesugarWiring(t *testing.T) {
+	if len(m7MultipartTable) != 15 {
+		t.Fatalf("m7MultipartTable has %d entries, want 15", len(m7MultipartTable))
+	}
+	for _, want := range m7MultipartTable {
+		name := want.pkgPath + "." + want.name
+		if want.recvType != "" {
+			name = want.pkgPath + "." + want.recvType + "." + want.name
+		}
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
 func TestM7StrconvJsonDesugarWiring(t *testing.T) {
 	if len(m7StrconvJsonTable) != 15 {
 		t.Fatalf("m7StrconvJsonTable has %d entries, want 15", len(m7StrconvJsonTable))

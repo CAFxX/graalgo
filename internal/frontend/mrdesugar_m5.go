@@ -619,7 +619,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"mime", "qDecode", "", "__mimeqDecode", "__mimeqDecodePair", []string{"f0", "f1"}, false},
 	{"mime", "readHexByte", "", "__mimereadHexByte", "__mimereadHexBytePair", []string{"f0", "f1"}, false},
 	{"mime", "fromHex", "", "__mimefromHex", "__mimefromHexPair", []string{"f0", "f1"}, false},
-	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "_"}, false},
+	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "f1"}, false},
 	{"mime/multipart", "newPart", "", "__mpnewPart", "__mpnewPartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "Read", "Part", "__mpPartRead", "__mpPartReadPair", []string{"n", "err"}, false},
 	{"mime/multipart", "Read", "partReader", "__mppartReaderRead", "__mppartReaderReadPair", []string{"f0", "f1"}, false},
@@ -627,6 +627,9 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"mime/multipart", "NextPart", "Reader", "__mpReaderNextPart", "__mpReaderNextPartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "NextRawPart", "Reader", "__mpReaderNextRawPart", "__mpReaderNextRawPartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "nextPart", "Reader", "__mpReadernextPart", "__mpReadernextPartPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "ReadForm", "Reader", "__mpReaderReadForm", "__mpReaderReadFormPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "readForm", "Reader", "__mpReaderreadForm", "__mpReaderreadFormPair", []string{"f0", "err"}, false},
+	{"mime/multipart", "Open", "FileHeader", "__mpFileHeaderOpen", "__mpFileHeaderOpenPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "CreatePart", "Writer", "__mpWriterCreatePart", "__mpWriterCreatePartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "CreateFormFile", "Writer", "__mpWriterCreateFormFile", "__mpWriterCreateFormFilePair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "CreateFormField", "Writer", "__mpWriterCreateFormField", "__mpWriterCreateFormFieldPair", []string{"f0", "f1"}, false},
@@ -1571,6 +1574,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			return nil
 		}
 		if obj, ok := e.info.Uses[id].(*types.Func); ok {
+			// linknameAlias: resolve a //go:linkname consumer stub to its
+			// provider before the pair/table lookups, so multi-result
+			// linkname targets (e.g. multipart's readMIMEHeader stub →
+			// net/textproto.readMIMEHeader) desugar through the provider's
+			// pair convention. General: any aliased stub classifies as its
+			// provider. The table classifiers below keep seeing the stub
+			// as written (restored on miss).
+			origObj := obj
+			if providerFi, ok := e.linknameAlias[obj]; ok && providerFi != nil {
+				obj = providerFi.obj
+			}
 			if mrInfo, ok := e.userMRFuncs[obj]; ok {
 				return &mrPlan{
 					kind:       mrUser,
@@ -1578,6 +1592,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					pairFields: mrInfo.pairFields,
 				}
 			}
+			obj = origObj
 			// P3-M9 (WS D): same-package Ident calls to synthetic
 			// multi-result functions (e.g. parseSignature in the
 			// synthetic crypto/ecdsa package, 3 results) desugar via
@@ -1638,6 +1653,14 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// Synthetic packages with real Go source (e.g., strings.Cut)
 			// get pair-transformed when not table-driven; their call
 			// sites must desugar via userMRFuncs, not fail fast.
+			// linknameAlias: same consumer→provider resolution as the
+			// Ident branch above (a qualified call can name an exported
+			// linkname stub). The table classifiers below keep seeing the
+			// stub as written (restored on miss).
+			origFn := fn
+			if providerFi, ok := e.linknameAlias[fn]; ok && providerFi != nil {
+				fn = providerFi.obj
+			}
 			if mrInfo, ok := e.userMRFuncs[fn]; ok {
 				return &mrPlan{
 					kind:       mrUser,
@@ -1645,6 +1668,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					pairFields: mrInfo.pairFields,
 				}
 			}
+			fn = origFn
 			// P3-M7 (wave 1): encoding/* package-level multi-result
 			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
 			// pem.Decode, asn1.Marshal/Unmarshal).
