@@ -16,6 +16,7 @@ import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import java.lang.ref.Reference;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -474,17 +475,15 @@ public final class ReflectOpNode extends GoExprNode {
         }
         long tok = ReflectValues.typeof(iface);
         Object data = iface instanceof graalgo.values.GoInterface gi ? gi.data() : iface;
-        long handle = ReflectRefs.intern(data);
-        return ReflectValues.pack(desc, tok, handle, 0);
+        return ReflectRefs.packCounted(desc, tok, data, 0);
     }
 
     /** __reflect_new: *T pointing at a fresh mutable cell. */
     private static GoStruct reflectNew(long tok) {
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         Object zero = zeroFor(tok);
-        long handle = ReflectRefs.intern(new Cell(zero));
         long ptrTok = ReflectTypes.ptrTo(tok);
-        return ReflectValues.pack(desc, ptrTok, handle, 0);
+        return ReflectRefs.packCounted(desc, ptrTok, new Cell(zero), 0);
     }
 
     /** __reflect_newat: *T pointing at an existing handle. */
@@ -493,7 +492,9 @@ public final class ReflectOpNode extends GoExprNode {
         // resolve validates the handle (unknown → UnsafeEscapeException).
         ReflectRefs.resolve(p);
         long ptrTok = ReflectTypes.ptrTo(tok);
-        return ReflectValues.pack(desc, ptrTok, p, ReflectValues.FLAG_ADDR);
+        // RV-P1-23 §2c: the handle came from Go as an unsafe.Pointer — the
+        // Value shares the unsafe-domain entry and takes no counted ownership.
+        return ReflectRefs.packShared(desc, ptrTok, p, ReflectValues.FLAG_ADDR);
     }
 
     /** Zero D5 value for a token. */
@@ -576,12 +577,18 @@ public final class ReflectOpNode extends GoExprNode {
     /** Unboxes a Value to its D5 value (resolving derived references). */
     private static Object unboxValue(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
+        Object d5;
         if (p.typ() == 0) {
             // Invalid (zero) Value: old load path (resolve(0) is null).
-            return ReflectRefs.load(p.ptr());
+            d5 = ReflectRefs.load(p.ptr());
+        } else {
+            GoKind kind = ReflectTypes.table().info(p.typ()).kind;
+            d5 = ReflectRefs.denotedValue(p.ptr(), kind);
         }
-        GoKind kind = ReflectTypes.table().info(p.typ()).kind;
-        return ReflectRefs.denotedValue(p.ptr(), kind);
+        // RV-P1-23 §6f: the handle is derived from v; keep v reachable past
+        // the last handle-derived use so its Cleaner cannot fire mid-call.
+        Reference.reachabilityFence(v);
+        return d5;
     }
 
     /**
@@ -594,6 +601,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         if (d5 == null) {
             return null;
         }
@@ -627,8 +636,11 @@ public final class ReflectOpNode extends GoExprNode {
         } else if ((p.flag() & ReflectValues.FLAG_RO) != 0) {
             flag |= ReflectValues.FLAG_EMBED_RO;
         }
-        long fieldHandle = ReflectRefs.internRef(new ReflectRefs.FieldRef(p.ptr(), i));
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), f.type.tok, fieldHandle, flag);
+        GoStruct fieldVal = ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), f.type.tok,
+                new ReflectRefs.FieldRef(p.ptr(), i), flag);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
+        return fieldVal;
     }
 
     /** __reflect_index: array/slice/string element. */
@@ -647,8 +659,11 @@ public final class ReflectOpNode extends GoExprNode {
                 if ((p.flag() & ReflectValues.FLAG_RO) != 0) {
                     flag |= ReflectValues.FLAG_EMBED_RO;
                 }
-                long h = ReflectRefs.internRef(new ReflectRefs.ArrayElemRef(p.ptr(), i));
-                return ReflectValues.pack(desc, elemTok, h, flag);
+                GoStruct arrayElem = ReflectRefs.packCounted(desc, elemTok,
+                        new ReflectRefs.ArrayElemRef(p.ptr(), i), flag);
+                // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+                Reference.reachabilityFence(v);
+                return arrayElem;
             }
             case SLICE -> {
                 long elemTok = t.elem.tok;
@@ -657,15 +672,20 @@ public final class ReflectOpNode extends GoExprNode {
                 if ((p.flag() & ReflectValues.FLAG_RO) != 0) {
                     flag |= ReflectValues.FLAG_EMBED_RO;
                 }
-                long h = ReflectRefs.internRef(new ReflectRefs.SliceElemRef(p.ptr(), i));
-                return ReflectValues.pack(desc, elemTok, h, flag);
+                GoStruct sliceElem = ReflectRefs.packCounted(desc, elemTok,
+                        new ReflectRefs.SliceElemRef(p.ptr(), i), flag);
+                // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+                Reference.reachabilityFence(v);
+                return sliceElem;
             }
             case STRING -> {
                 GoString gs = (GoString) ReflectRefs.denotedValue(p.ptr(), GoKind.STRING);
                 byte b = gs.bytes()[i];
-                long h = ReflectRefs.intern(b);
                 long uint8Tok = ReflectTypes.table().tokForKind(GoKind.UINT8);
-                return ReflectValues.pack(desc, uint8Tok, h, 0);
+                GoStruct byteVal = ReflectRefs.packCounted(desc, uint8Tok, b, 0);
+                // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+                Reference.reachabilityFence(v);
+                return byteVal;
             }
             default -> throw new IllegalStateException("reflect: index of " + t.kind);
         }
@@ -673,6 +693,16 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** __reflect_elem: interface unwrap or pointer dereference. */
     private static GoStruct reflectElem(GoStruct v) {
+        try {
+            return reflectElemInner(v);
+        } finally {
+            // RV-P1-23 §6f: keep v reachable past the last handle-derived
+            // use on every return path.
+            Reference.reachabilityFence(v);
+        }
+    }
+
+    private static GoStruct reflectElemInner(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
@@ -686,10 +716,9 @@ public final class ReflectOpNode extends GoExprNode {
                 long elemTok = ReflectValues.tokForDescriptor(
                         ((graalgo.values.GoInterface) d5).descriptor());
                 Object data = ((graalgo.values.GoInterface) d5).data();
-                long h = ReflectRefs.intern(data);
                 // gc: Elem sets flagIndir on the result (both branches).
                 long flag = ReflectValues.FLAG_INDIR | (p.flag() & ReflectValues.FLAG_RO);
-                return ReflectValues.pack(desc, elemTok, h, flag);
+                return ReflectRefs.packCounted(desc, elemTok, data, flag);
             }
             case POINTER -> {
                 // The Go pointer P that v represents is nil iff:
@@ -726,7 +755,10 @@ public final class ReflectOpNode extends GoExprNode {
                 }
                 // P is non-nil: Elem() is the pointee Value (valid even when
                 // the pointee itself is nil — e.g. **T pointing to nil *T).
-                long h;
+                // gc: Elem sets flagIndir on the result (provenance consumed
+                // by the Cell-handle nilness rule above).
+                long flag = ReflectValues.FLAG_INDIR | ReflectValues.FLAG_ADDR
+                        | (p.flag() & ReflectValues.FLAG_RO);
                 if (d5 instanceof GoPointer gp) {
                     Object ref = gp.referent();
                     if (ref == null && gp.isCellPointer()) {
@@ -738,23 +770,19 @@ public final class ReflectOpNode extends GoExprNode {
                         // Value.Elem() on **T pointing to nil *T returned the
                         // zero Value, breaking reflect-driven Set in errors.As
                         // test setup (and any pointer-to-nil-pointer Elem).
-                        h = ReflectRefs.intern(gp.cell());
+                        return ReflectRefs.packCounted(desc, t.elem.tok, gp.cell(), flag);
                     } else if (ref == null) {
                         return ReflectValues.zero(desc);
                     } else {
-                        h = ReflectRefs.intern(ref);
+                        return ReflectRefs.packCounted(desc, t.elem.tok, ref, flag);
                     }
                 } else {
                     // d5 is the raw pointee value (or null for a nil pointee
                     // behind Cell storage): address the storage itself so
-                    // Set() writes through.
-                    h = p.ptr();
+                    // Set() writes through. Reuses the parent's handle —
+                    // registers an additional counted owner (RV-P1-23).
+                    return ReflectRefs.packCountedExisting(desc, t.elem.tok, p.ptr(), flag);
                 }
-                // gc: Elem sets flagIndir on the result (provenance consumed
-                // by the Cell-handle nilness rule above).
-                long flag = ReflectValues.FLAG_INDIR | ReflectValues.FLAG_ADDR
-                        | (p.flag() & ReflectValues.FLAG_RO);
-                return ReflectValues.pack(desc, t.elem.tok, h, flag);
             }
             default -> throw new IllegalStateException("reflect: elem of " + t.kind);
         }
@@ -764,6 +792,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         return switch (t.kind) {
             case ARRAY -> t.arrayLen;
             case SLICE -> ((GoSlice) d5).len();
@@ -786,6 +816,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         return switch (t.kind) {
             case ARRAY -> t.arrayLen;
             case SLICE -> ((GoSlice) d5).cap();
@@ -805,6 +837,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         return d5 == null;
     }
 
@@ -812,6 +846,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         return isZeroValue(t, d5);
     }
 
@@ -866,6 +902,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         GoKind kind = ReflectTypes.table().info(p.typ()).kind;
         Object ref = ReflectRefs.resolve(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         if (ref instanceof Cell c) {
             c.value = boxed;
             return;
@@ -903,6 +941,8 @@ public final class ReflectOpNode extends GoExprNode {
         // SetBytes: v is []byte, x is []byte. Replace the slice header.
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         Object ref = ReflectRefs.resolve(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         byte[] bytes = (byte[]) bytesObj;
         GoSlice newSlice = new GoSlice(bytes, 0, bytes.length, bytes.length);
         if (ref instanceof Cell c) {
@@ -917,6 +957,9 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts dp = ReflectValues.parts(dst);
         Object d5src = unboxValue(src);
         Object ref = ReflectRefs.resolve(dp.ptr());
+        // RV-P1-23 §6f: keep dst reachable past the last handle-derived use
+        // (src is fenced inside unboxValue).
+        Reference.reachabilityFence(dst);
         if (ref instanceof Cell c) {
             c.value = d5src;
             return;
@@ -936,6 +979,8 @@ public final class ReflectOpNode extends GoExprNode {
         }
         // Whole-aggregate store: copy field-wise / element-wise.
         Object d5dst = ReflectRefs.denotedValue(dp.ptr(), t.kind);
+        // RV-P1-23 §6f: keep dst reachable past the last handle-derived use.
+        Reference.reachabilityFence(dst);
         copyAggregate(t, d5dst, d5src);
     }
 
@@ -966,6 +1011,8 @@ public final class ReflectOpNode extends GoExprNode {
     private static void setZero(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         Object ref = ReflectRefs.resolve(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         Object zero = zeroFor(p.typ());
         if (ref instanceof Cell c) {
             c.value = zero;
@@ -984,12 +1031,17 @@ public final class ReflectOpNode extends GoExprNode {
             storeThroughRef(ref, t.kind, zero);
             return;
         }
-        copyAggregate(t, ReflectRefs.denotedValue(p.ptr(), t.kind), zero);
+        Object d5zero = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
+        copyAggregate(t, d5zero, zero);
     }
 
     private static void setMapIndex(GoStruct v, GoStruct key, GoStruct elem) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         GoMap m = (GoMap) ReflectRefs.denotedValue(p.ptr(), GoKind.MAP);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         Object d5key = unboxValue(key);
         if (!ReflectValues.isValid(elem)) {
             graalgo.runtime.Intrinsics.mapDelete(m, d5key);
@@ -997,6 +1049,9 @@ public final class ReflectOpNode extends GoExprNode {
             Object d5elem = unboxValue(elem);
             graalgo.runtime.Intrinsics.mapAssign(m, d5key, d5elem);
         }
+        // RV-P1-23 §6f: elem is extracted directly (isValid); key is fenced
+        // inside unboxValue.
+        Reference.reachabilityFence(elem);
     }
 
     private static GoStruct mapIndex(GoStruct v, GoStruct key) {
@@ -1005,13 +1060,15 @@ public final class ReflectOpNode extends GoExprNode {
         GoMap m = (GoMap) ReflectRefs.denotedValue(p.ptr(), t.kind);
         Object d5key = unboxValue(key);
         Object d5val = graalgo.runtime.Intrinsics.mapAccess(m, d5key);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use
+        // (key is fenced inside unboxValue).
+        Reference.reachabilityFence(v);
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         if (d5val == null) {
             return ReflectValues.zero(desc);
         }
-        long h = ReflectRefs.intern(d5val);
         long flag = p.flag() & ReflectValues.FLAG_RO;
-        return ReflectValues.pack(desc, t.elem.tok, h, flag);
+        return ReflectRefs.packCounted(desc, t.elem.tok, d5val, flag);
     }
 
     private static Object getBytes(GoStruct v) {
@@ -1041,9 +1098,12 @@ public final class ReflectOpNode extends GoExprNode {
         TypeInfo from = ReflectTypes.table().info(p.typ());
         TypeInfo to = ReflectTypes.table().info(toTok);
         Object d5 = unboxValue(v);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use
+        // (covers the direct parts() extraction above; unboxValue fences
+        // its own extraction internally).
+        Reference.reachabilityFence(v);
         Object converted = convertValue(from, to, d5);
-        long h = ReflectRefs.intern(converted);
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), toTok, h, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), toTok, converted, 0);
     }
 
     private static Object convertValue(TypeInfo from, TypeInfo to, Object d5) {
@@ -1158,29 +1218,28 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         long flag = p.flag() & ReflectValues.FLAG_RO;
         switch (t.kind) {
             case ARRAY -> {
                 Object arr = d5;
                 GoSlice sl = new GoSlice(arr, i, j - i, t.arrayLen - i);
-                long h = ReflectRefs.intern(sl);
                 long sliceTok = sliceTokFor(t.elem.tok);
-                return ReflectValues.pack(desc, sliceTok, h, flag);
+                return ReflectRefs.packCounted(desc, sliceTok, sl, flag);
             }
             case SLICE -> {
                 GoSlice s = (GoSlice) d5;
                 GoSlice sl = s.slice(i, j);
-                long h = ReflectRefs.intern(sl);
-                return ReflectValues.pack(desc, p.typ(), h, flag);
+                return ReflectRefs.packCounted(desc, p.typ(), sl, flag);
             }
             case STRING -> {
                 GoString gs = (GoString) d5;
                 byte[] bytes = gs.bytes();
                 byte[] sub = new byte[j - i];
                 System.arraycopy(bytes, i, sub, 0, j - i);
-                long h = ReflectRefs.intern(new GoString(sub));
-                return ReflectValues.pack(desc, p.typ(), h, flag);
+                return ReflectRefs.packCounted(desc, p.typ(), new GoString(sub), flag);
             }
             default -> throw new IllegalStateException("reflect: slice of " + t.kind);
         }
@@ -1190,19 +1249,19 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         long flag = p.flag() & ReflectValues.FLAG_RO;
         if (t.kind == GoKind.ARRAY) {
             Object arr = d5;
             GoSlice sl = new GoSlice(arr, i, j - i, k - i);
-            long h = ReflectRefs.intern(sl);
             long sliceTok = sliceTokFor(t.elem.tok);
-            return ReflectValues.pack(desc, sliceTok, h, flag);
+            return ReflectRefs.packCounted(desc, sliceTok, sl, flag);
         }
         GoSlice s = (GoSlice) d5;
         GoSlice sl = s.slice3(i, j, k);
-        long h = ReflectRefs.intern(sl);
-        return ReflectValues.pack(desc, p.typ(), h, flag);
+        return ReflectRefs.packCounted(desc, p.typ(), sl, flag);
     }
 
     /** Token for []E (synthesized if absent). */
@@ -1239,6 +1298,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(fn);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object callable = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep fn reachable past the last handle-derived use.
+        Reference.reachabilityFence(fn);
         // Unbox the []Value args to D5.
         Object[] d5Args = unboxArgs(args, t, sliceCall);
         Object result = ReflectCalls.invokeCallable(callable, d5Args);
@@ -1249,8 +1310,7 @@ public final class ReflectOpNode extends GoExprNode {
             return new GoSlice(new GoStruct[0], 0, 0, 0);
         }
         long resultTok = t.outs.get(0).tok;
-        long h = ReflectRefs.intern(result);
-        GoStruct v = ReflectValues.pack(desc, resultTok, h, 0);
+        GoStruct v = ReflectRefs.packCounted(desc, resultTok, result, 0);
         return new GoSlice(new GoStruct[]{v}, 0, 1, 1);
     }
 
@@ -1287,14 +1347,16 @@ public final class ReflectOpNode extends GoExprNode {
         TypeInfo t = ReflectTypes.table().info(p.typ());
         ReflectTypes.MethodInfo mi = t.methods.get(i);
         Object receiver = unboxValue(v);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use
+        // (unboxValue fences its own extraction internally).
+        Reference.reachabilityFence(v);
         // Pointer-receiver adaptation: if the method needs a pointer but
         // the value is addressable, wrap it.
-        long handle = ReflectRefs.intern(
-                new ReflectCalls.BoundMethodVal(mi, receiver));
         // The bound method's type: func without receiver.
         long boundTok = boundMethodTok(mi);
         long flag = p.flag() & ReflectValues.FLAG_RO;
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), boundTok, handle, flag);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), boundTok,
+                new ReflectCalls.BoundMethodVal(mi, receiver), flag);
     }
 
     /** Token for a bound method's func type (receiver stripped). */
@@ -1336,8 +1398,8 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** __reflect_makefunc. */
     private static GoStruct makeFunc(long tok, GoStruct callback) {
-        long handle = ReflectRefs.intern(new ReflectCalls.MakeFuncVal(tok, callback));
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, handle, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), tok,
+                new ReflectCalls.MakeFuncVal(tok, callback), 0);
     }
 
     // ------------------------------------------------------------------
@@ -1348,14 +1410,12 @@ public final class ReflectOpNode extends GoExprNode {
         TypeInfo t = ReflectTypes.table().info(tok);
         Object arr = ReflectValues.newArray(t.elem.kind, cap);
         GoSlice sl = new GoSlice(arr, 0, len, cap);
-        long h = ReflectRefs.intern(sl);
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, h, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), tok, sl, 0);
     }
 
     private static GoStruct makeMap(long tok) {
         GoMap m = new GoMap();
-        long h = ReflectRefs.intern(m);
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, h, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), tok, m, 0);
     }
 
     private static GoStruct makeChan(long tok, int buffer) {
@@ -1363,14 +1423,15 @@ public final class ReflectOpNode extends GoExprNode {
         long elemSize = t.elem.size < 0 ? 8 : t.elem.size;
         graalgo.runtime.ChanOps.Chan ch =
                 graalgo.runtime.ChanOps.makeChan(elemSize, buffer);
-        long h = ReflectRefs.intern(ch);
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, h, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), tok, ch, 0);
     }
 
     private static GoStruct reflectAppend(GoStruct v, GoSlice xs) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         GoSlice s = (GoSlice) ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         int n = xs.len();
         Object arr = xs.array();
         int off = xs.offset();
@@ -1393,9 +1454,8 @@ public final class ReflectOpNode extends GoExprNode {
             ReflectValues.arraySet(outArr, t.elem.kind, out.offset() + out.len() + i, d5x);
         }
         GoSlice grown = new GoSlice(outArr, out.offset(), out.len() + n, out.cap());
-        long h = ReflectRefs.intern(grown);
         long flag = p.flag() & ReflectValues.FLAG_RO;
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), p.typ(), h, flag);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), p.typ(), grown, flag);
     }
 
     private static void copySliceElements(GoSlice src, Object dstArr, GoKind elemKind) {
@@ -1411,6 +1471,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object ref = ReflectRefs.resolve(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         if (!(ref instanceof Cell c)) {
             throw new IllegalStateException("reflect: Grow of non-cell slice");
         }
@@ -1429,6 +1491,8 @@ public final class ReflectOpNode extends GoExprNode {
     private static void setLen(GoStruct v, int n) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         Object ref = ReflectRefs.resolve(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         if (!(ref instanceof Cell c)) {
             throw new IllegalStateException("reflect: SetLen of non-cell slice");
         }
@@ -1442,6 +1506,8 @@ public final class ReflectOpNode extends GoExprNode {
     private static void setCap(GoStruct v, int n) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         Object ref = ReflectRefs.resolve(p.ptr());
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         if (!(ref instanceof Cell c)) {
             throw new IllegalStateException("reflect: SetCap of non-cell slice");
         }
@@ -1456,6 +1522,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         if (t.kind == GoKind.MAP) {
             GoMap m = (GoMap) d5;
             m.clear();
@@ -1475,6 +1543,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         GoSlice s = (GoSlice) ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         Object arr = s.array();
         int oi = s.offset() + i;
         int oj = s.offset() + j;
@@ -1490,6 +1560,8 @@ public final class ReflectOpNode extends GoExprNode {
 
     private static graalgo.runtime.ChanOps.Chan asChan(GoStruct v) {
         Object d5 = ReflectRefs.denotedValue(ReflectValues.parts(v).ptr(), GoKind.CHAN);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         return (graalgo.runtime.ChanOps.Chan) d5;
     }
 
@@ -1530,6 +1602,8 @@ public final class ReflectOpNode extends GoExprNode {
     private static GoStruct packValueBoolPair(Object d5val, boolean ok, GoStruct chanValue) {
         // The element type for the received value.
         TypeInfo t = ReflectTypes.table().info(ReflectValues.parts(chanValue).typ());
+        // RV-P1-23 §6f: keep chanValue reachable past the last handle-derived use.
+        Reference.reachabilityFence(chanValue);
         GoStructDescriptor desc = pairDescriptor();
         long[] longs = new long[desc.longsCount()];
         Object[] objects = new Object[desc.objectsCount()];
@@ -1537,8 +1611,7 @@ public final class ReflectOpNode extends GoExprNode {
         if (d5val == null && !ok) {
             xv = ReflectValues.zero(ReflectTypes.valueDescriptor());
         } else {
-            long h = ReflectRefs.intern(d5val);
-            xv = ReflectValues.pack(ReflectTypes.valueDescriptor(), t.elem.tok, h, 0);
+            xv = ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), t.elem.tok, d5val, 0);
         }
         setPairField(desc, longs, objects, 0, xv);
         setPairField(desc, longs, objects, 1, ok ? 1L : 0L);
@@ -1628,8 +1701,10 @@ public final class ReflectOpNode extends GoExprNode {
         } else {
             GoStruct chanVal = (GoStruct) chosenCase.getObject(1); // Chan field
             TypeInfo t = ReflectTypes.table().info(ReflectValues.parts(chanVal).typ());
-            long h = ReflectRefs.intern(recvVal);
-            recv = ReflectValues.pack(ReflectTypes.valueDescriptor(), t.elem.tok, h, 0);
+            // RV-P1-23 §6f: keep chosenCase reachable past the last
+            // handle-derived use (chanVal is derived from it).
+            Reference.reachabilityFence(chosenCase);
+            recv = ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), t.elem.tok, recvVal, 0);
         }
         setPairField(desc, longs, objects, 1, recv);
         setPairField(desc, longs, objects, 2, recvOK ? 1L : 0L);
@@ -1667,6 +1742,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         GoMap m = (GoMap) d5;
         return ReflectRefs.intern(new MapIterState(m, t.key.tok, t.elem.tok));
     }
@@ -1686,14 +1763,12 @@ public final class ReflectOpNode extends GoExprNode {
 
     private static GoStruct mapIterKey(long h) {
         MapIterState st = (MapIterState) ReflectRefs.resolve(h);
-        long handle = ReflectRefs.intern(st.key);
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), st.keyTok, handle, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), st.keyTok, st.key, 0);
     }
 
     private static GoStruct mapIterVal(long h) {
         MapIterState st = (MapIterState) ReflectRefs.resolve(h);
-        long handle = ReflectRefs.intern(st.val);
-        return ReflectValues.pack(ReflectTypes.valueDescriptor(), st.elemTok, handle, 0);
+        return ReflectRefs.packCounted(ReflectTypes.valueDescriptor(), st.elemTok, st.val, 0);
     }
 
     private static void mapIterReset(long h, GoStruct v) {
@@ -1701,6 +1776,8 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        // RV-P1-23 §6f: keep v reachable past the last handle-derived use.
+        Reference.reachabilityFence(v);
         st.reset((GoMap) d5, t.key.tok, t.elem.tok);
     }
 
@@ -1738,9 +1815,8 @@ public final class ReflectOpNode extends GoExprNode {
         setNamedField(desc, longs, objects, "PkgPath", GoString.fromUtf8(m.pkgPath));
         setNamedField(desc, longs, objects, "Type", ReflectTypes.boxType(m.funcType.tok));
         // The method expression value: a func Value wrapping the MethodVal.
-        long handle = ReflectRefs.intern(new ReflectCalls.MethodVal(m));
-        GoStruct funcVal = ReflectValues.pack(ReflectTypes.valueDescriptor(),
-                m.funcType.tok, handle, 0);
+        GoStruct funcVal = ReflectRefs.packCounted(ReflectTypes.valueDescriptor(),
+                m.funcType.tok, new ReflectCalls.MethodVal(m), 0);
         setNamedField(desc, longs, objects, "Func", funcVal);
         setNamedField(desc, longs, objects, "Index", (long) m.index);
         return new GoStruct(desc, longs, objects);

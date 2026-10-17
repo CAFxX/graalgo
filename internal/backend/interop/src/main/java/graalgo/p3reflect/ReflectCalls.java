@@ -4,6 +4,7 @@ import graalgo.values.GoFunc;
 import graalgo.values.GoSlice;
 import graalgo.values.GoStruct;
 import graalgo.runtime.GoCalls;
+import java.lang.ref.Reference;
 
 /**
  * Callable wrappers and trampolines for the reflect package (P3-M8, wave 2).
@@ -92,15 +93,17 @@ public final class ReflectCalls {
         GoStruct[] values = new GoStruct[d5Args.length];
         for (int i = 0; i < d5Args.length; i++) {
             long argTok = funcType.ins.get(i).tok;
-            long handle = ReflectRefs.intern(d5Args[i]);
-            values[i] = ReflectValues.pack(ReflectTypes.valueDescriptor(),
-                    argTok, handle, 0);
+            values[i] = ReflectRefs.packCounted(ReflectTypes.valueDescriptor(),
+                    argTok, d5Args[i], 0);
         }
         Object valuesSlice = new graalgo.values.GoSlice(
                 values, 0, values.length, values.length);
         // Invoke the callback: __reflect_call on the callback Value.
-        Object result = invokeCallable(
-                ReflectRefs.load(unpackHandle(mfv.callback)), new Object[]{valuesSlice});
+        Object callbackFn = ReflectRefs.load(unpackHandle(mfv.callback));
+        // RV-P1-23 §6f: keep the callback Value reachable past the last
+        // handle-derived use.
+        Reference.reachabilityFence(mfv.callback);
+        Object result = invokeCallable(callbackFn, new Object[]{valuesSlice});
         // Convert the []Value result back to D5. Single-result (v1).
         GoSlice resultSlice = (GoSlice) result;
         if (resultSlice.len() == 0) {
