@@ -23,12 +23,20 @@
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
 set -uo pipefail
 
-PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
+PROBE_DIR="$(cd -- "${1:?usage: run_module.sh <probe-dir> [case...]}" && pwd)"
 shift
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GR="${GR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 GO="${GO:-$HOME/tools/go/bin/go}"
+# Absolute paths throughout: the gc leg cds into PROBE_DIR, so a relative
+# TMPDIR (the default is under the probe dir) would resolve against the
+# wrong directory after the cd and `go build` would fail creating its
+# work dir. Same for a caller-supplied relative TMPDIR.
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
+case "$TMPDIR" in
+    /*) ;;
+    *) TMPDIR="$(pwd)/$TMPDIR" ;;
+esac
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
