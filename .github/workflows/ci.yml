@@ -37,12 +37,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (wt.py integrate + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # The no-bridges gate diffs the whole push delta via
+          # github.event.before (P0-1, 2026-10-17) — a shallow checkout has
+          # no pre-push history and the gate fails loudly instead of
+          # inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
+        env:
+          # Lets the gate diff before...SHA (the whole push delta) instead
+          # of just HEAD~1...HEAD. Empty/zeros on non-push events — the
+          # script falls back to origin/master...HEAD.
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
         run: python3 .github/scripts/check_no_bridges.py
 
       - name: Set up GraalVM JDK 25
