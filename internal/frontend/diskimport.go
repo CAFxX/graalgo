@@ -338,8 +338,12 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result (e.g. path/filepath's `var lstat = os.Lstat`).
-	// For package-level vars, records aliases instead of expanding.
-	etaVarLits, varAliases := etaExpandMRFuncValues(files, info, pkg)
+	// For package-level vars, records aliases and removes the specs
+	// (removeAliasedSpecs=true); the maps are stored on the package so the
+	// exporter desugars call sites through the var via the table
+	// classifiers. Only the disk path removes specs — the user and
+	// synthetic paths keep the declaration (see etaExpandMRFuncValues).
+	etaVarLits, varAliases := etaExpandMRFuncValues(files, info, pkg, true)
 	// Stubs served type-checking; keep them for method resolution
 	// (the desugar rewrites all calls, so stubs are never exported).
 	// Mark them via the spec so the exporter can skip them.

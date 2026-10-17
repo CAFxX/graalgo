@@ -942,8 +942,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues(files, info, pkg)
+	// where F is multi-result. Package-level ValueSpecs are NOT removed
+	// here (removeAliasedSpecs=false): PKG-035's export-time machinery
+	// lowers the initializer to the pair-returning value form and links
+	// the variable to its pair info, so the declaration (and every use)
+	// stays valid. Removing the spec would delete a legal global while
+	// leaving uses dangling.
+	_, _ = etaExpandMRFuncValues(files, info, pkg, false)
 
 	e := &exporter{
 		fset:    fset,
