@@ -91,6 +91,16 @@ public final class TimerHeap {
     private final Map<Long, Entry> byId = new HashMap<>();
     private final AtomicLong idGen = new AtomicLong(1);
     private final AtomicLong seqGen = new AtomicLong(1);
+    /**
+     * Fires in flight (RV-P1-19): entries popped from the heap whose
+     * fire side effects (the {@code sched.unpark} offer / channel send /
+     * callback) have not completed yet. Incremented under the heap lock
+     * at pop, decremented after the fire completes. Closes the race
+     * where {@link #pendingCount()} is already 0 but the wakeup token
+     * has not landed in the drainer's inbox yet — without this, the
+     * deadlock detector could fire between the pop and the offer.
+     */
+    private final AtomicLong firesInFlight = new AtomicLong();
     private Thread timerThread;
 
     public TimerHeap(SchedulerCore sched) {
@@ -304,10 +314,37 @@ public final class TimerHeap {
         return id;
     }
 
-    /** Pending (uncancelled, unfired) entry count; tests only. */
-    int pendingCount() {
+    /**
+     * Pending (uncancelled, unfired) entry count. Read by the drainer's
+     * deadlock detector (RV-P1-19) under the heap lock, after its cheap
+     * preconditions already hold — a pending timer suppresses the
+     * report (gc {@code checkdead} parity).
+     */
+    public int pendingCount() {
         synchronized (lock) {
             return byId.size();
+        }
+    }
+
+    /**
+     * Entries popped but not yet fully fired (RV-P1-19). Read by the
+     * drainer's deadlock detector under the heap lock; nonzero
+     * suppresses the report (a wakeup is in flight).
+     */
+    public long firesInFlight() {
+        return firesInFlight.get();
+    }
+
+    /**
+     * Deadlock-detector probe (RV-P1-19): true iff no timer is pending
+     * and no fire is in flight, evaluated atomically under the heap
+     * lock. A pending or firing timer suppresses the deadlock report
+     * (gc {@code checkdead} parity: any P with a non-empty timer heap
+     * returns early).
+     */
+    public boolean noTimersPendingOrFiring() {
+        synchronized (lock) {
+            return byId.isEmpty() && firesInFlight.get() == 0;
         }
     }
 
@@ -342,6 +379,11 @@ public final class TimerHeap {
                 }
                 e = heap.poll();
                 byId.remove(e.id);
+                // RV-P1-19: mark the fire in flight before releasing the
+                // heap lock — the deadlock detector reads this counter
+                // under the same lock, so pop-then-fire can never look
+                // like "no pending timer, no wakeup coming".
+                firesInFlight.incrementAndGet();
                 if (e.chan != null) {
                     // P0-3/P0-4: the staleness check, the send, and the
                     // ticker re-arm are atomic w.r.t. stopChan/resetChan:
@@ -353,11 +395,19 @@ public final class TimerHeap {
                     // our trySend never blocks). Lock order throughout is
                     // heap → owner → chan (leaf); trySend/unpark never
                     // block and never acquire heap/owner locks.
-                    fireChanLocked(e);
+                    try {
+                        fireChanLocked(e);
+                    } finally {
+                        firesInFlight.decrementAndGet();
+                    }
                     continue;
                 }
             }
-            fireNonChan(e);
+            try {
+                fireNonChan(e);
+            } finally {
+                firesInFlight.decrementAndGet();
+            }
         }
     }
 

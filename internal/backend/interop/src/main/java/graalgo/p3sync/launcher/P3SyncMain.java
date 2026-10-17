@@ -511,6 +511,9 @@ public final class P3SyncMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
+        // RV-P1-19: the gc-faithful netpoll quirk (probe p6 — once the
+        // poller thread exists the detector suppresses) is wired by
+        // GoNetpoll.pollServerInit itself, covering every consumer.
         final int[] exitCode = {EXIT_OK};
         try {
             sched.spawn(() -> {
@@ -518,32 +521,72 @@ public final class P3SyncMain {
                         .createVirtualFrame(new Object[0], program.descriptor());
                 try {
                     program.root().execute(frame);
+                    // RV-P1-19 (C1): main returned normally — gc exits
+                    // the process immediately (probe p2), abandoning
+                    // blocked children and pending timers.
+                    sched.signalMainReturned();
                 } catch (graalgo.runtime.Goexit g) {
                     // Main called Goexit: Go fatal deadlock iff no other
                     // goroutine is live; otherwise main just dies.
                     if (sched.runnableCount() > 1) {
                         return;
                     }
+                    // RV-P1-19 (C2): gc's distinct message for this case
+                    // (probe p3).
                     System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
+                            "fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
                     exitCode[0] = EXIT_PANIC;
                 }
             });
-            // P3-M5 (WS E, ADR-0005): timer translators are background
-            // goroutines that may outlive the Go program's own goroutines
-            // (gc: process exit abandons pending timers; time.Tick's ticker
-            // leaks by design). awaitQuiescence waits for EVERY goroutine,
-            // so first wait until only translators remain, shut them down,
-            // then await full quiescence. With no timers this is just the
-            // ordinary quiescence wait at 1ms poll granularity.
-            P3TimeRuntime.awaitBackgroundDrain(sched);
-            sched.awaitQuiescence();
+            try {
+                sched.awaitQuiescence();
+            } catch (graalgo.sched.DeadlockException de) {
+                // RV-P1-19 (C3): the drainer's detector fired — print
+                // the gc-style report to stderr, exit 2 (gc parity).
+                System.err.print(de.getReport());
+                return EXIT_PANIC;
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
             return EXIT_INPUT_ERROR;
         } finally {
             SchedulerCore.install(prev);
+        }
+        // RV-P1-19: the first awaitQuiescence returned early iff main
+        // returned normally (C1: exit now, like gc), or the drainer
+        // proved no further progress is possible after a recorded
+        // panic/crash (panic-no-progress wake). Otherwise main
+        // Goexit'ed with live others: drain the background translators,
+        // then await the rest.
+        boolean mainDone = sched.mainReturnedNormally();
+        boolean settled = mainDone || sched.panicked() || sched.crashed();
+        if (!settled) {
+            try {
+                // P3-M5 (WS E, ADR-0005): timer translators are background
+                // goroutines that may outlive the Go program's own goroutines
+                // (gc: process exit abandons pending timers; time.Tick's ticker
+                // leaks by design). awaitQuiescence waits for EVERY goroutine,
+                // so first wait until only translators remain, shut them down,
+                // then await full quiescence. With no timers this is just the
+                // ordinary quiescence wait at 1ms poll granularity.
+                // (Skipped on the C1 path: gc exits immediately — a pending
+                // time.After(time.Hour) must not delay exit — and on the
+                // panic-no-progress path, where parked non-background
+                // survivors would keep live > bg forever.)
+                P3TimeRuntime.awaitBackgroundDrain(sched);
+                try {
+                    sched.awaitQuiescence();
+                } catch (graalgo.sched.DeadlockException de) {
+                    // RV-P1-19 (C3).
+                    System.err.print(de.getReport());
+                    return EXIT_PANIC;
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
+                return EXIT_INPUT_ERROR;
+            }
         }
         // M9: dump even on panic (partial traces are marked as such by
         // the harness); the dump goes to stderr, never to the program's
@@ -557,7 +600,9 @@ public final class P3SyncMain {
         if (sched.crashed()) {
             return EXIT_INPUT_ERROR; // internal error, already reported on stderr
         }
-        return exitCode[0];
+        // RV-P1-19 (C1): main returned normally → exit 0 without waiting
+        // for children (gc probe p2). Otherwise the Goexit path's code.
+        return mainDone ? EXIT_OK : exitCode[0];
     }
 
     /**

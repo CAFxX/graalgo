@@ -38,9 +38,23 @@ public final class Drainer {
     private Thread drainerThread;
     // Test-only admission observer (null in production).
     private volatile java.util.function.Consumer<GoroutineHandle> admissionListener;
+    /**
+     * One parked goroutine (PARKED seen, UNPARK not yet): the parked
+     * generation plus the handle (for the deadlock detector's report).
+     */
+    private static final class ParkedRecord {
+        final long generation;
+        final GoroutineHandle handle;
+
+        ParkedRecord(long generation, GoroutineHandle handle) {
+            this.generation = generation;
+            this.handle = handle;
+        }
+    }
+
     // Park/unpark matching (all under lock, drainer thread only):
-    // handle id -> parked generation (PARKED seen, UNPARK not yet).
-    private final java.util.Map<Long, Long> parked = new java.util.HashMap<>();
+    // handle id -> parked record (PARKED seen, UNPARK not yet).
+    private final java.util.Map<Long, ParkedRecord> parked = new java.util.HashMap<>();
     // handle id -> pending unpark arrived before the PARKED token.
     private final java.util.Set<Long> unparkPending = new java.util.HashSet<>();
     // handle ids currently in blocking I/O (P2-M3, GG-0018): slot
@@ -112,6 +126,7 @@ public final class Drainer {
                     route(token);
                     admit();
                     checkInvariants();
+                    checkDeadlock();
                 }
             } catch (Throwable t) {
                 // Fail LOUD, never silent: a violated invariant (or any
@@ -163,15 +178,16 @@ public final class Drainer {
                     wakeFifo.addLast(new ResumeToken(
                             ResumeToken.Kind.WAKE, token.handle, token.generation));
                 } else {
-                    parked.put(token.handle.id, token.generation);
+                    parked.put(token.handle.id,
+                            new ParkedRecord(token.generation, token.handle));
                 }
             }
             case UNPARK -> {
-                Long gen = parked.remove(token.handle.id);
-                if (gen != null) {
+                ParkedRecord rec = parked.remove(token.handle.id);
+                if (rec != null) {
                     wakeUnparkDirect.incrementAndGet();
                     wakeFifo.addLast(new ResumeToken(
-                            ResumeToken.Kind.WAKE, token.handle, gen));
+                            ResumeToken.Kind.WAKE, token.handle, rec.generation));
                 } else {
                     // Park hasn't been processed yet: remember the wakeup.
                     unparkPending.add(token.handle.id);
@@ -259,6 +275,141 @@ public final class Drainer {
         }
     }
 
+    /**
+     * Deadlock detector (RV-P1-19). Called under {@link #lock} after
+     * every route+admit+check, when the inbox is empty.
+     *
+     * <p>The drainer is the single thread that observes every scheduler
+     * state transition under one lock — the structural analogue of gc
+     * holding {@code sched.lock} in {@code checkdead}. Every transition
+     * that can make the predicate true is a routed token (PARKED, EXIT,
+     * IO_EXIT) or a timer-heap mutation (always followed by a PARKED
+     * from the mutating goroutine, which is admitted ⇒
+     * {@code inflight > 0} meanwhile), so evaluating after each
+     * route+admit with an empty inbox covers all transitions.
+     *
+     * <p>Predicate (all must hold; cheap preconditions first, no extra
+     * locks, no allocation on this path):
+     * <ol>
+     *   <li>{@code liveGoroutines > 0} — zero live goroutines is
+     *       quiescence, not deadlock (gc: {@code checkdead} is only
+     *       meaningful with goroutines around).
+     *   <li>{@code inflight == 0} — nobody admitted/running user code
+     *       (gc: {@code run == 0}).
+     *   <li>{@code inIo} empty — no raw blocking syscall in flight (gc:
+     *       syscall Ms keep {@code run > 0}).
+     *   <li>{@code spawnInflight == 0} — no foreign-thread spawn between
+     *       {@code vthread.start()} and the INIT offer.
+     *   <li>not {@link SchedulerCore#deadlockSuppressed} — gc parity
+     *       quirk (probe p6): a live netpoller thread keeps
+     *       {@code run > 0} forever, so deadlock never fires.
+     *   <li>{@code parked.size() == liveGoroutines} — every live
+     *       goroutine parked (gc: all non-system gs {@code _Gwaiting}).
+     *       UNPARK-before-PARKED needs no special case: a stashed
+     *       wakeup keeps {@code parked.size() < live}.
+     *   <li>no pending or firing timers (timer-heap lock; lock order is
+     *       drainer → heap — the timer thread never takes the drainer
+     *       lock, so no inversion). A pending timer suppresses, like gc
+     *       (probe p5); {@code firesInFlight} closes the pop-then-fire
+     *       race where {@code pendingCount} is already 0 but the wakeup
+     *       offer has not landed yet.
+     *   <li>inbox re-checked empty — a fire that completed while
+     *       acquiring the heap lock left its UNPARK in the inbox.
+     * </ol>
+     *
+     * <p>When the predicate holds: if a panic/crash was already recorded
+     * (traceback printed by {@code recordPanic}), the launcher is woken
+     * for its panic/crash exit path — never a deadlock report.
+     * Otherwise the gc-style report is built (once per process;
+     * allocation is fine here, never on the check path above) and
+     * recorded on the scheduler; {@code awaitQuiescence} throws
+     * {@link DeadlockException} and the launcher prints the report to
+     * stderr and exits 2. The drainer itself never exits — exit policy
+     * stays with the launcher (library/test friendly).
+     */
+    private void checkDeadlock() {
+        if (!inbox.isEmpty() || sched.isDeadlocked()) {
+            return;
+        }
+        int live = sched.runnableCount();
+        if (live <= 0) {
+            return; // (1) quiescence, not deadlock
+        }
+        if (inflight != 0) {
+            return; // (2)
+        }
+        if (!inIo.isEmpty()) {
+            return; // (3)
+        }
+        if (sched.spawnInflightCount() != 0) {
+            return; // (4)
+        }
+        if (sched.deadlockSuppressed()) {
+            return; // (5) gc p6 netpoll quirk
+        }
+        if (parked.size() != live) {
+            return; // (6)
+        }
+        if (!sched.timerHeap().noTimersPendingOrFiring()) {
+            return; // (7)
+        }
+        if (!inbox.isEmpty()) {
+            return; // (8) re-check: a fire may have landed meanwhile
+        }
+        if (sched.panicked() || sched.crashed()) {
+            sched.wakeForRecordedPanic();
+            return;
+        }
+        sched.recordDeadlock(buildDeadlockReport());
+    }
+
+    /**
+     * Builds the gc-style deadlock report (RV-P1-19): the first line is
+     * byte-identical to gc
+     * ({@code fatal error: all goroutines are asleep - deadlock!}),
+     * followed by one block per parked goroutine sorted by handle id,
+     * rendered with the shared {@code renderGoStack}. Called once per
+     * process under {@link #lock}; every goroutine is parked, so the
+     * park-time stack snapshots cannot mutate underneath.
+     */
+    private String buildDeadlockReport() {
+        StringBuilder sb = new StringBuilder(
+                "fatal error: all goroutines are asleep - deadlock!\n\n");
+        java.util.TreeMap<Long, ParkedRecord> sorted =
+                new java.util.TreeMap<>(parked);
+        for (java.util.Map.Entry<Long, ParkedRecord> e : sorted.entrySet()) {
+            GoroutineHandle h = e.getValue().handle;
+            sb.append(graalgo.runtime.Intrinsics.renderGoStack(
+                    e.getKey(), deadlockLabel(h.parkReason),
+                    h.parkedGoStack, null));
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Approximate gc wait-reason label from the park reason (RV-P1-19).
+     * Documented approximations: gc distinguishes {@code [chan send]} /
+     * {@code [chan receive]} and {@code [select (no cases)]}; the
+     * scheduler records only the park site, so both channel directions
+     * render as {@code [chan wait]}. {@code QUANTUM} never appears in
+     * the parked map.
+     */
+    private static String deadlockLabel(graalgo.jfr.ParkReason reason) {
+        if (reason == null) {
+            return "waiting";
+        }
+        return switch (reason) {
+            case SELECT -> "select";
+            case CHANNEL -> "chan wait";
+            case TIMER -> "sleep";
+            case IO -> "syscall";
+            case NETPOLL -> "IO wait";
+            case UNKNOWN -> "waiting";
+            case QUANTUM -> "waiting"; // unreachable in the parked map
+        };
+    }
+
     // ---- test hooks (package-visible; production never calls these) ----
 
     /**
@@ -277,8 +428,8 @@ public final class Drainer {
             // iteration order is run-dependent (ids come from a global
             // counter), which made explorer state counts irreproducible.
             java.util.TreeMap<String, Long> parkedSorted = new java.util.TreeMap<>();
-            for (java.util.Map.Entry<Long, Long> e : parked.entrySet()) {
-                parkedSorted.put(name.apply(e.getKey()), e.getValue());
+            for (java.util.Map.Entry<Long, ParkedRecord> e : parked.entrySet()) {
+                parkedSorted.put(name.apply(e.getKey()), e.getValue().generation);
             }
             java.util.TreeSet<String> pendingSorted = new java.util.TreeSet<>();
             for (Long id : unparkPending) {
@@ -330,6 +481,18 @@ public final class Drainer {
     int inflightForTest() {
         synchronized (lock) {
             return inflight;
+        }
+    }
+
+    /**
+     * Number of goroutines currently in the parked map; deadlock-detector
+     * tests only. Lets a test wait until a park has been routed (route
+     * and the detector check run in the same critical section, so when
+     * this returns N the corresponding check has already evaluated).
+     */
+    int parkedCountForTest() {
+        synchronized (lock) {
+            return parked.size();
         }
     }
 

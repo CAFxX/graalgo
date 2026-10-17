@@ -42,6 +42,8 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.jfr.JfrRegistrationTest.class);
         TESTS.add(graalgo.sched.audit.PinAuditTest.class);
         TESTS.add(graalgo.sched.SchedulerCoreTest.class);
+        TESTS.add(graalgo.sched.DeadlockDetectTest.class);
+        TESTS.add(graalgo.sched.launcher.DeadlockLauncherTest.class);
         TESTS.add(graalgo.sched.ChannelTest.class);
         TESTS.add(graalgo.sched.ChannelDifferentialTest.class);
         TESTS.add(graalgo.sched.IoSlotsTest.class);

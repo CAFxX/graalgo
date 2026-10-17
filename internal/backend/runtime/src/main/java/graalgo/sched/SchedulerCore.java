@@ -99,6 +99,55 @@ public final class SchedulerCore {
     private final Object quiescenceLock = new Object();
 
     /**
+     * Spawns in flight (RV-P1-19): incremented at {@link #spawn} entry,
+     * decremented after the INIT token is offered. Closes the window
+     * between {@code vthread.start()} and the INIT offer when the
+     * spawner is a foreign (test/launcher) thread rather than an
+     * admitted goroutine — an admitted spawner already holds
+     * {@code inflight > 0} for the whole call. Read by the drainer's
+     * deadlock detector: a spawn in progress suppresses the report.
+     */
+    private final AtomicInteger spawnInflight = new AtomicInteger();
+
+    /**
+     * Deadlock detector state (RV-P1-19). Set once by the drainer when
+     * the predicate fires (see {@link Drainer}); read by
+     * {@link #awaitQuiescence}, which throws {@link DeadlockException}
+     * carrying the report.
+     */
+    private volatile boolean deadlocked;
+    private volatile String deadlockReport;
+
+    /**
+     * Set by the drainer when the no-progress predicate holds but a
+     * panic/crash was already recorded (RV-P1-19): the launcher must
+     * wake and take the panic/crash exit path, not a deadlock report.
+     * (Without this, parked survivors of a panic would hang
+     * {@link #awaitQuiescence} forever.)
+     */
+    private volatile boolean panicWakeup;
+
+    /**
+     * Set by the launcher via {@link #signalMainReturned} when the
+     * program's main goroutine returns normally (RV-P1-19, C1): gc
+     * exits the process immediately, abandoning blocked children, so
+     * {@link #awaitQuiescence} returns instead of waiting for
+     * quiescence.
+     */
+    private volatile boolean mainReturnedNormally;
+
+    /**
+     * External deadlock suppressor (RV-P1-19): while this returns true
+     * the detector never fires. Wired by launchers whose runtime keeps
+     * a gc-style background thread alive that gc itself counts as
+     * "still running" — e.g. P3's {@code GoNetpoll} poller thread (gc
+     * probe p6: once the netpoller thread exists, {@code run > 0}
+     * forever and deadlock is never reported). Defaults to unsuppressed.
+     */
+    private volatile java.util.function.BooleanSupplier deadlockSuppressor =
+            () -> false;
+
+    /**
      * @param gomaxprocs requested GOMAXPROCS (clamped to &ge;1)
      * @param quantumNanos quantum per admission, nanoseconds
      */
@@ -271,8 +320,15 @@ public final class SchedulerCore {
         long t = armPark(h);
         JfrEvents.notePark(h, reason);
         h.wakeAction.set(onWake);
+        // RV-P1-19: park-time Go-stack snapshot for the deadlock
+        // detector's per-goroutine dump. Taken on the owning vthread
+        // (GoroutineState is vthread-ThreadLocal); the chain is never
+        // mutated while its owner is parked.
+        GoroutineState state = GoroutineState.current();
+        h.parkedGoStack = state != null ? state.goStack() : null;
         drainer.offer(new ResumeToken(ResumeToken.Kind.PARKED, h, t));
         awaitAck(h, t);
+        h.parkedGoStack = null;
         Runnable action = h.wakeAction.getAndSet(null);
         if (action != null) {
             action.run();
@@ -350,6 +406,18 @@ public final class SchedulerCore {
      * (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
+        // RV-P1-19: hold spawnInflight across the whole call so the
+        // deadlock detector cannot fire between vthread.start() and
+        // the INIT offer on a foreign spawner thread.
+        spawnInflight.incrementAndGet();
+        try {
+            return spawnLocked(body);
+        } finally {
+            spawnInflight.decrementAndGet();
+        }
+    }
+
+    private GoroutineHandle spawnLocked(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
         long t = armPark(h);
         Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {
@@ -552,7 +620,102 @@ public final class SchedulerCore {
     }
 
     /**
+     * Records a deadlock report (RV-P1-19). Called once by the drainer
+     * when the detector predicate fires; wakes
+     * {@link #awaitQuiescence}, which throws {@link DeadlockException}.
+     */
+    void recordDeadlock(String report) {
+        synchronized (quiescenceLock) {
+            if (!deadlocked) {
+                deadlocked = true;
+                deadlockReport = report;
+                quiescenceLock.notifyAll();
+            }
+        }
+    }
+
+    /** True once the drainer's deadlock detector has fired. */
+    public boolean isDeadlocked() {
+        return deadlocked;
+    }
+
+    /**
+     * Wakes {@link #awaitQuiescence} without a deadlock report
+     * (RV-P1-19). Called by the drainer when the no-progress predicate
+     * holds but a panic/crash was already recorded and printed: the
+     * launcher must take the panic/crash exit path, never a deadlock
+     * report.
+     */
+    void wakeForRecordedPanic() {
+        synchronized (quiescenceLock) {
+            panicWakeup = true;
+            quiescenceLock.notifyAll();
+        }
+    }
+
+    /**
+     * Signals that the program's main goroutine returned normally
+     * (RV-P1-19, C1). gc exits the process immediately on main's
+     * return, abandoning blocked children; the launcher calls this
+     * from main's body so {@link #awaitQuiescence} returns instead of
+     * waiting for quiescence.
+     */
+    public void signalMainReturned() {
+        synchronized (quiescenceLock) {
+            mainReturnedNormally = true;
+            quiescenceLock.notifyAll();
+        }
+    }
+
+    /** True once {@link #signalMainReturned} was called. */
+    public boolean mainReturnedNormally() {
+        return mainReturnedNormally;
+    }
+
+    /**
+     * Installs the external deadlock suppressor (RV-P1-19); see the
+     * {@code deadlockSuppressor} field. Null resets to unsuppressed.
+     */
+    public void setDeadlockSuppressor(
+            java.util.function.BooleanSupplier suppressor) {
+        deadlockSuppressor =
+                suppressor != null ? suppressor : () -> false;
+    }
+
+    /** True while the external suppressor reports blocked progress. */
+    boolean deadlockSuppressed() {
+        return deadlockSuppressor.getAsBoolean();
+    }
+
+    /** Spawns currently in flight (RV-P1-19); the drainer's deadlock
+     * detector reads this on its check path, white-box tests too. */
+    int spawnInflightCount() {
+        return spawnInflight.get();
+    }
+
+    /**
+     * Adjusts the spawn-in-flight counter; white-box deadlock-detector
+     * tests only. Simulates a foreign-thread spawn in progress across a
+     * drainer evaluation — the real {@link #spawn} holds the counter
+     * across the vthread.start()→INIT-offer window, which no test can
+     * pause inside deterministically.
+     */
+    void addSpawnInflightForTest(int delta) {
+        spawnInflight.addAndGet(delta);
+    }
+
+    /**
      * Blocks until every spawned goroutine has finished.
+     *
+     * <p>Returns early (instead of waiting for quiescence) when the
+     * launcher's main goroutine returned normally
+     * ({@link #signalMainReturned}, gc C1 parity) or when the drainer
+     * proved no further progress is possible after a recorded
+     * panic/crash. Throws {@link DeadlockException} when the drainer's
+     * deadlock detector fired. A main-normal-return observed together
+     * with a concurrent deadlock record resolves to the normal return:
+     * in gc, main returning ends the process — a fatal raised during
+     * teardown is not reported.
      *
      * <p><strong>No-concurrent-spawn contract:</strong> {@code spawn()}
      * must not be called concurrently with this method from another
@@ -566,6 +729,12 @@ public final class SchedulerCore {
     public void awaitQuiescence() throws InterruptedException {
         synchronized (quiescenceLock) {
             while (liveGoroutines.get() != 0) {
+                if (mainReturnedNormally || panicWakeup) {
+                    return;
+                }
+                if (deadlocked) {
+                    throw new DeadlockException(deadlockReport);
+                }
                 quiescenceLock.wait();
             }
         }

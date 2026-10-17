@@ -157,24 +157,51 @@ public final class SchedMain {
                         .createVirtualFrame(new Object[0], program.descriptor());
                 try {
                     program.root().execute(frame);
+                    // RV-P1-19 (C1): main returned normally — gc exits
+                    // the process immediately, abandoning blocked
+                    // children (probe p2), instead of awaiting
+                    // quiescence (which would hang, or — with the
+                    // deadlock detector — falsely fatal).
+                    sched.signalMainReturned();
                 } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
+                    // Main called Goexit: gc fatal deadlock iff no other
                     // goroutine is live; otherwise main just dies.
                     if (sched.runnableCount() > 1) {
                         return;
                     }
+                    // RV-P1-19 (C2): gc's distinct message for this case
+                    // (probe p3).
                     System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
+                            "fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
                     exitCode[0] = EXIT_PANIC;
                 }
             });
-            sched.awaitQuiescence();
+            try {
+                sched.awaitQuiescence();
+            } catch (graalgo.sched.DeadlockException de) {
+                // RV-P1-19 (C3): the drainer's detector fired — print
+                // the gc-style report to stderr, exit 2 (gc parity).
+                System.err.print(de.getReport());
+                return EXIT_PANIC;
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-run: interrupted while awaiting quiescence");
             return EXIT_INPUT_ERROR;
         } finally {
             SchedulerCore.install(prev);
+        }
+        if (sched.mainReturnedNormally()) {
+            // RV-P1-19 (C1): main returned; exit now without waiting for
+            // children (gc probe p2). Preserve the uncaught-panic
+            // contract: a concurrent panic still exits 2.
+            if (sched.panicked()) {
+                return EXIT_PANIC;
+            }
+            if (sched.crashed()) {
+                return EXIT_INPUT_ERROR;
+            }
+            return EXIT_OK;
         }
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
