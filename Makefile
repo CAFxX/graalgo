@@ -169,16 +169,30 @@ test-regression: generate build graalgo
 # differential tests need the backend classes (built by `build`).
 #
 # In `all` (hence per-push CI): this module's ~60 tests never ran in CI
-# before (E6). Status of the four formerly-parked failures:
-# - TestSyncExportDir, TestSyncExtendedSurfaceExportParity: FIXED for real
-#   (rewritten for the real-sync2 mechanism) and verified passing.
-# - TestTwoPackageDifferential, TestEmbeddedFieldRebinding: frontend blockers
-#   FIXED (repoRoot path; 6812e97e N-target interface MR desugar absorbed with
-#   red-green regression tests), but SKIPPED with tracked ticket: the graalgo
-#   leg hits a backend RUNTIME NPE (GoStruct null) executing the merged fmt
-#   tree — a Java backend runtime bug out of this frontend/test lane's scope,
-#   needs a backend lane. Each Skip carries the reference. Unskip when the
-#   backend runs fmt-importing programs cleanly.
+# before (E6). Wiring it in exposed 9 more never-ran failures beyond the
+# 4 parked E6 ones — all fixed in this lane (all fail identically on
+# master, i.e. pre-existing phase-1-vs-mirror drift, none caused here):
+# - TestSyncExportDir, TestSyncExtendedSurfaceExportParity (E6): FIXED for
+#   real (rewritten for the real-sync2 mechanism) and verified passing.
+# - TestStrconvSyntheticSignatures: mirror typed ErrRange/ErrSyntax as
+#   error; phase-1 has the named string type strconvError — mirror fixed.
+# - TestStringsSyntheticSignatures, TestStringsOmissionSet: phase-1 strings
+#   imports the synthetic iter package (SplitSeq landed); test importer
+#   now provides it, mirror gained SplitSeq via syntheticIterPackage.
+# - TestContextSyntheticSignatures: phase-1 restored Context.Deadline in
+#   P4; mirror restored it too (absence assertion flipped to presence).
+# - TestErrorsSyntheticSignatures, TestEncCoreSyntheticSignatures,
+#   TestEncCoreOmissionsPinned: phase-1 errors source imports
+#   internal/reflectlite (synthetic retired; exporter uses the real
+#   package) — test importers now resolve the real package.
+# - TestTwoPackageDifferential, TestEmbeddedFieldRebinding (E6): frontend
+#   blockers FIXED (repoRoot path; 6812e97e N-target interface MR desugar
+#   absorbed with red-green regression tests), but SKIPPED with tracked
+#   ticket: the graalgo leg hits a backend RUNTIME NPE (GoStruct null)
+#   executing the merged fmt tree — a Java backend runtime bug out of this
+#   frontend/test lane's scope, needs a backend lane. Each Skip carries
+#   the reference. Unskip when the backend runs fmt-importing programs
+#   cleanly.
 # /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
 P3FE_TMP := $(CURDIR)/internal/frontend/p3frontend/.tmp
 test-p3frontend: generate build
