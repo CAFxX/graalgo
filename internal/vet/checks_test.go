@@ -9,8 +9,16 @@ import (
 
 func runVetOnSrc(t *testing.T, src string) string {
 	t.Helper()
+	return runVetOnSrcFile(t, "test.go", src)
+}
+
+// runVetOnSrcFile is runVetOnSrc with an explicit file name. Some analyzers
+// only inspect files with a particular suffix (e.g. the "tests" analyzer
+// only looks at _test.go files), so the file name is part of the fixture.
+func runVetOnSrcFile(t *testing.T, name, src string) string {
+	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "test.go")
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -453,5 +461,146 @@ func g(url string) {
 	count := strings.Count(joined, "before checking for errors")
 	if count != 1 {
 		t.Errorf("expected exactly 1 httpresponse diagnostic, got %d:\n%s", count, joined)
+	}
+}
+
+// Firing tests for the atomic, loopclosure, composites, and tests analyzers.
+// Each analyzer must fire on bad input (positive) and stay silent on the
+// corresponding good input (negative): a no-op analyzer must fail these
+// tests, per the repo's own doctrine that an unfired analyzer rots silently.
+
+func TestAtomic(t *testing.T) {
+	bad := `package main
+
+import "sync/atomic"
+
+func f() {
+	var n atomic.Int64
+	n.v = 5 // direct assignment to an atomic value: must use Store
+	_ = n
+}
+`
+	joined := runVetOnSrc(t, bad)
+	if !strings.Contains(joined, "direct assignment to atomic value") {
+		t.Errorf("expected atomic diagnostic, got:\n%s", joined)
+	}
+
+	good := `package main
+
+import "sync/atomic"
+
+func f() {
+	var n atomic.Int64
+	n.Store(5)
+	_ = n.Load()
+}
+`
+	joined = runVetOnSrc(t, good)
+	if strings.Contains(joined, "direct assignment to atomic value") {
+		t.Errorf("false positive on atomic Store/Load:\n%s", joined)
+	}
+}
+
+func TestLoopClosure(t *testing.T) {
+	// `for i = range` assigns to an outer variable, so a closure that
+	// outlives the iteration observes the final value — the case the
+	// analyzer flags (Go 1.22 per-iteration semantics only apply to :=).
+	bad := `package main
+
+func f() {
+	var i int
+	xs := []int{1, 2, 3}
+	for i = range xs {
+		go func() {
+			_ = i
+		}()
+	}
+	_ = xs
+}
+`
+	joined := runVetOnSrc(t, bad)
+	if !strings.Contains(joined, "loop variable i captured by func literal") {
+		t.Errorf("expected loopclosure diagnostic, got:\n%s", joined)
+	}
+
+	good := `package main
+
+func f() {
+	xs := []int{1, 2, 3}
+	for i := range xs {
+		i := i
+		go func() {
+			_ = i
+		}()
+	}
+	_ = xs
+}
+`
+	joined = runVetOnSrc(t, good)
+	if strings.Contains(joined, "captured by func literal") {
+		t.Errorf("false positive on per-iteration loop variable:\n%s", joined)
+	}
+}
+
+func TestComposites(t *testing.T) {
+	bad := `package main
+
+import "image"
+
+func f() image.Rectangle {
+	return image.Rectangle{image.Point{0, 0}, image.Point{10, 10}}
+}
+`
+	joined := runVetOnSrc(t, bad)
+	if !strings.Contains(joined, "composite literal uses unkeyed fields") {
+		t.Errorf("expected composites diagnostic, got:\n%s", joined)
+	}
+	// The outer literal and both nested points are unkeyed: exactly 3.
+	if n := strings.Count(joined, "composite literal uses unkeyed fields"); n != 3 {
+		t.Errorf("expected 3 composites diagnostics, got %d:\n%s", n, joined)
+	}
+
+	good := `package main
+
+import "image"
+
+func f() image.Rectangle {
+	return image.Rectangle{Min: image.Point{X: 0, Y: 0}, Max: image.Point{X: 10, Y: 10}}
+}
+`
+	joined = runVetOnSrc(t, good)
+	if strings.Contains(joined, "unkeyed fields") {
+		t.Errorf("false positive on keyed composite literal:\n%s", joined)
+	}
+}
+
+func TestTestsAnalyzer(t *testing.T) {
+	// The "tests" analyzer only inspects _test.go files, so the fixture
+	// must carry that suffix (runVetOnSrcFile, not runVetOnSrc).
+	bad := `package foo
+
+import "testing"
+
+func TestBad() {} // wrong signature: no *testing.T
+
+func TestMain() {} // wrong signature: no *testing.M
+`
+	joined := runVetOnSrcFile(t, "foo_test.go", bad)
+	if !strings.Contains(joined, "Test functions must take one *testing.T parameter") {
+		t.Errorf("expected tests diagnostic for TestBad, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "TestMain must take one *testing.M parameter") {
+		t.Errorf("expected tests diagnostic for TestMain, got:\n%s", joined)
+	}
+
+	good := `package foo
+
+import "testing"
+
+func TestGood(t *testing.T) { t.Log("ok") }
+`
+	joined = runVetOnSrcFile(t, "foo_test.go", good)
+	if strings.Contains(joined, "must take") {
+		t.Errorf("false positive on well-formed test:\n%s", joined)
 	}
 }
