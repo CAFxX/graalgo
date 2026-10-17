@@ -1,8 +1,5 @@
 package graalgo.p3builtin.nodes;
 
-import java.lang.reflect.Array;
-import java.util.Arrays;
-
 import com.oracle.truffle.api.frame.VirtualFrame;
 
 import graalgo.frontend.FrontendException;
@@ -83,50 +80,11 @@ public final class ClearNode extends GoExprNode {
 
     /** Zeroes the slice's len elements (backing array shared — no copy). */
     private static void clearSlice(GoSlice s) {
-        Object array = s.array();
-        int from = s.offset();
-        int len = s.len();
-        if (len == 0) {
-            return;
-        }
-        Class<?> ct = array.getClass().getComponentType();
-        if (!ct.isPrimitive()) {
-            Arrays.fill((Object[]) array, from, from + len, null);
-            return;
-        }
-        Object zero = primitiveZero(ct);
-        for (int i = 0; i < len; i++) {
-            Array.set(array, from + i, zero);
-        }
-    }
-
-    /** The boxed zero for a primitive component type. */
-    private static Object primitiveZero(Class<?> ct) {
-        if (ct == boolean.class) {
-            return Boolean.FALSE;
-        }
-        if (ct == byte.class) {
-            return (byte) 0;
-        }
-        if (ct == short.class) {
-            return (short) 0;
-        }
-        if (ct == int.class) {
-            return 0;
-        }
-        if (ct == long.class) {
-            return 0L;
-        }
-        if (ct == float.class) {
-            return 0.0f;
-        }
-        if (ct == double.class) {
-            return 0.0;
-        }
-        if (ct == char.class) {
-            return '\0';
-        }
-        throw new IllegalStateException("unsupported primitive component type: " + ct);
+        // Single D5-carrier-aware implementation shared with the v2
+        // frontend ClearNode (GoSlice.clearElements): primitive backings
+        // fill with 0, complex backings with the (0+0i) singletons (never
+        // null), struct slots with fresh zero structs (never null).
+        s.clearElements();
     }
 
     /**

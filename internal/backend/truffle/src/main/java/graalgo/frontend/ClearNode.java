@@ -34,28 +34,16 @@ public final class ClearNode extends GoExprNode {
                 ((GoMap) target).clear();
             }
         } else if (k == GoKind.SLICE) {
-            GoSlice gs = (GoSlice) target;
-            Object arr = gs.array();
-            int off = gs.offset();
-            int len = gs.len();
-            // Zero the slice's elements. Backing arrays are typed
-            // (byte[], short[], int[], long[], double[], Object[], etc. per D5).
-            if (arr instanceof byte[] ba) {
-                java.util.Arrays.fill(ba, off, off + len, (byte) 0);
-            } else if (arr instanceof short[] sa) {
-                java.util.Arrays.fill(sa, off, off + len, (short) 0);
-            } else if (arr instanceof int[] ia) {
-                java.util.Arrays.fill(ia, off, off + len, 0);
-            } else if (arr instanceof long[] la) {
-                java.util.Arrays.fill(la, off, off + len, 0L);
-            } else if (arr instanceof double[] da) {
-                java.util.Arrays.fill(da, off, off + len, 0.0);
-            } else if (arr instanceof boolean[] bo) {
-                java.util.Arrays.fill(bo, off, off + len, false);
-            } else if (arr instanceof Object[] oa) {
-                java.util.Arrays.fill(oa, off, off + len, null);
+            // clear on a nil slice is a no-op (gc parity; a nil slice is a
+            // null GoSlice reference per GoSlice's contract).
+            if (target != null) {
+                // Zero the slice's elements via the single D5-carrier-aware
+                // implementation shared with the p3builtin ClearNode
+                // (GoSlice.clearElements): covers float[] (R2 P0-2), and
+                // zeroes complex (0+0i, never null) and struct (fresh zero,
+                // never null) backings (R2 P1-9).
+                ((GoSlice) target).clearElements();
             }
-            // clear on a nil slice is a no-op (arr null handled by instanceof).
         }
         return 0L;
     }
