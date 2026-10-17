@@ -240,11 +240,13 @@ public final class DeadlockDetectTest {
 
     /**
      * A foreign-thread spawn in progress ({@code spawnInflight > 0})
-     * suppresses an otherwise-true predicate (design §4.2(4)). The real
-     * {@code spawn} holds the counter across the
-     * vthread.start()→INIT-offer window, which no test can pause inside
-     * deterministically, so the test holds it via the test-only
-     * adjuster; counter discipline of real spawns is asserted too.
+     * suppresses an otherwise-true predicate (design §4.2(4)). Production
+     * {@code spawn()} does not hold the counter — it increments
+     * {@code liveGoroutines} before {@code vthread.start()}, making the
+     * newcomer visible in {@code live} throughout the start→INIT-offer
+     * window (a spawner-held hold would suppress a fast exiter's EXIT
+     * evaluation). The counter is held here via the test-only adjuster to
+     * simulate the foreign-spawn window and prove the predicate honors it.
      */
     public void testSpawnInflightSuppressesDeadlock() throws Exception {
         SchedulerCore sched = newScheduler();
@@ -258,8 +260,6 @@ public final class DeadlockDetectTest {
                 }
                 sched.parkCurrent(null, ParkReason.SELECT);
             });
-            assertEquals(1, sched.spawnInflightCount(),
-                    "real spawn() balances its increment around the hold");
             release.set(true);
             waitFor(() -> sched.drainer().parkedCountForTest() == 1, "g1 parked");
             assertFalse(sched.isDeadlocked(), "spawn in flight suppresses the report");

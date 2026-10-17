@@ -303,7 +303,16 @@ public final class Drainer {
      *   <li>{@code inIo} empty — no raw blocking syscall in flight (gc:
      *       syscall Ms keep {@code run > 0}).
      *   <li>{@code spawnInflight == 0} — no foreign-thread spawn between
-     *       {@code vthread.start()} and the INIT offer.
+     *       {@code vthread.start()} and the INIT offer. Production
+     *       {@code spawn()} no longer holds this counter: it increments
+     *       {@code liveGoroutines} <em>before</em> {@code vthread.start()},
+     *       so the newcomer is visible in {@code live} throughout the
+     *       window ({@code parked.size() < live} there — no false
+     *       positive). A spawner-held hold is unsound: a goroutine fast
+     *       enough to exit before {@code spawn()} returns would have its
+     *       EXIT evaluation suppressed by the still-held counter. The
+     *       clause stays as defense-in-depth, exercised by the white-box
+     *       unit test via {@code addSpawnInflightForTest}.
      *   <li>not {@link SchedulerCore#deadlockSuppressed} — gc parity
      *       quirk (probe p6): a live netpoller thread keeps
      *       {@code run > 0} forever, so deadlock never fires.

@@ -431,15 +431,16 @@ public final class SchedulerCore {
      * (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
-        // RV-P1-19: hold spawnInflight across the whole call so the
-        // deadlock detector cannot fire between vthread.start() and
-        // the INIT offer on a foreign spawner thread.
-        spawnInflight.incrementAndGet();
-        try {
-            return spawnLocked(body);
-        } finally {
-            spawnInflight.decrementAndGet();
-        }
+        // RV-P1-19: no spawnInflight hold here. spawnLocked() increments
+        // liveGoroutines BEFORE vthread.start(), so the newcomer is
+        // visible in runnableCount() throughout the start→INIT-offer
+        // window (parked.size()<live there, no false positive). A
+        // spawner-held counter cannot work: a goroutine fast enough to
+        // exit before spawn() returns would have its EXIT evaluation
+        // suppressed by the still-held counter (flaky detector). The
+        // spawnInflight predicate clause remains for the white-box unit
+        // test (foreign spawn simulated via addSpawnInflightForTest).
+        return spawnLocked(body);
     }
 
     private GoroutineHandle spawnLocked(Runnable body) {
@@ -508,12 +509,27 @@ public final class SchedulerCore {
             }
         });
         h.thread = vthread;
-        // Start BEFORE accounting: if start() throws, no slot is leaked
-        // and the live count is untouched. The vthread blocks in awaitAck
-        // until the drainer admits it, so early start is safe.
-        vthread.start();
+        // RV-P1-19: account BEFORE start. The newcomer must be visible in
+        // runnableCount() throughout the start→INIT-offer window: if a
+        // foreign thread spawns while all goroutines are parked, the
+        // drainer could otherwise observe parked.size()==live with the
+        // newcomer invisible and false-positive the deadlock detector.
+        // (A spawner-held spawnInflight counter cannot close this gap:
+        // a goroutine fast enough to exit before spawn() returns would
+        // have its EXIT evaluation suppressed by the still-held counter
+        // — flaky testSpawnInflightSuppressesDeadlock. Making the
+        // newcomer visible in live closes it robustly: parked.size()<live
+        // until it parks.) If start() throws, the slot is released.
         synchronized (quiescenceLock) {
             liveGoroutines.incrementAndGet();
+        }
+        try {
+            vthread.start();
+        } catch (Throwable th) {
+            synchronized (quiescenceLock) {
+                liveGoroutines.decrementAndGet();
+            }
+            throw th;
         }
         drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
         return h;
