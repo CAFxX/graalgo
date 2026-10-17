@@ -7474,11 +7474,15 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 //   - a named function in value position (F := two),
 //   - a package-qualified named function (var F ... = syscall.Accept),
 //   - an alias of an already-linked variable (G := F).
+//   - a call returning a multi-result function value
+//     (comp := w.compressor(m)); the pair type is synthesized from the
+//     result signature (RV-P0-03).
 //
 // The pair info comes from the func lit's recorded transform
 // (funcLitMRInfo), from the named function's pair plan
-// (mrPlanForFuncValue: userMRFuncs or the table classifiers), or from the
-// aliased variable's existing link. Returns nil when the initializer is
+// (mrPlanForFuncValue: userMRFuncs or the table classifiers), from the
+// aliased variable's existing link, or from a synthesized pair type for
+// a call-result signature. Returns nil when the initializer is
 // not a multi-result function value.
 func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 	x = unparen(x)
@@ -7506,6 +7510,30 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 		if id, ok := x.X.(*ast.Ident); ok {
 			if _, ok := e.info.Uses[id].(*types.PkgName); ok {
 				fn, _ = e.info.Uses[x.Sel].(*types.Func)
+			}
+		}
+	case *ast.CallExpr:
+		// RV-P0-03: the call returns a function value (e.g.
+		// comp := w.compressor(m) where compressor returns Compressor).
+		// If that function type is multi-result, the value is
+		// pair-returning (v1 pair-transforms every multi-result func
+		// lit and named function at export), so synthesize the pair
+		// type from the result signature for call-site extraction.
+		// The field names (f0, f1, ...) match synthesizePairTypeForSig's
+		// convention, so extraction aligns with the transformed value's
+		// actual pair struct.
+		if tv, ok := e.info.Types[x]; ok && tv.Type != nil {
+			t := tv.Type
+			if nt, ok := t.(*types.Named); ok {
+				t = nt.Underlying()
+			}
+			if sig, ok := t.(*types.Signature); ok && sig.Results().Len() > 1 &&
+				(sig.TypeParams() == nil || sig.TypeParams().Len() == 0) {
+				pairType, fieldNames, err := e.synthesizePairTypeForSig(sig, "__wsd_pair_call")
+				if err != nil {
+					return nil
+				}
+				return &userMRInfo{pairType: pairType, pairFields: fieldNames, origSig: sig}
 			}
 		}
 	}

@@ -896,7 +896,16 @@ func (t Time) YearDay() int     { panic("time.Time.YearDay: not in M5 scope") }
 func (t Time) UTC() Time        { return t }
 func (t Time) Local() Time      { return t }
 func (t Time) In(loc *Location) Time {
-	panic("time.Time.In: not in M5 scope")
+	// UTC-only model (ADR-0005 D1): Time carries no zone, so In cannot
+	// re-label the presentation zone — but gc's In never changes the
+	// instant either, and the instant is what the UTC-only model
+	// represents, so returning t preserves every observable instant
+	// exactly. Zone-dependent display stays UTC (documented divergence,
+	// same class as Local-is-UTC; re-test trigger: synthetic zoneinfo).
+	// (Was a fail-fast "not in M5 scope" panic; archive/zip's parseExtras
+	// calls Modified.In(timeZone(...)) on every zip with extended
+	// timestamps — the panic aborted opening any such real file, RV-P0-03.)
+	return t
 }
 func (t Time) Location() *Location { panic("time.Time.Location: not in M5 scope") }
 func (t Time) Zone() (string, int) {
@@ -907,12 +916,28 @@ func (t Time) UnixMicro() int64 { return t.unixnano / 1e3 }
 
 // Location exists so *Location-typed signatures type-check. Local is
 // accepted as UTC (ADR-0005: documented divergence until P3-M7).
+// The offset field carries a FixedZone offset east of UTC for the
+// zoneinfo re-test trigger; the UTC-only model never applies it to
+// instants (see FixedZone, Time.In).
 type Location struct {
-	name string
+	name   string
+	offset int // seconds east of UTC; informational until synthetic zoneinfo
 }
 
 var UTC *Location = &Location{name: "UTC"}
 var Local *Location = &Location{name: "UTC"}
+
+// FixedZone returns a Location with the given name and the given offset
+// east of UTC. The synthetic time model is UTC-only (ADR-0005 D1): the
+// offset is recorded on the Location (see the offset field) but never
+// applied to instants — Time.In is the identity and Format renders UTC.
+// Documented divergence, same class as Local-is-UTC; re-test trigger:
+// synthetic zoneinfo. (Needed by archive/zip's timeZone helper; without
+// it the synthetic archive/zip package fails to type-check and every
+// program importing archive/zip fails at export, RV-P0-03.)
+func FixedZone(name string, offset int) *Location {
+	return &Location{name: name, offset: offset}
+}
 
 func (l *Location) String() string {
 	if l == nil || l.name == "" {

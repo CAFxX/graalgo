@@ -589,16 +589,14 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Read", "dirReader", "__zipdirReaderRead", "__zipdirReaderReadPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Stat", "checksumReader", "__zipchecksumReaderStat", "__zipchecksumReaderStatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "checksumReader", "__zipchecksumReaderRead", "__zipchecksumReaderReadPair", []string{"n", "err"}, false},
-	{"archive/zip", "Close", "checksumReader", "__zipchecksumReaderClose", "__zipchecksumReaderClosePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "readDirectoryEnd", "", "__zipreadDirectoryEnd", "__zipreadDirectoryEndPair", []string{"dir", "baseOffset", "err"}, false},
 	{"archive/zip", "findDirectory64End", "", "__zipfindDirectory64End", "__zipfindDirectory64EndPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "stat", "fileListEntry", "__zipfileListEntrystat", "__zipfileListEntrystatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Open", "Reader", "__zipReaderOpen", "__zipReaderOpenPair", []string{"f0", "f1"}, false},
-	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"f0", "elem", "isDir"}, false},
-	{"archive/zip", "Close", "openDir", "__zipopenDirClose", "__zipopenDirClosePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"dir", "elem", "isDir"}, false},
 	{"archive/zip", "ReadDir", "openDir", "__zipopenDirReadDir", "__zipopenDirReadDirPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Create", "Writer", "__zipWriterCreate", "__zipWriterCreatePair", []string{"f0", "f1"}, false},
-	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"f0", "require"}, false},
+	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"valid", "require"}, false},
 	{"archive/zip", "CreateHeader", "Writer", "__zipWriterCreateHeader", "__zipWriterCreateHeaderPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "CreateRaw", "Writer", "__zipWriterCreateRaw", "__zipWriterCreateRawPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Write", "fileWriter", "__zipfileWriterWrite", "__zipfileWriterWritePair", []string{"f0", "f1"}, false},
@@ -607,6 +605,14 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "timeToMsDosTime", "", "__ziptimeToMsDosTime", "__ziptimeToMsDosTimePair", []string{"fDate", "fTime"}, false},
 	{"archive/zip", "Write", "pooledFlateWriter", "__zippooledFlateWriterWrite", "__zippooledFlateWriterWritePair", []string{"n", "err"}, false},
 	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}, false},
+	// RV-P0-03: interface-reachable multi-result methods whose __-helpers
+	// already exist in the synthetic source but had no table entry, so
+	// interface dispatch failed fast with "missing method": fs.File.Read
+	// and fs.File.Stat on the *openDir returned by Reader.Open, and
+	// fs.DirEntry.Info on the *fileListEntry returned by ReadDir.
+	{"archive/zip", "Read", "openDir", "__zipopenDirRead", "__zipopenDirReadPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Stat", "openDir", "__zipopenDirStat", "__zipopenDirStatPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Info", "fileListEntry", "__zipfileListEntryInfo", "__zipfileListEntryInfoPair", []string{"f0", "f1"}, false},
 	{"mime", "ParseMediaType", "", "__mimeParseMediaType", "__mimeParseMediaTypePair", []string{"mediatype", "params", "err"}, false},
 	{"mime", "decode2231Enc", "", "__mimedecode2231Enc", "__mimedecode2231EncPair", []string{"f0", "f1"}, false},
 	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"f0", "rest"}, false},
@@ -1538,16 +1544,16 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
-				}
-			}
 			// General (real-x509 lane): Var aliases a multi-result Func
-			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
+			// (e.g. path/filepath's lstat -> os.Lstat). The var
+			// declaration was removed by etaExpandMRFuncValues, so there
+			// is no pair-transformed function to call: desugar as the
+			// aliased Func via the table (helper call). This MUST precede
+			// the userMRInfoForVar check below — its alias fallback
+			// returns an mrUser plan, which desugars via exportCall of
+			// the removed var and fails loud with "used before
+			// declaration". (RV-P0-03: the lstat alias misclassification
+			// aborted every export importing path/filepath.)
 			if aliasedFn, ok := e.varFuncAliases[v]; ok {
 				// Build a synthetic SelectorExpr call for classification.
 				// The table classifiers take (pkgPath, fn, targs).
@@ -1566,6 +1572,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
+				}
+				// Alias with no table entry: fall through to fail loud
+				// below (never silently export the removed var).
+				return nil
+			}
+			// MR-closure-var: call through a variable holding a multi-result
+			// closure (e.g. readModuleLine(elem) where readModuleLine :=
+			// func(...) (T, error) {...}). The variable was linked to the
+			// func lit's pair info at its definition; desugar via the pair
+			// exactly like a named user MR function.
+			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
 				}
 			}
 			return nil
