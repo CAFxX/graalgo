@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Batch differential fuzzing driver.
 
-1. Builds graalgo Java modules once.
+1. Builds graalgo backend modules once (root `make build`).
 2. Generates N programs (seed range).
 3. Runs diff_one.sh in parallel.
 4. Classifies, dedups, writes results.jsonl + summary.
+
+Exit codes: 0 = batch ok; 1 = batch failure (generator/differential);
+3 = build failure (counted by run_soak.sh for consecutive-failure abort).
 
 Usage: run_batch.py --seeds START:END --out DIR [--jobs J] [--gmp N]
 """
@@ -16,9 +19,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: tools/fuzz-soak/harness/run_batch.py -> tools/fuzz-soak -> tools -> repo.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,14 +42,17 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build backend modules once (root Makefile `build` target:
+    # internal/backend/{truffle,runtime,interop}).
+    # Exit code 3 = build failure (run_soak.sh counts consecutive build
+    # failures on this code and aborts the soak instead of looping forever).
+    print("== building graalgo backend modules ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=1800)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
-        sys.exit(1)
+        sys.exit(3)
     print("build ok", flush=True)
 
     # 2. Generate programs.

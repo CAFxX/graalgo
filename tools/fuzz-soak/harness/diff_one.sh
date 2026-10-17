@@ -8,22 +8,40 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+GR="${GR:-$(cd "$HERE/../.." && pwd)}"
+BACKEND="$GR/internal/backend"
+# Classpath order is load-bearing: interop FIRST, then runtime (so the
+# runtime module's same-FQN replacements shadow the truffle module's frozen
+# stubs), then truffle, then the Truffle jars — same order as the interop
+# module Makefile's RUN_CP and internal/backend/graalgo-sync-run.
+CP="$BACKEND/interop/out/classes:$BACKEND/runtime/out/classes:$BACKEND/truffle/out/classes"
+for jar in "$BACKEND"/truffle/lib/*.jar; do
+    CP="$CP:$jar"
+done
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+# Scratch: explicit FUZZ_TMPDIR (run_soak.sh sets it under the out dir),
+# else inherited TMPDIR, else the program workdir — never /tmp or the
+# banned hidden_files/ tree.
+export TMPDIR="${FUZZ_TMPDIR:-${TMPDIR:-$WORKDIR/tmp}}"
+mkdir -p "$TMPDIR" || { echo "diff_one.sh: cannot create TMPDIR=$TMPDIR" >&2; exit 2; }
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
 
+# json_emit <file> <result> <detail>: emits one JSON result record to
+# stdout. Details are JSON-escaped via python3 (T8 fix): raw printf
+# interpolation produced invalid JSON whenever a log excerpt contained
+# a quote or backslash, turning real CRASH findings into HARNESS_ERROR
+# noise downstream.
+json_emit() {
+    python3 -c 'import json,sys; print(json.dumps({"file": sys.argv[1], "result": sys.argv[2], "detail": sys.argv[3]}))' \
+        "$1" "$2" "$3"
+}
+
 # 1. gc build
 if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
-    printf '{"file": "%s", "result": "GC_BUILD_FAIL", "detail": "gc build failed"}\n' "$base"
+    json_emit "$base" "GC_BUILD_FAIL" "gc build failed"
     exit 0
 fi
 
@@ -42,36 +60,36 @@ gr_exit=$?
 # Scope rejection?
 if grep -q "not supported in frontend/v1 scope" "$WORKDIR/gr.err" 2>/dev/null; then
     reason="$(grep -m1 -o "not supported in frontend/v1 scope.*" "$WORKDIR/gr.err" | head -c 120)"
-    printf '{"file": "%s", "result": "SCOPE", "detail": "%s"}\n' "$base" "$reason"
+    json_emit "$base" "SCOPE" "$reason"
     exit 0
 fi
 
 # Hang?
 if [ "$gr_exit" = 124 ]; then
-    printf '{"file": "%s", "result": "HANG", "detail": "graalgo timeout 120s"}\n' "$base"
+    json_emit "$base" "HANG" "graalgo timeout 120s"
     exit 0
 fi
 if [ "$gc_exit" = 124 ]; then
-    printf '{"file": "%s", "result": "GC_HANG", "detail": "gc timeout 10s (generator bug?)"}\n' "$base"
+    json_emit "$base" "GC_HANG" "gc timeout 10s (generator bug?)"
     exit 0
 fi
 
 # JVM crash (not a Go panic)?
 if grep -qE "Exception in thread|ClassCastException|FrameSlotTypeException|at graalgo\.|at com\.oracle\.truffle" "$WORKDIR/gr.err" 2>/dev/null; then
     first="$(grep -m1 -E "Exception|Error" "$WORKDIR/gr.err" | head -c 200)"
-    printf '{"file": "%s", "result": "CRASH", "detail": "%s"}\n' "$base" "$first"
+    json_emit "$base" "CRASH" "$first"
     exit 0
 fi
 
 # stdout compare
 if ! cmp -s "$WORKDIR/gc.out" "$WORKDIR/gr.out"; then
-    printf '{"file": "%s", "result": "WRONG_OUTPUT", "detail": "stdout differs"}\n' "$base"
+    json_emit "$base" "WRONG_OUTPUT" "stdout differs"
     exit 0
 fi
 
 # exit code compare
 if [ "$gc_exit" != "$gr_exit" ]; then
-    printf '{"file": "%s", "result": "EXIT_MISMATCH", "detail": "gc=%s graalgo=%s"}\n' "$base" "$gc_exit" "$gr_exit"
+    json_emit "$base" "EXIT_MISMATCH" "gc=$gc_exit graalgo=$gr_exit"
     exit 0
 fi
 
@@ -80,9 +98,9 @@ if [ "$gc_exit" != 0 ]; then
     gc_panic="$(head -1 "$WORKDIR/gc.err")"
     gr_panic="$(grep -v "^WARNING: " "$WORKDIR/gr.err" 2>/dev/null | head -1)"
     if [ "$gc_panic" != "$gr_panic" ]; then
-        printf '{"file": "%s", "result": "GO_PANIC_MISMATCH", "detail": "gc=[%s] gr=[%s]"}\n' "$base" "$gc_panic" "$gr_panic"
+        json_emit "$base" "GO_PANIC_MISMATCH" "gc=[$gc_panic] gr=[$gr_panic]"
         exit 0
     fi
 fi
 
-printf '{"file": "%s", "result": "PASS", "detail": ""}\n' "$base"
+json_emit "$base" "PASS" ""

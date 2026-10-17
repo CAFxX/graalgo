@@ -18,8 +18,10 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: tools/fuzz-soak/harness/triage.py -> tools/fuzz-soak -> tools -> repo.
+_GR_DEFAULT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+GR = os.environ.get("GR", _GR_DEFAULT)
+FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 
 def diff_result(gofile, workdir):
@@ -62,7 +64,9 @@ def minimize(prog_path, out_path, workdir):
             f.write(src)
         # Must still build under gc (else not a valid reduction).
         env = dict(os.environ)
-        env["PATH"] = os.path.expanduser("~/tools/go/bin") + ":" + env.get("PATH", "")
+        go_bin = os.environ.get("GO_BIN_DIR",
+                                os.path.expanduser("~/tools/go/bin"))
+        env["PATH"] = go_bin + ":" + env.get("PATH", "")
         r = subprocess.run(["go", "build", "-o", os.devnull, tmp],
                            capture_output=True, env=env)
         if r.returncode != 0:
@@ -117,7 +121,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--prog", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workdir", default="/tmp/triage")
+    # Default scratch honors TMPDIR (never /tmp: the shared 512MB tmpfs).
+    ap.add_argument("--workdir",
+                    default=os.path.join(os.environ.get("TMPDIR", "."), "triage-work"))
     args = ap.parse_args()
     os.makedirs(args.workdir, exist_ok=True)
     ok = minimize(args.prog, args.out, args.workdir)
