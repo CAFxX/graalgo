@@ -287,8 +287,9 @@ def check_no_bridges(diff, base_rev):
             continue
         block = "\n".join(lines)
         for pat in block_pats[ext]:
-            m = re.search(pat, block, re.I)
-            if m and "\n" in m.group(0):
+            spans = [m for m in re.finditer(pat, block, re.I) if "\n" in m.group(0)]
+            if spans:
+                m = spans[0]
                 errors.append(f"LINE-SPLIT FAIL-FAST STUB in {fname}: {m.group(0)[:80].replace(chr(10), ' / ')}")
                 break
 
