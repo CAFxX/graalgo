@@ -5,6 +5,7 @@ import graalgo.p3reflect.ReflectValues;
 import graalgo.values.GoKind;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import graalgo.values.UnsafeHandles;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
