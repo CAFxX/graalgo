@@ -875,12 +875,17 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
+	// where F is multi-result. The alias maps are kept on the package so
+	// importSyntheticPackage can absorb them (P1-F1): discarding them
+	// removes the declarations from the AST while leaving call sites
+	// through the vars undesugarable.
+	etaVarLits, varFuncAliases := etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
-		raw: []byte(src),
+		raw:            []byte(src),
+		etaVarLits:     etaVarLits,
+		varFuncAliases: varFuncAliases,
 	}
 }
 
@@ -1000,22 +1005,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// General (real-x509 lane): copy eta-expanded Var->FuncLit mappings
 	// and Var->Func aliases for MR-closure-var linking (e.g.
 	// path/filepath's lstat).
-	if len(sp.etaVarLits) > 0 {
-		if e.etaVarLits == nil {
-			e.etaVarLits = make(map[*types.Var]*ast.FuncLit)
-		}
-		for v, lit := range sp.etaVarLits {
-			e.etaVarLits[v] = lit
-		}
-	}
-	if len(sp.varFuncAliases) > 0 {
-		if e.varFuncAliases == nil {
-			e.varFuncAliases = make(map[*types.Var]*types.Func)
-		}
-		for v, fn := range sp.varFuncAliases {
-			e.varFuncAliases[v] = fn
-		}
-	}
+	e.absorbEtaVarMaps(sp.etaVarLits, sp.varFuncAliases)
 	g := synthGroup{sp: sp}
 	// Two passes: funcs first (so var initializers can call them),
 	// then package vars.

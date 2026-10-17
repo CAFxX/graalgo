@@ -1403,6 +1403,12 @@ type mrPlan struct {
 	// (Load/LoadOrStore/LoadAndDelete/Swap), selecting the syncop wire
 	// node op and its arity check in desugarSyncMap.
 	syncMapOp string
+	// For P1-F1 (review3-frontend): aliasTarget is the *types.Func a
+	// package-level var alias resolves to (var x = pkg.F). The alias
+	// declaration was removed from the AST, so the call must lower as a
+	// direct call to the aliased func (exportAliasedMRCall) — never via
+	// the removed ident.
+	aliasTarget *types.Func
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -1488,31 +1494,82 @@ func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
 	}
 	// Fallback: var aliases a Func (e.g. lstat -> os.Lstat). Get the
 	// table MR info for the aliased Func.
-	if aliasedFn, ok := e.varFuncAliases[v]; ok {
-		pkgPath := ""
-		if aliasedFn.Pkg() != nil {
-			pkgPath = aliasedFn.Pkg().Path()
-		}
-		// Use the table classifiers to get the pair info.
-		// We need to construct a plan to get tmpType/pairFields.
-		var plan *mrPlan
-		if plan = classifyOsMultiResultCall(pkgPath, aliasedFn, nil); plan == nil {
-			if plan = classifyM7MultiResultCall(pkgPath, aliasedFn, nil); plan == nil {
-				plan = classifyM8MultiResultCall(pkgPath, aliasedFn, nil)
+	if plan := e.classifyVarFuncAlias(v); plan != nil {
+		if nt, ok := plan.tmpType.(*types.Named); ok {
+			mrInfo := &userMRInfo{
+				pairType:   nt,
+				pairFields: plan.pairFields,
 			}
-		}
-		if plan != nil {
-			if nt, ok := plan.tmpType.(*types.Named); ok {
-				mrInfo := &userMRInfo{
-					pairType:   nt,
-					pairFields: plan.pairFields,
-				}
-				e.userMRVars[v] = mrInfo
-				return mrInfo
-			}
+			e.userMRVars[v] = mrInfo
+			return mrInfo
 		}
 	}
 	return nil
+}
+
+// classifyVarFuncAlias classifies a call through a package-level variable
+// that aliases a multi-result Func (var x = pkg.F). It runs the same
+// general table chain as a package-qualified pkg.F(...) call — the
+// synthetic Appendix-M tables (m7/os/m8/io/m9), the disk MR table — plus
+// user pair-transformed funcs, so an alias covers everything the direct
+// call covers. (P1-F1: without the disk table, a top-level
+// `var lstat = os.Lstat` — os now resolves from disk — could not
+// desugar.)
+func (e *exporter) classifyVarFuncAlias(v *types.Var) *mrPlan {
+	aliasedFn, ok := e.varFuncAliases[v]
+	if !ok {
+		return nil
+	}
+	// P1-F1: the importer shares package objects across typechecks, so
+	// aliasedFn IS the func object the direct call site resolves to —
+	// userMRFuncs[aliasedFn] hits for pair-transformed synthetic funcs
+	// (e.g. strings.Cut) exactly as at the direct call site
+	// (classifyMultiResultCall Gate-1 #2). Checked before the tables:
+	// registerUserMRFunc skips table-driven funcs, so the two are
+	// disjoint.
+	if mrInfo, ok := e.userMRFuncs[aliasedFn]; ok {
+		return &mrPlan{
+			kind:        mrUser,
+			tmpType:     mrInfo.pairType,
+			pairFields:  mrInfo.pairFields,
+			aliasTarget: aliasedFn,
+		}
+	}
+	pkgPath := ""
+	if aliasedFn.Pkg() != nil {
+		pkgPath = aliasedFn.Pkg().Path()
+	}
+	if plan := classifyM7MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyOsMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyIoMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyM9MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyDiskMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+		return plan
+	}
+	return nil
+}
+
+// exportAliasedMRCall lowers a multi-result call through a package-level
+// var alias (P1-F1: var x = pkg.F). The alias declaration was removed
+// from the AST, so the call is emitted as a direct call to the aliased
+// func (plan.aliasTarget) — exactly the direct pkg.F lowering.
+func (e *exporter) exportAliasedMRCall(c *ast.CallExpr, plan *mrPlan) (*Node, error) {
+	id, ok := c.Fun.(*ast.Ident)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: aliased multi-result call has non-ident fun %T", c.Fun)
+	}
+	return e.exportFuncCall(c, id, plan.aliasTarget)
 }
 
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
@@ -1538,34 +1595,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
+			// (P1-F1) A Var aliasing a multi-result Func
+			// (var x = pkg.F) desugars as the aliased Func via the
+			// general table chain. Checked BEFORE the closure-var link:
+			// the table plan carries the __-helper dispatch that the
+			// mrUser closure-var plan cannot provide (the alias
+			// declaration was removed from the AST, so there is no
+			// pair-returning callee to call normally).
+			if plan := e.classifyVarFuncAlias(v); plan != nil {
+				return plan
+			}
 			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
 				return &mrPlan{
 					kind:       mrUser,
 					tmpType:    mrInfo.pairType,
 					pairFields: mrInfo.pairFields,
-				}
-			}
-			// General (real-x509 lane): Var aliases a multi-result Func
-			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
-			if aliasedFn, ok := e.varFuncAliases[v]; ok {
-				// Build a synthetic SelectorExpr call for classification.
-				// The table classifiers take (pkgPath, fn, targs).
-				pkgPath := ""
-				if aliasedFn.Pkg() != nil {
-					pkgPath = aliasedFn.Pkg().Path()
-				}
-				// Try the general classifiers with the aliased Func.
-				// For os.Lstat, the os table handles it.
-				if plan := classifyOsMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
-					return plan
-				}
-				// Fallback: try other tables.
-				if plan := classifyM7MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
-					return plan
-				}
-				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
-					return plan
 				}
 			}
 			return nil
@@ -3131,7 +3175,16 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	// directly (they were transformed to pair-returning at definition).
 	// Export the call normally, then extract fields from the pair.
 	if plan.kind == mrUser {
-		call, err := e.exportCall(c)
+		var call *Node
+		var err error
+		if plan.aliasTarget != nil {
+			// P1-F1: call through a package-level var alias — the alias
+			// declaration was removed, so lower as a direct call to the
+			// aliased func.
+			call, err = e.exportAliasedMRCall(c, plan)
+		} else {
+			call, err = e.exportCall(c)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -3430,7 +3483,14 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 				var innerTmpID, innerTmpTid int
 				if innerPlan.kind == mrUser || innerPlan.kind == mrIfaceMethod {
 					if innerPlan.kind == mrUser {
-						innerCallNode, err = e.exportCall(inner)
+						if innerPlan.aliasTarget != nil {
+							// P1-F1: nested call through a package-level
+							// var alias — lower as a direct call to the
+							// aliased func.
+							innerCallNode, err = e.exportAliasedMRCall(inner, innerPlan)
+						} else {
+							innerCallNode, err = e.exportCall(inner)
+						}
 					} else {
 						// General interface MR: build the ifacemethod
 						// dispatch node (yields the pair, like the
@@ -3515,7 +3575,13 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		// pair, like the assignment path in desugarIfaceMultiResult).
 		var err error
 		if plan.kind == mrUser {
-			callNode, err = e.exportCall(inner)
+			if plan.aliasTarget != nil {
+				// P1-F1: nested call through a package-level var alias —
+				// lower as a direct call to the aliased func.
+				callNode, err = e.exportAliasedMRCall(inner, plan)
+			} else {
+				callNode, err = e.exportCall(inner)
+			}
 		} else {
 			var sel *ast.SelectorExpr
 			var ok bool
@@ -4036,28 +4102,32 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 	}), nil
 }
 
-// etaExpandMRFuncValues rewrites variable initializers that capture a
+// etaExpandMRFuncValues handles variable initializers that capture a
 // multi-result function as a value:
 //
-//	var lstat = os.Lstat  →  var lstat = func(name string) (os.FileInfo, error) { return os.Lstat(name) }
+//	var lstat = os.Lstat  →  declaration removed; lstat recorded as an
+//	                           alias of os.Lstat (see aliases below)
 //
 // Rationale (general, real-x509 lane): frontend/v1 cannot represent a
 // multi-result function as a value (M5 scope error "X in value position
-// ... multi-result function values require v2"). Eta-expansion is the
-// semantics-preserving general fix: the wrapper is an ordinary
-// multi-result closure, which the existing machinery already handles —
-// exportFuncLit pair-transforms it, the MR-closure-var link
-// (linkFuncLitMRVars and the exportPackageVars ValueSpec case) connects
-// call sites through the variable to the pair info, and the inner call
-// desugars through the standard multi-result call path
-// (classifyMultiResultCall + hoistMRCallArg). This covers any
-// package-qualified multi-result function (synthetic Appendix-M tables,
-// the disk MR table, user pair-transforms) — not just os.Lstat.
+// ... multi-result function values require v2"). For package-level
+// `var x = pkg.F` the declaration is removed (to avoid the v1
+// value-position limitation) and the alias (x -> F) is returned; the
+// caller absorbs it into the exporter's varFuncAliases (see
+// absorbEtaVarMaps), and call sites through x desugar as the aliased
+// Func through the standard multi-result call path
+// (classifyMultiResultCall + userMRInfoForVar). Local `x := pkg.F`
+// initializers are eta-expanded in place to a FuncLit wrapper (an
+// ordinary multi-result closure, which the existing machinery already
+// handles). Method values keep their existing path (Selections non-nil
+// skips them). This covers any package-qualified multi-result function
+// (synthetic Appendix-M tables, the disk MR table, user pair-transforms)
+// — not just os.Lstat.
 //
 // Runs post-typecheck (it needs info for the signature); called from
 // buildDiskPackage, buildSyntheticPackage, and ExportFiles. Idempotent:
-// after expansion the RHS is a FuncLit, which never re-matches. Method
-// values keep their existing path (Selections non-nil skips them).
+// after expansion the RHS is a FuncLit, which never re-matches; removed
+// ValueSpecs never re-match either.
 func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
 	// Returns (var->FuncLit map, var->Func alias map).
 	// For package-level `var x = pkg.F` where F is multi-result, we record
@@ -4134,26 +4204,13 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 				}
 			}
 		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
-		}
+		// NOTE (P1-F1): call sites are NOT rewritten here. The removed
+		// declarations' call sites desugar through the returned alias map
+		// (absorbed into e.varFuncAliases by the caller — ExportFiles,
+		// buildSyntheticPackage, buildDiskPackage — and consulted by
+		// userMRInfoForVar / classifyMultiResultCall). An earlier version
+		// of this loop built a replacement ident and discarded it; it was
+		// a no-op and has been removed.
 	}
 	return varLits, aliases
 }

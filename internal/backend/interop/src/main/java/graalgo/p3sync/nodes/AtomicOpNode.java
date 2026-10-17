@@ -14,6 +14,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.runtime.Atomics;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
+import graalgo.p3unsafe.UnsafeTable;
 import graalgo.values.GoKind;
 
 /**
@@ -87,7 +88,11 @@ public final class AtomicOpNode extends GoExprNode {
             Map.entry("atomic.Pointer.CompareAndSwap", GoKind.BOOL),
             Map.entry("atomic.Value.Load", GoKind.INTERFACE),
             Map.entry("atomic.Value.Swap", GoKind.INTERFACE),
-            Map.entry("atomic.Value.CompareAndSwap", GoKind.BOOL));
+            Map.entry("atomic.Value.CompareAndSwap", GoKind.BOOL),
+            // P1-F2 (review3-frontend): package-level atomic.LoadPointer
+            // returns unsafe.Pointer — a long handle (D5), hence
+            // UNSAFE_POINTER, not POINTER.
+            Map.entry("atomic.UnsafePointer.Load", GoKind.UNSAFE_POINTER));
 
     /** Expected D5 argument count per op. */
     private static final Map<String, Integer> ARG_COUNTS = Map.of(
@@ -150,6 +155,66 @@ public final class AtomicOpNode extends GoExprNode {
         return (AtomicReference<Object>) c;
     }
 
+    /**
+     * Handle-preserving {@code unsafe.Pointer} load (P1-F2,
+     * review3-frontend). Two receiver shapes reach the
+     * {@code "atomic.UnsafePointer"} synctyp:
+     *
+     * <ul>
+     *   <li>a {@link LongCell} delegating cell (the {@code "ptr64"}
+     *       atomicaddr over a plain Go address): the cell holds the
+     *       unsafe.Pointer handle directly — lock-serialized load;</li>
+     *   <li>an {@link AtomicReference} cell (cell-transparent
+     *       {@code &x.v} inside the real {@code (*atomic.Pointer[T])}
+     *       bodies): the cell holds the referent object (the
+     *       typed-wrapper representation) — volatile read, then
+     *       identity-intern to the handle. Interning is stable per
+     *       referent object, so a stored handle resolves back to the
+     *       identical handle.</li>
+     * </ul>
+     */
+    private long loadUnsafePointerHandle(VirtualFrame frame) {
+        Object r = cell(frame);
+        if (r instanceof LongCell c) {
+            return Atomics.loadUnsafePointer(c);
+        }
+        if (r instanceof AtomicReference<?> ar) {
+            Object cur = ar.get();
+            if (cur == null) {
+                return 0;
+            }
+            return UnsafeTable.current().intern(cur);
+        }
+        throw new FrontendException(
+                "atomic op " + atomicType + "." + op + " on unexpected cell: "
+                        + r.getClass().getName());
+    }
+
+    /**
+     * Handle-preserving {@code unsafe.Pointer} store (P1-F2,
+     * review3-frontend). Receiver shapes as in
+     * {@link #loadUnsafePointerHandle}: the handle goes straight into
+     * the {@link LongCell}; the {@link AtomicReference} cell stores the
+     * resolved referent (the typed-wrapper representation), so a later
+     * load re-interns to the identical handle.
+     */
+    @SuppressWarnings("unchecked")
+    private void storeUnsafePointerHandle(VirtualFrame frame, long handle) {
+        Object r = cell(frame);
+        if (r instanceof LongCell c) {
+            Atomics.storeUnsafePointer(c, handle);
+            return;
+        }
+        if (r instanceof AtomicReference<?> ar) {
+            ((AtomicReference<Object>) ar).set(
+                    handle == 0 ? null : UnsafeTable.current().resolve(handle));
+            return;
+        }
+        throw new FrontendException(
+                "atomic op " + atomicType + "." + op + " on unexpected cell: "
+                        + r.getClass().getName());
+    }
+
     @Override
     public long executeLong(VirtualFrame frame) {
         return switch (atomicType + "." + op) {
@@ -164,6 +229,9 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uint64.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Load" -> Atomics.loadUintptr(cell64(frame));
+            // P1-F2 (review3-frontend): package-level atomic.LoadPointer —
+            // handle-preserving load (UNSAFE_POINTER kind).
+            case "atomic.UnsafePointer.Load" -> loadUnsafePointerHandle(frame);
             case "atomic.Uintptr.Add" -> Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
@@ -241,6 +309,10 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Int64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Store" -> Atomics.storeUintptr(cell64(frame), args[0].executeLong(frame));
+            // P1-F2 (review3-frontend): package-level atomic.StorePointer —
+            // handle-preserving store (void).
+            case "atomic.UnsafePointer.Store" ->
+                storeUnsafePointerHandle(frame, args[0].executeLong(frame));
             case "atomic.Int32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Uint32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Bool.Store" -> Atomics.storeBool(cell32(frame), args[0].executeBoolean(frame));

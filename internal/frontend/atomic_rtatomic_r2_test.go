@@ -6,9 +6,10 @@ package main
 //   (LoadAcquintptr/StoreReluintptr) that the f9735cc2 rebase dropped;
 //   corpus 46_sync_pool must lower the sync/pool.go rtatomic call sites
 //   to atomicaddr+syncop wire nodes.
-// - R2-P1-1: exportAtomicStorePointerStmt must intercept a renamed
+// - R2-P1-1: package-level atomic.StorePointer must intercept a renamed
 //   sync/atomic import in statement position, like the canonical
-//   spelling.
+//   spelling (P1-F2: via the atomicWordOps table → atomicaddr+syncop,
+//   not the old exportAtomicStorePointerStmt assign/deref lowering).
 // - R2-P2-9: runtime.Goexit must be intercepted under a renamed import.
 
 import (
@@ -96,7 +97,8 @@ func TestSyncPoolRtatomicLowersToSyncop(t *testing.T) {
 
 // TestAtomicStorePointerStmtRenamedImport (R2-P1-1): a renamed sync/atomic
 // import in statement position must be intercepted exactly like the
-// canonical spelling — the bare call lowers to *addr = val (assign/deref)
+// canonical spelling — the bare call lowers through the atomicWordOps
+// table to atomicaddr+syncop (synctyp "atomic.UnsafePointer", P1-F2)
 // instead of a plain call to the bodyless StorePointer func.
 func TestAtomicStorePointerStmtRenamedImport(t *testing.T) {
 	canonical := `package main
@@ -144,9 +146,22 @@ func main() {
 			}
 			plainCalls := 0
 			derefs := 0
+			syncops := 0
 			walkJSONNodes(mainBody, func(m map[string]any) {
 				if m["kind"] == "deref" {
 					derefs++
+				}
+				if m["kind"] == "syncop" {
+					fields, _ := m["fields"].(map[string]any)
+					if fields["op"] == "Store" && fields["synctyp"] == "atomic.UnsafePointer" {
+						syncops++
+						recv, _ := fields["recv"].(map[string]any)
+						if recv["kind"] != "atomicaddr" {
+							t.Errorf("syncop recv is %q, want atomicaddr", recv["kind"])
+						} else if cell, _ := recv["fields"].(map[string]any)["cell"].(string); cell != "ptr64" {
+							t.Errorf("atomicaddr cell is %q, want ptr64", cell)
+						}
+					}
 				}
 				if m["kind"] == "call" {
 					walkJSONNodes(m, func(inner map[string]any) {
@@ -161,8 +176,11 @@ func main() {
 			if plainCalls != 0 {
 				t.Errorf("StorePointer call was not intercepted in statement position (%d plain calls)", plainCalls)
 			}
-			if derefs == 0 {
-				t.Error("expected lowered *addr = val (deref node) in main")
+			if syncops != 1 {
+				t.Errorf("expected 1 syncop Store/atomic.UnsafePointer in main, got %d", syncops)
+			}
+			if derefs != 0 {
+				t.Errorf("old plain-deref lowering remains (%d deref nodes)", derefs)
 			}
 		})
 	}

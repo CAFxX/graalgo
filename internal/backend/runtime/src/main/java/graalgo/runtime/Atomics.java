@@ -136,6 +136,23 @@ public final class Atomics {
         addr.set(v);
     }
 
+    // -- unsafe.Pointer handles (P1-F2, review3-frontend) -------------------
+    // A Go unsafe.Pointer value is a long handle into the unsafe handle
+    // table (D5); atomically loading/storing the handle preserves the
+    // representation. These delegate to the 64-bit lock-serialized cell
+    // ops — the handle-preserving counterparts of loadUintptr /
+    // storeUintptr, named for the unsafe.Pointer contract.
+
+    /** Atomic unsafe.Pointer handle load (handle-preserving). */
+    public static long loadUnsafePointer(LongCell addr) {
+        return addr.get();
+    }
+
+    /** Atomic unsafe.Pointer handle store (handle-preserving). */
+    public static void storeUnsafePointer(LongCell addr, long v) {
+        addr.set(v);
+    }
+
     /** Atomic uintptr compare-and-swap. */
     public static boolean compareAndSwapUintptr(LongCell addr, long old, long new_) {
         return addr.compareAndSet(old, new_);

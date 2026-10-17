@@ -942,8 +942,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues(files, info, pkg)
+	// where F is multi-result. For the top-level package the alias maps
+	// must be absorbed into the exporter (below): without them a
+	// package-level `var lstat = os.Lstat` is removed from the AST but
+	// call sites through lstat cannot desugar (P1-F1).
+	etaVarLits, varFuncAliases := etaExpandMRFuncValues(files, info, pkg)
 
 	e := &exporter{
 		fset:    fset,
@@ -998,6 +1001,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// instantiations of multi-result templates.
 		instMRInfos: make(map[*instantiation]*userMRInfo),
 	}
+	// General (real-x509 lane, P1-F1): absorb the top-level package's own
+	// eta-expansion alias maps, exactly like importSyntheticPackage does
+	// for imported packages. Call sites through a package-level
+	// `var x = pkg.F` (multi-result F) desugar as the aliased Func via
+	// the table (see userMRInfoForVar / classifyMultiResultCall).
+	e.absorbEtaVarMaps(etaVarLits, varFuncAliases)
 	// fileBases lists the input files in order; position "file" indices
 	// index into this array (frontend/v1 wire format).
 	fileBases := make([]string, 0, len(paths))
@@ -3091,6 +3100,33 @@ type exporter struct {
 	// its own execution (tracked via length), so nested statements flush
 	// correctly.
 	mrHoistPre []*Node
+}
+
+// absorbEtaVarMaps merges eta-expansion alias maps (from
+// etaExpandMRFuncValues) into the exporter's tables, so call sites
+// through a package-level `var x = pkg.F` (multi-result F) desugar as the
+// aliased Func via the table. Used for the top-level package's own maps
+// (ExportFiles) and for imported packages (importSyntheticPackage);
+// diskimport.go sets the syntheticPackage fields directly at
+// construction. Idempotent and order-independent: keys are distinct
+// *types.Var objects per package.
+func (e *exporter) absorbEtaVarMaps(varLits map[*types.Var]*ast.FuncLit, aliases map[*types.Var]*types.Func) {
+	if len(varLits) > 0 {
+		if e.etaVarLits == nil {
+			e.etaVarLits = make(map[*types.Var]*ast.FuncLit)
+		}
+		for v, lit := range varLits {
+			e.etaVarLits[v] = lit
+		}
+	}
+	if len(aliases) > 0 {
+		if e.varFuncAliases == nil {
+			e.varFuncAliases = make(map[*types.Var]*types.Func)
+		}
+		for v, fn := range aliases {
+			e.varFuncAliases[v] = fn
+		}
+	}
 }
 
 // userMRInfo describes a user-defined multi-result function transformed
@@ -6654,14 +6690,11 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		if c, ok := isCloseCall(e.info, s.X); ok {
 			return e.exportChanCloseCall(c)
 		}
-		// P3-driver-harden (jsonlib lane): atomic.StorePointer(addr, val)
-		// as a bare statement lowers to *addr = val (statement position
-		// only; expression use is a gc type error).
-		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
-			if n, handled, err := e.exportAtomicStorePointerStmt(s, c); handled {
-				return n, err
-			}
-		}
+		// P1-F2 (review3-frontend): atomic.StorePointer(addr, val) as a
+		// bare statement flows through exportCall like the other void
+		// atomic stores (StoreUint64, …): atomicaddr+syncop with synctyp
+		// "atomic.UnsafePointer". Expression use remains a gc type error
+		// (StorePointer returns nothing), caught by type-checking.
 		// P3-M8 (WS D): a concrete multi-result call as a bare statement
 		// (w.Write(data) on *io.PipeWriter — legal Go, results
 		// discarded) desugars to the __-helper call with the pair
@@ -8414,10 +8447,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// need &x (WS D). Fail fast with the named scope error, never a
 		// confusing "undefined".
 		//
-		// P3-driver-harden (jsonlib lane): atomic.LoadPointer lowers to
-		// a plain deref read (scoped divergence: atomicity without gc's
-		// ordering guarantee); atomic.StorePointer is statement-only and
-		// handled in exportStmt.
+		// P1-F2 (review3-frontend): atomic.LoadPointer/StorePointer lower
+		// through the same atomicaddr+syncop machinery as the word ops
+		// (table entries below, synctyp "atomic.UnsafePointer"): the
+		// address operand evaluates to a GoPointer, "atomicaddr" wraps it
+		// in a lock-serialized delegating 64-bit cell holding the
+		// unsafe.Pointer handle, and AtomicOpNode performs the op. This
+		// replaces the old plain-deref lowering, which silently dropped
+		// gc's ordering/visibility guarantees.
 		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
 			// Only intercept package-qualified calls (atomic.Foo,
 			// rtatomic.Bar). A selector on a non-package identifier is a
@@ -8427,20 +8464,16 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// to the normal method-call path.
 			if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); isPkg {
 				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
-					if sel.Sel.Name == "LoadPointer" {
-						return e.exportAtomicLoadPointer(c)
-					}
 					// fix-linkname (Caddy/godebug lane): package-level atomic
-					// word/bool ops (LoadUint64, StoreInt32, …). The address
-					// operand evaluates to a GoPointer; the "atomicaddr"
-					// wire node wraps it in a delegating AtomicLong /
-					// AtomicInteger cell, and the existing "syncop" atomic
-					// machinery (AtomicOpNode) performs the op — the same
-					// node that serves the typed wrappers. RMW ops
-					// (Add/Swap/CompareAndSwap) serialize on a shared lock
-					// (documented in GoPointerCell64); Load/Store are plain
-					// volatile-cell accesses, the exportAtomicLoadPointer
-					// precedent.
+					// word/bool/pointer ops (LoadUint64, StoreInt32,
+					// LoadPointer, StorePointer, …). The address operand
+					// evaluates to a GoPointer; the "atomicaddr" wire node
+					// wraps it in a delegating cell, and the existing
+					// "syncop" atomic machinery (AtomicOpNode) performs the
+					// op — the same node that serves the typed wrappers.
+					// RMW ops (Add/Swap/CompareAndSwap) serialize on a
+					// shared lock (documented in GoPointerCell64);
+					// Load/Store are lock-serialized cell accesses.
 					if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
 						return n, err
 					}
@@ -9113,32 +9146,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	return e.node("call", c, fields), nil
 }
 
-// exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to *addr: a
-// plain deref read of the unsafe.Pointer. Scoped divergence from gc (see
-// the exportCall interception): atomicity without the ordering guarantee.
-func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
-	if len(c.Args) != 1 {
-		return nil, fmt.Errorf("gofrontend: atomic.LoadPointer takes 1 argument")
-	}
-	px, err := e.exportExpr(c.Args[0])
-	if err != nil {
-		return nil, err
-	}
-	tid, err := e.typeID(types.Typ[types.UnsafePointer])
-	if err != nil {
-		return nil, err
-	}
-	return e.node("deref", c, map[string]any{"x": px, "type": tid}), nil
-}
-
 // atomicWordOp describes one package-level sync/atomic word/bool
 // operation (fix-linkname): the syncop op name, the atomic synctyp
 // (shared with the typed wrappers so AtomicOpNode serves both), the
 // atomicaddr cell kind, and the value-argument count after the address.
 type atomicWordOp struct {
 	op      string // syncop op: Load/Store/Add/Swap/CompareAndSwap
-	synctyp string // e.g. "atomic.Uint64"
-	cell    string // atomicaddr cell kind: "int64", "int32", "bool"
+	synctyp string // e.g. "atomic.Uint64", "atomic.UnsafePointer"
+	cell    string // atomicaddr cell kind: "int64", "int32", "bool", "ptr64"
 	nargs   int    // value args after addr
 }
 
@@ -9193,6 +9208,18 @@ var atomicWordOps = map[string]atomicWordOp{
 	// Functionally identical to the sync/atomic uintptr ops.
 	"LoadAcquintptr":  {"Load", "atomic.Uintptr", "int64", 0},
 	"StoreReluintptr": {"Store", "atomic.Uintptr", "int64", 1},
+	// P1-F2 (review3-frontend): package-level pointer ops. unsafe.Pointer
+	// values are long handles (D5), so the cell is the lock-serialized
+	// 64-bit delegating cell ("ptr64", same class and lock domain as the
+	// word ops); the "atomic.UnsafePointer" synctyp keeps the
+	// UNSAFE_POINTER (handle) representation, unlike "atomic.Pointer"
+	// (opaque *T reference for the typed wrappers). Routing the
+	// unqualified in-package calls (e.g. LoadPointer(&x.v) in the real
+	// (*Pointer[T]).Load body) through the same table also fixes the
+	// typed wrappers, which previously emitted plain calls to the
+	// bodyless (unimplemented) funcs.
+	"LoadPointer":  {"Load", "atomic.UnsafePointer", "ptr64", 0},
+	"StorePointer": {"Store", "atomic.UnsafePointer", "ptr64", 1},
 }
 
 // exportAtomicWordOp lowers a package-level sync/atomic word/bool call
@@ -9229,49 +9256,6 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 	recv := e.node("atomicaddr", c, map[string]any{"addr": addr, "cell": desc.cell})
 	return e.node("syncop", c, map[string]any{
 		"op": desc.op, "synctyp": desc.synctyp, "recv": recv, "args": args, "type": typ,
-	}), true, nil
-}
-
-// exportAtomicStorePointerStmt lowers a bare-statement
-// atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
-// of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
-func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
-	sel, ok := unwrapSelector(c.Fun)
-	if !ok {
-		return nil, false, nil
-	}
-	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return nil, false, nil
-	}
-	// R2-P1-1: discriminate on the resolved object, not the identifier
-	// spelling — a renamed import (atom "sync/atomic") is still the
-	// package; a shadowed local named "atomic" is not.
-	if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); !isPkg {
-		return nil, false, nil
-	}
-	obj, ok := e.info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
-		return nil, false, nil
-	}
-	if len(c.Args) != 2 {
-		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
-	}
-	px, err := e.exportExpr(c.Args[0])
-	if err != nil {
-		return nil, true, err
-	}
-	vx, err := e.exportExpr(c.Args[1])
-	if err != nil {
-		return nil, true, err
-	}
-	tid, err := e.typeID(types.Typ[types.UnsafePointer])
-	if err != nil {
-		return nil, true, err
-	}
-	lhs := e.node("deref", c, map[string]any{"x": px, "type": tid})
-	return e.node("assign", s, map[string]any{
-		"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{vx},
 	}), true, nil
 }
 

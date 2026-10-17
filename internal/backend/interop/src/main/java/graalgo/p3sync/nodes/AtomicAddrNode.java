@@ -27,6 +27,15 @@ import graalgo.values.GoPointer;
  * ({@link AtomicOpNode}) serves the operation unchanged. A nil address
  * is gc's nil-dereference panic.
  *
+ * <p>P1-F2 (review3-frontend): the {@code "ptr64"} cell kind serves the
+ * package-level pointer ops ({@code atomic.LoadPointer} /
+ * {@code atomic.StorePointer}). A Go {@code unsafe.Pointer} value is a
+ * long handle into the unsafe handle table (D5), so the 64-bit
+ * lock-serialized delegating cell is exactly the right view — the same
+ * class and shared-lock domain as the word ops, preserving the handle
+ * representation (unlike the typed {@code atomic.Pointer[T]} wrappers,
+ * whose cells hold opaque references).
+ *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1
  * {@code NodeFactory} change.
@@ -66,6 +75,9 @@ public final class AtomicAddrNode extends GoExprNode {
         return switch (cell) {
             case "int64" -> new GoPointerCell64(gp);
             case "int32" -> new GoPointerCell32(gp);
+            // P1-F2 (review3-frontend): unsafe.Pointer handles are longs;
+            // the pointer ops share the 64-bit lock-serialized cell.
+            case "ptr64" -> new GoPointerCell64(gp);
             default -> throw new FrontendException("atomicaddr: unknown cell kind " + cell);
         };
     }
@@ -73,14 +85,15 @@ public final class AtomicAddrNode extends GoExprNode {
     /**
      * Builds the node from the {@code "atomicaddr"} wire node. Fields:
      * {@code addr} (the {@code *T} address expression) and
-     * {@code cell} ({@code "int64"}, {@code "int32"}, or {@code "bool"}).
+     * {@code cell} ({@code "int64"}, {@code "int32"}, or {@code "ptr64"}
+     * for the unsafe.Pointer handle cell — P1-F2).
      */
     public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
             NodeFactory factory) {
         Json.Object f = node.object("fields", "atomicaddr");
         String path = "atomicaddr.fields";
         String cell = f.string("cell", path);
-        if (!cell.equals("int64") && !cell.equals("int32")) {
+        if (!cell.equals("int64") && !cell.equals("int32") && !cell.equals("ptr64")) {
             throw new FrontendException(path + ": unknown cell kind " + cell);
         }
         GoExprNode addr = factory.buildExpr(f.object("addr", path), ctx);
