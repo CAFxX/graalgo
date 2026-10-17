@@ -31,9 +31,9 @@ import (
 //
 // Resolution is purely by import path via go/build (GOROOT for the
 // standard library, GOPATH otherwise; GOOS/GOARCH and build constraints
-// honored; test files excluded). No package names are special-cased: the
-// only fixed names are "unsafe" (which go/types itself special-cases via
-// types.Unsafe) and "C" (handled by types.Config.FakeImportC).
+// honored; test files excluded). No package names are special-cased:
+// "unsafe" is handled by the export-data importer per the go/types
+// contract (see Import), and "C" by types.Config.FakeImportC.
 //
 // Imports that cannot be resolved are recorded and surfaced by Run as
 // diagnostics ("could not import ...") instead of silently degrading
@@ -62,10 +62,14 @@ func newSourceImporter(fset *token.FileSet) *sourceImporter {
 }
 
 // Import implements types.Importer.
+//
+// Note: there is deliberately no special case for "unsafe" here. The
+// export-data importer consulted first by importOne returns types.Unsafe
+// for "unsafe" per the go/types importer contract (as does the gc
+// toolchain's own importer), so it resolves before the source path is
+// ever consulted. A source-derived "unsafe" package would be subtly
+// wrong: unsafe.Pointer/Sizeof need the checker's built-in identity.
 func (s *sourceImporter) Import(path string) (*types.Package, error) {
-	if path == "unsafe" {
-		return types.Unsafe, nil
-	}
 	s.mu.Lock()
 	if pkg, ok := s.pkgs[path]; ok {
 		s.mu.Unlock()
