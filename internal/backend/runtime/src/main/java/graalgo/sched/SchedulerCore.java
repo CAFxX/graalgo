@@ -68,6 +68,16 @@ public final class SchedulerCore {
     }
 
     /**
+     * The installed scheduler, or null when none is installed. The
+     * null-returning twin of {@link #current()}: for call paths that are
+     * scheduler-optional and must not fail-fast off-scheduler (e.g.
+     * {@code GcInterop.gc()} called from JUnit or tools).
+     */
+    public static SchedulerCore installedOrNull() {
+        return installed;
+    }
+
+    /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
@@ -300,6 +310,16 @@ public final class SchedulerCore {
     }
 
     /**
+     * The calling goroutine's handle, or null when the current thread is
+     * not a scheduler goroutine. The null-returning twin of
+     * {@link #currentGoroutine()}: for call paths that must not fail-fast
+     * off-scheduler.
+     */
+    public GoroutineHandle currentGoroutineOrNull() {
+        return currentHandle.get();
+    }
+
+    /**
      * Quantum check for the calling thread. No handle (not a scheduler
      * vthread) &rarr; no-op, so scheduler-less Phase-1 runs are
      * unaffected even with the replacement Safepoint on the classpath.
@@ -346,8 +366,10 @@ public final class SchedulerCore {
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
      * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * {@code RuntimeException}s, stack overflows, and any other
+     * {@code Error} (AssertionError, OutOfMemoryError, other
+     * LinkageErrors) are recorded loudly (the launcher exits 1). No
+     * throwable escapes a goroutine silently.
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
@@ -381,6 +403,14 @@ public final class SchedulerCore {
                     recordCrash("internal error", e);
                 }
             } catch (RuntimeException e) {
+                recordCrash("internal error", e);
+            } catch (Error e) {
+                // P1-B2 (review3): any other Error (AssertionError,
+                // OutOfMemoryError, ThreadDeath, other LinkageErrors) is
+                // an internal failure, never a silent goroutine death —
+                // record it loudly like every other non-Go failure above.
+                // (On virtual threads Thread.stop is unsupported, so
+                // catching ThreadDeath here is safe.)
                 recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.

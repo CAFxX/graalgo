@@ -138,6 +138,25 @@ public final class IoSlotsTest {
                 "cap violated: maxInflight=" + sched.maxInflightObserved());
     }
 
+    // Review3 P1-B3: runtime.GC()'s System.gc() + MXBean poll can block
+    // the calling thread for up to 30 s; on a scheduler goroutine it must
+    // release the in-flight slot (ioEnter/ioExit, P2-D4), not hold it.
+    // Accounting pin: the drainer's IO lane must show exactly one ioExit
+    // admission after a goroutine's gc() call. Mutation (no bracketing):
+    // ioExit stays 0 → red. Also asserts the hard cap was never exceeded.
+    public void testGcReleasesSlotDuringWait() throws Exception {
+        withScheduler(1, () -> {
+            sched.spawn(() -> {
+                graalgo.runtime.GcInterop.gc();
+            });
+        });
+        String prov = sched.wakeProvenance();
+        assertTrue(prov.contains("ioExit=1"),
+                "gc() must bracket its blocking section with ioEnter/ioExit, provenance=" + prov);
+        assertTrue(sched.maxInflightObserved() <= 1,
+                "cap violated: maxInflight=" + sched.maxInflightObserved());
+    }
+
     // Re-entrant ioEnter fails fast on the calling thread.
     public void testReentrantIoEnterFails() throws Exception {
         AtomicReference<String> err = new AtomicReference<>();

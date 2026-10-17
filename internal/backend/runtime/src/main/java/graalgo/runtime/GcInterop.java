@@ -1,6 +1,7 @@
 package graalgo.runtime;
 
 import graalgo.values.GoFunc;
+import graalgo.sched.SchedulerCore;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -49,7 +50,10 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  *       collection counts until they advance, bounded 30 s timeout. If the
  *       counts never advance (explicit GC disabled), returns anyway —
  *       <b>documented approximation:</b> callers must not depend on
- *       reclamation having completed.
+ *       reclamation having completed. On a scheduler goroutine the
+ *       in-flight slot is released around the blocking section
+ *       ({@code ioEnter}/{@code ioExit}, P2-D4) so a {@code runtime.GC()}
+ *       at small GOMAXPROCS does not serialize the scheduler.
  *   <li>{@code weak.Pointer} vehicle — {@link WeakReference} wrapper.
  *   <li>{@code runtime.ReadMemStats} — {@link #memStats()} field table;
  *       unmappable fields are absent (see {@code DIVERGENCES.md}).
@@ -223,6 +227,14 @@ public final class GcInterop {
      * timeout. If the counts never advance (explicit GC disabled), returns
      * anyway — <b>documented approximation:</b> callers must not depend on
      * reclamation having completed (ADR-0002 D4).
+     *
+     * <p>P2-D4 blocking discipline (review3 P1-B3): on a scheduler
+     * goroutine the in-flight slot is released around the blocking
+     * section ({@link SchedulerCore#ioEnter}/{@link SchedulerCore#ioExit})
+     * so this call does not serialize the scheduler at small GOMAXPROCS.
+     * Off-scheduler callers (JUnit, tools) hold no slot: the bracketing
+     * is skipped, so {@code ioEnter}'s foreign-thread fail-fast never
+     * fires here.
      */
     public static void gc() {
         FORCED_GC_COUNT.incrementAndGet();
@@ -233,6 +245,27 @@ public final class GcInterop {
         synchronized (FINALIZER_LOCK) {
             PINNED.clear();
         }
+        SchedulerCore sched = SchedulerCore.installedOrNull();
+        boolean holdsSlot = sched != null && sched.currentGoroutineOrNull() != null;
+        if (holdsSlot) {
+            sched.ioEnter();
+        }
+        try {
+            pollUntilCollected();
+        } finally {
+            if (holdsSlot) {
+                sched.ioExit();
+            }
+        }
+    }
+
+    /**
+     * {@code System.gc()} + poll of GC MXBean collection counts until they
+     * advance, bounded 30 s timeout. If the counts never advance (explicit
+     * GC disabled), returns anyway — <b>documented approximation:</b>
+     * callers must not depend on reclamation having completed (ADR-0002 D4).
+     */
+    private static void pollUntilCollected() {
         long before = totalCollections();
         System.gc();
         if (before < 0) {

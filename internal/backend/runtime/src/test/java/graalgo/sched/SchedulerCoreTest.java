@@ -484,6 +484,33 @@ public final class SchedulerCoreTest {
     }
 
     /**
+     * Any other Error escaping a goroutine body is recorded as a crash,
+     * never a silent death. Review3 P1-B2: the spawn catch chain caught
+     * RuntimeException and friends but let AssertionError /
+     * OutOfMemoryError / other LinkageErrors propagate uncaught — the
+     * finally still offered EXIT, so the scheduler kept running with no
+     * record of the dead goroutine (potentially a wrong result with a
+     * clean exit). Red-green: fails (crashed()==false) without the
+     * catch (Error e) clause.
+     * verifies: GG-0017 (Goexit/panic/crash discipline).
+     */
+    public void testSpawnedErrorRecorded() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new AssertionError("synthetic internal error");
+            });
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "AssertionError escaping a goroutine must be recorded as a crash");
+            assertTrue(!sched.panicked(), "a JVM Error is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Voluntary yield via the quantum-park mechanism.
      * Reviewer2 P1-2: yieldCurrent() had zero coverage. With cap=1 and
      * quantum disabled, a goroutine that never yields would starve the
