@@ -9,6 +9,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
+import graalgo.frontend.GoFieldCell;
 import graalgo.runtime.GoCalls;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.GoroutineState;
@@ -16,6 +17,7 @@ import graalgo.runtime.Panic;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
+import graalgo.values.GoStruct;
 import graalgo.values.GoTypeDescriptor;
 import graalgo.values.InterfaceDispatchProbes;
 
@@ -115,14 +117,19 @@ public final class IfaceDispatchNode extends GoExprNode {
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
         IfaceMethodTarget target = lookupPic(itab);
-        // R2 P2-7: an unsupported promotion (pointer receiver via a
-        // value-embedded field — wire "index" null) fails fast here, only
-        // when the method is actually dispatched. The itab build carries
-        // the unsupported target precisely so programs dispatching only
-        // supported methods through the interface keep working.
+        // Defensive: the exporter no longer emits unsupported promotions
+        // (every promotion path is walkable since review3-traps P1-I4),
+        // but the wire "index": null mark survives as defense-in-depth.
+        // This fires only when the method is actually dispatched (R2 P2-7
+        // narrowing: the itab build carries the unsupported target so
+        // programs dispatching only supported methods keep working). A Go
+        // panic (recoverable) — never a JVM exception type from a backend
+        // runtime node.
         if (!target.supported()) {
-            throw new FrontendException("interface dispatch: method \"" + methodName
-                    + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
+            Panic.throwPanic("interface dispatch: method \"" + methodName
+                    + "\" has an unsupported promotion path (internal error: wire \"index\" null)",
+                    null, null, this);
+            throw new AssertionError("unreachable: Panic.throwPanic returned");
         }
         // P3-M9 (x509/TLS lane): method promoted via an embedded interface
         // field (e.g. (*crypto/tls.listener).Addr from embedded
@@ -150,8 +157,11 @@ public final class IfaceDispatchNode extends GoExprNode {
                         + "\" (internal error)");
             }
             if (!inner.supported()) {
-                throw new FrontendException("interface dispatch: method \"" + methodName
-                        + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
+                // Defensive (see above): Go panic, never a JVM exception type.
+                Panic.throwPanic("interface dispatch: method \"" + methodName
+                        + "\" has an unsupported promotion path (internal error: wire \"index\" null)",
+                        null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
             }
             target = inner;
         }
@@ -183,13 +193,18 @@ public final class IfaceDispatchNode extends GoExprNode {
         if (target.isDirect() && receiverParamIsInterface(target)) {
             callArgs[0] = curGi;
         }
-        // P3-M9: pointer-receiver method promoted via a value-embedded
-        // struct field — take the address of the promoted field value
-        // (gc's implicit &). Struct fields are read by reference, so the
-        // pointer targets the live field object and mutations through it
-        // are visible to the outer struct, exactly like gc.
+        // Pointer-receiver method promoted via a value-embedded field —
+        // take the address of the promoted field value (gc's implicit &).
+        // Struct-typed fields are read by reference (P3-M9): the pointer
+        // targets the live field object. Any other field type (named
+        // scalars etc.) addresses the live field through a writeback
+        // field cell (review3-traps P1-I4), exactly like &s.f — a plain
+        // pointer over the walked value would point at a dead copy, and
+        // mutations through it would be lost, unlike gc.
         if (target.addrOf() && !(callArgs[0] instanceof GoPointer)) {
-            callArgs[0] = new GoPointer(callArgs[0]);
+            callArgs[0] = new GoPointer(callArgs[0] instanceof GoStruct
+                    ? callArgs[0]
+                    : promotedFieldCell(data, target.recvPath()));
         }
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
@@ -228,6 +243,57 @@ public final class IfaceDispatchNode extends GoExprNode {
             return kinds.length > 0 && kinds[0] == GoKind.INTERFACE;
         }
         return false;
+    }
+
+    /**
+     * Writeback cell addressing the promoted value-embedded field at the
+     * end of {@code recvPath} (review3-traps P1-I4).
+     *
+     * <p>Walks to the field's owner like
+     * {@code SelectorNode.readFieldPath} over all but the last hop — the
+     * initial data may be a pointer/interface carrier (for {@code *S}
+     * receivers), deref'd first. Non-struct fields are not read by
+     * reference, so the cell (not a plain pointer over the walked value)
+     * is the addressable form: {@code set} writes through to the live
+     * field, exactly like {@code &s.f} ({@link GoFieldCell}).
+     */
+    private GoFieldCell promotedFieldCell(Object data, int[] recvPath) {
+        Object owner = graalgo.frontend.SelectorNode.readFieldPath(derefCarrier(data),
+                java.util.Arrays.copyOf(recvPath, recvPath.length - 1), false, this);
+        if (!(owner instanceof GoStruct os)) {
+            Panic.throwPanic("interface dispatch: promoted field owner is not a struct"
+                    + " (internal error)", null, null, this);
+            throw new AssertionError("unreachable: Panic.throwPanic returned");
+        }
+        int last = recvPath[recvPath.length - 1];
+        return new GoFieldCell(os, last, os.descriptor().field(last).kind());
+    }
+
+    /**
+     * Deref a pointer/interface carrier to the underlying value
+     * (mirrors {@code SelectorNode.deref}; nil → gc's nil-dereference
+     * panic).
+     */
+    private Object derefCarrier(Object o) {
+        if (o == null) {
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+            throw new AssertionError("unreachable: Panic.throwPanic returned");
+        }
+        if (o instanceof GoPointer p) {
+            if (p.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
+            }
+            return p.referent();
+        }
+        if (o instanceof GoInterface gi) {
+            if (gi.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
+            }
+            return gi.data();
+        }
+        return o;
     }
 
     private GoInterface requireReceiver(Object r) {

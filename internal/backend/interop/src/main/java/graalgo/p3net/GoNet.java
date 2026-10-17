@@ -9,12 +9,14 @@ import java.net.SocketAddress;
 import java.net.SocketException;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectableChannel;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,9 +55,10 @@ import graalgo.values.GoSlice;
  *   <li>AF_INET (2): {@code [2, portHi, portLo, a0, a1, a2, a3]} (7 bytes)
  *   <li>AF_INET6 (10): {@code [10, portHi, portLo, a0..a15, scopeHi..scopeLo]}
  *       (23 bytes; scope id is a big-endian u32)
- *   <li>AF_UNIX (1): not supported in M9 — {@code socket()} returns
- *       {@code -EAFNOSUPPORT} (documented scope limit; loopback TCP/UDP
- *       is the M9 target).
+ *   <li>AF_UNIX (1): {@code [1, path bytes...]} — the path as UTF-8 bytes
+ *       with no NUL terminator (filesystem paths; the JDK has no
+ *       abstract-namespace support). Backed by
+ *       {@link UnixDomainSocketAddress} (JDK 16+).
  * </ul>
  * {@code recvfrom} writes the peer address in this format into its third
  * argument (which must have room for 23 bytes); byte 0 = 0 means "no
@@ -154,7 +157,7 @@ public final class GoNet {
         final int proto;
         volatile SockStateKind kind = SockStateKind.IDLE;
         /** Address recorded by bind(); null until bound. */
-        volatile InetSocketAddress boundAddr;
+        volatile SocketAddress boundAddr;
         /** Stashed async connect errno (SO_ERROR); 0 = none. */
         volatile int connectErrno;
         /** Recorded (level, opt, value) setsockopt calls, re-applied on channel swap. */
@@ -309,13 +312,13 @@ public final class GoNet {
     // Address wire format.
     // ------------------------------------------------------------------
 
-    /** Parses a wire-format address into an InetSocketAddress. */
-    private static InetSocketAddress parseAddr(Object addrArg) throws IllegalArgumentException {
+    /** Parses a wire-format address into a socket address. */
+    private static SocketAddress parseAddr(Object addrArg) throws IllegalArgumentException {
         return parseAddrBuf(goBuf(addrArg));
     }
 
     /** Parses a wire-format address from an already-copied buffer (P2-6: no double copy). */
-    private static InetSocketAddress parseAddrBuf(ByteBuffer bb) throws IllegalArgumentException {
+    private static SocketAddress parseAddrBuf(ByteBuffer bb) throws IllegalArgumentException {
         if (!bb.hasRemaining()) {
             throw new IllegalArgumentException("empty sockaddr");
         }
@@ -352,25 +355,41 @@ public final class GoNet {
                 throw new IllegalArgumentException(e);
             }
         }
+        if (fam == AF_UNIX) {
+            // Filesystem path as UTF-8 bytes (no NUL terminator). An
+            // empty path is the unnamed address (bind/connect of "@" —
+            // abstract namespace — is not supported by the JDK).
+            byte[] path = new byte[bb.remaining()];
+            bb.get(path);
+            return UnixDomainSocketAddress.of(new String(path, StandardCharsets.UTF_8));
+        }
         throw new IllegalArgumentException("unsupported sockaddr family " + fam);
     }
 
-    /** Serializes an InetSocketAddress into the wire format. */
-    private static byte[] renderAddr(InetSocketAddress sa) {
-        InetAddress ia = sa.getAddress();
+    /** Serializes a socket address into the wire format. */
+    private static byte[] renderAddr(SocketAddress sa) {
+        if (sa instanceof UnixDomainSocketAddress usa) {
+            byte[] path = usa.getPath().toString().getBytes(StandardCharsets.UTF_8);
+            byte[] out = new byte[1 + path.length];
+            out[0] = (byte) AF_UNIX;
+            System.arraycopy(path, 0, out, 1, path.length);
+            return out;
+        }
+        InetSocketAddress isa = (InetSocketAddress) sa;
+        InetAddress ia = isa.getAddress();
         byte[] raw = ia.getAddress();
         if (raw.length == 4) {
             byte[] out = new byte[7];
             out[0] = (byte) AF_INET;
-            out[1] = (byte) (sa.getPort() >>> 8);
-            out[2] = (byte) sa.getPort();
+            out[1] = (byte) (isa.getPort() >>> 8);
+            out[2] = (byte) isa.getPort();
             System.arraycopy(raw, 0, out, 3, 4);
             return out;
         }
         byte[] out = new byte[23];
         out[0] = (byte) AF_INET6;
-        out[1] = (byte) (sa.getPort() >>> 8);
-        out[2] = (byte) sa.getPort();
+        out[1] = (byte) (isa.getPort() >>> 8);
+        out[2] = (byte) isa.getPort();
         System.arraycopy(raw, 0, out, 3, 16);
         // Scope id: not recoverable from InetSocketAddress portably; zero.
         return out;
@@ -378,6 +397,9 @@ public final class GoNet {
 
     /** The zero address for a family (getsockname on an unbound socket, gc parity). */
     private static byte[] zeroAddr(int domain) {
+        if (domain == AF_UNIX) {
+            return new byte[]{(byte) AF_UNIX};
+        }
         if (domain == AF_INET6) {
             byte[] out = new byte[23];
             out[0] = (byte) AF_INET6;
@@ -389,6 +411,9 @@ public final class GoNet {
     }
 
     private static ProtocolFamily protoFamily(int domain) {
+        if (domain == AF_UNIX) {
+            return StandardProtocolFamily.UNIX;
+        }
         return domain == AF_INET6 ? StandardProtocolFamily.INET6 : StandardProtocolFamily.INET;
     }
 
@@ -401,8 +426,8 @@ public final class GoNet {
         int domain = num32(domainArg);
         int type = num32(typeArg) & 0xF; // mask off SOCK_CLOEXEC|SOCK_NONBLOCK
         int proto = num32(protoArg);
-        if (domain != AF_INET && domain != AF_INET6) {
-            return -EAFNOSUPPORT; // AF_UNIX deferred (documented scope limit)
+        if (domain != AF_INET && domain != AF_INET6 && domain != AF_UNIX) {
+            return -EAFNOSUPPORT;
         }
         try {
             final java.nio.channels.Channel ch;
@@ -441,7 +466,7 @@ public final class GoNet {
         if (st == null || ch == null) {
             return -GoOs.EBADF;
         }
-        final InetSocketAddress sa;
+        final SocketAddress sa;
         try {
             sa = parseAddr(addrArg);
         } catch (IllegalArgumentException e) {
@@ -546,7 +571,7 @@ public final class GoNet {
         if (!(ch instanceof SocketChannel) && !(ch instanceof DatagramChannel)) {
             return -EOPNOTSUPP;
         }
-        final InetSocketAddress sa;
+        final SocketAddress sa;
         try {
             sa = parseAddr(addrArg);
         } catch (IllegalArgumentException e) {
@@ -755,8 +780,8 @@ public final class GoNet {
                 la = dc.getLocalAddress();
             }
             byte[] wire;
-            if (la instanceof InetSocketAddress isa) {
-                wire = renderAddr(isa);
+            if (la instanceof InetSocketAddress || la instanceof UnixDomainSocketAddress) {
+                wire = renderAddr(la);
             } else if (st.boundAddr != null) {
                 wire = renderAddr(st.boundAddr);
             } else {
@@ -784,10 +809,10 @@ public final class GoNet {
             } else if (ch instanceof DatagramChannel dc) {
                 ra = dc.getRemoteAddress();
             }
-            if (!(ra instanceof InetSocketAddress isa)) {
+            if (!(ra instanceof InetSocketAddress) && !(ra instanceof UnixDomainSocketAddress)) {
                 return -ENOTCONN;
             }
-            int n = goBufPut(bufArg, renderAddr(isa));
+            int n = goBufPut(bufArg, renderAddr(ra));
             return n < 0 ? -GoOs.EINVAL : (long) n + 1;
         } catch (IOException e) {
             return -sockErrno(e);
@@ -973,8 +998,9 @@ public final class GoNet {
             }
             int n = bb.position();
             goBufBack(bufArg, bb, n);
-            byte[] wire = src instanceof InetSocketAddress isa
-                    ? renderAddr(isa) : new byte[]{(byte) 0};
+            byte[] wire = (src instanceof InetSocketAddress
+                    || src instanceof UnixDomainSocketAddress)
+                    ? renderAddr(src) : new byte[]{(byte) 0};
             if (goBufPut(addrArg, wire) < 0) {
                 return -EMSGSIZE; // peer buffer too small for the wire address
             }

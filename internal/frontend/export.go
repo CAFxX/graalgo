@@ -10227,10 +10227,13 @@ func typeKeyOf(t types.Type) string {
 // "pointer"); "index" is the receiver adaptation path: Selection.Index()
 // minus its last entry (the method's own index in the declaring type) —
 // empty for direct methods, e.g. [0] for a method promoted via embedded
-// field 0, null for unsupported promotions. "addrOf" is true when the
-// dispatcher must take the address of the promoted field value: a
-// pointer-receiver method promoted via a value-embedded struct field
-// (P3-M9). The Java dispatcher walks "index" to adapt the receiver
+// field 0. A null "index" still marks an unsupported promotion on the
+// wire (defense-in-depth; the exporter no longer emits it — every
+// promotion path is walkable since review3-traps P1-I4). "addrOf" is true
+// when the dispatcher must take the address of the promoted field value:
+// a pointer-receiver method promoted via a value-embedded field
+// (struct-typed fields: P3-M9; any other field type via a writeback field
+// cell: review3-traps P1-I4). The Java dispatcher walks "index" to adapt the receiver
 // (P3-M3). Interface-declared methods (no funcdecl exists to point at)
 // are skipped. Template methods of concrete generic instantiations are
 // monomorphized (P3-M9 instantiation method tables): "obj" is the
@@ -10297,16 +10300,14 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 	}
 	// P3-M3: promoted method with a pointer receiver via a
 	// value-embedded field: the dispatcher must take the address of
-	// the promoted field value (gc's implicit &). P3-M9: this is
-	// sound for struct-typed fields (read by reference — the live
-	// field object), so mark supported with "addrOf": true. For
-	// non-struct fields (primitives etc.) address-taking would need
-	// writeback (out of scope): mark unsupported ("index": null)
-	// rather than failing the export — the failure fires only if the
-	// method is actually dispatched through an interface (fail fast
-	// at dispatch, named P3-M3 scope error — R2 P2-7 narrowed the
-	// old whole-itab fail-fast to per-method) — never for programs
-	// that merely declare the type.
+	// the promoted field value (gc's implicit &), marked with
+	// "addrOf": true. Struct-typed fields are read by reference (the
+	// live field object — P3-M9); any other field type (named scalar
+	// types etc.) addresses the live field through a writeback field
+	// cell (GoFieldCell), exactly like &s.f (review3-traps P1-I4).
+	// The mark is lazy: the export succeeds even for types whose
+	// methods are never dispatched through an interface — never for
+	// programs that merely declare the type.
 	unsupported := false
 	addrOf := false
 	if len(path) > 0 && recv == "pointer" {
@@ -10319,11 +10320,7 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 				break
 			}
 			if _, ok := ft.(*types.Pointer); !ok {
-				if _, ok := ft.(*types.Struct); ok {
-					addrOf = true
-				} else {
-					unsupported = true
-				}
+				addrOf = true
 			}
 		}
 	}

@@ -1765,10 +1765,17 @@ func (v Value) Slice3(i, j, k int) Value {
 	return __reflect_slice3(v, i, j, k)
 }
 
-// SliceAt returns a Value representing a slice with the specified type,
-// pointer, and length.
+// SliceAt returns a Value representing a slice whose underlying data
+// starts at p, with length and capacity equal to n. This is like
+// unsafe.Slice. The backend synthesizes SliceOf(typ) at runtime
+// (__reflect_tSliceOf) and views the pointer's referent exactly like
+// unsafe.Slice (same shape checks; len == cap == n per gc).
 func SliceAt(typ Type, p unsafe.Pointer, n int) Value {
-	panic("reflect: SliceAt: not in M8 scope (needs runtime type synthesis for SliceOf(typ); re-test when it lands)")
+	rt, ok := typ.(rtype)
+	if !ok || rt.tok == nil {
+		panic("reflect: SliceAt of nil or non-rtype Type")
+	}
+	return __reflect_sliceat(rt.tok, p, n)
 }
 
 // Grow increases the slice's capacity, if necessary, to guarantee space

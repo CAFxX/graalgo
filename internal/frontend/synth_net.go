@@ -26,7 +26,10 @@ package main
 //   - os.ErrDeadlineExceeded (synthetic os) lacks Timeout()==true; net uses
 //     a local timeoutError{Timeout:true} so net.Conn deadline errors match gc.
 //   - fmt.Errorf %w flattens (D4 stub); net avoids %w.
-//   - AF_UNIX → -EAFNOSUPPORT; unconnected UDP sendto → EPERM (sandbox).
+//   - AF_UNIX: supported via UnixDomainSocketAddress (JDK 16+);
+//     "unix" dial/listen work; "unixpacket" and abstract-namespace
+//     addresses are not yet wired (unknown network). Unconnected UDP
+//     sendto → EPERM (sandbox).
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no unsafe).
 const syntheticNetSource = `// Copyright 2009 The Go Authors. All rights reserved.
@@ -926,6 +929,22 @@ func (a *UDPAddr) String() string {
 	return JoinHostPort(ip, itoa(a.Port))
 }
 
+// UnixAddr represents the address of a Unix domain socket end point.
+// (review3-traps P1-I7: AF_UNIX via UnixDomainSocketAddress.)
+type UnixAddr struct {
+	Name string // file-system path; no port, no DNS
+	Net  string // "unix" or "unixpacket"
+}
+
+func (a *UnixAddr) Network() string { return a.Net }
+
+func (a *UnixAddr) String() string {
+	if a == nil {
+		return "<nil>"
+	}
+	return a.Name
+}
+
 func ipEmptyString(ip IP) string {
 	if len(ip) == 0 {
 		return ""
@@ -1180,25 +1199,44 @@ func encodeSockaddr(ip IP, port int) []byte {
 type decodeSockaddrPair struct {
 	ip   IP
 	port int
+	unix bool
+	path string
 }
 
 func decodeSockaddr(b []byte) decodeSockaddrPair {
+	if len(b) < 1 {
+		return decodeSockaddrPair{}
+	}
+	// AF_UNIX (1): [1, path bytes...] (review3-traps P1-I7).
+	if b[0] == 1 {
+		return decodeSockaddrPair{unix: true, path: string(b[1:])}
+	}
 	if len(b) < 7 {
-		return decodeSockaddrPair{nil, 0}
+		return decodeSockaddrPair{}
 	}
 	port := int(b[1])<<8 | int(b[2])
 	switch b[0] {
 	case 2:
-		return decodeSockaddrPair{IP{b[3], b[4], b[5], b[6]}, port}
+		return decodeSockaddrPair{ip: IP{b[3], b[4], b[5], b[6]}, port: port}
 	case 10:
 		if len(b) < 23 {
-			return decodeSockaddrPair{nil, 0}
+			return decodeSockaddrPair{}
 		}
 		ip := make(IP, 16)
 		copy(ip, b[3:19])
-		return decodeSockaddrPair{ip, port}
+		return decodeSockaddrPair{ip: ip, port: port}
 	}
-	return decodeSockaddrPair{nil, 0}
+	return decodeSockaddrPair{}
+}
+
+// encodeUnixSockaddr encodes a Unix domain socket path into the wire
+// format: [1, path bytes...] (review3-traps P1-I7).
+func encodeUnixSockaddr(path string) []byte {
+	pb := []byte(path)
+	b := make([]byte, 1+len(pb))
+	b[0] = 1
+	copy(b[1:], pb)
+	return b
 }
 
 // netFD is a socket cookie registered with the netpoller.
@@ -1300,6 +1338,10 @@ func (fd *netFD) write(b []byte) writePair {
 // getSockAddr queries getsockname/getpeername and decodes the result.
 func (fd *netFD) getSockAddr(peer bool) Addr {
 	buf := make([]byte, 32)
+	if strings.HasPrefix(fd.net, "unix") {
+		// Unix paths reach 108 bytes; the wire is [1, path...].
+		buf = make([]byte, 128)
+	}
 	var r int64
 	if peer {
 		r = netGetpeername(int64(fd.cookie), buf)
@@ -1310,6 +1352,9 @@ func (fd *netFD) getSockAddr(peer bool) Addr {
 		return nil
 	}
 	__tmpSA := decodeSockaddr(buf[:r-1])
+	if __tmpSA.unix {
+		return &UnixAddr{Name: __tmpSA.path, Net: fd.net}
+	}
 	ip, port := __tmpSA.ip, __tmpSA.port
 	if strings.HasPrefix(fd.net, "tcp") {
 		return &TCPAddr{IP: ip, Port: port}
@@ -1426,6 +1471,187 @@ func __tcpListenerAccept(l *TCPListener) acceptPair {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Unix domain sockets (review3-traps P1-I7).
+// ---------------------------------------------------------------------------
+
+// UnixConn is a Unix domain socket connection.
+type UnixConn struct {
+	fd *netFD
+}
+
+func (c *UnixConn) Read(b []byte) (int, error) {
+	panic("net.UnixConn.Read: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *UnixConn) Write(b []byte) (int, error) {
+	panic("net.UnixConn.Write: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *UnixConn) Close() error                      { return c.fd.close() }
+func (c *UnixConn) LocalAddr() Addr                   { return c.fd.laddr }
+func (c *UnixConn) RemoteAddr() Addr                  { return c.fd.raddr }
+func (c *UnixConn) SetDeadline(t time.Time) error     { return c.fd.setDeadline(t, 'r'+'w') }
+func (c *UnixConn) SetReadDeadline(t time.Time) error { return c.fd.setDeadline(t, 'r') }
+func (c *UnixConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
+
+func __unixConnRead(c *UnixConn, b []byte) readPair {
+	return c.fd.read(b)
+}
+
+func __unixConnWrite(c *UnixConn, b []byte) writePair {
+	// gc's UnixConn.Write loops until all bytes are written.
+	var nn int
+	for nn < len(b) {
+		__tmpW := c.fd.write(b[nn:])
+		nn += __tmpW.n
+		if __tmpW.err != nil {
+			return writePair{nn, __tmpW.err}
+		}
+		if __tmpW.n == 0 {
+			break
+		}
+	}
+	return writePair{nn, nil}
+}
+
+// UnixListener is a Unix domain socket listener.
+type UnixListener struct {
+	fd *netFD
+}
+
+func (l *UnixListener) Accept() (Conn, error) {
+	panic("net.UnixListener.Accept: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (l *UnixListener) Close() error { return l.fd.close() }
+func (l *UnixListener) Addr() Addr   { return l.fd.laddr }
+
+func __unixListenerAccept(l *UnixListener) acceptPair {
+	for {
+		nc := netAccept(int64(l.fd.cookie))
+		if nc < 0 {
+			errnoVal := errno(-nc)
+			if errnoVal == errnoEAGAIN {
+				if werr := netPollWaitRead(l.fd.cookie); werr != nil {
+					return acceptPair{nil, l.fd.mapPollErr("accept", werr)}
+				}
+				continue
+			}
+			return acceptPair{nil, &OpError{Op: "accept", Net: l.fd.net, Addr: l.fd.laddr, Err: errnoVal}}
+		}
+		__tmpNFD := newNetFD(nc, l.fd.net)
+		if __tmpNFD.err != nil {
+			return acceptPair{nil, __tmpNFD.err}
+		}
+		fd := __tmpNFD.fd
+		fd.laddr = l.fd.laddr
+		fd.raddr = fd.getSockAddr(true)
+		return acceptPair{&UnixConn{fd: fd}, nil}
+	}
+}
+
+func __dialUnix(network, address string, deadline time.Time) dialPair {
+	__tmp := __resolveUnixAddr(network, address)
+	if __tmp.err != nil {
+		return dialPair{nil, __tmp.err}
+	}
+	raddr := __tmp.addr
+	cookie := netSocket(1, 1, 0) // AF_UNIX, SOCK_STREAM
+	if cookie < 0 {
+		return dialPair{nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(-cookie)}}
+	}
+	__tmpNFD := newNetFD(cookie, network)
+	if __tmpNFD.err != nil {
+		return dialPair{nil, __tmpNFD.err}
+	}
+	fd := __tmpNFD.fd
+	var disarm func()
+	fail := func(opErr error) dialPair {
+		if disarm != nil {
+			disarm()
+			disarm = nil
+		}
+		fd.close()
+		return dialPair{nil, opErr}
+	}
+	// Arm the connect deadline if set (same dance as TCP).
+	if !deadline.IsZero() {
+		d := int64(time.Until(deadline))
+		if d == 0 {
+			d = -1
+		}
+		if ctx, ok := netPollCtxs[fd.cookie]; ok {
+			netPollSetDeadline(ctx, d, 'r'+'w')
+			disarm = func() {
+				if ctx2, ok := netPollCtxs[fd.cookie]; ok {
+					netPollSetDeadline(ctx2, 0, 'r'+'w')
+				}
+			}
+			defer func() {
+				if disarm != nil {
+					disarm()
+				}
+			}()
+		}
+	}
+	sa := encodeUnixSockaddr(raddr.Name)
+	r := netConnect(cookie, sa)
+	if r < 0 {
+		errnoVal := errno(-r)
+		if errnoVal != errnoEINPROGRESS {
+			return fail(&OpError{Op: "dial", Net: network, Addr: raddr, Err: errnoVal})
+		}
+		// EINPROGRESS: wait for writability, then check SO_ERROR.
+		if werr := netPollWaitWrite(fd.cookie); werr != nil {
+			return fail(fd.mapPollErr("dial", werr))
+		}
+		soerr := netGetsockopt(cookie, 1, 4) // SOL_SOCKET, SO_ERROR
+		if soerr < 0 {
+			return fail(&OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(-soerr)})
+		}
+		if soerr != 0 {
+			return fail(&OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(soerr)})
+		}
+	}
+	fd.laddr = fd.getSockAddr(false)
+	fd.raddr = raddr
+	return dialPair{&UnixConn{fd: fd}, nil}
+}
+
+func __listenUnix(network, address string) listenPair {
+	__tmp := __resolveUnixAddr(network, address)
+	if __tmp.err != nil {
+		return listenPair{nil, __tmp.err}
+	}
+	laddr := __tmp.addr
+	cookie := netSocket(1, 1, 0) // AF_UNIX, SOCK_STREAM
+	if cookie < 0 {
+		return listenPair{nil, &OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-cookie)}}
+	}
+	__tmpNFD := newNetFD(cookie, network)
+	if __tmpNFD.err != nil {
+		return listenPair{nil, __tmpNFD.err}
+	}
+	fd := __tmpNFD.fd
+	fail := func(opErr error) listenPair {
+		fd.close()
+		return listenPair{nil, opErr}
+	}
+	sa := encodeUnixSockaddr(laddr.Name)
+	if r := netBind(cookie, sa); r < 0 {
+		return fail(&OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-r)})
+	}
+	if r := netListenSock(cookie, 128); r < 0 {
+		return fail(&OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-r)})
+	}
+	fd.laddr = fd.getSockAddr(false)
+	if fd.laddr == nil {
+		fd.laddr = laddr
+	}
+	return listenPair{&UnixListener{fd: fd}, nil}
+}
+
 // Dial connects to the address on the named network.
 func Dial(network, address string) (Conn, error) {
 	panic("net.Dial: unreachable (Appendix-M desugar did not fire)")
@@ -1504,6 +1730,9 @@ func __dial(network, address string) dialPair {
 			return dialPair{nil, __tmp.err}
 		}
 		return __dialTCPAddr(network, __tmp.addr)
+	case "unix":
+		// review3-traps P1-I7: no deadline on the plain Dial path.
+		return __dialUnix(network, address, time.Time{})
 	default:
 		return dialPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("unknown network " + network)}}
 	}
@@ -1526,6 +1755,9 @@ func __dialWithDeadline(network, address string, deadline time.Time) dialPair {
 			return dialPair{nil, __tmp.err}
 		}
 		return __dialTCPAddrDeadline(network, __tmp.addr, deadline)
+	case "unix":
+		// review3-traps P1-I7.
+		return __dialUnix(network, address, deadline)
 	default:
 		return dialPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("unknown network " + network)}}
 	}
@@ -1617,6 +1849,9 @@ func __listen(network, address string) listenPair {
 			return listenPair{nil, __tmp.err}
 		}
 		return __listenTCP(network, __tmp.addr)
+	case "unix":
+		// review3-traps P1-I7.
+		return __listenUnix(network, address)
 	default:
 		return listenPair{nil, &OpError{Op: "listen", Net: network, Err: errors.New("unknown network " + network)}}
 	}
@@ -1838,6 +2073,13 @@ func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 	panic("net.ResolveUDPAddr: unreachable (Appendix-M desugar did not fire)")
 }
 
+// ResolveUnixAddr returns a Unix domain socket address for the given
+// network and address (the address is the file-system path as-is).
+// (review3-traps P1-I7.)
+func ResolveUnixAddr(network, address string) (*UnixAddr, error) {
+	panic("net.ResolveUnixAddr: unreachable (Appendix-M desugar did not fire)")
+}
+
 type resolveIPAddrPair struct {
 	ip  *IPAddr
 	err error
@@ -1850,6 +2092,11 @@ type resolveTCPAddrPair struct {
 
 type resolveUDPAddrPair struct {
 	addr *UDPAddr
+	err  error
+}
+
+type resolveUnixAddrPair struct {
+	addr *UnixAddr
 	err  error
 }
 
@@ -1899,6 +2146,19 @@ func __resolveUDPAddr(network, address string) resolveUDPAddrPair {
 		}
 	}
 	return resolveUDPAddrPair{&UDPAddr{IP: ip, Port: p}, nil}
+}
+
+// __resolveUnixAddr resolves a Unix domain socket address: the address is
+// the file-system path as-is (no host/port split, no DNS).
+// (review3-traps P1-I7.)
+func __resolveUnixAddr(network, address string) resolveUnixAddrPair {
+	switch network {
+	case "unix", "unixpacket":
+		return resolveUnixAddrPair{&UnixAddr{Name: address, Net: network}, nil}
+	default:
+		return resolveUnixAddrPair{nil, &OpError{Op: "resolve", Net: network,
+			Err: errors.New("unknown network " + network)}}
+	}
 }
 
 // ---------------------------------------------------------------------------

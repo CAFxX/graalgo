@@ -109,6 +109,46 @@ public final class UnsafeOps {
      * the nil slice.
      */
     public static GoSlice slice(Object referent, long len, GoKind elemKind, Node site) {
+        SliceView v = view(referent, len, "Slice", site);
+        if (v == null) {
+            return null;
+        }
+        checkCarrier(v.array(), elemKind, "Slice", site);
+        if (len > v.cap()) {
+            Panic.throwPanic("unsafe.Slice: len out of range", null, null, site);
+        }
+        return new GoSlice(v.array(), v.baseOffset(), (int) len, v.cap());
+    }
+
+    /**
+     * {@code reflect.SliceAt} view (review3-traps P1-I3): like
+     * {@link #slice}, but the capacity is pinned to {@code len} (gc:
+     * {@code Slice{Data: p, Len: n, Cap: n}}). The element kind comes from
+     * the runtime-synthesized element type token.
+     */
+    public static GoSlice sliceAtView(Object referent, long len, GoKind elemKind, Node site) {
+        SliceView v = view(referent, len, "SliceAt", site);
+        if (v == null) {
+            return null;
+        }
+        checkCarrier(v.array(), elemKind, "SliceAt", site);
+        if (len > v.cap()) {
+            Panic.throwPanic("unsafe.Slice: len out of range", null, null, site);
+        }
+        return new GoSlice(v.array(), v.baseOffset(), (int) len, (int) len);
+    }
+
+    /** Resolved slice-view shape: carrier array, base offset, available capacity. */
+    private record SliceView(Object array, int baseOffset, int cap) {}
+
+    /**
+     * Shared referent-shape dispatch for the slice-view intrinsics
+     * ({@link #slice}, {@link #sliceAtView}): a bare scalar box opens to
+     * its stable carrier (P3-M10); null with len 0 is the nil slice
+     * (returned as null); anything else fails fast per the documented
+     * failure taxonomy.
+     */
+    private static SliceView view(Object referent, long len, String op, Node site) {
         if (len < 0) {
             Panic.throwPanic("runtime error: unsafe.Slice: len out of range", null, null, site);
         }
@@ -138,15 +178,11 @@ public final class UnsafeOps {
             baseOffset = 0;
             cap = arrayLength(array);
         } else {
-            Panic.throwPanic("unsafe.Slice: unsupported referent shape "
+            Panic.throwPanic("unsafe." + op + ": unsupported referent shape "
                     + referent.getClass().getSimpleName(), null, null, site);
             throw new AssertionError("unreachable");
         }
-        checkCarrier(array, elemKind, "Slice", site);
-        if (len > cap) {
-            Panic.throwPanic("unsafe.Slice: len out of range", null, null, site);
-        }
-        return new GoSlice(array, baseOffset, (int) len, cap);
+        return new SliceView(array, baseOffset, cap);
     }
 
     /**

@@ -1192,6 +1192,7 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "", "resolveIPAddrPair", []string{"ip", "err"}},
 	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "", "resolveTCPAddrPair", []string{"addr", "err"}},
 	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "", "resolveUDPAddrPair", []string{"addr", "err"}},
+	{"net", "ResolveUnixAddr", "", "__resolveUnixAddr", "", "resolveUnixAddrPair", []string{"addr", "err"}},
 	{"net", "ParseCIDR", "", "__parseCIDR", "", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
 	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
 	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port", "err"}},
@@ -1208,6 +1209,10 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "DialContext", "Dialer", "__dialerDialContext", "", "dialPair", []string{"c", "err"}},
 	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
 	{"net", "Write", "TCPConn", "__tcpConnWrite", "", "writePair", []string{"n", "err"}},
+	// review3-traps P1-I7: Unix domain sockets (AF_UNIX).
+	{"net", "Read", "UnixConn", "__unixConnRead", "", "readPair", []string{"n", "err"}},
+	{"net", "Write", "UnixConn", "__unixConnWrite", "", "writePair", []string{"n", "err"}},
+	{"net", "Accept", "UnixListener", "__unixListenerAccept", "", "acceptPair", []string{"c", "err"}},
 	{"net", "Read", "UDPConn", "__udpConnRead", "", "readPair", []string{"n", "err"}},
 	{"net", "Write", "UDPConn", "__udpConnWrite", "", "writePair", []string{"n", "err"}},
 	{"net", "ReadFrom", "UDPConn", "__udpConnReadFrom", "", "readFromPair", []string{"n", "addr", "err"}},

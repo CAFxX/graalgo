@@ -434,7 +434,7 @@ public final class ReflectOpNode extends GoExprNode {
             case "makeslice" -> makeSlice(asTok(argv[0]), asInt(argv[1]), asInt(argv[2]));
             case "makemap" -> makeMap(asTok(argv[0]));
             case "makechan" -> makeChan(asTok(argv[0]), asInt(argv[1]));
-            case "sliceat" -> throw new IllegalStateException("reflect: SliceAt needs type synthesis");
+            case "sliceat" -> sliceAt(asTok(argv[0]), asTok(argv[1]), asInt(argv[2]));
             case "send" -> {
                 chanSend(asValue(argv[0]), asValue(argv[1]));
                 yield null;
@@ -1350,6 +1350,24 @@ public final class ReflectOpNode extends GoExprNode {
         GoSlice sl = new GoSlice(arr, 0, len, cap);
         long h = ReflectRefs.intern(sl);
         return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, h, 0);
+    }
+
+    /**
+     * __reflect_sliceat: {@code SliceAt(typ, p, n)} (review3-traps P1-I3).
+     * {@code typ} is the ELEMENT type token (gc takes the element type and
+     * synthesizes {@code SliceOf(typ)}); {@code p} is the unsafe.Pointer
+     * handle (0 for nil). Like {@code unsafe.Slice} over the pointer's
+     * referent — same shape checks, gc-exact panics — but the result
+     * Value is typed with the runtime-synthesized slice type and has
+     * len == cap == n (gc: {@code Slice{Data: p, Len: n, Cap: n}}).
+     */
+    private static GoStruct sliceAt(long elemTok, long ptrHandle, int n) {
+        TypeInfo elem = ReflectTypes.table().info(elemTok);
+        Object referent = ptrHandle == 0 ? null : ReflectRefs.resolve(ptrHandle);
+        GoSlice sl = graalgo.p3unsafe.UnsafeOps.sliceAtView(referent, n, elem.kind, null);
+        long h = ReflectRefs.intern(sl);
+        long sliceTok = ReflectTypes.sliceOf(elemTok);
+        return ReflectValues.pack(ReflectTypes.valueDescriptor(), sliceTok, h, 0);
     }
 
     private static GoStruct makeMap(long tok) {

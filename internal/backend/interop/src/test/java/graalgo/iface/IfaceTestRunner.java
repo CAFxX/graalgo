@@ -33,10 +33,18 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+        // review3-traps P1-I2: unsafe.Slice/String shape dispatch pins
+        // (B-8 failure mode + positive controls).
+        TESTS.add(graalgo.p3unsafe.UnsafeOpsTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // review3-traps P1-I7: AF_UNIX via UnixDomainSocketAddress.
+        TESTS.add(graalgo.p3net.GoNetUnixTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
-        TESTS.add(FmtStateItabTest.class);
+        // (review3-traps: FmtStateItabTest was deleted with the Java fmt
+        // implementation (real-fmt2 a527063d); the registration is removed
+        // with it — the fail-loud behavior is covered by the real fmt
+        // package's tests.)
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
         // isolation — identity-keyed, never structural.
         TESTS.add(graalgo.p3link.CondIsolationTest.class);

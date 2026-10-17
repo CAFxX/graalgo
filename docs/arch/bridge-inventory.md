@@ -131,6 +131,30 @@ deliverable until the design lands.
   `real-reflect2` (`reflect`).
 - **Phase:** 1 (the four in-flight packages) → 2 (remainder).
 
+- **Line items (review3-traps P1-I3, 2026-10-17):**
+  - `reflect.SliceAt` — **implemented** via runtime type synthesis: the
+    frontend `SliceAt` calls the `__reflect_sliceat` intrinsic (wired to
+    the `sliceat` reflectop); the backend
+    [`ReflectOpNode.sliceAt`](../../internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectOpNode.java)
+    resolves the element type token, views the pointer's referent with
+    [`UnsafeOps.sliceAtView`](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
+    (same shape checks as `unsafe.Slice`, len == cap == n per gc), and
+    types the result with the runtime-synthesized `SliceOf(typ)`
+    ([`ReflectTypes.sliceOf`](../../internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectTypes.java)).
+    The `sliceat` → `IllegalStateException` trap and the frontend
+    "not in M8 scope" panic are retired.
+  - `reflect.TypeAssert[T]` (Go 1.26 API) — **open**, fail-fast retained
+    ("not in M8 scope", now tracked here instead of a bare panic).
+    Design: implement via `v.Interface().(T)` after gc-exact pre-checks
+    (`flag == 0` → `ValueError{"reflect.TypeAssert", Invalid}`,
+    `flagRO` → the read-only panic), once method values land — the naive
+    `.(T)` is wrong for `flagMethod` values (gc wraps them with
+    `makeMethodValue` first), and method values are reachable
+    (`Value.Method` → `__reflect_methodval`). Generic instantiation in
+    synthetic scope works (cf. `TypeFor[T]`), so the blocker is method
+    values, not generics. Re-test trigger: method-value support in the
+    synthetic reflect.
+
 ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
 
 - **What:**
@@ -175,6 +199,37 @@ deliverable until the design lands.
   through the backend so `runtime.Callers` walks the actual guest stack;
   then delete the synthetic intrinsics.
 - **Phase:** 4.
+
+### B-8. `unsafe.Slice`/`unsafe.String` cannot reinterpret GoStruct referents (review3-traps P1-I2)
+
+- **What:**
+  [UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
+  `slice`/`sliceAtView`/`stringOf` panic `"unsafe.<op>: unsupported
+  referent shape GoStruct"` — the standard struct-to-bytes idiom
+  `unsafe.Slice((*byte)(unsafe.Pointer(&s)), size)` used by
+  hashers/encoders dies loud on any struct referent. Beyond inventoried
+  B-6, which covers only `unsafe.Add`.
+- **Why:** the handle model has no flat memory: a `GoStruct` is a
+  (descriptor, longs[], objects[]) triple, not bytes, so gc's
+  reinterpretation has nothing to reinterpret.
+- **Root-cause fix:** needs design — a byte-view carrier. Two semantics:
+  (a) **snapshot**: serialize scalar fields (little-endian, field order,
+  a documented graalgo layout — never gc's) into a fresh `byte[]` at
+  view construction; reads work (covers the hasher/encoder read idiom),
+  writes do not alias (documented divergence); non-scalar fields fail
+  loud at construction (opaque handles have no byte form). (b)
+  **aliasing strided view** (future): index → (field, byte-offset) with
+  writeback; needs a new carrier (`GoSlice` is flat). Phasing: keep the
+  loud panic; implement (a) for scalar-only structs first; (b) needs
+  design. Alternative considered and rejected as the default: keeping
+  the panic as the permanent D5 contract (programs serialize
+  explicitly) — the panic message already documents this, but the
+  read idiom is common enough to deserve the carrier.
+- **Phase:** 4.
+- **Re-test trigger:** the byte-view carrier lands; the `"unsupported
+  referent shape GoStruct"` panic tests flip to view tests.
+- **Regression:** `UnsafeOpsTest.testSliceOnStructReferentPanics` (added
+  review3-traps) pins the current loud failure mode.
 
 ## Adjudicated non-bridges
 

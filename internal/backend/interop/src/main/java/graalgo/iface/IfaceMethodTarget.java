@@ -19,13 +19,16 @@ import graalgo.values.GoFunc;
  * pointer-receiver methods. A value-receiver method promoted via a
  * pointer-embedded field gets one trailing dereference (gc's implicit
  * {@code (*p)}); a pointer-receiver method promoted via a value-embedded
- * struct field takes the address of the promoted field value (wire
- * {@code "addrOf"} true, P3-M9 — gc's implicit {@code &}). The remaining
- * combination (pointer receiver via a value-embedded non-struct field)
- * is marked unsupported (wire {@code "index"} null) and fails fast with
- * a named P3-M3 scope error at dispatch — only when that method is
- * actually dispatched (R2 P2-7: narrowing; the itab build carries the
- * unsupported target so supported methods keep working).
+ * field takes the address of the promoted field value (wire
+ * {@code "addrOf"} true — gc's implicit {@code &}). Struct-typed fields
+ * are read by reference (P3-M9); any other field type (named scalars
+ * etc.) addresses the live field through a writeback field cell
+ * (review3-traps P1-I4), exactly like {@code &s.f}. A null path (wire
+ * {@code "index"} null) still marks an unsupported promotion and fails
+ * fast with a Go panic at dispatch — only when that method is actually
+ * dispatched (R2 P2-7: narrowing; the itab build carries the unsupported
+ * target so supported methods keep working). The exporter no longer emits
+ * the null mark; it survives as defense-in-depth.
  *
  * <p>{@code embeddedIfaceId} is the wire type-table id of the embedded
  * interface's {@code interface}-kind entry for a method promoted via an

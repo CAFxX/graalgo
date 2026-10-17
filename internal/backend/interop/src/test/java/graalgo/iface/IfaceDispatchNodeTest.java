@@ -113,6 +113,11 @@ public final class IfaceDispatchNodeTest {
         return new IfaceMethodTarget(goFunc(root), recvPath, false, false, -1, null);
     }
 
+    /** Promoted pointer-receiver target via value-embedded field: address-of adaptation. */
+    private static IfaceMethodTarget promotedAddrOfTarget(CaptureRoot root, int... recvPath) {
+        return new IfaceMethodTarget(goFunc(root), recvPath, true, true, -1, null);
+    }
+
     private static VirtualFrame frame() {
         return Truffle.getRuntime().createVirtualFrame(new Object[0],
                 FrameDescriptor.newBuilder().build());
@@ -373,7 +378,7 @@ public final class IfaceDispatchNodeTest {
         try {
             graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.MW",
                     List.of(new graalgo.values.GoStructDescriptor.Field("Buf",
-                            GoKind.POINTER, false, 0, -1, null, null)));
+                            GoKind.POINTER, false, 0, -1, null, null, null)));
             graalgo.values.GoStruct outer =
                     new graalgo.values.GoStruct(desc, new long[0], new Object[]{"EMBEDDED"});
             GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.MW", outer), 0);
@@ -417,7 +422,7 @@ public final class IfaceDispatchNodeTest {
         try {
             graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.MW",
                     List.of(new graalgo.values.GoStructDescriptor.Field("Buf",
-                            GoKind.POINTER, false, 0, -1, null, null)));
+                            GoKind.POINTER, false, 0, -1, null, null, null)));
             Object referent = new Object();
             graalgo.values.GoPointer ptr = new graalgo.values.GoPointer(referent);
             graalgo.values.GoStruct outer =
@@ -438,9 +443,53 @@ public final class IfaceDispatchNodeTest {
     }
 
     /**
-     * R2 P2-7 (narrowing): dispatching an unsupported promotion (pointer
-     * receiver via a value-embedded field) fails fast with the named
-     * P3-M3 scope error — at dispatch, not at itab build.
+     * Review3-traps P1-I4: a pointer-receiver method promoted via a
+     * value-embedded NON-struct field (e.g. {@code type Counter int} with
+     * {@code func (c *Counter) Inc()}) dispatches through a writeback
+     * field cell — exactly like {@code &s.f} — instead of failing fast.
+     * The receiver holds *V (the faithful Go shape: only *V satisfies the
+     * interface); mutations through the pointer alias the live struct
+     * field (gc's implicit &), rather than hitting a dead copy.
+     * verifies: GG-0014
+     */
+    public void testPromotedAddrOfNonStructFieldWriteback() {
+        CaptureRoot root = new CaptureRoot(0L);
+        setUp(Map.of("main.V", Map.of("M", promotedAddrOfTarget(root, 0))));
+        try {
+            GoStructDescriptor desc = new GoStructDescriptor("main.V", List.of(
+                    new GoStructDescriptor.Field("Counter", GoKind.INT64, true,
+                            0, -1, null, null, null)));
+            GoStruct outer = new GoStruct(desc, new long[]{41L}, new Object[0]);
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE,
+                    iface("main.V", new graalgo.values.GoPointer(outer)), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            n.executeLong(frame());
+            assertEquals(1, root.seen.size(), "method invoked once");
+            Object recvArg = root.seen.get(0)[1];
+            assertTrue(recvArg instanceof graalgo.values.GoPointer,
+                    "params[0] is a GoPointer, got " + recvArg.getClass().getName());
+            Object referent = ((graalgo.values.GoPointer) recvArg).referent();
+            assertTrue(referent instanceof graalgo.frontend.GoFieldCell,
+                    "pointer addresses a writeback field cell, got "
+                            + referent.getClass().getName());
+            graalgo.frontend.GoFieldCell cell = (graalgo.frontend.GoFieldCell) referent;
+            // gc aliasing: a write through the pointer updates the live field.
+            cell.set(Long.valueOf(42L));
+            assertEquals(42L, outer.getLong(0),
+                    "write through the cell aliases the struct field");
+            // And reads see the live field value.
+            assertEquals(Long.valueOf(42L), cell.get(), "cell reads the live field");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R2 P2-7 (narrowing): dispatching an unsupported promotion (wire
+     * "index" null — defense-in-depth; the exporter no longer emits it)
+     * fails fast with a Go panic at dispatch, not at itab build.
+     * Review3-traps P1-I4: a backend runtime node must not leak the
+     * frontend's exception type — the failure is a recoverable Go panic.
      * verifies: GG-0014
      */
     public void testUnsupportedPromotionFailsFastAtDispatch() {
@@ -451,12 +500,13 @@ public final class IfaceDispatchNodeTest {
             IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
             try {
                 n.executeLong(frame());
-            } catch (FrontendException fe) {
-                assertTrue(fe.getMessage().contains("(P3-M3 scope)"),
-                        "named P3-M3 scope error: " + fe.getMessage());
+            } catch (PanicException pe) {
+                Object gv = pe.goValue();
+                assertTrue(gv instanceof String && ((String) gv).contains("unsupported promotion path"),
+                        "Go panic naming the unsupported promotion: " + gv);
                 return;
             }
-            throw new AssertionError("expected FrontendException for unsupported-promotion dispatch");
+            throw new AssertionError("expected PanicException for unsupported-promotion dispatch");
         } finally {
             tearDown();
         }
@@ -502,7 +552,7 @@ public final class IfaceDispatchNodeTest {
             GoInterface innerIface = iface("main.Inner", "INNER-DATA");
             GoStructDescriptor outerDesc = new GoStructDescriptor("main.Outer", List.of(
                     new GoStructDescriptor.Field("Iface", GoKind.INTERFACE, false,
-                            0, 0, null, null)));
+                            0, 0, null, null, null)));
             GoStruct outerData = new GoStruct(outerDesc, new long[0],
                     new Object[]{innerIface});
             GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.Outer", outerData), 0);

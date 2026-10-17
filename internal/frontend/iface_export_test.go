@@ -1073,14 +1073,15 @@ func TestMentionsTypeParamAliasUnion(t *testing.T) {
 	}
 }
 
-// TestIfaceMethodTableValueEmbedPrimitiveUnsupported (P3-M9): a
-// pointer-receiver method promoted via a VALUE-embedded non-struct field
-// (e.g. a defined int type) is still marked unsupported in the wire
-// ("index": null) — taking the address would need writeback for the
-// primitive field value (out of scope). The mark is lazy: the export
-// succeeds, and dispatch fails fast with a named P3-M3 scope error only
-// if the method is actually dispatched.
-func TestIfaceMethodTableValueEmbedPrimitiveUnsupported(t *testing.T) {
+// TestIfaceMethodTableValueEmbedPrimitiveAddrOf (review3-traps P1-I4):
+// a pointer-receiver method promoted via a VALUE-embedded non-struct
+// field (e.g. a defined int type) is marked supported in the wire
+// ("index": [0], "addrOf": true) — the dispatcher takes the address of
+// the promoted field value through a writeback field cell (GoFieldCell),
+// exactly like &s.f, so mutations alias the live field (gc's implicit &).
+// The mark is lazy: the export succeeds, and dispatch adapts the receiver
+// only if the method is actually dispatched through an interface.
+func TestIfaceMethodTableValueEmbedPrimitiveAddrOf(t *testing.T) {
 	const src = `package main
 
 type Counter int
@@ -1119,11 +1120,15 @@ func main() {
 				continue
 			}
 			found = true
-			if idx, ok := mm["index"]; !ok || idx != nil {
-				t.Fatalf("*V.Inc index = %v (%T), want JSON null (unsupported)", mm["index"], mm["index"])
+			idx, ok := mm["index"].([]any)
+			if !ok || len(idx) != 1 {
+				t.Fatalf("*V.Inc index = %v (%T), want [0] (supported with addrOf)", mm["index"], mm["index"])
 			}
-			if ao, ok := mm["addrOf"].(bool); !ok || ao {
-				t.Fatalf("*V.Inc addrOf = %v (%T), want false", mm["addrOf"], mm["addrOf"])
+			if f, _ := idx[0].(float64); f != 0 {
+				t.Fatalf("*V.Inc index = %v, want [0]", idx)
+			}
+			if ao, ok := mm["addrOf"].(bool); !ok || !ao {
+				t.Fatalf("*V.Inc addrOf = %v (%T), want true", mm["addrOf"], mm["addrOf"])
 			}
 		}
 	}
