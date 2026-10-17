@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Layer-3 per-release gate (phases/phase3/PLAN.md §5 layer 3, GG-0029/GG-0032):
+# Layer-3 per-release gate (docs/arch/phases/phase3/PLAN.md §5 layer 3, GG-0029/GG-0032):
 # stdlib differential via the wave1/wave2/wave3 corpora.
 #
 # The wave corpora are the operational form of the "stdlib + scripts" layer:
@@ -35,6 +35,9 @@ GR="${GR:-$REPO_ROOT}"
 export GR
 export GO_BIN_DIR="${GO_BIN_DIR:-$HOME/tools/go/bin}"
 export JAVA_BIN="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+# The wave runners invoke internal/backend/graalgo-sync-run, which resolves
+# java via GRAALVM_HOME (not JAVA_BIN); derive it when unset.
+export GRAALVM_HOME="${GRAALVM_HOME:-${JAVA_BIN%/bin/java}}"
 export PATH="$GO_BIN_DIR:$PATH"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"

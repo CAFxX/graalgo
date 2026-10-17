@@ -16,9 +16,29 @@ This directory holds end-to-end proofs: real published Go modules compiled
   `modprobe/bugs/`, 2026-10-14). Every entry names the general fix or the
   blocking graalgo gap; module sources are never patched.
 
+## Running
+
+`make build` at the repo root first (the runner never builds — the
+[product launcher](../../internal/backend/graalgo-sync-run) needs the
+truffle+runtime+interop classes), then:
+
+```bash
+./run_module.sh uuid            # all 8 uuid cases
+./run_module.sh uuid case01     # one case
+```
+
+Each case runs under stock gc (built binary) and under graalgo at
+`--gmp=1` and `--gmp=4`; stdout bytes, exit codes, and (for panics) the
+first stderr line must match. Exit 0 iff every case passes every leg.
+
+CI: the weekly [e2e-modules](../../.github/workflows/e2e-modules.yml)
+workflow runs the uuid probe (schedule + manual dispatch); results feed
+the as-published-modules milestone.
+
 ## Status
 
-`run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
-before it runs again — see the driver-hardening lane.
+`run_module.sh` was rewired to the post-restructure layout (2026-10-17,
+lane `rev-test-runners`): it now invokes the
+[product launcher](../../internal/backend/graalgo-sync-run) (P3SyncMain,
+same backend as the [diffharness smoke corpus](../differential/run.sh))
+instead of the removed `phases/phase3` tree.

@@ -5,19 +5,33 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P1="$GR/phases/phase1"
-P2="$GR/phases/phase2"
-export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+# Backend: the interop product launcher (P3SyncMain) via
+# internal/backend/graalgo-sync-run — the same backend the diffharness
+# smoke corpus uses (test/differential/run.sh). PHASE3_DIR points at the
+# internal/backend tree; defaults to this repo's tree so a plain
+# ./run_differential.sh works from a clean checkout. The launcher never
+# builds: `make build` at the repo root must have run first; fail fast
+# with the fix instead of a confusing java classpath error.
+if [ -z "${PHASE3_DIR:-}" ]; then
+  PHASE3_DIR="$(cd ../../../internal/backend && pwd)"
+fi
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ]; then
+  echo "run_differential.sh: $PHASE3_DIR/graalgo-sync-run missing/not executable" >&2
+  exit 2
+fi
+if [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
+  echo "run_differential.sh: backend classes not built; run 'make build' at the repo root first" >&2
+  exit 2
+fi
+GRAALGO_RUN=( "$PHASE3_DIR/graalgo-sync-run" )
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# Tmp discipline: never write to /tmp (512M shared tmpfs). Honor a
+# caller-supplied TMPDIR; otherwise use the repo-local scratch dir (.tmp/
+# is gitignored).
+REPO_ROOT="$(cd ../../.. && pwd)"
+export TMPDIR="${TMPDIR:-$REPO_ROOT/.tmp/corpus-slice}"
+mkdir -p "$TMPDIR"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

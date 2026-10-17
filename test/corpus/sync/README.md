@@ -2,7 +2,7 @@
 
 Go programs exercising the P3-M2b `sync` Go bindings (ADR-0002),
 differential vs stock gc 1.27.1. Ports every leg of the Java-level
-`SyncStressTest` (`phases/phase2/src/test/java/graalgo/runtime/sync/`),
+`SyncStressTest` ([internal/backend/runtime/src/test/java/graalgo/runtime/sync/](../../../internal/backend/runtime/src/test/java/graalgo/runtime/sync/)),
 discharging the P2-M8 re-test trigger.
 
 ## Programs
@@ -46,5 +46,5 @@ The cap-1 leg (`testMutexCapOne`) is the same program as `sy01` run with
 ```
 
 The differential runner filters the known JVM `Unsafe` warnings on
-stderr (harness noise, cf. `p3frontend/DESIGN.md` §7) and compares the
+stderr (harness noise, cf. [p3frontend/DESIGN.md](../../../internal/frontend/p3frontend/DESIGN.md) §7) and compares the
 first remaining stderr line for panic programs.

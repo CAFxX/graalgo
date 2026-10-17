@@ -4,14 +4,20 @@
 # Usage: run_module.sh <probe-dir> [case...]
 #   probe-dir: contains go.mod (for the gc leg) and one subdir per case,
 #              each a package-main program (caseNN/main.go).
-#   Compares `go run` (gc 1.27.1) vs graalgo P3SyncMain --gmp=1 and --gmp=4:
-#   byte-identical stdout and equal exit codes. Panic programs: the first
-#   stderr line is compared (wave3 convention).
+#   Compares `go build`+run (gc 1.27.1) vs the graalgo product launcher
+#   (graalgo-sync-run, P3SyncMain) at --gmp=1 and --gmp=4: byte-identical
+#   stdout and equal exit codes. Panic programs: the first stderr line is
+#   compared (wave3 convention).
+#
+# Backend: internal/backend/graalgo-sync-run — the same product launcher
+# the diffharness smoke corpus uses (test/differential/run.sh). The
+# launcher never builds: `make build` at the repo root must have run
+# first; the script fails fast with the fix.
 #
 # Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
+#   GR        repo root (default: the repository containing this script,
+#             resolved via its own path — never hardcoded)
 #   GO        gc toolchain (default ~/tools/go/bin/go)
-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
 #   TMPDIR    scratch (default <probe-dir>/.tmp, created)
 #
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
@@ -19,23 +25,28 @@ set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GR="${GR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 GO="${GO:-$HOME/tools/go/bin/go}"
-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
+mkdir -p "$GOCACHE"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
+if [ -z "${PHASE3_DIR:-}" ]; then
+  PHASE3_DIR="$GR/internal/backend"
 fi
+if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ]; then
+  echo "run_module.sh: $PHASE3_DIR/graalgo-sync-run missing/not executable" >&2
+  exit 2
+fi
+if [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
+  echo "run_module.sh: backend classes not built; run 'make build' at the repo root first" >&2
+  exit 2
+fi
+# -Djava.io.tmpdir is set inside graalgo-sync-run from $TMPDIR (never /tmp).
+GRAALGO_RUN=( "$PHASE3_DIR/graalgo-sync-run" )
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
 

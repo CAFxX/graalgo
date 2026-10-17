@@ -17,6 +17,9 @@
 #   layer 4 (fuzz soak):        overnight per release — generative
 #                               differential fuzzing (`fuzz-soak.yml`:
 #                               nightly + manual dispatch)
+#   e2e (as-published modules): weekly + manual dispatch — real published
+#                               Go modules (uuid probe) compiled as-published
+#                               vs gc (`e2e-modules.yml`)
 # The full differential suite (`make test`, 30+ min) is excluded from
 # per-push CI by design — it runs in local verification and the weekly
 # full-suite job. This is documented, not skipped.

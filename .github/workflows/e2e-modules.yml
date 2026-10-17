@@ -1,0 +1,53 @@
+# E2E — as-published Go modules via graalgo (E7/QN-11).
+#
+# The as-published-modules milestone: real published Go modules compiled
+# as-published (never patched), output byte-identical to `go run`
+# (gc 1.27.1). The [uuid probe](../test/e2e/uuid/) exercises
+# github.com/google/uuid through [run_module.sh](../test/e2e/run_module.sh):
+# each caseNN/main.go runs under stock gc vs the graalgo product launcher
+# at --gmp=1 and --gmp=4.
+#
+# Cadence: weekly plus manual dispatch. Hours-scale is not expected (8 cases,
+# ~minutes), but the JVM legs are the long pole on shared runners, so this
+# stays out of per-push CI by design — per-push covers the fast subset via
+# `make all` (see ci.yml).
+name: e2e-modules
+
+on:
+  schedule:
+    # Weekly: Saturday 03:00 UTC (stdlib-gate runs Sunday, full-suite Monday).
+    - cron: '0 3 * * 6'
+  workflow_dispatch:
+
+jobs:
+  e2e-modules:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: Build backend (truffle+runtime+interop)
+        run: make build
+
+      - name: E2E — uuid module probe (gc vs graalgo)
+        env:
+          GOCACHE: ${{ runner.temp }}/gocache-modprobe
+        run: ./test/e2e/run_module.sh test/e2e/uuid

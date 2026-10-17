@@ -1,16 +1,8 @@
 # P3-M8 wave-2 differential corpus
 
 Go programs exercising the wave-2 synthetic stdlib packages (io, os,
-syscall, reflect, unsafe, crypto/* — see
-`phases/phase3/hidden_files/m8-analysis/`), differential vs stock gc
-1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
-
-Pipelining note: wave 2 is built in parallel with the P3-M7 remediation
-on a separate tree (`~/workspace/graalgo-m8-pipe`, branch `m8-pipeline`).
-The runner resolves its own repository root from its path — it works from
-any checkout. Corpus programs and synthetic-source drafts are new files;
-shared-file integration (importer registration, desugars) lands at rebase
-time after M7 remediation completes.
+syscall, reflect, unsafe, crypto/*), differential vs stock gc 1.27.1.
+Run via the shared runner `run_wave.sh`, not by hand.
 
 ## Layout
 
@@ -81,13 +73,16 @@ time after M7 remediation completes.
 
 ## The runner
 
-`run_wave.sh [pkg]` — builds the phase-3 java module once, then for each
-`<nn>_<name>.go` runs it under stock gc (built binary, run directly —
-`go run` masks the exit code) and under `P3SyncMain`, and byte-compares
-stdout, exit codes, and (for panic programs) the first stderr line.
+`run_wave.sh [pkg]` — requires `make build` at the repo root first (the
+runner never builds; it fails fast if the backend classes are missing),
+then for each `<nn>_<name>.go` runs it under stock gc (built binary, run
+directly — `go run` masks the exit code) and under the
+[graalgo-sync-run](../../../internal/backend/graalgo-sync-run) product
+launcher (P3SyncMain), and byte-compares stdout, exit codes, and (for
+panic programs) the first stderr line.
 Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
-cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
-`corpus/wave1/run_wave.sh` (same phases, same comparisons), except the
+cf. [p3frontend/DESIGN.md](../../../internal/frontend/p3frontend/DESIGN.md) §7).
+Modeled exactly on `corpus/wave1/run_wave.sh` (same comparisons), except the
 repo root resolves from the script's own path instead of a hardcoded
 default.
 
@@ -109,17 +104,8 @@ not scratch space:
 - **NEVER** clean `/tmp` (or any part of it) — other agents' live work
   lives there.
 
-Every wave-2 worker must export, for **every** `go`/`java` command
-(ad-hoc builds included — the phase Makefiles already route the test
-temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
-these itself to the wave-2 dirs):
-
-```bash
-export TMPDIR=$HOME/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/<pkg>
-export GOCACHE=$HOME/workspace/.gocache-m8-<pkg>
-```
-
-`run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
-`TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m8-tmp/<pkg>` and its
-own `.gocache-m8-<pkg>`; never share a scratch dir with another worker.
+`run_wave.sh` honors a caller-supplied `TMPDIR` and otherwise defaults
+to `$GR/.tmp/wave2` (repo-local, gitignored); `mktemp -d` (which honors
+`TMPDIR`) creates the per-run scratch and removes it on exit. Set
+`TMPDIR` (and `GOCACHE`) before invoking the runner if you need a
+different scratch location — never point them at `/tmp`.

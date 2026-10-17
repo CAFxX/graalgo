@@ -15,9 +15,9 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   `hash/adler32/`, `hash/crc32/`, `hash/crc64/`, `hash/fnv/`,
   `hash/maphash/`.
 - `run_wave3.sh` — the shared runner (a `../wave1/run_wave.sh`
-  derivative with wave-3 tmp paths: `TMPDIR=$P3/hidden_files/m9-tmp/wave3`,
-  `GOCACHE=$HOME/workspace/.gocache-m9-wave3`). Usage:
-  `GR=~/workspace/graalgo-m9 ./run_wave3.sh [pkg|all]`.
+  derivative). Usage: `./run_wave3.sh [pkg|all]` (repo root resolves from
+  the script's path; `TMPDIR` defaults to `$GR/.tmp/wave3`,
+  `GOCACHE` to `$HOME/workspace/.gocache-m9-wave3`).
 - Per-package `run_differential.sh`: thin wrapper
   `exec "$(dirname "$0")/../run_wave3.sh" <pkg>`.
 - Per-package `README.md`: scope boundary + retest trigger.
@@ -60,19 +60,23 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   tool restriction), so these are `.scopelimited` + `nogc`. `internal/bytealg`
   has a synthetic adapter (`synth_bytealg.go`, portable real-Go impls,
   synthetic-only like `internal/reflectlite`); its correctness evidence is
-  the tier1d harness (`phases/phase3/hidden_files/m9-tmp/tier1d-harness/`),
-  which runs the corpus program (self-checking against `bytes`/`strings`)
-  under gc against the extracted synthetic source. `internal/cpu`,
+  the tier-1d harness run during the M9 lane (the corpus program,
+  self-checking against `bytes`/`strings`, run under gc against the
+  extracted synthetic source). `internal/cpu`,
   `internal/godebug`, `internal/bisect` have no adapter: cpu needs cpuid
   intrinsics, godebug needs the godebugs table + runtime linknames, bisect's
   core needs `runtime.Callers`; none has an in-tree consumer.
 
 ## Frontend selection (tier-1d note)
 
-`run_wave3.sh` shells out to `P3SyncMain`, which locates the `gofrontend`
-binary via `GRAALGO_GOFRONTEND` (override), else `<phase1>/frontend/gofrontend`.
-When the shared m9 tree's frontend is mid-flight (other workers' uncommitted
-edits), point `GRAALGO_GOFRONTEND` at a known-good build:
+`run_wave3.sh` shells out to the
+[graalgo-sync-run](../../../internal/backend/graalgo-sync-run) launcher
+(P3SyncMain), which locates the `gofrontend` binary via
+`GRAALGO_GOFRONTEND` (override), else by walking up to
+`<repo>/internal/frontend/gofrontend`, else `gofrontend` on `PATH` (see
+`ToolPaths` in `internal/backend/runtime`). When the checkout's frontend
+is mid-flight (uncommitted edits), point `GRAALGO_GOFRONTEND` at a
+known-good build:
 
 ```bash
 GRAALGO_GOFRONTEND=~/workspace/tmp/tier1d-fe/gofrontend \

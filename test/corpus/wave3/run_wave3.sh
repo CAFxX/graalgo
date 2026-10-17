@@ -1,7 +1,7 @@
 #!/bin/bash
 # Differential runner for the P3-M9 wave-3 corpus (see README.md): each
 # program runs under stock gc 1.27.1 (built binary, run directly — `go run`
-# masks the exit code) and under graalgo-p3sync-run. Compares stdout bytes,
+# masks the exit code) and under graalgo-sync-run. Compares stdout bytes,
 # exit codes, and — for panic programs — the first stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
@@ -34,20 +34,23 @@
 # package dir when omitted (nested dirs like testing/quick are included).
 # Underscore-prefixed dirs (_smoke, infra) run only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m9 run_wave3.sh strings
+# The repo root defaults to the repository containing this script
+# (resolved via its own path — never hardcoded) but can be overridden:
+#   GR=<repo-root> run_wave3.sh strings
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: resolved from this script's own path (never hardcoded);
+# overridable for cross-worktree runs, e.g. GR=<root> ./run_wave.sh strings
+GR="${GR:-$(cd ../../.. && pwd)}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave3/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m9-tmp/wave3"
+# Tmp discipline: never write to /tmp (512M shared tmpfs). Honor a
+# caller-supplied TMPDIR (tools/run_stdlib_gate.sh sets one for the
+# weekly gate); otherwise use the repo-local scratch dir (.tmp/ is
+# gitignored).
+export TMPDIR="${TMPDIR:-$GR/.tmp/wave3}"
 export GOCACHE="$HOME/workspace/.gocache-m9-wave3"
 mkdir -p "$TMPDIR"
 
@@ -72,15 +75,26 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# Backend: the interop product launcher (P3SyncMain) via
+# internal/backend/graalgo-sync-run — the same backend the diffharness
+# smoke corpus uses (test/differential/run.sh). The launcher never builds:
+# `make build` at the repo root must have run first
+# (tools/run_stdlib_gate.sh does this for the weekly gate); fail fast with
+# the fix instead of "phase3 build failed".
+if [ -z "${PHASE3_DIR:-}" ]; then
+  PHASE3_DIR="$GR/internal/backend"
+fi
+if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ]; then
+  echo "run_wave3.sh: $PHASE3_DIR/graalgo-sync-run missing/not executable" >&2
+  exit 2
+fi
+if [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
+  echo "run_wave3.sh: backend classes not built; run 'make build' at the repo root first" >&2
+  exit 2
+fi
+# -Djava.io.tmpdir is set inside graalgo-sync-run from $TMPDIR (never
+# /tmp: a full /tmp silently yields empty output with exit 0 — P3-M7R2).
+GRAALGO_RUN=( "$PHASE3_DIR/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -98,7 +112,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \

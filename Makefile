@@ -18,7 +18,7 @@
 #
 # CI SCOPE — honest, not aspirational.
 #   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#                + test-go + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -32,6 +32,9 @@
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-go   Go unit tests: the root module (cmd/graalgo, internal/driver,
+#               internal/vet) plus every tools/* module (QN-8: previously
+#               CI-invisible). Pure Go, no JVM, fast — per-push.
 #     test-regression
 #               regression tests for fixed PKGs
 #               ([test/regression/](test/regression/)): each
@@ -104,9 +107,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-go test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-ci test-regression
+all: generate build snapshot-check check test-v2 test-go test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -193,6 +196,20 @@ test-v2:
 	mkdir -p $(V2_TMP) && \
 	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
+
+# Go unit tests (QN-8): the root module's Go tests — cmd/graalgo,
+# internal/driver, internal/vet (previously CI-invisible, rotting silently)
+# — plus every tools/* module. In `all` (hence per-push CI): pure-Go unit
+# tests, no JVM, fast. /tmp is a 512M shared tmpfs: keep go test temps on
+# persistent disk (.tmp/ is gitignored).
+GO_TEST_TMP := $(CURDIR)/.tmp/test-go
+test-go:
+	mkdir -p $(GO_TEST_TMP) && \
+	TMPDIR="$(GO_TEST_TMP)" GOTMPDIR="$(GO_TEST_TMP)" $(GO) test ./cmd/... ./internal/... && \
+	for m in $(wildcard tools/*/go.mod); do \
+		d=$$(dirname $$m); echo "=== $$d ==="; \
+		(cd $$d && TMPDIR="$(GO_TEST_TMP)" GOTMPDIR="$(GO_TEST_TMP)" $(GO) test ./...) || exit 1; \
+	done
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)

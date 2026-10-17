@@ -33,12 +33,13 @@ corpus is that integration test.
 
 ```bash
 ./regen.sh               # regenerate .expected/.panic.gc from gc 1.27.1
-./run_differential.sh    # gc binary vs graalgo (P3SyncMain): stdout bytes,
-                         # exit codes, first stderr line (panic programs)
+./run_differential.sh    # gc binary vs graalgo (graalgo-sync-run, the P3SyncMain
+                         # product launcher): stdout bytes, exit codes,
+                         # first stderr line (panic programs)
 ```
 
 The differential runner filters the known JVM `Unsafe` warnings on
-stderr (harness noise, cf. `p3frontend/DESIGN.md` §7). Programs are
+stderr (harness noise, cf. [p3frontend/DESIGN.md](../../../internal/frontend/p3frontend/DESIGN.md) §7). Programs are
 single-goroutine; one `--gmp=1` run each (the sync corpus's gmp sweep
 covers the scheduler).
 

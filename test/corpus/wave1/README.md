@@ -1,9 +1,9 @@
 # P3-M7 wave-1 differential corpus
 
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
-bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
-see `phases/phase3/hidden_files/m7-CHECKLIST.md`), differential vs stock
-gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
+bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort),
+differential vs stock gc 1.27.1. Run via the shared runner `run_wave.sh`,
+not by hand.
 
 ## Layout
 
@@ -67,15 +67,18 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## The runner
 
-`run_wave.sh [pkg]` — builds the phase-3 java module once, then for each
-`<nn>_<name>.go` runs it under stock gc (built binary, run directly —
-`go run` masks the exit code) and under `P3SyncMain`, and byte-compares
-stdout, exit codes, and (for panic programs) the first stderr line.
+`run_wave.sh [pkg]` — requires `make build` at the repo root first (the
+runner never builds; it fails fast if the backend classes are missing),
+then for each `<nn>_<name>.go` runs it under stock gc (built binary, run
+directly — `go run` masks the exit code) and under the
+[graalgo-sync-run](../../../internal/backend/graalgo-sync-run) product
+launcher (P3SyncMain), and byte-compares stdout, exit codes, and (for
+panic programs) the first stderr line.
 Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
-cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
-`corpus/timectx/run_differential.sh` (same phases, same comparisons);
-only the program discovery (per-package dirs, `[0-9][0-9]_*.go` glob,
-`.timing` marker) is wave-1 specific.
+cf. [p3frontend/DESIGN.md](../../../internal/frontend/p3frontend/DESIGN.md) §7).
+Modeled exactly on `corpus/timectx/run_differential.sh` (same
+comparisons); only the program discovery (per-package dirs,
+`[0-9][0-9]_*.go` glob, `.timing` marker) is wave-1 specific.
 
 Per-package thin wrapper (`<pkg>/run_differential.sh`):
 
@@ -95,17 +98,8 @@ not scratch space:
 - **NEVER** clean `/tmp` (or any part of it) — other agents' live work
   lives there.
 
-Every wave-1 worker must export, for **every** `go`/`java` command
-(ad-hoc builds included — the phase Makefiles already route the test
-temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
-these itself to the wave-1 dirs):
-
-```bash
-export TMPDIR=$HOME/workspace/graalgo-m7-int/phases/phase3/hidden_files/m7-tmp/<pkg>
-export GOCACHE=$HOME/workspace/.gocache-m7-<pkg>
-```
-
-`run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
-`TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m7-tmp/<pkg>` and its
-own `.gocache-m7-<pkg>`; never share a scratch dir with another worker.
+`run_wave.sh` honors a caller-supplied `TMPDIR` and otherwise defaults
+to `$GR/.tmp/wave1` (repo-local, gitignored); `mktemp -d` (which honors
+`TMPDIR`) creates the per-run scratch and removes it on exit. Set
+`TMPDIR` (and `GOCACHE`) before invoking the runner if you need a
+different scratch location — never point them at `/tmp`.
