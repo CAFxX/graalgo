@@ -2,8 +2,8 @@
 # P2-M8 stress-corpus differential: runtime/context-pattern Go programs vs gc.
 #
 # Each program runs under graalgo (--gmp=2) and under gc; outputs compared.
-# rt_finalizer_storm's finalizer count is timing-dependent (informational);
-# the gate is clean completion (exit 0, no crash/hang) on both.
+# goroutine_storm's spawn burst is a completion gate (exit 0, no crash/hang),
+# since the printed count is deterministic (500).
 #
 # Logs go to internal/backend/runtime/out/torture/stress-differential/
 # (gitignored via out/). The Go corpus lives in tools/torture/corpus/
@@ -51,18 +51,21 @@ export _JAVA_OPTIONS="-Xmx1g"
 PASS=0; FAIL=0; FAILED=""
 
 # differential <name> <mode: exact|completion>
+# The corpus prints via the println builtin (stderr on both gc and graalgo),
+# so the exact-mode comparison is on stderr. (JVM/launcher warnings would
+# also land on stderr and fail the check; that is intended.)
 differential() {
   local name="$1" mode="$2"
   local prog="$CORPUS/$name.go"
   [ -f "$prog" ] || { echo "ERROR: corpus program missing: $prog" >&2; exit 1; }
   local grc=0 gcrc=0
   timeout 180 "$SYNC_RUN" --gmp=2 "$GR/$prog" \
-    > "$OUTDIR/$name.graalgo.out" 2> "$OUTDIR/$name.graalgo.err" || grc=$?
+    > "$OUTDIR/$name.graalgo.stdout" 2> "$OUTDIR/$name.graalgo.stderr" || grc=$?
   timeout 120 "$GO" run "$prog" \
-    > "$OUTDIR/$name.gc.out" 2> "$OUTDIR/$name.gc.err" || gcrc=$?
+    > "$OUTDIR/$name.gc.stdout" 2> "$OUTDIR/$name.gc.stderr" || gcrc=$?
   local ok=1
   if [ "$mode" = "exact" ]; then
-    cmp -s "$OUTDIR/$name.graalgo.out" "$OUTDIR/$name.gc.out" || ok=0
+    cmp -s "$OUTDIR/$name.graalgo.stderr" "$OUTDIR/$name.gc.stderr" || ok=0
   fi
   [ $grc -eq 0 ] || ok=0
   [ $gcrc -eq 0 ] || ok=0
@@ -77,8 +80,8 @@ differential() {
 
 differential gmp_compute exact
 differential gmp_mixed exact
-differential ctx_cancel exact
-differential rt_finalizer_storm completion
+differential cancel_broadcast exact
+differential goroutine_storm completion
 
 echo "---"
 echo "stress differential: $PASS pass, $FAIL fail"

@@ -20,6 +20,22 @@ T17 (shell hygiene).
   construction (order-independent reductions), so `exact` comparisons are
   schedule-independent.
 
+## Corpus constraints
+
+The corpus is deliberately restricted to what the Go toolchain can execute
+through the product launcher **on the current base**: goroutines, channels,
+plain (multi-value) calls, and the `println` builtin. The `fmt`/`os`/
+`context`/`runtime`/`sync/atomic` packages are not yet usable end-to-end
+(pre-existing toolchain gaps: a 3-valued `ifacemethod` assignment in the
+`fmt` closure breaks the backend's `buildAssign`; `os.Stdout` hits an NPE;
+`context` hits an interface-dispatch gap; `runtime` hangs). Because `fmt`
+is unavailable, programs print via the `println` builtin — which writes to
+**stderr** on both `gc` and graalgo — so the differential scripts compare
+stderr, not stdout. JVM/launcher warnings also land on stderr and will
+fail a cell; that is intended (toolchain noise is a signal).
+When the toolchain gaps close, extend the corpus (context cancellation,
+finalizers) — the `exact`/`completion` modes already support it.
+
 ## Prerequisites
 
 - GraalVM at `$GRAALVM_HOME` (default `~/tools/graalvm-jdk-25`).

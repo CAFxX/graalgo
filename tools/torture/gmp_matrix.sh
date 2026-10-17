@@ -62,14 +62,18 @@ cell() {
   local prog="$CORPUS/gmp_$wl.go"
   [ -f "$prog" ] || { echo "ERROR: corpus program missing: $prog" >&2; exit 1; }
   local grc=0 gcrc=0
-  # graalgo (product launcher: same SchedulerCore, full stdlib surface)
+  # graalgo (product launcher: same SchedulerCore, full stdlib surface).
+  # The corpus prints via the println builtin, which writes to stderr on
+  # both gc and graalgo — so the differential comparison is on stderr.
+  # (JVM/launcher warnings would also land on stderr and fail the cell;
+  # that is intended: toolchain noise is a signal, not to be filtered.)
   timeout 180 "$SYNC_RUN" --gmp="$gmp" "$GR/$prog" \
-    > "$OUTDIR/${wl}_${tag}.graalgo.out" 2> "$OUTDIR/${wl}_${tag}.graalgo.err" || grc=$?
+    > "$OUTDIR/${wl}_${tag}.graalgo.stdout" 2> "$OUTDIR/${wl}_${tag}.graalgo.stderr" || grc=$?
   # gc
   GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
-    > "$OUTDIR/${wl}_${tag}.gc.out" 2> "$OUTDIR/${wl}_${tag}.gc.err" || gcrc=$?
+    > "$OUTDIR/${wl}_${tag}.gc.stdout" 2> "$OUTDIR/${wl}_${tag}.gc.stderr" || gcrc=$?
   if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
-     cmp -s "$OUTDIR/${wl}_${tag}.graalgo.out" "$OUTDIR/${wl}_${tag}.gc.out"; then
+     cmp -s "$OUTDIR/${wl}_${tag}.graalgo.stderr" "$OUTDIR/${wl}_${tag}.gc.stderr"; then
     echo "PASS wl=$wl gmp=$gmp"
     PASS=$((PASS + 1))
   else

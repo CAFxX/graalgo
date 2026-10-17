@@ -1,14 +1,15 @@
 package main
 
-import "fmt"
-
 // gmp_mixed: deterministic mixed compute+communication workload.
 //
 // A producer feeds 1..N into a channel; four worker goroutines square each
 // value and forward it; the main goroutine sums the squares. Addition is
 // order-independent, so the printed total is identical under any schedule
-// and any GOMAXPROCS. The gmp-matrix and stress-differential scripts
-// compare graalgo's stdout byte-for-byte against gc's.
+// and any GOMAXPROCS. The gmp-matrix and stress-differential scripts compare
+// graalgo's output byte-for-byte against gc's.
+//
+// NOTE: output goes through the println builtin (stderr on both gc and
+// graalgo); see gmp_compute.go for why fmt is not used.
 func main() {
 	const N = 5000
 	const workers = 4
@@ -35,5 +36,5 @@ func main() {
 	for i := 0; i < N; i++ {
 		total += int64(<-out)
 	}
-	fmt.Println(total)
+	println(total)
 }
