@@ -320,9 +320,13 @@ func TestProvidedExtraction(t *testing.T) {
 		"graalgo.tls.newClientEngine",
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
-		"reflect.TypeOf", "encoding/json.Marshal", "crypto/sha256.New",
-		"net/http.Get", "syscall.Getenv", "maps.Clone",
-		"internal/reflectlite.TypeOf",
+		"encoding/json.Marshal", "crypto/sha256.New",
+		"syscall.Getenv", "maps.Clone",
+		"iter.Seq", "net.InterfaceAddrs",
+		// Retired synthetics are intentionally ABSENT: fmt, sync,
+		// sync/atomic, net/http, reflect and internal/reflectlite now
+		// resolve from disk (real packages), so their symbols are not
+		// part of the provided set (see TestSyntheticShadowSet).
 	}
 	for _, w := range want {
 		if !provided.has(w) {

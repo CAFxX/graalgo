@@ -49,7 +49,9 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 An explicit `--src` always wins. There are no silent fallbacks: every
 resolution announces where the tree came from.
 
-Wired into `make -C phases/phase3 check` (stdlib exclusion-list gate).
+Run as part of the stdlib exclusion-list gate (GG-0033): `stdlib-excl
+validate` against the committed
+[tools/stdlib-fork/exclusions.yaml](../stdlib-fork/exclusions.yaml).
 
 ## measure
 

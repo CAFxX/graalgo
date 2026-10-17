@@ -7,13 +7,13 @@ package main
 // snapshot diff rather than silent staleness.
 //
 // Sources (see README.md § "Provided set"):
-//  1. phases/phase3/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
+//  1. internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
 //     Linknames.register("symbol", ...) calls (Go→intrinsic direction).
-//  2. phases/phase3/src/p3frontend/importer.go — syntheticRuntimePackage,
+//  2. internal/frontend/p3frontend/importer.go — syntheticRuntimePackage,
 //     syntheticFmtPackage, syntheticSyncPackage, syntheticAtomicPackage,
 //     plus the package-level syncMethodSpecs var and the
 //     syncLockerInterface function.
-//  3. phases/phase3/src/p3frontend/synth_time_context.go —
+//  3. internal/frontend/p3frontend/synth_time_context.go —
 //     syntheticTimePackage, syntheticContextPackage.
 //  4. internal/frontend/synth_time_context.go — syntheticTimeSource /
 //     syntheticContextSource embedded Go sources (normative; the
@@ -21,6 +21,14 @@ package main
 //  5. M10: every embedded synthetic package in the syntheticSources
 //     registry (internal/frontend/synth_machinery.go) — exported
 //     symbols qualified by import path (see synth.go).
+//
+// Design note (post-P4 layout): sources 2–3 deliberately extract from
+// the p3frontend MIRROR tree, not the live frontend — the mirror is this
+// tool's extraction surface by design, and the live frontend's current
+// synthetic surface is covered via source 5. If the mirror tree is
+// retired (bridge-inventory D12 decision), extraction fails LOUD on the
+// missing file (loadProvided returns the error), so SPEC §3.6's linkname
+// kill trigger never degrades to a silent no-op.
 //
 // Symbol forms: path.Name (func/var/const/type), path.Type.Method
 // (value-receiver or interface method), path.(*Type).Method
@@ -72,18 +80,18 @@ func loadProvided(o options) (*ProvidedSet, error) {
 		return readSnapshot(o.provided)
 	}
 	p := &ProvidedSet{}
-	if err := p.extractRegistry(filepath.Join(o.graalgo, "phases", "phase3", "src", "main", "java",
-		"graalgo", "p3link", "LinknameIntrinsics.java")); err != nil {
+	if err := p.extractRegistry(filepath.Join(o.graalgo, "internal", "backend", "interop",
+		"src", "main", "java", "graalgo", "p3link", "LinknameIntrinsics.java")); err != nil {
 		return nil, err
 	}
-	p3fe := filepath.Join(o.graalgo, "phases", "phase3", "src", "p3frontend")
+	p3fe := filepath.Join(o.graalgo, "internal", "frontend", "p3frontend")
 	if err := p.extractP3FrontendFile(filepath.Join(p3fe, "importer.go")); err != nil {
 		return nil, err
 	}
 	if err := p.extractP3FrontendFile(filepath.Join(p3fe, "synth_time_context.go")); err != nil {
 		return nil, err
 	}
-	if err := p.extractEmbeddedSynthetics(filepath.Join(o.graalgo, "phases", "phase1",
+	if err := p.extractEmbeddedSynthetics(filepath.Join(o.graalgo, "internal",
 		"frontend", "synth_time_context.go")); err != nil {
 		return nil, err
 	}
@@ -256,11 +264,11 @@ func (p *ProvidedSet) extractLockerInterface(body *ast.BlockStmt, prov string) {
 // synthExtractor accumulates one synthetic package's surface from the
 // AST of its builder function body.
 type synthExtractor struct {
-	pkg string
-	out *ProvidedSet
+	pkg  string
+	out  *ProvidedSet
 	prov string
 
-	typeNameOf    map[string]string   // var -> T from v := types.NewTypeName(...,"T",...)
+	typeNameOf     map[string]string   // var -> T from v := types.NewTypeName(...,"T",...)
 	namedOf        map[string]string   // var -> T from v := types.NewNamed(w,...), w->T
 	listOf         map[string][]string // var -> methods from v := []*types.Func{...}
 	fieldsOf       map[string][]string // var -> names from v := []struct{ name string ... }{...}

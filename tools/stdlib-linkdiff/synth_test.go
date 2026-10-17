@@ -28,7 +28,7 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 	if len(reg.Sources) < 100 {
 		t.Fatalf("registry resolved %d sources, want >= 100", len(reg.Sources))
 	}
-	for _, path := range []string{"os", "net/http", "reflect", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
+	for _, path := range []string{"os", "net", "mime", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
 		src, ok := reg.Sources[path]
 		if !ok {
 			t.Errorf("registry missing source for %q", path)
@@ -41,11 +41,11 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 			t.Errorf("source for %q lacks provenance (const/file)", path)
 		}
 	}
-	// Every overlay-switch path backed by the registry must resolve to
-	// a non-empty source: the map<->const wiring must not rot.
+	// Every overlay-substituted path backed by the registry must resolve
+	// to a non-empty source: the map<->const wiring must not rot.
 	for path := range reg.Shadowed {
 		if _, inMap := reg.Sources[path]; !inMap {
-			continue // builder-synthesized (runtime/fmt/sync/...) or unsafe
+			continue // dedicated stubs (runtime/unsafe), not const-backed
 		}
 		if reg.Sources[path] == "" {
 			t.Errorf("registry source for %q resolved empty", path)
@@ -55,14 +55,21 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 
 func TestSyntheticShadowSet(t *testing.T) {
 	reg := testRegistry(t)
-	for _, path := range []string{"os", "runtime", "fmt", "sync", "sync/atomic", "time", "context",
-		"net/http", "reflect", "internal/poll", "syscall", "encoding/json"} {
+	// Overlaid: the overlay substitutes these, so their real-stdlib
+	// files are never compiled. (Post-P4 the overlay is map-driven:
+	// syntheticSources keys plus the dedicatedSyntheticStubs pair.)
+	for _, path := range []string{"os", "runtime", "unsafe", "time", "context",
+		"net", "mime", "reflect_m7", "internal/poll", "syscall", "encoding/json"} {
 		if !reg.Shadowed[path] {
 			t.Errorf("shadow set missing overlaid package %q", path)
 		}
 	}
-	// Not overlaid: their real-stdlib files are still compiled.
-	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo"} {
+	// Not overlaid: their real-stdlib files are still compiled. This
+	// includes the retired synthetics (fmt, sync, sync/atomic,
+	// net/http, reflect now resolve from disk) — marking any of them
+	// shadowed would hide live linkname needs from the skip-list split.
+	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo",
+		"fmt", "sync", "sync/atomic", "net/http", "reflect"} {
 		if reg.Shadowed[path] {
 			t.Errorf("shadow set wrongly contains non-overlaid package %q", path)
 		}
@@ -121,7 +128,7 @@ func TestShadowMarking(t *testing.T) {
 	want := map[string]string{
 		"os/file.go": "os", "runtime/proc.go": "runtime",
 		"cmd/vendor/golang.org/x/sys/unix/auxv.go": "",
-		"database/sql/sql.go": "", "synthetic/os": "",
+		"database/sql/sql.go":                      "", "synthetic/os": "",
 	}
 	for _, ln := range scan.Linknames {
 		if ln.ShadowedBy != want[ln.File] {
@@ -235,14 +242,14 @@ func TestLocalNamePackageScope(t *testing.T) {
 
 func TestTargetPackage(t *testing.T) {
 	cases := map[string]string{
-		"runtime.fastrand":               "runtime",
-		"internal/poll.runtime_pollOpen": "internal/poll",
-		"reflect.(*rtype).Name":          "reflect",
+		"runtime.fastrand":                "runtime",
+		"internal/poll.runtime_pollOpen":  "internal/poll",
+		"reflect.(*rtype).Name":           "reflect",
 		"net/http.(*Transport).RoundTrip": "net/http",
-		"go/types.(*Checker).infer":      "go/types",
-		"http.cloneTLSConfig":            "http",
-		"go:fipsinfo":                    "go:fipsinfo",
-		"time.Duration.String":           "time",
+		"go/types.(*Checker).infer":       "go/types",
+		"http.cloneTLSConfig":             "http",
+		"go:fipsinfo":                     "go:fipsinfo",
+		"time.Duration.String":            "time",
 	}
 	for target, want := range cases {
 		if got := targetPackage(target); got != want {

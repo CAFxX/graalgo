@@ -276,11 +276,11 @@ func TestParseVocabularySection(t *testing.T) {
 }
 
 // fakeRepoRoot builds a temp repo root with pinned-version.txt and
-// vendor-manifest.json for the given versions.
+// vendor-manifest.json under tools/stdlib-fork/ for the given versions.
 func fakeRepoRoot(t *testing.T, pin, manifestVer string) string {
 	t.Helper()
 	root := t.TempDir()
-	fork := filepath.Join(root, "phases", "phase3", "stdlib-fork")
+	fork := filepath.Join(root, "tools", "stdlib-fork")
 	if err := os.MkdirAll(fork, 0755); err != nil {
 		t.Fatal(err)
 	}

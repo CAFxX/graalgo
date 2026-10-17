@@ -101,21 +101,33 @@ func defaultGoroot(stderr io.Writer) (string, error) {
 	// in sync): the vendored tree for the pinned version when present,
 	// else the live toolchain -- announced loudly, never silently.
 	if graalgo := defaultGraalgo(); graalgo != "" {
-		pinPath := filepath.Join(graalgo, "phases", "phase3", "stdlib-fork", "pinned-version.txt")
-		if data, err := os.ReadFile(pinPath); err == nil {
-			if ver := strings.TrimSpace(string(data)); ver != "" {
-				if home, herr := os.UserHomeDir(); herr == nil {
-					cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
-					if fi, serr := os.Stat(cand); serr == nil && fi.IsDir() {
-						if err := linkdiffCrossCheckPin(graalgo, ver); err != nil {
-							return "", err
-						}
-						fmt.Fprintf(stderr, "stdlib tree: using vendored tree %s (pin %s)\n", cand, ver)
-						return cand, nil
-					}
-					fmt.Fprintf(stderr, "stdlib tree: WARNING: no vendored tree at %s; falling back to live GOROOT (results pin to the live toolchain, not the pinned %s)\n", cand, ver)
-				}
+		pinPath := filepath.Join(graalgo, "tools", "stdlib-fork", "pinned-version.txt")
+		// A pin read failure is LOUD, never swallowed: the vendored tree
+		// is the canonical resolution, so an unreadable pin is a
+		// repo-state problem the operator must see (twin of
+		// tools/stdlib-excl's resolveStdlibTree -- keep in sync).
+		data, err := os.ReadFile(pinPath)
+		switch {
+		case err != nil:
+			fmt.Fprintf(stderr, "stdlib tree: WARNING: cannot read pin %s (%v); falling back to live GOROOT\n", pinPath, err)
+		case strings.TrimSpace(string(data)) == "":
+			fmt.Fprintf(stderr, "stdlib tree: WARNING: pin %s is empty; falling back to live GOROOT\n", pinPath)
+		default:
+			ver := strings.TrimSpace(string(data))
+			home, herr := os.UserHomeDir()
+			if herr != nil {
+				fmt.Fprintf(stderr, "stdlib tree: WARNING: cannot determine home dir (%v); falling back to live GOROOT\n", herr)
+				break
 			}
+			cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+			if fi, serr := os.Stat(cand); serr == nil && fi.IsDir() {
+				if err := linkdiffCrossCheckPin(graalgo, ver); err != nil {
+					return "", err
+				}
+				fmt.Fprintf(stderr, "stdlib tree: using vendored tree %s (pin %s)\n", cand, ver)
+				return cand, nil
+			}
+			fmt.Fprintf(stderr, "stdlib tree: WARNING: no vendored tree at %s; falling back to live GOROOT (results pin to the live toolchain, not the pinned %s)\n", cand, ver)
 		}
 	}
 	if g := os.Getenv("GOROOT"); g != "" {
@@ -137,7 +149,7 @@ func defaultGoroot(stderr io.Writer) (string, error) {
 // records a different Go version than the pin (twin of
 // tools/stdlib-excl's crossCheckPin -- keep in sync).
 func linkdiffCrossCheckPin(graalgo, ver string) error {
-	data, err := os.ReadFile(filepath.Join(graalgo, "phases", "phase3", "stdlib-fork", "vendor-manifest.json"))
+	data, err := os.ReadFile(filepath.Join(graalgo, "tools", "stdlib-fork", "vendor-manifest.json"))
 	if err != nil {
 		return fmt.Errorf("stdlib tree: cannot read vendor manifest: %w", err)
 	}
