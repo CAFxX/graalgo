@@ -171,6 +171,9 @@ public class FastCycleDaemon {
         PrintStream ps = new PrintStream(buf, true, StandardCharsets.UTF_8);
 
         int exitCode = 0;
+        // B1: the daemon is persistent — save the thread's original context
+        // classloader so it can be restored below.
+        ClassLoader prevTccl = Thread.currentThread().getContextClassLoader();
         try {
             System.setOut(ps);
             System.setErr(ps);
@@ -180,34 +183,42 @@ public class FastCycleDaemon {
             for (int i = 0; i < cpEntries.length; i++) {
                 urls[i] = Paths.get(cpEntries[i]).toUri().toURL();
             }
-            URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
-            Thread.currentThread().setContextClassLoader(cl);
-            Class<?> cls = Class.forName(mainClass, true, cl);
+            // B1: the loader is per-invocation by design (fresh classes each
+            // run), so close it when the run finishes — otherwise every
+            // invocation leaks the loader, its classes (metaspace), and the
+            // open jar file handles for the daemon's lifetime.
+            try (URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+                Thread.currentThread().setContextClassLoader(cl);
+                Class<?> cls = Class.forName(mainClass, true, cl);
 
-            // Prefer run(String[]) returning int (no System.exit) over main.
-            try {
-                java.lang.reflect.Method run = cls.getDeclaredMethod("run", String[].class);
-                run.setAccessible(true);
-                if (run.getReturnType() == int.class) {
-                    exitCode = (int) run.invoke(null, (Object) args);
-                } else {
-                    run.invoke(null, (Object) args);
-                }
-            } catch (NoSuchMethodException e) {
-                // Fall back to main (may call System.exit and kill the daemon).
-                java.lang.reflect.Method main = cls.getMethod("main", String[].class);
+                // Prefer run(String[]) returning int (no System.exit) over main.
                 try {
-                    main.invoke(null, (Object) args);
-                } catch (java.lang.reflect.InvocationTargetException ite) {
-                    Throwable cause = ite.getCause();
-                    cause.printStackTrace(ps);
-                    exitCode = 1;
+                    java.lang.reflect.Method run = cls.getDeclaredMethod("run", String[].class);
+                    run.setAccessible(true);
+                    if (run.getReturnType() == int.class) {
+                        exitCode = (int) run.invoke(null, (Object) args);
+                    } else {
+                        run.invoke(null, (Object) args);
+                    }
+                } catch (NoSuchMethodException e) {
+                    // Fall back to main (may call System.exit and kill the daemon).
+                    java.lang.reflect.Method main = cls.getMethod("main", String[].class);
+                    try {
+                        main.invoke(null, (Object) args);
+                    } catch (java.lang.reflect.InvocationTargetException ite) {
+                        Throwable cause = ite.getCause();
+                        cause.printStackTrace(ps);
+                        exitCode = 1;
+                    }
                 }
             }
         } catch (Exception e) {
             e.printStackTrace(ps);
             exitCode = 1;
         } finally {
+            // B1: restore the thread's original context classloader alongside
+            // stdout/stderr, so the closed loader becomes unreachable.
+            Thread.currentThread().setContextClassLoader(prevTccl);
             System.setOut(origOut);
             System.setErr(origErr);
         }
@@ -231,6 +242,9 @@ public class FastCycleDaemon {
 
         int run = 0;
         int failed = 0;
+        // B1: the daemon is persistent — save the thread's original context
+        // classloader so it can be restored below.
+        ClassLoader prevTccl = Thread.currentThread().getContextClassLoader();
         try {
             System.setOut(ps);
             System.setErr(ps);
@@ -240,39 +254,48 @@ public class FastCycleDaemon {
             for (int i = 0; i < cpEntries.length; i++) {
                 urls[i] = Paths.get(cpEntries[i]).toUri().toURL();
             }
-            URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
-            Thread.currentThread().setContextClassLoader(cl);
-            Class<?> cls = Class.forName(testClass, true, cl);
+            // B1: the loader is per-invocation by design (fresh classes each
+            // run), so close it when the run finishes — otherwise every
+            // invocation leaks the loader, its classes (metaspace), and the
+            // open jar file handles for the daemon's lifetime.
+            try (URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+                Thread.currentThread().setContextClassLoader(cl);
+                Class<?> cls = Class.forName(testClass, true, cl);
 
-            List<java.lang.reflect.Method> methods = new ArrayList<>();
-            for (java.lang.reflect.Method m : cls.getMethods()) {
-                if (methodName != null) {
-                    if (m.getName().equals(methodName) && m.getParameterCount() == 0) {
+                List<java.lang.reflect.Method> methods = new ArrayList<>();
+                for (java.lang.reflect.Method m : cls.getMethods()) {
+                    if (methodName != null) {
+                        if (m.getName().equals(methodName) && m.getParameterCount() == 0) {
+                            methods.add(m);
+                        }
+                    } else if (m.getName().startsWith("test") && m.getParameterCount() == 0
+                            && java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
                         methods.add(m);
                     }
-                } else if (m.getName().startsWith("test") && m.getParameterCount() == 0
-                        && java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
-                    methods.add(m);
                 }
-            }
 
-            for (java.lang.reflect.Method m : methods) {
-                run++;
-                try {
-                    Object instance = cls.getDeclaredConstructor().newInstance();
-                    m.invoke(instance);
-                    ps.println("PASS " + cls.getSimpleName() + "." + m.getName());
-                } catch (Exception e) {
-                    failed++;
-                    Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    ps.println("FAIL " + cls.getSimpleName() + "." + m.getName() + ": " + cause);
+                for (java.lang.reflect.Method m : methods) {
+                    run++;
+                    try {
+                        Object instance = cls.getDeclaredConstructor().newInstance();
+                        m.invoke(instance);
+                        ps.println("PASS " + cls.getSimpleName() + "." + m.getName());
+                    } catch (Exception e) {
+                        failed++;
+                        Throwable cause = e.getCause() != null ? e.getCause() : e;
+                        ps.println("FAIL " + cls.getSimpleName() + "." + m.getName() + ": " + cause);
+                    }
                 }
+                ps.println(run + " tests, " + failed + " failures");
             }
-            ps.println(run + " tests, " + failed + " failures");
         } catch (Exception e) {
             e.printStackTrace(ps);
             failed = 1;
         } finally {
+            // B1: restore the thread's original context classloader alongside
+            // stdout/stderr and system properties, so the closed loader
+            // becomes unreachable.
+            Thread.currentThread().setContextClassLoader(prevTccl);
             System.setOut(origOut);
             System.setErr(origErr);
             // Restore system properties
