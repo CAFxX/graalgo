@@ -32,12 +32,20 @@ public final class GoStructDescriptor {
      * Intrinsics.structSizeBytes to compute ABI sizes of nested structs
      * (P3-M4 scope extension: nested structs are no longer fail-fast),
      * and by GoStruct.zero to recursively materialize nested struct
-     * fields (RV-P0 runtime-npe; opaque sync primitives are carved out
-     * and stay null).
+     * fields (RV-P0 runtime-npe). opaquePrimitive is true when the field's
+     * type is an opaque sync primitive (B-2: {@code sync.Pool},
+     * {@code sync.Map}, {@code sync/atomic.*}) whose live Java carrier is
+     * owned by the frontend template mechanism — GoStruct.zero must not
+     * fabricate an empty GoStruct for it (the carve-out). The flag is
+     * computed ONCE at descriptor build time by the frontend
+     * ({@code NodeFactory.isOpaqueSyncPrimitive}, the single recognition
+     * site reusing the existing B-2 authority
+     * {@code syncPrimitiveName}); the values layer only reads it and does
+     * no name matching of its own.
      */
     public record Field(String name, GoKind kind, boolean inLongs, int index, int arrayLen,
                         GoKind arrayElemKind, GoStructDescriptor arrayElemDesc,
-                        GoStructDescriptor structDesc) {}
+                        GoStructDescriptor structDesc, boolean opaquePrimitive) {}
 
     private final String typeName;
     private final List<Field> fields;
@@ -74,16 +82,17 @@ public final class GoStructDescriptor {
      * (null for non-arrays); arrayElemDescs[i] is the element struct
      * descriptor for ARRAY-kind fields whose element kind is STRUCT
      * (null otherwise); structDescs[i] is the nested struct descriptor for
-     * STRUCT-kind fields (null otherwise).
+     * STRUCT-kind fields (null otherwise); opaquePrimitives[i] is the
+     * per-field opaque-primitive flag (false for non-STRUCT fields).
      */
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
             List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs,
-            List<GoStructDescriptor> structDescs) {
+            List<GoStructDescriptor> structDescs, List<Boolean> opaquePrimitives) {
         if (names.size() != kinds.size() || names.size() != arrayLens.size()
                 || names.size() != arrayElemKinds.size() || names.size() != arrayElemDescs.size()
-                || names.size() != structDescs.size()) {
+                || names.size() != structDescs.size() || names.size() != opaquePrimitives.size()) {
             throw new IllegalArgumentException(
-                    "names/kinds/arrayLens/arrayElemKinds/arrayElemDescs/structDescs length mismatch");
+                    "names/kinds/arrayLens/arrayElemKinds/arrayElemDescs/structDescs/opaquePrimitives length mismatch");
         }
         java.util.ArrayList<Field> fields = new java.util.ArrayList<>(names.size());
         int longs = 0;
@@ -93,9 +102,26 @@ public final class GoStructDescriptor {
             boolean inLongs = k.isIntKind() || k.isFloatKind() || k == GoKind.BOOL;
             fields.add(new Field(names.get(i), k, inLongs, inLongs ? longs++ : objects++,
                     arrayLens.get(i), arrayElemKinds.get(i), arrayElemDescs.get(i),
-                    structDescs.get(i)));
+                    structDescs.get(i), opaquePrimitives.get(i)));
         }
         return new GoStructDescriptor(typeName, fields);
+    }
+
+    /**
+     * Layout without per-field opaque-primitive flags (all false): for call
+     * sites that do not carry frontend-computed opacity (hand-built
+     * descriptors in tests). Prefer the eight-argument overload when the
+     * frontend recognition ran.
+     */
+    public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
+            List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs,
+            List<GoStructDescriptor> structDescs) {
+        java.util.ArrayList<Boolean> opaque = new java.util.ArrayList<>(names.size());
+        for (int i = 0; i < names.size(); i++) {
+            opaque.add(Boolean.FALSE);
+        }
+        return layout(typeName, names, kinds, arrayLens, arrayElemKinds, arrayElemDescs, structDescs,
+                opaque);
     }
 
     /**

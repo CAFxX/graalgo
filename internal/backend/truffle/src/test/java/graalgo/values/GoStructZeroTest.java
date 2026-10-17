@@ -16,7 +16,10 @@ import java.util.List;
  * {@code testCellPointerRoundTrip} is the JVM-level rendering of the §2
  * repro ({@code p := &a[0].In; p.X = 42} NPE'd).
  * GREEN: nested structs are materialized; opaque sync primitives and
- * null-descriptor fields stay null (the carve-out).
+ * null-descriptor fields stay null (the carve-out). The carve-out is
+ * driven by the frontend-computed {@code Field.opaquePrimitive} flag
+ * (B-2-linked temporary mechanism) — the values layer does no name
+ * matching; tests that need the carve-out set the flag explicitly.
  */
 public final class GoStructZeroTest {
 
@@ -134,11 +137,15 @@ public final class GoStructZeroTest {
     }
 
     /**
-     * Opaque-primitive carve-out: STRUCT fields whose nested descriptor
-     * denotes {@code sync.Pool}, {@code sync.Map} or {@code sync/atomic.*}
-     * stay null — the frontend template mechanism owns their live Java
-     * carriers; fabricating an empty GoStruct would be a subtler wrong
-     * value. Plain nested structs alongside are still materialized.
+     * Opaque-primitive carve-out: STRUCT fields flagged
+     * {@code opaquePrimitive} — the flag the frontend computes once via
+     * the B-2 recognition site for {@code sync.Pool}, {@code sync.Map},
+     * {@code sync/atomic.*} — stay null: the frontend template mechanism
+     * owns their live Java carriers; fabricating an empty GoStruct would
+     * be a subtler wrong value. Plain nested structs alongside are still
+     * materialized. (The flag is a build-time input here, standing in for
+     * what {@code NodeFactory.structDescriptorForInner} computes; the
+     * values layer never name-matches.)
      */
     public void testOpaquePrimitiveCarveOut() {
         GoStructDescriptor poolDesc = intStruct("sync.Pool");
@@ -153,7 +160,8 @@ public final class GoStructZeroTest {
                 Arrays.asList((GoKind) null, (GoKind) null, (GoKind) null, (GoKind) null, (GoKind) null),
                 Arrays.asList((GoStructDescriptor) null, (GoStructDescriptor) null,
                         (GoStructDescriptor) null, (GoStructDescriptor) null, (GoStructDescriptor) null),
-                Arrays.asList(poolDesc, mapDesc, atomicDesc, atomicPtrDesc, inner));
+                Arrays.asList(poolDesc, mapDesc, atomicDesc, atomicPtrDesc, inner),
+                Arrays.asList(true, true, true, true, false));
         GoStruct z = GoStruct.zero(holder);
         assertNull(z.getObject(0), "sync.Pool field stays null");
         assertNull(z.getObject(1), "sync.Map field stays null");

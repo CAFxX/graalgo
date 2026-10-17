@@ -1066,6 +1066,7 @@ public final class NodeFactory {
         List<graalgo.values.GoKind> arrayElemKinds = new ArrayList<>(fields.size());
         List<GoStructDescriptor> arrayElemDescs = new ArrayList<>(fields.size());
         List<GoStructDescriptor> structDescs = new ArrayList<>(fields.size());
+        List<Boolean> opaqueFlags = new ArrayList<>(fields.size());
         int[] fieldTypeIds = new int[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Json.Value fv = fields.get(i);
@@ -1096,6 +1097,12 @@ public final class NodeFactory {
             GoKind fieldKind = kinds.get(i);
             structDescs.add(fieldKind == GoKind.STRUCT
                     ? structDescriptorFor(ctx, ftid, path) : null);
+            // RV-P0 runtime-npe (carve-out, B-2-linked): the opaque-primitive
+            // flag is computed HERE, once, via the single recognition site
+            // isOpaqueSyncPrimitive (which reuses syncPrimitiveName's
+            // alias-resolving recognition — no new name matching), and
+            // carried on the Field record. graalgo.values only reads it.
+            opaqueFlags.add(fieldKind == GoKind.STRUCT && isOpaqueSyncPrimitive(ctx, ftid, path));
         }
         // P3-M8b: canonicalize process-wide so descriptor identity == type
         // identity across BuildCtxs (functions/packages). The per-BuildCtx
@@ -1113,9 +1120,14 @@ public final class NodeFactory {
         // share a descriptor and GoStruct.zero would fill the wrong element
         // type. Element keys are structural (not type-id-based) so identical
         // anonymous structs still share across BuildCtxs.
+        // RV-P0 runtime-npe: the key also carries the per-field
+        // opaque-primitive flags — opacity is part of the Field record, so
+        // two structs with identical layouts but different opacity (e.g. a
+        // field of named type sync.Pool vs. a same-layout user struct) must
+        // not share a canonical descriptor.
         String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens
                 + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs)
-                + "|" + elemDescKeys(structDescs);
+                + "|" + elemDescKeys(structDescs) + "|" + opaqueFlags;
         GoStructDescriptor cd = STRUCT_DESCS.get(key);
         if (cd == null) {
             // P0-fmt: use the qualified name for named structs so %#v renders
@@ -1123,7 +1135,7 @@ public final class NodeFactory {
             // (rendered structurally via GoTypeStrings).
             GoStructDescriptor nd = GoStructDescriptor.layout(
                     qname != null ? qname : "struct#" + typeId, names, kinds, arrayLens,
-                    arrayElemKinds, arrayElemDescs, structDescs);
+                    arrayElemKinds, arrayElemDescs, structDescs, opaqueFlags);
             GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
             cd = prev != null ? prev : nd;
         }
@@ -2008,6 +2020,29 @@ public final class NodeFactory {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether the type-table id denotes an opaque sync primitive whose live
+     * Java carrier is owned by the frontend template mechanism (B-2):
+     * {@code sync.Pool}, {@code sync.Map}, {@code sync/atomic.*}.
+     * {@code sync.Mutex}/{@code RWMutex}/{@code WaitGroup}/{@code Once}
+     * are NOT opaque — since PKG-053 they materialize as plain GoStructs.
+     *
+     * <p>RV-P0 runtime-npe (carve-out): the SINGLE recognition site for the
+     * {@link GoStructDescriptor.Field#opaquePrimitive} flag. It reuses
+     * {@link #syncPrimitiveName} — the existing B-2 recognition authority,
+     * with its alias resolution (so {@code type P = sync.Pool} fields are
+     * flagged too) and generic-instantiation handling — and adds no name
+     * matching of its own. This flag is the temporary B-2-linked mechanism
+     * replacing the vetoed values-layer {@code GoStruct.isOpaquePrimitive};
+     * it retires when B-2 retires (deleting {@code syncPrimitiveName}
+     * deletes this method's only recognition source).
+     */
+    private static boolean isOpaqueSyncPrimitive(BuildCtx ctx, int typeId, String path) {
+        String prim = syncPrimitiveName(ctx, typeId, path);
+        return prim != null
+                && (prim.equals("Pool") || prim.equals("Map") || prim.startsWith("atomic."));
     }
 
     private static Object arrayZeroTemplate(BuildCtx ctx, int arrayTypeId, String path) {

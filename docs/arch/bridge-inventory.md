@@ -66,6 +66,20 @@ deliverable until the design lands.
   `sync.Pool`/`sync.Map` keep their Java objects. Full deletion of the
   method awaits those.
 - **Phase:** 3 (after the last synthetic package that depends on it retires).
+- **Temporary B-2-linked mechanism (fix-p0-runtime-npe follow-up,
+  2026-10-17):** the opaque-primitive carve-out in
+  [GoStruct.zero](../../internal/backend/truffle/src/main/java/graalgo/values/GoStruct.java)
+  is driven by the per-field `opaquePrimitive` flag on
+  [GoStructDescriptor.Field](../../internal/backend/truffle/src/main/java/graalgo/values/GoStructDescriptor.java),
+  computed ONCE at descriptor build time in
+  [NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
+  `structDescriptorForInner` via the single recognition site
+  `isOpaqueSyncPrimitive` — which reuses `syncPrimitiveName`'s
+  alias-resolving recognition and adds no name matching of its own. The
+  values layer only reads the flag (the name-keyed `GoStruct.isOpaquePrimitive`
+  it replaces was vetoed at independent review and deleted). Lifecycle:
+  this flag retires with B-2 — deleting `syncPrimitiveName` deletes the
+  flag's only recognition source.
 
 ### B-3. Frontend package-name-keyed special-case machinery
 

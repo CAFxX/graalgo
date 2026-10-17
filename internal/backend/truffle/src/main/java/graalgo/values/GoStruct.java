@@ -34,7 +34,10 @@ public final class GoStruct {
      * value's nested struct field is never absent, so Java {@code null}
      * must not double as "Go zero struct value" (it remains the carrier
      * for Go nil — pointers, interfaces, maps, slices, chans, funcs — and
-     * for the opaque-primitive carve-out below).
+     * for the opaque-primitive carve-out below). The carve-out is read
+     * from the per-field {@code opaquePrimitive} flag, computed once at
+     * descriptor build time by the frontend — no name matching lives in
+     * this layer.
      */
     public static GoStruct zero(GoStructDescriptor descriptor) {
         return zero(descriptor, new java.util.IdentityHashMap<>());
@@ -72,12 +75,17 @@ public final class GoStruct {
                     objects[f.index()] = f.kind() == GoKind.COMPLEX64
                             ? GoComplex32.ZERO : GoComplex64.ZERO;
                 } else if (f.kind() == GoKind.STRUCT && f.structDesc() != null
-                        && !isOpaquePrimitive(f.structDesc())) {
+                        && !f.opaquePrimitive()) {
                     // RV-P0 runtime-npe: the zero value of a nested struct
                     // field is a zero struct, never Java null (null made
                     // &z.Nested a cell pointer over nothing, NPEing the
-                    // selector sites). Opaque sync primitives are carved
-                    // out (below); a null structDesc keeps legacy behavior.
+                    // selector sites). Fields flagged opaquePrimitive (set
+                    // once by the frontend from the B-2 recognition site;
+                    // read here, never name-matched here) are carved out:
+                    // their live Java carriers are owned by the frontend
+                    // template mechanism, and fabricating an empty GoStruct
+                    // would be a subtler wrong value. A null structDesc
+                    // keeps legacy behavior.
                     objects[f.index()] = zero(f.structDesc(), visiting);
                 }
             }
@@ -85,47 +93,6 @@ public final class GoStruct {
         } finally {
             visiting.remove(descriptor);
         }
-    }
-
-    /**
-     * Whether the nested struct descriptor denotes an opaque sync primitive
-     * whose live Java carrier is owned by the frontend template mechanism
-     * ({@code sync.Pool}, {@code sync.Map}, {@code sync/atomic.*}) — mirrors
-     * {@code NodeFactory.syncPrimitiveName}'s recognition set (minus alias
-     * resolution, which needs the frontend type table). The frontend remains
-     * the recognition authority for template building. Fabricating an empty
-     * {@code GoStruct} for such a field would be a subtler wrong value than
-     * leaving it null.
-     */
-    private static boolean isOpaquePrimitive(GoStructDescriptor d) {
-        String name = d.typeName();
-        if (name == null) {
-            return false; // programmatic descriptor without a name: not opaque
-        }
-        // Strip generic instantiation suffix: Pointer[T] -> Pointer.
-        int br = name.indexOf('[');
-        if (br >= 0) {
-            name = name.substring(0, br);
-        }
-        if ("sync.Pool".equals(name) || "sync.Map".equals(name)) {
-            return true;
-        }
-        if (name.startsWith("sync/atomic.")) {
-            switch (name.substring("sync/atomic.".length())) {
-                case "Int64":
-                case "Uint64":
-                case "Uintptr":
-                case "Int32":
-                case "Uint32":
-                case "Bool":
-                case "Pointer":
-                case "Value":
-                    return true;
-                default:
-                    return false;
-            }
-        }
-        return false;
     }
 
     public GoStructDescriptor descriptor() {

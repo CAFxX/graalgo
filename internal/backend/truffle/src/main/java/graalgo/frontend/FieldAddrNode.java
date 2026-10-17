@@ -39,6 +39,13 @@ public final class FieldAddrNode extends GoExprNode {
     public Object executeObject(VirtualFrame frame) {
         Object b = base.executeObject(frame);
         b = unwrap(b);
+        if (b == null) {
+            // RV-P0 runtime-npe (Layer 2): unwrap can yield Java null
+            // without panicking (a cell pointer over a null struct field;
+            // typed-nil interface data). &s.f on a null receiver is Go's
+            // nil-dereference — never a JVM NPE on the cast below.
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+        }
         // PKG-053: the address of an atomic wrapper's value field IS the
         // wrapper cell itself. The real sync/atomic method bodies
         // (compiled from disk since 503608ea) address the word as &x.v,
@@ -58,6 +65,12 @@ public final class FieldAddrNode extends GoExprNode {
             // lands on an atomic cell (e.g. &s.f.v) yields the cell.
             if (isAtomicCell(next)) {
                 return next;
+            }
+            if (next == null) {
+                // RV-P0 runtime-npe (Layer 2): an intermediate hop can be
+                // Java null (legacy null structDesc field). Selecting into
+                // a null struct is Go's nil-dereference — never a JVM NPE.
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
             }
             cur = (GoStruct) next;
         }
