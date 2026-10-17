@@ -2,6 +2,8 @@ package graalgo.runtime;
 
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.GoInterface;
+import graalgo.values.GoKind;
+import graalgo.values.GoTypeDescriptor;
 
 /**
  * Phase-2 same-FQN overlay of Phase-1 {@code graalgo.runtime.Panic}
@@ -19,10 +21,17 @@ import graalgo.values.GoInterface;
  * <p>Drift guard: {@code PanicOverlayDriftTest} reflectively asserts that
  * every public method of the Phase-1 original exists here with an
  * identical signature, so a future Phase-1 change to this class fails
- * the suite instead of silently desyncing the overlay.
+ * the suite instead of silently desyncing the overlay. Behavioral parity
+ * is pinned too: the same test throws runtime panics through both copies
+ * and asserts identical descriptor inference and {@code recover()}
+ * boxing (bug-019: a {@code GoErrorValue} thrown without a descriptor
+ * gets an inferred one so {@code recover()} returns a {@code GoInterface}).
  *
  * <p>Do NOT add other behavior here: this overlay exists solely for the
- * panicnil knob. (P2-M5 triage: EMULATED.)
+ * panicnil knob. (P2-M5 triage: EMULATED.) <em>Tracking</em> a Phase-1
+ * behavioral fix (like the bug-019 inference above) is not new behavior
+ * — it is the overlay staying identical to the original, which is its
+ * whole contract.
  */
 public final class Panic {
     private Panic() {}
@@ -69,6 +78,10 @@ public final class Panic {
      *                   {@code *PanicNilError} unless old behavior is on).
      * @param descriptor the dynamic-type descriptor (a
      *                   {@code graalgo.values.GoTypeDescriptor}), or null.
+     *                   A null descriptor is inferred for a bare
+     *                   {@code GoErrorValue} (bug-019, tracked from the
+     *                   Phase-1 original) so {@code recover()} boxes the
+     *                   panic as a Go {@code any}.
      * @param goTypeName Go-syntax type name for composite rendering, or null.
      * @param throwSite  the throwing AST node, or null.
      */
@@ -95,6 +108,19 @@ public final class Panic {
         if (v == null && !panicNilOldBehavior) {
             v = PanicNilError.INSTANCE;
             d = PanicNilError.descriptor();
+        }
+        // bug-019 (tracked from the Phase-1 original): a GoErrorValue
+        // (runtime panic like "comparing uncomparable type") thrown without
+        // a descriptor needs one for recover() to box it as a GoInterface.
+        // Infer gc's type name from the message: most runtime errors are
+        // runtime.errorString; interface conversion is
+        // *runtime.TypeAssertionError. Orthogonal to the panicnil knob: this
+        // fires only for non-null GoErrorValue, never for nil panics.
+        if (v instanceof GoErrorValue gev && d == null) {
+            String typeName = gev.errorString().startsWith("interface conversion: ")
+                    ? "*runtime.TypeAssertionError"
+                    : "runtime.errorString";
+            d = new GoTypeDescriptor(typeName, GoKind.STRING, false);
         }
         throw new PanicException(v, d, goTypeName, throwSite);
     }
