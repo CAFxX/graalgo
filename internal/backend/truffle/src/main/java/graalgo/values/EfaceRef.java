@@ -15,22 +15,24 @@ package graalgo.values;
  */
 public final class EfaceRef {
     private final AbiTypeRef typeRef;
-    private final long dataHandle;
+    /** The {@code Data} word as a {@code GoPointer} (unsafe.Pointer); null for nil. */
+    private final Object dataPointer;
 
-    public EfaceRef(AbiTypeRef typeRef, long dataHandle) {
+    public EfaceRef(AbiTypeRef typeRef, Object dataPointer) {
         this.typeRef = typeRef;
-        this.dataHandle = dataHandle;
+        this.dataPointer = dataPointer;
     }
 
     /**
      * Field read by go/types field index: 0 = {@code Type} (a
      * {@code *abi.Type}, i.e. a {@link graalgo.values.GoPointer} to an
-     * {@link AbiTypeRef}), 1 = {@code Data} (unsafe.Pointer handle).
+     * {@link AbiTypeRef}), 1 = {@code Data} (an {@code unsafe.Pointer},
+     * i.e. a {@link graalgo.values.GoPointer}; null for nil data).
      */
     public Object field(int idx) {
         return switch (idx) {
             case 0 -> new GoPointer(typeRef);
-            case 1 -> Long.valueOf(dataHandle);
+            case 1 -> dataPointer;
             default -> throw new IllegalStateException(
                     "EfaceRef: no field " + idx + " (EmptyInterface has Type, Data)");
         };
@@ -38,6 +40,6 @@ public final class EfaceRef {
 
     @Override
     public String toString() {
-        return "EfaceRef{" + typeRef + ", data=" + dataHandle + "}";
+        return "EfaceRef{" + typeRef + ", data=" + dataPointer + "}";
     }
 }

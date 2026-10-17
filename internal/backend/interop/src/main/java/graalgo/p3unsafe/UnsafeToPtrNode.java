@@ -104,13 +104,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
         }
         if (gi.isNil()) {
             // Nil interface viewed as EmptyInterface: Type is nil *Type.
-            return new GoPointer(new EfaceRef(null, 0L));
+            return new GoPointer(new EfaceRef(null, null));
         }
         long tok = ReflectTypes.tokForDescriptor(gi.descriptor());
         Object data = gi.data();
-        long dataHandle = data == null ? 0L : UnsafeTable.current().intern(data);
+        // Data is unsafe.Pointer: wrap the referent (null for nil data).
+        Object dataPtr = data == null ? null
+                : UnsafeTable.pointerFor(data);
         AbiTypeRef typeRef = abiTypeRef(tok, "internal/abi.Type");
-        return new GoPointer(new EfaceRef(typeRef, dataHandle));
+        return new GoPointer(new EfaceRef(typeRef, dataPtr));
     }
 
     /**

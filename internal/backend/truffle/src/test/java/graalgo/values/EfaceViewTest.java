@@ -44,7 +44,7 @@ public final class EfaceViewTest {
     public void testDerefFormTypeField() {
         // (*p).Type — the *(*abi.EmptyInterface)(unsafe.Pointer(&x)) idiom
         // from internal/abi.TypeOf, as used by internal/reflectlite.
-        EfaceRef ef = new EfaceRef(typeRef(), 77L);
+        EfaceRef ef = new EfaceRef(typeRef(), new GoPointer(new Object()));
         AbiTypeRef got = assertAbiType(
                 SelectorNode.readFieldPath(ef, new int[]{0}, false), "deref-form .Type");
         assertEq(0x1234L, got.tok(), "deref-form .Type token");
@@ -52,7 +52,7 @@ public final class EfaceViewTest {
 
     public void testPointerFormTypeField() {
         // p.Type on a *abi.EmptyInterface — auto-deref through the pointer.
-        EfaceRef ef = new EfaceRef(typeRef(), 77L);
+        EfaceRef ef = new EfaceRef(typeRef(), new GoPointer(new Object()));
         AbiTypeRef got = assertAbiType(
                 SelectorNode.readFieldPath(new GoPointer(ef), new int[]{0}, false),
                 "pointer-form .Type");
@@ -60,16 +60,18 @@ public final class EfaceViewTest {
     }
 
     public void testPointerFormDataField() {
-        // p.Data on a *abi.EmptyInterface — the data word as unsafe.Pointer.
-        EfaceRef ef = new EfaceRef(typeRef(), 77L);
+        // p.Data on a *abi.EmptyInterface — the data word as unsafe.Pointer
+        // (a GoPointer, not a raw handle).
+        Object dataObj = new Object();
+        EfaceRef ef = new EfaceRef(typeRef(), new GoPointer(dataObj));
         Object v = SelectorNode.readFieldPath(new GoPointer(ef), new int[]{1}, false);
-        assertTrue(v instanceof Long, "pointer-form .Data not a Long: " + v);
-        assertEq(77L, (Long) v, "pointer-form .Data");
+        assertTrue(v instanceof GoPointer, "pointer-form .Data not a GoPointer: " + v);
+        assertTrue(((GoPointer) v).referent() == dataObj, "pointer-form .Data referent");
     }
 
     public void testNilInterfaceView() {
         // A nil interface viewed as eface: Type is nil *abi.Type, Data is 0.
-        EfaceRef ef = new EfaceRef(null, 0L);
+        EfaceRef ef = new EfaceRef(null, null);
         Object t = SelectorNode.readFieldPath(new GoPointer(ef), new int[]{0}, false);
         assertTrue(t instanceof GoPointer && ((GoPointer) t).isNil(),
                 "nil-iface .Type not a nil pointer: " + t);
