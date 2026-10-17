@@ -235,22 +235,55 @@ public final class ValuesTest {
         assertEq(-123L, GoConvert.floatToInt64(-123.999), "-123.999->int64");
         assertEq(0L, GoConvert.floatToInt64(0.9), "0.9->int64");
         assertEq(0L, GoConvert.floatToInt64(-0.9), "-0.9->int64");
-        // uint64: 0x8000000000000000 on out-of-range.
+        // uint64: 0x8000000000000000 on out-of-range (NaN, >= 2^64);
+        // negatives wrap mod 2^64 via the CVTTSD2SI int64 result
+        // (gc/amd64-measured: N1 fix, 2026-10-18).
         assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(1e300), "1e300->uint64");
-        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(-1.5), "-1.5->uint64");
         assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Double.NaN), "NaN->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Double.POSITIVE_INFINITY), "+Inf->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Double.NEGATIVE_INFINITY), "-Inf->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(18446744073709551616.0), "2^64->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(-9.4e18), "below -2^63->uint64");
+        assertEq(-1L, GoConvert.floatToUint64(-1.5), "-1.5->uint64");
+        assertEq(-1L, GoConvert.floatToUint64(-1.0), "-1.0->uint64");
+        assertEq(-2L, GoConvert.floatToUint64(-2.5), "-2.5->uint64");
+        assertEq(0L, GoConvert.floatToUint64(-0.5), "-0.5->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(-9223372036854775808.0), "-2^63->uint64");
         assertEq(Long.parseUnsignedLong("9300000000000000000"), GoConvert.floatToUint64(9.3e18), "9.3e18->uint64");
         assertEq(0L, GoConvert.floatToUint64(0.9), "0.9->uint64");
+        // float32 overload: exact widening, same gc values.
+        assertEq(-1L, GoConvert.floatToUint64(-1.5f), "-1.5f->uint64");
+        assertEq(-2L, GoConvert.floatToUint64(-2.5f), "-2.5f->uint64");
+        assertEq(0L, GoConvert.floatToUint64(-0.5f), "-0.5f->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Float.NaN), "NaNf->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Float.POSITIVE_INFINITY), "+Inff->uint64");
         // int32: 0x80000000 on out-of-range.
         assertEq(Integer.MIN_VALUE, GoConvert.floatToInt32(1e300), "1e300->int32");
         assertEq(Integer.MIN_VALUE, GoConvert.floatToInt32(3.5e9), "3.5e9->int32");
     }
 
     public void testGoConvertFloatToIntNarrow() {
-        // float->uint32 goes via int64 then low 32 bits (gc-measured).
+        // float->uint32: 0 on NaN or |d| >= 2^63 (gc-measured); else the
+        // low 32 bits of the float->uint64 conversion.
         assertEq(705032704, GoConvert.floatToUint32(5e9), "5e9->uint32");
+        assertEq(0xD09DC300, GoConvert.floatToUint32(3.5e9), "3.5e9->uint32");
+        assertEq(0x2F623D00, GoConvert.floatToUint32(-3.5e9), "-3.5e9->uint32");
         assertEq(0, GoConvert.floatToUint32(1e300), "1e300->uint32");
+        assertEq(0, GoConvert.floatToUint32(-1e300), "-1e300->uint32");
+        assertEq(0, GoConvert.floatToUint32(9.3e18), "9.3e18->uint32");
+        assertEq(0, GoConvert.floatToUint32(-9.3e18), "-9.3e18->uint32");
+        assertEq(0, GoConvert.floatToUint32(Double.NaN), "NaN->uint32");
+        assertEq(0, GoConvert.floatToUint32(Double.POSITIVE_INFINITY), "+Inf->uint32");
+        assertEq(0, GoConvert.floatToUint32(Double.NEGATIVE_INFINITY), "-Inf->uint32");
+        assertEq(0, GoConvert.floatToUint32(9223372036854775808.0), "2^63->uint32");
+        assertEq(0, GoConvert.floatToUint32(-9223372036854775808.0), "-2^63->uint32");
+        assertEq(0xFFFFFC00, GoConvert.floatToUint32(9223372036854774784.0), "2^63-1024->uint32");
+        assertEq(0x00000400, GoConvert.floatToUint32(-9223372036854774784.0), "-(2^63-1024)->uint32");
+        assertEq(0xFFFFFFFF, GoConvert.floatToUint32(4294967295.0), "2^32-1->uint32");
+        assertEq(1, GoConvert.floatToUint32(-4294967295.9), "-(2^32-1)+trunc->uint32");
         assertEq(-1, GoConvert.floatToUint32(-1.5), "-1.5->uint32 (=-1)");
+        assertEq(-2, GoConvert.floatToUint32(-2.5), "-2.5->uint32 (=-2)");
+        assertEq(0, GoConvert.floatToUint32(-0.5), "-0.5->uint32");
         // float->int16/uint16/int8/uint8 go via int32 then truncation.
         assertEq(0, (int) (short) GoConvert.floatToInt32(5e9), "5e9->int16");
         assertEq(300, (int) (short) GoConvert.floatToInt32(300.5), "300.5->int16");
