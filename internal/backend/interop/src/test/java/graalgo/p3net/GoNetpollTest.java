@@ -219,6 +219,26 @@ public final class GoNetpollTest {
         }
     }
 
+    /**
+     * RV-P1-19 (predicate clause 5, gc p6 quirk): {@code pollServerInit}
+     * wires the deadlock suppressor onto the installed scheduler once the
+     * poller thread exists — the detector then suppresses while the
+     * poller lives. {@code resetForTest} tears the poller down and the
+     * suppression deactivates with it.
+     */
+    public void testPollServerInitWiresDeadlockSuppressor() {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            assertTrue(!sched.deadlockSuppressed(), "no suppression before init");
+            GoNetpoll.pollServerInit();
+            assertTrue(GoNetpoll.pollerThreadStarted(), "poller thread exists");
+            assertTrue(sched.deadlockSuppressed(), "suppressor wired and active");
+        } finally {
+            teardown(prev);
+        }
+    }
+
     public void testSocketBindListenAcceptConnect() throws Exception {
         SchedulerCore prev = setup();
         try {

@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.jfr.ParkReason;
 import graalgo.runtime.GoChan;
@@ -28,7 +29,13 @@ import graalgo.runtime.GoChan;
  * <p>Red-green: every positive test fails (hangs in
  * {@code awaitQuiescence} or misses the report) without the detector;
  * every negative test fails (spurious {@link DeadlockException}) if its
- * predicate clause is dropped.
+ * predicate clause is dropped — except clauses (2) ({@code inflight==0})
+ * and (3) ({@code inIo} empty), which are cheap fast-paths subsumed by
+ * clause (6): {@code inflight > 0} implies some live handle is not in
+ * the parked map, and the parked/inIo maps are disjoint by construction
+ * (route throws otherwise), so in either case {@code parked.size() < live}
+ * and clause (6) already rejects. They are kept as documented
+ * short-circuits, not independently falsifiable clauses.
  *
  * <p>verifies: RV-P1-19 (deadlock detector).
  */
@@ -182,10 +189,15 @@ public final class DeadlockDetectTest {
             // evaluation has already run.
             waitFor(() -> sched.drainer().parkedCountForTest() == 2, "both parked");
             assertFalse(sched.isDeadlocked(), "pending timer suppresses the report");
-            assertTrue(sched.timerHeap().cancel(timerId.get()), "timer was pending");
+            assertTrue(sched.timerHeap().pendingCount() > 0, "timer was pending");
+            // The timer stays armed through teardown: cancelling it before
+            // the unparks would open a race — if the first unparked
+            // goroutine exits before the second unpark is issued, the
+            // detector correctly fires on the still-parked survivor.
             sched.unpark(h1);
             sched.unpark(h2);
             sched.awaitQuiescence();
+            assertTrue(sched.timerHeap().cancel(timerId.get()), "timer was pending");
             assertEquals(0, sched.runnableCount(), "quiescence after unpark");
         } finally {
             SchedulerCore.install(null);
@@ -477,6 +489,120 @@ public final class DeadlockDetectTest {
         } finally {
             System.setErr(origErr);
             SchedulerCore.install(prev);
+        }
+    }
+
+    // ---------- 11: C1 orphan — foreign scheduler install fails fast ----------
+
+    /**
+     * RV-P1-19 (C1 orphan, foreign scheduler): if a new scheduler is
+     * installed while a previous scheduler's orphan still runs (in-process
+     * hosts, sequential launcher runs), the orphan's ambient
+     * {@code SchedulerCore.current()} must fail fast instead of returning
+     * the foreign scheduler — otherwise the orphan's tokens would corrupt
+     * the foreign scheduler's accounting (phantom PARKED → negative
+     * inflight → drainer corruption halt). The fail-fast throw is caught
+     * by the vthread wrapper and dies quietly via
+     * {@code recordCrash}/{@code isOrphaned}.
+     *
+     * <p>Red-green: without the foreign check in {@code current()}, the
+     * orphan gets the foreign scheduler (no throw) and the first
+     * assertion fails.
+     */
+    public void testOrphanAgainstForeignSchedulerFailsFast() throws Exception {
+        SchedulerCore schedA = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        SchedulerCore prev = SchedulerCore.install(schedA);
+        PrintStream origErr = System.err;
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
+        CountDownLatch admitted = new CountDownLatch(1);
+        AtomicBoolean release = new AtomicBoolean(false);
+        AtomicReference<Throwable> observedThrow = new AtomicReference<>();
+        AtomicReference<SchedulerCore> gotScheduler = new AtomicReference<>();
+        SchedulerCore schedB = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        try {
+            schedA.start();
+            schedA.drainer().setAdmissionListener(h -> admitted.countDown());
+            schedA.spawn(() -> {
+                // Scheduler-aware wait (never JVM-block inside a goroutine):
+                // spin until the test thread has installed the foreign scheduler.
+                while (!release.get()) {
+                    schedA.yieldCurrent();
+                }
+                try {
+                    gotScheduler.set(SchedulerCore.current());
+                } catch (IllegalStateException ise) {
+                    // Fail-fast: rethrow so the vthread wrapper dies quietly.
+                    observedThrow.set(ise);
+                    throw ise;
+                }
+            });
+            // Wait until the orphan is past the pre-admission guard and
+            // running guest code.
+            assertTrue(admitted.await(15, TimeUnit.SECONDS), "orphan admitted");
+            // A foreign scheduler is installed while the orphan still runs.
+            schedB.start();
+            SchedulerCore.install(schedB);
+            release.set(true);
+            waitFor(() -> schedA.runnableCount() == 0,
+                    "orphan released its live count");
+            // The orphan must NOT have received the foreign scheduler.
+            assertTrue(observedThrow.get() != null,
+                    "current() failed fast on the foreign scheduler");
+            assertTrue(gotScheduler.get() == null,
+                    "orphan never ran against the foreign scheduler");
+            String err = errBuf.toString(StandardCharsets.UTF_8);
+            assertFalse(err.contains("fatal internal error"),
+                    "orphan died quietly, stderr was:\n" + err);
+            assertFalse(schedA.crashed(), "no internal-error crash recorded");
+            // The foreign scheduler is uncorrupted: it runs goroutines normally.
+            AtomicBoolean bRan = new AtomicBoolean(false);
+            schedB.spawn(() -> bRan.set(true));
+            waitFor(() -> schedB.runnableCount() == 0,
+                    "foreign scheduler quiesced");
+            assertTrue(bRan.get(), "foreign scheduler runs goroutines");
+            assertFalse(schedB.crashed(), "foreign scheduler not crashed");
+        } finally {
+            System.setErr(origErr);
+            SchedulerCore.install(prev);
+        }
+    }
+
+    // ---------- 12: suppressor (predicate clause 5) blocks the report ----------
+
+    /**
+     * RV-P1-19 (predicate clause 5): while an external deadlock suppressor
+     * is installed — the gc p6 netpoll quirk, wired by
+     * {@code GoNetpoll.pollServerInit} once its poller thread exists — an
+     * all-parked, timer-less scheduler must NOT report deadlock. Clearing
+     * the suppressor re-arms the detector.
+     *
+     * <p>Red-green: without clause (5), the first park fires and the
+     * {@code isDeadlocked} assertion fails.
+     */
+    public void testSuppressorBlocksDeadlockReport() throws Exception {
+        SchedulerCore sched = newScheduler();
+        try {
+            sched.setDeadlockSuppressor(() -> true);
+            GoroutineHandle h = sched.spawn(
+                    () -> sched.parkCurrent(null, ParkReason.SELECT));
+            // The park has been routed, so the detector has evaluated.
+            waitFor(() -> sched.drainer().parkedCountForTest() == 1,
+                    "goroutine parked");
+            assertFalse(sched.isDeadlocked(), "suppressed: no deadlock report");
+            sched.unpark(h);
+            sched.awaitQuiescence();
+            assertFalse(sched.isDeadlocked(), "still no deadlock report");
+            // Clearing the suppressor re-arms the detector.
+            sched.setDeadlockSuppressor(null);
+            sched.spawn(() -> sched.parkCurrent(null, ParkReason.SELECT));
+            try {
+                sched.awaitQuiescence();
+                throw new AssertionError("expected DeadlockException after suppressor cleared");
+            } catch (DeadlockException expected) {
+            }
+        } finally {
+            SchedulerCore.install(null);
         }
     }
 }

@@ -146,10 +146,11 @@ public final class DeadlockLauncherTest {
     }
 
     /**
-     * Main blocked receiving while a child is blocked sending (and vice
-     * versa) → exit 2 with a two-goroutine dump.
+     * Non-deadlock control: main receives while a child sends — the
+     * send/recv rendezvous, so this completes with exit 0 (contrast with
+     * the crossed variant below, which genuinely deadlocks).
      */
-    public void testChannelDeadlockPair() throws Exception {
+    public void testChannelRendezvousControl() throws Exception {
         RunResult r = runGo("chan_pair",
                 "package main\n\n"
                         + "func main() {\n"
