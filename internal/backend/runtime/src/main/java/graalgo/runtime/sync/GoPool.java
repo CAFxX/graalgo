@@ -1,5 +1,6 @@
 package graalgo.runtime.sync;
 
+import java.lang.ref.Cleaner;
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
 import java.util.Collections;
@@ -30,10 +31,13 @@ import java.util.concurrent.atomic.AtomicReference;
  *       {@link java.util.concurrent.atomic.AtomicReference}, so an owner
  *       racing a thief is safe. Stealing {@code private} is a deliberate
  *       JVM adaptation (see the field doc): gc's {@code getSlow} skips it
- *       because Ps are immortal; our threads are not. Locals of dead
- *       threads stay registered — their items remain stealable. The
- *       registry is bounded in practice by the scheduler's carrier pool
- *       plus the threads that touch the pool.</li>
+ *       because Ps are immortal; our threads are not. When a thread
+ *       becomes unreachable, a {@link Cleaner} action unregisters its
+ *       {@code Local} and drains its items into the victim generation
+ *       (mirroring gc's {@code poolCleanup} primary→victim rotation), so
+ *       dead threads' items remain retrievable while the registry stays
+ *       bounded by the live threads using the pool — reclamation is
+ *       GC-driven, with no polling and no dependence on pool traffic.</li>
  *   <li>Victim cache + GC interaction: gc rotates primary→victim at each
  *       GC stop-the-world ({@code poolCleanup}); there is no STW hook on
  *       the JVM, so the victim holds {@link WeakReference}s. The JVM GC
@@ -97,6 +101,60 @@ public final class GoPool {
 
     /** Pool-lock-guarded shared state. */
     private final Object lock = new Object();
+
+    /**
+     * Cleaner that reclaims per-thread {@code Local}s when their owner
+     * thread becomes unreachable. A dedicated Cleaner — not
+     * {@code GcInterop}'s — so pool cleanup never queues behind arbitrary
+     * user finalizers.
+     */
+    private static final Cleaner POOL_CLEANER = Cleaner.create();
+
+    /**
+     * Cleaner action that unregisters a thread's {@code Local} when the
+     * thread becomes unreachable: removes it from {@link #allLocals} and
+     * drains its items into the victim generation (mirroring gc's
+     * {@code poolCleanup} primary→victim rotation), so they stay
+     * retrievable until the JVM GC reclaims them.
+     *
+     * <p>Static and thread-free by construction: holds only a
+     * {@link WeakReference} to the pool — a strong pool reference would
+     * trade the thread-lifetime leak for a pool-lifetime leak, pinning
+     * every pool as long as any thread that ever touched it lives — and
+     * a strong reference to the {@code Local} (harmless: its lifetime
+     * was already tied to {@code allLocals}). Must never capture the
+     * owner {@code Thread}; the phantom reference would never clear.
+     */
+    private static final class ReclaimAction implements Runnable {
+        private final WeakReference<GoPool> poolRef;
+        private final Local local;
+
+        ReclaimAction(WeakReference<GoPool> poolRef, Local local) {
+            this.poolRef = poolRef;
+            this.local = local;
+        }
+
+        @Override
+        public void run() {
+            GoPool pool = poolRef.get();
+            if (pool == null) {
+                return; // pool already collected
+            }
+            synchronized (pool.lock) {
+                if (pool.allLocals.remove(local)) { // exactly-once guard
+                    Object p = local.privateSlot.getAndSet(null);
+                    if (p != null) {
+                        pool.victim.addLast(new WeakReference<>(p));
+                    }
+                    Object s;
+                    while ((s = local.shared.pollFirst()) != null) {
+                        pool.victim.addLast(new WeakReference<>(s));
+                    }
+                }
+            }
+        }
+    }
+
     /** All per-thread Locals ever used with this pool (gc's allPools). */
     private final Set<Local> allLocals =
             Collections.newSetFromMap(new IdentityHashMap<>());
@@ -122,10 +180,26 @@ public final class GoPool {
         if (!l.registered) {
             synchronized (lock) {
                 allLocals.add(l);
+                // Reclaim at thread unreachability (once per thread
+                // lifetime — off the put/get fast paths).
+                POOL_CLEANER.register(Thread.currentThread(),
+                        new ReclaimAction(new WeakReference<>(this), l));
                 l.registered = true;
             }
         }
         return l;
+    }
+
+    /** Package-private test accessor: the calling thread's Local. */
+    Local debugLocal() {
+        return locals.get();
+    }
+
+    /** Package-private test accessor: number of registered Locals. */
+    int registeredLocalCount() {
+        synchronized (lock) {
+            return allLocals.size();
+        }
     }
 
     /**
