@@ -1,16 +1,16 @@
 package graalgo.p3builtin.nodes;
 
-import java.lang.reflect.Array;
-import java.util.Arrays;
-
 import com.oracle.truffle.api.frame.VirtualFrame;
 
+import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoSlice;
+import graalgo.values.GoStructDescriptor;
 
 /**
  * The {@code clear} builtin (Go 1.21+): the {@code "clear"} wire node.
@@ -33,19 +33,31 @@ import graalgo.values.GoSlice;
  * never from the type table. {@code clear} returns no value; the node
  * evaluates to {@code null} and is used in statement position.
  *
+ * <p>Slice zeroing goes through {@link Boxing#clearSlice}, the single
+ * canonical implementation covering every D5 backing carrier; the
+ * element kind (and struct descriptor) are resolved from the type table
+ * at build time so {@code Object[]} slots get the Go zero value, not
+ * Java {@code null} (I-8).
+ *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook.
  */
 public final class ClearNode extends GoExprNode {
 
     @Child private GoExprNode operand;
+    /** Slice element kind (for the {@code Object[]} zero value). */
+    private final GoKind elemKind;
+    /** Element struct descriptor for {@code STRUCT} kinds; null otherwise. */
+    private final GoStructDescriptor elemDesc;
 
-    private ClearNode(GoExprNode operand) {
+    ClearNode(GoExprNode operand, GoKind elemKind, GoStructDescriptor elemDesc) {
         // clear returns no Go value; the kind is a placeholder (the
         // DeleteNode precedent uses INT64 for the same reason). The node
         // is only ever used in statement position.
         super(graalgo.values.GoKind.INT64);
         this.operand = operand;
+        this.elemKind = elemKind;
+        this.elemDesc = elemDesc;
     }
 
     @Override
@@ -74,59 +86,11 @@ public final class ClearNode extends GoExprNode {
             return;
         }
         if (v instanceof GoSlice s) {
-            clearSlice(s);
+            Boxing.clearSlice(s, elemKind, elemDesc);
             return;
         }
         throw new IllegalStateException(
                 "clear of non-map, non-slice value: " + v.getClass());
-    }
-
-    /** Zeroes the slice's len elements (backing array shared — no copy). */
-    private static void clearSlice(GoSlice s) {
-        Object array = s.array();
-        int from = s.offset();
-        int len = s.len();
-        if (len == 0) {
-            return;
-        }
-        Class<?> ct = array.getClass().getComponentType();
-        if (!ct.isPrimitive()) {
-            Arrays.fill((Object[]) array, from, from + len, null);
-            return;
-        }
-        Object zero = primitiveZero(ct);
-        for (int i = 0; i < len; i++) {
-            Array.set(array, from + i, zero);
-        }
-    }
-
-    /** The boxed zero for a primitive component type. */
-    private static Object primitiveZero(Class<?> ct) {
-        if (ct == boolean.class) {
-            return Boolean.FALSE;
-        }
-        if (ct == byte.class) {
-            return (byte) 0;
-        }
-        if (ct == short.class) {
-            return (short) 0;
-        }
-        if (ct == int.class) {
-            return 0;
-        }
-        if (ct == long.class) {
-            return 0L;
-        }
-        if (ct == float.class) {
-            return 0.0f;
-        }
-        if (ct == double.class) {
-            return 0.0;
-        }
-        if (ct == char.class) {
-            return '\0';
-        }
-        throw new IllegalStateException("unsupported primitive component type: " + ct);
     }
 
     /**
@@ -141,6 +105,20 @@ public final class ClearNode extends GoExprNode {
         if (!(xv instanceof Json.Object o)) {
             throw new FrontendException(path + ": clear needs an \"x\" node object");
         }
-        return new ClearNode(factory.buildExpr(o, ctx));
+        GoExprNode operand = factory.buildExpr(o, ctx);
+        // Resolve the slice's element kind/descriptor for the Object[]
+        // zero value. Unresolvable (missing type id) degrades to
+        // INTERFACE — nulling, the pre-fix behavior.
+        GoKind elemKind = GoKind.INTERFACE;
+        GoStructDescriptor elemDesc = null;
+        int sliceTid = operand.typeId();
+        if (sliceTid >= 0 && operand.kind() == GoKind.SLICE) {
+            int elemTid = NodeFactory.sliceElemTypeId(ctx, sliceTid, path, "clear");
+            elemKind = NodeFactory.kindOf(ctx, elemTid, path);
+            if (elemKind == GoKind.STRUCT) {
+                elemDesc = NodeFactory.structDescriptorFor(ctx, elemTid, path);
+            }
+        }
+        return new ClearNode(operand, elemKind, elemDesc);
     }
 }

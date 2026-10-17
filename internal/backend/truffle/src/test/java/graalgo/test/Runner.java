@@ -41,6 +41,9 @@ public final class Runner {
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.CommaOkLvalueTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
+        // P0-4 / I-8 (2026-10-17): clear() slice semantics pinned for
+        // every D5 backing carrier (float32 regression + Go zero values).
+        TESTS.add(graalgo.frontend.ClearSliceTest.class);
     }
 
     public static void main(String[] args) {

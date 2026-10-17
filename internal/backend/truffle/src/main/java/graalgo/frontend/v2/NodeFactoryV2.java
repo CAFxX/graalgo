@@ -1130,11 +1130,57 @@ public final class NodeFactoryV2 {
                 if (args.size() != 1) {
                     throw new FrontendException(where + ": clear requires 1 arg");
                 }
-                return new ClearNode(args.get(0));
+                return new ClearNode(args.get(0),
+                        sliceElemKind(scope.types, argsList.get(0), where));
             }
             default:
                 throw new FrontendException(where + ": unsupported builtin \"" + builtin + "\"");
         }
+    }
+
+    /**
+     * Resolves a slice operand's element kind from the v2 type table
+     * (the operand's {@code "type"} → slice entry → {@code detail.elem}).
+     * Named slice types are chased to their underlying type. Anything
+     * unresolvable degrades to {@link GoKind#INTERFACE} (whose clear zero
+     * is null — the pre-fix behavior).
+     */
+    @SuppressWarnings("unchecked")
+    private static GoKind sliceElemKind(List<Object> types, Object argNode, String where) {
+        if (!(argNode instanceof Map)) {
+            return GoKind.INTERFACE;
+        }
+        Object t = ((Map<String, Object>) argNode).get("type");
+        if (!(t instanceof Long)) {
+            return GoKind.INTERFACE;
+        }
+        int typeId = ((Long) t).intValue();
+        for (int i = 0; i < 8; i++) { // bound the named-type chase
+            if (typeId < 0 || typeId >= types.size() || !(types.get(typeId) instanceof Map)) {
+                return GoKind.INTERFACE;
+            }
+            Map<String, Object> typeMap = (Map<String, Object>) types.get(typeId);
+            String kind = (String) typeMap.get("kind");
+            if ("named".equals(kind)) {
+                Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+                Object u = detail == null ? null : detail.get("underlying");
+                if (!(u instanceof Long)) {
+                    return GoKind.INTERFACE;
+                }
+                typeId = ((Long) u).intValue();
+                continue;
+            }
+            if (!"slice".equals(kind)) {
+                return GoKind.INTERFACE;
+            }
+            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+            Object e = detail == null ? null : detail.get("elem");
+            if (!(e instanceof Long)) {
+                return GoKind.INTERFACE;
+            }
+            return goKindForTypeId(types, e, where);
+        }
+        return GoKind.INTERFACE;
     }
 
     // --- Helpers for safe map access ---

@@ -2,8 +2,11 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.values.GoComplex32;
+import graalgo.values.GoComplex64;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
@@ -224,6 +227,127 @@ public final class Boxing {
      */
     public static Object newArray(GoKind elemKind, int len) {
         return newArray(elemKind, null, len);
+    }
+
+    /**
+     * Zeroes the {@code len} elements of a slice's backing array starting at
+     * its offset (the {@code clear} builtin's slice form): the single
+     * canonical implementation behind both {@code clear} nodes (the v1/v2
+     * frontend {@code ClearNode} and the p3 {@code "clear"} wire node).
+     *
+     * <p>Every D5 backing carrier is covered — previously the frontend node
+     * silently skipped {@code float[]} (P0-4: {@code clear} on
+     * {@code []float32} was a no-op) and both nodes left complex-typed
+     * arrays untouched. {@code Object[]} slots get the Go zero value for
+     * the element kind (review2-p19 / I-8), not Java {@code null}:
+     * strings clear to {@link GoString#EMPTY}, complex elements to the
+     * (0+0i) singletons, struct elements to a fresh {@link GoStruct#zero}
+     * per slot (a shared instance would alias: {@code GoStruct} is
+     * mutable). Interface, pointer, map, slice, func, chan, and unsafe
+     * elements clear to {@code null} — Go's zero for those is nil, so the
+     * old behavior was already correct there. Array elements also clear
+     * to {@code null}, matching {@link #newArray}'s own convention
+     * ({@code make([][N]T, n)} leaves array-element slots null today).
+     *
+     * @param elemKind the slice's element kind; {@code null} (unknown, e.g.
+     *                 a legacy call site) degrades to the old behavior —
+     *                 primitives zeroed, {@code Object[]} slots nulled.
+     * @param elemDesc element struct descriptor for {@code STRUCT} kinds;
+     *                 may be null, in which case the descriptor is recovered
+     *                 from a live {@link GoStruct} element when one exists.
+     */
+    public static void clearSlice(GoSlice s, GoKind elemKind, GoStructDescriptor elemDesc) {
+        Object array = s.array();
+        int from = s.offset();
+        int len = s.len();
+        if (len == 0) {
+            return;
+        }
+        // Complex-typed backing arrays (D5): pre-filled with (0+0i) at
+        // allocation; clear restores the singleton, never null.
+        if (array instanceof GoComplex32[] ca) {
+            java.util.Arrays.fill(ca, from, from + len, GoComplex32.ZERO);
+            return;
+        }
+        if (array instanceof GoComplex64[] ca) {
+            java.util.Arrays.fill(ca, from, from + len, GoComplex64.ZERO);
+            return;
+        }
+        Class<?> ct = array.getClass().getComponentType();
+        if (ct.isPrimitive()) {
+            // Every primitive carrier: byte, short, int, long, float,
+            // double, boolean (char is defensive — D5 never emits it).
+            for (int i = 0; i < len; i++) {
+                java.lang.reflect.Array.set(array, from + i, primitiveZero(ct));
+            }
+            return;
+        }
+        Object[] oa = (Object[]) array;
+        if (elemKind == null) {
+            java.util.Arrays.fill(oa, from, from + len, null);
+            return;
+        }
+        switch (elemKind) {
+            case STRING -> java.util.Arrays.fill(oa, from, from + len, GoString.EMPTY);
+            case COMPLEX64 -> java.util.Arrays.fill(oa, from, from + len, GoComplex32.ZERO);
+            case COMPLEX128, UNTYPED_COMPLEX ->
+                    java.util.Arrays.fill(oa, from, from + len, GoComplex64.ZERO);
+            case STRUCT -> {
+                GoStructDescriptor d = elemDesc;
+                if (d == null) {
+                    // No descriptor available (v2 frontend path): recover
+                    // it from a live element — GoStruct carries its own.
+                    // Slices are homogeneous, so any slot in the backing
+                    // array will do.
+                    for (Object o : oa) {
+                        if (o instanceof GoStruct gs) {
+                            d = gs.descriptor();
+                            break;
+                        }
+                    }
+                }
+                if (d == null) {
+                    java.util.Arrays.fill(oa, from, from + len, null);
+                } else {
+                    for (int i = 0; i < len; i++) {
+                        oa[from + i] = GoStruct.zero(d);
+                    }
+                }
+            }
+            // INTERFACE, POINTER, MAP, SLICE, FUNC, CHAN, UNSAFE_POINTER:
+            // Go's zero is nil. ARRAY: matches newArray's own null-slot
+            // convention for array elements.
+            default -> java.util.Arrays.fill(oa, from, from + len, null);
+        }
+    }
+
+    /** The boxed zero for a primitive component type. */
+    private static Object primitiveZero(Class<?> ct) {
+        if (ct == boolean.class) {
+            return Boolean.FALSE;
+        }
+        if (ct == byte.class) {
+            return (byte) 0;
+        }
+        if (ct == short.class) {
+            return (short) 0;
+        }
+        if (ct == int.class) {
+            return 0;
+        }
+        if (ct == long.class) {
+            return 0L;
+        }
+        if (ct == float.class) {
+            return 0.0f;
+        }
+        if (ct == double.class) {
+            return 0.0;
+        }
+        if (ct == char.class) {
+            return '\0';
+        }
+        throw new IllegalStateException("unsupported primitive component type: " + ct);
     }
 
     /** Reads one array element in canonical boxed form. */

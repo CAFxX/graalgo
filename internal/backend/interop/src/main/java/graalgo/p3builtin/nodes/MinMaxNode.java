@@ -1,5 +1,6 @@
 package graalgo.p3builtin.nodes;
 
+import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 
@@ -35,7 +36,7 @@ public final class MinMaxNode extends GoExprNode {
     @Children private final GoExprNode[] args;
     private final boolean isMin;
 
-    private MinMaxNode(GoKind kind, boolean isMin, GoExprNode[] args) {
+    MinMaxNode(GoKind kind, boolean isMin, GoExprNode[] args) {
         super(kind);
         this.isMin = isMin;
         this.args = args;
@@ -46,6 +47,13 @@ public final class MinMaxNode extends GoExprNode {
         if (!kind().isIntKind() || kind().isFloatKind()) {
             throw new IllegalStateException("minmax executeLong on non-int kind " + kind());
         }
+        if (kind().slotKind() == FrameSlotKind.Int) {
+            // Sub-64-bit carriers serve the long path by delegating to
+            // executeInt (the AtomicOpNode int32 precedent): D5
+            // sign/zero-extends to 64 bits.
+            int v = executeInt(frame);
+            return kind().isUintKind() ? (v & 0xFFFFFFFFL) : v;
+        }
         boolean unsigned = kind().isUintKind();
         long best = args[0].executeLong(frame);
         for (int i = 1; i < args.length; i++) {
@@ -55,6 +63,37 @@ public final class MinMaxNode extends GoExprNode {
                 take = isMin
                         ? Long.compareUnsigned(v, best) < 0
                         : Long.compareUnsigned(v, best) > 0;
+            } else {
+                take = isMin ? v < best : v > best;
+            }
+            if (take) {
+                best = v;
+            }
+        }
+        return best;
+    }
+
+    @Override
+    public int executeInt(VirtualFrame frame) {
+        // P1-I5: GoKinds narrower than 64 bits (INT8/16/32, UINT8/16/32)
+        // map to FrameSlotKind.Int (GoKind.slotKind), so every consumer
+        // that dispatches on the slot kind (AssignNode, VarDeclNode,
+        // ExprStmtNode, ...) reads a min/max result via executeInt — the
+        // base implementation throws UOE. Without this override,
+        // x := min(int32a, int32b) crashes on legal code.
+        if (!kind().isIntKind() || kind().isFloatKind()
+                || kind().slotKind() != FrameSlotKind.Int) {
+            throw new IllegalStateException("minmax executeInt on non-32-bit-int kind " + kind());
+        }
+        boolean unsigned = kind().isUintKind();
+        int best = args[0].executeInt(frame);
+        for (int i = 1; i < args.length; i++) {
+            int v = args[i].executeInt(frame);
+            boolean take;
+            if (unsigned) {
+                take = isMin
+                        ? Integer.compareUnsigned(v, best) < 0
+                        : Integer.compareUnsigned(v, best) > 0;
             } else {
                 take = isMin ? v < best : v > best;
             }

@@ -45,6 +45,10 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // P1-I5 / I-8 (2026-10-17): min/max executeInt for 32-bit carriers,
+        // clear() Go-zero-value semantics for the p3 wire nodes.
+        TESTS.add(graalgo.p3builtin.nodes.MinMaxNodeTest.class);
+        TESTS.add(graalgo.p3builtin.nodes.ClearNodeTest.class);
     }
 
     private IfaceTestRunner() {}

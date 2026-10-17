@@ -3724,12 +3724,21 @@ public final class NodeFactory {
 
     /** Element kind of the type id's underlying composite (slice/array/map/pointer). */
     private static GoKind builtinElemKind(BuildCtx ctx, int typeId, String path, String what) {
+        return kindOf(ctx, sliceElemTypeId(ctx, typeId, path, what), path);
+    }
+
+    /**
+     * Element type-table id of a slice/array/map composite type (public for
+     * backend nodes that need the element kind or descriptor, e.g. the p3
+     * {@code "clear"} wire node resolving the slice's element zero value).
+     */
+    public static int sliceElemTypeId(BuildCtx ctx, int typeId, String path, String what) {
         Json.Object entry = underlyingEntry(ctx, typeId, path);
         Json.Object detail = entry.object("detail", path);
         if (!detail.has("elem")) {
             throw new FrontendException(path + ": " + what + " on non-composite type");
         }
-        return kindOf(ctx, detail.intValue("elem", path), path);
+        return detail.intValue("elem", path);
     }
 
     /** {@code make}: slice and map forms (chan is Phase 2). */
