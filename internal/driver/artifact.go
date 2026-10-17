@@ -6,12 +6,19 @@ package driver
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// wireProtocolVersion is the frontend wire protocol version this driver
+// expects. It must track internal/frontend's frontendVersion
+// (docs/frontend-v1.md §8 governs version bumps): a skew between the
+// two means the embedded JSON is not what the backend understands.
+const wireProtocolVersion = "v1"
 
 // Artifact describes the executable artifact `graalgo build` emits.
 type Artifact struct {
@@ -49,6 +56,13 @@ func Emit(a Artifact) error {
 	}
 	if a.GraalgoRoot == "" {
 		return fmt.Errorf("no graalgo root")
+	}
+
+	// Validate the frontend output BEFORE embedding it: a malformed,
+	// wrong-schema, or version-skewed document must fail the build
+	// here, not surface as a run-time failure of the artifact.
+	if err := validateWireJSON(a.WireJSON); err != nil {
+		return err
 	}
 
 	// Compress the JSON. Frontend output can be large (100MB+ for big
@@ -104,6 +118,32 @@ func Emit(a Artifact) error {
 	// go build sets the executable bit, but ensure it (umask-safe).
 	if err := os.Chmod(a.OutputPath, 0o755); err != nil {
 		return fmt.Errorf("cannot chmod %s: %v", a.OutputPath, err)
+	}
+	return nil
+}
+
+// validateWireJSON parses the frontend output and checks its wire
+// protocol version against the driver's expected version. Failing the
+// build here is the point: a silently embedded bad document would
+// produce an artifact that exits 0 at build time and fails only when
+// run.
+func validateWireJSON(wire []byte) error {
+	var doc struct {
+		// The "frontend" field carries the protocol version (Doc.Frontend
+		// in internal/frontend). Checking only this field is deliberate:
+		// it is the field the version contract (docs/frontend-v1.md §8)
+		// is anchored on; full schema validation belongs to the
+		// frontend's own --check gate.
+		Frontend string `json:"frontend"`
+	}
+	if err := json.Unmarshal(wire, &doc); err != nil {
+		return fmt.Errorf("invalid frontend output: %v", err)
+	}
+	if doc.Frontend == "" {
+		return fmt.Errorf("invalid frontend output: missing \"frontend\" version field")
+	}
+	if doc.Frontend != wireProtocolVersion {
+		return fmt.Errorf("wire protocol version mismatch: frontend emitted %q, driver expects %q", doc.Frontend, wireProtocolVersion)
 	}
 	return nil
 }

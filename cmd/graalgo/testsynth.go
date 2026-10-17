@@ -14,15 +14,27 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
-// discoverTests returns the names of TestXxx functions in a _test.go file.
+// discoverTests returns the names of the test functions in a _test.go
+// file, mirroring `go test` selection semantics: a test is a function
+// named TestXxx where Xxx is non-empty and its first rune is not
+// lowercase, with signature func TestXxx(t *testing.T) and no results.
+// TestMain is the test binary's entry point, never a test; helpers,
+// benchmarks, fuzz targets, and examples are never selected.
+//
+// The *testing.T check resolves through the file's own import bindings
+// (the local name of the "testing" import, usually "testing"), not by
+// matching a bare type name.
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
+	testingName := testingLocalName(f)
 	var tests []string
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -30,16 +42,71 @@ func discoverTests(path string) ([]string, error) {
 			continue
 		}
 		name := fn.Name.Name
+		if name == "TestMain" {
+			continue
+		}
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
-		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		// Like `go test`: the suffix after "Test" must be non-empty and
+		// its first rune must not be lowercase (so "Test" and "Testx"
+		// are helpers, not tests).
+		suffix := name[len("Test"):]
+		if suffix == "" {
+			continue
+		}
+		if r, _ := utf8.DecodeRuneInString(suffix); unicode.IsLower(r) {
+			continue
+		}
+		// `go test` does not run generic functions.
+		if fn.Type.TypeParams != nil && len(fn.Type.TypeParams.List) > 0 {
+			continue
+		}
+		// Exactly one parameter of type *testing.T, no results.
+		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 ||
+			!isTestingTParam(fn.Type.Params.List[0].Type, testingName) {
+			continue
+		}
+		if fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
 			continue
 		}
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// testingLocalName returns the local name the file binds to the
+// "testing" import ("" when the file does not import "testing").
+// isTestingTParam uses it to resolve the test parameter's type.
+func testingLocalName(f *ast.File) string {
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, `"`) == "testing" {
+			if imp.Name != nil {
+				return imp.Name.Name
+			}
+			return "testing"
+		}
+	}
+	return ""
+}
+
+// isTestingTParam reports whether expr denotes *<testingName>.T, i.e.
+// the parameter type `go test` requires. Dot and blank imports of
+// "testing" bind no usable qualifier, so they never match.
+func isTestingTParam(expr ast.Expr, testingName string) bool {
+	if testingName == "" || testingName == "." || testingName == "_" {
+		return false
+	}
+	star, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	qual, ok := sel.X.(*ast.Ident)
+	return ok && qual.Name == testingName && sel.Sel.Name == "T"
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -729,7 +796,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				if !isTest && isEntry {
 					continue
 				}
-				rewriteParam(d)
+				rewriteParam(d, testingLocalName(tu.f))
 				rewriteTestCalls(d, tu.fset)
 				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
@@ -754,7 +821,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 						continue
 					}
 				}
-				rewriteParam(d)
+				rewriteParam(d, testingLocalName(u.f))
 				rewriteTestCalls(d, u.fset)
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
@@ -1743,17 +1810,20 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 // rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
 // the parameter list AND any nested function literals (e.g. the closure
 // passed to t.Run). Uses an AST walk so no testing.T reference survives.
-func rewriteParam(fn *ast.FuncDecl) {
+// testingName is the file's local name for the "testing" import (resolved
+// by testingLocalName), so explicitly-named imports (import tt "testing")
+// are rewritten the same as plain ones.
+func rewriteParam(fn *ast.FuncDecl, testingName string) {
 	ast.Inspect(fn, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.StarExpr:
 			if sel, ok := t.X.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
+				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == testingName && sel.Sel.Name == "T" {
 					t.X = &ast.Ident{Name: "graalgoT"}
 				}
 			}
 		case *ast.SelectorExpr:
-			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
+			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == testingName && t.Sel.Name == "T" {
 				// testing.T as a bare type (not pointer): replace the
 				// selector with the graalgoT identifier.
 				// (Handled by replacing the parent; see below.)
@@ -1763,10 +1833,10 @@ func rewriteParam(fn *ast.FuncDecl) {
 	})
 	// Second pass: replace bare testing.T selector expressions (non-pointer
 	// type references) which ast.Inspect can't swap in place.
-	rewriteBareTestingT(fn.Type)
+	rewriteBareTestingT(fn.Type, testingName)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if fl, ok := n.(*ast.FuncLit); ok {
-			rewriteBareTestingT(fl.Type)
+			rewriteBareTestingT(fl.Type, testingName)
 		}
 		return true
 	})
@@ -1774,21 +1844,21 @@ func rewriteParam(fn *ast.FuncDecl) {
 
 // rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
 // function type's params and results.
-func rewriteBareTestingT(ft *ast.FuncType) {
+func rewriteBareTestingT(ft *ast.FuncType, testingName string) {
 	if ft == nil {
 		return
 	}
-	rewriteFieldList(ft.Params)
-	rewriteFieldList(ft.Results)
+	rewriteFieldList(ft.Params, testingName)
+	rewriteFieldList(ft.Results, testingName)
 }
 
-func rewriteFieldList(fl *ast.FieldList) {
+func rewriteFieldList(fl *ast.FieldList, testingName string) {
 	if fl == nil {
 		return
 	}
 	for _, f := range fl.List {
 		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == testingName && sel.Sel.Name == "T" {
 				f.Type = &ast.Ident{Name: "graalgoT"}
 			}
 		}

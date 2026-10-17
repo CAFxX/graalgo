@@ -12,8 +12,8 @@ import (
 // TestEmitProducesBinary verifies that Emit produces a real executable
 // binary (not a shell script) embedding the frontend output.
 func TestEmitProducesBinary(t *testing.T) {
-	// Minimal fake frontend JSON. Emit does not validate the content;
-	// it only packages it.
+	// Minimal fake frontend JSON carrying the expected wire version.
+	// Emit validates it (see the Reject tests below).
 	wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
 
 	out := filepath.Join(t.TempDir(), "prog")
@@ -78,6 +78,69 @@ func TestEmitNoRoot(t *testing.T) {
 	err := Emit(Artifact{OutputPath: filepath.Join(t.TempDir(), "prog"), WireJSON: []byte("{}")})
 	if err == nil || !strings.Contains(err.Error(), "graalgo root") {
 		t.Errorf("Emit with no graalgo root = %v, want root error", err)
+	}
+}
+
+// TestEmitRejectsMalformedWireJSON is the negative test for QN-6: a
+// document that is not JSON must fail the build loudly, not embed.
+func TestEmitRejectsMalformedWireJSON(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "prog")
+	err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: "/x",
+		WireJSON:    []byte(`{"frontend": "v1", truncated`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid frontend output") {
+		t.Errorf("Emit with malformed JSON = %v, want invalid-output error", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("Emit wrote an artifact despite the validation failure")
+	}
+}
+
+// TestEmitRejectsVersionSkew is the negative test for QN-6: wire JSON
+// from a frontend speaking a different protocol version must fail the
+// build loudly — never produce an artifact that dies at run time.
+func TestEmitRejectsVersionSkew(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "prog")
+	err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: "/x",
+		WireJSON:    []byte(`{"frontend":"v99"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "wire protocol version mismatch") {
+		t.Errorf("Emit with skewed version = %v, want version-mismatch error", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("Emit wrote an artifact despite the validation failure")
+	}
+}
+
+// TestEmitRejectsMissingVersion pins the wrong-schema case: syntactically
+// valid JSON with no "frontend" field is not a frontend document.
+func TestEmitRejectsMissingVersion(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "prog")
+	err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: "/x",
+		WireJSON:    []byte(`{"functions":[]}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing \"frontend\"") {
+		t.Errorf("Emit with no frontend field = %v, want missing-field error", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("Emit wrote an artifact despite the validation failure")
+	}
+}
+
+// TestEmitAcceptsExpectedWireVersion is the positive test for QN-6: a
+// well-formed document at the driver's expected protocol version embeds
+// cleanly.
+func TestEmitAcceptsExpectedWireVersion(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "prog")
+	wireJSON := []byte(`{"frontend":"v1","package":{"name":"main"}}`)
+	if err := Emit(Artifact{OutputPath: out, GraalgoRoot: "/x", WireJSON: wireJSON}); err != nil {
+		t.Fatalf("Emit with valid v1 JSON: %v", err)
 	}
 }
 

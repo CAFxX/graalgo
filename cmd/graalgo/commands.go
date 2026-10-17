@@ -261,13 +261,11 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			failed = true
-		}
-	}
-	if failed {
+	// Frontend gate: run --check once over the whole file set, exactly as
+	// cmdBuild does. Per-file invocations would fail with
+	// undefined-symbol artifacts for cross-file references before the
+	// analyzers ever run.
+	if code := graalgoRun(root, append([]string{"--check"}, files...)); code != 0 {
 		return 1
 	}
 	// Run the analyzers over all files as one package.

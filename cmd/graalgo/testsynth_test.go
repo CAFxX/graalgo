@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -964,5 +965,111 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestDiscoverTestsMirrorsGoTest is the C6 regression test: discovery
+// must select exactly what `go test` would — func TestXxx(t *testing.T)
+// with a non-empty suffix whose first rune is not lowercase — and
+// nothing else. In particular TestMain (the test binary's entry point),
+// helpers with wrong-typed parameters, and bare `Test` are never tests.
+func TestDiscoverTestsMirrorsGoTest(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/discover\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package discover\n")
+	writeFile(t, root, "a_test.go", `package discover
+
+import "testing"
+
+func TestReal(t *testing.T)         {}
+func TestUnicodeÅ(t *testing.T)      {}
+func Test123(t *testing.T)           {}
+func TestXxx_suffix(t *testing.T)   {}
+
+func TestMain(m *testing.M)                {}
+func Test(t *testing.T)                    {}
+func Testlower(t *testing.T)               {}
+func TestHelper(x int)                     {}
+func TestTwoParams(t *testing.T, extra int) {}
+func TestNoParams()                        {}
+func TestReturns(t *testing.T) int         { return 0 }
+func TestGeneric[T any](t *testing.T)      {}
+func BenchmarkBig(b *testing.B)            {}
+func FuzzIt(f *testing.F)                  {}
+func Example_output()                      {}
+func helper(x int)                         {}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"TestReal", "TestUnicodeÅ", "Test123", "TestXxx_suffix"}
+	if !reflect.DeepEqual(tests, want) {
+		t.Fatalf("discoverTests = %v, want %v", tests, want)
+	}
+	// The selected tests must be runnable by the synthesized driver:
+	// every selected name appears as a `Name(tt)` call in the generated
+	// main, and nothing unselected does.
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	for _, n := range want {
+		if strings.Count(src, n+"(tt)") != 1 {
+			t.Errorf("driver does not call selected test %s exactly once", n)
+		}
+	}
+	for _, n := range []string{"TestMain", "TestHelper", "Testlower", "TestReturns", "TestGeneric", "TestTwoParams", "TestNoParams"} {
+		if strings.Contains(src, n+"(tt)") {
+			t.Errorf("driver calls unselected function %s", n)
+		}
+	}
+	// TestMain must never appear as a test entry at all — the driver
+	// must not even emit a result line for it.
+	if strings.Contains(src, `"TestMain"`) {
+		t.Errorf("driver references TestMain:\n%s", src)
+	}
+}
+
+// TestAliasedTestingImport covers a file importing testing under an
+// explicit local name. Discovery must resolve the *testing.T parameter
+// through the file's own import bindings (not the literal qualifier
+// "testing"), and synthesis must rewrite it to *graalgoT so the
+// generated driver compiles — the two halves of the C6 mechanism must
+// agree.
+func TestAliasedTestingImport(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/aliastest\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package aliastest\n")
+	writeFile(t, root, "p_test.go", `package aliastest
+
+import tt "testing"
+
+func TestAliased(t *tt.T) {
+	t.Helper()
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestAliased" {
+		t.Fatalf("discoverTests = %v", tests)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	// The aliased *tt.T parameter must be rewritten to *graalgoT.
+	if !strings.Contains(src, "func TestAliased(t *graalgoT,)") {
+		t.Errorf("driver did not rewrite the aliased *tt.T param:\n%s", src)
+	}
+	if strings.Contains(src, "*tt.T") {
+		t.Errorf("driver left an unrewritten *tt.T reference:\n%s", src)
+	}
+	// The driver must parse.
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
 	}
 }
