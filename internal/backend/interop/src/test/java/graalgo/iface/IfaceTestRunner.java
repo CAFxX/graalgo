@@ -28,6 +28,9 @@ public final class IfaceTestRunner {
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
+        // RV-P1-22 (2026-10-17): fire-instant mapping on the GoTimerT
+        // delivery path (fire value = heap fire instant, not delivery time).
+        TESTS.add(graalgo.p3time.GoTimerTFireTimeTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);

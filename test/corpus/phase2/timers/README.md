@@ -7,10 +7,12 @@ gc to produce `tm*.expected`. The Java translations in
 `TimerDifferentialTest` are mechanical (see its translation convention)
 and must produce byte-identical output.
 
-Only event ORDER is significant — never wall-clock values. Sleep
-margins are generous (≥300ms separations; 50ms sat inside the measured
-fire-lateness noise band and flaked — P1-2) so scheduling jitter cannot
-reorder events. If a program flakes, widen the sleeps.
+Only event ORDER is significant — never wall-clock values — EXCEPT tm16
+(RV-P1-22 carve-out, 2026-10-17): tm16 is the first value-sensitive case,
+asserting the `time.Time` VALUE delivered on timer channels is the fire
+instant. Margins follow the P1-2 rule (≥300ms separations; 50ms tolerance,
+sat inside the measured fire-lateness noise band). If a program flakes,
+widen the sleeps.
 
 These .go files double as the future end-to-end corpus: once the
 exporter lowers the `time` package (parent dependency), the same
@@ -37,3 +39,5 @@ Programs:
 - tm13: Ticker Stop with buffered tick → drained, 0 remaining (Go 1.23+)
 - tm14: Ticker Reset with buffered tick → stale drained, fresh tick arrives
 - tm15: len/cap of timer/ticker channels are 0 in every state (DIV-M3-1)
+- tm16: fire-value is the fire instant (RV-P1-22): `<-time.After(300ms)` lands
+  in `[before+300ms-50ms, after+50ms]`; 3 ticker ticks non-decreasing

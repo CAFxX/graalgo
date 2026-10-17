@@ -58,6 +58,18 @@ import graalgo.values.GoStructDescriptor;
  * narrowing the window to that single handoff; gc documents the same
  * race for concurrent Stop/Reset.
  *
+ * <p>Clock-domain mapping (RV-P1-22): the heap delivers the fire instant
+ * in {@code nanoTime()} domain; Go code must observe the fire instant as
+ * wall-clock {@code time.Time}. Each timer captures a nanoTime→wall
+ * offset at construction (re-captured on {@link #reset}, i.e. each new
+ * arming epoch) and the translator maps {@code fireNano + offset}.
+ * Known limitation: a wall-clock step (NTP/admin) between capture and
+ * fire is not tracked — the reported {@code Time} misses the step, while
+ * scheduling truth stays nanoTime-based so no timer fires early/late;
+ * {@code reset()} re-pairs the clocks. {@code nanoTime()} rate drift vs
+ * the wall clock is ppm-level (single-digit ms over a one-hour timer),
+ * below scheduler-lateness noise.
+ *
  * <p>Copying copies the reference (the ADR-0002 {@code sync.Mutex}
  * pattern): this is not a {@code GoStruct}, so assignment, argument
  * passing, and interface boxing carry the reference.
@@ -94,6 +106,41 @@ public class GoTimerT {
     private final AtomicBoolean fCommitted = new AtomicBoolean(false);
 
     /**
+     * nanoTime→wall offset captured at construction and re-captured on
+     * every {@link #reset()} (a new arming epoch); maps the heap's
+     * nanoTime-domain fire instant to unix nanos on the translator's
+     * delivery path. Volatile: written under {@link #lock} in
+     * {@link #reset()}, read lock-free by the translator goroutine.
+     * Package-private for the same-package unit tests.
+     */
+    volatile long nanoToWallOffset;
+
+    /**
+     * Captures the nanoTime→wall offset: pairs a {@code currentTimeMillis}
+     * read with the midpoint of two {@code nanoTime} reads, bounding the
+     * pairing error to {@code (n2-n1)/2} ns instead of a full scheduling
+     * quantum.
+     */
+    static long captureNanoToWallOffset() {
+        long n1 = System.nanoTime();
+        long wallMs = System.currentTimeMillis();
+        long n2 = System.nanoTime();
+        return wallMs * 1_000_000L - (n1 + n2) / 2;
+    }
+
+    /**
+     * Maps a heap fire instant ({@code nanoTime} domain) to unix nanos via
+     * a capture-time offset. Overflow-safe:
+     * {@code fireNano + (wallMs·1e6 − nanoPair) = wallMs·1e6 + (fireNano − nanoPair)};
+     * {@code fireNano − nanoPair} is the elapsed nanos since capture
+     * (≥ ~0, small for any real timer lifetime; {@code nanoTime()}
+     * magnitudes are ≪ 2⁶³ in practice), so the sum stays far inside int64.
+     */
+    static long fireToUnixNanos(long fireNano, long nanoToWallOffset) {
+        return fireNano + nanoToWallOffset;
+    }
+
+    /**
      * @param timer     the Phase-2 one-shot timer (already armed)
      * @param ticker    true for {@code *time.Ticker} (the translator loops)
      * @param afterFunc non-null for {@code AfterFunc}: spawned on fire
@@ -115,6 +162,9 @@ public class GoTimerT {
         this.sched = SchedulerCore.current();
         this.internal = tc;
         this.user = new TimeChan();
+        // Capture the clock-pairing BEFORE the translator is spawned: the
+        // delivery path reads it lock-free (volatile publish here).
+        this.nanoToWallOffset = captureNanoToWallOffset();
         ensureTranslator();
     }
 
@@ -170,6 +220,8 @@ public class GoTimerT {
             was = timer.reset(ns);
             generation++;
             armed = true;
+            // New arming epoch → re-pair the clocks (RV-P1-22).
+            nanoToWallOffset = captureNanoToWallOffset();
             // Wake any translator parked on the old done, then install a
             // fresh one for the new arming (close-then-replace is atomic
             // under lock, so the translator re-reads a consistent pair).
@@ -275,18 +327,22 @@ public class GoTimerT {
                     throw new IllegalStateException("p3time: timer heap channel closed");
                 }
                 Object fireVal = ChanOps.selectRecvValue();
-                if (!(fireVal instanceof Long)) {
+                if (!(fireVal instanceof Long fireNanoBox)) {
                     throw new IllegalStateException(
                             "p3time: timer heap channel delivered non-Long " + fireVal);
                 }
+                long fireNano = fireNanoBox; // the heap's fire instant, nanoTime domain
                 if (user.isClosed()) {
                     // gc: send on a closed channel panics (even the
                     // runtime's non-blocking timer send).
                     Panic.throwPanic(new GoString(
                             "send on closed channel".getBytes(StandardCharsets.UTF_8)));
                 }
+                // RV-P1-22: the delivered Time is the heap's fire instant
+                // mapped to unix nanos — never the translator's
+                // delivery-time wall read.
                 GoStruct tv = new GoStruct(timeDesc,
-                        new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
+                        new long[]{fireToUnixNanos(fireNano, nanoToWallOffset), 1}, new Object[0]);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the
