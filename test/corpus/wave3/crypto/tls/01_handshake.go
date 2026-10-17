@@ -95,7 +95,7 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string) {
+func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}, serverDone chan<- struct{}) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -111,6 +111,11 @@ func runServer(port string, ready chan<- string) {
 	if err := tlsConn.Handshake(); err != nil {
 		panic("server handshake: " + err.Error())
 	}
+	// Deterministic print ordering for the byte-identical differential:
+	// the client prints its handshake lines before the server prints.
+	// (This replaces a 10s sleep that used to live in the TLS handshake
+	// path solely to win this race.)
+	<-clientPrinted
 	cs := tlsConn.ConnectionState()
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
@@ -123,9 +128,12 @@ func runServer(port string, ready chan<- string) {
 		panic("server write: " + err.Error())
 	}
 	fmt.Println("server: echo-ok")
+	// Signal the client that the server's final line is printed, so the
+	// differential output order is deterministic (see runClient).
+	close(serverDone)
 }
 
-func runClient(port string) {
+func runClient(port string, printed chan<- struct{}, serverDone <-chan struct{}) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -135,6 +143,9 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	// Signal the server that the client's handshake lines are printed,
+	// so the differential output order is deterministic (see runServer).
+	close(printed)
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -144,7 +155,11 @@ func runClient(port string) {
 	if err != nil {
 		panic("client read: " + err.Error())
 	}
-	fmt.Println("client: echo-match:", string(buf[:n]) == msg)
+	match := string(buf[:n]) == msg
+	// Deterministic print ordering for the byte-identical differential:
+	// the server's final line is printed before the client's.
+	<-serverDone
+	fmt.Println("client: echo-match:", match)
 }
 
 func main() {
@@ -160,13 +175,20 @@ func main() {
 	}
 	switch mode {
 	case "server":
+		// Standalone server (external client): no print-ordering
+		// constraint; pass already-closed / never-read channels.
+		closed := make(chan struct{})
+		close(closed)
 		ready := make(chan string, 1)
-		go runServer(port, ready)
+		go runServer(port, ready, closed, make(chan struct{}))
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port)
+		printed := make(chan struct{})
+		serverDone := make(chan struct{})
+		close(serverDone)
+		runClient(port, printed, serverDone)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,8 +199,10 @@ func main() {
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(ephemPort, ready)
+		printed := make(chan struct{})
+		serverDone := make(chan struct{})
+		go runServer(ephemPort, ready, printed, serverDone)
 		<-ready
-		runClient(ephemPort)
+		runClient(ephemPort, printed, serverDone)
 	}
 }

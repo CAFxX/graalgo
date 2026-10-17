@@ -732,6 +732,8 @@ public final class LinknameIntrinsics {
                 args -> TlsRuntime.engineStatus(args[0]), 1);
         Linknames.register("graalgo.tls.wrap",
                 args -> TlsRuntime.wrap(args[0], args[1]), 2);
+        Linknames.register("graalgo.tls.closeWrite",
+                args -> TlsRuntime.closeWrite(args[0]), 1);
         Linknames.register("graalgo.tls.unwrap",
                 args -> TlsRuntime.unwrap(args[0], args[1]), 2);
         Linknames.register("graalgo.tls.hasPending",

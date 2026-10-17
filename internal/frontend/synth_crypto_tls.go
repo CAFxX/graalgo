@@ -38,32 +38,198 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"sync"
 	"time"
 	"unsafe"
 )
 
 // TLS version constants.
 const (
+	VersionSSL30 = 0x0300
 	VersionTLS10 = 0x0301
 	VersionTLS11 = 0x0302
 	VersionTLS12 = 0x0303
 	VersionTLS13 = 0x0304
 )
 
-// Cipher suite constants (subset for M9; full list in cipher_suites.go).
+// VersionName returns the name for the passed protocol version,
+// or a fallback representation of the version if unknown.
+// Mirrors gc go1.27.1.
+func VersionName(version uint16) string {
+	switch version {
+	case VersionSSL30:
+		return "SSLv3"
+	case VersionTLS10:
+		return "TLS 1.0"
+	case VersionTLS11:
+		return "TLS 1.1"
+	case VersionTLS12:
+		return "TLS 1.2"
+	case VersionTLS13:
+		return "TLS 1.3"
+	default:
+		return fmt.Sprintf("0x%04X", version)
+	}
+}
+
+// Cipher suite constants (gc go1.27.1 src/crypto/tls/cipher_suites.go).
 const (
+	TLS_RSA_WITH_RC4_128_SHA                uint16 = 0x0005
+	TLS_RSA_WITH_3DES_EDE_CBC_SHA           uint16 = 0x000a
+	TLS_RSA_WITH_AES_128_CBC_SHA            uint16 = 0x002f
+	TLS_RSA_WITH_AES_256_CBC_SHA            uint16 = 0x0035
+	TLS_RSA_WITH_AES_128_CBC_SHA256         uint16 = 0x003c
 	TLS_RSA_WITH_AES_128_GCM_SHA256         uint16 = 0x009c
 	TLS_RSA_WITH_AES_256_GCM_SHA384         uint16 = 0x009d
+	TLS_ECDHE_ECDSA_WITH_RC4_128_SHA        uint16 = 0xc007
+	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA    uint16 = 0xc009
+	TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA    uint16 = 0xc00a
+	TLS_ECDHE_RSA_WITH_RC4_128_SHA          uint16 = 0xc011
+	TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA     uint16 = 0xc012
+	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA      uint16 = 0xc013
+	TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA      uint16 = 0xc014
+	TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256 uint16 = 0xc023
+	TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256   uint16 = 0xc027
 	TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256   uint16 = 0xc02f
 	TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 uint16 = 0xc02b
 	TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384   uint16 = 0xc030
 	TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 uint16 = 0xc02c
-	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305    uint16 = 0xcca8
-	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305  uint16 = 0xcca9
+	TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256   uint16 = 0xcca8
+	TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 uint16 = 0xcca9
 	TLS_AES_128_GCM_SHA256                  uint16 = 0x1301
 	TLS_AES_256_GCM_SHA384                  uint16 = 0x1302
 	TLS_CHACHA20_POLY1305_SHA256            uint16 = 0x1303
+	TLS_FALLBACK_SCSV                       uint16 = 0x5600
 )
+
+// CipherSuite describes a TLS cipher suite.
+type CipherSuite struct {
+	ID   uint16
+	Name string
+
+	// SupportedVersions is the list of TLS protocol versions that can
+	// negotiate this cipher suite.
+	SupportedVersions []uint16
+
+	// Insecure is true if the cipher suite has known security issues
+	// due to its primitives, design, or implementation.
+	Insecure bool
+}
+
+// CipherSuites returns the cipher suites implemented by this package,
+// excluding those with security issues (see InsecureCipherSuites).
+// Mirrors gc go1.27.1.
+func CipherSuites() []*CipherSuite {
+	supportedUpToTLS12 := []uint16{VersionTLS10, VersionTLS11, VersionTLS12}
+	supportedOnlyTLS12 := []uint16{VersionTLS12}
+	supportedOnlyTLS13 := []uint16{VersionTLS13}
+	return []*CipherSuite{
+		{ID: TLS_AES_128_GCM_SHA256, Name: "TLS_AES_128_GCM_SHA256", SupportedVersions: supportedOnlyTLS13},
+		{ID: TLS_AES_256_GCM_SHA384, Name: "TLS_AES_256_GCM_SHA384", SupportedVersions: supportedOnlyTLS13},
+		{ID: TLS_CHACHA20_POLY1305_SHA256, Name: "TLS_CHACHA20_POLY1305_SHA256", SupportedVersions: supportedOnlyTLS13},
+
+		{ID: TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, Name: "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", SupportedVersions: supportedUpToTLS12},
+		{ID: TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, Name: "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", SupportedVersions: supportedUpToTLS12},
+		{ID: TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, Name: "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", SupportedVersions: supportedUpToTLS12},
+		{ID: TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, Name: "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA", SupportedVersions: supportedUpToTLS12},
+		{ID: TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, Name: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", SupportedVersions: supportedOnlyTLS12},
+		{ID: TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, Name: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", SupportedVersions: supportedOnlyTLS12},
+		{ID: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, Name: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", SupportedVersions: supportedOnlyTLS12},
+		{ID: TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, Name: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", SupportedVersions: supportedOnlyTLS12},
+		{ID: TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, Name: "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", SupportedVersions: supportedOnlyTLS12},
+		{ID: TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, Name: "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", SupportedVersions: supportedOnlyTLS12},
+	}
+}
+
+// InsecureCipherSuites returns the cipher suites implemented by this package
+// which have security issues. Mirrors gc go1.27.1.
+func InsecureCipherSuites() []*CipherSuite {
+	supportedUpToTLS12 := []uint16{VersionTLS10, VersionTLS11, VersionTLS12}
+	supportedOnlyTLS12 := []uint16{VersionTLS12}
+	mk := func(id uint16, name string, vers []uint16) *CipherSuite {
+		return &CipherSuite{ID: id, Name: name, SupportedVersions: vers, Insecure: true}
+	}
+	return []*CipherSuite{
+		mk(TLS_RSA_WITH_RC4_128_SHA, "TLS_RSA_WITH_RC4_128_SHA", supportedUpToTLS12),
+		mk(TLS_RSA_WITH_3DES_EDE_CBC_SHA, "TLS_RSA_WITH_3DES_EDE_CBC_SHA", supportedUpToTLS12),
+		mk(TLS_RSA_WITH_AES_128_CBC_SHA, "TLS_RSA_WITH_AES_128_CBC_SHA", supportedUpToTLS12),
+		mk(TLS_RSA_WITH_AES_256_CBC_SHA, "TLS_RSA_WITH_AES_256_CBC_SHA", supportedUpToTLS12),
+		mk(TLS_RSA_WITH_AES_128_CBC_SHA256, "TLS_RSA_WITH_AES_128_CBC_SHA256", supportedOnlyTLS12),
+		mk(TLS_RSA_WITH_AES_128_GCM_SHA256, "TLS_RSA_WITH_AES_128_GCM_SHA256", supportedOnlyTLS12),
+		mk(TLS_RSA_WITH_AES_256_GCM_SHA384, "TLS_RSA_WITH_AES_256_GCM_SHA384", supportedOnlyTLS12),
+		mk(TLS_ECDHE_ECDSA_WITH_RC4_128_SHA, "TLS_ECDHE_ECDSA_WITH_RC4_128_SHA", supportedUpToTLS12),
+		mk(TLS_ECDHE_RSA_WITH_RC4_128_SHA, "TLS_ECDHE_RSA_WITH_RC4_128_SHA", supportedUpToTLS12),
+		mk(TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA", supportedUpToTLS12),
+		mk(TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256", supportedOnlyTLS12),
+		mk(TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256", supportedOnlyTLS12),
+	}
+}
+
+// CipherSuiteName returns the standard name for the passed cipher suite ID,
+// or a fallback representation of the ID if not implemented by this package.
+// Mirrors gc go1.27.1.
+func CipherSuiteName(id uint16) string {
+	for _, c := range CipherSuites() {
+		if c.ID == id {
+			return c.Name
+		}
+	}
+	for _, c := range InsecureCipherSuites() {
+		if c.ID == id {
+			return c.Name
+		}
+	}
+	return fmt.Sprintf("0x%04X", id)
+}
+
+// AlertError is a TLS alert value (RFC 8446, Section 6).
+// Mirrors gc go1.27.1 (type AlertError uint8).
+type AlertError uint8
+
+// Error returns a description of the alert.
+func (e AlertError) Error() string {
+	if s, ok := alertText[uint8(e)]; ok {
+		return "tls: " + s
+	}
+	return fmt.Sprintf("tls: alert(%d)", uint8(e))
+}
+
+var alertText = map[uint8]string{
+	0:   "close notify",
+	10:  "unexpected message",
+	20:  "bad record MAC",
+	21:  "decryption failed",
+	22:  "record overflow",
+	30:  "decompression failure",
+	40:  "handshake failure",
+	42:  "bad certificate",
+	43:  "unsupported certificate",
+	44:  "revoked certificate",
+	45:  "expired certificate",
+	46:  "unknown certificate",
+	47:  "illegal parameter",
+	48:  "unknown certificate authority",
+	49:  "access denied",
+	50:  "decode error",
+	51:  "decrypt error",
+	60:  "export restriction",
+	70:  "protocol version",
+	71:  "insufficient security",
+	80:  "internal error",
+	86:  "inappropriate fallback",
+	90:  "user canceled",
+	100: "no renegotiation",
+	109: "missing extension",
+	110: "unsupported extension",
+	111: "certificate unobtainable",
+	112: "unrecognized name",
+	113: "bad certificate status response",
+	114: "bad certificate hash value",
+	115: "unknown PSK identity",
+	116: "certificate required",
+	120: "no application protocol",
+	121: "ECH required",
+}
 
 // CurveID identifies an elliptic curve.
 type CurveID uint16
@@ -95,11 +261,216 @@ type Config struct {
 	CipherSuites           []uint16
 	PreferServerCipherSuites bool
 	SessionTicketsDisabled bool
+	SessionTicketKey       [32]byte
+	ClientSessionCache     ClientSessionCache
 	MinVersion             uint16
 	MaxVersion             uint16
 	CurvePreferences       []CurveID
+	DynamicRecordSizingDisabled bool
 	Renegotiation          RenegotiationSupport
 	KeyLogWriter           io.Writer
+
+	// sessionTicketKeys holds keys installed via SetSessionTicketKeys.
+	// The Java SSLEngine manages its own session-ticket encryption;
+	// these are stored for API compatibility only.
+	sessionTicketKeys [][32]byte
+}
+
+// Clone returns a shallow clone of c. It is safe to clone a Config that is
+// being used concurrently by a TLS client or server.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	c2 := *c
+	return &c2
+}
+
+// SetSessionTicketKeys updates the session ticket keys used by c.
+// Like gc, it panics if keys is empty.
+func (c *Config) SetSessionTicketKeys(keys [][32]byte) {
+	if len(keys) == 0 {
+		panic("tls: keys must have at least one key")
+	}
+	c.sessionTicketKeys = keys
+}
+
+// BuildNameToCertificate parses Certificates and populates NameToCertificate.
+// Mirrors gc go1.27.1.
+func (c *Config) BuildNameToCertificate() {
+	c.NameToCertificate = make(map[string]*Certificate)
+	for i := range c.Certificates {
+		cert := &c.Certificates[i]
+		leaf := cert.Leaf
+		if leaf == nil && len(cert.Certificate) > 0 {
+			var err error
+			leaf, err = x509.ParseCertificate(cert.Certificate[0])
+			if err != nil {
+				continue
+			}
+		}
+		if leaf == nil {
+			continue
+		}
+		// If SANs are *not* present, some clients will consider the
+		// certificate valid for the name in the Common Name.
+		if leaf.Subject.CommonName != "" && len(leaf.DNSNames) == 0 {
+			c.NameToCertificate[leaf.Subject.CommonName] = cert
+		}
+		for _, san := range leaf.DNSNames {
+			c.NameToCertificate[san] = cert
+		}
+	}
+}
+
+// SessionState is the state of a TLS session, used for session resumption.
+// Only the exported fields are meaningful to callers; the session ticket
+// itself is managed by the Java SSLEngine.
+type SessionState struct {
+	// Extra contains extra data to be stored with the session.
+	Extra [][]byte
+	// EarlyData indicates whether the session can be used for early data.
+	EarlyData bool
+
+	ticket []byte
+}
+
+// ClientSessionState is the state of a single TLS session, as stored in a
+// ClientSessionCache.
+type ClientSessionState struct {
+	session *SessionState
+}
+
+// ResumptionState returns the session ticket sent by the server and the
+// state necessary to resume this session.
+func (cs *ClientSessionState) ResumptionState() (ticket []byte, state *SessionState, err error) {
+	if cs == nil || cs.session == nil {
+		return nil, nil, nil
+	}
+	return cs.session.ticket, cs.session, nil
+}
+
+// NewResumptionState returns a state value that can be returned by
+// ClientSessionCache.Get to resume a previous session.
+func NewResumptionState(ticket []byte, state *SessionState) (*ClientSessionState, error) {
+	if state == nil {
+		return nil, errors.New("tls: nil SessionState")
+	}
+	state.ticket = ticket
+	return &ClientSessionState{session: state}, nil
+}
+
+// ClientSessionCache is a cache of ClientSessionState entries for TLS
+// clients, used for session resumption.
+type ClientSessionCache interface {
+	// Get searches for a ClientSessionState associated with the given key.
+	// On return, ok is true if one was found.
+	Get(sessionKey string) (session *ClientSessionState, ok bool)
+
+	// Put adds the ClientSessionState to the cache with the given key.
+	// If called with a nil *ClientSessionState, it removes the entry.
+	Put(sessionKey string, cs *ClientSessionState)
+}
+
+// NewLRUClientSessionCache returns a ClientSessionCache with the given
+// capacity. Once the cache reaches capacity, the least-recently-used
+// entry is evicted. Pure-Go implementation mirroring gc's semantics.
+func NewLRUClientSessionCache(capacity int) ClientSessionCache {
+	if capacity < 1 {
+		capacity = 1
+	}
+	return &lruSessionCache{capacity: capacity, entries: make(map[string]*lruSessionCacheEntry)}
+}
+
+type lruSessionCacheEntry struct {
+	cs   *ClientSessionState
+	prev *lruSessionCacheEntry
+	next *lruSessionCacheEntry
+	key  string
+}
+
+type lruSessionCache struct {
+	mu       sync.Mutex
+	capacity int
+	entries  map[string]*lruSessionCacheEntry
+	newest   *lruSessionCacheEntry
+	oldest   *lruSessionCacheEntry
+}
+
+func (c *lruSessionCache) Get(sessionKey string) (*ClientSessionState, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[sessionKey]
+	if !ok {
+		return nil, false
+	}
+	c.moveToFront(e)
+	return e.cs, true
+}
+
+func (c *lruSessionCache) Put(sessionKey string, cs *ClientSessionState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[sessionKey]; ok {
+		e.cs = cs
+		if cs == nil {
+			c.remove(e)
+		} else {
+			c.moveToFront(e)
+		}
+		return
+	}
+	if cs == nil {
+		return
+	}
+	e := &lruSessionCacheEntry{cs: cs, key: sessionKey}
+	c.entries[sessionKey] = e
+	c.pushFront(e)
+	for len(c.entries) > c.capacity {
+		c.remove(c.oldest)
+	}
+}
+
+func (c *lruSessionCache) pushFront(e *lruSessionCacheEntry) {
+	e.prev = nil
+	e.next = c.newest
+	if c.newest != nil {
+		c.newest.prev = e
+	}
+	c.newest = e
+	if c.oldest == nil {
+		c.oldest = e
+	}
+}
+
+func (c *lruSessionCache) moveToFront(e *lruSessionCacheEntry) {
+	if e == c.newest {
+		return
+	}
+	if e.prev != nil {
+		e.prev.next = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	}
+	if e == c.oldest {
+		c.oldest = e.prev
+	}
+	c.pushFront(e)
+}
+
+func (c *lruSessionCache) remove(e *lruSessionCacheEntry) {
+	if e.prev != nil {
+		e.prev.next = e.next
+	} else {
+		c.newest = e.next
+	}
+	if e.next != nil {
+		e.next.prev = e.prev
+	} else {
+		c.oldest = e.prev
+	}
+	delete(c.entries, e.key)
 }
 
 // ClientAuthType determines client authentication.
@@ -739,30 +1110,16 @@ func (c *Conn) Handshake() error {
 			if err := c.verifyPeer(); err != nil {
 				return err
 			}
-			// P3-M9 (x509): the in-process handshake test prints
-			// "handshake-ok" right after Handshake() returns. The client's
-			// verifyPeer (x509 chain building under Truffle) is slower
-			// than the server's no-op verify, so the server would print
-			// first while gc prints the client first. Brief yield so the
-			// client's prints land first (byte-identical differential).
-			// TODO: replace with proper synchronization or faster verify.
-			if !c.isClient {
-				time.Sleep(10 * time.Second)
-			}
 			return nil
 		case engineNeedWrap:
+			// The graalgo.tls.wrap trap drains the engine's pending
+			// handshake flight internally (Java side, driven by output
+			// production — e.g. ChangeCipherSpec followed by Finished in
+			// TLS 1.3 — not by the reported status, which SSLEngine may
+			// report prematurely). This loop therefore drives strictly
+			// on engine status: one wrap per NEED_WRAP observation, and
+			// the outer switch re-queries the status afterwards.
 			out := wrapTrap(c.engineHandle, nil)
-			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
-			// separately from Finished. If wrap returns a tiny output,
-			// the engine may have more (e.g. Finished) — wrap again
-			// immediately instead of trusting a premature NEED_UNWRAP.
-			for i := 0; i < 3 && len(out) > 0 && len(out) < 10; i++ {
-				out2 := wrapTrap(c.engineHandle, nil)
-				if len(out2) == 0 {
-					break
-				}
-				out = append(out, out2...)
-			}
 			if len(out) > 0 {
 				if err := writeAll(c.conn, out); err != nil {
 					return err
@@ -923,6 +1280,9 @@ func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 //go:linkname tlsCloseTrap graalgo.tls.close
 func tlsCloseTrap(engineHandle int64)
 
+//go:linkname closeWriteTrap graalgo.tls.closeWrite
+func closeWriteTrap(engineHandle int64) []byte
+
 func (c *Conn) Close() error {
 	if c.engineHandle != 0 {
 		tlsCloseTrap(c.engineHandle)
@@ -945,6 +1305,37 @@ func (c *Conn) SetReadDeadline(t time.Time) error { return c.conn.SetReadDeadlin
 
 // SetWriteDeadline sets the write deadline.
 func (c *Conn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
+// CloseWrite shuts down the write side of the connection: it sends a
+// close_notify alert. The connection can still be read from afterwards.
+func (c *Conn) CloseWrite() error {
+	if !c.handshakeComplete {
+		return errors.New("tls: CloseWrite before handshake")
+	}
+	notify := closeWriteTrap(c.engineHandle)
+	if notify == nil {
+		return errors.New("tls: CloseWrite failed")
+	}
+	return writeAll(c.conn, notify)
+}
+
+// HandshakeContext runs the TLS handshake, or returns nil if the handshake
+// is already complete. An already-canceled context is reported immediately;
+// a context canceled while the handshake is in flight is observed once the
+// handshake returns (the synthetic handshake loop performs blocking I/O
+// with no cancellation points).
+func (c *Conn) HandshakeContext(ctx context.Context) error {
+	if c.handshakeComplete {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Handshake()
+}
+
+// OCSPResponse returns the OCSP status response stapled by the peer.
+// The synthetic engine never requests OCSP stapling, so this is always nil.
+func (c *Conn) OCSPResponse() []byte { return nil }
 
 // VerifyHostname verifies the hostname against the peer certificate chain
 // using x509 hostname semantics.
