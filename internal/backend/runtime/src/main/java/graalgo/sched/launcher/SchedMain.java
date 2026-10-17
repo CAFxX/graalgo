@@ -150,6 +150,10 @@ public final class SchedMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
+        // RV-P1-19: arm the drainer's deadlock detector — a whole Go
+        // program whose goroutines are all parked with no timers is a
+        // gc-defined deadlock (fatal, exit 2).
+        sched.setDeadlockDetectionEnabled(true);
         final int[] exitCode = {EXIT_OK};
         try {
             sched.spawn(() -> {

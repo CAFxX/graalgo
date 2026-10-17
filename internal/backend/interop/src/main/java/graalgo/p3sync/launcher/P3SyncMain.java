@@ -511,6 +511,10 @@ public final class P3SyncMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
+        // RV-P1-19: arm the drainer's deadlock detector — a whole Go
+        // program whose goroutines are all parked with no timers is a
+        // gc-defined deadlock (fatal, exit 2).
+        sched.setDeadlockDetectionEnabled(true);
         // RV-P1-19: the gc-faithful netpoll quirk (probe p6 — once the
         // poller thread exists the detector suppresses) is wired by
         // GoNetpoll.pollServerInit itself, covering every consumer.

@@ -110,6 +110,31 @@ public final class SchedulerCore {
     private final AtomicInteger spawnInflight = new AtomicInteger();
 
     /**
+     * Deadlock detector arming (RV-P1-19). The detector is a launcher
+     * policy: it must fire for whole Go programs (where an all-parked,
+     * timer-less scheduler is a gc-defined deadlock), but in-JVM unit
+     * tests routinely stage transient all-parked states that the test
+     * thread then resolves — firing there would be a false positive
+     * against the test's intent. Defaults to disarmed; the product
+     * launchers ({@code SchedMain}, {@code P3SyncMain}) arm it, and the
+     * detector's own unit tests arm it explicitly.
+     */
+    private volatile boolean deadlockDetectionEnabled;
+
+    /**
+     * Arms or disarms the drainer's deadlock detector (RV-P1-19).
+     * Disarmed by default; the product launchers arm it.
+     */
+    public void setDeadlockDetectionEnabled(boolean enabled) {
+        deadlockDetectionEnabled = enabled;
+    }
+
+    /** True once {@link #setDeadlockDetectionEnabled(boolean)} armed it. */
+    boolean deadlockDetectionEnabled() {
+        return deadlockDetectionEnabled;
+    }
+
+    /**
      * Deadlock detector state (RV-P1-19). Set once by the drainer when
      * the predicate fires (see {@link Drainer}); read by
      * {@link #awaitQuiescence}, which throws {@link DeadlockException}
