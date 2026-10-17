@@ -51,14 +51,14 @@ public final class ReflectConvertMisuseTest {
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"string\",\"name\":\"string\",\"untyped\":false}},"
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"pointer\",\"name\":\"Pointer\",\"untyped\":false}},"
             + "{\"kind\":\"struct\",\"detail\":{\"fields\":["
-            + "{\"name\":\"typ\",\"type\":" + T_UNSAFEPTR + "},"
-            + "{\"name\":\"ptr\",\"type\":" + T_UNSAFEPTR + "},"
-            + "{\"name\":\"flag\",\"type\":" + T_INT + "}]}},"
+            + "{\"name\":\"typ\",\"tag\":\"\",\"offset\":0,\"type\":" + T_UNSAFEPTR + "},"
+            + "{\"name\":\"ptr\",\"tag\":\"\",\"offset\":8,\"type\":" + T_UNSAFEPTR + "},"
+            + "{\"name\":\"flag\",\"tag\":\"\",\"offset\":16,\"type\":" + T_INT + "}]}},"
             + "{\"kind\":\"named\",\"detail\":{\"name\":\"reflect.Value\",\"underlying\":"
             + T_VALUE_STRUCT + ",\"methods\":[]}}"
             + "]";
 
-    private static final String POS = "{\"line\":1,\"col\":1,\"len\":1}";
+    private static final String POS = "{\"file\":0,\"line\":1,\"col\":1,\"len\":1}";
 
     private NodeFactory factory;
     private NodeFactory.BuildCtx ctx;
