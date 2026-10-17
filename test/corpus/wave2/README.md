@@ -1,7 +1,7 @@
 # P3-M8 wave-2 differential corpus
 
 Go programs exercising the wave-2 synthetic stdlib packages (io, os,
-syscall, reflect, unsafe, crypto/* — ), differential vs stock gc
+syscall, reflect, unsafe, crypto/*), differential vs stock gc
 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 Pipelining note: wave 2 is built in parallel with the P3-M7 remediation

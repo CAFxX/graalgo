@@ -1,8 +1,8 @@
 # P3-M7 wave-1 differential corpus
 
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
-bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
-), differential vs stock
+bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort),
+differential vs stock
 gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## Layout

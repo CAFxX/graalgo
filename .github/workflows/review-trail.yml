@@ -3,7 +3,7 @@
 #
 # Fails the push when any commit in the push delta lacks the review trailers
 # (`Reviewed-by:` + `Review-verdict: clean`). The convention is documented in
-# [docs/dev/review-trail.md](../docs/dev/review-trail.md); the check itself
+# [docs/dev/review-trail.md](../../docs/dev/review-trail.md); the check itself
 # lives in [.github/scripts/check_review_trail.py](../scripts/check_review_trail.py).
 #
 # Scope: pushes to master only. Lane branches (`wt/<chat>/<stream>`) carry

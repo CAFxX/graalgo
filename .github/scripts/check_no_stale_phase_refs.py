@@ -13,6 +13,8 @@ Usage: check_no_stale_phase_refs.py [--repo DIR]
 Exit 0: clean. Exit 1: stale references found (listed file:line).
 
 Exclusions (each deliberate, each documented):
+- this script itself (.github/scripts/check_no_stale_phase_refs.py) — its
+  docstring legitimately names the pattern it polices
 - docs/arch/** — archived history (phase docs, reviews, consolidated SPEC
   history). Frozen by design.
 - docs/dev/adr/** — dated architecture decision records. Rewriting them
@@ -57,6 +59,7 @@ EXCLUDE_DIRS = [
 ]
 EXCLUDE_FILES = {
     "docs/REPO_STRUCTURE.md",
+    ".github/scripts/check_no_stale_phase_refs.py",  # self: docstring names the pattern
     ".github/workflows/ci.yml",
     "test/e2e/run_module.sh",
     "tools/fuzz-soak/harness/diff_one.sh",
