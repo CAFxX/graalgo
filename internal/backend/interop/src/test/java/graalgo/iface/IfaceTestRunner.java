@@ -45,6 +45,10 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // R2 (review P1-8, 2026-10-17): reflect misuse (unsupported
+        // Convert, unknown op) must surface as a Go panic (ADR-0002 D4),
+        // never as an escaped IllegalStateException.
+        TESTS.add(graalgo.frontend.ReflectConvertMisuseTest.class);
     }
 
     private IfaceTestRunner() {}

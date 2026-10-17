@@ -9,6 +9,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.frontend.TypeTable;
 import graalgo.p3reflect.ReflectRefs.Cell;
 import graalgo.p3reflect.ReflectTypes.TypeInfo;
+import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
@@ -16,6 +17,7 @@ import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -89,13 +91,27 @@ public final class ReflectOpNode extends GoExprNode {
      * primitive kind (e.g. {@code unsafe.Pointer} tokens are Long) live
      * in primitive frame slots, so a blind {@code executeObject} throws
      * {@code FrameSlotTypeException}.
+     *
+     * <p>R2 (P1-8): the dispatch's {@code IllegalStateException} misuse
+     * signal (which carries gc's message text, e.g. {@code "reflect:
+     * convert ... not supported"}) is translated into a Go panic
+     * (ADR-0002 D4) — the {@code SyncOpNode.panicOnMisuse} pattern. A
+     * guest hitting an unsupported conversion must see gc's conversion
+     * panic (exit 2), not an "internal error" (exit 1).
      */
     private Object dispatchBoxed(VirtualFrame frame) {
         Object[] argv = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             argv[i] = boxArg(args[i], frame);
         }
-        return dispatch(op, argv);
+        try {
+            return dispatch(op, argv);
+        } catch (IllegalStateException e) {
+            // The message must be a D5 GoString, not a Java String —
+            // PanicRendering renders Java Strings as "(?) 0xADDR".
+            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)), null, null, this);
+            throw new AssertionError("unreachable: Panic.throwPanic returned");
+        }
     }
 
     /**
