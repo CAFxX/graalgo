@@ -475,7 +475,7 @@
       "buildOk": true,
       "exitCode": 2,
       "name": "49_deadlock_select",
-      "stderr": "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine 1 [select]:\nmain.main()\n\tmain.go:5\n\n",
+      "stderr": "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine # [select]:\nmain.main()\n\tmain.go:LINE\n\n",
       "stdin": "",
       "stdout": "",
       "timedOut": false
@@ -486,7 +486,7 @@
       "buildOk": true,
       "exitCode": 2,
       "name": "50_deadlock_chan_send",
-      "stderr": "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine 1 [chan wait]:\nmain.main()\n\tmain.go:5\n\n",
+      "stderr": "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine # [chan wait]:\nmain.main()\n\tmain.go:LINE\n\n",
       "stdin": "",
       "stdout": "",
       "timedOut": false
@@ -497,7 +497,7 @@
       "buildOk": true,
       "exitCode": 2,
       "name": "51_deadlock_chan_crossed",
-      "stderr": "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine 1 [chan wait]:\nmain.main()\n\tmain.go:12\n\ngoroutine 2 [chan wait]:\nmain.func1()\n\tmain.go:15\n\n",
+      "stderr": "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine # [chan wait]:\nmain.main()\n\tmain.go:LINE\n\ngoroutine # [chan wait]:\nmain.func1()\n\tmain.go:LINE\n\n",
       "stdin": "",
       "stdout": "",
       "timedOut": false
