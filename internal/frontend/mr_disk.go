@@ -55,13 +55,9 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	for _, f := range files {
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
+			if !ok || fd.Body == nil {
 				continue
 			}
-			// Body-less declarations (e.g. //go:noescape assembly stubs
-			// like reflect's chanrecv) are included: their call sites
-			// still need desugaring, and the generated __-helper gets a
-			// panic body (the real implementation is a backend intrinsic).
 			if numResults(fd) > 1 {
 				mrNames[fd.Name.Name] = true
 			}
@@ -99,7 +95,7 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		var newDecls []ast.Decl
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || numResults(fd) <= 1 {
+			if !ok || fd.Body == nil || numResults(fd) <= 1 {
 				newDecls = append(newDecls, decl)
 				continue
 			}
@@ -802,73 +798,52 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// the original body, before rewriteMRReturns reshapes it.
 	// Compute before rewriteMRReturns (which introduces its own __t :=
 	// bindings).
-	//
-	// Body-less declarations (e.g. //go:noescape assembly stubs like
-	// reflect's chanrecv): there is no body to rewrite. The __-helper
-	// gets a fail-fast panic body — the real implementation is a
-	// backend intrinsic. The pair type and stub are still generated so
-	// call sites desugar correctly.
-	var rewrittenBody *ast.BlockStmt
-	if fd.Body == nil {
-		rewrittenBody = &ast.BlockStmt{
-			List: []ast.Stmt{
-				&ast.ExprStmt{
-					X: &ast.CallExpr{
-						Fun: ast.NewIdent("panic"),
-						Args: []ast.Expr{&ast.BasicLit{Kind: token.STRING,
-							Value: `"__` + helper + ` not implemented: no Go body (backend intrinsic)"`}},
-					},
-				},
-			},
-		}
-	} else {
-		usedNames := usedNamedResults(fd)
-		rewrittenBody = rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
-		var namedDecls []ast.Stmt
-		if len(usedNames) > 0 && fd.Type.Results != nil {
-			for _, fld := range fd.Type.Results.List {
-				if len(fld.Names) == 0 {
-					continue
+	usedNames := usedNamedResults(fd)
+	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
+	var namedDecls []ast.Stmt
+	if len(usedNames) > 0 && fd.Type.Results != nil {
+		for _, fld := range fd.Type.Results.List {
+			if len(fld.Names) == 0 {
+				continue
+			}
+			var keep []*ast.Ident
+			for _, n := range fld.Names {
+				if usedNames[n.Name] {
+					// Fresh ident: reusing n would share its *ast.Object
+					// with the stub's named result (the stub reuses
+					// fd.Type), and go/types then misattributes uses —
+					// notably references from inside closures — as
+					// "declared and not used".
+					keep = append(keep, ast.NewIdent(n.Name))
 				}
-				var keep []*ast.Ident
-				for _, n := range fld.Names {
-					if usedNames[n.Name] {
-						// Fresh ident: reusing n would share its *ast.Object
-						// with the stub's named result (the stub reuses
-						// fd.Type), and go/types then misattributes uses —
-						// notably references from inside closures — as
-						// "declared and not used".
-						keep = append(keep, ast.NewIdent(n.Name))
-					}
-				}
-				if len(keep) > 0 {
-					namedDecls = append(namedDecls, &ast.DeclStmt{
-						Decl: &ast.GenDecl{
-							Tok: token.VAR,
-							Specs: []ast.Spec{
-								&ast.ValueSpec{Names: keep, Type: fld.Type},
-							},
+			}
+			if len(keep) > 0 {
+				namedDecls = append(namedDecls, &ast.DeclStmt{
+					Decl: &ast.GenDecl{
+						Tok: token.VAR,
+						Specs: []ast.Spec{
+							&ast.ValueSpec{Names: keep, Type: fld.Type},
 						},
+					},
+				})
+				// Mark each declared name as used: a named result that
+				// is only assigned (e.g. in a defer closure) but never
+				// read would trip go/types' "declared and not used" as
+				// a local variable. The blank assignment is a no-op
+				// that satisfies the use check.
+				for _, n := range keep {
+					namedDecls = append(namedDecls, &ast.AssignStmt{
+						Lhs: []ast.Expr{ast.NewIdent("_")},
+						Tok: token.ASSIGN,
+						Rhs: []ast.Expr{ast.NewIdent(n.Name)},
 					})
-					// Mark each declared name as used: a named result that
-					// is only assigned (e.g. in a defer closure) but never
-					// read would trip go/types' "declared and not used" as
-					// a local variable. The blank assignment is a no-op
-					// that satisfies the use check.
-					for _, n := range keep {
-						namedDecls = append(namedDecls, &ast.AssignStmt{
-							Lhs: []ast.Expr{ast.NewIdent("_")},
-							Tok: token.ASSIGN,
-							Rhs: []ast.Expr{ast.NewIdent(n.Name)},
-						})
-					}
 				}
 			}
 		}
-		if len(namedDecls) > 0 {
-			rewrittenBody.List = append(namedDecls, rewrittenBody.List...)
-		}
-	} // end else (fd.Body != nil); body-less case used panic body above
+	}
+	if len(namedDecls) > 0 {
+		rewrittenBody.List = append(namedDecls, rewrittenBody.List...)
+	}
 	helperDecl := &ast.FuncDecl{
 		Name: ast.NewIdent(helper),
 		Type: &ast.FuncType{

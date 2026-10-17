@@ -1176,7 +1176,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// with real Go source (e.g., strings.Cut) get pair-transformed
 			// via the userMRFuncs mechanism. Register here so call sites
 			// in importing packages classify correctly. registerUserMRFunc
-			// is idempotent and skips table-driven/single-result/bodyless.
+			// is idempotent and skips table-driven/single-result decls.
 			// General (real-x509 lane): fail-fast stubs skip the
 			// pair-transform (their panic body must be preserved).
 			if !skipPairTransform {

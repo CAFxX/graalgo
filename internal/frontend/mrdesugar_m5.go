@@ -3683,9 +3683,17 @@ func (e *exporter) registerUserMRPairs(funcs []*funcDeclInfo) error {
 // decision point for "does this func get a userMRFuncs entry", shared by
 // registerUserMRPairs (pre-pass) and exportFuncDecl, so the two can never
 // disagree. Returns (nil, nil) when fi must not be registered (synthetic
-// package func, generic template, at most one result, bodyless linkname
-// stub, or WS G disk-package multi-result stub — all cases exportFuncDecl
-// skips or rejects before reaching registration).
+// package func, generic template, at most one result, or WS G
+// disk-package multi-result stub — all cases exportFuncDecl skips or
+// rejects before reaching registration).
+//
+// Bodyless declarations (e.g. //go:noescape assembly stubs) are NOT
+// skipped: exportFuncDecl routes them to exportLinknameDecl, which emits
+// "unimplemented": true (or a linkname symbol) with no body — but their
+// call sites still need the pair transform, so the pair is pre-registered
+// here. The inline registration in exportLinknameDecl is idempotent
+// (guarded by `if _, ok := e.userMRFuncs[fi.obj]; !ok`), so the pre-pass
+// and the emission path cannot disagree.
 func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
 	if fi == nil || fi.isTemplate {
 		return nil, nil
@@ -3700,11 +3708,10 @@ func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
 	if fi.sig == nil || fi.sig.Results().Len() <= 1 {
 		return nil, nil
 	}
-	if fi.fd != nil && fi.fd.Body == nil {
-		// Bodyless (//go:linkname): exportFuncDecl routes these to
-		// exportLinknameDecl before reaching registration.
-		return nil, nil
-	}
+	// NOTE: bodyless FuncDecls (fd.Body == nil) intentionally fall through
+	// to registration below (see doc comment). The WS G disk-package check
+	// does not skip them: bodyless decls get no diskMRSpec (the disk
+	// transform leaves them untouched), so lookupDiskMR returns nil.
 	if fi.obj != nil && fi.obj.Pkg() != nil {
 		// WS G: disk-package multi-result stubs are skipped by
 		// exportFuncDecl (the desugar rewrites all calls to the
