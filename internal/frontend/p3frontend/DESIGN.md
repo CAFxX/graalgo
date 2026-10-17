@@ -103,12 +103,15 @@ over a visited set plus an explicit stack.
 - `"sync"` → synthetic package with the exact P3-M2b signatures
   (ADR-0002): `Mutex`/`RWMutex`/`WaitGroup`/`Once` with pointer-receiver
   methods (`Lock/Unlock`, `RLock/RUnlock`, `Add(int)/Done/Wait`,
-  `Do(func())`) plus the defined-but-out-of-scope `TryLock`/`TryRLock`/
-  `RLocker`/`WaitGroup.Go`. The mirror is pinned by
-  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete`; the frozen
-  exporter (not p3frontend) lowers the calls to `syncnew`/`syncop` wire
-  nodes and raises the named `not in M2 scope` errors
-  (`TestSyncScopeErrorParity`).
+  `Do(func())`) plus `TryLock`/`TryRLock`/`RLocker`/`WaitGroup.Go`. The
+  mirror is pinned by
+  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete`; it exists
+  for p3frontend-side type-checking only — the frozen exporter retired
+  the synthetic lowering in 503608ea (real-sync2) and now compiles the
+  real sync package from GOROOT disk sources (calls are real methodref
+  dispatches, not `syncnew`/`syncop` wire nodes; the former `not in M2
+  scope` errors are gone). The end-to-end path is pinned by
+  `TestSyncExportDir` and `TestSyncExtendedSurfaceExportParity`.
 - `"errors"` → synthetic package with the exact gc 1.27.1 signatures
   (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`/`AsType`; `As`
   keeps its exact signature with a fail-fast body (needs `reflect`).

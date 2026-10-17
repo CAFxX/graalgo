@@ -106,7 +106,7 @@ GO ?= $(HOME)/tools/go/bin/go
 
 .PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-ci test-regression
+all: generate build snapshot-check check test-v2 test-ci test-regression test-p3frontend
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -165,20 +165,22 @@ test-regression: generate build graalgo
 # internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
 # and `go test` in the p3frontend module. Needs the gofrontend binary
 # (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
-# the <repo>/internal/frontend/gofrontend fallback (export.go).
+# the <repo>/internal/frontend/gofrontend fallback (export.go). The two
+# differential tests need the backend classes (built by `build`).
 #
-# NOT in `all` yet: 4 pre-existing failures need owner fixes first
-# (all fail on master too, never ran in CI):
-#   TestSyncExportDir, TestSyncScopeErrorParity — real-sync exporter
-#     semantics (sync lowering / M2 scope errors); route to the sync
-#     owner or review-d2-vettest (sync test infra).
-#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner points at the removed phases/phase2 tree;
-#     rewire graalgoRun() to internal/backend/graalgo-run; route to
-#     review-t2-testinfra (test infra) or the backend owner.
-# Add test-p3frontend to `all` once those are green.
-test-p3frontend: generate
-	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
+# In `all` (hence per-push CI): this module's ~60 tests never ran in CI
+# before (E6). Two tests are skipped with tracked blockers, not silently:
+# TestTwoPackageDifferential and TestEmbeddedFieldRebinding exercise the
+# graalgo leg via internal/backend/graalgo-sync-run and are blocked on the
+# active graalgo/fix-multival-rhs lane (the backend AST build rejects the
+# real GOROOT fmt tree's multi-valued RHS assigns, e.g. fmt/scan.go:189;
+# fix pending on the real-fmt2 branch) — each Skip carries the reference.
+# /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
+P3FE_TMP := $(CURDIR)/internal/frontend/p3frontend/.tmp
+test-p3frontend: generate build
+	mkdir -p $(P3FE_TMP) && \
+	cd internal/frontend/p3frontend && TMPDIR="$(P3FE_TMP)" GOTMPDIR="$(P3FE_TMP)" $(GO) vet ./... && \
+	TMPDIR="$(P3FE_TMP)" GOTMPDIR="$(P3FE_TMP)" $(GO) test ./...
 
 # Frontend v2 module tests: the [internal/frontend/v2](internal/frontend/v2)
 # module (own go.mod) — parser, checker, emitter, and the Go→Java binary

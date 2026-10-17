@@ -1,5 +1,13 @@
 # [SYNC_DESIGN.md](SYNC_DESIGN.md) — P3-M2b `sync` Go bindings
 
+> **SUPERSEDED (2026-10-15):** the synthetic `sync`/`sync/atomic`
+> lowering described below was retired by `503608ea` (real-sync2, per
+> the no-bridges order) — both packages now compile from real GOROOT
+> disk sources and calls are ordinary method dispatches. This document
+> is retained as the historical record of the P3-M2b design; for the
+> current end-to-end `sync` path see `TestSyncExportDir` and
+> `TestSyncExtendedSurfaceExportParity` in [sync_test.go](sync_test.go).
+
 **Scope:** PLAN.md §4 P3-M2 (WS D), GG-0017 sync slice. Implements
 ADR-0002 (freeze exception for the synthetic `sync` package).
 **Status:** implemented 2026-10-06; differential corpus 22/22 vs gc 1.27.1.

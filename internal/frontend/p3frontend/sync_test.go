@@ -1,9 +1,12 @@
 package p3frontend
 
-// P3-M2b (WS D, ADR-0002): p3frontend tests for the synthetic "sync"
-// package. The importer reimplements the frozen exporter's synthetic sync
-// signatures (it cannot reuse them — unexported and frozen); these tests
-// pin the mirror so drift fails fast.
+// p3frontend tests for the "sync" package. The frozen exporter retired its
+// synthetic sync lowering in 503608ea (real-sync2: sync and sync/atomic
+// now compile from real GOROOT disk sources); the p3frontend importer
+// keeps a mirrored signature table for type-checking only (it cannot reuse
+// the frozen exporter's — unexported and frozen). The mirror tests pin the
+// table so drift fails fast; the ExportDir tests below pin the real-sync
+// end-to-end path (loader + importer + flattener + frozen exporter).
 
 import (
 	"go/format"
@@ -263,9 +266,11 @@ func TestSyncResolveImportSynthetic(t *testing.T) {
 }
 
 // TestSyncExportDir: a single-file program importing "sync" compiles
-// through ExportDir — loader (synthetic), importer (mirrored
-// signatures), flattener (import spec kept), and the frozen gofrontend
-// binary (syncnew/syncop nodes in the document).
+// through ExportDir — loader (synthetic-kind marker), importer (mirrored
+// signatures for type-checking), flattener (import spec kept), and the
+// frozen gofrontend binary, which since 503608ea (real-sync2) compiles the
+// REAL sync package from disk instead of the retired synthetic lowering.
+// Calls are real method dispatches (methodref), not syncnew/syncop nodes.
 func TestSyncExportDir(t *testing.T) {
 	dir := t.TempDir()
 	src := `package main
@@ -295,15 +300,19 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportDir with import \"sync\": %v", err)
 	}
+	// The real sync package compiled through: its types are in the doc and
+	// the calls are real method dispatches.
 	for _, want := range []string{
-		`"kind": "syncnew"`, `"kind": "syncop"`,
-		`"op": "Lock"`, `"op": "Unlock"`,
-		`"op": "Add"`, `"op": "Done"`, `"op": "Wait"`, `"op": "Do"`,
-		`"synctyp": "Mutex"`, `"synctyp": "WaitGroup"`, `"synctyp": "Once"`,
+		`sync.Mutex`, `sync.WaitGroup`, `sync.Once`,
+		`"kind": "methodref"`,
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("ExportDir doc missing %s", want)
+			t.Errorf("ExportDir doc missing %s (real sync package did not compile through)", want)
 		}
+	}
+	// The synthetic lowering is retired: no syncnew node may appear.
+	if strings.Contains(doc, `"kind": "syncnew"`) {
+		t.Error("ExportDir doc contains a syncnew node (retired by real-sync2, 503608ea)")
 	}
 	// The merged source kept the import spec (flatten.go kept-import path).
 	merged, err := MergeDir(dir)
@@ -313,39 +322,98 @@ func main() {
 	if !strings.Contains(merged, `"sync"`) {
 		t.Error("merged source dropped the import \"sync\" spec")
 	}
+	// Parity: the p3frontend path agrees byte-for-byte with the frozen
+	// exporter run directly on the merged source.
+	mergedPath := filepath.Join(t.TempDir(), "merged.go")
+	if err := os.WriteFile(mergedPath, []byte(merged), 0644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := runGofrontend(mergedPath)
+	if err != nil {
+		t.Fatalf("runGofrontend: %v", err)
+	}
+	if !reflect.DeepEqual(normalizeDoc(t, want), normalizeDoc(t, doc)) {
+		t.Error("ExportDir doc != direct gofrontend export of merged source")
+	}
 }
 
-// TestSyncScopeErrorParity: out-of-scope sync surface fails through the
-// full ExportDir path with the same named M2 scope errors the frozen
-// exporter produces (the mirrored signatures must agree).
-func TestSyncScopeErrorParity(t *testing.T) {
-	cases := map[string]string{
-		"m.TryLock()":                    "not in M2 scope",
-		"rw.RLocker()":                   "not in M2 scope",
-		"type T struct { mu sync.Once }": "not in M2 scope",
+// TestSyncExtendedSurfaceExportParity: the sync members that were
+// out-of-M2-scope under the retired synthetic lowering (TryLock,
+// TryRLock, RLocker, WaitGroup.Go, embedded sync.Once) compile through the
+// full ExportDir path now that the frozen exporter builds the real sync
+// package from disk — and the p3frontend path agrees byte-for-byte with
+// the frozen exporter run directly (the parity property the old
+// scope-error test pinned, under the new mechanism).
+func TestSyncExtendedSurfaceExportParity(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		mark string // doc marker proving the member compiled through
+	}{
+		"trylock": {`package main
+
+import "sync"
+
+func main() {
+	var m sync.Mutex
+	println(m.TryLock())
+	var rw sync.RWMutex
+	println(rw.TryRLock())
+	_ = rw.RLocker()
+}
+`, `"name": "TryLock"`},
+		"waitgroup_go": {`package main
+
+import "sync"
+
+func main() {
+	var wg sync.WaitGroup
+	wg.Go(func() {})
+	wg.Wait()
+}
+`, `"name": "Go"`},
+		"embedded_once": {`package main
+
+import "sync"
+
+type T struct{ mu sync.Once }
+
+func main() {
+	var t T
+	t.mu.Do(func() { println("once") })
+}
+`, `sync.Once`},
 	}
-	for body, want := range cases {
+	for name, tc := range cases {
 		dir := t.TempDir()
-		var src string
-		if strings.HasPrefix(body, "type ") {
-			src = "package main\n\nimport \"sync\"\n\n" + body + "\n\nfunc main() {}\n"
-		} else {
-			src = "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tvar rw sync.RWMutex\n\t_ = m\n\t_ = rw\n\t" + body + "\n}\n"
-		}
-		formatted, err := format.Source([]byte(src))
+		formatted, err := format.Source([]byte(tc.src))
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("%s: %v", name, err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "main.go"), formatted, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err = ExportDir(dir)
-		if err == nil {
-			t.Errorf("%s: expected scope error, got success", body)
+		doc, err := ExportDir(dir)
+		if err != nil {
+			t.Errorf("%s: ExportDir failed, want success (real sync compiles): %v", name, err)
 			continue
 		}
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: error %q does not contain %q", body, err, want)
+		if !strings.Contains(doc, tc.mark) {
+			t.Errorf("%s: ExportDir doc missing %s", name, tc.mark)
+		}
+		merged, err := MergeDir(dir)
+		if err != nil {
+			t.Fatalf("%s: MergeDir: %v", name, err)
+		}
+		mergedPath := filepath.Join(t.TempDir(), "merged.go")
+		if err := os.WriteFile(mergedPath, []byte(merged), 0644); err != nil {
+			t.Fatal(err)
+		}
+		want, err := runGofrontend(mergedPath)
+		if err != nil {
+			t.Fatalf("%s: runGofrontend: %v", name, err)
+		}
+		if !reflect.DeepEqual(normalizeDoc(t, want), normalizeDoc(t, doc)) {
+			t.Errorf("%s: ExportDir doc != direct gofrontend export of merged source", name)
 		}
 	}
 }
