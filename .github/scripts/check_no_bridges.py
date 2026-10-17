@@ -6,8 +6,9 @@ Fails if the diff introduces new bridges:
 - New synth_*.go files
 - New package-name conditionals in frontend/backend
 - New panic/fail-fast stubs (Go, Java, Python)
-- New wire node kinds (Go e.node emissions anywhere + Java
-  registerStmtKind/registerKind registrations)
+- New wire node kinds (Go e.node emissions anywhere — literal or via the
+  kind :=/kind =/intrinsic-map dynamic-kind idiom — + Java
+  registerStmtKind/registerExprKind/registerKind registrations)
 - New synthetic function registrations
 - New syntheticSources overlay entries / synthetic source consts
 
@@ -75,40 +76,55 @@ ADJUDICATED_REGISTRATIONS = {
 # Generic (non-stdlib-specific) wire node kinds: the closed AST vocabulary
 # the frontend emitter and the backend kind factories share. The wire-node
 # check is INVERTED: an added e.node("kind") emission (any .go file) or
-# registerStmtKind/registerKind("kind") registration (any .java file) whose
-# kind is not in this set — and not adjudicated above — is flagged as a
-# suspicious new wire node. The old family-prefix regex missed the live
-# time*/unsafe*/reflectop*/abifuncpc families; inversion cannot miss a
-# family. A genuinely new generic kind extends this set through the
-# adjudication process (independent review), not by lane edit.
-# Derived 2026-10-17 from the 80 live e.node kinds in internal/frontend
-# (49 generic below; 31 stdlib-specific: time*/runtime*/unsafe* families,
-# syncop, atomicaddr, reflectop, abifuncpc — enumerated in
-# docs/arch/bridge-inventory.md B-3).
+# registerStmtKind/registerExprKind/registerKind("kind") registration (any
+# .java file) whose kind is not in this set — and not adjudicated above —
+# is flagged as a suspicious new wire node. The old family-prefix regex
+# missed the live time*/unsafe*/reflectop*/abifuncpc families; inversion
+# cannot miss a family. A genuinely new generic kind extends this set
+# through the adjudication process (independent review), not by lane edit.
+# Census 2026-10-17: 83 live literal e.node("kind") kinds in
+# internal/frontend (52 generic below — incl. compositelit/pkgref/slice
+# from the frontend-v2 emitter; 31 stdlib-specific literal kinds:
+# time*/runtime*/unsafe* families, syncop, atomicaddr, reflectop,
+# abifuncpc) plus 13 dynamic-idiom stdlib-specific kinds the literal scan
+# cannot see (mathf64bits/mathf64frombits/mathf32bits/mathf32frombits/
+# mathsqrt/mathfma, chanlen/chancap, runtimefuncname/runtimefuncentry,
+# runtimecaller, runtimeframesnext/runtimefuncfileline — enumerated in
+# docs/arch/bridge-inventory.md B-3): 96 distinct wire kinds, 44
+# stdlib-specific. The 13 dynamic kinds stay OUTSIDE this set on purpose:
+# a newly added `kind := "mathfrob2"` must fire like any new stdlib kind.
 GENERIC_WIRE_KINDS = frozenset([
     "addrof", "assign", "basiclit", "binary", "blank", "block", "branch",
-    "call", "caseclause", "chanclose", "clear", "complit", "convert",
-    "defer", "deref", "exprstmt", "for", "funcdecl", "funcfieldcall",
-    "funclit", "gostmt", "ident", "if", "ifacemethod", "incdec", "index",
-    "labeled", "makechan", "methodref", "methodvalue", "minmax", "nil",
-    "param", "paren", "range", "recv", "return", "select", "selectcase",
-    "selector", "send", "sliceexpr", "sliceoverlap", "switch", "typeassert",
-    "typecase", "typeswitch", "unary", "vardecl",
+    "call", "caseclause", "chanclose", "clear", "complit", "compositelit",
+    "convert", "defer", "deref", "exprstmt", "for", "funcdecl",
+    "funcfieldcall", "funclit", "gostmt", "ident", "if", "ifacemethod",
+    "incdec", "index", "labeled", "makechan", "methodref", "methodvalue",
+    "minmax", "nil", "param", "paren", "pkgref", "range", "recv", "return",
+    "select", "selectcase", "selector", "send", "slice", "sliceexpr",
+    "sliceoverlap", "switch", "typeassert", "typecase", "typeswitch",
+    "unary", "vardecl",
 ])
 
 # Frozen Java fail-fast stubs: intentional Phase-1 API contracts, not
 # bodges. Each file freezes signatures a later phase owns; every method
 # throws UnsupportedOperationException with a phase-scoped message and the
-# file header says STUB. The Java fail-fast-stub check grandfathers new
-# throw sites in exactly these files; a new throw anywhere else fails the
-# gate. Inventory record: docs/arch/bridge-inventory.md
-# ("Frozen API contracts (not bridges)").
+# file header says STUB. The exemption is anchored on the Phase-1 truffle
+# module path (truffle/src/main/java/...): the Phase-2
+# internal/backend/runtime/... tree reuses the same class names for REAL
+# implementations (e.g. its GcInterop.java has 0 throws and real MXBean
+# code), so a bare "graalgo/runtime/..." suffix would also exempt those
+# files and a new throw there — a genuine bodge — would slip through.
+# Safepoint.java is NOT in the allowlist: neither Safepoint file throws
+# (the truffle one is an intentionally empty no-op seam; the runtime one
+# is the Phase-2 implementation), so a new throw in either file fails the
+# gate. The Java fail-fast-stub check grandfathers new throw sites in
+# exactly these files; a new throw anywhere else fails the gate.
+# Inventory record: docs/arch/bridge-inventory.md ("Frozen API contracts").
 FROZEN_JAVA_STUB_FILES = (
-    "graalgo/runtime/Netpoll.java",      # frozen netpoller contract (WS G, GG-0020)
-    "graalgo/runtime/ChanOps.java",      # frozen channel/select surface (WS G, GG-0020)
-    "graalgo/runtime/Scheduler.java",    # frozen scheduler glue (WS G, GG-0020)
-    "graalgo/runtime/GcInterop.java",    # Phase-1 stub, P2-M4 (ADR-0002 D4)
-    "graalgo/safepoint/Safepoint.java",  # Phase-1 no-op seam (PLAN.md D8, GG-0017)
+    "truffle/src/main/java/graalgo/runtime/Netpoll.java",   # frozen netpoller contract (WS G, GG-0020)
+    "truffle/src/main/java/graalgo/runtime/ChanOps.java",   # frozen channel/select surface (WS G, GG-0020)
+    "truffle/src/main/java/graalgo/runtime/Scheduler.java", # frozen scheduler glue (WS G, GG-0020)
+    "truffle/src/main/java/graalgo/runtime/GcInterop.java", # Phase-1 stub, P2-M4 (ADR-0002 D4)
 )
 
 # Marker written by the gen_synth_*.py pipeline into generated synth files
@@ -147,18 +163,32 @@ def _is_test_file(fname):
     return fname.endswith("_test.go") or "/src/test/" in fname
 
 
+_gen_synth_marker_cache = {}
+
+
 def _file_has_gen_synth_marker(abs_path):
-    """True when the file header carries the generator-pipeline marker."""
-    try:
-        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-            for i, line in enumerate(f):
-                if i > 25:
-                    break
-                if GEN_SYNTH_MARKER in line:
-                    return True
-    except OSError:
-        pass
-    return False
+    """True when the file carries the generator-pipeline marker.
+
+    The WHOLE file is scanned (result cached per path): generator headers
+    vary in length (license blocks, doc comments) and 5 of the 18 pipeline
+    outputs carry the marker past line 26 (synth_compress_flate.go:30,
+    synth_mathbits.go:39, synth_mathcmplx.go:28, synth_mathrand.go:27,
+    synth_mathrandv2.go:35). A bounded 25-line window falsely flags const
+    additions on the sanctioned regeneration path as NEW SYNTHETIC
+    PACKAGE.
+    """
+    if abs_path not in _gen_synth_marker_cache:
+        hit = False
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if GEN_SYNTH_MARKER in line:
+                        hit = True
+                        break
+        except OSError:
+            pass
+        _gen_synth_marker_cache[abs_path] = hit
+    return _gen_synth_marker_cache[abs_path]
 
 
 def _is_gen_synth_output(repo_rel_path):
@@ -267,9 +297,14 @@ def get_diff():
     return "", ""
 # Mechanical stdlib list, derived 2026-10-17 from the pinned go1.27.1
 # GOROOT: every package dir containing .go files, excluding cmd/, vendor/,
-# and zzdiag/ (local scratch, not upstream). Regenerate with:
-#   find $GOROOT/src -name "*.go" -not -path "*/cmd/*" -not -path "*/vendor/*" -not -path "*/zzdiag/*" |
+# and zzdiag/ (local scratch, not upstream). 475 entries. Regenerate with:
+#   cd "$GOROOT/src" && find . -name "*.go" -not -path "*/cmd/*" \
+#     -not -path "*/vendor/*" -not -path "*/zzdiag/*" |
 #     sed "s|^\./||; s|/[^/]*\.go$||" | sort -u
+# (run from INSIDE $GOROOT/src so find emits relative paths — the sed
+#  s|^\./|| strip only works on relative paths. An absolute
+#  find $GOROOT/src ... invocation would need s|^$GOROOT/src/|| instead
+#  and would NOT reproduce this list.)
 _GOROOT_STDLIB_PKGS = frozenset([
     "archive/tar",
     "archive/zip",
@@ -435,7 +470,6 @@ _GOROOT_STDLIB_PKGS = frozenset([
     "go/build/testdata/other",
     "go/build/testdata/other/file",
     "go/build/testdata/withvendor/src/a/b",
-    "go/build/testdata/withvendor/src/a/vendor/c/d",
     "go/constant",
     "go/doc",
     "go/doc/comment",
@@ -803,8 +837,9 @@ def check_no_bridges(diff):
     #    panic(fmt.Sprintf("... not implemented")). Fail loud on all of them —
     #    a human decides whether an added panic is a legitimate invariant.
     #    Java: throw new UnsupportedOperationException (+ TODO/FIXME in a
-    #    throw site's message). The five frozen API-contract files are
-    #    grandfathered (FROZEN_JAVA_STUB_FILES); anything else is flagged.
+    #    throw site's message). The four frozen API-contract files are
+    #    grandfathered (FROZEN_JAVA_STUB_FILES, anchored on the Phase-1
+    #    truffle module path); anything else is flagged.
     #    Python: the NotImplementedError-raising equivalent in generators/templates.
     panic_stub_res = [
         r'panic\s*\(\s*\)',            # bare panic() — nothing to go on
@@ -842,12 +877,26 @@ def check_no_bridges(diff):
                 break
 
     # 4. New wire node kinds (INVERTED). Any added e.node("kind") emission
-    #    in any .go file, or registerStmtKind/registerKind("kind") in any
-    #    .java file, whose kind is outside the shared generic vocabulary
+    #    in any .go file, or
+    #    registerStmtKind/registerExprKind/registerKind("kind") in any .java
+    #    file, whose kind is outside the shared generic vocabulary
     #    (GENERIC_WIRE_KINDS) is flagged — unless adjudicated. Comment-only
     #    lines (kind mentions in prose) are skipped: a comment emits nothing.
+    #    The literal check cannot see the dynamic-kind idiom (kind :=
+    #    "runtimefuncname" / kind = "chancap" in export.go, kind =
+    #    "runtimecaller"/"runtimeframesnext"/"runtimefuncfileline" in
+    #    mrdesugar_m5.go, the "Sqrt": "mathsqrt" intrinsic map +
+    #    e.node(kind, ...) in synth_machinery.go) — the dynamic half below
+    #    flags added kind :=/kind = string assignments and "Sym": "kindval"
+    #    map entries (in files that feed a variable kind to e.node) whose
+    #    value is outside the vocabulary. Values must be kind-shaped
+    #    (lowercase alnum): message-shaped strings are not wire kinds.
+    def _adjudicated_go_wire(fname, kind):
+        return any(f_sub in fname and nk == kind
+                   for f_sub, nk in ADJUDICATED_WIRE_NODES)
+
     wire_go_re = re.compile(r'\.node\s*\(\s*"([^"]+)"')
-    wire_java_re = re.compile(r'register(?:Stmt)?Kind\s*\(\s*"([^"]+)"')
+    wire_java_re = re.compile(r'register(?:Stmt|Expr)?Kind\s*\(\s*"([^"]+)"')
     for fname, line in added_lines:
         if not fname:
             continue
@@ -867,16 +916,68 @@ def check_no_bridges(diff):
             continue
         # Adjudicated real implementations are not bridges. The Go emission
         # is file-scoped (the adjudication names export.go); the Java
-        # registerStmtKind half is kind-scoped — the PKG-040 inventory entry
+        # register-kind half is kind-scoped — the PKG-040 inventory entry
         # explicitly clears "the registerStmtKind("runtimegosched", ...) P3
         # registrations" as the public register-kind hook, not synthetic
         # stdlib logic. Same entries, no broadening.
         if fname.endswith(".java"):
             if kind in {nk for _, nk in ADJUDICATED_WIRE_NODES}:
                 continue
-        elif any(f_sub in fname and nk == kind for f_sub, nk in ADJUDICATED_WIRE_NODES):
+        elif _adjudicated_go_wire(fname, kind):
             continue
         errors.append(f"SUSPICIOUS WIRE NODE in {fname}: {kind}")
+
+    # 4b. Dynamic-kind idiom. An added `kind := "..."` / `kind = "..."`
+    #     assignment, or an added "Sym": "kindval" map entry in a file that
+    #     feeds a variable kind to e.node (live file content, or the same
+    #     diff adding the consumer), names a wire kind the literal check
+    #     cannot see. Flag values outside GENERIC_WIRE_KINDS; adjudicated
+    #     entries stay quiet, exactly like the literal half.
+    dyn_kind_assign_re = re.compile(
+        r'^\s*kind\s*:?=\s*"([a-z][a-z0-9]*)"\s*(?://.*)?$')
+    dyn_kind_map_re = re.compile(
+        r'^\s*"[^"]+"\s*:\s*"([a-z][a-z0-9]*)"\s*,?\s*(?://.*)?$')
+    dyn_consumer_re = re.compile(r'\.node\s*\(\s*[A-Za-z_]\w*\s*,')
+    _dyn_consumer_cache = {}
+
+    def _file_feeds_dyn_kind(repo_rel_path):
+        """True when the live file passes a variable kind to e.node."""
+        if repo_rel_path not in _dyn_consumer_cache:
+            hit = False
+            root = _repo_root()
+            if root:
+                try:
+                    with open(os.path.join(root, repo_rel_path),
+                              "r", encoding="utf-8", errors="replace") as f:
+                        for fline in f:
+                            if dyn_consumer_re.search(fline):
+                                hit = True
+                                break
+                except OSError:
+                    pass
+            _dyn_consumer_cache[repo_rel_path] = hit
+        return _dyn_consumer_cache[repo_rel_path]
+
+    dyn_consumer_added = {fname for fname, line in added_lines
+                          if fname and fname.endswith(".go")
+                          and dyn_consumer_re.search(line)}
+    for fname, line in added_lines:
+        if not fname or not fname.endswith(".go"):
+            continue
+        kind = None
+        m = dyn_kind_assign_re.match(line)
+        if m:
+            kind = m.group(1)
+        else:
+            m = dyn_kind_map_re.match(line)
+            if m and (_file_feeds_dyn_kind(fname)
+                      or fname in dyn_consumer_added):
+                kind = m.group(1)
+        if kind is None or kind in GENERIC_WIRE_KINDS:
+            continue
+        if _adjudicated_go_wire(fname, kind):
+            continue
+        errors.append(f"SUSPICIOUS WIRE NODE (dynamic kind) in {fname}: {kind}")
 
     # 5. New synthetic function registrations
     for fname, line in added_lines:
@@ -900,6 +1001,12 @@ def check_no_bridges(diff):
     #    added map entry is flagged. Added const definitions are flagged
     #    unless the file is a generator-pipeline output (regeneration is not
     #    a new bridge); an unreadable file is never treated as generated.
+    # Known limitation: the map-entry shape requires the value to be a
+    # synthetic\w+Source identifier — the only value shape in the current
+    # syntheticSources map (130 entries, all identifiers; verified
+    # 2026-10-17). An overlay entry with an inline-string or
+    # differently-shaped value would not match; broaden the alternation if
+    # that shape ever appears.
     synth_map_entry_re = re.compile(r'^\s*"[^"]+"\s*:\s*synthetic\w+Source\b')
     synth_const_re = re.compile(r'^\s*(?:const\s+)?synthetic\w+Source\s*=')
     for fname, line in added_lines:

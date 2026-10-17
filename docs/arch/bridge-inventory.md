@@ -93,9 +93,19 @@ deliverable until the design lands.
     `runtimegomaxprocs`, `runtimefuncforpc`, `runtimecallersframes`,
     `runtimecallers`), the `unsafe*` family (`unsafeadd`, `unsafeslice`,
     `unsafeslicedata`, `unsafestring`, `unsafestringdata`,
-    `unsafefromptr`, `unsafetooptr`, `unsafefromuint`), plus `syncop`,
-    `atomicaddr`, `reflectop`, `abifuncpc` (the backend registers the
-    `runtimecaller` spelling for `runtime.Caller`); and the `time.Now`
+    `unsafefromptr`, `unsafetooptr`, `unsafefromuint`), the `math*` family
+    (`mathf64bits`, `mathf64frombits`, `mathf32bits`, `mathf32frombits`,
+    `mathsqrt`, `mathfma`), plus `syncop`, `atomicaddr`, `reflectop`,
+    `abifuncpc`, `chanlen`/`chancap`, `runtimefuncname`/`runtimefuncentry`,
+    `runtimecaller`, `runtimeframesnext`/`runtimefuncfileline`. Census
+    2026-10-17: 44 stdlib-specific wire kinds — 31 emitted as literal
+    `e.node("kind")` calls, 13 through the dynamic-kind idiom (`kind :=`/
+    `kind =` string assignments in
+    [export.go](../../internal/frontend/export.go) ~lines 8715/9027 and
+    [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go) ~line 3195,
+    the intrinsic-name→kind map in
+    [synth_machinery.go](../../internal/frontend/synth_machinery.go)
+    ~line 1588, all feeding `e.node(kind, ...)`); and the `time.Now`
     eta-expansion hardcoded by package+symbol name
     ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
     The `runtimenumgoroutine`/`runtimegosched` additions are adjudicated
@@ -243,27 +253,41 @@ extend these entries or add new ones without a fresh independent review.
 
 ## Frozen API contracts (not bridges)
 
-Intentional Phase-1 API-contract stubs — not fail-fast bodges. Each file
-freezes signatures a later phase owns; every method throws
-`UnsupportedOperationException` with a phase-scoped message and the file
-header marks it STUB. The no-bridges gate's Java fail-fast-stub scan
-grandfathers exactly these files
+Intentional Phase-1 API-contract stubs — not fail-fast bodges. Four files
+freeze signatures a later phase owns: each file header marks it STUB and
+every method throws `UnsupportedOperationException` with a phase-scoped
+message. The no-bridges gate's Java fail-fast-stub scan grandfathers new
+throw sites in exactly these four files
 ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py)
-`FROZEN_JAVA_STUB_FILES`); a new `throw new
-UnsupportedOperationException` anywhere else fails the gate.
+`FROZEN_JAVA_STUB_FILES`), anchored on the Phase-1 truffle module path —
+the Phase-2 `internal/backend/runtime/…` tree reuses the same class names
+for real implementations (e.g. its `GcInterop.java` has 0 throw sites and
+real MXBean code), so a new `throw new UnsupportedOperationException`
+there fails the gate. The safepoint seam is a no-op by design, not a
+throw-contract: it is NOT in the gate's allowlist, and a new throw in
+either Safepoint file fails the gate.
 
 - [Netpoll.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Netpoll.java) —
-  frozen netpoller API contract (WS G, GG-0020, STUB).
+  frozen netpoller API contract (WS G, GG-0020, STUB; 5 throw sites).
 - [ChanOps.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java) —
-  frozen channel/select intrinsic surface (WS G, GG-0020, STUB).
+  frozen channel/select intrinsic surface (WS G, GG-0020, STUB; 7 throw
+  sites).
 - [Scheduler.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Scheduler.java) —
-  frozen scheduler-glue intrinsic surface (WS G, GG-0020, STUB).
+  frozen scheduler-glue intrinsic surface (WS G, GG-0020, STUB; 4 throw
+  sites).
 - [GcInterop.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java) —
-  Phase-1 stub of the Go-observable GC surface (P2-M4, ADR-0002 D4); the
-  Phase-2 module shadows it with the real implementation.
-- [Safepoint.java](../../internal/backend/runtime/src/main/java/graalgo/safepoint/Safepoint.java) —
-  GC safepoint seam (PLAN.md D8, GG-0017); a no-op without a scheduler
-  (Phase-1 parity), replaced by the Phase-2 implementation.
+  Phase-1 stub of the Go-observable GC surface (P2-M4, ADR-0002 D4; 3
+  throw sites); the Phase-2 module shadows it with the real implementation
+  ([GcInterop.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/GcInterop.java) —
+  0 throw sites, real MXBean code).
+- Safepoint seam — NOT a throw-contract (dropped from the gate's allowlist
+  2026-10-17): the Phase-1
+  [Safepoint.java](../../internal/backend/truffle/src/main/java/graalgo/safepoint/Safepoint.java)
+  is an intentionally empty no-op (`poll()` has an empty body; 0 throw
+  sites), and the Phase-2
+  [Safepoint.java](../../internal/backend/runtime/src/main/java/graalgo/safepoint/Safepoint.java)
+  *replaces* it with the real scheduler quantum check (0 throw sites; its
+  header says "Phase-2 implementation … *replaces* the Phase-1 no-op").
 
 ## Retired
 
