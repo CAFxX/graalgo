@@ -6,7 +6,9 @@
 // EXTERNAL directory (default ~/workspace/graalgo-stdlib/<version>/) and
 // writes a byte-deterministic file manifest (relative path + SHA-256 +
 // size + mode) plus the pinned Go version into the repo at
-// phases/phase3/stdlib-fork/.
+// tools/stdlib-fork/ (as `vendor-manifest.json` + `pinned-version.txt`;
+// the old `phases/phase3/stdlib-fork/` location was retired when the
+// tooling moved to `tools/` on 2026-10-14).
 //
 // Subcommands:
 //

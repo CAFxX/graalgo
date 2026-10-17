@@ -19,11 +19,11 @@ deliverable until the design lands.
 
 ## Phased removal order
 
-- **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+- **Phase 1 — in flight (2026-10-15; `fmt` retired 2026-10-16, see B-1).**
+  Retire the highest-value synthetic packages via root-cause fixes:
+  `crypto/x509` (worktree `real-x509`), `net`/`net/http` (worktree
+  `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires B-5 and
+  the reflect/time/math name-keyed predicates in B-3.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -47,7 +47,7 @@ deliverable until the design lands.
 
 - **What:**
   [NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
-  `syncPrimitiveName` (~line 1908): matches `sync.Mutex`/`sync.Map`/
+  `syncPrimitiveName` (~line 1963): matches `sync.Mutex`/`sync.Map`/
   `sync/atomic.*` by package/name and lowers them to Java representations
   instead of compiling the real `sync` sources.
 - **Why:** the real `sync`/`sync/atomic` sources did not compile; the
@@ -70,21 +70,46 @@ deliverable until the design lands.
 ### B-3. Frontend package-name-keyed special-case machinery
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
-  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
-    entries), `isMultiResultSynthetic` (~line 2113) /
-    `multiResultSyntheticError` (~line 2207) ~60-path chains,
-    `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
-    `isAliasIntrinsicFunc` (~line 2088), `isAbiFuncPCIntrinsicFunc`
-    (~line 1701);
+  - `synth_machinery.go`: `syntheticSources` import overlay (line 70, 130
+    entries), `isMultiResultSynthetic` (:2205) /
+    `multiResultSyntheticError` (:2299) classifier chains,
+    `isTimeIntrinsicFunc` (:2123), `isMathIntrinsicFunc` (:2128),
+    `isAliasIntrinsicFunc` (:2142), `isAbiFuncPCIntrinsicFunc` (:1654);
   - [synth_reflect.go](../../internal/frontend/synth_reflect.go):
-    `isReflectIntrinsicFunc` (~line 2898);
-  - [diskimport.go](../../internal/frontend/diskimport.go):
-    `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
-    switches (~line 402) and the linkname package allowlist;
+    `isReflectIntrinsicFunc` (:2908);
+  - [export.go](../../internal/frontend/export.go): the table-driven
+    `dedicatedSyntheticStubs` (:589-594) mapping `"runtime"` and `"unsafe"`
+    to their builders (the old per-package `"runtime"`/`"fmt"`/`"unsafe"`
+    switches are gone — `"fmt"` retired with B-1); the general
+    `linknameAlias` mechanism (export.go:2960) replaced the linkname
+    package allowlist; `resolvePkgTree`
+    ([diskimport.go](../../internal/frontend/diskimport.go):403) is now
+    general (syntheticSources map → dedicated-stub table → disk importer);
   - [export.go](../../internal/frontend/export.go): `"syncop"` and
     `"runtimecaller"` custom wire nodes for stdlib functions, and the
     `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228);
+  - [export.go](../../internal/frontend/export.go): `exportAtomicWordOp`
+    package-name-keyed predicates — :8444 (`obj.Pkg().Path() ==
+    "sync/atomic"`, selector form), :8454 (`"internal/runtime/atomic"`,
+    selector form), :9289 (`fn.Pkg().Path() == "sync/atomic"`,
+    unqualified form), :9298 (`"internal/runtime/atomic"`, unqualified
+    form) — intercepting package-level word/bool atomic calls by package
+    path (definition :9204);
+  - [export.go](../../internal/frontend/export.go): the `"atomicaddr"`
+    wire node (:9229) wrapping the atomic address operand in a delegating
+    `AtomicLong`/`AtomicInteger` cell;
+  - [export.go](../../internal/frontend/export.go): the `"timec"` wire
+    node (:11511-11520) for `t.C` on `*time.Timer`/`*time.Ticker`, keyed
+    on the `timeTimerTickerNamedExact` predicate
+    ([synth_machinery.go](../../internal/frontend/synth_machinery.go):923:
+    `obj.Pkg().Path() == "time"` + name `Timer`/`Ticker`);
+  - [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go): the
+    name-keyed `switch pn.Imported().Path()` (:1683) —
+    `case "context"` (:1684: `WithCancel`/`WithDeadline` →
+    `__withCancel`/`__withDeadline`), `case "runtime"` (:1713: `Caller` →
+    `mrRuntimeStack` / the `"runtimecaller"` wire node), `case "time"`
+    (:1728: `ParseDuration` → `__parseDuration`).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -95,28 +120,63 @@ deliverable until the design lands.
   design" for the mechanism — the inventory entry is the deliverable now).
   In flight: `real-reflect2` already drops stale synthetic-reflect entries;
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
-  (Phase 4).
+  (Phase 4). The 2026-10-17 additions retire as follows.
+  `exportAtomicWordOp` predicates: the real `sync/atomic` and
+  `internal/runtime/atomic` sources already resolve from disk (PKG-012);
+  when their package-level word/bool ops link end-to-end through the
+  general call path with the atomic-cell value model, delete the four
+  predicates and let the calls resolve normally (Phase 2 → 3). The
+  `"atomicaddr"` wire node retires with them; its cell-wrapping is
+  absorbed into the general atomic-cell lowering (B-2's cell-transparent
+  `&x.v` is the precedent keeping atomicity sound on real bodies). The
+  `"timec"` wire node and the `timeTimerTickerNamedExact` predicate retire
+  when the real `time` package compiles from disk (Phase 2): `.C` becomes
+  an ordinary channel field on the real `Timer`/`Ticker` types. The
+  `mrdesugar_m5.go` switch folds into the table-driven
+  `classify*MultiResultCall` chain — `context`/`time` when their
+  synthetic packages retire (Phase 2), `runtime.Caller` when real stack
+  metadata replaces the rtstack intrinsics (B-7, Phase 4).
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
-- **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
-  the *declared view* of the already-inventoried dedicated stubs
-  (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
-  `syntheticFmtPackage`, `syntheticUnsafePackage`) is NOT a new bridge.
-  The mechanical gate flags `addFunc(` lines in `export.go`, but the
-  overlay's existence is grandfathered by this entry — extending its
-  declared API surface toward gc's documented API adds no new bridge
-  machinery (no new synth files, no new wire nodes, no new
-  package-name-keyed branches). The PKG-023 reviewer judged the flag a
-  mechanical false positive, not a veto; the same judgment covers the
-  PKG-038 runtime-view completion.
+- **Note (2026-10-16, PKG-023 independent review + PKG-038; refreshed
+  2026-10-17):** completing the *declared view* of the already-inventoried
+  dedicated stubs is NOT a new bridge. The stubs live in the table-driven
+  `dedicatedSyntheticStubs`
+  ([export.go](../../internal/frontend/export.go):589-594): `"runtime"`
+  (`syntheticRuntimePackage`, export.go:249) and `"unsafe"`
+  (`syntheticUnsafePackage`,
+  [synth_unsafe.go](../../internal/frontend/synth_unsafe.go):66). `fmt`
+  retired with B-1 — `syntheticFmtPackage` no longer exists in the main
+  frontend; it survives only in the p3frontend importer mirror
+  ([p3frontend/importer.go](../../internal/frontend/p3frontend/importer.go):329),
+  inventoried under B-4's mirrors (retire-or-keep decision). The
+  mechanical gate flags `addFunc(` lines in `export.go`, but the overlay's
+  existence is grandfathered by this entry — extending its declared API
+  surface toward gc's documented API adds no new bridge machinery (no new
+  synth files, no new wire nodes, no new package-name-keyed branches).
+  The PKG-023 reviewer judged the flag a mechanical false positive, not
+  a veto; the same judgment covers the PKG-038 runtime-view completion.
+- **Note (2026-10-17, RV-P2-03):** the 8 `synth_*_test.go` files are test
+  fixtures pinning the synthetic sources' declared surfaces, not bridges.
+  [check_no_bridges.py](../../.github/scripts/check_no_bridges.py)'s "NEW
+  SYNTHETIC FILE" pattern flags them as well (commit `44d08976` added
+  `internal/frontend/synth_path_export_test.go`) — a mechanical false
+  positive. The script fix (exclude `*_test.go`) is tracked separately and
+  is not made in this doc change.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 140 `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
-  `synth_*.go` mirrors under
+- **What:** 140 `synth_*.go` files in [internal/frontend/](../../internal/frontend/)
+  (132 non-test + 8 `synth_*_test.go` test fixtures, which are not bridges —
+  see the RV-P2-03 note under B-3) plus 12 `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. Of the 132 non-test files, 18 are generator outputs (the
+  `GENERATED_SYNTH` block in [Makefile](../../Makefile), regenerated by
+  `make gen-synth` from the 10 `gen_synth_*.py` generators over
+  version-pinned gc 1.27.1 sources, 6 with a frontend-constraint adaptation
+  patch from
+  [`gen_synth_adapt/`](../../internal/frontend/gen_synth_adapt/)); the
+  rest are verbatim or adapted gc 1.27.1 sources embedded as text.
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).
