@@ -48,8 +48,22 @@ func classifyBodyless(fi *funcDeclInfo, pkgPath string) (string, error) {
 // provider-side //go:linkname directives), or "" if it has no runtime
 // provider. These are runtime services, not assembly. Methods are excluded:
 // provider directives name package-level functions.
+//
+// The predicate is uniform over all packages: classification is by exact
+// linkname-symbol match, with no package-name carve-outs (his 2026-10-15
+// no-bridges order). A same-package hit is correct, not suspect: the
+// declaration's default object symbol IS the provided symbol, so gc links
+// its references to the provider's TEXT just the same. (The old
+// package-name exclusion for the runtime package was a vestige of the
+// retired `runtime_` prefix hack, where a name pattern rather than an exact
+// symbol drove classification; it has no function in the table-driven
+// design.)
+// Fail-closed: a table hit still goes through checkBodylessReference,
+// which requires a registered backend intrinsic or a compiled Go provider
+// — a wrong table entry rejects at export time, it can never silently
+// miscompile.
 func bodylessProviderSymbol(fi *funcDeclInfo, pkgPath string) string {
-	if fi == nil || fi.obj == nil || fi.recv != nil || pkgPath == "runtime" {
+	if fi == nil || fi.obj == nil || fi.recv != nil {
 		return ""
 	}
 	if sym, ok := runtimeProvidedLinknames[pkgPath+"."+fi.obj.Name()]; ok {

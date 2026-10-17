@@ -5,6 +5,8 @@ package main
 // compilable program.
 
 import (
+	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 )
@@ -31,10 +33,53 @@ func TestProviderTableMechanical(t *testing.T) {
 			t.Errorf("runtimeProvidedLinknames[%q] = %q, %v; want %q, true", sym, got, ok, sym)
 		}
 	}
-	// The runtime package itself is never compiled; its own symbols are
-	// not rerouted (guard against self-routing).
-	if _, ok := runtimeProvidedLinknames["runtime.fastrand"]; ok {
-		t.Logf("note: runtime.fastrand is provider-listed (harmless: runtime is never compiled)")
+	// Provider-listed symbols under "runtime.*" (e.g. runtime.fastrand,
+	// provided by the runtime's own compiled body) classify uniformly:
+	// there are no package-name carve-outs (see
+	// TestProviderTableAppliesUniformly). The GOROOT runtime package
+	// itself is never compiled by the frontend (synthetic overlay
+	// instead), so these entries only ever match declarations that
+	// genuinely resolve to the provided symbol.
+	if _, ok := runtimeProvidedLinknames["runtime.fastrand"]; !ok {
+		t.Errorf("runtimeProvidedLinknames lacks %q; want it present (provided by runtime's own body)", "runtime.fastrand")
+	}
+}
+
+// TestProviderTableAppliesUniformly: provider-table classification is by
+// exact linkname-symbol match, uniformly for every package — no
+// package-name carve-outs (his 2026-10-15 no-bridges order). In particular
+// a bodyless declaration in package "runtime" itself whose default symbol
+// is provider-listed (runtime.fastrand, provided by the runtime's own
+// compiled body under that symbol) classifies as provided. This is the
+// regression test for the removed package-name exclusion: the exclusion
+// must not come back.
+func TestProviderTableAppliesUniformly(t *testing.T) {
+	mk := func(pkgPath, name string, recv *types.Var) *funcDeclInfo {
+		pkg := types.NewPackage(pkgPath, pkgPath)
+		sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+		return &funcDeclInfo{obj: types.NewFunc(token.NoPos, pkg, name, sig), recv: recv}
+	}
+	// The removed guard's case: same-package hit must classify as provided.
+	if got := bodylessProviderSymbol(mk("runtime", "fastrand", nil), "runtime"); got != "runtime.fastrand" {
+		t.Errorf("bodylessProviderSymbol(runtime.fastrand) = %q; want %q (no package exclusion)", got, "runtime.fastrand")
+	}
+	// Cross-package behavior unchanged.
+	if got := bodylessProviderSymbol(mk("sync", "throw", nil), "sync"); got != "sync.throw" {
+		t.Errorf("bodylessProviderSymbol(sync.throw) = %q; want %q", got, "sync.throw")
+	}
+	// Negative: unlisted symbol stays unimplemented, even in package runtime.
+	if got := bodylessProviderSymbol(mk("runtime", "definitelyNotProvided", nil), "runtime"); got != "" {
+		t.Errorf("bodylessProviderSymbol(runtime.definitelyNotProvided) = %q; want \"\"", got)
+	}
+	// Negative: methods are excluded (provider directives name
+	// package-level functions).
+	recv := types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])
+	if got := bodylessProviderSymbol(mk("sync", "throw", recv), "sync"); got != "" {
+		t.Errorf("bodylessProviderSymbol(method) = %q; want \"\" (methods excluded)", got)
+	}
+	// Negative: nil declaration.
+	if got := bodylessProviderSymbol(nil, "runtime"); got != "" {
+		t.Errorf("bodylessProviderSymbol(nil) = %q; want \"\"", got)
 	}
 }
 
