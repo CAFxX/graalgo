@@ -3,6 +3,8 @@ package graalgo.p3sync.launcher;
 import graalgo.frontend.NodeFactory;
 import graalgo.frontend.WireKindRegistrar;
 import graalgo.iface.IfaceDispatchBuilder;
+import graalgo.p3abi.AbiFuncPCNode;
+import graalgo.p3abi.AbiTypeOfNode;
 import graalgo.p3builtin.nodes.ClearNode;
 import graalgo.p3builtin.nodes.GoMaxProcsNode;
 import graalgo.p3builtin.nodes.GoschedNode;
@@ -36,6 +38,7 @@ import graalgo.p3time.nodes.TimeTickNode;
 import graalgo.p3unsafe.UnsafeAddNode;
 import graalgo.p3unsafe.UnsafeFromPtrNode;
 import graalgo.p3unsafe.UnsafeFromUintNode;
+import graalgo.p3unsafe.UnsafePtrAddNode;
 import graalgo.p3unsafe.UnsafeSliceDataNode;
 import graalgo.p3unsafe.UnsafeSliceNode;
 import graalgo.p3unsafe.UnsafeStringDataNode;
@@ -201,10 +204,33 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> UnsafeStringDataNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeadd",
                 (node, ctx) -> UnsafeAddNode.build(node, factory, ctx));
+        // fix-redmaster-conformance: the "unsafeptradd" wire node for the
+        // unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T)) idiom (element-
+        // indexed pointer arithmetic). Public extension hook — no Phase-1/
+        // Phase-2 change.
+        factory.registerExprKind("unsafeptradd",
+                (node, ctx) -> UnsafePtrAddNode.build(node, factory, ctx));
         UnsafeTable.install();
         // P3-M8 (wave 2, reflect): the "reflectop" wire node.
         factory.registerExprKind("reflectop",
                 (node, ctx) -> graalgo.p3reflect.ReflectOpNode.build(node, ctx, factory));
+        // real-reflect (Phase 1): the "abifuncpc" wire node for the
+        // internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsics
+        // (opaque stable func ids). Public extension hook — no
+        // Phase-1/Phase-2 change.
+        factory.registerExprKind("abifuncpc",
+                (node, ctx) -> AbiFuncPCNode.build(node, factory, ctx));
+        // fix-redmaster-buildok (r5): the "abitypeof" wire node for the
+        // internal/abi.TypeOf intrinsic (materialized *abi.Type).
+        // Public extension hook — no Phase-1/Phase-2 change.
+        // fix-redmaster-conformance (r6): these two abi wire kinds were
+        // registered only in P3SyncMain's private inline list, so the
+        // basic graalgo-run launcher (which discovers this shared
+        // registry via ServiceLoader) died with "unsupported expression
+        // kind" on any program touching them. They belong here so every
+        // launcher sees the same set.
+        factory.registerExprKind("abitypeof",
+                (node, ctx) -> AbiTypeOfNode.build(node, factory, ctx));
         // P2-M1 (WS A): the go statement.
         factory.registerStmtKind("gostmt",
                 (node, ctx) -> GoStatementNode.build(node, ctx, factory));

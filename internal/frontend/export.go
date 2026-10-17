@@ -8479,6 +8479,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				}
 			}
 		}
+		// fix-redmaster-conformance: method calls on sync.Pool (structurally
+		// identified): Get() and Put(any) lower to the syncop wire node
+		// (SyncOpNode, Java GoPool backing). The Go method bodies use
+		// unsafe pointer arithmetic that cannot work on the handle model.
+		if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
+			if method, ok := isSyncPoolMethod(obj); ok {
+				n, err := e.exportSyncPoolMethod(c, sel, method)
+				if err != nil {
+					return nil, err
+				}
+				return n, nil
+			}
+		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
 		// local named runtime is not. The structural obj.Pkg().Name()
@@ -9251,6 +9264,143 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 	return e.node("syncop", c, map[string]any{
 		"op": desc.op, "synctyp": desc.synctyp, "recv": recv, "args": args, "type": typ,
 	}), true, nil
+}
+
+// isSyncPoolType reports whether t is the sync.Pool type, identified
+// structurally (03a5ae8a discipline): a named type "Pool" with a Get()
+// any method and a Put(any) method. No package-path string appears.
+func isSyncPoolType(t types.Type) bool {
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok || named.Obj().Name() != "Pool" {
+		return false
+	}
+	// Check the method set for Get() any and Put(any).
+	// Use the pointer method set (methods may be on *Pool).
+	hasGet := false
+	hasPut := false
+	for _, ptr := range []bool{false, true} {
+		var mt types.Type = named
+		if ptr {
+			mt = types.NewPointer(named)
+		}
+		ms := types.NewMethodSet(mt)
+		for i := 0; i < ms.Len(); i++ {
+			sel := ms.At(i)
+			fn, ok := sel.Obj().(*types.Func)
+			if !ok {
+				continue
+			}
+			switch fn.Name() {
+			case "Get":
+				// Get() any: no params, one result of empty interface type.
+				if sig, ok := fn.Type().(*types.Signature); ok &&
+					sig.Params().Len() == 0 && sig.Results().Len() == 1 {
+					if isEmptyInterface(sig.Results().At(0).Type()) {
+						hasGet = true
+					}
+				}
+			case "Put":
+				// Put(any): one param of empty interface type, no results.
+				if sig, ok := fn.Type().(*types.Signature); ok &&
+					sig.Params().Len() == 1 && sig.Results().Len() == 0 {
+					if isEmptyInterface(sig.Params().At(0).Type()) {
+						hasPut = true
+					}
+				}
+			}
+		}
+		if hasGet && hasPut {
+			return true
+		}
+	}
+	return hasGet && hasPut
+}
+
+// isEmptyInterface reports whether t is the empty interface type.
+func isEmptyInterface(t types.Type) bool {
+	iface, ok := types.Unalias(t).(*types.Interface)
+	return ok && iface.Empty()
+}
+
+// exportSyncPoolLit lowers a sync.Pool composite literal (structurally
+// identified) to the syncnew wire node. The New field (if present) is
+// exported as the "newfunc".
+func (e *exporter) exportSyncPoolLit(l *ast.CompositeLit, t types.Type) (*Node, error) {
+	var newFunc *Node
+	for _, el := range l.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "New" {
+			fn, err := e.exportExpr(kv.Value)
+			if err != nil {
+				return nil, err
+			}
+			newFunc = fn
+		}
+	}
+	typ, err := e.typeID(t)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"synctyp": "Pool", "type": typ,
+	}
+	if newFunc != nil {
+		fields["newfunc"] = newFunc
+	}
+	return e.node("syncnew", l, fields), nil
+}
+
+// isSyncPoolMethod reports whether obj is a Get or Put method on the
+// sync.Pool type (structurally identified). Returns the method name.
+func isSyncPoolMethod(obj *types.Func) (string, bool) {
+	name := obj.Name()
+	if name != "Get" && name != "Put" {
+		return "", false
+	}
+	sig, ok := obj.Type().(*types.Signature)
+	if !ok {
+		return "", false
+	}
+	recv := sig.Recv()
+	if recv == nil {
+		return "", false
+	}
+	// Receiver must be Pool or *Pool (structurally identified).
+	recvT := types.Unalias(recv.Type())
+	if ptr, ok := recvT.(*types.Pointer); ok {
+		recvT = types.Unalias(ptr.Elem())
+	}
+	if !isSyncPoolType(recvT) {
+		return "", false
+	}
+	return name, true
+}
+
+// exportSyncPoolMethod lowers x.Get() and x.Put(v) on sync.Pool
+// (structurally identified) to the syncop wire node.
+func (e *exporter) exportSyncPoolMethod(c *ast.CallExpr, sel *ast.SelectorExpr, method string) (*Node, error) {
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]*Node, 0, len(c.Args))
+	for _, a := range c.Args {
+		an, err := e.exportExpr(a)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, an)
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncop", c, map[string]any{
+		"op": method, "synctyp": "Pool", "recv": recv, "args": args, "type": typ,
+	}), nil
 }
 
 // exportAtomicStorePointerStmt lowers a bare-statement
@@ -11289,6 +11439,14 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 		// time.NewTimer/time.NewTicker).
 		if nt := timeTimerTickerNamedExact(tv.Type); nt != nil {
 			return nil, timerScopeErrorf(nt, "composite literal")
+		}
+		// fix-redmaster-conformance: sync.Pool composite literals (e.g.
+		// sync.Pool{New: f}) lower to the syncnew wire node (Java GoPool
+		// backing). Identified structurally (03a5ae8a discipline): a named
+		// type "Pool" with Get() any and Put(any) methods. No package-path
+		// string appears.
+		if isSyncPoolType(tv.Type) {
+			return e.exportSyncPoolLit(l, tv.Type)
 		}
 	}
 	keyed := false

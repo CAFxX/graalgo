@@ -144,10 +144,13 @@ public final class SyncOpNode extends GoExprNode {
             case "Pool.Get" -> {
                 GoPool pool = poolOf(r);
                 Object x = pool.get();
+                System.err.println("DIAG-POOLGET x=" + x + " class=" + (x == null ? "null" : x.getClass().getName()));
                 if (x == null) {
                     Object nf = pool.getNewFunc();
+                    System.err.println("DIAG-NEWFUNC nf=" + nf + " class=" + (nf == null ? "null" : nf.getClass().getName()));
                     if (nf instanceof GoFunc f) {
                         x = invokeFuncValue(f, frame);
+                        System.err.println("DIAG-NEWRESULT x=" + x + " class=" + (x == null ? "null" : x.getClass().getName()));
                     }
                 }
                 return x;

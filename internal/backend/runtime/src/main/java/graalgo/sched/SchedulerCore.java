@@ -456,6 +456,7 @@ public final class SchedulerCore {
             return;
         }
         System.err.println("graalgo-run: fatal " + what + " in goroutine: " + t);
+        t.printStackTrace(System.err);
     }
 
     private static boolean isClassLoadingFailure(Throwable t) {

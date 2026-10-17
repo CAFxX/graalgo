@@ -44,6 +44,22 @@ public final class GoStruct {
                 // WS G: a complex field's zero value is (0+0i), not nil.
                 objects[f.index()] = f.kind() == GoKind.COMPLEX64
                         ? GoComplex32.ZERO : GoComplex64.ZERO;
+            } else if (!f.inLongs() && f.kind() == GoKind.STRUCT && f.structDesc() != null) {
+                // fix-redmaster-conformance (r6): nested struct fields must
+                // be recursively zeroed. Previously they stayed null, so
+                // make([]T,n) elements (and any other GoStruct.zero user)
+                // panicked on arr[i].nested.field. Go forbids direct value
+                // recursion, so this terminates. sync.Pool/sync.Map keep
+                // their Java objects (PKG-053 precedent: their real bodies
+                // need runtime support beyond struct layout).
+                String nestedName = f.structDesc().typeName();
+                if ("sync.Pool".equals(nestedName)) {
+                    objects[f.index()] = new graalgo.runtime.sync.GoPool();
+                } else if ("sync.Map".equals(nestedName)) {
+                    objects[f.index()] = new graalgo.runtime.sync.GoSyncMap();
+                } else {
+                    objects[f.index()] = GoStruct.zero(f.structDesc());
+                }
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);

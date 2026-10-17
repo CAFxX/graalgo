@@ -222,6 +222,28 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 			}), true, nil
 		}
 		if isUintptr(srcT) {
+			// fix-redmaster-conformance (r6): recognize the standard
+			// unsafe pointer-arithmetic idiom
+			//   unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T))
+			// where p is unsafe.Pointer, and lower it to the
+			// "unsafeptradd" wire node (a general mechanism for Go's
+			// unsafe arithmetic idiom, not a package-specific case).
+			// The "index" field is an element count (k), not a byte
+			// offset: the backend implements it as ArrayRef element
+			// indexing. Anything else keeps the D5 trap (unsafefromuint).
+			if ptrArg, indexArg := splitPtrAdd(e, c.Args[0]); ptrArg != nil {
+				ptr, err := e.exportExpr(ptrArg)
+				if err != nil {
+					return nil, false, err
+				}
+				index, err := e.exportExpr(indexArg)
+				if err != nil {
+					return nil, false, err
+				}
+				return e.node("unsafeptradd", c, map[string]any{
+					"ptr": ptr, "index": index, "type": to,
+				}), true, nil
+			}
 			return e.node("unsafefromuint", c, map[string]any{
 				"x": x, "type": to,
 			}), true, nil
@@ -246,4 +268,127 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 func isUintptr(t types.Type) bool {
 	b, ok := types.Unalias(t).(*types.Basic)
 	return ok && b.Kind() == types.Uintptr
+}
+
+// splitPtrAdd recognizes the standard unsafe pointer-arithmetic idiom in a
+// uintptr expression:
+//
+//	unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T))
+//	unsafe.Pointer(k*unsafe.Sizeof(T) + uintptr(p))
+//	unsafe.Pointer(uintptr(p) - k*unsafe.Sizeof(T))
+//
+// where p has type unsafe.Pointer. It returns the unsafe.Pointer operand p
+// and the element-count operand k.
+//
+// The unsafe.Sizeof(T) factor is load-bearing: it proves the offset is a
+// whole number of T-sized elements, so the backend can implement the node
+// as element indexing on the array referent (ArrayRef arithmetic) rather
+// than byte arithmetic on an opaque handle. A uintptr->unsafe.Pointer
+// conversion whose offset is not of this form keeps the D5 trap
+// (unsafefromuint): a handle can never be materialized from an arbitrary
+// integer.
+//
+// This is a structural, general mechanism — the Go unsafe idiom itself —
+// not a package- or symbol-keyed special case.
+func splitPtrAdd(e *exporter, uintptrExpr ast.Expr) (ptrArg, indexArg ast.Expr) {
+	bin, ok := uintptrExpr.(*ast.BinaryExpr)
+	if !ok {
+		return nil, nil
+	}
+	var ptrConv, offset ast.Expr
+	neg := false
+	switch bin.Op {
+	case token.ADD:
+		switch {
+		case isUintptrOfUnsafePointer(e, bin.X):
+			ptrConv, offset = bin.X, bin.Y
+		case isUintptrOfUnsafePointer(e, bin.Y):
+			ptrConv, offset = bin.Y, bin.X
+		default:
+			return nil, nil
+		}
+	case token.SUB:
+		// Only uintptr(p) - offset. (offset - uintptr(p) would negate the
+		// base handle, which is meaningless.)
+		if !isUintptrOfUnsafePointer(e, bin.X) {
+			return nil, nil
+		}
+		ptrConv, offset = bin.X, bin.Y
+		neg = true
+	default:
+		return nil, nil
+	}
+	// ptrConv is uintptr(p); extract p.
+	call, ok := ptrConv.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil, nil
+	}
+	p := call.Args[0]
+	// The offset must be k*unsafe.Sizeof(T) (in either order), a bare
+	// unsafe.Sizeof(T) (k=1), or the constant 0 (identity).
+	k, ok := matchSizeofMultiple(e, offset)
+	if !ok {
+		return nil, nil
+	}
+	if neg {
+		k = &ast.UnaryExpr{Op: token.SUB, X: k}
+	}
+	return p, k
+}
+
+// isUintptrOfUnsafePointer reports whether expr is a conversion uintptr(p)
+// where p has type unsafe.Pointer.
+func isUintptrOfUnsafePointer(e *exporter, expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	// The conversion result must be uintptr ...
+	if !isUintptr(e.info.TypeOf(call)) {
+		return false
+	}
+	// ... and the operand must be unsafe.Pointer.
+	argT := e.info.TypeOf(call.Args[0])
+	return argT != nil && types.Unalias(argT) == types.Typ[types.UnsafePointer]
+}
+
+// matchSizeofMultiple matches k*unsafe.Sizeof(T), unsafe.Sizeof(T)*k, a bare
+// unsafe.Sizeof(T) (k=1), or the constant 0, returning the element-count
+// operand k.
+func matchSizeofMultiple(e *exporter, expr ast.Expr) (ast.Expr, bool) {
+	if isUnsafeSizeofCall(e, expr) {
+		return &ast.BasicLit{Kind: token.INT, Value: "1"}, true
+	}
+	if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.INT && lit.Value == "0" {
+		return lit, true
+	}
+	bin, ok := expr.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.MUL {
+		return nil, false
+	}
+	if isUnsafeSizeofCall(e, bin.X) {
+		return bin.Y, true
+	}
+	if isUnsafeSizeofCall(e, bin.Y) {
+		return bin.X, true
+	}
+	return nil, false
+}
+
+// isUnsafeSizeofCall reports whether expr is a call to the unsafe.Sizeof
+// builtin. The builtin is resolved via go/types (like exportUnsafeIntrinsic),
+// so package aliases are handled and a local identifier named "Sizeof" can
+// never match.
+func isUnsafeSizeofCall(e *exporter, expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Sizeof" {
+		return false
+	}
+	obj := e.info.Uses[sel.Sel]
+	b, ok := obj.(*types.Builtin)
+	return ok && isUnsafeIntrinsic(b) && b.Name() == "Sizeof"
 }

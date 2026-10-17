@@ -59,6 +59,9 @@ public final class SelectorNode extends GoExprNode {
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site) {
         for (int idx : selpath) {
             o = deref(o, site);
+            if (!(o instanceof GoStruct)) {
+                System.err.println("DIAG-READFIELD o=" + o + " class=" + (o == null ? "null" : o.getClass().getName()) + " site=" + site + " src=" + site.getSourceSection());
+            }
             GoStruct s = (GoStruct) o;
             if (s.descriptor().field(idx).inLongs()) {
                 o = Long.valueOf(s.getLong(idx));
