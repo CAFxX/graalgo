@@ -1855,6 +1855,24 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// P4 (WS D, general interface MR): user-defined (or
+				// otherwise unlisted) multi-result interface methods
+				// in N-target assignment position (e.g. r, size, err
+				// = s.rs.ReadRune() in fmt/scan.go:189, which every
+				// fmt-importing program carries). The call-expression
+				// path (exportIfaceMethodCall) already chains this
+				// classifier after the table classifiers; the
+				// assignment path must mirror it, otherwise the
+				// N-target assignment keeps the raw pair-typed
+				// ifacemethod node and the backend fails it with
+				// "lhs/rhs length mismatch". The WS H fallback
+				// classifier is intentionally absent here: its
+				// type-parameter receivers are excluded by recvIface,
+				// and that path is owned by exportIfaceFallbackCall
+				// (see the type-param arm below).
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
