@@ -2,7 +2,6 @@ package vet
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/token"
 	"go/types"
 	"strconv"
@@ -45,7 +44,7 @@ func runCgoCall(pass *Pass) []Diagnostic {
 		Uses:  make(map[*ast.Ident]types.Object),
 	}
 	conf := types.Config{
-		Importer:                 importer.Default(),
+		Importer:                 newSourceImporter(pass.Fset),
 		FakeImportC:              true,
 		DisableUnusedImportCheck: true,
 		Error:                    func(error) {}, // ignore errors; best effort

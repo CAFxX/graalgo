@@ -2,7 +2,6 @@ package vet
 
 import (
 	"go/ast"
-	"go/token"
 	"go/types"
 )
 
@@ -69,8 +68,8 @@ func runComposites(pass *Pass) []Diagnostic {
 
 // Common test mistakes:
 // - Test function with wrong signature (must be func TestXxx(*testing.T))
+// - TestMain with wrong signature (must be func TestMain(*testing.M))
 // - Example without // Output: comment (not an error, skip)
-// - TestMain with wrong signature
 func runTests(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -84,41 +83,76 @@ func runTests(pass *Pass) []Diagnostic {
 			if !ok {
 				continue
 			}
-			name := fn.Name.Name
-			if len(name) < 4 || name[:4] != "Test" {
+			// TestMain is checked separately below: it must not be
+			// swept up by the Test* loop (it takes *testing.M, not
+			// *testing.T).
+			if fn.Name.Name == "TestMain" {
+				out = append(out, checkTestMain(pass, fn)...)
 				continue
 			}
-			// TestXxx must take *testing.T.
-			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
-				out = append(out, Diagnostic{
-					pass.position(fn),
-					"Test functions must take one *testing.T parameter",
-				})
-				continue
-			}
-			param := fn.Type.Params.List[0]
-			tv, ok := pass.Info.Types[param.Type]
-			if !ok || tv.Type == nil || tv.Type.String() != "*testing.T" {
-				out = append(out, Diagnostic{
-					pass.position(fn),
-					"Test functions must take *testing.T",
-				})
-			}
-		}
-		// Check TestMain signature.
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != "TestMain" {
-				continue
-			}
-			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
-				out = append(out, Diagnostic{
-					pass.position(fn),
-					"TestMain must take one *testing.M parameter",
-				})
+			if name := fn.Name.Name; len(name) >= 4 && name[:4] == "Test" {
+				out = append(out, checkTestFunc(pass, fn)...)
 			}
 		}
 	}
-	_ = token.NoPos
+	return out
+}
+
+// checkTestFunc verifies a TestXxx function has the signature
+// func TestXxx(*testing.T).
+func checkTestFunc(pass *Pass, fn *ast.FuncDecl) []Diagnostic {
+	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		return []Diagnostic{{
+			pass.position(fn),
+			"Test functions must take one *testing.T parameter",
+		}}
+	}
+	param := fn.Type.Params.List[0]
+	tv, ok := pass.Info.Types[param.Type]
+	if !ok || tv.Type == nil {
+		// The parameter type did not resolve (its import failed, which
+		// Run already reported as a diagnostic). Treat it as unknown
+		// rather than as a violation: do not flag what cannot be
+		// verified (C2/C3).
+		return nil
+	}
+	if !isPointerToNamed(tv.Type, "testing", "T") {
+		return []Diagnostic{{
+			pass.position(fn),
+			"Test functions must take *testing.T",
+		}}
+	}
+	return nil
+}
+
+// checkTestMain verifies the signature func TestMain(m *testing.M) with
+// no results. As with checkTestFunc, an unresolvable parameter type is
+// treated as unknown rather than as a violation.
+func checkTestMain(pass *Pass, fn *ast.FuncDecl) []Diagnostic {
+	var out []Diagnostic
+	paramBad := true
+	if fn.Type.Params != nil && len(fn.Type.Params.List) == 1 {
+		tv, ok := pass.Info.Types[fn.Type.Params.List[0].Type]
+		switch {
+		case !ok || tv.Type == nil:
+			// Unresolvable: cannot verify; the failed import is
+			// already reported by Run. Do not flag.
+			paramBad = false
+		case isPointerToNamed(tv.Type, "testing", "M"):
+			paramBad = false
+		}
+	}
+	if paramBad {
+		out = append(out, Diagnostic{
+			pass.position(fn),
+			"TestMain must take one *testing.M parameter",
+		})
+	}
+	if fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
+		out = append(out, Diagnostic{
+			pass.position(fn),
+			"TestMain must not return results",
+		})
+	}
 	return out
 }

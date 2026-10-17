@@ -38,7 +38,7 @@ This package implements `go vet`-style static analyzers that run as part of
 | `sigchanyzer` | `signal.Notify` with unbuffered channel |
 | `hostport` | `net.Dial` with concatenated or port-less addresses |
 | `directive` | Unknown `//go:` directives |
-| `buildtag` | Malformed `// +build` lines |
+| `buildtag` | Malformed `// +build` lines, `// +build` lines misplaced after the package clause |
 | `asmdecl` | Mismatches between assembly files and Go declarations |
 | `cgocall` | Violations of the cgo pointer passing rules |
 | `framepointer` | Assembly that clobbers the frame pointer before saving it |
@@ -48,8 +48,16 @@ This package implements `go vet`-style static analyzers that run as part of
 
 - Analyzers are registered via `register()` in `init()` and run in order.
 - `Pass` carries the `token.FileSet`, parsed `[]*ast.File`, and `*types.Info`.
-- Type checking is best-effort: if `types.Config.Check` fails, analyzers
-  still run on the AST with partial type info.
+- Type checking is best-effort: imports are resolved from source by
+  `sourceImporter` ([importer.go](importer.go)) — `importer.Default()`'s
+  gc export-data lookup cannot work here (`$GOROOT/pkg` no longer ships
+  compiled archives), and shelling out to `go list -export` would hard-wire
+  a dependency on the reference toolchain into `graalgo vet`. Resolution is
+  purely by import path via `go/build` (GOROOT for stdlib, GOPATH
+  otherwise); no package names are special-cased. Imports that cannot be
+  resolved are reported as `could not import ...` diagnostics rather than
+  silently degrading import-dependent checks, and type-gated analyzers
+  treat unresolvable types as unknown rather than as violations.
 - `Run(paths)` returns diagnostics sorted by source position.
 - `asmdecl` and `framepointer` discover `.s` files in the directories
   containing the analyzed Go files.

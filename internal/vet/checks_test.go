@@ -9,8 +9,17 @@ import (
 
 func runVetOnSrc(t *testing.T, src string) string {
 	t.Helper()
+	return runVetOnSrcAs(t, src, "test.go")
+}
+
+// runVetOnSrcAs is runVetOnSrc with an explicit file name, so tests can
+// target analyzers that key off the file name (e.g. the tests analyzer,
+// which only inspects _test.go files — a fixture named test.go never
+// exercises it, C4).
+func runVetOnSrcAs(t *testing.T, src, name string) string {
+	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "test.go")
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}

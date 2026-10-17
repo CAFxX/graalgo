@@ -7,7 +7,6 @@ package vet
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -44,8 +43,10 @@ func Analyzers() []*Analyzer {
 
 // Run analyzes the named Go source files and returns sorted diagnostics.
 // It parses with comments (for directive checks) and type-checks on a
-// best-effort basis: if type checking fails, analyzers still run on the
-// AST with whatever type info was gathered.
+// best-effort basis: imports are resolved from source (see sourceImporter),
+// and if type checking fails, analyzers still run on the AST with whatever
+// type info was gathered. Imports that cannot be resolved are reported as
+// diagnostics rather than silently degrading import-dependent checks.
 func Run(paths []string) ([]Diagnostic, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
@@ -71,20 +72,73 @@ func Run(paths []string) ([]Diagnostic, error) {
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		Scopes:     make(map[ast.Node]*types.Scope),
 	}
+	imp := newSourceImporter(fset)
 	conf := types.Config{
-		Importer:                 importer.Default(),
+		Importer:                 imp,
 		IgnoreFuncBodies:         false,
 		DisableUnusedImportCheck: true,
+		FakeImportC:              true, // cgo files get usable type info instead of a failed "C" import
+		Sizes:                    imp.sizes,
 	}
 	pkg, _ := conf.Check("vetpkg", fset, files, info)
 	// Type errors are tolerated: analyzers use best-effort info.
+	// Import failures are not silent (QN-13): each is reported so the
+	// user knows which import-dependent checks were degraded.
 
 	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
 	var out []Diagnostic
+	out = append(out, importFailureDiagnostics(fset, files, imp.failures())...)
 	for _, a := range analyzers {
 		out = append(out, a.Run(pass)...)
 	}
 	return SortDiagnostics(out), nil
+}
+
+// importFailureDiagnostics reports unresolvable imports as diagnostics
+// positioned at the corresponding import spec, so a degraded run is
+// visible instead of silent (QN-13).
+func importFailureDiagnostics(fset *token.FileSet, files []*ast.File, failed map[string]error) []Diagnostic {
+	var out []Diagnostic
+	for _, f := range files {
+		for _, spec := range f.Imports {
+			path := importPath(spec)
+			err, ok := failed[path]
+			if !ok {
+				continue
+			}
+			out = append(out, Diagnostic{
+				Pos:     fset.Position(spec.Pos()),
+				Message: fmt.Sprintf("could not import %q (%v); import-dependent checks skipped for this package", path, firstLine(err.Error())),
+			})
+		}
+	}
+	return out
+}
+
+// firstLine truncates s at the first newline (go/build failure reasons
+// list every search path; the diagnostic keeps the summary).
+func firstLine(s string) string {
+	for i, r := range s {
+		if r == '\n' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// isPointerToNamed reports whether t is *pkgPath.name, compared
+// structurally rather than by string rendering.
+func isPointerToNamed(t types.Type, pkgPath, name string) bool {
+	p, ok := t.(*types.Pointer)
+	if !ok {
+		return false
+	}
+	named, ok := p.Elem().(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj.Name() == name && obj.Pkg() != nil && obj.Pkg().Path() == pkgPath
 }
 
 // position returns the source position of n.

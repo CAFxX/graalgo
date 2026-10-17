@@ -68,6 +68,16 @@ func runBuildTag(pass *Pass) []Diagnostic {
 			for _, c := range cg.List {
 				text := strings.TrimSpace(c.Text)
 				if strings.HasPrefix(text, "// +build") {
+					// Placement: a // +build line is only honored as a
+					// build constraint when it appears before the package
+					// clause (followed by a blank line); after the package
+					// clause it is silently ignored, so report it.
+					if f.Package != token.NoPos && c.Pos() > f.Package {
+						out = append(out, Diagnostic{
+							pass.position(c),
+							"misplaced // +build comment: after the package clause it is ignored as a build constraint",
+						})
+					}
 					rest := strings.TrimSpace(text[len("// +build"):])
 					if rest == "" {
 						out = append(out, Diagnostic{
@@ -101,11 +111,6 @@ func runBuildTag(pass *Pass) []Diagnostic {
 					}
 				}
 			}
-		}
-		// Check placement: //go:build should be before package clause.
-		// (The parser already enforces this; we check // +build after package.)
-		if f.Package != token.NoPos {
-			_ = f.Package
 		}
 	}
 	return out
