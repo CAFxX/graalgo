@@ -179,6 +179,49 @@ func main() {
 	}
 }
 
+// singleValueIndexTypeIDs returns the "type" field ids of every index node
+// NOT marked commaOk in the wire document, plus the decoded types table.
+func singleValueIndexTypeIDs(t *testing.T, doc string) ([]int, []map[string]any) {
+	t.Helper()
+	raw := map[string]any{}
+	if err := json.Unmarshal([]byte(doc), &raw); err != nil {
+		t.Fatalf("unmarshal doc: %v", err)
+	}
+	typesRaw, _ := raw["types"].([]any)
+	types := make([]map[string]any, len(typesRaw))
+	for i, tr := range typesRaw {
+		m, _ := tr.(map[string]any)
+		types[i] = m
+	}
+	var ids []int
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "index" {
+				if f, ok := v["fields"].(map[string]any); ok {
+					if cok, _ := f["commaOk"].(bool); !cok {
+						if tid, ok := f["type"].(float64); ok {
+							ids = append(ids, int(tid))
+						} else {
+							t.Fatalf("single-value index node has no numeric type field: %v", f)
+						}
+					}
+				}
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	return ids, types
+}
+
 // TestSingleValueIndexDefinedMapType: the single-value index path must keep
 // working on defined map types (it never had the Underlying check, but it
 // shares exportIndex — guard against regressions).
@@ -202,9 +245,10 @@ func main() {
 }
 
 // TestSingleValueIndexTypeParamMap: single-value index on a type parameter
-// constrained by ~map[K]V.
+// constrained by ~map[K]V. The index must be emitted (not comma-ok) with
+// the value type resolved — mirroring the comma-ok type-param assertions.
 func TestSingleValueIndexTypeParamMap(t *testing.T) {
-	exportSrc(t, `package main
+	out := exportSrc(t, `package main
 
 func get[M2 ~map[K]V, K, V comparable](m2 M2, k K) V {
 	return m2[k]
@@ -216,4 +260,20 @@ func main() {
 	_ = v
 }
 `)
+	ids, types := singleValueIndexTypeIDs(t, out)
+	if len(ids) == 0 {
+		t.Fatal("no single-value index node emitted")
+	}
+	for _, id := range ids {
+		kind, name := typeKindName(types, id)
+		// Generic body: typeparam V; monomorphized instantiation at the
+		// call site: basic int. Both are correct value types.
+		ok := (kind == "typeparam" && name == "V") || (kind == "basic" && name == "int")
+		if !ok {
+			t.Fatalf("elem type = %s %q, want typeparam V or basic int", kind, name)
+		}
+	}
+	if strings.Contains(out, `"commaOk": true`) {
+		t.Fatal("single-value index must not be marked commaOk")
+	}
 }

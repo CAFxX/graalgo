@@ -875,8 +875,12 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
+	// where F is multi-result. Package-level ValueSpecs are NOT removed
+	// here (removeAliasedSpecs=false): the spec stays in the AST so the
+	// synthetic var export lowers the initializer to the pair form
+	// (or skips it for fail-fast stubs) and PKG-035 links the variable
+	// to its pair info. The alias maps are unused on this path.
+	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg, false)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
@@ -1281,18 +1285,21 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			var initExpr ast.Expr
 			if len(sv.vs.Values) > 0 {
 				initExpr = sv.vs.Values[i]
-				// General (real-x509 lane): if the initializer is a
-				// synthetic multi-result function in value position
-				// (e.g. var lstat = os.Lstat), skip the initializer
-				// (var stays nil). The function cannot be captured as a
-				// value in v1; call sites through the var use the alias
-				// map (varFuncAliases) to desugar as the original Func.
+				// If the initializer is a multi-result function with no
+				// pair form (e.g. a fail-fast stub like time.ParseDuration),
+				// it cannot be captured as a value in v1: skip the
+				// initializer (var stays nil). Functions with a pair form
+				// fall through to exportExpr, which lowers them to the
+				// pair-returning value (PKG-035), and the var is linked to
+				// its pair info below so call sites desugar. (The previous
+				// check keyed on synthFuncIDs membership, which also
+				// matched functions with __-helpers and single-result
+				// functions — both lower fine and must not be skipped.)
 				if sel, ok := unparen(initExpr).(*ast.SelectorExpr); ok {
 					if _, isSel := e.info.Selections[sel]; !isSel {
 						if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
-							if obj.Pkg() != nil && e.synthFuncIDs != nil {
-								key := obj.Pkg().Path() + "." + obj.Name()
-								if _, ok := e.synthFuncIDs[key]; ok {
+							if sig, ok := obj.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
+								if e.mrPlanForFuncValue(obj) == nil {
 									// Skip: leave init nil.
 									varInits = append(varInits, ginit{oid: sv.oids[i], init: nil, expr: nil, pos: e.pos(n)})
 									continue

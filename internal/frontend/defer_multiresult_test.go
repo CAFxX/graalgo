@@ -142,17 +142,16 @@ func main() {
 	}
 }
 
-// TestDeferSingleResultCallUnaffected: a defer of a single-result call
-// must not take the multi-result desugar path (no __-helper).
+// TestDeferSingleResultCallUnaffected: a defer of a genuinely single-result
+// call must not take the multi-result desugar path — the defer's call fun
+// is the plain ident, not a __-helper.
 func TestDeferSingleResultCallUnaffected(t *testing.T) {
 	src := `package main
-
-import "fmt"
 
 func one() int { return 1 }
 
 func main() {
-	defer fmt.Println(one())
+	defer one()
 }
 `
 	doc := exportSrc(t, src)
@@ -160,14 +159,25 @@ func main() {
 	if len(defers) == 0 {
 		t.Fatal("no defer nodes in exported document")
 	}
-	// The inner one() call is single-result; the deferred call itself is
-	// still the mrM7 Println helper (results discarded). What matters:
-	// export succeeds and the defer call fun is the helper ident.
+	found := false
 	for _, d := range defers {
 		call, ok := nodeFields(t, d)["call"].(map[string]any)
 		if !ok || call["kind"] != "call" {
 			t.Fatalf("defer wraps %v, want call node", call["kind"])
 		}
+		fun, ok := nodeFields(t, call)["fun"].(map[string]any)
+		if !ok || fun["kind"] != "ident" {
+			continue
+		}
+		// The single-result call must keep its plain ident fun. Had the
+		// multi-result desugar path applied, the fun would be a
+		// __-helper ident instead and this would find nothing.
+		if name, _ := nodeFields(t, fun)["name"].(string); name == "one" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("defer of one() lost its plain ident fun (multi-result desugar path applied?)")
 	}
 }
 

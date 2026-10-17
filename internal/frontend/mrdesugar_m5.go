@@ -4039,39 +4039,66 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 // etaExpandMRFuncValues rewrites variable initializers that capture a
 // multi-result function as a value:
 //
-//	var lstat = os.Lstat  →  var lstat = func(name string) (os.FileInfo, error) { return os.Lstat(name) }
+//	x := pkg.F  →  x := func(p0 T0, ...) (R0, ...) { return pkg.F(p0, ...) }
 //
-// Rationale (general, real-x509 lane): frontend/v1 cannot represent a
-// multi-result function as a value (M5 scope error "X in value position
-// ... multi-result function values require v2"). Eta-expansion is the
-// semantics-preserving general fix: the wrapper is an ordinary
-// multi-result closure, which the existing machinery already handles —
-// exportFuncLit pair-transforms it, the MR-closure-var link
-// (linkFuncLitMRVars and the exportPackageVars ValueSpec case) connects
-// call sites through the variable to the pair info, and the inner call
-// desugars through the standard multi-result call path
+// (and likewise for struct/map literal fields holding such a value).
+//
+// Rationale (general): frontend/v1 cannot represent a multi-result function
+// as a value (M5 scope error "X in value position ... multi-result function
+// values require v2"). Eta-expansion is the semantics-preserving general
+// fix: the wrapper is an ordinary multi-result closure, which the existing
+// machinery already handles — exportFuncLit pair-transforms it, the
+// MR-closure-var link (linkFuncLitMRVars and the exportPackageVars ValueSpec
+// case) connects call sites through the variable to the pair info, and the
+// inner call desugars through the standard multi-result call path
 // (classifyMultiResultCall + hoistMRCallArg). This covers any
 // package-qualified multi-result function (synthetic Appendix-M tables,
-// the disk MR table, user pair-transforms) — not just os.Lstat.
+// the disk MR table, user pair-transforms).
+//
+// Package-level `var x = pkg.F` specs are handled according to
+// removeAliasedSpecs:
+//
+//   - Disk packages (removeAliasedSpecs=true, buildDiskPackage): the spec
+//     is removed and the alias (x -> F) recorded in the returned map. The
+//     disk exporter never sees the declaration; call sites through x
+//     desugar via the alias map and the table classifiers
+//     (classifyMultiResultCall / userMRInfoForVar fallbacks). This is the
+//     real-x509 path that compiles path/filepath's `var lstat = os.Lstat`.
+//   - User and synthetic packages (removeAliasedSpecs=false, ExportFiles
+//     and buildSyntheticPackage): the spec is left untouched. PKG-035's
+//     export-time machinery lowers the initializer to the pair-returning
+//     value form (the __-helper ident for table-driven functions, the
+//     transformed funcdecl for user functions) and links the variable to
+//     its pair info (userMRVars), so call sites through the variable
+//     desugar exactly like direct calls. Removing the declaration here
+//     would delete a legal global while leaving every use dangling (and
+//     an AST-level ident→pkg.F rewrite would be unsound for reassignable
+//     vars), so the removal is deliberately disk-only.
 //
 // Runs post-typecheck (it needs info for the signature); called from
 // buildDiskPackage, buildSyntheticPackage, and ExportFiles. Idempotent:
 // after expansion the RHS is a FuncLit, which never re-matches. Method
 // values keep their existing path (Selections non-nil skips them).
-func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
-	// Returns (var->FuncLit map, var->Func alias map).
-	// For package-level `var x = pkg.F` where F is multi-result, we record
-	// the alias (x -> F) and REMOVE the declaration (to avoid the v1
-	// value-position limitation). Call sites through x are rewritten to
-	// pkg.F directly (real-x509 lane).
+func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package, removeAliasedSpecs bool) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
+	// Returns (var->FuncLit map, var->Func alias map). The FuncLit map is
+	// currently always empty (kept for the disk-package merge shape); the
+	// alias map is populated only when removeAliasedSpecs is true.
 	varLits := make(map[*types.Var]*ast.FuncLit)
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
-		// Collect ValueSpecs to remove (can't modify during Inspect).
-		var toRemove []*ast.ValueSpec
+		// Names to drop per ValueSpec (can't modify during Inspect).
+		type specEdit struct {
+			vs   *ast.ValueSpec
+			drop map[int]bool // name indices aliased to a multi-result Func
+		}
+		var edits []specEdit
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.ValueSpec:
+				if !removeAliasedSpecs {
+					return true
+				}
+				drop := make(map[int]bool)
 				for i, v := range n.Values {
 					sel, ok := unparen(v).(*ast.SelectorExpr)
 					if !ok {
@@ -4091,13 +4118,20 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 					if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
 						continue
 					}
-					// Record alias and mark for removal.
+					// Record the alias and mark the name for removal. The
+					// value initializes name i: a selector initializer
+					// always pairs positionally (len(Values)==len(Names)
+					// post-typecheck; a lone selector initializes the
+					// sole name).
 					if i < len(n.Names) {
 						if vr, ok := info.Defs[n.Names[i]].(*types.Var); ok {
 							aliases[vr] = obj
 						}
+						drop[i] = true
 					}
-					toRemove = append(toRemove, n)
+				}
+				if len(drop) > 0 {
+					edits = append(edits, specEdit{vs: n, drop: drop})
 				}
 			case *ast.AssignStmt:
 				if n.Tok != token.DEFINE {
@@ -4119,41 +4153,48 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 			}
 			return true
 		})
-		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
-		// (Simplified: just remove; call-site rewriting via alias map.)
-		for _, vs := range toRemove {
-			// Find and remove from parent GenDecl.
-			for _, decl := range f.Decls {
-				if gd, ok := decl.(*ast.GenDecl); ok {
-					for i, spec := range gd.Specs {
-						if spec == vs {
-							gd.Specs = append(gd.Specs[:i], gd.Specs[i+1:]...)
-							break
-						}
-					}
-				}
-			}
-		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
+		// Apply the edits: drop only the aliased names (and their values),
+		// keeping the rest of a multi-name spec intact. When every name is
+		// aliased, remove the whole spec from its GenDecl.
+		for _, ed := range edits {
+			vs := ed.vs
+			if len(ed.drop) == len(vs.Names) {
+				for _, decl := range f.Decls {
+					if gd, ok := decl.(*ast.GenDecl); ok {
+						for i, spec := range gd.Specs {
+							if spec == vs {
+								gd.Specs = append(gd.Specs[:i], gd.Specs[i+1:]...)
+								break
 							}
 						}
 					}
 				}
-				return true
-			})
+				continue
+			}
+			keepNames := make([]*ast.Ident, 0, len(vs.Names)-len(ed.drop))
+			keepValues := make([]ast.Expr, 0, len(vs.Values)-len(ed.drop))
+			for ni, name := range vs.Names {
+				if ed.drop[ni] {
+					continue
+				}
+				keepNames = append(keepNames, name)
+				// Value i initializes name i (positional pairing).
+				if ni < len(vs.Values) {
+					keepValues = append(keepValues, vs.Values[ni])
+				}
+			}
+			vs.Names = keepNames
+			if len(keepValues) == len(keepNames) {
+				vs.Values = keepValues
+			}
 		}
+		// NOTE: no AST-level ident→pkg.F rewrite here. Rewriting use-site
+		// idents to selector exprs would be unsound for reassignable vars
+		// (a later assignment to x must be seen through x), and building
+		// correct info.Uses/Types entries for synthesized selectors is
+		// fragile. Call sites through an aliased var desugar in the
+		// exporter via the returned alias map instead
+		// (classifyMultiResultCall / userMRInfoForVar).
 	}
 	return varLits, aliases
 }
