@@ -112,7 +112,7 @@ var syntheticSources = map[string]string{
 	// "internal/reflectlite": syntheticReflectliteSource, // RETIRED - real
 	// internal/reflectlite from GOROOT via disk importer (needed by real
 	// reflect and real errors)
-	"iter":                 syntheticIterSource,
+	"iter": syntheticIterSource,
 	// M7 helpers for reflect (disk-imported): the M7 desugaring table
 	// still needs the __-helpers and pair types (e.g. __reflect_taglookup,
 	// reflectTagPair). They live in the retired synth_reflect.go source,
@@ -333,7 +333,7 @@ var syntheticSources = map[string]string{
 	"mime/quotedprintable": syntheticMimeQuotedprintableSource,
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
 	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go,
-// net/http and net/http/httptest are REAL (P4 bridge-removal): the
+	// net/http and net/http/httptest are REAL (P4 bridge-removal): the
 	// synthetic sources are retired. Real net/http compiles from GOROOT
 	// via the general disk overlay.
 }
@@ -1119,7 +1119,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 								}
 							}
 						}
-					// General (real-x509 lane): fail-fast stubs ARE registered
+						// General (real-x509 lane): fail-fast stubs ARE registered
 						// (so call sites link to the stub, which panics at
 						// runtime if invoked — the honest fail-fast
 						// behavior); skipPairTransform below prevents the
@@ -1269,7 +1269,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 		}
 	}
-		varInits := []ginit{}
+	varInits := []ginit{}
 	for _, sv := range sspecs {
 		// WS G: the initializer's own file (multi-file disk packages).
 		e.src = sp.srcForFile(sv.file)
@@ -1373,61 +1373,117 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				return err
 			}
 			e.synthGlobals = append(e.synthGlobals, ent)
+			// RV-P1-02 narrowing (Mechanism A, §4.2): init functions
+			// always run (Go initialization semantics) — demand their
+			// bodies at import time. The initCallEnt above is a genuine
+			// program reference to fi.funcID.
+			e.demandBody(fi)
 		}
 	}
 	e.synthGroups = append(e.synthGroups, g)
 	return nil
 }
 
-// exportSyntheticBodies emits the imported synthetic funcdecls into
-// doc.Funcs (after the user's). State is swapped per package.
+// exportSyntheticBodies emits the bodies of demanded imported functions
+// into doc.Funcs (after the user's), draining the demand fixpoint:
+// emitting a body can demand further bodies (transitive closure).
+// Deterministic order: package import order (synthGroups) × source
+// declaration order. State is swapped per package.
+//
+// RV-P1-02 narrowing (Mechanism A): only bodies referenced by the program
+// are emitted, so checkBodylessReference only fires for genuine program
+// references. funcIDs are declaration-assigned, so a reference exported
+// before its callee's body needs no wire change.
 func (e *exporter) exportSyntheticBodies(doc *Doc) error {
-	// Gate-1 #2: pre-register pair types for synthetic multi-result
-	// functions with real Go source and no table coverage (e.g.,
-	// regexp/syntax.leadingString). Without this, intra-package calls
-	// fail with "multi-valued call result is not supported" because the
-	// callee isn't in userMRFuncs when the caller is exported.
-	for _, g := range e.synthGroups {
-		for _, fi := range g.fis {
-			if fi.isTemplate || fi.synthPkg == nil {
-				continue
-			}
-			if isTableDrivenMR(fi) {
-				continue
-			}
-			if _, err := e.registerUserMRFunc(fi); err != nil {
+	for {
+		progress := false
+		for _, g := range e.synthGroups {
+			if err := e.drainSyntheticGroup(g, doc, &progress); err != nil {
 				return err
 			}
+		}
+		if !progress {
+			return nil
 		}
 	}
-	for _, g := range e.synthGroups {
-		savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
-		savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
-		e.fset, e.src, e.info, e.pkg = g.sp.fset, g.sp.raw, g.sp.info, g.sp.pkg
-		e.subst, e.substTypeIDs = nil, nil
-		for _, fi := range g.fis {
-			if fi.isTemplate {
-				// P3-M9 (tier-1d): templates emit only via monomorphized
-				// instantiations (exportInstantiation), never directly —
-				// same rule as user templates.
-				continue
-			}
-			// WS G: the declaration's own file (multi-file disk packages).
-			e.src = g.sp.srcForFile(fi.file)
-			f, err := e.exportFuncDecl(fi)
-			if err != nil {
-				e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
-				e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
-				return err
-			}
-			if f == nil {
-				// Disk-MR stub: skipped by exportFuncDecl.
-				continue
-			}
-			doc.Funcs = append(doc.Funcs, f)
+}
+
+// drainSyntheticGroup runs the Gate-1 #2 MR pair pre-registration for the
+// group's newly demanded functions, then emits their bodies in source
+// declaration order via exportFuncDecl (factored so the demand drain can
+// reuse the per-group state swap). Sets *progress if any body was
+// processed.
+func (e *exporter) drainSyntheticGroup(g synthGroup, doc *Doc, progress *bool) error {
+	// Gate-1 #2: pre-register pair types for newly demanded synthetic
+	// multi-result functions with real Go source and no table coverage
+	// (e.g., regexp/syntax.leadingString). Without this, intra-package
+	// calls fail with "multi-valued call result is not supported"
+	// because the callee isn't in userMRFuncs when the caller is
+	// exported. Scoped to the demand set (was: whole package). Runs in
+	// the ambient (caller) package state, like the old pre-pass.
+	for _, fi := range g.fis {
+		if !e.demanded[fi] || e.emittedBodies[fi] {
+			continue
 		}
+		if fi.isTemplate || fi.synthPkg == nil {
+			continue
+		}
+		if isTableDrivenMR(fi) {
+			continue
+		}
+		if _, err := e.registerUserMRFunc(fi); err != nil {
+			return err
+		}
+	}
+	// Skip the state swap when the group has no newly demanded bodies.
+	hasWork := false
+	for _, fi := range g.fis {
+		if e.demanded[fi] && !e.emittedBodies[fi] {
+			hasWork = true
+			break
+		}
+	}
+	if !hasWork {
+		return nil
+	}
+	savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
+	savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
+	e.fset, e.src, e.info, e.pkg = g.sp.fset, g.sp.raw, g.sp.info, g.sp.pkg
+	e.subst, e.substTypeIDs = nil, nil
+	defer func() {
 		e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
 		e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
+	}()
+	for _, fi := range g.fis {
+		if !e.demanded[fi] || e.emittedBodies[fi] {
+			continue
+		}
+		// Mark before emission: emitting the body can re-demand fi
+		// (recursion) and must not loop.
+		if e.emittedBodies == nil {
+			e.emittedBodies = make(map[*funcDeclInfo]bool)
+		}
+		e.emittedBodies[fi] = true
+		*progress = true
+		if fi.isTemplate {
+			// P3-M9 (tier-1d): templates emit only via monomorphized
+			// instantiations (exportInstantiation), never directly —
+			// same rule as user templates.
+			continue
+		}
+		// WS G: the declaration's own file (multi-file disk packages).
+		e.src = g.sp.srcForFile(fi.file)
+		f, err := e.exportFuncDecl(fi)
+		if err != nil {
+			return err
+		}
+		if f == nil {
+			// Disk-MR stub, or truly-unimplemented bodyless (cannot be
+			// demanded — the reference-site check fails first): skipped
+			// by exportFuncDecl.
+			continue
+		}
+		doc.Funcs = append(doc.Funcs, f)
 	}
 	return nil
 }
@@ -2027,6 +2083,14 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", helperFn.Name())
 			}
+			// RV-P1-02 narrowing (Mechanism A): the helper in value
+			// position is a genuine program reference — check and demand
+			// the helper body. (This path bypasses exportFuncValue's
+			// reference site.)
+			if err := e.checkBodylessReference(fi); err != nil {
+				return nil, err
+			}
+			e.demandBody(fi)
 			sigID, err := e.typeID(helperFn.Type())
 			if err != nil {
 				return nil, err
@@ -2188,6 +2252,7 @@ func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
 	}
 	return isMultiResultSynthetic(fn)
 }
+
 // isGenericFunc reports whether fn is a generic function template (has
 // type parameters). Generic templates are never pair-transformed
 // themselves (registerUserMRFunc skips isTemplate); their instantiations

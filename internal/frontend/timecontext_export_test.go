@@ -12,9 +12,15 @@ import (
 // Appendix M) synthetic package shape: the single-result desugar helpers
 // (__withCancel/__withCancelCause/__withDeadline/__withTimeout/
 // __deadlineOf/__parseDuration, cancelFunc/cancelCauseFunc methods) are
-// exported as real funcdecls; the 6 multi-result operations keep exact gc
-// signatures but are NOT exported (their call sites desugar or fail
-// fast); the retired ctxChanClose intrinsic is gone.
+// exported as real funcdecls when referenced; the 6 multi-result
+// operations keep exact gc signatures but are NOT exported (their call
+// sites desugar or fail fast); the retired ctxChanClose intrinsic is
+// gone.
+//
+// RV-P1-02 narrowing (Mechanism A): unreferenced helpers are NOT
+// emitted — the unit of use is the reference, not the package. The test
+// program therefore exercises the desugar paths so the helpers are
+// genuinely referenced.
 func TestSyntheticContextM5(t *testing.T) {
 	src := `package main
 
@@ -24,9 +30,13 @@ import (
 )
 
 func main() {
-	ctx := context.WithValue(context.Background(), "k", 1)
+	ctx, cancel := context.WithCancel(context.Background())
 	_ = ctx
-	d := 5 * time.Second
+	cancel()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	_ = ctx2
+	cancel2()
+	d, _ := time.ParseDuration("5s")
 	_ = d
 }
 `
@@ -75,12 +85,23 @@ func main() {
 		}
 	}
 	walk(raw)
+	// RV-P1-02 narrowing: only the helpers referenced by the program are
+	// emitted (__withCancel/__withTimeout/__withDeadline/__parseDuration
+	// via the desugar — __withTimeout calls __withDeadline — cancelFunc
+	// via the cancel() calls). Unreferenced helpers (__withCancelCause,
+	// __deadlineOf, cancelCauseFunc) are not emitted.
 	for _, want := range []string{
-		"__withCancel", "__withCancelCause", "__withDeadline", "__withTimeout",
-		"__deadlineOf", "__parseDuration", "cancelFunc", "cancelCauseFunc",
+		"__withCancel", "__withTimeout", "__withDeadline", "__parseDuration", "cancelFunc",
 	} {
 		if !names[want] {
 			t.Errorf("synthetic helper %q not exported as funcdecl", want)
+		}
+	}
+	for _, absent := range []string{
+		"__withCancelCause", "__deadlineOf", "cancelCauseFunc",
+	} {
+		if names[absent] {
+			t.Errorf("unreferenced synthetic helper %q must not be exported as funcdecl (RV-P1-02 narrowing)", absent)
 		}
 	}
 	for _, banned := range []string{

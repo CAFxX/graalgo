@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"go/types"
+	"sort"
 )
 
 // RV-P1-02 (option (b)): assembly-backed functions are rejected at compile
@@ -105,6 +106,7 @@ func (e *exporter) checkBodylessReference(fi *funcDeclInfo) error {
 		return fmt.Errorf("gofrontend: cannot compile reference to %s: "+
 			"assembly function not implemented in graalgo [RV-P1-02]", name)
 	}
+
 	if linknameIntrinsicSymbols[symbol] {
 		return nil
 	}
@@ -114,6 +116,80 @@ func (e *exporter) checkBodylessReference(fi *funcDeclInfo) error {
 	return fmt.Errorf("gofrontend: cannot compile reference to %s: "+
 		"linkname symbol %q has no registered backend intrinsic and no "+
 		"compiled Go provider [RV-P1-02]", name, symbol)
+}
+
+// demandBody records a demand for fi's body under RV-P1-02 narrowing
+// (Mechanism A: demand-driven body emission for imported packages). The
+// exportSyntheticBodies drain emits exactly the demanded bodies, so
+// checkBodylessReference only ever fires for references the compiled
+// program contains.
+//
+// It is a no-op for:
+//   - user-package functions (fi.synthPkg == nil): emitted wholesale;
+//   - generic templates: emitted only via monomorphized instantiations;
+//   - already-demanded or already-emitted functions.
+//
+// Bodyless functions with a linkname symbol ARE demanded: they have no
+// body to emit, but their DECLARATION must be emitted (exportFuncDecl
+// routes them to exportLinknameDecl, and the backend builds the
+// LinknameRootNode from the funcdecl). Truly unimplemented bodyless
+// functions never reach here — the reference-site check fails first —
+// and would be skipped by exportFuncDecl anyway.
+func (e *exporter) demandBody(fi *funcDeclInfo) {
+	if fi == nil || fi.synthPkg == nil || fi.isTemplate {
+		return
+	}
+	if e.demanded[fi] || e.emittedBodies[fi] {
+		return
+	}
+	if e.demanded == nil {
+		e.demanded = make(map[*funcDeclInfo]bool)
+	}
+	e.demanded[fi] = true
+}
+
+// demandIfaceCandidates implements the §4.5 conservative rule: a method
+// referenced through an interface value demands the bodies of ALL
+// candidate implementations registered in methodIndex under that method
+// name. Dynamic dispatch targets are not statically knowable, so this is
+// a deliberate over-approximation. Every candidate passes through
+// checkBodylessReference: a dynamically reachable unimplemented function
+// is "knowable at compile time" as a candidate and is rejected rather
+// than deferred to a runtime panic (§5). Candidates are visited in
+// deterministic (funcID, package path, name) order so rejections are
+// reproducible.
+func (e *exporter) demandIfaceCandidates(mname string) error {
+	var cands []*funcDeclInfo
+	for key, fi := range e.methodIndex {
+		if key.name != mname || fi == nil {
+			continue
+		}
+		cands = append(cands, fi)
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].funcID != cands[j].funcID {
+			return cands[i].funcID < cands[j].funcID
+		}
+		pi, pj := funcPkgPath(e, cands[i]), funcPkgPath(e, cands[j])
+		if pi != pj {
+			return pi < pj
+		}
+		ni, nj := "", ""
+		if cands[i].obj != nil {
+			ni = cands[i].obj.Name()
+		}
+		if cands[j].obj != nil {
+			nj = cands[j].obj.Name()
+		}
+		return ni < nj
+	})
+	for _, fi := range cands {
+		if err := e.checkBodylessReference(fi); err != nil {
+			return err
+		}
+		e.demandBody(fi)
+	}
+	return nil
 }
 
 // linknameGoProviderKnown reports whether a compiled Go function is known

@@ -2057,12 +2057,12 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 //
 // Design: the field holds a function value. For the call to work, the
 // stored value must be pair-returning. This holds because:
-// - Synthetic packages declare pair-returning field types explicitly
-//   (e.g., nistCurve.generate)
-// - Disk/user packages: the field is assigned a function that has been
-//   pair-transformed (via userMRFuncs or the disk MR table), so the
-//   value is pair-returning even though the declared field type is
-//   multi-result.
+//   - Synthetic packages declare pair-returning field types explicitly
+//     (e.g., nistCurve.generate)
+//   - Disk/user packages: the field is assigned a function that has been
+//     pair-transformed (via userMRFuncs or the disk MR table), so the
+//     value is pair-returning even though the declared field type is
+//     multi-result.
 //
 // The desugar emits a regular "call" node (not "funcfieldcall") with the
 // pair type — the backend already handles selector-fun calls via
@@ -3916,6 +3916,13 @@ func (e *exporter) synthHelperCallNode(c *ast.CallExpr, fn *types.Func, resultTy
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", fn.Name())
 	}
+	// RV-P1-02 narrowing (Mechanism A): the desugared helper call is a
+	// genuine program reference — check and demand the helper body.
+	// (This path bypasses exportFuncCall's reference sites.)
+	if err := e.checkBodylessReference(fi); err != nil {
+		return nil, err
+	}
+	e.demandBody(fi)
 	// P3-M9 (instantiation method tables): a generic helper (e.g.
 	// __mrgenerateFIPS[P]) must be instantiated with the call-site type
 	// arguments — referencing the template's funcID would leave an
@@ -3992,6 +3999,13 @@ func (e *exporter) synthMethodCall(c *ast.CallExpr, tmpName string, tmpID, tmpTi
 	if !ok || fi == nil {
 		return nil, fmt.Errorf("gofrontend: synthetic method %s.%s not in methodIndex", recv.Obj().Name(), method)
 	}
+	// RV-P1-02 narrowing (Mechanism A): the desugared helper method call
+	// is a genuine program reference — check and demand the method body.
+	// (This path bypasses methodRefNode's reference site.)
+	if err := e.checkBodylessReference(fi); err != nil {
+		return nil, err
+	}
+	e.demandBody(fi)
 	sigID, err := e.freshSigID(fi.recv, fi.sig.Params(), fi.sig.Results(), fi.sig.Variadic())
 	if err != nil {
 		return nil, err

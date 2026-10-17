@@ -2447,19 +2447,31 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 		doc.Funcs = append(doc.Funcs, f)
 	}
-	// P3-M5 (WS E, ADR-0005): emit the synthetic time/context funcdecls
-	// after the user's (call sites resolve by object id, so order is
-	// irrelevant; appending keeps user code first for readability).
-	if err := e.exportSyntheticBodies(&doc); err != nil {
-		return "", err
+	// RV-P1-02 narrowing (Mechanism A): demand-driven emission of imported
+	// package bodies. Interleaved fixpoint: emitting demanded synthetic
+	// bodies can queue generic instantiations (mtPending), and emitting
+	// those can demand further synthetic bodies — loop until both drains
+	// are stable. (Call sites resolve by object id, so emission order is
+	// irrelevant; user code stays first for readability. Terminates:
+	// demand and emission sets only grow, bounded by the declaration and
+	// instantiation universes.)
+	for {
+		if err := e.exportSyntheticBodies(&doc); err != nil {
+			return "", err
+		}
+		if len(e.mtPending) == 0 {
+			break
+		}
+		// P3-M9 (instantiation method tables): emit the bodies of
+		// on-demand monomorphizations queued while types were described
+		// during body export; their bodies may demand further synthetic
+		// bodies, hence the loop.
+		if err := e.drainMethodTablePending(&doc); err != nil {
+			return "", err
+		}
 	}
-	// P3-M9 (instantiation method tables): emit the bodies of on-demand
-	// monomorphizations queued while types were described during body
-	// export, then rebuild the method tables a final time so late
-	// types carry resolved entries.
-	if err := e.drainMethodTablePending(&doc); err != nil {
-		return "", err
-	}
+	// P3-M9 (instantiation method tables): rebuild the method tables a
+	// final time so late types carry resolved entries.
 	if err := e.recomputeMethodTables(); err != nil {
 		return "", err
 	}
@@ -3047,6 +3059,17 @@ type exporter struct {
 	// by exportSyntheticBodies after the user's.
 	synthGlobals []GlobalEnt
 	synthGroups  []synthGroup
+	// RV-P1-02 narrowing (Mechanism A): demand-driven body emission for
+	// imported packages. demanded records imported functions whose bodies
+	// must be emitted — the demand fixpoint rooted at user bodies,
+	// imported init functions, and imported package-var initializers.
+	// (Bodyless linkname functions are demanded for DECLARATION emission
+	// via exportFuncDecl → exportLinknameDecl; truly unimplemented
+	// bodyless functions never enter the set — the reference-site check
+	// fails first.) emittedBodies records functions already processed by
+	// the exportSyntheticBodies drain.
+	demanded      map[*funcDeclInfo]bool
+	emittedBodies map[*funcDeclInfo]bool
 	// P3-M9 (WS D): user-defined multi-result functions transformed to
 	// pair-returning form. Maps *types.Func -> pair info for call-site
 	// desugar. Unlike the synthetic table-driven mechanism, this is
@@ -5129,10 +5152,15 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 // initializers, __mr wrappers — which the user-file-only scan never sees,
 // failing export with "not enumerated (internal error)"). Idents inside
 // generic templates are skipped (found via the fixpoint, not as roots).
-func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*funcDeclInfo, enqueue func(*instantiation), newFuncInst func(*funcDeclInfo, []types.Type, *typeSubst) (*instantiation, error)) error {
+func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*funcDeclInfo, allow func(*ast.Ident) bool, enqueue func(*instantiation), newFuncInst func(*funcDeclInfo, []types.Type, *typeSubst) (*instantiation, error)) error {
 	saved := e.info
 	e.info = info
 	defer func() { e.info = saved }()
+
+	// allow, when non-nil, restricts root discovery to idents lexically
+	// inside demanded bodies (RV-P1-02 narrowing): instantiation roots
+	// must come from demanded bodies only. Nil allows all (user package,
+	// emitted wholesale).
 
 	// idents inside generic templates: instantiations recorded there are
 	// nested (found in the fixpoint), not roots.
@@ -5162,6 +5190,9 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 	// Roots: generic-function instantiations in non-generic code.
 	for id, inst := range e.info.Instances {
 		if inTemplate[id] {
+			continue
+		}
+		if allow != nil && !allow(id) {
 			continue
 		}
 		handled := false
@@ -5270,6 +5301,9 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 	// Roots: method calls in non-generic code.
 	for sel, selection := range e.info.Selections {
 		if inTemplate[sel.Sel] {
+			continue
+		}
+		if allow != nil && !allow(sel.Sel) {
 			continue
 		}
 		if selection.Kind() != types.MethodVal {
@@ -5629,7 +5663,7 @@ func (e *exporter) enumerateInstantiations(files []*ast.File, funcs []*funcDeclI
 	}
 	newFuncInst := e.newFuncInstantiation
 
-	if err := e.scanRoots(e.info, files, funcs, enqueue, newFuncInst); err != nil {
+	if err := e.scanRoots(e.info, files, funcs, nil, enqueue, newFuncInst); err != nil {
 		return nil, err
 	}
 	// P3-M9 (tier-5): synthetic packages root their own generic
@@ -5652,7 +5686,27 @@ func (e *exporter) enumerateInstantiations(files []*ast.File, funcs []*funcDeclI
 				sfuncs = append(sfuncs, fi)
 			}
 		}
-		if err := e.scanRoots(sp.info, sp.files, sfuncs, enqueue, newFuncInst); err != nil {
+		// RV-P1-02 narrowing: instantiation roots must come from demanded
+		// bodies only. At this point demand holds the import-time roots
+		// (init functions, package-var-initializer references); generic
+		// references in later-demanded bodies flow through the on-demand
+		// ensureFuncInstantiation path at the reference sites during body
+		// export. Collect the idents lexically inside demanded
+		// non-template bodies as the allow-set.
+		allowed := make(map[*ast.Ident]bool)
+		for _, fi := range sfuncs {
+			if fi.isTemplate || !e.demanded[fi] || fi.fd == nil {
+				continue
+			}
+			ast.Inspect(fi.fd, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok {
+					allowed[id] = true
+				}
+				return true
+			})
+		}
+		allow := func(id *ast.Ident) bool { return allowed[id] }
+		if err := e.scanRoots(sp.info, sp.files, sfuncs, allow, enqueue, newFuncInst); err != nil {
 			return nil, err
 		}
 	}
@@ -6986,6 +7040,12 @@ func (e *exporter) exportGoMultiResultCall(s *ast.GoStmt, plan *mrPlan) (*Node, 
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", helperFn.Name())
 	}
+	// RV-P1-02 narrowing (Mechanism A): the hoisted helper value is a
+	// genuine program reference — check and demand the helper body.
+	if err := e.checkBodylessReference(fi); err != nil {
+		return nil, err
+	}
+	e.demandBody(fi)
 	sigID, err := e.typeID(helperFn.Type())
 	if err != nil {
 		return nil, err
@@ -8322,6 +8382,9 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 	if err := e.checkBodylessReference(fi); err != nil {
 		return err
 	}
+	// RV-P1-02 narrowing (Mechanism A): a function value demands the
+	// referenced body.
+	e.demandBody(fi)
 	if fi.recv != nil {
 		return scopeErrorf("method value %s (bound receiver) is not supported in frontend/v1 scope (WS H)", id.Name)
 	}
@@ -9555,6 +9618,9 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if err := e.checkBodylessReference(fi); err != nil {
 		return nil, err
 	}
+	// RV-P1-02 narrowing (Mechanism A): a direct call demands the
+	// callee's body. (go/defer reach here via exportCall.)
+	e.demandBody(fi)
 	var fnSig *types.Signature
 	if sig, ok := fn.Type().(*types.Signature); ok {
 		fnSig = sig
@@ -9864,6 +9930,9 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err := e.checkBodylessReference(mc.decl); err != nil {
 		return nil, err
 	}
+	// RV-P1-02 narrowing (Mechanism A): a method call demands the
+	// method's body.
+	e.demandBody(mc.decl)
 	// P3-M9: variadic method calls pack trailing args into a slice literal
 	// (the spread form passes the slice directly and needs no packing).
 	// The packing is applied at the exportCallArgs site below via
@@ -9928,7 +9997,20 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if mc.needsInst {
 		inst, ok := e.instByKey[mc.key]
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
+			// RV-P1-02 narrowing: the instantiation was not pre-enumerated
+			// (scanRoots is restricted to demanded bodies). Create it on
+			// demand — prepared immediately (its instID is referenced by
+			// the caller) and queued for body emission via mtPending,
+			// mirroring methodTableOnDemand.
+			inst = &instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name}
+			if err := e.prepareInstantiation(inst); err != nil {
+				return nil, err
+			}
+			if e.instByKey == nil {
+				e.instByKey = make(map[string]*instantiation)
+			}
+			e.instByKey[mc.key] = inst
+			e.mtPending = append(e.mtPending, inst)
 		}
 		objID = inst.instID
 		sigID = inst.sigID
@@ -9984,6 +10066,11 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	if mc.ifaceFallback != nil {
 		return nil, scopeErrorf("method value %s via type parameter is not supported (WS H: iface fallback is call-only)", sel.Sel.Name)
 	}
+	// RV-P1-02 narrowing (Mechanism A): a method value references the
+	// method's body (invoked through the value at runtime), so it demands
+	// it. (No reference-site check here — methodValueNode never had one;
+	// check behavior is unchanged.)
+	e.demandBody(mc.decl)
 	declRecv := mc.decl.sig.Recv().Type()
 	xt, ok := e.info.Types[sel.X]
 	if !ok || xt.Type == nil {
@@ -10022,7 +10109,17 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	if mc.needsInst {
 		inst, ok := e.instByKey[mc.key]
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
+			// RV-P1-02 narrowing: on-demand method instantiation (see
+			// methodRefNode).
+			inst = &instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name}
+			if err := e.prepareInstantiation(inst); err != nil {
+				return nil, err
+			}
+			if e.instByKey == nil {
+				e.instByKey = make(map[string]*instantiation)
+			}
+			e.instByKey[mc.key] = inst
+			e.mtPending = append(e.mtPending, inst)
 		}
 		objID = inst.instID
 	} else {
@@ -10982,6 +11079,13 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 			return nil, err
 		}
 	}
+	// RV-P1-02 narrowing (Mechanism A, §4.5): interface dispatch resolves
+	// dynamically, so a dispatched method demands the bodies of ALL
+	// candidate implementations from methodIndex (deliberate
+	// over-approximation; unimplemented candidates fail the export).
+	if err := e.demandIfaceCandidates(mname); err != nil {
+		return nil, err
+	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,
 		"args": args, "sig": sigID, "type": typ,
@@ -11067,6 +11171,12 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 		if err != nil {
 			return nil, err
 		}
+	}
+	// RV-P1-02 narrowing (Mechanism A, §4.5): the fallback dispatches
+	// through the constraint interface's itab, so like a regular
+	// interface call it demands all candidate implementations.
+	if err := e.demandIfaceCandidates(mname); err != nil {
+		return nil, err
 	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,
