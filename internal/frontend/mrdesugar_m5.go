@@ -1532,22 +1532,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// P3-M9 (WS D): user-defined package-level multi-result functions
 	// called as `foo()` (Ident, not SelectorExpr).
 	if id, ok := c.Fun.(*ast.Ident); ok {
-		// MR-closure-var: call through a variable holding a multi-result
-		// closure (e.g. readModuleLine(elem) where readModuleLine :=
-		// func(...) (T, error) {...}). The variable was linked to the
-		// func lit's pair info at its definition; desugar via the pair
-		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
-				}
-			}
 			// General (real-x509 lane): Var aliases a multi-result Func
-			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
+			// (e.g. path/filepath's lstat -> os.Lstat, or a main
+			// package's `var myStat = os.Stat`). Desugar as the
+			// aliased Func via the table. This MUST precede
+			// userMRInfoForVar: its alias fallback wraps the same info
+			// in an mrUser plan, whose desugar exportCalls the original
+			// call — but the var's declaration was removed by
+			// etaExpandMRFuncValues, so exporting its ident fails
+			// ("used before declaration"). The table plan desugars to
+			// the __-helper and never touches the removed var's ident.
 			if aliasedFn, ok := e.varFuncAliases[v]; ok {
 				// Build a synthetic SelectorExpr call for classification.
 				// The table classifiers take (pkgPath, fn, targs).
@@ -1566,6 +1561,18 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
+				}
+			}
+			// MR-closure-var: call through a variable holding a multi-result
+			// closure (e.g. readModuleLine(elem) where readModuleLine :=
+			// func(...) (T, error) {...}). The variable was linked to the
+			// func lit's pair info at its definition; desugar via the pair
+			// exactly like a named user MR function.
+			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
 				}
 			}
 			return nil
@@ -4062,8 +4069,12 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 	// Returns (var->FuncLit map, var->Func alias map).
 	// For package-level `var x = pkg.F` where F is multi-result, we record
 	// the alias (x -> F) and REMOVE the declaration (to avoid the v1
-	// value-position limitation). Call sites through x are rewritten to
-	// pkg.F directly (real-x509 lane).
+	// value-position limitation). No AST rewrite of call sites is needed:
+	// classifyMultiResultCall and userMRInfoForVar consult the alias map
+	// (via the exporter's varFuncAliases) and desugar calls through x as
+	// calls to the aliased Func. Non-call value uses of x (passing it as
+	// a value) are unsupported — same limitation as the disk-package
+	// path — and fail loudly at export time.
 	varLits := make(map[*types.Var]*ast.FuncLit)
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
@@ -4119,8 +4130,9 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 			}
 			return true
 		})
-		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
-		// (Simplified: just remove; call-site rewriting via alias map.)
+		// Remove the marked ValueSpecs. Call sites through the removed vars
+		// desugar via the alias map (exporter.varFuncAliases), so no
+		// ident rewriting is needed here.
 		for _, vs := range toRemove {
 			// Find and remove from parent GenDecl.
 			for _, decl := range f.Decls {
@@ -4133,26 +4145,6 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 					}
 				}
 			}
-		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
 		}
 	}
 	return varLits, aliases

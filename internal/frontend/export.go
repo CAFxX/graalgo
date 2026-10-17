@@ -942,8 +942,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues(files, info, pkg)
+	// where F is multi-result. Package-level aliases (var x = pkg.F) are
+	// installed on the exporter so call sites through x desugar as the
+	// aliased Func via e.varFuncAliases — the same merge the disk-package
+	// path does in synth_machinery.go (importPkgTree).
+	etaVarLits, varFuncAliases := etaExpandMRFuncValues(files, info, pkg)
 
 	e := &exporter{
 		fset:    fset,
@@ -994,6 +997,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		userMRVars: make(map[*types.Var]*userMRInfo),
 		// MR-closure-var: func lit -> pair info side channel.
 		funcLitMRInfo: make(map[*ast.FuncLit]*userMRInfo),
+		// General (real-x509 lane): the main package's own package-level
+		// multi-result func-value aliases (var x = pkg.F), recorded by
+		// etaExpandMRFuncValues above. Call sites through such vars
+		// desugar as the aliased Func via e.varFuncAliases
+		// (classifyMultiResultCall, userMRInfoForVar).
+		etaVarLits:     etaVarLits,
+		varFuncAliases: varFuncAliases,
 		// P4 (generic MR): Maps *instantiation -> pair info for generic
 		// instantiations of multi-result templates.
 		instMRInfos: make(map[*instantiation]*userMRInfo),
@@ -3065,13 +3075,15 @@ type exporter struct {
 	// exportDefine/exportVarSpec can link the LHS variable(s).
 	funcLitMRInfo map[*ast.FuncLit]*userMRInfo
 	// General (real-x509 lane): maps Vars to their eta-expanded FuncLit
-	// initializers (from buildDiskPackage). Used by userMRInfoForVar to
-	// find the pair info for disk-package vars (e.g. path/filepath's
-	// lstat) where the link wasn't established during export.
+	// initializers (from buildDiskPackage and ExportFiles). Used by
+	// userMRInfoForVar to find the pair info for disk-package vars
+	// (e.g. path/filepath's lstat) where the link wasn't established
+	// during export.
 	etaVarLits map[*types.Var]*ast.FuncLit
 	// General (real-x509 lane): maps Vars to the multi-result Func they
-	// alias (e.g. path/filepath's lstat -> os.Lstat). Call sites through
-	// the Var desugar as the aliased Func via the table.
+	// alias (e.g. path/filepath's lstat -> os.Lstat; a main package's
+	// `var myStat = os.Stat`). Call sites through the Var desugar as
+	// the aliased Func via the table.
 	varFuncAliases map[*types.Var]*types.Func
 	// P4 (generic MR): Maps *instantiation -> pair info for generic
 	// instantiations of multi-result templates. The template itself is
