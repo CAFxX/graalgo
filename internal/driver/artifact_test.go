@@ -2,9 +2,13 @@ package driver
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -201,4 +205,72 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestLauncherSourceHostileRoot is a regression test for the
+// format-string injection in launcher source generation. The graalgo
+// root is user-controlled (GRAALGO_HOME), and the old "%s" interpolation
+// let a crafted root break out of the string literal and inject arbitrary
+// Go code that `go build` then compiled. Every hostile root must still
+// produce source that parses, with the graalgoRoot constant holding
+// exactly the input root.
+func TestLauncherSourceHostileRoot(t *testing.T) {
+	roots := []string{
+		`/tmp/graal"root`,     // embedded double quote
+		"/tmp/line1\nline2",   // newline
+		"/tmp/line1\r\nline2", // CRLF
+		`${GRAALGO_HOME}`,     // shell expansion syntax
+		`C:\graal\root`,       // backslashes
+		`/tmp/root\`,          // trailing backslash (escapes the closing quote under "%s")
+		"/tmp/100%s/root",     // literal percent sequence (must not be re-scanned)
+		"/tmp/100%q/root",     // literal %q (must not be treated as a verb)
+		`x"; import("os"); func init(){ os.Exit(1) } //`, // code-injection attempt
+		"/tmp/gråälgo ✓",                                 // printable unicode
+		"/tmp/root\x00bin",                               // NUL byte
+		"",                                               // empty (Emit rejects it, but the generator must stay parseable)
+	}
+	for _, root := range roots {
+		src := launcherSource(root)
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "launcher.go", src, 0)
+		if err != nil {
+			t.Errorf("launcherSource(%q): generated source does not parse: %v", root, err)
+			continue
+		}
+		got, ok := graalgoRootConst(f)
+		if !ok {
+			t.Errorf("launcherSource(%q): graalgoRoot const not found in generated source", root)
+			continue
+		}
+		if got != root {
+			t.Errorf("launcherSource(%q): graalgoRoot = %q, want exact input", root, got)
+		}
+	}
+}
+
+// graalgoRootConst finds `const graalgoRoot = <string literal>` in the
+// parsed launcher source and returns the literal's value.
+func graalgoRootConst(f *ast.File) (string, bool) {
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "graalgoRoot" || len(vs.Values) != 1 {
+				continue
+			}
+			lit, ok := vs.Values[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return "", false
+			}
+			v, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return "", false
+			}
+			return v, true
+		}
+	}
+	return "", false
 }
