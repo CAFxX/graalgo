@@ -33,6 +33,13 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
+		if name == "TestMain" {
+			// The TestMain hook is not a test; it is detected
+			// separately by hasTestMain and wired into the driver's
+			// main. (Without this skip it would be collected here and
+			// called with a *graalgoT where *testing.M is required.)
+			continue
+		}
 		// Must take *testing.T (or be a simple TestXxx with one param).
 		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
 			continue
@@ -40,6 +47,48 @@ func discoverTests(path string) ([]string, error) {
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// hasTestMain reports whether path declares the TestMain hook:
+// func TestMain(m *testing.M) — no receiver, exactly one parameter of
+// type *testing.M. Any other shape (including a parameterless TestMain)
+// is not the hook, matching the go tool.
+func hasTestMain(path string) (bool, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return false, fmt.Errorf("parse: %w", err)
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" {
+			continue
+		}
+		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+			continue
+		}
+		if isTestingMParam(fn.Type.Params.List[0]) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// isTestingMParam reports whether a field declares *testing.M (or a
+// dot-imported *M).
+func isTestingMParam(field *ast.Field) bool {
+	star, ok := field.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	switch x := star.X.(type) {
+	case *ast.SelectorExpr:
+		id, ok := x.X.(*ast.Ident)
+		return ok && id.Name == "testing" && x.Sel.Name == "M"
+	case *ast.Ident:
+		return x.Name == "M"
+	}
+	return false
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -56,12 +105,16 @@ const testShimTemplate = `
 const graalgoVerbose = GRAALGO_VERBOSE_PLACEHOLDER
 
 type graalgoT struct {
-	name       string
-	depth      int
-	failed     bool
-	skipped    bool
-	output     []string // buffered detail lines (flushed on failure when !verbose)
-	subresults []string // buffered subtest result lines (flushed after own result)
+	name         string
+	depth        int
+	failed       bool
+	skipped      bool
+	output       []string // buffered detail lines (flushed on failure when !verbose)
+	subresults   []string // buffered subtest result lines (flushed after own result)
+	parent       *graalgoT
+	isParallel   bool
+	denyParallel bool
+	cleanups     []func()
 }
 
 // logLine emits a detail line: immediately in verbose mode, buffered
@@ -147,14 +200,89 @@ func (t *graalgoT) Skipped() bool {
 	return t.skipped
 }
 
+// parallelConflict is testing's exact panic text for Setenv/Parallel
+// misuse; kept verbatim so failures read like go test's.
+const parallelConflict = "testing: test using t.Setenv, t.Chdir, or cryptotest.SetGlobalRandom can not use t.Parallel"
+
+func (t *graalgoT) Parallel() {
+	if t.isParallel {
+		panic("testing: t.Parallel called multiple times")
+	}
+	if t.denyParallel {
+		panic(parallelConflict)
+	}
+	t.isParallel = true
+	// The driver runs tests strictly sequentially, so Parallel has no
+	// scheduling effect: the test still runs exactly once, in declaration
+	// order. The mark is load-bearing for Setenv's parallel check, which
+	// panics exactly like go test.
+}
+
+func (t *graalgoT) Cleanup(f func()) {
+	t.cleanups = append(t.cleanups, f)
+}
+
+// runCleanups drains the cleanup list LIFO. Callers defer it BEFORE the
+// panic-classifying recover (i.e. registered after), so cleanups run on
+// every exit path — pass, fail, Fatal, Skip, or panic — during unwind,
+// before the panic is classified. That is testing's order.
+func (t *graalgoT) runCleanups() {
+	for i := len(t.cleanups) - 1; i >= 0; i-- {
+		t.cleanups[i]()
+	}
+	t.cleanups = nil
+}
+
+func (t *graalgoT) TempDir() string {
+	dir, err := os.MkdirTemp(os.Getenv("GOTMPDIR"), "graalgotest-*")
+	if err != nil {
+		t.failed = true
+		t.logLine("    " + t.name + ": TempDir: " + sprintf("%v", err))
+		panic("graalgo test fatal: " + t.name)
+	}
+	// Removal is unconditional (pass or fail): Cleanup always runs.
+	t.Cleanup(func() {
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			t.failed = true
+			t.logLine("    " + t.name + ": TempDir RemoveAll cleanup: " + sprintf("%v", rerr))
+		}
+	})
+	return dir
+}
+
+func (t *graalgoT) Setenv(key, value string) {
+	// Like testing, Setenv cannot be used in parallel tests or tests
+	// with parallel ancestors.
+	for c := t; c != nil; c = c.parent {
+		if c.isParallel {
+			panic(parallelConflict)
+		}
+	}
+	t.denyParallel = true
+	prev, ok := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.failed = true
+		t.logLine("    " + t.name + ": cannot set environment variable: " + sprintf("%v", err))
+		panic("graalgo test fatal: " + t.name)
+	}
+	if ok {
+		t.Cleanup(func() { os.Setenv(key, prev) })
+	} else {
+		t.Cleanup(func() { os.Unsetenv(key) })
+	}
+}
+
 func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
-	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
+	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1, parent: t}
 	// === RUN lines are never indented, matching go test.
 	if graalgoVerbose {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	func() {
+		defer sub.runCleanups()
+		f(sub)
+	}()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
@@ -292,6 +420,94 @@ func testShimSource(verbose bool) string {
 	return strings.Replace(testShimTemplate, "GRAALGO_VERBOSE_PLACEHOLDER", v, 1)
 }
 
+// testMShim is the minimal testing.M replacement, emitted only when the
+// package defines TestMain. testing.M's deprecated surface
+// (StartCPUProfile etc.) is not shimmed; Run is the contract.
+const testMShim = `
+// --- graalgo TestMain shim (generated) ---
+type graalgoM struct {
+	exitCode int
+}
+
+// Run executes every selected test through the standard per-test harness
+// and returns the process exit code: 1 if any test failed, 0 otherwise.
+// Like testing.M.Run it may be called more than once; each call reruns
+// the tests. The PASS/FAIL summary mirrors the default runner's so that
+// a TestMain doing os.Exit(m.Run()) produces go test's output.
+func (m *graalgoM) Run() int {
+	failed := graalgoRunTests()
+	if failed > 0 {
+		println("FAIL")
+		m.exitCode = 1
+	} else {
+		if graalgoVerbose {
+			println("PASS")
+		}
+		m.exitCode = 0
+	}
+	return m.exitCode
+}
+`
+
+// writeTestLoopBody writes the single per-test execution block used inside
+// the `for _, e := range graalgoTestEntries` loop of graalgoRunTests: a
+// fresh *graalgoT, the === RUN line (verbose), the test invocation wrapped
+// so cleanups drain before the panic is classified (see runCleanups), and
+// the --- PASS/FAIL/SKIP result lines. e.name is the display name
+// (original TestXxx); e.fn the function to invoke (possibly the phase-B
+// renamed one).
+func writeTestLoopBody(sb *strings.Builder, verbose bool) {
+	sb.WriteString("\t\ttt := &graalgoT{name: e.name}\n")
+	if verbose {
+		sb.WriteString("\t\tprintln(\"=== RUN   \" + e.name)\n")
+	}
+	sb.WriteString("\t\tt0 := time.Now()\n")
+	sb.WriteString("\t\tfunc() {\n")
+	sb.WriteString("\t\t\tdefer func() {\n")
+	sb.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
+	sb.WriteString("\t\t\t\t\ts := toString(r)\n")
+	sb.WriteString("\t\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
+	sb.WriteString("\t\t\t\t\t\ttt.skipped = true\n")
+	sb.WriteString("\t\t\t\t\t} else if len(s) >= 18 && s[:18] == \"graalgo test fatal\" {\n")
+	sb.WriteString("\t\t\t\t\t\ttt.failed = true\n")
+	sb.WriteString("\t\t\t\t\t} else {\n")
+	sb.WriteString("\t\t\t\t\t\ttt.failed = true\n")
+	sb.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + s)\n")
+	sb.WriteString("\t\t\t\t\t}\n")
+	sb.WriteString("\t\t\t\t}\n")
+	sb.WriteString("\t\t\t}()\n")
+	// Registered after the recover defer, so cleanups drain first (LIFO)
+	// on every exit path, before the panic is classified.
+	sb.WriteString("\t\t\tdefer tt.runCleanups()\n")
+	sb.WriteString("\t\t\te.fn(tt)\n")
+	sb.WriteString("\t\t}()\n")
+	sb.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
+	if verbose {
+		sb.WriteString("\t\tif tt.skipped {\n")
+		sb.WriteString("\t\t\tprintln(\"--- SKIP: \" + e.name + \" \" + dur)\n")
+		sb.WriteString("\t\t} else if tt.failed {\n")
+		sb.WriteString("\t\t\tprintln(\"--- FAIL: \" + e.name + \" \" + dur)\n")
+		sb.WriteString("\t\t\tfailed++\n")
+		sb.WriteString("\t\t} else {\n")
+		sb.WriteString("\t\t\tprintln(\"--- PASS: \" + e.name + \" \" + dur)\n")
+		sb.WriteString("\t\t}\n")
+		sb.WriteString("\t\tfor _, l := range tt.subresults {\n")
+		sb.WriteString("\t\t\tprintln(l)\n")
+		sb.WriteString("\t\t}\n")
+	} else {
+		sb.WriteString("\t\tif tt.failed {\n")
+		sb.WriteString("\t\t\tprintln(\"--- FAIL: \" + e.name + \" \" + dur)\n")
+		sb.WriteString("\t\t\tfor _, l := range tt.output {\n")
+		sb.WriteString("\t\t\t\tprintln(l)\n")
+		sb.WriteString("\t\t\t}\n")
+		sb.WriteString("\t\t\tfor _, l := range tt.subresults {\n")
+		sb.WriteString("\t\t\t\tprintln(l)\n")
+		sb.WriteString("\t\t\t}\n")
+		sb.WriteString("\t\t\tfailed++\n")
+		sb.WriteString("\t\t}\n")
+	}
+}
+
 // fileTests groups the selected tests of one _test.go file.
 type fileTests struct {
 	file  string
@@ -417,7 +633,11 @@ func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 // One driver per package (not per file) so the output matches `go test`:
 // a single PASS/FAIL summary and per-test === RUN / --- PASS lines in
 // file order. Verbosity is baked into the driver at synthesis time.
-func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool) (string, error) {
+//
+// testMainFile names the test file declaring the TestMain hook ("" when
+// the package has none). When set, the generated main hands the binary to
+// TestMain with a *graalgoM instead of running the tests directly.
+func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool, testMainFile string) (string, error) {
 	// Import collection preserves every distinct (name, path) form: a
 	// package can be imported plain in one test file and dot-imported
 	// in another (unicode does exactly this), and collapsing to one
@@ -724,9 +944,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				// Skip other entry points (Test/Benchmark/Fuzz/Example).
 				// Methods (Recv != nil) are always inlined — tests use
 				// them (e.g. badRand.Read implementing io.Reader).
+				// The TestMain hook is gathered (not skipped) from the
+				// file that declares it; it is wired into the driver's
+				// main rather than run as a test.
+				isTestMain := n == "TestMain" && tu.path == testMainFile
 				isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
 					strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")
-				if !isTest && isEntry {
+				if !isTest && isEntry && !isTestMain {
 					continue
 				}
 				rewriteParam(d)
@@ -749,8 +973,12 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			case *ast.FuncDecl:
 				if d.Recv == nil {
 					n := d.Name.Name
-					if strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
-						strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example") {
+					// The TestMain hook may live in a file with no
+					// selected tests; gather it from the sibling file
+					// that declares it.
+					isTestMain := n == "TestMain" && u.path == testMainFile
+					if !isTestMain && (strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
+						strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")) {
 						continue
 					}
 				}
@@ -817,7 +1045,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunTests", "graalgoTestEntry", "graalgoTestEntries", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -926,7 +1154,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunTests", "graalgoTestEntry", "graalgoTestEntries", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -948,6 +1176,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 		for _, n := range g.names {
 			if !protected[n] || renamed[n] {
+				continue
+			}
+			if n == "TestMain" {
+				// The TestMain hook keeps its name: the generated main
+				// calls it directly. (A white-box TestMain colliding with
+				// it is a genuine redeclaration and fails loudly at
+				// driver compile time, as it should.)
 				continue
 			}
 			renamed[n] = true
@@ -1370,82 +1605,77 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		body.WriteString("\n")
 	}
 
-	// Shim + main runner. Per-test output mirrors `go test -v`:
-	// === RUN / --- PASS/FAIL/SKIP with (0.00s) timings, a single
-	// PASS/FAIL summary, and exit code 1 (no panic trace) on failure.
-	body.WriteString(testShimSource(verbose))
-	body.WriteString("\nfunc main() {\n")
-	body.WriteString("\tfailed := 0\n")
+	// Test table: display name (original TestXxx, used for the === RUN /
+	// --- PASS lines) plus the function to call (the phase-B renamed one
+	// when the external test package's declaration was renamed — calling
+	// the pristine name would silently run the wrong package's test).
+	type testEntry struct{ name, callName string }
+	var entries []testEntry
 	for _, tu := range testUnits {
 		for _, t := range tu.ordered {
-			// If this test file's TestXxx was renamed by phase B (its
-			// name collided with the package under test's), call the
-			// renamed function — otherwise the driver would silently
-			// run the wrong package's test.
 			callName := t
 			if pkgNameErr == nil && tu.f.Name.Name != pkgName {
 				if nn, ok := eRenames[t]; ok {
 					callName = nn
 				}
 			}
-			body.WriteString("\t{\n")
-			body.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", t))
-			if verbose {
-				body.WriteString(fmt.Sprintf("\t\tprintln(\"=== RUN   %s\")\n", t))
-			}
-			body.WriteString("\t\tt0 := time.Now()\n")
-			body.WriteString("\t\tfunc() {\n")
-			body.WriteString("\t\t\tdefer func() {\n")
-			body.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
-			body.WriteString("\t\t\t\t\ts := toString(r)\n")
-			body.WriteString("\t\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
-			body.WriteString("\t\t\t\t\t\ttt.skipped = true\n")
-			body.WriteString("\t\t\t\t\t} else if len(s) >= 18 && s[:18] == \"graalgo test fatal\" {\n")
-			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t} else {\n")
-			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + s)\n")
-			body.WriteString("\t\t\t\t\t}\n")
-			body.WriteString("\t\t\t\t}\n")
-			body.WriteString("\t\t\t}()\n")
-			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
-			body.WriteString("\t\t}()\n")
-			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
-			if verbose {
-				body.WriteString("\t\tif tt.skipped {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
-				body.WriteString("\t\t} else if tt.failed {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
-				body.WriteString("\t\t\tfailed++\n")
-				body.WriteString("\t\t} else {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", t))
-				body.WriteString("\t\t}\n")
-				body.WriteString("\t\tfor _, l := range tt.subresults {\n")
-				body.WriteString("\t\t\tprintln(l)\n")
-				body.WriteString("\t\t}\n")
-			} else {
-				body.WriteString("\t\tif tt.failed {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
-				body.WriteString("\t\t\tfor _, l := range tt.output {\n")
-				body.WriteString("\t\t\t\tprintln(l)\n")
-				body.WriteString("\t\t\t}\n")
-				body.WriteString("\t\t\tfor _, l := range tt.subresults {\n")
-				body.WriteString("\t\t\t\tprintln(l)\n")
-				body.WriteString("\t\t\t}\n")
-				body.WriteString("\t\t\tfailed++\n")
-				body.WriteString("\t\t}\n")
-			}
-			body.WriteString("\t}\n")
+			entries = append(entries, testEntry{t, callName})
 		}
 	}
-	body.WriteString("\tif failed > 0 {\n")
-	body.WriteString("\t\tprintln(\"FAIL\")\n")
-	body.WriteString("\t\tos.Exit(1)\n")
-	body.WriteString("\t}\n")
-	if verbose {
-		body.WriteString("\tprintln(\"PASS\")\n")
+
+	// Shim + test table + shared runner. Per-test output mirrors
+	// `go test -v`: === RUN / --- PASS/FAIL/SKIP with (0.00s) timings.
+	// The runner is shared so the TestMain path (via graalgoM.Run) and
+	// the default path execute identical per-test logic.
+	body.WriteString(testShimSource(verbose))
+	body.WriteString("\ntype graalgoTestEntry struct {\n\tname string\n\tfn   func(*graalgoT)\n}\n\n")
+	body.WriteString("var graalgoTestEntries = []graalgoTestEntry{\n")
+	for _, e := range entries {
+		body.WriteString(fmt.Sprintf("\t{%q, %s},\n", e.name, e.callName))
 	}
 	body.WriteString("}\n")
+	if testMainFile != "" {
+		body.WriteString(testMShim)
+	}
+	body.WriteString("\n// graalgoRunTests runs every selected test and returns the\n")
+	body.WriteString("// number of failed tests.\n")
+	body.WriteString("func graalgoRunTests() int {\n")
+	body.WriteString("\tfailed := 0\n")
+	if verbose {
+		// Like go test, the no-tests warning comes from the test binary
+		// itself (only reachable here via TestMain with no selected
+		// tests: the default path always has at least one entry).
+		body.WriteString("\tif len(graalgoTestEntries) == 0 {\n")
+		body.WriteString("\t\tprintln(\"testing: warning: no tests to run\")\n")
+		body.WriteString("\t}\n")
+	}
+	body.WriteString("\tfor _, e := range graalgoTestEntries {\n")
+	writeTestLoopBody(&body, verbose)
+	body.WriteString("\t}\n")
+	body.WriteString("\treturn failed\n")
+	body.WriteString("}\n")
+	if testMainFile != "" {
+		// With TestMain the hook owns the binary: setup, m.Run(),
+		// teardown. If it returns without calling os.Exit, exit with
+		// m.exitCode (0 when Run was never called) — testing's contract.
+		body.WriteString("\nfunc main() {\n")
+		body.WriteString("\tm := &graalgoM{}\n")
+		body.WriteString("\tTestMain(m)\n")
+		body.WriteString("\tos.Exit(m.exitCode)\n")
+		body.WriteString("}\n")
+	} else {
+		// Default runner: failures print FAIL and exit 1 (no panic
+		// trace); verbose success prints PASS.
+		body.WriteString("\nfunc main() {\n")
+		body.WriteString("\tif graalgoRunTests() > 0 {\n")
+		body.WriteString("\t\tprintln(\"FAIL\")\n")
+		body.WriteString("\t\tos.Exit(1)\n")
+		body.WriteString("\t}\n")
+		if verbose {
+			body.WriteString("\tprintln(\"PASS\")\n")
+		}
+		body.WriteString("}\n")
+	}
 
 	sb.WriteString(body.String())
 
@@ -1740,41 +1970,47 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 	sb.WriteString(buf.String())
 }
 
-// rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
-// the parameter list AND any nested function literals (e.g. the closure
-// passed to t.Run). Uses an AST walk so no testing.T reference survives.
+// rewriteParam rewrites *testing.T to *graalgoT and *testing.M to
+// *graalgoM everywhere in a FuncDecl: the parameter list AND any nested
+// function literals (e.g. the closure passed to t.Run). Uses an AST walk
+// so no testing.T/testing.M reference survives.
 func rewriteParam(fn *ast.FuncDecl) {
 	ast.Inspect(fn, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.StarExpr:
 			if sel, ok := t.X.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-					t.X = &ast.Ident{Name: "graalgoT"}
+				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" {
+					switch sel.Sel.Name {
+					case "T":
+						t.X = &ast.Ident{Name: "graalgoT"}
+					case "M":
+						t.X = &ast.Ident{Name: "graalgoM"}
+					}
 				}
 			}
 		case *ast.SelectorExpr:
-			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
-				// testing.T as a bare type (not pointer): replace the
-				// selector with the graalgoT identifier.
+			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && (t.Sel.Name == "T" || t.Sel.Name == "M") {
+				// testing.T / testing.M as a bare type (not pointer):
+				// replace the selector with the shim identifier.
 				// (Handled by replacing the parent; see below.)
 			}
 		}
 		return true
 	})
-	// Second pass: replace bare testing.T selector expressions (non-pointer
-	// type references) which ast.Inspect can't swap in place.
-	rewriteBareTestingT(fn.Type)
+	// Second pass: replace bare testing.T/testing.M selector expressions
+	// (non-pointer type references) which ast.Inspect can't swap in place.
+	rewriteBareTestingTypes(fn.Type)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if fl, ok := n.(*ast.FuncLit); ok {
-			rewriteBareTestingT(fl.Type)
+			rewriteBareTestingTypes(fl.Type)
 		}
 		return true
 	})
 }
 
-// rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
-// function type's params and results.
-func rewriteBareTestingT(ft *ast.FuncType) {
+// rewriteBareTestingTypes replaces testing.T/testing.M (non-pointer)
+// with graalgoT/graalgoM in a function type's params and results.
+func rewriteBareTestingTypes(ft *ast.FuncType) {
 	if ft == nil {
 		return
 	}
@@ -1788,8 +2024,13 @@ func rewriteFieldList(fl *ast.FieldList) {
 	}
 	for _, f := range fl.List {
 		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-				f.Type = &ast.Ident{Name: "graalgoT"}
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" {
+				switch sel.Sel.Name {
+				case "T":
+					f.Type = &ast.Ident{Name: "graalgoT"}
+				case "M":
+					f.Type = &ast.Ident{Name: "graalgoM"}
+				}
 			}
 		}
 	}

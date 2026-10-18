@@ -22,17 +22,38 @@ func writeFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// synthDriver runs synthesizeTestDriver on dir and returns the generated
-// driver source.
-func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string) string {
+// synthDriverFile runs synthesizeTestDriver on dir and returns the path
+// of the generated driver file; the caller removes it.
+func synthDriverFile(t *testing.T, dir string, ftList []fileTests, srcFiles []string, verbose bool, testMainFile string) string {
 	t.Helper()
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in.
 	importPkgNameCache = map[string]string{}
-	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, verbose, testMainFile)
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}
+	return driver
+}
+
+// synthDriver runs synthesizeTestDriver on dir and returns the generated
+// driver source.
+func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string) string {
+	t.Helper()
+	driver := synthDriverFile(t, dir, ftList, srcFiles, false, "")
+	defer os.Remove(driver)
+	src, err := os.ReadFile(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(src)
+}
+
+// synthDriverMain is synthDriver for packages declaring the TestMain
+// hook: testMainFile names the file declaring it.
+func synthDriverMain(t *testing.T, dir string, ftList []fileTests, srcFiles []string, testMainFile string) string {
+	t.Helper()
+	driver := synthDriverFile(t, dir, ftList, srcFiles, false, testMainFile)
 	defer os.Remove(driver)
 	src, err := os.ReadFile(driver)
 	if err != nil {
@@ -770,13 +791,14 @@ func TestSame(t *testing.T) { extRan = true }
 	if !strings.Contains(src, "func TestSame2(") {
 		t.Errorf("driver did not rename the external test function:\n%s", src)
 	}
-	// The external file's main entry calls the renamed function; the
-	// white-box entry calls the pristine one.
-	if strings.Count(src, "TestSame2(tt)") != 1 {
-		t.Errorf("driver does not call the renamed test exactly once:\n%s", src)
+	// The external file's entry goes through the renamed function; the
+	// white-box entry through the pristine one. Dispatch runs through the
+	// entries table, so the table rows are the assertion point.
+	if strings.Count(src, `{"TestSame", TestSame},`) != 1 {
+		t.Errorf("driver entries do not dispatch the white-box test exactly once:\n%s", src)
 	}
-	if strings.Count(src, "TestSame(tt)") != 1 {
-		t.Errorf("driver does not call the white-box test exactly once:\n%s", src)
+	if strings.Count(src, `{"TestSame", TestSame2},`) != 1 {
+		t.Errorf("driver entries do not dispatch the renamed external test exactly once:\n%s", src)
 	}
 }
 
@@ -964,5 +986,219 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestDiscoverTestsSkipsTestMain pins that the TestMain hook is not
+// collected as a test: discoverTests must return only the real TestXxx
+// functions. (Before the fix, TestMain was collected and the driver
+// called it with a *graalgoT where *testing.M was required — a driver
+// compile error.)
+func TestDiscoverTestsSkipsTestMain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmskip\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tmskip\n")
+	writeFile(t, root, "p_test.go", `package tmskip
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) { os.Exit(m.Run()) }
+
+func TestReal(t *testing.T) {}
+`)
+	tests, err := discoverTests(filepath.Join(root, "p_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestReal" {
+		t.Fatalf("discoverTests = %v, want [TestReal]", tests)
+	}
+}
+
+// TestHasTestMain covers the hook detector: the canonical shape is
+// detected; a missing hook, a wrong signature, and a method are not.
+func TestHasTestMain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmdet\n\ngo 1.21\n")
+	cases := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"canonical", "package tmdet\n\nimport \"testing\"\n\nfunc TestMain(m *testing.M) {}\n", true},
+		{"no hook", "package tmdet\n\nimport \"testing\"\n\nfunc TestXxx(t *testing.T) {}\n", false},
+		{"no params", "package tmdet\n\nfunc TestMain() {}\n", false},
+		{"wrong param type", "package tmdet\n\nfunc TestMain(m int) {}\n", false},
+		{"two params", "package tmdet\n\nimport \"testing\"\n\nfunc TestMain(m *testing.M, x int) {}\n", false},
+		{"method", "package tmdet\n\nimport \"testing\"\n\ntype T struct{}\n\nfunc (T) TestMain(m *testing.M) {}\n", false},
+	}
+	for _, c := range cases {
+		path := filepath.Join(root, c.name+"_test.go")
+		writeFile(t, root, c.name+"_test.go", c.src)
+		got, err := hasTestMain(path)
+		if err != nil {
+			t.Fatalf("%s: hasTestMain: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: hasTestMain = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestTestMainDriverWiring pins the TestMain driver shape: the hook is
+// gathered with its *testing.M rewritten to *graalgoM, the generated
+// main hands the binary to TestMain, and the tests run through the
+// shared entries table (not via direct calls in main).
+func TestTestMainDriverWiring(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmwire\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tmwire\n")
+	writeFile(t, root, "p_test.go", `package tmwire
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) { os.Exit(m.Run()) }
+
+func TestReal(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriverMain(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")},
+		testFile)
+	// The hook is inlined with the M shim type...
+	if !strings.Contains(src, "func TestMain(m *graalgoM,)") {
+		t.Errorf("driver did not rewrite TestMain's *testing.M to *graalgoM:\n%s", src)
+	}
+	// ...the M shim is emitted...
+	if !strings.Contains(src, "func (m *graalgoM) Run() int") {
+		t.Errorf("driver did not emit the graalgoM shim:\n%s", src)
+	}
+	// ...main hands the binary to the hook, and falls back to m.exitCode
+	// when the hook returns without calling os.Exit...
+	if !strings.Contains(src, "TestMain(m)") || !strings.Contains(src, "os.Exit(m.exitCode)") {
+		t.Errorf("driver main does not hand off to TestMain:\n%s", src)
+	}
+	// ...and the test runs through the shared entries table: main hands
+	// off to TestMain and never calls a test directly.
+	if !strings.Contains(src, `{"TestReal", TestReal}`) {
+		t.Errorf("driver lost the test entry:\n%s", src)
+	}
+	if idx := strings.Index(src, "func main()"); idx >= 0 && strings.Contains(src[idx:], "(tt)") {
+		t.Errorf("driver main calls a test directly instead of via TestMain:\n%s", src)
+	}
+	// The generated driver must parse.
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
+	}
+}
+
+// TestTestMainInSiblingFile pins that the hook is gathered even when it
+// lives in a file with no selected tests (e.g. everything filtered out
+// by -run): under go test TestMain always runs.
+func TestTestMainInSiblingFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmsib\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tmsib\n")
+	writeFile(t, root, "a_test.go", `package tmsib
+
+import "testing"
+
+func TestSelected(t *testing.T) {}
+`)
+	writeFile(t, root, "b_test.go", `package tmsib
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) { os.Exit(m.Run()) }
+
+func helper() {}
+`)
+	testsA, err := discoverTests(filepath.Join(root, "a_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriverMain(t, root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: testsA}},
+		[]string{filepath.Join(root, "p.go")},
+		filepath.Join(root, "b_test.go"))
+	if !strings.Contains(src, "func TestMain(m *graalgoM,)") {
+		t.Errorf("driver did not gather TestMain from the sibling file:\n%s", src)
+	}
+	if !strings.Contains(src, "TestMain(m)") {
+		t.Errorf("driver main does not call TestMain:\n%s", src)
+	}
+}
+
+// TestNoTestMainOmitsMShim pins that packages without the hook get no
+// graalgoM: the shim is emitted only when needed.
+func TestNoTestMainOmitsMShim(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmomit\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tmomit\n")
+	writeFile(t, root, "p_test.go", `package tmomit
+
+import "testing"
+
+func TestReal(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	if strings.Contains(src, "graalgoM") {
+		t.Errorf("driver without TestMain must not mention graalgoM:\n%s", src)
+	}
+	if !strings.Contains(src, "graalgoRunTests()") {
+		t.Errorf("driver without TestMain must run tests through graalgoRunTests:\n%s", src)
+	}
+}
+
+// TestShimNewMethods pins that the generated shim carries the four new
+// *graalgoT methods (and the cleanup drain they rely on).
+func TestShimNewMethods(t *testing.T) {
+	src := testShimSource(false)
+	for _, m := range []string{
+		"func (t *graalgoT) Parallel()",
+		"func (t *graalgoT) Cleanup(",
+		"func (t *graalgoT) runCleanups()",
+		"func (t *graalgoT) TempDir() string",
+		"func (t *graalgoT) Setenv(",
+	} {
+		if !strings.Contains(src, m) {
+			t.Errorf("shim missing %s", m)
+		}
+	}
+	// The subtest constructor must link the parent (Setenv's ancestor
+	// walk depends on it).
+	if !strings.Contains(src, "parent: t") {
+		t.Errorf("shim Run does not link subtest parent")
+	}
+	// gc's exact misuse texts are kept verbatim.
+	for _, msg := range []string{
+		"testing: t.Parallel called multiple times",
+		"testing: test using t.Setenv, t.Chdir, or cryptotest.SetGlobalRandom can not use t.Parallel",
+	} {
+		if !strings.Contains(src, msg) {
+			t.Errorf("shim missing gc panic text %q", msg)
+		}
 	}
 }

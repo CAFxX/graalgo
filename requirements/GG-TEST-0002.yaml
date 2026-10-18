@@ -1,0 +1,10 @@
+id: GG-TEST-0002
+title: graalgo test driver TestMain support
+statement: When a tested package declares the TestMain hook (func TestMain(m *testing.M)), the `graalgo test` synthesized driver SHALL hand the test binary to the hook with a testing.M replacement whose Run() executes the selected tests and returns 1 on any failure, 0 otherwise; if the hook returns without calling os.Exit, the driver SHALL exit with m.exitCode (0 when Run was never called, in which case no tests run). More than one TestMain definition SHALL fail loudly naming the package. TestMain is never collected as a test.
+rationale: 'Independent review P1-7 (2026-10-18): TestMain was collected as a test and called with *graalgoT where *testing.M is required (driver compile error); packages needing setup/teardown via TestMain could not run. Design: docs/dev/test-driver-fidelity.md.'
+parent: ""
+status: draft
+superseded_by: ""
+verification_plan: gc-executed driver fixtures in cmd/graalgo/testdriver_exec_test.go (TestDriverTestMain, TestDriverTestMainFailure, TestDriverTestMainWithoutRun) plus unit tests in cmd/graalgo/testsynth_test.go (TestDiscoverTestsSkipsTestMain, TestHasTestMain, TestTestMainDriverWiring, TestTestMainInSiblingFile, TestNoTestMainOmitsMShim).
+history:
+    - '2026-10-18: created (draft)'

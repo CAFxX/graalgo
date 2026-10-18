@@ -225,13 +225,39 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
+	// Detect the TestMain hook across all buildable test files — not just
+	// -run-selected ones: TestMain is the test binary's entry point and
+	// always runs under `go test`. More than one definition is a loud
+	// error naming the package, like the go tool's redeclaration error.
+	var testMainFiles []string
+	for _, tf := range runnableTests {
+		has, err := hasTestMain(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		if has {
+			testMainFiles = append(testMainFiles, tf)
+		}
+	}
+	testMainFile := ""
+	if len(testMainFiles) > 1 {
+		fmt.Fprintf(os.Stderr, "graalgo test: %s: multiple definitions of TestMain (%s)\n",
+			importPath, strings.Join(testMainFiles, ", "))
+		return false
+	} else if len(testMainFiles) == 1 {
+		testMainFile = testMainFiles[0]
+	}
+
 	// The synthesized driver prints go-test-format output itself
 	// (=== RUN / --- PASS/FAIL lines, PASS/FAIL summary); a non-zero
-	// exit means the package failed.
+	// exit means the package failed. With TestMain the driver is
+	// synthesized even when no tests were selected: the hook itself must
+	// run (it may do setup/teardown around zero tests).
 	t0 := time.Now()
 	ok := true
-	if len(ftList) > 0 {
-		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
+	if len(ftList) > 0 || testMainFile != "" {
+		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose, testMainFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
 			return false

@@ -1,0 +1,10 @@
+id: GG-TEST-0001
+title: graalgo test driver testing.T method fidelity
+statement: The `graalgo test` synthesized driver's testing.T replacement SHALL implement Parallel, Cleanup, TempDir, and Setenv with gc-compatible semantics: Cleanup funcs run LIFO at test end on every exit path (pass, fail, Fatal, Skip, panic); TempDir returns an existing directory honored from GOTMPDIR and removed unconditionally at test end; Setenv sets the variable for the test's duration and restores the previous value (or unsets) at test end; Setenv-after-Parallel (self or ancestor) and Parallel-after-Setenv panic with testing's exact parallelConflict text; double Parallel panics; Parallel is otherwise a documented scheduling no-op on the sequential driver.
+rationale: 'Independent review P1-6 (2026-10-18): real Go test suites routinely use t.Parallel/t.Cleanup/t.TempDir/t.Setenv; without them tests fail driver compilation or silently misbehave. Design: docs/dev/test-driver-fidelity.md.'
+parent: ""
+status: draft
+superseded_by: ""
+verification_plan: gc-executed driver fixtures in cmd/graalgo/testdriver_exec_test.go (TestDriverShimMethods, TestDriverCleanupOnFatalAndPanic) plus unit tests in cmd/graalgo/testsynth_test.go (TestShimNewMethods).
+history:
+    - '2026-10-18: created (draft)'
