@@ -729,7 +729,7 @@ func __csvRead(r *Reader) csvReadPair {
 // (rec, err := r.Read()) to __csvRead (Appendix M pattern — v1 cannot
 // call multi-result functions, WS D). Every other position fails here.
 func (r *Reader) Read() ([]string, error) {
-	panic("csv: Reader.Read is not in M7 scope as a direct call (only the rec, err := r.Read() 2-target form desugars; multi-result calls need WS D; re-test when it lands)")
+	panic("csv: Reader.Read is not in M7 scope as a direct call (only the rec, err := r.Read() 2-target form desugars; only the 2-target form is desugared)")
 }
 
 // csvReadAllPair is the Appendix M single-result carrier for ReadAll.
@@ -764,7 +764,7 @@ func __csvReadAll(r *Reader) csvReadAllPair {
 //
 // M7: fail-fast body like Read; 2-target call sites desugar to __csvReadAll.
 func (r *Reader) ReadAll() ([][]string, error) {
-	panic("csv: Reader.ReadAll is not in M7 scope as a direct call (only the recs, err := r.ReadAll() 2-target form desugars; multi-result calls need WS D; re-test when it lands)")
+	panic("csv: Reader.ReadAll is not in M7 scope as a direct call (only the recs, err := r.ReadAll() 2-target form desugars; only the 2-target form is desugared)")
 }
 
 // csvFieldPosPair is the Appendix M single-result carrier for FieldPos.
@@ -791,7 +791,7 @@ func __csvFieldPos(r *Reader, field int) csvFieldPosPair {
 //
 // M7: fail-fast body like Read; 2-target call sites desugar to __csvFieldPos.
 func (r *Reader) FieldPos(field int) (line, column int) {
-	panic("csv: Reader.FieldPos is not in M7 scope as a direct call (only the line, column := r.FieldPos(i) 2-target form desugars; multi-result calls need WS D; re-test when it lands)")
+	panic("csv: Reader.FieldPos is not in M7 scope as a direct call (only the line, column := r.FieldPos(i) 2-target form desugars; only the 2-target form is desugared)")
 }
 
 // InputOffset returns the input byte offset of the current reader
