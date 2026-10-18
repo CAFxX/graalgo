@@ -47,6 +47,12 @@ ADJUDICATED_WIRE_NODES = {
     # the scheduler's voluntary-yield primitive SchedulerCore.yieldCurrent),
     # not a new bridge.
     ("internal/frontend/export.go", "runtimegosched"),
+    # 2026-10-18 (independent codebase-review adjudication; independent
+    # review CLEAN, no veto): "runtimefuncforpc" is a real implementation
+    # following the runtimenumgoroutine precedent (backend
+    # RuntimeFuncForPCNode on the live guest call stack via
+    # GoFuncInfo.forPc / StackTrace PC interning), not a new bridge.
+    ("internal/frontend/export.go", "runtimefuncforpc"),
 }
 ADJUDICATED_REGISTRATIONS = {
     # (file substring, addFunc'd symbol name)
@@ -63,6 +69,18 @@ ADJUDICATED_REGISTRATIONS = {
     # public register-kind hook (no Phase-1 factory change), not synthetic
     # stdlib logic.
     ("internal/frontend/export.go", "Gosched"),
+    # 2026-10-18 (independent codebase-review adjudication; independent
+    # review CLEAN, no veto): the Goexit/SetFinalizer/KeepAlive/GC/FuncForPC
+    # overlay declarations are genuine stdlib surface (gc 1.27.1 src/runtime
+    # API) whose backends implement them for real — GoexitCallNode on the
+    # goroutine-termination control-flow machinery, the gcinterop nodes on
+    # the real JVM GC via GcInterop (ADR-0002), FuncForPC on the live guest
+    # stack via GoFuncInfo/StackTrace — not synthetic stdlib logic.
+    ("internal/frontend/export.go", "Goexit"),
+    ("internal/frontend/export.go", "SetFinalizer"),
+    ("internal/frontend/export.go", "KeepAlive"),
+    ("internal/frontend/export.go", "GC"),
+    ("internal/frontend/export.go", "FuncForPC"),
 }
 
 def get_diff():

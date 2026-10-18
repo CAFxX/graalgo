@@ -85,6 +85,38 @@ deliverable until the design lands.
     `"runtimecaller"` custom wire nodes for stdlib functions, and the
     `time.Now` eta-expansion hardcoded by package+symbol name
     ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+  - **2026-10-18 (independent codebase review, P1): uninventoried
+    name-keyed machinery in the same class.** None of this is new
+    machinery — it predates the 2026-10-15 no-new-bridges order and was
+    missed by the original inventory; it is grandfathered here with the
+    same phased removal:
+    - [p3frontend/loader.go](../../internal/frontend/p3frontend/loader.go)
+      `ResolveImport` `switch path` (~line 406): 23-case name-keyed switch
+      routing `runtime`/`fmt`/`sync`/`time`/`context`/`errors`/`sort`/
+      `bytes`/`math`/`strings`/`strconv`/`encoding` + 8 `encoding/*` paths
+      to `kindSynthetic` markers instead of GOROOT (the p3frontend mirror
+      of the `diskimport.go` overlay switches).
+    - [p3frontend/importer.go](../../internal/frontend/p3frontend/importer.go)
+      `Import` `switch path` (~line 66): name-keyed switch dispatching to
+      25 `synthetic*Package()` constructors (`syntheticRuntimePackage`,
+      `syntheticFmtPackage`, `syntheticSyncPackage`,
+      `syntheticAtomicPackage`, `syntheticTimePackage`, …).
+    - [export.go](../../internal/frontend/export.go): `"atomicaddr"`
+      custom wire node (~line 9229, from commit `8bf0e94a` fix-linkname,
+      post-inventory) wrapping the address operand in a delegating
+      `AtomicLong`/`AtomicInteger` cell, plus the package-path interception
+      predicates routing package-level `sync/atomic` word/bool calls into
+      it — `obj.Pkg().Path() == "sync/atomic"` (~line 8429) and
+      `== "internal/runtime/atomic"` (~line 8453) for package-qualified
+      calls, `fn.Pkg().Path() == "sync/atomic"` (~line 9288, PKG-012) and
+      `== "internal/runtime/atomic"` (~line 9297, fix-atomic-rtatomic) for
+      unqualified calls from inside those packages.
+    - [export.go](../../internal/frontend/export.go) `resolveMethodCall`
+      (~line 4759): `(*runtime.Func).Name()` name-keyed fail-fast —
+      `rn.Obj().Pkg().Path() == "runtime" && mname == "Name"` returns a
+      panic-marker methodCall ("runtime.Func.Name not implemented (no
+      PC-to-function table)"). Honest fail-fast, but a name-keyed bridge
+      until retired.
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -96,7 +128,24 @@ deliverable until the design lands.
   In flight: `real-reflect2` already drops stale synthetic-reflect entries;
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
-- **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
+  - **2026-10-18 additions (root-cause fixes):** the p3frontend
+    loader/importer switches retire with the synthetic packages — Phase 2
+    shrinks the case lists as each package goes real; Phase 3 deletes the
+    switches with the overlay machinery (the p3frontend mirrors retire with
+    the top-level tree or via an explicit retire-or-keep decision, per
+    B-4). The `"atomicaddr"` wire node and the `sync/atomic` +
+    `internal/runtime/atomic` interception predicates retire when the real
+    `sync` and `sync/atomic` sources compile (same root cause as the
+    remaining B-2 work; the `internal/runtime/atomic` `//go:noescape`
+    bodyless funcs need the linkname/trap path) — the calls then compile
+    to real method bodies and the name-keyed lowering is deleted
+    (Phase 2 → 3). The `(*runtime.Func).Name()` panic retires by
+    implementing `Name()` from the same PC-interning metadata that backs
+    the `"runtimefuncforpc"` node (`GoFuncInfo` already carries
+    `funcName()`; a `Name` accessor on the GoPointer-wrapped `GoFuncInfo`
+    replaces the panic) — Phase 4 with the B-7 rtstack work.
+- **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete);
+  the `(*runtime.Func).Name()` fail-fast is Phase 4.
 - **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
   the *declared view* of the already-inventoried dedicated stubs
   (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
@@ -225,6 +274,78 @@ extend these entries or add new ones without a fresh independent review.
   bridge: no synthetic stdlib logic, no name-keyed special case — the
   call interception reuses the existing general runtime-overlay guard
   block, exactly like `NumGoroutine`.
+
+- **2026-10-18 — `goexit` marker + `runtime.Goexit` overlay declaration
+  (independent codebase-review adjudication, this commit).** The gate does
+  not flag the marker (it rides on `e.node("call", …)`, not a new wire
+  node kind), but the name-keyed interception was uninventoried.
+  Independent review: CLEAN, no veto — adjudicated a real implementation
+  following the `runtimegosched` precedent. The frontend marks the call
+  only after resolving the selector to the `runtime` package's
+  `*types.Func` ([export.go](../../internal/frontend/export.go) ~line
+  8473: `e.node("call", c, map[string]any{"goexit": true, …})`); the
+  backend
+  [GoexitCallNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/GoexitCallNode.java)
+  drives `graalgo.runtime.Goexit.goexit()`, throwing the frozen `Goexit`
+  `ControlFlowException` that unwinds Truffle frames running deferred
+  calls — not recoverable, never crash output. `runtime.Goexit` has no Go
+  source to compile; the control-flow exception on the goroutine-
+  termination machinery IS the real implementation, exactly analogous to
+  `GoschedNode` on `SchedulerCore.yieldCurrent()`. Verified by the
+  differential corpus (`test/corpus/phase1/panic/pn10_goexit.go`,
+  `pn11_goexit_not_recoverable.go`, `pn19_adv11_goexit_nested.go`).
+
+- **2026-10-18 — `gcinterop` marker + `runtime.SetFinalizer`/`KeepAlive`/
+  `GC` overlay declarations (independent codebase-review adjudication,
+  this commit).** The gate does not flag the marker (same `"call"`-node
+  shape as `goexit`), but the interception was uninventoried. Independent
+  review: CLEAN, no veto — adjudicated a real implementation. The frontend
+  emits `"call"` nodes with the additive `"gcinterop": <Name>` marker
+  ([export.go](../../internal/frontend/export.go) ~line 8500, explicitly
+  documented as the goexit-marker precedent), guarded on the resolved
+  `*types.Func` with `obj.Pkg().Name() == "runtime"`; the backend builds
+  `SetFinalizerCallNode`/`KeepAliveCallNode`/`GcCallNode` delegating to
+  `graalgo.runtime.GcInterop`. The "Phase-1 stub" comment is superseded:
+  the runtime module carries the Phase-2 real implementation
+  ([GcInterop.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/GcInterop.java)),
+  classpath-ordered first by `internal/backend/graalgo-run` so it shadows
+  the truffle module's frozen stub — SetFinalizer via a shared
+  `java.lang.ref.Cleaner` (serialized like gc's finalizer goroutine),
+  KeepAlive via `Reference.reachabilityFence`, `GC()` via `System.gc()` +
+  GC-MXBean poll. Per
+  [ADR-0002](../dev/adr/ADR-0002-gc-interop.md) ("the JVM GC *is* the Go
+  GC") these intrinsics have no Go source; implementing their observable
+  surface against the real collector is design, not a Java reimplementation
+  of Go logic. Verified by the differential corpus (`gc01`–`gc07`) plus
+  `GcInteropTest`/`GcTortureTest`/`GcVisibilityTest`/`GcDifferentialTest`.
+
+- **2026-10-18 — `runtimefuncforpc` wire node + `runtime.FuncForPC`
+  overlay declaration (independent codebase-review adjudication, this
+  commit).** The gate flags the additive `"runtimefuncforpc"` wire node by
+  pattern. Independent review: CLEAN, no veto — adjudicated a real
+  implementation following the `runtimenumgoroutine` precedent. The
+  frontend lowers calls to the additive wire node inside the general
+  runtime-interception guard block with resolved-object discrimination
+  ([export.go](../../internal/frontend/export.go) ~line 8663); the overlay
+  declares `FuncForPC` via `addFunc` (the grandfathered-overlay completion
+  the B-3 PKG-023 note covers); the backend
+  [RuntimeFuncForPCNode.java](../../internal/backend/interop/src/main/java/graalgo/rtstack/RuntimeFuncForPCNode.java)
+  resolves via `GoFuncInfo.forPc(pc)` →
+  [StackTrace](../../internal/backend/runtime/src/main/java/graalgo/runtime/StackTrace.java)
+  PC interning, populated from the live guest call stack (`GoStackFrame`
+  chains pushed/popped by real guest calls — the same stack the panic
+  traceback renders). Since graalgo has no machine code, dense interned
+  ids are the contract-faithful representation of PCs (gc's own contract:
+  PCs are opaque). Registered via the public `registerExprKind` hook (no
+  Phase-1 factory change), the `GoschedNode` precedent. B-7 tension,
+  resolved: B-7 labels the `rtstack` family a bridge but its named class
+  list omits `RuntimeFuncForPCNode`, and B-7's stated "why" (real stack
+  metadata unavailable to the backend) does not hold for this path — the
+  metadata resolved here IS the real guest stack. Not a bridge: no
+  synthetic stdlib logic, no name-keyed special case. **Testing-gap caveat
+  (not a bridge):** only frontend wire-format tests exist
+  (`TestRuntimeFuncExport`); no differential-corpus or JVM behavioral
+  tests — recommended follow-up.
 
 ## Retired
 
