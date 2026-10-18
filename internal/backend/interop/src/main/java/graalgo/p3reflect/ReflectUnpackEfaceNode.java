@@ -79,9 +79,6 @@ public final class ReflectUnpackEfaceNode extends GoExprNode {
         }
 
         // Build the reflect.Value struct: {typ_, ptr, flag}.
-        // Field layout: typ_ (pointer, objects[0]), ptr (unsafe.Pointer/long,
-        // longs[0]), flag (uintptr, longs[1]).
-        // Note: exact layout depends on descriptor; use field indices.
         return buildValueStruct(desc, typPtr, ptrHandle, flag);
     }
 
@@ -132,15 +129,16 @@ public final class ReflectUnpackEfaceNode extends GoExprNode {
     /**
      * Builds the reflect.Value GoStruct with the given field values.
      * Uses the descriptor to place fields correctly.
+     *
+     * <p>reflect.Value has fields: typ_ (*abi.Type, pointer -> objects),
+     * ptr (unsafe.Pointer -> objects, NOT longs!), flag (uintptr -> longs).
+     * This matches the layout used by ReflectValues.pack.
      */
     private static GoStruct buildValueStruct(GoStructDescriptor desc, GoPointer typPtr,
             long ptrHandle, long flag) {
-        // reflect.Value has fields: typ_ (*abi.Type), ptr (unsafe.Pointer), flag (uintptr).
-        // typ_ is a pointer -> objects carrier; ptr and flag are longs -> longs carrier.
-        // Field order in descriptor determines indices; we use the standard layout:
-        // objects[0] = typ_, longs[0] = ptr, longs[1] = flag.
-        // TODO: verify field order against actual descriptor.
-        return new GoStruct(desc, new long[]{ptrHandle, flag}, new Object[]{typPtr});
+        // ptr is unsafe.Pointer which goes in objects carrier (not longs),
+        // boxed as Long. typ_ is a GoPointer in objects. flag is in longs.
+        return new GoStruct(desc, new long[]{flag}, new Object[]{typPtr, ptrHandle});
     }
 
     /**
