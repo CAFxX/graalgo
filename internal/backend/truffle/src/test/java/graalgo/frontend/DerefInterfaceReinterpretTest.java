@@ -37,7 +37,9 @@ public final class DerefInterfaceReinterpretTest {
 
     /**
      * Positive: a 2-field struct descriptor synthesizes correctly from a
-     * GoInterface. Field 0 gets the descriptor, field 1 gets the data.
+     * GoInterface. Field 0 gets the descriptor wrapped as a *T-valued
+     * GoPointer (the interface's descriptor word IS a *Type in Go's type
+     * system), field 1 gets the data.
      * This is the abi.EmptyInterface layout: {Type *Type, Data unsafe.Pointer}.
      */
     public void testSynthesizeTwoFieldStruct() {
@@ -51,12 +53,17 @@ public final class DerefInterfaceReinterpretTest {
         GoStruct s = DerefNode.synthesizeStructFromInterface(desc, gi);
 
         assertTrue(s.descriptor() == desc, "struct descriptor");
-        assertTrue(s.getObject(0) == fakeTypeDesc, "field 0 (Type) gets descriptor");
+        Object f0 = s.getObject(0);
+        assertTrue(f0 instanceof graalgo.values.GoPointer,
+                "field 0 (Type) is a *T-valued GoPointer, got " + f0.getClass().getSimpleName());
+        assertTrue(((graalgo.values.GoPointer) f0).referent() == fakeTypeDesc,
+                "field 0's referent is the descriptor");
         assertTrue(s.getObject(1) == null, "field 1 (Data) gets null data");
     }
 
     /**
-     * Positive: non-nil data flows through to field 1.
+     * Positive: non-nil data flows through to field 1; a POINTER-kind
+     * field holding an already-well-typed GoPointer is not double-wrapped.
      */
     public void testSynthesizeWithData() {
         GoStructDescriptor desc = GoStructDescriptor.layout("EmptyInterface",
@@ -68,8 +75,27 @@ public final class DerefInterfaceReinterpretTest {
 
         GoStruct s = DerefNode.synthesizeStructFromInterface(desc, gi);
 
-        assertTrue(s.getObject(0) == fakeTypeDesc, "field 0 gets descriptor");
+        Object f0 = s.getObject(0);
+        assertTrue(f0 instanceof graalgo.values.GoPointer, "field 0 is a GoPointer");
+        assertTrue(((graalgo.values.GoPointer) f0).referent() == fakeTypeDesc,
+                "field 0's referent is the descriptor");
         assertTrue(s.getObject(1) == fakeData, "field 1 gets data");
+    }
+
+    /**
+     * Positive: an already-pointer-valued descriptor is not double-wrapped.
+     */
+    public void testSynthesizeAlreadyPointerNotRewrapped() {
+        GoStructDescriptor desc = GoStructDescriptor.layout("EmptyInterface",
+                List.of("Type", "Data"),
+                List.of(GoKind.POINTER, GoKind.UNSAFE_POINTER));
+        Object fakeTypeDesc = new Object();
+        graalgo.values.GoPointer alreadyPtr = new graalgo.values.GoPointer(fakeTypeDesc);
+        GoInterface gi = new GoInterface(alreadyPtr, null, null);
+
+        GoStruct s = DerefNode.synthesizeStructFromInterface(desc, gi);
+
+        assertTrue(s.getObject(0) == alreadyPtr, "field 0 keeps the existing GoPointer");
     }
 
     /**

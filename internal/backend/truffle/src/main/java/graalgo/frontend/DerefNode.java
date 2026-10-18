@@ -84,6 +84,13 @@ public final class DerefNode extends GoExprNode {
      * <p>Currently supports 2-field structs where field 0 receives the
      * descriptor and field 1 receives the data. Other shapes throw
      * FrontendException (unsupported reinterpretation).
+     *
+     * <p>Values are placed per the field's GoKind: a POINTER-kind field
+     * holds a {@code *T}-valued {@link GoPointer} (null for nil), never the
+     * bare referent — in Go's type system the interface's descriptor word
+     * <em>is</em> a {@code *Type}, so the synthesized field must be
+     * pointer-valued for downstream {@code *T} operations (deref,
+     * {@code unsafe.Pointer}, {@code ==}) to see a well-typed value.
      */
     static graalgo.values.GoStruct synthesizeStructFromInterface(
             graalgo.values.GoStructDescriptor desc, graalgo.values.GoInterface gi) {
@@ -98,6 +105,12 @@ public final class DerefNode extends GoExprNode {
         for (int i = 0; i < 2; i++) {
             var f = fields.get(i);
             Object v = (i == 0) ? gi.descriptor() : gi.data();
+            if (f.kind() == GoKind.POINTER && v != null && !(v instanceof GoPointer)) {
+                // *T-typed field: wrap the referent so the field holds a
+                // genuine *T value. Null stays null (nil *T); an existing
+                // GoPointer is already well-typed.
+                v = new GoPointer(v);
+            }
             if (f.inLongs()) {
                 // Longs-carried field: encode the value as long bits.
                 if (v instanceof Long l) {
