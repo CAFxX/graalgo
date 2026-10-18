@@ -1,6 +1,24 @@
 // Command mutation runs curated source-level mutants against the test suite.
 // For each mutant it builds an overlay (Java) or a rebuilt binary (Go),
 // runs the full suite, and reports KILLED (suite red) or SURVIVED (suite green).
+//
+// Layout (post Phase-4 restructure): the Java backend lives in
+// internal/backend/{truffle,runtime,interop}. The differential test runner is
+// graalgo.test.Runner in the truffle module; the tool uses the same classpath
+// the truffle Makefile's `test` target uses:
+//
+//	out/test-classes : runtime/out/classes : out/classes : lib/*.jar
+//
+// (the runtime module compiles the joint round, so runtime/out/classes holds
+// every non-stub class; the overlay dir goes first to shadow the mutant.)
+// The corpus is located via -Dgraalgo.repo.dir=<repo> (tests resolve
+// test/corpus/phase1/... under it) and the gofrontend binary via the
+// GRAALGO_GOFRONTEND env var, exactly like the Makefile.
+//
+// Reports always land in the run's temp workdir; a timestamped copy is also
+// kept in the durable report dir from mutationReportsDir() (env
+// GRAALGO_MUTATION_REPORTS, default ~/workspace/graalgo-mutation-reports —
+// outside the repo tree, never hidden_files/).
 package main
 
 import (
@@ -30,6 +48,79 @@ type Result struct {
 	DurationSec int64  `json:"duration_sec"`
 }
 
+// layout resolves the repo-relative backend paths once per run.
+type layout struct {
+	repo       string
+	truffle    string   // <repo>/internal/backend/truffle
+	runtime    string   // <repo>/internal/backend/runtime
+	frontend   string   // <repo>/internal/frontend
+	gofrontend string   // <repo>/internal/frontend/gofrontend
+	jars       []string // <repo>/internal/backend/truffle/lib/*.jar
+	persistDir string   // durable report dir (env-overridable, outside the repo)
+}
+
+func newLayout(repo string) (layout, error) {
+	l := layout{
+		repo:       repo,
+		truffle:    filepath.Join(repo, "internal", "backend", "truffle"),
+		runtime:    filepath.Join(repo, "internal", "backend", "runtime"),
+		frontend:   filepath.Join(repo, "internal", "frontend"),
+		persistDir: mutationReportsDir(),
+	}
+	l.gofrontend = filepath.Join(l.frontend, "gofrontend")
+	jars, err := filepath.Glob(filepath.Join(l.truffle, "lib", "*.jar"))
+	if err != nil {
+		return l, err
+	}
+	l.jars = jars
+	return l, nil
+}
+
+// mutationReportsDir is the durable report location. Reports are per-run
+// evidence: they must not land in the repo tree (no-debris rule, AGENTS.md
+// section 5 — the old phases/phase1/hidden_files/mutation location died
+// with the phases/ deletion, and hidden_files/ must never reappear).
+// GRAALGO_MUTATION_REPORTS overrides the location; the default is outside
+// the repo so no gitignore entry is needed.
+func mutationReportsDir() string {
+	if p := os.Getenv("GRAALGO_MUTATION_REPORTS"); p != "" {
+		return p
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "workspace", "graalgo-mutation-reports")
+	}
+	return filepath.Join(os.TempDir(), "graalgo-mutation-reports")
+}
+
+// testClasspath mirrors the truffle module Makefile `test` target:
+// out/test-classes : runtime/out/classes : out/classes : lib/*.jar,
+// with the mutant overlay (if any) first so it shadows the real classes.
+func (l layout) testClasspath(overlay string) string {
+	parts := []string{}
+	if overlay != "" {
+		parts = append(parts, overlay)
+	}
+	parts = append(parts,
+		filepath.Join(l.truffle, "out", "test-classes"),
+		filepath.Join(l.runtime, "out", "classes"),
+		filepath.Join(l.truffle, "out", "classes"),
+	)
+	parts = append(parts, l.jars...)
+	return strings.Join(parts, ":")
+}
+
+// overlayClasspath is the javac classpath for compiling a single mutated
+// Java file: the runtime module's joint-round classes first (they hold every
+// non-stub class), then the truffle stubs, then the Truffle jars.
+func (l layout) overlayClasspath() string {
+	parts := []string{
+		filepath.Join(l.runtime, "out", "classes"),
+		filepath.Join(l.truffle, "out", "classes"),
+	}
+	parts = append(parts, l.jars...)
+	return strings.Join(parts, ":")
+}
+
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "usage: mutation <repo> <mutants.json>\n")
@@ -37,6 +128,11 @@ func main() {
 	}
 	repo := os.Args[1]
 	specPath := os.Args[2]
+
+	l, err := newLayout(repo)
+	if err != nil {
+		fatal(err)
+	}
 
 	data, err := os.ReadFile(specPath)
 	if err != nil {
@@ -60,7 +156,7 @@ func main() {
 	// R1#5, R2#6: baseline control — the clean tree must be green,
 	// otherwise every mutant is trivially "killed".
 	fmt.Printf("running baseline control...\n")
-	baselineVerdict, baselineDetail := runTestSuite(repo, workdir, nil)
+	baselineVerdict, baselineDetail := runTestSuite(l, workdir, nil)
 	if baselineVerdict != "SURVIVED" {
 		fatal(fmt.Errorf("baseline not green: %s (%s)", baselineVerdict, baselineDetail))
 	}
@@ -68,7 +164,7 @@ func main() {
 
 	for _, m := range spec.Mutants {
 		start := time.Now()
-		verdict, detail := runMutant(repo, workdir, m)
+		verdict, detail := runMutant(l, workdir, m)
 		results = append(results, Result{
 			ID:          m.ID,
 			Description: m.Description,
@@ -79,18 +175,30 @@ func main() {
 		fmt.Printf("[%s] %s: %s (%s)\n", m.ID, verdict, m.Description, detail)
 	}
 
-	// Write report (R2#6: persist to hidden_files, not just /tmp)
-	report, _ := json.MarshalIndent(results, "", "  ")
-	os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644)
+	// Write report to the run workdir.
+	report, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		fatal(fmt.Errorf("marshal report: %v", err))
+	}
+	if err := os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644); err != nil {
+		fatal(fmt.Errorf("write report: %v", err))
+	}
 	fmt.Printf("\nreport: %s/report.json\n", workdir)
 
-	// Also copy to the repo's hidden_files for durability
-	persistDir := "/home/hatch/workspace/graalgo/phases/phase1/hidden_files/mutation"
-	os.MkdirAll(persistDir, 0755)
-	ts := time.Now().Format("20060102-150405")
-	persistPath := filepath.Join(persistDir, "report-"+ts+".json")
-	os.WriteFile(persistPath, report, 0644)
-	fmt.Printf("persisted: %s\n", persistPath)
+	// Keep a timestamped copy in the durable report dir (outside the repo).
+	// Never under hidden_files/ (no-debris rule). A failed persist is only
+	// a warning: the primary report above already landed.
+	if err := os.MkdirAll(l.persistDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: cannot create %s: %v\n", l.persistDir, err)
+	} else {
+		ts := time.Now().Format("20060102-150405")
+		persistPath := filepath.Join(l.persistDir, "report-"+ts+".json")
+		if err := os.WriteFile(persistPath, report, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: cannot persist report: %v\n", err)
+		} else {
+			fmt.Printf("persisted: %s\n", persistPath)
+		}
+	}
 
 	// Summary
 	killed, survived, errors := 0, 0, 0
@@ -107,14 +215,14 @@ func main() {
 	fmt.Printf("killed=%d survived=%d errors=%d\n", killed, survived, errors)
 }
 
-func runMutant(repo, workdir string, m Mutant) (string, string) {
+func runMutant(l layout, workdir string, m Mutant) (string, string) {
 	mdir := filepath.Join(workdir, m.ID)
 	if err := os.MkdirAll(mdir, 0755); err != nil {
 		return "ERROR", err.Error()
 	}
 
 	// Read original file
-	srcPath := filepath.Join(repo, m.File)
+	srcPath := filepath.Join(l.repo, filepath.FromSlash(m.File))
 	orig, err := os.ReadFile(srcPath)
 	if err != nil {
 		return "ERROR", fmt.Sprintf("read: %v", err)
@@ -129,14 +237,14 @@ func runMutant(repo, workdir string, m Mutant) (string, string) {
 	mutated := strings.Replace(string(orig), m.Old, m.New, 1)
 
 	if m.Lang == "java" {
-		return runJavaMutant(repo, mdir, m, mutated)
+		return runJavaMutant(l, mdir, m, mutated)
 	}
-	return runGoMutant(repo, mdir, m, mutated)
+	return runGoMutant(l, mdir, m, mutated)
 }
 
-func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
+func runJavaMutant(l layout, mdir string, m Mutant, mutated string) (string, string) {
 	// Write mutated file to overlay source tree (mirror repo-relative path)
-	overlaySrc := filepath.Join(mdir, "src", m.File)
+	overlaySrc := filepath.Join(mdir, "src", filepath.FromSlash(m.File))
 	if err := os.MkdirAll(filepath.Dir(overlaySrc), 0755); err != nil {
 		return "ERROR", err.Error()
 	}
@@ -144,79 +252,98 @@ func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string)
 		return "ERROR", err.Error()
 	}
 
-	// Compile single file against out/classes
+	// Compile single file against the backend classes.
 	overlayClasses := filepath.Join(mdir, "classes")
-	os.MkdirAll(overlayClasses, 0755)
-	phase1 := filepath.Join(repo, "phases/phase1")
-	cp := fmt.Sprintf("%s/out/classes:%s", phase1, jarCP(phase1))
+	if err := os.MkdirAll(overlayClasses, 0755); err != nil {
+		return "ERROR", fmt.Sprintf("overlay classes dir: %v", err)
+	}
 	cmd := exec.Command(javaBin(),
 		"-Xlint:deprecation", "-Werror",
-		"-cp", cp,
+		"-cp", l.overlayClasspath(),
 		"-d", overlayClasses,
 		overlaySrc)
-	cmd.Dir = phase1
+	cmd.Dir = l.truffle
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "ERROR", fmt.Sprintf("javac: %v\n%s", err, out)
 	}
 
 	// Run test suite with overlay first in classpath
-	return runTestSuite(repo, mdir, map[string]string{
+	return runTestSuite(l, mdir, map[string]string{
 		"CLASSPATH_OVERLAY": overlayClasses,
 	})
 }
 
-func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
-	// For Go exporter: copy the frontend dir, apply mutation, build
-	frontSrc := filepath.Join(repo, "internal", "frontend")
+func runGoMutant(l layout, mdir string, m Mutant, mutated string) (string, string) {
+	// For the Go exporter: copy the frontend dir, apply mutation, rebuild.
 	frontDst := filepath.Join(mdir, "frontend")
-	if err := copyDir(frontSrc, frontDst); err != nil {
+	if err := copyDir(l.frontend, frontDst); err != nil {
 		return "ERROR", fmt.Sprintf("copy: %v", err)
 	}
-	mutPath := filepath.Join(frontDst, filepath.Base(m.File))
-	// m.File is internal/frontend/export.go, so base is export.go
+	// m.File is repo-relative (e.g. internal/frontend/export.go); resolve it
+	// inside the copied tree and refuse anything that escapes it.
+	rel, err := filepath.Rel(filepath.Join("internal", "frontend"), filepath.FromSlash(m.File))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "ERROR", fmt.Sprintf("mutant file outside internal/frontend: %q", m.File)
+	}
+	mutPath := filepath.Join(frontDst, rel)
 	if err := os.WriteFile(mutPath, []byte(mutated), 0644); err != nil {
 		return "ERROR", err.Error()
 	}
 
-	// Build gofrontend
-	bin := filepath.Join(mdir, "gofrontend")
-	cmd := exec.Command(goBin(), "build", "-o", bin, ".")
+	// Rebuild gofrontend with the vendored-overlay build (build.sh), NOT a
+	// plain `go build`: the binary must embed the vendored go/* sources via
+	// -overlay, else it silently tests the wrong sources (P3-M7 trap).
+	// build.sh loses its exec bit in the copy, so invoke it via sh.
+	cmd := exec.Command("sh", "build.sh", "build")
 	cmd.Dir = frontDst
-	cmd.Env = append(os.Environ(), "PATH="+os.Getenv("PATH"))
+	cmd.Env = setEnvVar(os.Environ(), "PATH",
+		filepath.Dir(goBin())+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "ERROR", fmt.Sprintf("go build: %v\n%s", err, out)
+		return "ERROR", fmt.Sprintf("build.sh: %v\n%s", err, out)
 	}
 
 	// Run test suite with GRAALGO_GOFRONTEND pointing to mutated binary
-	return runTestSuite(repo, mdir, map[string]string{
-		"GRAALGO_GOFRONTEND": bin,
+	return runTestSuite(l, mdir, map[string]string{
+		"GRAALGO_GOFRONTEND": filepath.Join(frontDst, "gofrontend"),
 	})
 }
 
-func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string) {
-	phase1 := filepath.Join(repo, "phases/phase1")
-	// Build classpath: overlay (if any) : out/test : out/classes : jars
-	cp := ""
-	if ov, ok := extraEnv["CLASSPATH_OVERLAY"]; ok {
-		cp = ov + ":"
+func runTestSuite(l layout, mdir string, extraEnv map[string]string) (string, string) {
+	// Build classpath: overlay (if any) : out/test-classes :
+	// runtime/out/classes : out/classes : jars (Makefile `test` order).
+	cp := l.testClasspath(extraEnv["CLASSPATH_OVERLAY"])
+
+	// gofrontend: the Makefile exports <repo>/internal/frontend/gofrontend;
+	// a Go mutant overrides it with its rebuilt binary.
+	gofrontend := l.gofrontend
+	if v, ok := extraEnv["GRAALGO_GOFRONTEND"]; ok {
+		gofrontend = v
 	}
-	cp += fmt.Sprintf("%s/out/test:%s/out/classes:%s", phase1, phase1, jarCP(phase1))
 
 	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test).
+	// -Dgraalgo.repo.dir lets the corpus tests find test/corpus/phase1/...
 	cmd := exec.Command(javaRunBin(),
 		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
+		"-Dgraalgo.repo.dir="+l.repo,
 		"-cp", cp, "graalgo.test.Runner")
-	cmd.Dir = phase1
-	cmd.Env = os.Environ()
+	cmd.Dir = l.truffle
+	env := os.Environ()
 	for k, v := range extraEnv {
 		if k == "CLASSPATH_OVERLAY" {
 			continue
 		}
-		cmd.Env = append(cmd.Env, k+"="+v)
+		env = setEnvVar(env, k, v)
 	}
-	// Log output
+	env = setEnvVar(env, "GRAALGO_GOFRONTEND", gofrontend)
+	cmd.Env = env
+	// Log output. A missing log costs the FAIL-line attribution, so fail
+	// the mutant loudly instead of silently degrading (or panicking on a
+	// nil Close).
 	logPath := filepath.Join(mdir, "test.log")
-	logFile, _ := os.Create(logPath)
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		return "ERROR", fmt.Sprintf("log: %v", err)
+	}
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -254,29 +381,48 @@ func findFailingTests(logPath string) []string {
 	return killers
 }
 
+// setEnvVar sets key=value in env, replacing any existing entry for key.
+func setEnvVar(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
 func javaBin() string {
 	if p := os.Getenv("GRAALGO_JAVA"); p != "" {
 		return p
 	}
-	// javac is alongside java in the GraalVM JDK
-	return "/home/hatch/tools/graalvm-jdk-25/bin/javac"
+	// javac is alongside java in the GraalVM JDK. $HOME-relative, never a
+	// hardcoded username; fall back to PATH lookup.
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "tools", "graalvm-jdk-25", "bin", "javac")
+	}
+	return "javac"
 }
 
 func javaRunBin() string {
 	if p := os.Getenv("GRAALGO_JAVA_RUN"); p != "" {
 		return p
 	}
-	return "/home/hatch/tools/graalvm-jdk-25/bin/java"
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "tools", "graalvm-jdk-25", "bin", "java")
+	}
+	return "java"
 }
 
 func goBin() string {
-	return "/home/hatch/tools/go/bin/go"
-}
-
-func jarCP(phase1 string) string {
-	// Match Makefile CP: lib/*.jar
-	jars, _ := filepath.Glob(filepath.Join(phase1, "lib", "*.jar"))
-	return strings.Join(jars, ":")
+	if p := os.Getenv("GRAALGO_GO"); p != "" {
+		return p
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "tools", "go", "bin", "go")
+	}
+	return "go"
 }
 
 func copyDir(src, dst string) error {

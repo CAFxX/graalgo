@@ -2,7 +2,7 @@
   "mutants": [
     {
       "description": "Inc/dec swapped: i++ becomes i-1 (first occurrence, ident incdec)",
-      "file": "phases/phase1/src/main/java/graalgo/frontend/NodeFactory.java",
+      "file": "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java",
       "id": "M-J01",
       "lang": "java",
       "new": "delta > 0 ? BinaryOpNode.Op.SUB : BinaryOpNode.Op.ADD,",
@@ -10,7 +10,7 @@
     },
     {
       "description": "Off-by-one in global initializer oid check (first occurrence)",
-      "file": "phases/phase1/src/main/java/graalgo/frontend/NodeFactory.java",
+      "file": "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java",
       "id": "M-J02",
       "lang": "java",
       "new": "if (oid <= 0) {",
@@ -26,7 +26,7 @@
     },
     {
       "description": "Nil check negation inverted: ==nil becomes !=nil",
-      "file": "phases/phase1/src/main/java/graalgo/frontend/NodeFactory.java",
+      "file": "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java",
       "id": "M-J04",
       "lang": "java",
       "new": "{ return new NilCheckNode(other, op == BinaryOpNode.Op.EQ); }",
@@ -34,7 +34,7 @@
     },
     {
       "description": "Slot null check inverted (throws on valid, NPEs on invalid)",
-      "file": "phases/phase1/src/main/java/graalgo/frontend/NodeFactory.java",
+      "file": "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java",
       "id": "M-J05",
       "lang": "java",
       "new": "if (slot != null) {",
