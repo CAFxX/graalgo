@@ -43,6 +43,12 @@
 #   phase2 SchedTestRunner, phase3 IfaceTestRunner, plus the wave1-3
 #   corpus differentials). It takes 30+ minutes and runs in local
 #   verification and nightly runs, not per-push. Invoke it explicitly.
+#   `make test-e2e` — the published-module end-to-end probes
+#   ([test/e2e/](test/e2e/): `github.com/google/uuid` compiled
+#   as-published, gc vs graalgo differential via run_module.sh). Each of
+#   the 8 cases runs two JVM backend invocations plus a gc build, and the
+#   module cache needs priming over the network on first run. Runs in CI's
+#   full-suite job (weekly + manual dispatch), not per-push.
 #
 
 
@@ -104,7 +110,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test test-e2e clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -159,6 +165,24 @@ test-regression: generate build graalgo
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
+
+# e2e: published-module differential probes ([test/e2e/](test/e2e/)).
+# Compares gc (`go build`+run) vs the product launcher
+# ([internal/backend/graalgo-sync-run](internal/backend/graalgo-sync-run),
+# P3SyncMain) with --gmp=1 and --gmp=4 legs, per case: byte-identical
+# stdout, equal exit codes, and (for panics) the first stderr line.
+# `timeout` per graalgo leg (GR_TIMEOUT, default 300s) is the failability
+# mechanism for hang regressions: a reintroduced hang is killed and fails
+# the case instead of hanging CI. /tmp is a 512M tmpfs shared with other
+# work and routinely full: keep the JVM and scratch files on the
+# persistent disk (same pattern as the snapshot targets); test/e2e/.tmp is
+# gitignored. NOT in `all` (hence not per-push): ~10-20 min, needs network
+# for the module cache on first run. Wired into CI's full-suite job.
+E2E_TMP := $(CURDIR)/test/e2e/.tmp
+test-e2e: generate build
+	mkdir -p $(E2E_TMP) && \
+	TMPDIR="$(E2E_TMP)" GOTMPDIR="$(E2E_TMP)" \
+	GR="$(CURDIR)" ./test/e2e/run_module.sh $(CURDIR)/test/e2e/uuid
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the

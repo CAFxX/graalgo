@@ -1,5 +1,12 @@
 # Module-probe bug log (lane: m9-modprobe, worktree `wt/graalgo-p3/m9-modprobe`)
 
+> Provenance (2026-10-18): the m9-modprobe lane completed 2026-10-14; the
+> harness moved to [test/e2e/](.) and `run_module.sh` was rewired against
+> [internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run)
+> with per-case timeouts, wired into CI's full-suite job via `make test-e2e`
+> (see [README.md](README.md)). Entries below are the historical lane log;
+> `modprobe/...` paths refer to the pre-move layout.
+
 Every failure from a module probe gets a BUG entry with a minimal reproducer.
 Fixed-by-general-fix entries name the commit. Blocked-on-other-lane entries
 name the owner. No module source is ever patched (hard rule 1); every fix is

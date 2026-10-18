@@ -86,6 +86,8 @@ jobs:
   full-suite:
     # The long differential suite, excluded from per-push CI by design
     # (Makefile header). Runs weekly and on manual dispatch.
+    # After the wave corpus: the published-module e2e probes
+    # (`make test-e2e`, [test/e2e/](../../test/e2e/)).
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -115,3 +117,11 @@ jobs:
 
       - name: make test (full differential suite)
         run: make test
+
+      - name: make test-e2e (published-module probes)
+        # The uuid probe cases ([test/e2e/](../../test/e2e/)):
+        # github.com/google/uuid compiled as-published, gc vs graalgo
+        # differential via test/e2e/run_module.sh (8 cases x 2 gmp legs).
+        # Same weekly cadence as the rest of the full suite; needs network
+        # for `go mod download` on first run.
+        run: make test-e2e
