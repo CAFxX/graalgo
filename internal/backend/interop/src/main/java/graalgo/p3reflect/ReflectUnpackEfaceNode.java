@@ -70,10 +70,14 @@ public final class ReflectUnpackEfaceNode extends GoExprNode {
         Object data = gi.data();
         long ptrHandle = graalgo.p3unsafe.UnsafeTable.current().intern(data);
 
-        // Compute the flag: kind in low 5 bits, flagIndir if not direct.
-        ReflectTypes.TypeInfo ti = ReflectTypes.table().info(tok);
-        int kindBits = abiKind(ti.kind);
+        // Compute the flag: kind in low 5 bits from the materialized abi.Type's
+        // Kind_ field, flagIndir if not direct.
+        // Note: we read Kind from the materialized struct rather than mapping
+        // from GoKind, because GoKind doesn't distinguish int vs int64 (both
+        // are INT64, but reflect.Int=2 vs reflect.Int64=6).
+        int kindBits = readAbiKind(abiType);
         long flag = kindBits;
+        ReflectTypes.TypeInfo ti = ReflectTypes.table().info(tok);
         if (!isDirectIface(ti)) {
             flag |= ReflectValues.FLAG_INDIR;
         }
@@ -83,8 +87,28 @@ public final class ReflectUnpackEfaceNode extends GoExprNode {
     }
 
     /**
-     * Maps GoKind to abi Kind value (mirrors ReflectTypes.abiKind).
+     * Reads the Kind value from a materialized abi.Type GoStruct.
+     * The Kind_ field is in the longs carrier.
      */
+    private static int readAbiKind(GoStruct abiType) {
+        try {
+            GoStructDescriptor desc = abiType.descriptor();
+            for (GoStructDescriptor.Field f : desc.fields()) {
+                if (f.name().equals("Kind_") && f.inLongs()) {
+                    return (int) abiType.getLong(f.index());
+                }
+            }
+        } catch (Exception e) {
+            // Fall through to default
+        }
+        return 0;
+    }
+
+    /**
+     * Maps GoKind to abi Kind value (mirrors ReflectTypes.abiKind).
+     * @deprecated Use readAbiKind instead for accuracy.
+     */
+    @Deprecated
     private static int abiKind(GoKind kind) {
         return switch (kind) {
             case BOOL -> 1;
