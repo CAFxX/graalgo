@@ -2022,6 +2022,13 @@ public final class ReflectTypes {
     private static volatile graalgo.values.GoStructDescriptor structFieldDesc;
     private static volatile graalgo.values.GoStructDescriptor rtypeDescStruct;
     private static volatile graalgo.values.GoTypeDescriptor rtypeDesc;
+    // fix-redmaster-buildok (r5): descriptors for internal/abi type
+    // materialization (abi.TypeOf intrinsic). The materialized descriptors
+    // are fully-populated most-derived structs (e.g. PtrType for *T), so
+    // the real reflect package's pure-Go methods work unmodified.
+    private static volatile graalgo.values.GoStructDescriptor abiTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiPtrTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiInterfaceTypeDesc;
 
     /**
      * Captures the struct descriptors for the synthetic reflect structs.
@@ -2058,6 +2065,24 @@ public final class ReflectTypes {
             rtypeDesc = descriptorFor(types, "reflect.rtype");
         } catch (FrontendException e) {
             rtypeDesc = null;
+        }
+        // fix-redmaster-buildok (r5): internal/abi type descriptors for
+        // materialized descriptors (abi.TypeOf intrinsic). Tolerant of
+        // programs that don't import internal/abi.
+        try {
+            abiTypeDesc = structDescFor(types, "internal/abi.Type");
+        } catch (FrontendException e) {
+            abiTypeDesc = null;
+        }
+        try {
+            abiPtrTypeDesc = structDescFor(types, "internal/abi.PtrType");
+        } catch (FrontendException e) {
+            abiPtrTypeDesc = null;
+        }
+        try {
+            abiInterfaceTypeDesc = structDescFor(types, "internal/abi.InterfaceType");
+        } catch (FrontendException e) {
+            abiInterfaceTypeDesc = null;
         }
     }
 
@@ -2185,6 +2210,15 @@ public final class ReflectTypes {
         return d;
     }
 
+    /** The reflect.rtype struct descriptor (for direct struct construction). */
+    public static graalgo.values.GoStructDescriptor rtypeStructDescriptor() {
+        graalgo.values.GoStructDescriptor d = rtypeDescStruct;
+        if (d == null) {
+            throw new IllegalStateException("reflect: descriptors not captured");
+        }
+        return d;
+    }
+
     /**
      * Boxes a type token as a {@code reflect.Type} interface value
      * (GoInterface over an rtype struct). The itab is left null and built
@@ -2199,5 +2233,265 @@ public final class ReflectTypes {
         graalgo.values.GoStruct rt = new graalgo.values.GoStruct(
                 rtypeDescStruct, new long[0], new Object[]{tok});
         return new graalgo.values.GoInterface(rtypeDesc, rt, null);
+    }
+
+    // ------------------------------------------------------------------
+    // Materialized descriptors (fix-redmaster-buildok r5).
+    //
+    // The runtime materializes *internal/abi.Type as fully-populated
+    // most-derived GoStructs (e.g. PtrType for *T, InterfaceType for
+    // interfaces), so the real reflect package's pure-Go methods (Kind(),
+    // Elem(), ...) work unmodified — they read struct fields directly and
+    // use unsafe reinterpretation between *Type and derived types.
+    // ------------------------------------------------------------------
+
+    /** Maps a GoKind to the numeric internal/abi.Kind value (gc-exact). */
+    private static int abiKind(graalgo.values.GoKind kind) {
+        return switch (kind) {
+            case BOOL -> 1;
+            case INT8 -> 3;
+            case INT16 -> 4;
+            case INT32 -> 5;
+            case INT64 -> 6;
+            case UINT8 -> 8;
+            case UINT16 -> 9;
+            case UINT32 -> 10;
+            case UINT64 -> 11;
+            case FLOAT32 -> 13;
+            case FLOAT64 -> 14;
+            case COMPLEX64 -> 15;
+            case COMPLEX128 -> 16;
+            case ARRAY -> 17;
+            case CHAN -> 18;
+            case FUNC -> 19;
+            case INTERFACE -> 20;
+            case MAP -> 21;
+            case POINTER -> 22;
+            case SLICE -> 23;
+            case STRING -> 24;
+            case STRUCT -> 25;
+            case UNSAFE_POINTER -> 26;
+            default -> 0;
+        };
+    }
+
+    /** The internal/abi.Type struct descriptor (for materialized descriptors). */
+    public static graalgo.values.GoStructDescriptor abiTypeDescriptor() {
+        graalgo.values.GoStructDescriptor d = abiTypeDesc;
+        if (d == null) {
+            throw new IllegalStateException("reflect: internal/abi.Type descriptor not captured");
+        }
+        return d;
+    }
+
+    /**
+     * Builds a flattened descriptor for a derived abi type (e.g. PtrType).
+     * The base Type fields come first (at their original indices, so *Type
+     * accesses work), followed by the derived fields. This makes the
+     * materialized struct layout-compatible with both *Type and *DerivedType
+     * static types, which the unsafe reinterpretation in abi.Type.Elem()
+     * relies on.
+     */
+    private static graalgo.values.GoStructDescriptor flattenedDesc(
+            String name,
+            graalgo.values.GoStructDescriptor base,
+            java.util.List<String> extraNames,
+            java.util.List<graalgo.values.GoKind> extraKinds) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        java.util.List<graalgo.values.GoKind> kinds = new java.util.ArrayList<>();
+        for (graalgo.values.GoStructDescriptor.Field f : base.fields()) {
+            names.add(f.name());
+            kinds.add(f.kind());
+        }
+        names.addAll(extraNames);
+        kinds.addAll(extraKinds);
+        // Build via layout (7-arg version with null nested descriptors).
+        int n = names.size();
+        java.util.List<Integer> arrayLens = new java.util.ArrayList<>(n);
+        java.util.List<graalgo.values.GoKind> arrayElemKinds = new java.util.ArrayList<>(n);
+        java.util.List<graalgo.values.GoStructDescriptor> arrayElemDescs = new java.util.ArrayList<>(n);
+        java.util.List<graalgo.values.GoStructDescriptor> structDescs = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            arrayLens.add(-1);
+            arrayElemKinds.add(null);
+            arrayElemDescs.add(null);
+            structDescs.add(null);
+        }
+        return graalgo.values.GoStructDescriptor.layout(name, names, kinds,
+                arrayLens, arrayElemKinds, arrayElemDescs, structDescs);
+    }
+
+    private static volatile graalgo.values.GoStructDescriptor abiPtrTypeFlatDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiInterfaceTypeFlatDesc;
+
+    /**
+     * Materializes the fully-populated internal/abi.Type GoStruct for a
+     * type token. Composite kinds produce the most-derived struct
+     * (PtrType for POINTER, InterfaceType for INTERFACE); the common
+     * Type fields (Size_, Align_, Kind_, ...) are populated from the
+     * TypeInfo.
+     *
+     * <p>Results are cached per token (descriptors are immutable and
+     * pointer-identity matters for unsafe round-trips).
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Long, graalgo.values.GoStruct>
+            MATERIALIZED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static graalgo.values.GoStruct materialize(long tok) {
+        return MATERIALIZED.computeIfAbsent(tok, ReflectTypes::materializeUncached);
+    }
+
+    private static graalgo.values.GoStruct materializeUncached(long tok) {
+        TypeInfo ti = table().info(tok);
+        // For composite kinds, build the most-derived struct with the
+        // embedded Type populated. The wire represents embedded structs as
+        // nested fields (not flattened).
+        boolean isPtr = ti.kind == graalgo.values.GoKind.POINTER;
+        boolean isIface = ti.kind == graalgo.values.GoKind.INTERFACE;
+        if (isPtr && abiPtrTypeDesc != null) {
+            return materializePtrType(ti);
+        } else if (isIface && abiInterfaceTypeDesc != null) {
+            return materializeInterfaceType(ti);
+        } else {
+            return materializeBaseType(ti, abiTypeDescriptor());
+        }
+    }
+
+    /** Materializes a base internal/abi.Type GoStruct. */
+    private static graalgo.values.GoStruct materializeBaseType(TypeInfo ti,
+            graalgo.values.GoStructDescriptor desc) {
+        long[] longs = new long[desc.longsCount()];
+        Object[] objects = new Object[desc.objectsCount()];
+        for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
+            switch (f.name()) {
+                case "Size_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.size;
+                }
+                case "PtrBytes" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Hash" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "TFlag" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Align_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "FieldAlign_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "Kind_" -> {
+                    if (f.inLongs()) longs[f.index()] = abiKind(ti.kind);
+                }
+                case "Equal", "GCData" -> {
+                    if (!f.inLongs()) objects[f.index()] = null;
+                }
+                case "Str", "PtrToThis" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                default -> {
+                    // Unknown field: leave zero.
+                }
+            }
+        }
+        return new graalgo.values.GoStruct(desc, longs, objects);
+    }
+
+    /** Materializes an internal/abi.PtrType GoStruct (for POINTER kind). */
+    private static graalgo.values.GoStruct materializePtrType(TypeInfo ti) {
+        // Build (once) a flattened PtrType descriptor: the 11 Type fields
+        // at their original indices, plus Elem.
+        graalgo.values.GoStructDescriptor desc = abiPtrTypeFlatDesc;
+        if (desc == null) {
+            desc = flattenedDesc("internal/abi.PtrType", abiTypeDescriptor(),
+                    java.util.List.of("Elem"),
+                    java.util.List.of(graalgo.values.GoKind.POINTER));
+            abiPtrTypeFlatDesc = desc;
+        }
+        Object elem = null;
+        if (ti.elem != null) {
+            elem = materialize(ti.elem.tok);
+        }
+        return materializeWithExtra(ti, desc, "Elem", elem);
+    }
+
+    /** Finds a field by name in a descriptor (null if absent). */
+    private static graalgo.values.GoStructDescriptor.Field findField(
+            graalgo.values.GoStructDescriptor desc, String name) {
+        for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
+            if (name.equals(f.name())) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    /** Materializes an internal/abi.InterfaceType GoStruct (for INTERFACE kind). */
+    private static graalgo.values.GoStruct materializeInterfaceType(TypeInfo ti) {
+        // Flattened: the 11 Type fields at original indices.
+        // (InterfaceType adds PkgPath and Methods, which we leave zero.)
+        graalgo.values.GoStructDescriptor desc = abiInterfaceTypeFlatDesc;
+        if (desc == null) {
+            desc = flattenedDesc("internal/abi.InterfaceType", abiTypeDescriptor(),
+                    java.util.List.of(), java.util.List.of());
+            abiInterfaceTypeFlatDesc = desc;
+        }
+        return materializeWithExtra(ti, desc, null, null);
+    }
+
+    /**
+     * Materializes a GoStruct with the given (flattened) descriptor,
+     * populating the Type fields from the TypeInfo and optionally one extra
+     * object field.
+     */
+    private static graalgo.values.GoStruct materializeWithExtra(TypeInfo ti,
+            graalgo.values.GoStructDescriptor desc,
+            String extraName, Object extraValue) {
+        long[] longs = new long[desc.longsCount()];
+        Object[] objects = new Object[desc.objectsCount()];
+        for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
+            String name = f.name();
+            if (extraName != null && extraName.equals(name)) {
+                if (!f.inLongs()) {
+                    objects[f.index()] = extraValue;
+                }
+                continue;
+            }
+            switch (name) {
+                case "Size_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.size;
+                }
+                case "PtrBytes" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Hash" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "TFlag" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Align_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "FieldAlign_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "Kind_" -> {
+                    if (f.inLongs()) longs[f.index()] = abiKind(ti.kind);
+                }
+                case "Equal", "GCData" -> {
+                    if (!f.inLongs()) objects[f.index()] = null;
+                }
+                case "Str", "PtrToThis" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                default -> {
+                    // Unknown field: leave zero.
+                }
+            }
+        }
+        return new graalgo.values.GoStruct(desc, longs, objects);
     }
 }
