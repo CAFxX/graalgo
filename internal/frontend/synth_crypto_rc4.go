@@ -35,9 +35,9 @@ func (k KeySizeError) Error() string {
 // RC4 key, at least 1 byte and at most 256 bytes.
 // NewCipher creates and returns a new [Cipher].
 // P3-M8: fail-fast stub (exact gc signature). Real callers go through the
-// mrM8 desugar to __rc4NewCipher. Re-test trigger: WS D lands.
+// mrM8 desugar to __rc4NewCipher.
 func NewCipher(key []byte) (*Cipher, error) {
-	panic("crypto/rc4: NewCipher: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/rc4: NewCipher: unreachable (call sites desugar to __rc4NewCipher")
 }
 
 // Reset zeros the key data and makes the [Cipher] unusable.
