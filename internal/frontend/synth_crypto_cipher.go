@@ -573,7 +573,7 @@ func __streamReaderRead(r StreamReader, dst []byte) streamReaderReadPair {
 
 // Read implements io.Reader (fail-fast stub; served via mrM8 desugar).
 func (r StreamReader) Read(dst []byte) (n int, err error) {
-	panic("crypto/cipher: StreamReader.Read: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/cipher: StreamReader.Read: unreachable (call sites desugar to __streamReaderRead")
 }
 
 // StreamWriter wraps a [Stream] into an io.Writer. It calls XORKeyStream
@@ -607,7 +607,7 @@ func __streamWriterWrite(w StreamWriter, src []byte) streamWriterWritePair {
 
 // Write implements io.Writer (fail-fast stub; served via mrM8 desugar).
 func (w StreamWriter) Write(src []byte) (n int, err error) {
-	panic("crypto/cipher: StreamWriter.Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/cipher: StreamWriter.Write: unreachable (call sites desugar to __streamWriterWrite")
 }
 
 // Close closes the underlying Writer and returns its Close return value, if the Writer
