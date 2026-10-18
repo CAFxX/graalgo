@@ -1708,12 +1708,8 @@ func __udpConnRead(c *UDPConn, b []byte) readPair {
 			return readPair{0, &OpError{Op: "read", Net: c.fd.net, Err: errnoVal}}
 		}
 		n := int(r - 1)
-		if n == 0 && len(b) > 0 {
-			if werr := netPollWaitRead(c.fd.cookie); werr != nil {
-				return readPair{0, c.fd.mapPollErr("read", werr)}
-			}
-			continue
-		}
+		// r-1 == 0 means a zero-length datagram was consumed (no datagram
+		// pending is reported as -EAGAIN above): return it immediately.
 		return readPair{n, nil}
 	}
 }
@@ -1741,13 +1737,10 @@ func __udpConnReadFrom(c *UDPConn, b []byte) readFromPair {
 		// Re-query the peer address length via a second call is not
 		// possible; decode from addrBuf directly. The trap writes the
 		// wire format; decode the family to know the length.
+		//
+		// n == 0 means a zero-length datagram was consumed (no datagram
+		// pending is reported as -EAGAIN above): return it immediately.
 		n := int(r - 1)
-		if n == 0 && len(b) > 0 {
-			if werr := netPollWaitRead(c.fd.cookie); werr != nil {
-				return readFromPair{0, nil, c.fd.mapPollErr("read", werr)}
-			}
-			continue
-		}
 		var raddr Addr
 		if len(addrBuf) >= 7 {
 			__tmpSA2 := decodeSockaddr(addrBuf)
@@ -1763,11 +1756,25 @@ func __udpConnWriteTo(c *UDPConn, b []byte, addr Addr) writePair {
 		return writePair{0, &OpError{Op: "write", Net: c.fd.net, Err: errors.New("net: WriteTo with non-UDPAddr")}}
 	}
 	sa := encodeSockaddr(uaddr.IP, uaddr.Port)
-	r := netSendto(int64(c.fd.cookie), b, sa)
-	if r < 0 {
-		return writePair{0, &OpError{Op: "write", Net: c.fd.net, Addr: addr, Err: errno(-r)}}
+	for {
+		r := netSendto(int64(c.fd.cookie), b, sa)
+		if r < 0 {
+			return writePair{0, &OpError{Op: "write", Net: c.fd.net, Addr: addr, Err: errno(-r)}}
+		}
+		n := int(r - 1)
+		if n == 0 && len(b) > 0 {
+			// 0-byte send on a nonblocking socket with want > 0: EAGAIN
+			// (fork-side contract, mirroring netFD.write). Wait for
+			// writability via the netpoller and retry; do not report a
+			// successful zero-byte write. len(b)==0 datagrams still
+			// complete immediately as genuine zero-byte writes.
+			if werr := netPollWaitWrite(c.fd.cookie); werr != nil {
+				return writePair{0, c.fd.mapPollErr("write", werr)}
+			}
+			continue
+		}
+		return writePair{n, nil}
 	}
-	return writePair{int(r - 1), nil}
 }
 
 // ListenPacket announces on the local network address.
