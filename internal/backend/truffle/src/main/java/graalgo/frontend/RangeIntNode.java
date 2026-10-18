@@ -103,6 +103,9 @@ public final class RangeIntNode extends Node implements RepeatingNode, LabelTarg
         try {
             body.executeVoid(frame);
         } catch (ContinueSignal s) {
+            if (!s.matches(label)) {
+                throw s; // targets an outer loop: rethrow (same rule as RangeSliceNode)
+            }
             // continue: proceed to next iteration
         }
         // Advance the per-invocation index (committed before the next
