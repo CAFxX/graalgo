@@ -2,6 +2,7 @@ package vet
 
 import (
 	"go/ast"
+	"go/token"
 )
 
 func init() {
@@ -110,7 +111,7 @@ func checkStmtUnreachable(pass *Pass, s ast.Stmt) []Diagnostic {
 
 // terminates reports whether s always exits the current block
 // (return, panic, break/continue/goto/fallthrough, or an infinite
-// for loop without break).
+// for loop with no exit).
 func terminates(s ast.Stmt) bool {
 	switch s := s.(type) {
 	case *ast.ReturnStmt, *ast.BranchStmt:
@@ -124,9 +125,9 @@ func terminates(s ast.Stmt) bool {
 			}
 		}
 	case *ast.ForStmt:
-		// for {} with no break terminates (infinite loop).
+		// for {} with no exit terminates (infinite loop).
 		if s.Cond == nil && s.Init == nil && s.Post == nil {
-			if !hasBreak(s.Body) {
+			if !loopMayExit(s.Body) {
 				return true
 			}
 		}
@@ -134,38 +135,112 @@ func terminates(s ast.Stmt) bool {
 	return false
 }
 
-// hasBreak reports whether the loop body contains a break that
-// targets this loop (conservatively: any break not inside a nested
-// for/switch/select).
-func hasBreak(body *ast.BlockStmt) bool {
+// loopMayExit reports whether the body of an infinite for loop may
+// transfer control past the end of the loop, via a break or a goto
+// whose target lies outside the loop body. Code following such a loop
+// is reachable and must not be reported as unreachable.
+//
+// A break exits the loop when it is unlabeled and not enclosed in a
+// nested for/switch/select, or when it is labeled and the label is not
+// defined inside the loop body: label names are unique within a
+// function, so such a label must name this loop itself or an enclosing
+// statement, and the break abandons the loop either way. A goto exits
+// the loop when its target label is not defined inside the loop body.
+// Labels inside nested function literals are ignored: a goto inside a
+// function literal cannot name a label outside it, and a goto outside
+// one cannot jump into it.
+func loopMayExit(body *ast.BlockStmt) bool {
 	if body == nil {
 		return false
 	}
-	found := false
-	var walk func(list []ast.Stmt, depth int)
-	walk = func(list []ast.Stmt, depth int) {
+	inner := map[string]struct{}{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.LabeledStmt:
+			inner[n.Label.Name] = struct{}{}
+		}
+		return true
+	})
+	exits := false
+	// breakable counts the for/range/switch/select statements enclosing
+	// the current statement relative to the analyzed loop.
+	var walk func(list []ast.Stmt, breakable int)
+	walk = func(list []ast.Stmt, breakable int) {
 		for _, s := range list {
-			if found {
+			if exits {
 				return
 			}
 			switch s := s.(type) {
 			case *ast.BranchStmt:
-				if s.Tok.String() == "break" && s.Label == nil && depth == 0 {
-					found = true
+				switch s.Tok {
+				case token.BREAK:
+					if s.Label == nil {
+						if breakable == 0 {
+							exits = true
+						}
+					} else if _, ok := inner[s.Label.Name]; !ok {
+						exits = true
+					}
+				case token.GOTO:
+					if s.Label != nil {
+						if _, ok := inner[s.Label.Name]; !ok {
+							exits = true
+						}
+					}
 				}
-			case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt,
-				*ast.TypeSwitchStmt, *ast.SelectStmt:
-				// Nested loop/switch: breaks inside target it.
-				continue
+			case *ast.ForStmt:
+				if s.Body != nil {
+					walk(s.Body.List, breakable+1)
+				}
+			case *ast.RangeStmt:
+				if s.Body != nil {
+					walk(s.Body.List, breakable+1)
+				}
+			case *ast.SwitchStmt:
+				if s.Body != nil {
+					for _, c := range s.Body.List {
+						if cc, ok := c.(*ast.CaseClause); ok {
+							walk(cc.Body, breakable+1)
+						}
+					}
+				}
+			case *ast.TypeSwitchStmt:
+				if s.Body != nil {
+					for _, c := range s.Body.List {
+						if cc, ok := c.(*ast.CaseClause); ok {
+							walk(cc.Body, breakable+1)
+						}
+					}
+				}
+			case *ast.SelectStmt:
+				if s.Body != nil {
+					for _, c := range s.Body.List {
+						if cc, ok := c.(*ast.CommClause); ok {
+							walk(cc.Body, breakable+1)
+						}
+					}
+				}
 			case *ast.BlockStmt:
-				walk(s.List, depth)
+				walk(s.List, breakable)
 			case *ast.IfStmt:
 				if s.Body != nil {
-					walk(s.Body.List, depth)
+					walk(s.Body.List, breakable)
 				}
+				if s.Else != nil {
+					switch e := s.Else.(type) {
+					case *ast.BlockStmt:
+						walk(e.List, breakable)
+					case *ast.IfStmt:
+						walk([]ast.Stmt{e}, breakable)
+					}
+				}
+			case *ast.LabeledStmt:
+				walk([]ast.Stmt{s.Stmt}, breakable)
 			}
 		}
 	}
 	walk(body.List, 0)
-	return found
+	return exits
 }

@@ -9,7 +9,7 @@ This package implements `go vet`-style static analyzers that run as part of
 | Name | Checks |
 |------|--------|
 | `printf` | Format string/argument consistency for `fmt.Printf`, `Sprintf`, `Fprintf`, `Errorf`, `Scanf`, `Sscanf`, `Fscanf`, `log.Printf/Fatalf/Panicf`, `testing.T.Errorf/Fatalf` |
-| `unreachable` | Code after `return`, `panic`, `break`/`continue`/`goto`, or infinite loops |
+| `unreachable` | Code after `return`, `panic`, `break`/`continue`/`goto`, or an infinite `for {}` loop with no `break`/`goto` exit |
 | `stringintconv` | `string(int)` conversions that yield a single rune instead of digits |
 | `nilfunc` | Comparisons of func values to nil that are always true/false |
 | `bools` | Redundant `x == true`, suspicious `!x == y` precedence |
