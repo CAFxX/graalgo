@@ -673,10 +673,14 @@ public final class SchedulerCoreTest {
             assertEquals(5, Gomaxprocs.current(), "observed value updated");
 
             // Installed scheduler: the effective cap moves too.
+            // NB: constructing the scheduler re-publishes its requested cap
+            // (startup sync by design), so the "previous" observed value for
+            // the next set() is the constructor's cap, not the 5 above.
             SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+            assertEquals(2, Gomaxprocs.current(), "constructor re-publishes its cap");
             SchedulerCore.install(sched);
             int prevObs2 = Gomaxprocs.set(4);
-            assertEquals(5, prevObs2, "returns previous observed value");
+            assertEquals(2, prevObs2, "returns previous observed value");
             assertEquals(4, Gomaxprocs.current(), "observed value updated");
             assertEquals(Math.min(4, Runtime.getRuntime().availableProcessors()),
                     sched.cap(), "installed scheduler cap moved");
