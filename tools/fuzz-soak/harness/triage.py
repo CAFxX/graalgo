@@ -18,8 +18,8 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# tools/fuzz-soak layout: harness/triage.py -> tools/fuzz-soak.
+FUZZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def diff_result(gofile, workdir):

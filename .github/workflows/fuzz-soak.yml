@@ -1,12 +1,16 @@
-# Layer 4 — fuzz soak (phases/phase3/PLAN.md §5, GG-0037): generative
-# differential fuzzing + native testing.F differential fuzzing, overnight
-# per release.
+# Layer 4 — fuzz soak (GG-0037): generative differential fuzzing + native
+# testing.F differential fuzzing, nightly.
 #
-# Cadence: nightly (the overnight per-release soak) plus manual dispatch.
+# Cadence: nightly (01:00 UTC) plus manual dispatch.
 # Each run: seeded program generation + differential harness batches
 # (run_soak.sh) and the native testing.F targets with differential replay
 # (fuzz/run_fuzz_native.sh). Minimized divergences become permanent
-# regressions per SPEC §5.4 (phases/phase3/fuzzing/findings/).
+# regressions per SPEC §5.4 (tools/fuzz-soak/findings/).
+#
+# HONEST-GATE CONTRACT: run_soak.sh exits non-zero when zero batches
+# produced a results.jsonl, so a dead harness can never report green.
+# Divergences are triaged into findings/ — they are the gate's output,
+# not its failure.
 #
 # The continuous adversarial track reserves the same interface:
 # run_soak.sh --seeds A:B runs one bounded batch.

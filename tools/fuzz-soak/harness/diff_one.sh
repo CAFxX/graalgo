@@ -1,25 +1,44 @@
 #!/bin/bash
-# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
-# Usage: diff_one.sh <go-file> <workdir> <gmp>
+# Single-program differential: gc 1.27.1 vs graalgo (sync launcher).
+# Usage: diff_one.sh <go-file> <workdir>
 # Emits a JSON result record to stdout.
+#
+# The graalgo leg runs through the supported backend launcher wrapper
+# (internal/backend/graalgo-run -> graalgo.launcher.Main), which assembles
+# its own classpath; this script never hand-builds one. The wrapper needs
+# `make build` outputs (internal/backend/*/out/classes) to exist — the
+# batch driver builds them once per batch before invoking this script.
 set -uo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Repo root: harness/diff_one.sh -> tools/fuzz-soak -> tools -> repo.
+GR="${GR:-$(cd "$HERE/../../.." && pwd)}"
+RUNNER="$GR/internal/backend/graalgo-run"
 
 GO_FILE="$1"
 WORKDIR="$2"
-GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR/tmp}"
+mkdir -p "$TMPDIR"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
+
+harness_error() {
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "%s"}\n' \
+        "$base" "$1"
+    exit 0
+}
+
+# 0. launcher sanity: a missing/unbuilt backend is a harness problem, not a
+#    program verdict — report it as HARNESS_ERROR, never as a crash.
+if [ ! -x "$RUNNER" ]; then
+    harness_error "launcher missing: $RUNNER"
+fi
+if [ ! -d "$GR/internal/backend/runtime/out/classes" ]; then
+    harness_error "backend not built: run 'make build' at the repo root first"
+fi
 
 # 1. gc build
 if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
@@ -32,16 +51,14 @@ timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
 # 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+timeout 120 "$RUNNER" "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 
 # 4. classify
 # Scope rejection?
-if grep -q "not supported in frontend/v1 scope" "$WORKDIR/gr.err" 2>/dev/null; then
-    reason="$(grep -m1 -o "not supported in frontend/v1 scope.*" "$WORKDIR/gr.err" | head -c 120)"
+if grep -qE "not supported in frontend/v1 scope|not supported in v1" "$WORKDIR/gr.err" 2>/dev/null; then
+    reason="$(grep -m1 -oE "not supported in (frontend/)?v1 scope.*" "$WORKDIR/gr.err" | head -c 120)"
     printf '{"file": "%s", "result": "SCOPE", "detail": "%s"}\n' "$base" "$reason"
     exit 0
 fi
@@ -56,9 +73,9 @@ if [ "$gc_exit" = 124 ]; then
     exit 0
 fi
 
-# JVM crash (not a Go panic)?
-if grep -qE "Exception in thread|ClassCastException|FrameSlotTypeException|at graalgo\.|at com\.oracle\.truffle" "$WORKDIR/gr.err" 2>/dev/null; then
-    first="$(grep -m1 -E "Exception|Error" "$WORKDIR/gr.err" | head -c 200)"
+# JVM crash or launcher-internal failure (never the program's fault)?
+if grep -qE "Exception in thread|ClassCastException|FrameSlotTypeException|at graalgo\.|at com\.oracle\.truffle|^graalgo-run: internal error|^graalgo-run: execution failed" "$WORKDIR/gr.err" 2>/dev/null; then
+    first="$(grep -m1 -E "Exception|Error|graalgo-run: " "$WORKDIR/gr.err" | head -c 200)"
     printf '{"file": "%s", "result": "CRASH", "detail": "%s"}\n' "$base" "$first"
     exit 0
 fi
