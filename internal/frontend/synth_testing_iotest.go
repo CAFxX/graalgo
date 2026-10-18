@@ -268,7 +268,7 @@ type truncateWriter struct {
 }
 
 func (t *truncateWriter) Write(p []byte) (n int, err error) {
-	panic("testing/iotest.truncateWriter.Write: not in scope (multi-result calls need WS D; re-test when it lands)")
+	panic("testing/iotest.truncateWriter.Write: not in scope (needs multi-result call support)")
 }
 
 // truncateWriterWritePair is the Appendix M carrier for truncateWriter.Write.
