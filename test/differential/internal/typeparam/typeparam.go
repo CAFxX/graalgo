@@ -412,8 +412,18 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		// gc backend (fast, per-case).
 		bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
 
-		// graalgo build result from batch.
-		bAlt := batchOut[batchKey("check", srcs[k])]
+		// graalgo build result from the batch. If the batch JVM died
+		// mid-way (e.g. an uncaught product exception on another entry
+		// kills it — observed 2026-10-18: ConvertNode's
+		// IllegalArgumentException on bigmap.go), the entry is missing
+		// from batchOut: fall back to a per-file graalgo invocation so
+		// one bad file cannot silently poison the rest of the job's
+		// results (a missing entry would otherwise read as a build
+		// failure with an empty log).
+		bAlt, ok := batchOut[batchKey("check", srcs[k])]
+		if !ok {
+			bAlt = harness.BuildOnly(cfg, alt, prog, workRoot)
+		}
 
 		switch tf.Class {
 		case ClassCompile:
@@ -445,20 +455,27 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			continue
 		}
 		oRef := harness.RunProgram(cfg, ref, prog, workRoot)
-		oAlt := batchOut[batchKey("run", srcs[k])]
 		// RunProgram does BuildOnly first; our batch already did the build.
 		// For the run outcome, use the batch's run result directly.
 		// But we need to construct an Outcome for Compare.
-		oAltFull := harness.Outcome{
-			Program:  tf.Name,
-			Backend:  alt.Name,
-			BuildOK:  bAlt.BuildOK,
-			BuildLog: bAlt.BuildLog,
-			Stdout:   oAlt.Stdout,
-			Stderr:   oAlt.Stderr,
-			ExitCode: oAlt.ExitCode,
-			TimedOut: oAlt.TimedOut,
-			Duration: oAlt.Duration,
+		// (Same batch-death fallback as the build above: a missing entry
+		// runs per-file instead of silently comparing against a zero
+		// Outcome.)
+		var oAltFull harness.Outcome
+		if oAlt, ok := batchOut[batchKey("run", srcs[k])]; ok {
+			oAltFull = harness.Outcome{
+				Program:  tf.Name,
+				Backend:  alt.Name,
+				BuildOK:  bAlt.BuildOK,
+				BuildLog: bAlt.BuildLog,
+				Stdout:   oAlt.Stdout,
+				Stderr:   oAlt.Stderr,
+				ExitCode: oAlt.ExitCode,
+				TimedOut: oAlt.TimedOut,
+				Duration: oAlt.Duration,
+			}
+		} else {
+			oAltFull = harness.RunProgram(cfg, alt, prog, workRoot)
 		}
 		hc := harness.Compare(oRef, oAltFull)
 		c.Same = hc.Same
