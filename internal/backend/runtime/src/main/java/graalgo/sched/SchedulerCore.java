@@ -28,6 +28,9 @@ import graalgo.jfr.ParkReason;
  *   <li>In-flight cap = {@code min(GOMAXPROCS, carrier parallelism)}
  *       (P2-D6, GG-SCHED-0003): at most {@code cap} vthreads are
  *       admitted-but-not-parked at any time; the drainer hard-asserts.
+ *       Go code may change GOMAXPROCS at runtime via {@link #setCap};
+ *       a shrink ratchets down as in-flight slots free
+ *       ({@link #convergeCap}), so the assert never fires spuriously.
  *   <li>Armed-ticket discipline (P2-D7, GG-WAKE-0001): every park
  *       reserves a generation via {@link #armPark} BEFORE becoming
  *       visible to wakers; every admission does ack-before-unpark.
@@ -68,6 +71,16 @@ public final class SchedulerCore {
     }
 
     /**
+     * The installed scheduler, or {@code null} when none is installed
+     * (scheduler-less Phase-1 runs). Unlike {@link #current()}, never
+     * throws — for entry points (like {@code runtime.GOMAXPROCS}) that
+     * are reachable without a scheduler.
+     */
+    public static SchedulerCore installedOrNull() {
+        return installed;
+    }
+
+    /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
@@ -80,8 +93,25 @@ public final class SchedulerCore {
         sc.pollCurrentThread();
     }
 
-    private final int cap;
-    private final int requestedCap;
+    /**
+     * Effective in-flight cap (P2-D6: {@code min(GOMAXPROCS, carrier
+     * parallelism)}). Mutable: {@link #setCap} changes it when Go code
+     * calls {@code runtime.GOMAXPROCS(n)} (P1-29). A shrink is applied by
+     * ratcheting — {@link #convergeCap} lowers the cap toward the new
+     * target only as in-flight slots free, so the drainer's
+     * {@code inflight <= cap} hard assert (GG-SCHED-0003) never fires on
+     * a legitimate shrink: already-admitted goroutines are grandfathered
+     * (gc parity — threads already running are not descheduled when the
+     * thread limit drops). Volatile: written under the drainer lock, read
+     * lock-free by {@link #cap()}.
+     */
+    private volatile int cap;
+    /**
+     * The requested GOMAXPROCS value (clamped to &ge;1). Updated by
+     * {@link #setCap}; the constructor establishes it. Volatile for the
+     * same reason as {@link #cap}.
+     */
+    private volatile int requestedCap;
     private final int carrierParallelism;
     private final long quantumNanos;
     private final Drainer drainer;
@@ -120,6 +150,47 @@ public final class SchedulerCore {
     /** Effective in-flight cap. */
     public int cap() {
         return cap;
+    }
+
+    /**
+     * Changes the GOMAXPROCS cap at runtime (P1-29): the
+     * {@code runtime.GOMAXPROCS(n)} wire node calls this so the admission
+     * cap follows the reported value — gc changes the thread limit, not
+     * just the reported number. Growth (or an equal value) applies
+     * immediately; a shrink converges as far as the current in-flight
+     * count allows (grandfathered slots keep running; the drainer's
+     * per-iteration {@link #convergeCap} finishes the job as they drain),
+     * so already-admitted goroutines are never descheduled and the
+     * drainer's hard assert never fires on the transient overshoot.
+     *
+     * @param gomaxprocs requested GOMAXPROCS (clamped to &ge;1, as in the constructor)
+     */
+    public void setCap(int gomaxprocs) {
+        int want = Math.max(1, gomaxprocs);
+        drainer.runUnderLock(() -> {
+            requestedCap = want;
+            convergeCap(drainer.inflightForTest());
+            drainer.checkInvariants();
+        });
+    }
+
+    /**
+     * Moves {@link #cap} toward the current target
+     * ({@code min(requestedCap, carrierParallelism)}): grows immediately
+     * (always safe — no in-flight slot can exceed the new cap), shrinks
+     * by ratcheting down to at most the given in-flight count. Call with
+     * the drainer lock held — the drainer calls this after every
+     * {@code route()}, before {@code admit()}, so admission never exceeds
+     * the target once the pre-shrink in-flight slots have drained. No
+     * allocation: this runs on the drainer's hot path.
+     */
+    void convergeCap(int inflight) {
+        int target = Math.min(requestedCap, carrierParallelism);
+        if (target >= cap) {
+            cap = target;
+        } else {
+            cap = Math.max(target, Math.min(cap, inflight));
+        }
     }
 
     public int requestedCap() {

@@ -45,6 +45,11 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // P1-29 (2026-10-18): runtime.GOMAXPROCS(n) drives the scheduler
+        // admission cap (GoMaxProcsNode -> SchedulerCore.setCap), and
+        // SyncRuntime.procPin sizes P-ids from the effective cap.
+        TESTS.add(graalgo.p3builtin.nodes.GoMaxProcsNodeTest.class);
+        TESTS.add(graalgo.p3link.ProcPinCapTest.class);
     }
 
     private IfaceTestRunner() {}

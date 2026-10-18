@@ -83,6 +83,18 @@ public final class Drainer {
         inbox.offer(token);
     }
 
+    /**
+     * Runs {@code action} with the drainer lock held. For
+     * {@link SchedulerCore#setCap}, which mutates scheduler cap state
+     * that the drainer reads (setCap is off the hot path, so the lambda
+     * allocation here is acceptable).
+     */
+    void runUnderLock(Runnable action) {
+        synchronized (lock) {
+            action.run();
+        }
+    }
+
     /** Highest in-flight count observed; for tests and stats. */
     public int maxInflightObserved() {
         synchronized (lock) {
@@ -110,6 +122,9 @@ public final class Drainer {
             try {
                 synchronized (lock) {
                     route(token);
+                    // P1-29: converge a shrunk cap toward its target
+                    // BEFORE admitting, so admission never exceeds it.
+                    sched.convergeCap(inflight);
                     admit();
                     checkInvariants();
                 }
@@ -326,7 +341,11 @@ public final class Drainer {
         }
     }
 
-    /** Reads the in-flight count; white-box invariant tests only. */
+    /**
+     * Reads the in-flight count. White-box invariant tests use the
+     * synchronized form; {@link SchedulerCore#setCap} calls it with the
+     * drainer lock already held (synchronized is reentrant).
+     */
     int inflightForTest() {
         synchronized (lock) {
             return inflight;
@@ -346,6 +365,7 @@ public final class Drainer {
     void processOneForTest(ResumeToken token) {
         synchronized (lock) {
             route(token);
+            sched.convergeCap(inflight);
             admit();
             checkInvariants();
         }

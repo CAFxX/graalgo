@@ -69,10 +69,10 @@ import graalgo.values.GoString;
  *       disable, and a pin section contains no blocking calls, so the
  *       goroutine cannot migrate carriers mid-section; pin/unpin are
  *       therefore pure id assignment / no-op. The id is a per-thread
- *       dense number reduced mod the current GOMAXPROCS, so the
- *       {@code pid < GOMAXPROCS(0)} invariant that
+ *       dense number reduced mod the scheduler's effective admission
+ *       cap (P1-29), so the {@code pid < GOMAXPROCS(0)} invariant that
  *       {@code sync.Pool.pinSlow} relies on when sizing its per-P array
- *       always holds. Once more than GOMAXPROCS threads exist in a run,
+ *       always holds (the cap never exceeds the requested GOMAXPROCS). Once more than GOMAXPROCS threads exist in a run,
  *       two threads can hold congruent ids in pin sections
  *       <em>concurrently</em> and share one {@code poolLocal} shard's
  *       {@code private} slot without synchronization — a genuine Go data
@@ -183,9 +183,19 @@ public final class SyncRuntime {
      * gc's {@code procPin}: pin to the current P and return its id in
      * {@code [0, GOMAXPROCS)}. The JVM has no preemption to disable and a
      * pin section cannot block, so this is pure id assignment.
+     *
+     * <p>The id is a per-thread dense number reduced mod the scheduler's
+     * <em>effective</em> admission cap ({@link SchedulerCore#cap}), not
+     * the requested GOMAXPROCS — the two disagree when GOMAXPROCS
+     * exceeds the carrier parallelism (P1-29). The cap never exceeds the
+     * requested value, so the {@code pid < GOMAXPROCS(0)} invariant that
+     * {@code sync.Pool.pinSlow} relies on when sizing its per-P array
+     * always holds. Scheduler-less runs have no cap: fall back to the
+     * requested value.
      */
     public static int procPin() {
-        int gmp = Math.max(1, GoMaxProcsNode.current());
+        SchedulerCore sc = SchedulerCore.installedOrNull();
+        int gmp = Math.max(1, sc != null ? sc.cap() : GoMaxProcsNode.current());
         return Math.floorMod(PIN_ID.get(), gmp);
     }
 
