@@ -39,7 +39,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 			for _, name := range field.Names {
 				pobj := e.info.Info.Defs[name]
 				if pobj == nil {
-					continue
+					return nil, fmt.Errorf("emit: no object for param %s of func %s", name.Name, fn.Name())
 				}
 				pid := e.declareParam(pobj)
 				params = append(params, e.node("param", name, map[string]any{
