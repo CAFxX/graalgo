@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import graalgo.p3os.GoOs;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 
 /**
  * Host-side implementation of the {@code graalgo.net.*} linkname
@@ -868,6 +869,61 @@ public final class GoNet {
             }
             int n = goBufPut(bufArg, data);
             return n < 0 ? -GoOs.EINVAL : (long) n + 1;
+    }
+
+    /**
+     * graalgo.net.lookupHost — DNS resolution via the JDK
+     * ({@link InetAddress#getAllByName}). The Go side declares
+     * {@code func netLookupHost(host string) string}.
+     *
+     * <p>Returns a {@link GoString} of the "\n"-joined
+     * {@link InetAddress#getHostAddress()} literals on success, or
+     * {@code null} on failure (unknown host, empty host, security
+     * manager denial). The Go side maps null/"" to
+     * {@code *DNSError{Err: "no such host"}} and re-parses each literal
+     * with ParseIP, so the only contract here is the join format.
+     *
+     * <p>IP literals never reach this trap (the Go side fast-paths
+     * ParseIP), but getAllByName handles them without DNS anyway.
+     */
+    public static Object lookupHost(Object hostArg) {
+        final String host;
+        if (hostArg instanceof GoString gs) {
+            host = new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } else if (hostArg instanceof String s) {
+            host = s;
+        } else {
+            return null;
+        }
+        if (host.isEmpty()) {
+            return null;
+        }
+        final InetAddress[] addrs;
+        try {
+            addrs = InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            return null;
+        } catch (SecurityException e) {
+            return null;
+        }
+        if (addrs == null || addrs.length == 0) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (InetAddress ia : addrs) {
+            if (ia == null) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(ia.getHostAddress());
+        }
+        if (sb.length() == 0) {
+            return null;
+        }
+        return new GoString(
+                sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private static void putI32(java.io.ByteArrayOutputStream out, int v) {

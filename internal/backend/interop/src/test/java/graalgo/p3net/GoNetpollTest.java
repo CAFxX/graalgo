@@ -10,6 +10,7 @@ import graalgo.p3os.GoOs;
 import graalgo.runtime.Linknames;
 import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 
 /**
  * Tests for the P3-M9 netpoller ({@link GoNetpoll}) and socket traps
@@ -920,9 +921,49 @@ public final class GoNetpollTest {
         }
     }
 
-    /** Linkname table: the net symbols dispatch with the right arity. */
-    public void testLinknamesRegistered() {
+    /**
+     * P1-net remediation (2026-10-18): the graalgo.net.lookupHost trap
+     * resolves via JDK InetAddress delegation. localhost resolves through
+     * the platform resolver (hosts file — no external DNS); unknown and
+     * empty hosts return null (the Go side maps that to *DNSError).
+     */
+    public void testLookupHostResolvesViaJdk() {
         SchedulerCore prev = setup();
+        try {
+            // localhost resolves (hosts file; loopback-only, no egress).
+            Object r = GoNet.lookupHost(goStr("localhost"));
+            assertTrue(r instanceof GoString, "localhost → GoString, got " + r);
+            String addrs = r.toString();
+            assertTrue(addrs.contains("127.0.0.1"),
+                    "localhost addrs contain 127.0.0.1: " + addrs);
+            // Same path through the linkname table (arity 1).
+            Object viaTable = Linknames.dispatch("graalgo.net.lookupHost",
+                    new Object[]{goStr("localhost")});
+            assertTrue(viaTable instanceof GoString,
+                    "table dispatch → GoString, got " + viaTable);
+            assertTrue(viaTable.toString().contains("127.0.0.1"),
+                    "table addrs contain 127.0.0.1: " + viaTable);
+            // Unknown host → null (".." is not a valid DNS name and fails
+            // even where the resolver wildcard-matches; verified 2026-10-18).
+            assertTrue(GoNet.lookupHost(goStr("..")) == null,
+                    "unknown host → null");
+            // Empty host → null (Go rejects "" before the trap; the JDK
+            // would map "" to localhost, so the trap must not either).
+            assertTrue(GoNet.lookupHost(goStr("")) == null, "empty host → null");
+            // Wrong arg type → null, never a ClassCastException.
+            assertTrue(GoNet.lookupHost(Long.valueOf(42)) == null,
+                    "non-string arg → null");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    private static GoString goStr(String s) {
+        return new GoString(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /** Linkname table: the net symbols dispatch with the right arity. */
+    public void testLinknamesRegistered() {        SchedulerCore prev = setup();
         try {
             // pollServerInit dispatches (void → null).
             Object r = Linknames.dispatch("internal/poll.runtime_pollServerInit",

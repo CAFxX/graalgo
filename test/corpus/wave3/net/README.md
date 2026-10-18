@@ -26,8 +26,12 @@ semantics, the shared-runner model).
 
 - Loopback-only: 127.0.0.1 / ::1, port 0. Never hardcode ports, never
   dial external hosts, never depend on external DNS (egress grep gate).
-- DNS (`LookupHost`, `LookupIP`, `LookupPort`) is fail-fast: no resolver
-  in M9. `retest:` DNS intrinsics land.
+- DNS: `LookupHost`/`LookupIP` resolve via the `graalgo.net.lookupHost`
+  trap (JDK `InetAddress` delegation, P1-net remediation 2026-10-18);
+  `ResolveIPAddr`/`ResolveTCPAddr`/`ResolveUDPAddr` fall back to DNS for
+  non-literal hosts (with gc's network-family filtering). `LookupPort`
+  (service database, not DNS) is still fail-fast. The corpus stays
+  loopback-only: no program depends on external DNS.
 - `InterfaceAddrs` is fail-fast. `retest:` interface listing lands.
 - AF_UNIX → `-EAFNOSUPPORT` (M9: TCP/UDP loopback only).
 - Known D4 divergence: `fmt.Errorf` `%w` flattens (no wrap chain); the

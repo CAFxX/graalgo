@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestM9NetDesugarWiring pins the 46 P3-M9 (tier-4) m9MultiResultFuncs
+// TestM9NetDesugarWiring pins the 50 P3-M9 (tier-4) m9MultiResultFuncs
 // entries added for the synthetic net packages (Appendix M). It follows
 // the TestM7StrconvJsonDesugarWiring pattern: for each entry it verifies,
 // against the synthetic sources in
@@ -23,7 +23,7 @@ import (
 //     each field's type identical to the multi-result signature's
 //     corresponding result type.
 //
-// All 44 current entries keep their __-helpers in the same synthetic
+// All 48 current entries keep their __-helpers in the same synthetic
 // package (helperPkg == ""), which the checker pins as well.
 //
 // This test fails on the pre-net tree (no table entries for these
@@ -70,6 +70,8 @@ var m9NetTable = []m9NetExpect{
 	// net/url: methods (prependRecv).
 	{"net/url", "Password", "Userinfo", "__userinfoPassword", "passwordPair", []string{"s", "ok"}},
 	{"net/url", "Parse", "URL", "__urlParsePub", "parseURLPair", []string{"u", "err"}},
+	{"net/url", "MarshalBinary", "URL", "__urlMarshalBinary", "bytesErrPair", []string{"b", "err"}},
+	{"net/url", "AppendBinary", "URL", "__urlAppendBinary", "bytesErrPair", []string{"b", "err"}},
 	// net: package-level funcs (socket path; __-helpers in synth_net.go).
 	{"net", "Pipe", "", "__pipe", "pipePair", []string{"c1", "c2"}},
 	{"net", "Dial", "", "__dial", "dialPair", []string{"c", "err"}},
@@ -79,6 +81,8 @@ var m9NetTable = []m9NetExpect{
 	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "resolveIPAddrPair", []string{"ip", "err"}},
 	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "resolveTCPAddrPair", []string{"addr", "err"}},
 	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "resolveUDPAddrPair", []string{"addr", "err"}},
+	{"net", "LookupHost", "", "__lookupHost", "lookupHostPair", []string{"addrs", "err"}},
+	{"net", "LookupIP", "", "__lookupIP", "lookupIPPair", []string{"ips", "err"}},
 	{"net", "ParseCIDR", "", "__parseCIDR", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
 	{"net", "ParseMAC", "", "__parseMAC", "parseMACPair", []string{"hw", "err"}},
 	{"net", "SplitHostPort", "", "__splitHostPort", "splitHostPortPair", []string{"host", "port", "err"}},
@@ -97,8 +101,8 @@ var m9NetTable = []m9NetExpect{
 }
 
 func TestM9NetDesugarWiring(t *testing.T) {
-	if len(m9NetTable) != 46 {
-		t.Fatalf("m9NetTable has %d entries, want 46", len(m9NetTable))
+	if len(m9NetTable) != 50 {
+		t.Fatalf("m9NetTable has %d entries, want 50", len(m9NetTable))
 	}
 	for _, want := range m9NetTable {
 		name := want.pkgPath + "." + want.name

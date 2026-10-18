@@ -641,6 +641,10 @@ public final class LinknameIntrinsics {
         // net.Interface/Interfaces (github.com/google/uuid v1 node IDs).
         Linknames.register("graalgo.net.interfaces",
                 args -> GoNet.interfaces(args[0]), 1);
+        // P1-net remediation (2026-10-18): DNS via JDK InetAddress
+        // delegation (see the DNS section in synth_net.go).
+        Linknames.register("graalgo.net.lookupHost",
+                args -> GoNet.lookupHost(args[0]), 1);
     }
 
     /**

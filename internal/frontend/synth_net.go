@@ -14,7 +14,8 @@ package main
 //   - net.Pipe: verbatim port of gc pipe.go (pure Go, channels).
 //   - Socket path: netFD on the trap linknames + internal/poll FD for
 //     deadlines; Dial/Listen/Accept over loopback TCP; UDP via
-//     sendto/recvfrom; DNS funcs are fail-fast (no resolver in M9).
+//     sendto/recvfrom; DNS via the graalgo.net.lookupHost trap (JDK
+//     java.net.InetAddress delegation; see the DNS section below).
 //
 // Adaptations for the v1 frontend (no multi-result functions, WS D):
 // same-package multi-result funcs use the __-form explicitly (pair structs);
@@ -642,20 +643,141 @@ type parseCIDRPair struct {
 	err   error
 }
 
-// ---------------------------------------------------------------- DNS fail-fast
+// ---------------------------------------------------------------------------
+// DNS resolution (P1-net remediation, 2026-10-18).
+//
+// DNS resolves through the JDK (java.net.InetAddress) via the
+// graalgo.net.lookupHost linkname trap — the same delegation pattern as
+// the socket traps below. Rationale: the JVM resolver consults the
+// platform resolver (hosts file, DNS, caches) with correct IP-literal
+// handling; reimplementing the DNS wire protocol in synthetic Go would
+// duplicate the JDK and violate the prefer-JDK-delegation directive (see
+// synth_crypto_tls.go). Wire format: the trap returns "" on failure
+// (unknown host) or the "\n"-joined getHostAddress() literals on success;
+// the Go side splits and re-parses them with ParseIP.
+//
+// gc parity notes:
+//   - LookupHost("") / LookupIP("") reject before the trap: gc returns
+//     *DNSError "no such host" without consulting the resolver (and the
+//     JDK maps "" to localhost, which would be wrong here).
+//   - IP literals never reach the trap (gc's lookupIPAddr fast path).
+//   - Unknown host maps to *DNSError{Err: "no such host", Name: host}.
+//   - __resolve*Addr filters by network family like gc's internetAddrList
+//     (network ending in '4'/'6'); no suitable address is *AddrError
+//     "no suitable address found", mirroring gc's filterAddrList.
+//
+// LookupPort (service name -> port via the service database) is not a DNS
+// operation and stays out of scope.
+// ---------------------------------------------------------------------------
+
+//go:linkname netLookupHost graalgo.net.lookupHost
+func netLookupHost(host string) string // "" on failure; "\n"-joined literal addresses on success
+
 // LookupHost looks up the given host using the local resolver.
 func LookupHost(host string) ([]string, error) {
-	panic("net.LookupHost: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupHost: unreachable (Appendix-M desugar did not fire)")
 }
 
 // LookupIP looks up host using the local resolver.
 func LookupIP(host string) ([]IP, error) {
-	panic("net.LookupIP: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupIP: unreachable (Appendix-M desugar did not fire)")
 }
 
 // LookupPort looks up the port for the given network and service.
 func LookupPort(network, service string) (int, error) {
-	panic("net.LookupPort: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupPort: not in M9 scope (no service database; re-test when it lands)")
+}
+
+type lookupHostPair struct {
+	addrs []string
+	err   error
+}
+
+type lookupIPPair struct {
+	ips []IP
+	err error
+}
+
+// __lookupHost implements LookupHost (desugar target).
+func __lookupHost(host string) lookupHostPair {
+	if host == "" {
+		return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host}}
+	}
+	if ip := ParseIP(host); ip != nil {
+		return lookupHostPair{[]string{host}, nil}
+	}
+	addrs := __splitLookupAddrs(netLookupHost(host))
+	if len(addrs) == 0 {
+		return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host}}
+	}
+	return lookupHostPair{addrs, nil}
+}
+
+// __lookupIP implements LookupIP (desugar target).
+func __lookupIP(host string) lookupIPPair {
+	if host == "" {
+		return lookupIPPair{nil, &DNSError{Err: "no such host", Name: host}}
+	}
+	if ip := ParseIP(host); ip != nil {
+		return lookupIPPair{[]IP{ip}, nil}
+	}
+	__tmp := __lookupHost(host)
+	if __tmp.err != nil {
+		return lookupIPPair{nil, __tmp.err}
+	}
+	ips := make([]IP, 0, len(__tmp.addrs))
+	for _, a := range __tmp.addrs {
+		if ip := ParseIP(a); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+	if len(ips) == 0 {
+		// Defensive: the trap only emits getHostAddress() literals, so
+		// every entry parses; a total failure is still "no such host".
+		return lookupIPPair{nil, &DNSError{Err: "no such host", Name: host}}
+	}
+	return lookupIPPair{ips, nil}
+}
+
+// __splitLookupAddrs splits the trap's "\n"-joined address list, dropping
+// empty entries. Pure Go (unit-testable under gc).
+func __splitLookupAddrs(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, "\n")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// __filterResolveIP returns the first address matching the network's IP
+// family (gc parity: internetAddrList's ipv4only/ipv6only filters), or nil
+// when no address is suitable. Pure Go (unit-testable under gc).
+func __filterResolveIP(network string, ips []IP) IP {
+	var v4only, v6only bool
+	if network != "" {
+		switch network[len(network)-1] {
+		case '4':
+			v4only = true
+		case '6':
+			v6only = true
+		}
+	}
+	for _, ip := range ips {
+		switch {
+		case v4only && ip.To4() == nil:
+			continue
+		case v6only && !(len(ip) == IPv6len && ip.To4() == nil):
+			continue
+		}
+		return ip
+	}
+	return nil
 }
 
 // InterfaceAddrs returns a list of the system's unicast interface addresses.
@@ -1820,7 +1942,8 @@ func __listenUDP(network string, laddr *UDPAddr) listenPacketPair {
 }
 
 // ---------------------------------------------------------------------------
-// Address resolution (IP literals only; DNS is fail-fast in M9).
+// Address resolution (IP literals resolve directly; DNS names resolve via
+// the graalgo.net.lookupHost trap — see the DNS section above).
 // ---------------------------------------------------------------------------
 
 // ResolveIPAddr returns an IP address for the given network and address.
@@ -1854,9 +1977,21 @@ type resolveUDPAddrPair struct {
 }
 
 func __resolveIPAddr(network, address string) resolveIPAddrPair {
+	// gc parity (internetAddrList): an empty address resolves to the
+	// zero IPAddr without consulting the resolver.
+	if address == "" {
+		return resolveIPAddrPair{&IPAddr{}, nil}
+	}
 	ip := ParseIP(address)
 	if ip == nil {
-		return resolveIPAddrPair{nil, &DNSError{Err: "no such host", Name: address}}
+		__tmp := __lookupIP(address)
+		if __tmp.err != nil {
+			return resolveIPAddrPair{nil, __tmp.err}
+		}
+		ip = __filterResolveIP(network, __tmp.ips)
+		if ip == nil {
+			return resolveIPAddrPair{nil, &AddrError{Err: "no suitable address found", Addr: address}}
+		}
 	}
 	return resolveIPAddrPair{&IPAddr{IP: ip}, nil}
 }
@@ -1875,7 +2010,14 @@ func __resolveTCPAddr(network, address string) resolveTCPAddrPair {
 	if host != "" {
 		ip = ParseIP(host)
 		if ip == nil {
-			return resolveTCPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+			__tmpIP := __lookupIP(host)
+			if __tmpIP.err != nil {
+				return resolveTCPAddrPair{nil, __tmpIP.err}
+			}
+			ip = __filterResolveIP(network, __tmpIP.ips)
+			if ip == nil {
+				return resolveTCPAddrPair{nil, &AddrError{Err: "no suitable address found", Addr: host}}
+			}
 		}
 	}
 	return resolveTCPAddrPair{&TCPAddr{IP: ip, Port: p}, nil}
@@ -1895,7 +2037,14 @@ func __resolveUDPAddr(network, address string) resolveUDPAddrPair {
 	if host != "" {
 		ip = ParseIP(host)
 		if ip == nil {
-			return resolveUDPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+			__tmpIP := __lookupIP(host)
+			if __tmpIP.err != nil {
+				return resolveUDPAddrPair{nil, __tmpIP.err}
+			}
+			ip = __filterResolveIP(network, __tmpIP.ips)
+			if ip == nil {
+				return resolveUDPAddrPair{nil, &AddrError{Err: "no suitable address found", Addr: host}}
+			}
 		}
 	}
 	return resolveUDPAddrPair{&UDPAddr{IP: ip, Port: p}, nil}

@@ -191,12 +191,30 @@ func ParseQuery(query string) (Values, error) {
 	panic("url.ParseQuery: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
 }
 
+// MarshalBinary returns a binary encoding of u (gc: u.AppendBinary(nil)).
+// The Appendix-M desugar redirects every call site to __urlMarshalBinary;
+// a direct call means the desugar did not fire.
 func (u *URL) MarshalBinary() (text []byte, err error) {
-	panic("url.URL.MarshalBinary: not in M9 scope (re-test when WS D lands)")
+	panic("url.URL.MarshalBinary: unreachable (Appendix-M desugar did not fire)")
 }
 
+// AppendBinary appends a binary encoding of u to b (gc: append(b,
+// u.String()...)). The Appendix-M desugar redirects every call site to
+// __urlAppendBinary; a direct call means the desugar did not fire.
 func (u *URL) AppendBinary(b []byte) ([]byte, error) {
-	panic("url.URL.AppendBinary: not in M9 scope (re-test when WS D lands)")
+	panic("url.URL.AppendBinary: unreachable (Appendix-M desugar did not fire)")
+}
+
+// __urlAppendBinary implements URL.AppendBinary (desugar target):
+// append(b, u.String()...), infallible like gc.
+func __urlAppendBinary(u *URL, b []byte) bytesErrPair {
+	return bytesErrPair{append(b, u.String()...), nil}
+}
+
+// __urlMarshalBinary implements URL.MarshalBinary (desugar target):
+// u.AppendBinary(nil).
+func __urlMarshalBinary(u *URL) bytesErrPair {
+	return __urlAppendBinary(u, nil)
 }
 
 // __queryUnescape / __pathUnescape are the desugar targets for the

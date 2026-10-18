@@ -1183,6 +1183,8 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	// net/url: methods (prependRecv).
 	{"net/url", "Password", "Userinfo", "__userinfoPassword", "", "passwordPair", []string{"s", "ok"}},
 	{"net/url", "Parse", "URL", "__urlParsePub", "", "parseURLPair", []string{"u", "err"}},
+	{"net/url", "MarshalBinary", "URL", "__urlMarshalBinary", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/url", "AppendBinary", "URL", "__urlAppendBinary", "", "bytesErrPair", []string{"b", "err"}},
 	// net: package-level funcs (socket path; __-helpers in synth_net.go).
 	{"net", "Pipe", "", "__pipe", "", "pipePair", []string{"c1", "c2"}},
 	{"net", "Dial", "", "__dial", "", "dialPair", []string{"c", "err"}},
@@ -1192,6 +1194,8 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "", "resolveIPAddrPair", []string{"ip", "err"}},
 	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "", "resolveTCPAddrPair", []string{"addr", "err"}},
 	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "", "resolveUDPAddrPair", []string{"addr", "err"}},
+	{"net", "LookupHost", "", "__lookupHost", "", "lookupHostPair", []string{"addrs", "err"}},
+	{"net", "LookupIP", "", "__lookupIP", "", "lookupIPPair", []string{"ips", "err"}},
 	{"net", "ParseCIDR", "", "__parseCIDR", "", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
 	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
 	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port", "err"}},
