@@ -265,6 +265,17 @@ public final class SelectOp {
                 sched.parkCurrent(null, ParkReason.SELECT);
                 throw new IllegalStateException("unreachable: empty select woke");
             }
+            // P0-1: a send case observed closed during the sweep must panic
+            // before parking — gc treats the send-on-closed case as
+            // never-blocking, even when other cases enqueued waiters above
+            // (the channel closed between poll and sweep: a genuine race
+            // under contention). Remove the enqueued waiters first: a stale
+            // unclaimed waiter left on a channel queue could later win its
+            // CAS claim for this dead op and produce a spurious unpark.
+            if (poison) {
+                cleanup(mine);
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
+            }
             // Scheduler-aware park. A waker that claimed us before we park
             // has its UNPARK stashed by the drainer — no wakeup lost.
             // P2-M6: the select genuinely blocks — record it before parking
