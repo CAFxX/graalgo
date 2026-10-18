@@ -13,8 +13,9 @@ program can import `internal/*`, so `00_functions.go` is `.scopelimited` +
 
 ## Correctness evidence (the tier1d harness)
 
-`phases/phase3/hidden_files/m9-tmp/tier1d-harness/` extracts
-`syntheticBytealgSource` to a GOPATH (`src/internal/bytealg/`) and runs
+During the M9 milestone, the tier1d harness (uncommitted scratch under the
+since-deleted phases/ tree) extracted
+`syntheticBytealgSource` to a GOPATH (`src/internal/bytealg/`) and ran
 this exact corpus program under stock gc 1.27.1 against it. The program is
 self-checking: every result is cross-checked against the stdlib wrappers
 (`bytes`/`strings`) that consume bytealg, over empty/singleton/text/

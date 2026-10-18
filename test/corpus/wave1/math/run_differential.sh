@@ -3,25 +3,38 @@
 # runs under stock gc 1.27.1 and under graalgo. Compares stdout bytes
 # (programs print with %x / %.17g to catch single-bit differences).
 #
-# GR defaults to $HOME/workspace/graalgo (the integrated tree); override
-# with GRAALGO_HOME for worktree testing.
+# The repo root defaults to the repository containing this script (resolved
+# via its own path — never hardcoded) but can be overridden with GR or
+# GRAALGO_HOME for worktree testing.
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
-export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
+GR="${GR:-${GRAALGO_HOME:-$(cd "../../../.." && pwd)}}"
+# Post-phase-4 layout (migration e5e6dbd9 + fbe5b563: the phases/ tree is
+# gone; derive every module path from the repo root, never hardcode):
+#   INTEROP <- phases/phase3 (stdlib bindings; the module this runner builds)
+#   RUNTIME <- phases/phase2 + phases/phase1 runtime/ (sched/jfr/runtime/...)
+#   TRUFFLE <- phases/phase1 nodes/values/frontend (Truffle AST impl) + stubs
+# Classpath order (INTEROP:RUNTIME:TRUFFLE:jars) mirrors
+# internal/backend/interop/Makefile's RUN_CP: the runtime module's
+# same-FQN replacements shadow the truffle module's phase-1 stubs.
+INTEROP="$GR/internal/backend/interop"
+RUNTIME="$GR/internal/backend/runtime"
+TRUFFLE="$GR/internal/backend/truffle"
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+# Tmp discipline (corpus/wave1/README.md; repo AGENTS.md §5 no-debris):
+# never write to /tmp, and never re-create hidden_files/ under the deleted
+# phases/ path. Inherit TMPDIR from the environment; standalone runs default
+# to the gitignored .tmp/ tree.
+export TMPDIR="${TMPDIR:-$GR/.tmp/wave1/math}"
 export GOCACHE="$HOME/workspace/.gocache-m7-math"
 mkdir -p "$TMPDIR"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules (interop) =="
+make -C "$INTEROP" main > /dev/null || { echo "interop build failed"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+CP="$INTEROP/out/classes:$RUNTIME/out/classes:$TRUFFLE/out/classes:$(ls "$TRUFFLE"/lib/*.jar | tr '\n' ':')"
 # P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
 # yields empty output with exit 0 — methodology review finding).
 GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \

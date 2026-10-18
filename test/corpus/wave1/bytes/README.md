@@ -36,8 +36,9 @@ design, re-test when those waves land.
 ## Runtime limitations discovered (v1)
 
 The following crash the Truffle runtime with
-`ClassCastException: Integer cannot be cast to Long` (repros in
-`phases/phase3/hidden_files/m7-tmp/bytes/repro/`). They are runtime bugs,
+`ClassCastException: Integer cannot be cast to Long` (repros were captured
+during the M7 milestone in the since-deleted
+`phases/phase3/hidden_files/m7-tmp/bytes/repro/` scratch). They are runtime bugs,
 not port bugs — the synthetic source is gc-faithful (see redgreen.md) —
 so the corpus avoids them:
 

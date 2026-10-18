@@ -34,20 +34,32 @@
 # package dir when omitted (nested dirs like testing/quick are included).
 # Underscore-prefixed dirs (_smoke, infra) run only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m9 run_wave3.sh strings
+# The repo root defaults to the repository containing this script (resolved
+# via its own path — never hardcoded) but can be overridden:
+#   GR=<path-to-another-checkout> run_wave3.sh strings
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Post-phase-4 layout (migration e5e6dbd9 + fbe5b563: the phases/ tree is
+# gone; derive every module path from the repo root, never hardcode):
+#   INTEROP <- phases/phase3 (stdlib bindings; the module this runner builds)
+#   RUNTIME <- phases/phase2 + phases/phase1 runtime/ (sched/jfr/runtime/...)
+#   TRUFFLE <- phases/phase1 nodes/values/frontend (Truffle AST impl) + stubs
+# Classpath order (INTEROP:RUNTIME:TRUFFLE:jars) mirrors
+# internal/backend/interop/Makefile's RUN_CP: the runtime module's
+# same-FQN replacements shadow the truffle module's phase-1 stubs.
+GR="${GR:-$(cd "../../.." && pwd)}"
+INTEROP="$GR/internal/backend/interop"
+RUNTIME="$GR/internal/backend/runtime"
+TRUFFLE="$GR/internal/backend/truffle"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
-# Tmp discipline (corpus/wave3/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m9-tmp/wave3"
+# Tmp discipline (corpus/wave3/README.md; repo AGENTS.md §5 no-debris):
+# never write to /tmp, and never re-create hidden_files/ under the deleted
+# phases/ path. Inherit TMPDIR from the gate runner (tools/run_stdlib_gate.sh
+# exports $OUTDIR/tmp); standalone runs default to the gitignored .tmp/ tree.
+export TMPDIR="${TMPDIR:-$GR/.tmp/wave3}"
 export GOCACHE="$HOME/workspace/.gocache-m9-wave3"
 mkdir -p "$TMPDIR"
 
@@ -72,10 +84,10 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules (interop) =="
+make -C "$INTEROP" main > /dev/null || { echo "interop build failed"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+CP="$INTEROP/out/classes:$RUNTIME/out/classes:$TRUFFLE/out/classes:$(ls "$TRUFFLE"/lib/*.jar | tr '\n' ':')"
 # P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
 # yields empty output with exit 0 — methodology review finding).
 GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
@@ -98,7 +110,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \

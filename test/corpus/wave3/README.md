@@ -15,9 +15,9 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   `hash/adler32/`, `hash/crc32/`, `hash/crc64/`, `hash/fnv/`,
   `hash/maphash/`.
 - `run_wave3.sh` — the shared runner (a `../wave1/run_wave.sh`
-  derivative with wave-3 tmp paths: `TMPDIR=$P3/hidden_files/m9-tmp/wave3`,
+  derivative; `TMPDIR=$GR/.tmp/wave3`,
   `GOCACHE=$HOME/workspace/.gocache-m9-wave3`). Usage:
-  `GR=~/workspace/graalgo-m9 ./run_wave3.sh [pkg|all]`.
+  `./run_wave3.sh [pkg|all]`.
 - Per-package `run_differential.sh`: thin wrapper
   `exec "$(dirname "$0")/../run_wave3.sh" <pkg>`.
 - Per-package `README.md`: scope boundary + retest trigger.
@@ -59,10 +59,10 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
 - `internal/*`: external programs cannot import `internal/*` at all (go
   tool restriction), so these are `.scopelimited` + `nogc`. `internal/bytealg`
   has a synthetic adapter (`synth_bytealg.go`, portable real-Go impls,
-  synthetic-only like `internal/reflectlite`); its correctness evidence is
-  the tier1d harness (`phases/phase3/hidden_files/m9-tmp/tier1d-harness/`),
-  which runs the corpus program (self-checking against `bytes`/`strings`)
-  under gc against the extracted synthetic source. `internal/cpu`,
+  synthetic-only like `internal/reflectlite`); it was validated during the
+  milestone by the tier1d harness (uncommitted scratch under the since-deleted
+  phases/ tree), which ran the corpus program (self-checking against
+  `bytes`/`strings`) under gc against the extracted synthetic source. `internal/cpu`,
   `internal/godebug`, `internal/bisect` have no adapter: cpu needs cpuid
   intrinsics, godebug needs the godebugs table + runtime linknames, bisect's
   core needs `runtime.Callers`; none has an in-tree consumer.

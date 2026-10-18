@@ -15,21 +15,28 @@
 #   13_failfast.go: stdout is "pinned <case>" on both legs and the exit
 #     code is 2 on both legs; the graalgo leg additionally panics with
 #     the pinned "not in M8 scope" message on stderr (checked).
+#
+# The repo root defaults to the repository containing this script (resolved
+# via its own path — never hardcoded) but can be overridden with GR.
+#
+# Post-phase-4 layout (migration e5e6dbd9 + fbe5b563: the phases/ tree is
+# gone; the launcher wrapper lives at internal/backend/graalgo-sync-run).
 set -u
+cd "$(dirname "$0")"
 
-PIPE="$HOME/workspace/graalgo-m8-pipe"
-OSDIR="$PIPE/phases/phase3/corpus/wave2/os"
-export TMPDIR="$PIPE/phases/phase3/hidden_files/m8-tmp/os"
+GR="${GR:-$(cd "../../../.." && pwd)}"
+OSDIR="$(pwd)"
+export TMPDIR="${TMPDIR:-$GR/.tmp/wave2/os}"
 export GOCACHE="$HOME/workspace/.gocache-m8-os"
 mkdir -p "$TMPDIR" "$GOCACHE"
 GO="$HOME/tools/go/bin/go"
-RUN="${GRAALGO_RUN:-$PIPE/phases/phase3/out/graalgo-sync-run}"
+RUN="${GRAALGO_RUN:-$GR/internal/backend/graalgo-sync-run}"
 
 pass=0; fail=0; failed_cases=()
 
 if [[ ! -x "$RUN" ]]; then
     echo "FAIL: graalgo launcher not found: $RUN"
-    echo "  build phase3 first (make main), or set GRAALGO_RUN"
+    echo "  build the backend modules first (make -C internal/backend/interop main), or set GRAALGO_RUN"
     exit 1
 fi
 

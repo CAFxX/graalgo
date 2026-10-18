@@ -25,15 +25,21 @@ Deliberate scope-avoidance (frontend/v1 + M7 scope):
 
 ## Running
 
+Repo-relative, gitignored; never under /tmp (512M tmpfs) or the deleted
+phases/ tree (repo AGENTS.md §5 no-debris):
+
 ```bash
-GR=$HOME/workspace/graalgo-m7-int
-P3=$GR/phases/phase3; P2=$GR/phases/phase2; P1=$GR/phases/phase1
+GR=$(git rev-parse --show-toplevel)   # this repo's root
+INTEROP=$GR/internal/backend/interop
+RUNTIME=$GR/internal/backend/runtime
+TRUFFLE=$GR/internal/backend/truffle
+TMPDIR=$GR/.tmp/wave1/demo
 JAVA=$HOME/tools/graalvm-jdk-25/bin/java
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls $P1/lib/*.jar | tr '\n' ':')"
+CP="$INTEROP/out/classes:$RUNTIME/out/classes:$TRUFFLE/out/classes:$(ls $TRUFFLE/lib/*.jar | tr '\n' ':')"
 # gc baseline (wordfreq.expected is checked in):
-go build -o /tmp/wf.gc wordfreq.go && /tmp/wf.gc > wordfreq.expected
+go build -o $TMPDIR/wf.gc wordfreq.go && $TMPDIR/wf.gc > wordfreq.expected
 # graalgo leg (same invocation pattern as ../run_wave.sh):
-"$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP" \
+"$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
     graalgo.p3sync.launcher.P3SyncMain --gmp=1 wordfreq.go
 ```
 

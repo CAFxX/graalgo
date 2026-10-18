@@ -1,16 +1,16 @@
 # P3-M8 wave-2 differential corpus
 
 Go programs exercising the wave-2 synthetic stdlib packages (io, os,
-syscall, reflect, unsafe, crypto/* — see
-`phases/phase3/hidden_files/m8-analysis/`), differential vs stock gc
+syscall, reflect, unsafe, crypto/* — see the package subdirectories),
+differential vs stock gc
 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
-Pipelining note: wave 2 is built in parallel with the P3-M7 remediation
-on a separate tree (`~/workspace/graalgo-m8-pipe`, branch `m8-pipeline`).
+Pipelining note: wave 2 was developed in parallel with the P3-M7 remediation
+on a separate tree during the `phases/` era (since merged to master).
 The runner resolves its own repository root from its path — it works from
 any checkout. Corpus programs and synthetic-source drafts are new files;
-shared-file integration (importer registration, desugars) lands at rebase
-time after M7 remediation completes.
+shared-file integration (importer registration, desugars) landed at rebase
+time after M7 remediation completed.
 
 ## Layout
 
@@ -81,7 +81,7 @@ time after M7 remediation completes.
 
 ## The runner
 
-`run_wave.sh [pkg]` — builds the phase-3 java module once, then for each
+`run_wave.sh [pkg]` — builds the interop backend java module once, then for each
 `<nn>_<name>.go` runs it under stock gc (built binary, run directly —
 `go run` masks the exit code) and under `P3SyncMain`, and byte-compares
 stdout, exit codes, and (for panic programs) the first stderr line.
@@ -115,11 +115,14 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-2 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/<pkg>
+# Repo-relative, gitignored; never under /tmp (512M tmpfs) or the deleted
+# phases/ tree (repo AGENTS.md §5 no-debris).
+export TMPDIR=$GR/.tmp/wave2/<pkg>
 export GOCACHE=$HOME/workspace/.gocache-m8-<pkg>
 ```
 
 `run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
 `TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m8-tmp/<pkg>` and its
+runner is sufficient (unset: the runner defaults to the gitignored
+`$GR/.tmp/wave2`). Each package gets its own `.tmp/wave2/<pkg>` and its
 own `.gocache-m8-<pkg>`; never share a scratch dir with another worker.

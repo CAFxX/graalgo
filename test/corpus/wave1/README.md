@@ -2,7 +2,7 @@
 
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
 bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
-see `phases/phase3/hidden_files/m7-CHECKLIST.md`), differential vs stock
+see the package subdirectories), differential vs stock
 gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## Layout
@@ -67,7 +67,7 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## The runner
 
-`run_wave.sh [pkg]` — builds the phase-3 java module once, then for each
+`run_wave.sh [pkg]` — builds the interop backend java module once, then for each
 `<nn>_<name>.go` runs it under stock gc (built binary, run directly —
 `go run` masks the exit code) and under `P3SyncMain`, and byte-compares
 stdout, exit codes, and (for panic programs) the first stderr line.
@@ -101,11 +101,14 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-1 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m7-int/phases/phase3/hidden_files/m7-tmp/<pkg>
+# Repo-relative, gitignored; never under /tmp (512M tmpfs) or the deleted
+# phases/ tree (repo AGENTS.md §5 no-debris).
+export TMPDIR=$GR/.tmp/wave1/<pkg>
 export GOCACHE=$HOME/workspace/.gocache-m7-<pkg>
 ```
 
 `run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
 `TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m7-tmp/<pkg>` and its
+runner is sufficient (unset: the runner defaults to the gitignored
+`$GR/.tmp/wave1`). Each package gets its own `.tmp/wave1/<pkg>` and its
 own `.gocache-m7-<pkg>`; never share a scratch dir with another worker.
