@@ -25,6 +25,10 @@ public final class IfaceTestRunner {
         TESTS.add(ItabForIntrinsicTest.class);
         TESTS.add(AtomicContentionTest.class);
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
+        // 2026-10-18 review P1: launcher-divergence guard — the "abifuncpc"
+        // wire kind must be accepted identically by graalgo-run
+        // (ServiceLoader path) and graalgo-sync-run.
+        TESTS.add(graalgo.p3sync.launcher.AbiFuncPCParityTest.class);
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);

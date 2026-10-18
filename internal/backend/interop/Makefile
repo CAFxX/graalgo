@@ -31,6 +31,7 @@ CP := $(subst $(eval) ,:,$(strip $(LIB)))
 SRC_MAIN := $(shell find src/main/java -name '*.java')
 SRC_TEST := $(shell find src/test/java -name '*.java' 2>/dev/null)
 SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
+SRC_TESTRES := $(shell find src/test/resources -type f 2>/dev/null)
 OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
@@ -78,9 +79,11 @@ run: main
 
 test: main $(OUT_TEST)/.built
 	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
-$(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
+$(OUT_TEST)/.built: $(SRC_TEST) $(SRC_TESTRES) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(OUT_MAIN):$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
+	@if [ -d src/test/resources ]; then \
+		cp -r src/test/resources/. $(OUT_TEST)/; fi
 	touch $(OUT_TEST)/.built
 
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
@@ -100,6 +103,14 @@ check: main $(OUT_TEST)/.built
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v -F 'System.err.println("fatal error: '; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
+	@echo "== single-registration-path gate (2026-10-18 review P1) =="
+	@echo "P3SyncMain must register wire kinds only via"
+	@echo "P3KindRegistrations.registerAllStatic (the set graalgo-run"
+	@echo "discovers via ServiceLoader); inline factory.register*Kind calls"
+	@echo "here are launcher divergence. New kinds go in the registrar."
+	@if grep -n 'factory\.register\(Expr\|Stmt\)Kind' src/main/java/graalgo/p3sync/launcher/P3SyncMain.java; then \
+		echo "REGISTRATION-DRIFT GATE FAILED"; exit 1; fi
+	@echo "single-registration-path gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
 	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
 		if [ -x "$(HOME)/tools/go/bin/go" ]; then \
