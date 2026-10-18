@@ -176,6 +176,74 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+### B-8. `rtmemstats` synthetic `runtime` telemetry intrinsics
+
+- **What:** [rtmemstats/](../../internal/backend/interop/src/main/java/graalgo/rtmemstats/)
+  (`RuntimeReadMemStatsNode`, `RuntimeGoRootNode`, `RuntimeVersionNode`,
+  `RuntimeStackNode`, `RtMemStats`, `GoToolchain`): synthetic
+  implementations of `runtime.ReadMemStats`/`GOROOT`/`Version`/`Stack`
+  against JVM telemetry (MemoryMXBean/GC MXBeans, thread stack traces, the
+  `GOROOT` env var / `go env GOROOT` probe / `$GOROOT/VERSION`), reached
+  via the additive wire nodes `runtimereadmemstats`/`runtimegoroot`/
+  `runtimeversion`/`runtimestack` emitted in
+  [export.go](../../internal/frontend/export.go) (~lines 8576–8610) and
+  registered in
+  [P3KindRegistrations](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java)
+  and
+  [P3SyncMain](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java)
+  (PKG-051). B-7 inventories only the `rtstack` Callers-family intrinsics —
+  nothing covered these four.
+- **Why:** the frontend emitted these wire nodes since `6bd652f4`
+  ("backend intrinsics to follow") with no backend handler — any program
+  reaching `runtime.Version()` (e.g. via `runtime/debug.ReadBuildInfo`)
+  died with "unsupported expression kind". They unblock `runtime/debug`
+  (hence Badger via testify); the JVM heap/thread telemetry is the only
+  data source on this platform.
+- **Root-cause fix:** needs design. These four read the host platform's
+  actual runtime state — the same rationale as the grandfathered
+  `runtimenumcpu` and the adjudicated `runtimenumgoroutine`/
+  `runtimegosched` non-bridges — so the likely end state is
+  independent-review adjudication as real platform intrinsics (narrowly
+  scoped to these four symbols), not deletion. Two open questions for that
+  adjudication: (1) `ReadMemStats` maps JVM telemetry onto Go's
+  allocator-centric `MemStats` fields (`HeapAlloc` ← heap used; fields like
+  `MSpanInuse` have no JVM counterpart) — the field-mapping contract needs
+  documenting plus differential tests vs gc; (2) `GoToolchain`'s `go env
+  GOROOT` subprocess probe and `PINNED_GO_VERSION` fallback need a pinned,
+  hermetic contract. Until the adjudication lands, this entry is the
+  deliverable.
+- **Phase:** 4 (needs design).
+
+### B-9. `ReflectOpNode` name-keyed resolution of synthetic reflect helper types
+
+- **What:**
+  [ReflectOpNode.java](../../internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectOpNode.java)
+  `pairDescriptor()` (~line 1548) and `packSelectTriple` (~line 1620)
+  resolve `reflect.reflectValueBoolPair` / `reflect.reflectSelectTriple` by
+  qualified name from the wire type table via
+  `ReflectTypes.structDescriptorFor`
+  ([ReflectTypes.java](../../internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectTypes.java):2065 —
+  javadoc: "struct descriptor for any synthetic named struct type"). Those
+  named types exist only because the synthetic reflect package declares
+  them ([synth_reflect.go](../../internal/frontend/synth_reflect.go):462
+  `reflectSelectTriple`, :565 `reflectValueBoolPair`) as the result types
+  of the `__reflect_recv`/`__reflectTryRecv`/`__reflect_selectimpl`
+  backend intrinsics, which the backend packs as fresh `GoStruct`s with
+  the looked-up layout.
+- **Why:** the synthetic reflect's select/recv intrinsics return
+  multi-value results; the backend needs a struct descriptor matching the
+  Go-side declared layout to pack them.
+- **Root-cause fix:** `real-reflect2` (Phase 1, in flight) retires the
+  synthetic reflect package; when it does, these qualified names vanish
+  from the wire type table and `structDescriptorFor` throws
+  `FrontendException("reflect: no named type …")`. The name-keyed lookups
+  must be deleted with the synthetic intrinsics in that lane. If the real
+  `reflect` package needs backend packing helpers for `Select`/`TryRecv`,
+  they must be derived structurally — e.g. from the real package's
+  `reflect.Value`/`reflect.SelectCase` descriptors or a locally-built
+  layout — never from synthetic helper names.
+- **Phase:** 1 (owned by `real-reflect2`).
+
 ## Adjudicated non-bridges
 
 Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
