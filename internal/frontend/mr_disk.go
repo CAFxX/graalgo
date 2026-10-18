@@ -303,8 +303,19 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 					newSpecs = append(newSpecs, spec)
 					continue
 				}
-				// Hoist: var __mr_tmp_N = __Inner(args), preserving the
-				// package qualifier and explicit type arguments
+				if callTargetIdent(inner.Fun) == nil {
+					// Non-identifier-rooted inner call (pkg.F,
+					// pkg.F[T], method value): hoisting would emit
+					// pkg.__F, but the __-helper is unexported in
+					// pkg ("cannot refer to unexported name").
+					// Identifier-rooted calls (F, F[T]) hoist to the
+					// package-local __-helper; anything else is left
+					// for the export desugar.
+					newSpecs = append(newSpecs, spec)
+					continue
+				}
+				// Hoist: var __mr_tmp_N = __Inner(args), preserving
+				// explicit type arguments
 				// (GAP-GENERIC-MR: F[T](args) -> __F[T](args)).
 				tmpName := fmt.Sprintf("__mr_hoist_%d", len(hoisted))
 				helperCall := &ast.CallExpr{
@@ -386,6 +397,22 @@ func mrHelperFunForCall(fun ast.Expr, innerName string) ast.Expr {
 		return &ast.ParenExpr{X: mrHelperFunForCall(f.X, innerName)}
 	default:
 		return ast.NewIdent("__" + innerName)
+	}
+}
+
+// hoistNestedMRInCaseBodies rewrites the statement lists of every case
+// clause in a switch or type-switch body. Each clause body is rewritten
+// through a named BlockStmt so the callee's list assignment lands back
+// on the clause: rewriting a throwaway
+// &ast.BlockStmt{List: ccc.Body} discards the hoisted statements (the
+// callee assigns to the wrapper, not to ccc.Body).
+func hoistNestedMRInCaseBodies(body *ast.BlockStmt, specByName map[string]*diskMRSpec, counter *int) {
+	for _, cc := range body.List {
+		if ccc, ok := cc.(*ast.CaseClause); ok {
+			b := &ast.BlockStmt{List: ccc.Body}
+			hoistNestedMRInBlock(b, specByName, counter)
+			ccc.Body = b.List
+		}
 	}
 }
 
@@ -487,13 +514,22 @@ func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter 
 			*pre = append(*pre, p...)
 		}
 		if stmt.Body != nil {
-			for _, cc := range stmt.Body.List {
-				if ccc, ok := cc.(*ast.CaseClause); ok {
-					hoistNestedMRInBlock(&ast.BlockStmt{List: ccc.Body}, specByName, counter)
-					// Copy back (BlockStmt was a view).
-					ccc.Body = (&ast.BlockStmt{List: ccc.Body}).List
-				}
-			}
+			hoistNestedMRInCaseBodies(stmt.Body, specByName, counter)
+		}
+		return stmt
+	case *ast.TypeSwitchStmt:
+		if stmt.Init != nil {
+			var p []ast.Stmt
+			stmt.Init = hoistNestedMRInStmt(stmt.Init, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Assign != nil {
+			var p []ast.Stmt
+			stmt.Assign = hoistNestedMRInStmt(stmt.Assign, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Body != nil {
+			hoistNestedMRInCaseBodies(stmt.Body, specByName, counter)
 		}
 		return stmt
 	case *ast.DeferStmt:
@@ -1756,12 +1792,21 @@ func (ctx *mrRewriteCtx) rewriteStmt(stmt ast.Stmt) []ast.Stmt {
 		return []ast.Stmt{s}
 	case *ast.LabeledStmt:
 		// Descend into the labeled statement (e.g. parseLoop: for ...).
-		// A labeled return expanding to two statements drops the label
-		// (labels are semantically irrelevant on return).
 		rewritten := ctx.rewriteStmt(s.Stmt)
 		if len(rewritten) == 1 {
 			s.Stmt = rewritten[0]
 			return []ast.Stmt{s}
+		}
+		// The labeled statement expanded to several statements (e.g.
+		// a return rewritten to a temp assignment plus the pair
+		// return). The label may be a goto target, so keep it on the
+		// first emitted statement.
+		if len(rewritten) > 0 {
+			rewritten[0] = &ast.LabeledStmt{
+				Label: s.Label,
+				Colon: s.Colon,
+				Stmt:  rewritten[0],
+			}
 		}
 		return rewritten
 	case *ast.IfStmt:
@@ -1872,8 +1917,9 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 	case 1:
 		// Single expr which is a call: in the ORIGINAL code this
 		// type-checked as a multi-result call forwarding its values
-		// (e.g. return vr.Value()).
-		if call, ok := rs.Results[0].(*ast.CallExpr); ok {
+		// (e.g. return vr.Value()). Unparen first: return (F()) is
+		// the same forwarding call and must be rewritten too.
+		if call, ok := unparen(rs.Results[0]).(*ast.CallExpr); ok {
 			var fname string
 			if id, ok := call.Fun.(*ast.Ident); ok {
 				fname = id.Name
