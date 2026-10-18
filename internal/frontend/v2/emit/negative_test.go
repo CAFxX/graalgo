@@ -11,6 +11,7 @@ package emit
 
 import (
 	"go/ast"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -304,7 +305,11 @@ func main() { println(conv(1).v) }
 		t.Fatal("test setup: checker did not record the Box[int] instantiation in Info.Instances")
 	}
 
-	e := &Emitter{info: cres}
+	e := &Emitter{
+		info:    cres,
+		typeIDs: make(map[types.Type]int),
+		objIDs:  make(map[types.Object]int),
+	}
 	if _, err := e.emitIndex(ix); err == nil {
 		t.Fatal("emitIndex accepted a generic type instantiation (silent miscompile)")
 	} else if !strings.Contains(err.Error(), "generic instantiation") {
