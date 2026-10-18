@@ -44,6 +44,17 @@ public final class GoStruct {
                 // WS G: a complex field's zero value is (0+0i), not nil.
                 objects[f.index()] = f.kind() == GoKind.COMPLEX64
                         ? GoComplex32.ZERO : GoComplex64.ZERO;
+            } else if (!f.inLongs() && f.kind() == GoKind.STRUCT) {
+                // fix-redmaster-exitcode-drift: a nested struct field's zero
+                // value is a zero struct, not null. Without this, make([]T,n)
+                // leaves embedded/nested structs as Java null and a selector
+                // walking through them (s[i].promotedField) hits a nil
+                // dereference. Recursive: Go forbids direct value self-
+                // containment, so the struct containment graph is acyclic.
+                GoStructDescriptor nested = f.structDesc();
+                if (nested != null) {
+                    objects[f.index()] = GoStruct.zero(nested);
+                }
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);
