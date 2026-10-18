@@ -178,7 +178,7 @@ func __mpstickyErrorReaderRead(r *stickyErrorReader, p []byte) __mpstickyErrorRe
 }
 
 func (r *stickyErrorReader) Read(p []byte) (n int, _ error) {
-	panic("mime/multipart.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.Read: unreachable (call sites desugar to __mpstickyErrorReaderRead")
 }
 
 
@@ -211,7 +211,7 @@ func __mpnewPart(mr *Reader, rawPart bool, maxMIMEHeaderSize int64, maxMIMEHeade
 }
 
 func newPart(mr *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) (*Part, error) {
-	panic("mime/multipart.newPart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.newPart: unreachable (call sites desugar to __mpnewPart")
 }
 
 
@@ -244,7 +244,7 @@ func __mpPartRead(p *Part, d []byte) __mpPartReadPair {
 }
 
 func (p *Part) Read(d []byte) (n int, err error) {
-	panic("mime/multipart.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.Read: unreachable (call sites desugar to __mpPartRead")
 }
 
 
@@ -297,7 +297,7 @@ __mrtmp1 := __mpscanUntilBoundary(peek, p.mr.dashBoundary, p.mr.nlDashBoundary, 
 }
 
 func (pr partReader) Read(d []byte) (int, error) {
-	panic("mime/multipart.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.Read: unreachable (call sites desugar to __mppartReaderRead")
 }
 
 
@@ -363,7 +363,7 @@ func __mpscanUntilBoundary(buf []byte, dashBoundary []byte, nlDashBoundary []byt
 }
 
 func scanUntilBoundary(buf, dashBoundary, nlDashBoundary []byte, total int64, readErr error) (int, error) {
-	panic("mime/multipart.scanUntilBoundary: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.scanUntilBoundary: unreachable (call sites desugar to __mpscanUntilBoundary")
 }
 
 
@@ -476,7 +476,7 @@ func __mpReaderNextPart(r *Reader) __mpReaderNextPartPair {
 }
 
 func (r *Reader) NextPart() (*Part, error) {
-	panic("mime/multipart.NextPart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.NextPart: unreachable (call sites desugar to __mpReaderNextPart")
 }
 
 
@@ -497,7 +497,7 @@ func __mpReaderNextRawPart(r *Reader) __mpReaderNextRawPartPair {
 }
 
 func (r *Reader) NextRawPart() (*Part, error) {
-	panic("mime/multipart.NextRawPart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.NextRawPart: unreachable (call sites desugar to __mpReaderNextRawPart")
 }
 
 
@@ -569,7 +569,7 @@ __mrtmp4 := __mpnewPart(r, rawPart, maxMIMEHeaderSize, maxMIMEHeaders); bp, err 
 }
 
 func (r *Reader) nextPart(rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) (*Part, error) {
-	panic("mime/multipart.nextPart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.nextPart: unreachable (call sites desugar to __mpReadernextPart")
 }
 
 
@@ -657,7 +657,7 @@ func __mpReaderReadForm(r *Reader, maxMemory int64) __mpReaderReadFormPair {
 }
 
 func (r *Reader) ReadForm(maxMemory int64) (*Form, error) {
-	panic("mime/multipart.ReadForm: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.ReadForm: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 
@@ -852,7 +852,7 @@ __mrtmp3 := __mpReadernextPart(r, false, maxMemoryBytes, maxHeaders); p, err := 
 }
 
 func (r *Reader) readForm(maxMemory int64) (_ *Form, err error) {
-	panic("mime/multipart.readForm: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.readForm: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 
@@ -935,7 +935,7 @@ func __mpFileHeaderOpen(fh *FileHeader) __mpFileHeaderOpenPair {
 }
 
 func (fh *FileHeader) Open() (File, error) {
-	panic("mime/multipart.Open: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.Open: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 
@@ -1098,7 +1098,7 @@ func __mpWriterCreatePart(w *Writer, header __mpMIMEHeader) __mpWriterCreatePart
 }
 
 func (w *Writer) CreatePart(header __mpMIMEHeader) (io.Writer, error) {
-	panic("mime/multipart.CreatePart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.CreatePart: unreachable (call sites desugar to __mpWriterCreatePart")
 }
 
 
@@ -1139,7 +1139,7 @@ func __mpWriterCreateFormFile(w *Writer, fieldname string, filename string) __mp
 }
 
 func (w *Writer) CreateFormFile(fieldname, filename string) (io.Writer, error) {
-	panic("mime/multipart.CreateFormFile: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.CreateFormFile: unreachable (call sites desugar to __mpWriterCreateFormFile")
 }
 
 
@@ -1160,7 +1160,7 @@ func __mpWriterCreateFormField(w *Writer, fieldname string) __mpWriterCreateForm
 }
 
 func (w *Writer) CreateFormField(fieldname string) (io.Writer, error) {
-	panic("mime/multipart.CreateFormField: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.CreateFormField: unreachable (call sites desugar to __mpWriterCreateFormField")
 }
 
 
@@ -1234,7 +1234,7 @@ func __mppartWrite(p *part, d []byte) __mppartWritePair {
 }
 
 func (p *part) Write(d []byte) (n int, err error) {
-	panic("mime/multipart.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/multipart.Write: unreachable (call sites desugar to __mppartWrite")
 }
 
 
