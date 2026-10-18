@@ -95,9 +95,9 @@ type desCipher struct {
 // NewCipher creates and returns a new [cipher.Block].
 // NewCipher creates and returns a new [cipher.Block].
 // P3-M8: fail-fast stub (exact gc signature). Real callers go through the
-// mrM8 desugar to __desNewCipher. Re-test trigger: WS D lands.
+// mrM8 desugar to __desNewCipher.
 func NewCipher(key []byte) (cipher.Block, error) {
-	panic("crypto/des: NewCipher: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/des: NewCipher: unreachable (call sites desugar to __desNewCipher")
 }
 
 func (c *desCipher) BlockSize() int { return BlockSize }
@@ -136,9 +136,9 @@ type tripleDESCipher struct {
 // NewTripleDESCipher creates and returns a new [cipher.Block].
 // NewTripleDESCipher creates and returns a new [cipher.Block].
 // P3-M8: fail-fast stub (exact gc signature). Real callers go through the
-// mrM8 desugar to __desNewTripleDESCipher. Re-test trigger: WS D lands.
+// mrM8 desugar to __desNewTripleDESCipher.
 func NewTripleDESCipher(key []byte) (cipher.Block, error) {
-	panic("crypto/des: NewTripleDESCipher: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/des: NewTripleDESCipher: unreachable (call sites desugar to __desNewTripleDESCipher")
 }
 
 func (c *tripleDESCipher) BlockSize() int { return BlockSize }
