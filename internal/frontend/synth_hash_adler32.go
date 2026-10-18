@@ -47,7 +47,7 @@ const Size = 4
 // The low 16 bits are s1, the high 16 bits are s2.
 //
 // P3-M9: struct-based (not 'type digest uint32') because the frontend
-// forbids assignment to *ast.StarExpr in synthetic bodies (WS D); all
+// forbids assignment to *ast.StarExpr in synthetic bodies ; all
 // mutation goes through the selector d.s.
 type digest struct{ s uint32 }
 
@@ -83,9 +83,8 @@ func beUint32(b []byte) uint32 {
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (d *digest) AppendSingle(b []byte) []byte {
 	b = append(b, magic...)
 	b = beAppendUint32(b, d.s)
@@ -94,23 +93,22 @@ func (d *digest) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (d *digest) MarshalSingle() []byte {
 	return d.AppendSingle(make([]byte, 0, marshaledSize))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (d *digest) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/adler32: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/adler32: AppendBinary: unreachable (call sites desugar to __adler32Append")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (d *digest) MarshalBinary() ([]byte, error) {
-	panic("hash/adler32: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/adler32: MarshalBinary: unreachable (call sites desugar to __adler32Marshal")
 }
 
 func (d *digest) UnmarshalBinary(b []byte) error {
@@ -126,16 +124,14 @@ func (d *digest) UnmarshalBinary(b []byte) error {
 
 // CloneSinglePair is the single-result form of Clone (see AppendSingle).
 // Served via the mrM8 desugar to hash.__hashClone. Re-test trigger:
-// WS D lands.
 func (d *digest) CloneSinglePair() hash.ClonePair {
 	return hash.ClonePair{C: &digest{s: d.s}, Err: nil}
 }
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is
 // CloneSinglePair, served via the mrM8 desugar to hash.__hashClone).
-// Re-test trigger: WS D lands.
 func (d *digest) Clone() (hash.Cloner, error) {
-	panic("hash/adler32: Clone: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/adler32: Clone: unreachable (call sites desugar to __adler32Clone")
 }
 
 // Add p to the running checksum d.
@@ -170,11 +166,10 @@ func update(d uint32, p []byte) uint32 {
 
 
 // P3-M9: package-local multi-result helpers. The v1 frontend cannot emit
-// or call multi-result functions (WS D), so Write/Clone/MarshalBinary/
+// or call multi-result functions , so Write/Clone/MarshalBinary/
 // AppendBinary are served through the mrM8 desugar. These helpers take
 // interface{} (not hash.Hash) to avoid an interface conversion that would
 // lose the dynamic type's method set.
-// Re-test trigger: WS D lands.
 type writePair struct {
 	n   int
 	err error
@@ -207,11 +202,9 @@ func __adler32Append(d *digest, b []byte) bytesPair {
 	return bytesPair{d.AppendSingle(b), nil}
 }
 
-// WriteSingle is the single-result form of Write (the v1 frontend cannot
-// emit or call multi-result functions (WS D); the real logic lives here,
+// WriteSingle is the single-result form of Write (the real logic lives here,
 // served via the mrM8 desugar to hash.__hashWrite, which delegates to
 // this method through the hash.singleWriter interface. Re-test trigger:
-// WS D lands.
 func (d *digest) WriteSingle(p []byte) int {
 	d.s = update(d.s, p)
 	return len(p)
@@ -219,9 +212,8 @@ func (d *digest) WriteSingle(p []byte) int {
 
 // Write implements hash.Hash (fail-fast stub; real logic is WriteSingle,
 // served via the mrM8 desugar to hash.__hashWrite). Re-test trigger:
-// WS D lands.
 func (d *digest) Write(p []byte) (nn int, err error) {
-	panic("hash/adler32: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/adler32: Write: unreachable (call sites desugar to __adler32Write")
 }
 
 func (d *digest) Sum32() uint32 { return d.s }
