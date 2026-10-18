@@ -144,6 +144,41 @@ public final class ValuesTest {
         assertEq(1, fm.size(), "NaN key still stored");
     }
 
+    public void testGoMapDeleteDuringSnapshot() {
+        // RV18-P1-14: the range-over-map liveness contract. keysSnapshot()
+        // captures the key set; entries deleted afterwards must fail
+        // containsKey (RangeMapNode skips them at production time), while
+        // entries still present pass — including a present entry whose
+        // value is null (nil container value), which must NOT be treated
+        // as deleted (that was the P3-M7 bug: a get()!=null liveness check
+        // dropped present keys with nil values).
+        GoMap m = new GoMap();
+        for (long i = 0; i < 8; i++) {
+            m.put(i, i * 10);
+        }
+        Object[] snap = m.keysSnapshot();
+        assertEq(8, snap.length, "snapshot length");
+        m.delete(2L);
+        m.delete(5L);
+        int live = 0;
+        for (Object k : snap) {
+            if (m.containsKey(k)) {
+                live++;
+            }
+        }
+        assertEq(6, live, "live entries after deletes");
+        assertTrue(!m.containsKey(2L), "deleted key not contained");
+        assertTrue(m.containsKey(3L), "surviving key contained");
+        // Present-with-null-value entry: containsKey true, get null.
+        GoMap n = new GoMap();
+        n.put(1L, null);
+        assertTrue(n.containsKey(1L), "null-value entry contained");
+        assertTrue(n.get(1L) == null, "null-value entry get");
+        Object[] snap2 = n.keysSnapshot();
+        assertEq(1, snap2.length, "snapshot keeps null-value entry");
+        assertTrue(n.containsKey(snap2[0]), "null-value entry live");
+    }
+
     public void testGoStruct() {
         GoStructDescriptor d = GoStructDescriptor.layout("T",
                 List.of("a", "b", "s"), List.of(GoKind.INT32, GoKind.STRING, GoKind.BOOL));

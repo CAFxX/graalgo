@@ -24,6 +24,7 @@ gofrontend builtin emission, WS B/G), through graalgo for comparison.
 | bi13_append_sizes.go | growth by elem size | len 10, valid caps, elems correct (exact caps compiler-dependent) |
 | bi14_map_lifecycle.go | map ops | make/assign/len/delete/lookup |
 | bi15_copy_counts.go | copy counts | n=3 (truncated); n2=5 |
+| bi23_delete_during_range.go | delete during range | current-key delete: all 8 produced (360); not-yet-reached delete: only first produced (stderr) |
 
 **Note on exact capacities (bi01, bi10, bi13):** gc's observable `cap`
 after `append` depends on a compiler optimization (the `growsliceBuf`
@@ -144,6 +145,12 @@ v: two ok: true
 ```
 n: 3 dst: 1 2 3
 n2: 5 len: 10
+```
+
+### bi23
+```
+delcur: 360 8
+delnotreached: 10 1
 ```
 
 ## Red-green / mutation story (SPEC §5.2)

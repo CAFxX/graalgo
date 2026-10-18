@@ -70,4 +70,8 @@ public final class BuiltinsCorpusTest {
     public void testBi20StructPrint() throws Exception { Differential.checkProgram(prog("bi20_struct_print")); }
     public void testBi21NestedMaps() throws Exception { Differential.checkProgram(prog("bi21_nested_maps")); }
     public void testBi22FloatEdge() throws Exception { Differential.checkProgram(prog("bi22_float_edge")); }
+    // RV18-P1-14: delete-during-range over map[int]int (primitive carriers).
+    // A not-yet-reached entry deleted during iteration must not be produced;
+    // the pre-fix code threw a raw Java NullPointerException on it.
+    public void testBi23DeleteDuringRange() throws Exception { Differential.checkProgram(prog("bi23_delete_during_range")); }
 }

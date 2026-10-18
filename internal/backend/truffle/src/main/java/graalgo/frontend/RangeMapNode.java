@@ -100,17 +100,30 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
             i = frame.getInt(indexSlot);
         }
         Object key = null;
-        // P3-M7: iterate the snapshot directly. The containsKey re-check
-        // (for deletes during iteration) was buggy: it dropped present
-        // keys with nil values when the map also held container values.
-        // Go spec permits producing or skipping entries deleted mid-iteration;
-        // we produce from the snapshot (simple, correct for the common case).
         if (i < keys.length) {
-            key = keys[i];
+            // RV18-P1-14: skip snapshot entries deleted since the snapshot
+            // was taken (deleted during iteration by this loop's body, or by
+            // another goroutine). Go spec: a not-yet-reached entry removed
+            // during iteration is not produced (verified against gc; see
+            // bi23_delete_during_range). Without this check, map.get(key)
+            // returns null for the deleted entry and Boxing.setSlot unboxes
+            // it into a primitive frame slot — a raw Java
+            // NullPointerException, which gc never produces. The liveness
+            // check must be containsKey, NOT get(...) != null: a present
+            // entry with a nil container value (e.g. map[string]*int holding
+            // nil) has a null get() result and must still be produced —
+            // the value-based check was the P3-M7 bug.
+            int j = i;
+            while (j < keys.length && !map.containsKey(keys[j])) {
+                j++;
+            }
             // Advance the per-invocation index before producing the entry
             // (the body may break/continue/throw; the advance is already
             // committed, matching the old keys[i++] ordering).
-            frame.setInt(indexSlot, i + 1);
+            frame.setInt(indexSlot, j + 1);
+            if (j < keys.length) {
+                key = keys[j];
+            }
         }
         if (key == null) {
             // No live entry left (keys are never null in Phase 1).
