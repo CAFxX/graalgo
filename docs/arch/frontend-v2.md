@@ -130,7 +130,14 @@ it *is* the frontend — just the next generation.
   (`mrdesugar_m5.go`, etc.). v2 should use `go/types`'s native generic
   support and instantiate cleanly. Needs investigation.
 - **Init order**: v1 handles `init()` and package-level var initialization
-  order. v2 must preserve this (it's observable behavior).
+  order. v2 must preserve this (it's observable behavior). Until init order
+  is implemented, `func init()` fails loudly at emission (P1-11) rather than
+  silently becoming a never-called plain function.
+- **Methods**: the v2 backend has no receiver/method model (type tables
+  record empty method sets; selectors resolve by name). Any `FuncDecl` with
+  a receiver fails loudly at emission (P1-11) rather than being emitted as
+  a receiver-less plain funcdecl (which collides across same-name methods
+  of different types).
 - **Cgo**: v1 punts. v2 punts too (documented limitation, not a bodge).
 
 ## 7. References

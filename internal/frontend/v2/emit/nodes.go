@@ -31,6 +31,19 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
 	}
+	// P1-11: v2 has no method model. Emitting (T).M and (U).M as plain
+	// funcdecls named "M" collides in the backend's by-name function table
+	// and silently drops the receivers. Fail loudly instead of mis-emitting.
+	if fd.Recv != nil {
+		return nil, fmt.Errorf("emit: unsupported method %s (the v2 backend has no receiver support)", fn.Name())
+	}
+	// P1-11: v2 has no package-initialization phase. A func init() would be
+	// emitted as a plain function the backend never calls — a silent gc
+	// divergence. p3frontend rejects init for the same reason. Fail loudly
+	// until v2 implements init order (see docs/arch/frontend-v2.md §6).
+	if fn.Name() == "init" {
+		return nil, fmt.Errorf("emit: unsupported func init() (the v2 backend never executes init functions)")
+	}
 	sig := e.typeID(fn.Type())
 
 	params := []any{}

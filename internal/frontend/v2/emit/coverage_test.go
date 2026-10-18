@@ -27,7 +27,7 @@ import (
 // This list is checked mechanically against go/ast — it cannot drift.
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
-	"FuncDecl": true, // emitFuncDecl
+	"FuncDecl": true, // emitFuncDecl; methods and func init() fail loudly (P1-11)
 
 	// Statements.
 	"AssignStmt": true,

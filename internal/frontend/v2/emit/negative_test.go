@@ -172,6 +172,30 @@ func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
+	{
+		// P1-11: methods have no v2 backend model; emitting them as plain
+		// funcdecls would drop the receiver (and collide on same-name
+		// methods of different types). Must fail loudly.
+		name: "MethodReceiver",
+		src: `package main
+type T struct{}
+func (t T) M() int { return 1 }
+func main() { println(T{}.M()) }
+`,
+		want: "unsupported method",
+	},
+	{
+		// P1-11: the v2 backend never executes init functions; emitting one
+		// as a plain funcdecl would be a silent gc divergence. Must fail
+		// loudly (mirrors p3frontend's init rejection).
+		name: "FuncInit",
+		src: `package main
+var x int
+func init() { x = 42 }
+func main() { println(x) }
+`,
+		want: "unsupported func init()",
+	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {
