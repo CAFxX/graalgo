@@ -16,7 +16,7 @@ Differential tests for Go control flow, bit-identical vs stock gc 1.27.1
 | cf07_range_array_string.go | range over array (copy semantics), range over string (byte offsets + runes), non-define `=` range |
 | cf08_range_map.go | range over map (key+value, key-only, value-only); order-independent reductions |
 | cf09_switch.go | expression switch (init, multi-case, fallthrough, default, no-match, break-in-case), tagless switch |
-| cf10_typeswitch.go | type switch (binding, named-type distinction, `case nil`, multi-type clause, default) |
+| cf10_typeswitch.go | type switch (binding, named-type distinction, `case nil`, multi-type clause, default, typed-nil r6: no `case nil` match, hits dynamic-type clause) |
 | cf11_goto.go | forward goto, backward goto as loop, goto out of nested block/for |
 
 ## Conventions
