@@ -2003,7 +2003,7 @@ func (v Value) Seq() iter.Seq[Value] {
 			}
 		}
 	case Chan:
-		panic("reflect.Value.Seq: not in M8 scope (chan iteration needs reflect.Value.Recv multi-result, WS D; re-test when it lands)")
+		panic("reflect.Value.Seq: not in M8 scope (chan iteration needs reflect.Value.Recv multi-result)")
 	}
 	panic("reflect: " + v.Type().String() + " cannot produce iter.Seq[Value]")
 }
