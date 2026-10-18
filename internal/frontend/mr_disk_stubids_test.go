@@ -95,7 +95,9 @@ func TestExportFuncDeclStubRecordingIdempotent(t *testing.T) {
 // determinism, and empty-but-non-nil when nothing was withheld (the wire
 // field keeps its [] shape instead of null).
 func TestAttestedStubObjIDsSorted(t *testing.T) {
-	e := &exporter{diskMRStubObjIDs: map[int]bool{9: true, 3: true, 7: true, 3: true}}
+	stubSet := map[int]bool{9: true, 3: true, 7: true}
+	stubSet[3] = true // duplicate insert: still one entry
+	e := &exporter{diskMRStubObjIDs: stubSet}
 	got := e.attestedStubObjIDs()
 	want := []int{3, 7, 9}
 	if len(got) != len(want) {
