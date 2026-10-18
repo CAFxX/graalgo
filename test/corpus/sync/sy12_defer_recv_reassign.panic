@@ -1,1 +1,1 @@
-panic: sync: unlock of unlocked mutex
+fatal error: sync: unlock of unlocked mutex

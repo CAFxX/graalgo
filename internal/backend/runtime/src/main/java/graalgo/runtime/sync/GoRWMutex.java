@@ -47,7 +47,8 @@ public final class GoRWMutex {
         Deque<GoroutineHandle> toWake = new ArrayDeque<>();
         synchronized (this) {
             if (readers <= 0) {
-                throw new IllegalStateException("sync: RUnlock of unlocked RWMutex");
+                // gc fatal-errors (runtime.throw, unrecoverable) — R-7.
+                throw new GoFatalMisuseException("sync: RUnlock of unlocked RWMutex");
             }
             readers--;
             if (readers == 0 && waitingWriters > 0) {
@@ -86,7 +87,8 @@ public final class GoRWMutex {
         Deque<GoroutineHandle> toWake = new ArrayDeque<>();
         synchronized (this) {
             if (!writer) {
-                throw new IllegalStateException("sync: Unlock of unlocked RWMutex");
+                // gc fatal-errors (runtime.throw, unrecoverable) — R-7.
+                throw new GoFatalMisuseException("sync: Unlock of unlocked RWMutex");
             }
             writer = false;
             if (!readWaiters.isEmpty()) {

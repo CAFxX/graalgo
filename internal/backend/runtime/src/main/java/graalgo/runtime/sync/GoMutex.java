@@ -16,9 +16,10 @@ import java.util.Deque;
  * {@code LockSupport.park} without a ticket) is banned here per P2-D4 —
  * it would bypass the in-flight cap accounting.
  *
- * <p>Go semantics: non-reentrant; {@code unlock} of an unlocked mutex
- * panics ("sync: unlock of unlocked mutex", gc parity); unlocking from a
- * different goroutine than the locker is allowed (as in gc).
+ * <p>Go semantics: non-reentrant; {@code unlock} of an unlocked mutex is a
+ * gc fatal error ({@code fatal error: sync: unlock of unlocked mutex},
+ * unrecoverable, exit 2 — R-7); unlocking from a different goroutine
+ * than the locker is allowed (as in gc).
  *
  * <p>verifies: GG-SCHED-0004 (scheduler-aware blocking).
  */
@@ -50,7 +51,9 @@ public final class GoMutex {
         GoroutineHandle next;
         synchronized (this) {
             if (!locked) {
-                throw new IllegalStateException("sync: unlock of unlocked mutex");
+                // gc fatal-errors (runtime.throw, unrecoverable), it does
+                // not panic — R-7.
+                throw new GoFatalMisuseException("sync: unlock of unlocked mutex");
             }
             next = waiters.pollFirst();
             if (next == null) {

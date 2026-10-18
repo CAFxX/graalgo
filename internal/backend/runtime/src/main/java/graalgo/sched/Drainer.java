@@ -248,11 +248,16 @@ public final class Drainer {
      * exceeds the cap and never goes negative. Called by the drainer
      * after every route+admit; a violation is a loud
      * {@link AssertionError}, never silent corruption.
+     *
+     * <p>R-2: checked against the largest cap ever installed, not the
+     * current one — after a {@code runtime.GOMAXPROCS} decrease,
+     * in-flight goroutines above the new cap are legitimate (draining),
+     * but above <em>any</em> cap ever installed is still a bug.
      */
     void checkInvariants() {
-        if (inflight > sched.cap()) {
+        if (inflight > sched.maxCapEver()) {
             throw new AssertionError(
-                    "inflight=" + inflight + " > cap=" + sched.cap());
+                    "inflight=" + inflight + " > maxCapEver=" + sched.maxCapEver());
         }
         if (inflight < 0) {
             throw new AssertionError("inflight negative: " + inflight);

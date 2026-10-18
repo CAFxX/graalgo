@@ -145,25 +145,30 @@ correct zero) and stays allowed.
 factory-level zero manufacturing; the scope errors name M2 so the trigger
 is greppable.
 
-## D4. Misuse → Go panic with gc's message (known divergence, scoped)
+## D4. Misuse → gc's own classification: fatal error vs Go panic (R-7)
 
-`GoMutex.unlock()`/`GoRWMutex.rUnlock()` throw `IllegalStateException`
-with gc's message text; `GoWaitGroup.add` throws on negative counters.
-The binding translates these to Go panics via `Panic.throwPanic`:
+`GoMutex.unlock()`/`GoRWMutex.unlock()`/`GoRWMutex.rUnlock()` throw
+`GoFatalMisuseException` (an `IllegalStateException` subtype, carrying
+gc's message text); `GoWaitGroup.add` throws plain
+`IllegalStateException` on negative counters. The binding routes by gc's
+own classification:
 
 - `sync: negative WaitGroup counter` — gc 1.27.1 panics (recoverable);
-  full parity: `panic: sync: negative WaitGroup counter`, exit 2.
-- `sync: unlock of unlocked mutex`, `sync: RUnlock of unlocked RWMutex` —
-  gc 1.27.1 **fatal-errors** (`fatal error: ...`, unrecoverable, exit 2;
-  verified against `~/tools/go-1.27.1`). The binding panics with gc's
-  message text (`panic: sync: ...`, exit 2) per the P3-M2 brief
-  ("unlock-of-unlocked panics with gc's message"). **Scoped divergence:**
-  ours is recoverable, gc's is not; the `panic:`/`fatal error:` wrapper
-  line differs. A true fatal-error path needs scheduler machinery Phase 2
-  does not have (and may not be modified).
+  full parity: `panic: sync: negative WaitGroup counter`, exit 2, caught
+  by a deferred `recover()`.
+- `sync: unlock of unlocked mutex`, `sync: Unlock of unlocked RWMutex`,
+  `sync: RUnlock of unlocked RWMutex` — gc 1.27.1 **fatal-errors**
+  (`fatal error: ...`, unrecoverable, exit 2; verified against
+  `~/tools/go-1.27.1`). The binding prints `fatal error: <msg>` on
+  stderr and exits 2 — the same contract as `sync.throw` /
+  `sync.fatal` — unrecoverable from Go code (defers do not run).
 
-**Re-test trigger:** when the scheduler gains a fatal-error path, re-run
-the unlock-misuse corpus expecting gc's `fatal error:` line.
+(R-7 retired the old scoped divergence, where the binding panicked with
+gc's message text for all misuses: same text, same exit code, but
+recoverable where gc is not.)
+
+**Re-test trigger:** none open — the unlock-misuse corpus (`sy03`,
+`sy05`, `sy12`, `sy13`) expects gc's `fatal error:` line.
 
 Inherited limitation (phase-2 primitive, out of M2 scope): `GoWaitGroup`
 does not detect "Add called concurrently with Wait" (gc panics); the

@@ -1,1 +1,1 @@
-panic: sync: Unlock of unlocked RWMutex
+fatal error: sync: Unlock of unlocked RWMutex

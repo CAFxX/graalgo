@@ -45,6 +45,9 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // R-4 (2026-10-18): procPin id-checkout pool — unique ids per
+        // concurrent pin section, never aliased shards.
+        TESTS.add(graalgo.p3link.SyncRuntimePinTest.class);
     }
 
     private IfaceTestRunner() {}

@@ -604,4 +604,85 @@ public final class SchedulerCoreTest {
             SchedulerCore.install(null);
         }
     }
+
+    // ---------- dynamic GOMAXPROCS cap (R-2, 2026-10-18) ----------
+
+    /**
+     * R-2: constructing a scheduler publishes its requested GOMAXPROCS as
+     * the process-observable value (the launcher {@code --gmp} flag flows
+     * through the constructor, so {@code runtime.GOMAXPROCS(0)} reports
+     * the flag, not NumCPU). Restores the cell afterwards: the runner
+     * shares one JVM across tests.
+     *
+     * <p>Red-green: fails if the constructor does not sync the cell
+     * (the R-2 bug: GOMAXPROCS(0) reported NumCPU under --gmp=N).
+     */
+    public void testConstructorPublishesGomaxprocs() {
+        int prev = Gomaxprocs.current();
+        try {
+            SchedulerCore sched = new SchedulerCore(3, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+            assertEquals(3, Gomaxprocs.current(), "constructor publishes requested gmp");
+            assertEquals(Math.min(3, Runtime.getRuntime().availableProcessors()),
+                    sched.cap(), "effective cap = min(gmp, carriers)");
+        } finally {
+            Gomaxprocs.setInitial(prev);
+        }
+    }
+
+    /**
+     * R-2: {@code setGomaxprocs} moves the effective in-flight cap
+     * (clamped to [1, carriers]) and the drainer bound only grows.
+     *
+     * <p>Red-green: fails if the cap stays final (the R-2 bug:
+     * GOMAXPROCS(n) never moved the scheduler).
+     */
+    public void testSetGomaxprocsMovesCap() {
+        int prev = Gomaxprocs.current();
+        try {
+            int carriers = Runtime.getRuntime().availableProcessors();
+            SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+            int eff2 = Math.min(2, carriers);
+            assertEquals(eff2, sched.cap(), "initial effective cap");
+            int prevCap = sched.setGomaxprocs(4);
+            assertEquals(eff2, prevCap, "setGomaxprocs returns the previous cap");
+            assertEquals(Math.min(4, carriers), sched.cap(), "cap moves up");
+            sched.setGomaxprocs(1);
+            assertEquals(1, sched.cap(), "cap moves down");
+            assertTrue(sched.maxCapEver() >= Math.min(4, carriers),
+                    "drainer bound never shrinks below an installed cap");
+        } finally {
+            Gomaxprocs.setInitial(prev);
+        }
+    }
+
+    /**
+     * R-2: {@code Gomaxprocs.set(n)} (the
+     * {@code runtime.GOMAXPROCS(n)} write path) publishes the observed
+     * value, returns the previous one, and pushes the new cap to the
+     * installed scheduler; with no scheduler installed it degrades to
+     * bookkeeping (Phase-1 parity).
+     */
+    public void testGomaxprocsSetPushesToInstalledScheduler() {
+        int prev = Gomaxprocs.current();
+        SchedulerCore prevSched = SchedulerCore.installed();
+        try {
+            // No scheduler installed: pure bookkeeping.
+            SchedulerCore.install(null);
+            int prevObs = Gomaxprocs.set(5);
+            assertEquals(prev, prevObs, "returns previous observed value");
+            assertEquals(5, Gomaxprocs.current(), "observed value updated");
+
+            // Installed scheduler: the effective cap moves too.
+            SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+            SchedulerCore.install(sched);
+            int prevObs2 = Gomaxprocs.set(4);
+            assertEquals(5, prevObs2, "returns previous observed value");
+            assertEquals(4, Gomaxprocs.current(), "observed value updated");
+            assertEquals(Math.min(4, Runtime.getRuntime().availableProcessors()),
+                    sched.cap(), "installed scheduler cap moved");
+        } finally {
+            SchedulerCore.install(prevSched);
+            Gomaxprocs.setInitial(prev);
+        }
+    }
 }

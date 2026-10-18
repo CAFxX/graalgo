@@ -28,6 +28,9 @@ import graalgo.jfr.ParkReason;
  *   <li>In-flight cap = {@code min(GOMAXPROCS, carrier parallelism)}
  *       (P2-D6, GG-SCHED-0003): at most {@code cap} vthreads are
  *       admitted-but-not-parked at any time; the drainer hard-asserts.
+ *       Dynamic (R-2): {@code runtime.GOMAXPROCS(n)} moves the cap via
+ *       {@link #setGomaxprocs} — a decrease drains down naturally, never
+ *       preempting running goroutines.
  *   <li>Armed-ticket discipline (P2-D7, GG-WAKE-0001): every park
  *       reserves a generation via {@link #armPark} BEFORE becoming
  *       visible to wakers; every admission does ack-before-unpark.
@@ -51,6 +54,16 @@ public final class SchedulerCore {
         SchedulerCore prev = installed;
         installed = next;
         return prev;
+    }
+
+    /**
+     * The installed scheduler, or null when none is installed. The
+     * nullable read (unlike {@link #current()}) is for cross-cutting
+     * updates — e.g. {@link Gomaxprocs#set} pushing a GOMAXPROCS change —
+     * that must degrade gracefully on scheduler-less runs.
+     */
+    public static SchedulerCore installed() {
+        return installed;
     }
 
     /**
@@ -80,9 +93,24 @@ public final class SchedulerCore {
         sc.pollCurrentThread();
     }
 
-    private final int cap;
     private final int requestedCap;
     private final int carrierParallelism;
+    /**
+     * Effective in-flight cap. Volatile: {@code runtime.GOMAXPROCS(n)}
+     * moves it at runtime ({@link #setGomaxprocs}); the drainer's admit
+     * loop reads it fresh, so an increase admits more goroutines
+     * immediately and a decrease drains down naturally (running
+     * goroutines are never preempted — gc parity).
+     */
+    private volatile int cap;
+    /**
+     * Monotonic maximum of {@link #cap} since construction. The drainer's
+     * hard invariant is checked against this, not {@link #cap}: after a
+     * GOMAXPROCS decrease, in-flight goroutines above the new cap are
+     * legitimate (draining), but in-flight above <em>any</em> cap ever
+     * installed is still a scheduler bug.
+     */
+    private final AtomicInteger maxCapEver = new AtomicInteger();
     private final long quantumNanos;
     private final Drainer drainer;
     private final graalgo.runtime.TimerHeap timerHeap;
@@ -107,6 +135,12 @@ public final class SchedulerCore {
         this.carrierParallelism = Math.max(1, Runtime.getRuntime().availableProcessors());
         // P2-D6: effective cap = min(GOMAXPROCS, carrier parallelism).
         this.cap = Math.min(requestedCap, carrierParallelism);
+        this.maxCapEver.set(this.cap);
+        // R-2: publish the requested GOMAXPROCS as the process-observable
+        // value. The launcher --gmp flag flows through this constructor,
+        // so the sync cannot be forgotten by a launcher (and every
+        // program in a shared JVM starts from its own flag value).
+        Gomaxprocs.setInitial(requestedCap);
         this.quantumNanos = quantumNanos;
         // P2-M7 (GG-0057): force-initialize the JFR event classes here on
         // the startup thread. Their <clinit> calls FlightRecorder.register,
@@ -117,9 +151,32 @@ public final class SchedulerCore {
         this.timerHeap = new graalgo.runtime.TimerHeap(this);
     }
 
-    /** Effective in-flight cap. */
+    /** Effective in-flight cap (volatile: moved by {@link #setGomaxprocs}). */
     public int cap() {
         return cap;
+    }
+
+    /**
+     * Moves the effective in-flight cap to {@code min(n, carrier
+     * parallelism)} — the {@code runtime.GOMAXPROCS(n)} write path
+     * (R-2). An increase takes effect on the drainer's next admit pass;
+     * a decrease drains down naturally (in-flight goroutines above the
+     * new cap are legitimate until they park or exit, and the drainer's
+     * invariant tolerates exactly that via {@link #maxCapEver}).
+     *
+     * @return the previous effective cap.
+     */
+    public int setGomaxprocs(int n) {
+        int c = Math.min(Math.max(1, n), carrierParallelism);
+        int prev = cap;
+        maxCapEver.accumulateAndGet(c, Math::max);
+        cap = c;
+        return prev;
+    }
+
+    /** Largest effective cap ever installed (drainer invariant bound). */
+    int maxCapEver() {
+        return maxCapEver.get();
     }
 
     public int requestedCap() {

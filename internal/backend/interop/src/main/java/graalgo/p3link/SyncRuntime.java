@@ -7,6 +7,7 @@ import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -68,24 +69,32 @@ import graalgo.values.GoString;
  *       {@code [0, GOMAXPROCS)}. On the JVM there is no preemption to
  *       disable, and a pin section contains no blocking calls, so the
  *       goroutine cannot migrate carriers mid-section; pin/unpin are
- *       therefore pure id assignment / no-op. The id is a per-thread
- *       dense number reduced mod the current GOMAXPROCS, so the
- *       {@code pid < GOMAXPROCS(0)} invariant that
- *       {@code sync.Pool.pinSlow} relies on when sizing its per-P array
- *       always holds. Once more than GOMAXPROCS threads exist in a run,
- *       two threads can hold congruent ids in pin sections
- *       <em>concurrently</em> and share one {@code poolLocal} shard's
- *       {@code private} slot without synchronization — a genuine Go data
- *       race (gc's per-P exclusivity does not hold here). On the JVM the
- *       consequence is bounded: aliased or dropped pooled objects (JVM
- *       reference reads/writes are atomic, so no tearing or memory
- *       unsafety; and {@code sync.Pool}'s contract permits dropping
- *       entries), never a crash — but the sharing is not race-safe, only
- *       rare in practice, because pin sections are a handful of
- *       non-blocking array accesses. The principled fix is an id checkout
- *       pool (GOMAXPROCS ids checked out per pin section, returned at
- *       unpin, with a per-thread stack for nested pins); that is
- *       follow-up work, not done here.</li>
+ *       therefore id checkout / checkin. The id is checked out of a pool
+ *       of exactly GOMAXPROCS ids (sized by the current GOMAXPROCS,
+ *       rebuilt when it changes), so the {@code pid < GOMAXPROCS(0)}
+ *       invariant that {@code sync.Pool.pinSlow} relies on when sizing
+ *       its per-P array always holds <em>and</em> two threads never hold
+ *       the same id concurrently — no two pin sections ever share one
+ *       {@code poolLocal} shard's {@code private} slot (R-4; the
+ *       mod-reduced ids this replaced could alias once more than
+ *       GOMAXPROCS threads existed, a genuine Go data race). Nested pin
+ *       sections on one thread reuse the outer id (gc pins to the same
+ *       P); the outermost unpin returns it to the pool. Pool exhaustion
+ *       is unreachable from scheduler goroutines (at most
+ *       {@code min(GOMAXPROCS, carriers)} are in flight) and fails fast
+ *       with a named cause otherwise.
+ *
+ *       <p>Residual (documented, bounded): if GOMAXPROCS changes while
+ *       pin sections are in flight, ids outstanding from the older pool
+ *       generation can collide numerically with ids freshly checked out
+ *       of the new generation until the old sections drain (pin sections
+ *       are microseconds, non-blocking). The worst case is a dropped or
+ *       duplicated pooled entry — which {@code sync.Pool}'s contract
+ *       explicitly permits ("any item stored in the Pool may be removed
+ *       automatically at any time"); gc itself accepts pool-content
+ *       disruption across GOMAXPROCS changes (its {@code pinSlow}
+ *       reallocates and loses the old array). No crash, no tearing (JVM
+ *       reference reads/writes are atomic).</li>
  *   <li><b>notifyList</b> ({@code sync.runtime_notifyListAdd} /
  *       {@code Wait} / {@code NotifyOne} / {@code NotifyAll} /
  *       {@code Check}, the ticket lock behind {@code sync.Cond}):
@@ -173,25 +182,142 @@ public final class SyncRuntime {
     // P pinning (sync/sync/atomic .runtime_procPin/.runtime_procUnpin).
     // ------------------------------------------------------------------
 
-    private static final AtomicInteger NEXT_PIN_ID = new AtomicInteger();
+    /**
+     * One generation of the pin-id checkout pool: exactly {@link #size}
+     * ids, each held by at most one pin section at a time (R-4). Ids are
+     * issued on demand (never preallocated — a huge GOMAXPROCS must not
+     * OOM the pool build); returned ids are recycled through the free
+     * deque first.
+     */
+    private static final class PinPool {
+        final int size;
+        private final ConcurrentLinkedDeque<Integer> free =
+                new ConcurrentLinkedDeque<>();
+        /** Next never-issued id. */
+        private final AtomicInteger nextId = new AtomicInteger();
 
-    /** Dense per-thread id source; reduced mod GOMAXPROCS at each pin. */
-    private static final ThreadLocal<Integer> PIN_ID =
-            ThreadLocal.withInitial(NEXT_PIN_ID::getAndIncrement);
+        PinPool(int size) {
+            this.size = size;
+        }
+
+        /** Checks out an id, or null when every id is held. */
+        Integer checkout() {
+            Integer id = free.pollFirst();
+            if (id != null) {
+                return id;
+            }
+            for (;;) {
+                int n = nextId.get();
+                if (n >= size) {
+                    return null;
+                }
+                if (nextId.compareAndSet(n, n + 1)) {
+                    return n;
+                }
+            }
+        }
+
+        /** Returns an id to the pool. */
+        void checkin(int id) {
+            free.addFirst(id);
+        }
+    }
+
+    /** Guards {@link #pinPool} (re)publication. */
+    private static final Object PIN_POOL_LOCK = new Object();
+
+    /**
+     * The current pin-id pool generation, sized by the current
+     * GOMAXPROCS. Rebuilt when GOMAXPROCS changes; checkouts outstanding
+     * against an older generation drain back into their own generation
+     * (each {@link PinState} remembers its pool), so an id is never
+     * handed out twice within a generation.
+     */
+    private static volatile PinPool pinPool;
+
+    /** Returns the pool generation for {@code gmp}, building it once. */
+    private static PinPool pinPoolFor(int gmp) {
+        PinPool p = pinPool;
+        if (p != null && p.size == gmp) {
+            return p;
+        }
+        synchronized (PIN_POOL_LOCK) {
+            p = pinPool;
+            if (p == null || p.size != gmp) {
+                p = new PinPool(gmp);
+                pinPool = p;
+            }
+            return p;
+        }
+    }
+
+    /**
+     * A thread's pin state: the checked-out id, the pool generation it
+     * came from, and the nesting depth (nested pin sections on one
+     * thread reuse the outer id — gc pins to the same P, preemption
+     * already disabled — so nesting never consumes extra ids).
+     */
+    private static final class PinState {
+        PinPool pool;
+        int id;
+        int depth;
+    }
+
+    private static final ThreadLocal<PinState> PIN_STATE =
+            ThreadLocal.withInitial(PinState::new);
 
     /**
      * gc's {@code procPin}: pin to the current P and return its id in
      * {@code [0, GOMAXPROCS)}. The JVM has no preemption to disable and a
-     * pin section cannot block, so this is pure id assignment.
+     * pin section cannot block, so this is pure id assignment — but the
+     * id is <em>checked out</em> of the pool, so two threads never hold
+     * the same id concurrently and never share one {@code poolLocal}
+     * shard's {@code private} slot (R-4: the mod-reduced ids this
+     * replaces could alias once more than GOMAXPROCS threads existed).
+     *
+     * <p>Fail-fast (never silent aliasing) when every id is checked out:
+     * from scheduler goroutines this is unreachable — at most
+     * {@code min(GOMAXPROCS, carriers)} goroutines are in flight, hence
+     * in pin sections — so exhaustion names a genuine bug (unbalanced
+     * pin/unpin, e.g. a checkout leaked by a panic inside a pin section,
+     * or pinning off the scheduler).
      */
     public static int procPin() {
+        PinState s = PIN_STATE.get();
+        if (s.depth > 0) {
+            s.depth++;
+            return s.id;
+        }
         int gmp = Math.max(1, GoMaxProcsNode.current());
-        return Math.floorMod(PIN_ID.get(), gmp);
+        PinPool pool = pinPoolFor(gmp);
+        Integer id = pool.checkout();
+        if (id == null) {
+            throw new FrontendException(
+                    "sync.runtime_procPin: pin-id pool exhausted (GOMAXPROCS=" + gmp
+                            + ", all ids checked out) — unbalanced procPin/procUnpin"
+                            + " or pinning off the scheduler");
+        }
+        s.pool = pool;
+        s.id = id;
+        s.depth = 1;
+        return id;
     }
 
-    /** gc's {@code procUnpin}: re-enable preemption — a no-op on the JVM. */
+    /**
+     * gc's {@code procUnpin}: re-enable preemption — on the JVM, return
+     * the thread's pin id to its pool generation (outermost unpin only;
+     * nested unpins just decrement the depth).
+     */
     public static void procUnpin() {
-        // Nothing to unpin: see procPin.
+        PinState s = PIN_STATE.get();
+        if (s.depth == 0) {
+            throw new FrontendException(
+                    "sync.runtime_procUnpin: unpin with no pin on this thread");
+        }
+        if (--s.depth == 0) {
+            s.pool.checkin(s.id);
+            s.pool = null;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -474,10 +600,12 @@ public final class SyncRuntime {
      * {@code Linknames.clear()}: the notifyList table is keyed by Go
      * struct object identity and the pool-cleanup func is compiled code
      * from the previous program build — neither may leak across builds
-     * in one JVM.
+     * in one JVM. The pin-id pool is rebuilt lazily on the next pin,
+     * sized by the then-current GOMAXPROCS.
      */
     public static void clear() {
         POOL_CLEANUP.set(null);
         NOTIFY.clear();
+        pinPool = null;
     }
 }
