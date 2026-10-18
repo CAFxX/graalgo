@@ -1232,7 +1232,7 @@ public final class NodeFactory {
         // P3-M7: a pointer to a named type is named "*"+qualifiedName
         // (like gc's %T), not structural. Two distinct named types with
         // identical structure must not share a descriptor, and
-        // *errors.errorString must be recognizable by name (Fmt's
+        // *errors.errorString must be recognizable by name (historical
         // errorString stand-in check). Pointers to unnamed types stay
         // structural.
         if ("pointer".equals(k)) {

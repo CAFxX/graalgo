@@ -318,7 +318,7 @@ public final class MainTest {
 
     public void testFmtInvalidUtf8Bytes() throws Exception {
         // M8 fuzzer find: Go strings are bytes. fmt of invalid UTF-8 must
-        // emit raw bytes (never U+FFFD). Pre-fix, Fmt decoded via
+        // emit raw bytes (never U+FFFD). Pre-fix, the formatter decoded via
         // new String(bytes, UTF_8) which sanitizes malformed input, so
         // Println("a\xff\xfe") printed "a\uFFFD\uFFFD".
         Path dir = Files.createTempDirectory("graalgo-main-test");

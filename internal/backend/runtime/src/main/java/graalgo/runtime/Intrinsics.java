@@ -31,8 +31,7 @@ import graalgo.values.GoTypeDescriptor;
  * (renders {@link GoroutineState} stacks).
  *
  * <p>Related frozen surfaces live in sibling classes:
- * {@link BuiltinPrint} (print/println), {@link Fmt} (fmt stub),
- * {@link Atomics}, {@link Timers}, {@link Scheduler}, {@link Netpoll},
+ * {@link BuiltinPrint} (print/println), {@link Atomics}, {@link Timers}, {@link Scheduler}, {@link Netpoll},
  * {@link ChanOps}; panic/recover in {@link Panic} (worker-F, WS F).
  */
 public final class Intrinsics {
