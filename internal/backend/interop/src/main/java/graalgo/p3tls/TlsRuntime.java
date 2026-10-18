@@ -78,6 +78,21 @@ public final class TlsRuntime {
     private static final ConcurrentHashMap<Long, byte[]> PENDING =
             new ConcurrentHashMap<>();
 
+    /**
+     * Last record-layer failure per engine, recorded by {@link #wrap} and
+     * {@link #unwrap}. Review finding 2026-10-18 (review14-tls-error):
+     * both methods used to swallow every exception and return null, which
+     * the Go side could not distinguish from a clean peer close
+     * (close_notify) — every TLS record error surfaced as io.EOF. Now a
+     * failure stashes a description here and the Go side retrieves it via
+     * {@link #lastError} to build a real TLS error. Entries are cleared
+     * when a new wrap/unwrap call starts (so a stale failure is never
+     * reported for a later successful call), consumed by lastError, and
+     * dropped by {@link #close}.
+     */
+    private static final ConcurrentHashMap<Long, String> LAST_ERRORS =
+            new ConcurrentHashMap<>();
+
     private static final int APP_BUF = 17 * 1024;
     private static final int NET_BUF = 17 * 1024;
 
@@ -186,6 +201,17 @@ public final class TlsRuntime {
         // []byte is byte[]-backed (D5).
         byte[] arr = b.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
+    }
+
+    /**
+     * One-line description of a record-layer failure for {@link #lastError}:
+     * the exception's simple class name plus its message (the message alone
+     * is often null or generic, e.g. for AEADBadTagException).
+     */
+    private static String describeFailure(Throwable e) {
+        String msg = e.getMessage();
+        String name = e.getClass().getSimpleName();
+        return (msg == null || msg.isEmpty()) ? name : name + ": " + msg;
     }
 
     /** Splits length-prefixed byte strings (uint32 BE length + data). */
@@ -450,13 +476,20 @@ public final class TlsRuntime {
 
     /**
      * Wraps application/handshake data into TLS records.
-     * graalgo.tls.wrap(handle, plaintext) -> ciphertext (may be empty).
+     * Returns ciphertext (may be empty); null on engine failure — the
+     * failure is recorded and retrievable via {@link #lastError} (the Go
+     * side must consult it instead of treating null as a clean close).
+     * graalgo.tls.wrap(handle, plaintext) -> ciphertext | null
      */
     public static Object wrap(Object handleArg, Object plaintextArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        long handle = num(handleArg);
+        SSLEngine engine = ENGINES.get(handle);
         if (engine == null) {
             return null;
         }
+        // A new call supersedes any previously recorded failure: a stale
+        // error must never be reported for this call's outcome.
+        LAST_ERRORS.remove(handle);
         try {
             byte[] plain = bytes(plaintextArg);
             ByteBuffer src = ByteBuffer.wrap(plain);
@@ -520,13 +553,19 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            LAST_ERRORS.put(handle, describeFailure(e));
             return null;
         }
     }
 
     /**
      * Unwraps TLS records into application data.
-     * Returns app bytes (may be empty); null if the peer closed or on error.
+     * Returns app bytes (may be empty); null if the peer closed cleanly
+     * (close_notify) or on engine failure. The two cases are NOT
+     * distinguished by the return value: on null the Go side must consult
+     * {@link #lastError} — a recorded failure means a real record-layer
+     * error (bad MAC, unexpected message, fatal alert, engine bug), while
+     * no recorded failure means a clean close.
      * graalgo.tls.unwrap(handle, netData) -> appdata | null
      */
     public static Object unwrap(Object handleArg, Object netDataArg) {
@@ -535,6 +574,9 @@ public final class TlsRuntime {
         if (engine == null) {
             return null;
         }
+        // A new call supersedes any previously recorded failure: a stale
+        // error must never be reported for this call's outcome.
+        LAST_ERRORS.remove(handle);
         try {
             byte[] netData = bytes(netDataArg);
             // Prepend any unconsumed bytes from the previous call: the
@@ -610,8 +652,25 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            LAST_ERRORS.put(handle, describeFailure(e));
             return null;
         }
+    }
+
+    /**
+     * Returns the failure recorded by the last {@link #wrap}/{@link #unwrap}
+     * call on this engine, or null if that call succeeded or closed cleanly.
+     * The recorded failure is consumed: each failure is reported exactly
+     * once. The Go side calls this whenever wrap/unwrap returns null to
+     * decide between a real TLS error and io.EOF.
+     * graalgo.tls.lastError(handle) -> bytes | null
+     */
+    public static Object lastError(Object handleArg) {
+        String msg = LAST_ERRORS.remove(num(handleArg));
+        if (msg == null) {
+            return null;
+        }
+        return toGoBytes(msg.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**
@@ -780,6 +839,7 @@ public final class TlsRuntime {
         long handle = num(handleArg);
         SSLEngine engine = ENGINES.remove(handle);
         PENDING.remove(handle);
+        LAST_ERRORS.remove(handle);
         if (engine != null) {
             try {
                 engine.closeInbound();

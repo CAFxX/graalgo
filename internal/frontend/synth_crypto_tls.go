@@ -710,6 +710,23 @@ func peerCertificatesTrap(engineHandle int64) []byte
 //go:linkname connectionStateTrap graalgo.tls.connectionState
 func connectionStateTrap(engineHandle int64) int64
 
+//go:linkname lastErrorTrap graalgo.tls.lastError
+func lastErrorTrap(engineHandle int64) []byte
+
+// tlsRecordError returns the TLS record-layer failure recorded by the most
+// recent wrap/unwrap trap call on this engine, or nil when that call
+// succeeded or closed cleanly. wrap/unwrap return nil both for a clean peer
+// close (close_notify) and for a record-layer failure (bad record MAC,
+// unexpected message, fatal alert, engine bug); the recorded failure is
+// what lets the Go side surface a real TLS error instead of io.EOF
+// (review14-tls-error).
+func tlsRecordError(engineHandle int64) error {
+	if msg := lastErrorTrap(engineHandle); msg != nil {
+		return fmt.Errorf("tls: record error: %s", msg)
+	}
+	return nil
+}
+
 // Handshake performs the TLS handshake, driving the Java SSLEngine state
 // machine: shuttling handshake records between the engine and the raw
 // net.Conn until the engine reports FINISHED. Afterwards (client side,
@@ -752,6 +769,15 @@ func (c *Conn) Handshake() error {
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
+			if out == nil {
+				// wrap returns nil only on engine failure (never for
+				// empty output): fail the handshake fast with the real
+				// record error instead of spinning on NEED_WRAP
+				// (review14-tls-error).
+				if err := tlsRecordError(c.engineHandle); err != nil {
+					return err
+				}
+			}
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
 			// the engine may have more (e.g. Finished) — wrap again
@@ -780,7 +806,11 @@ func (c *Conn) Handshake() error {
 			// first — do NOT block on a network read when there is
 			// already input waiting, or the handshake deadlocks.
 			if hasPendingTrap(c.engineHandle) != 0 {
-				_ = unwrapTrap(c.engineHandle, nil)
+				if unwrapTrap(c.engineHandle, nil) == nil {
+					if err := tlsRecordError(c.engineHandle); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			n, err := c.conn.Read(tmp)
@@ -790,7 +820,11 @@ func (c *Conn) Handshake() error {
 			if n == 0 {
 				continue
 			}
-			_ = unwrapTrap(c.engineHandle, tmp[:n])
+			if unwrapTrap(c.engineHandle, tmp[:n]) == nil {
+				if err := tlsRecordError(c.engineHandle); err != nil {
+					return err
+				}
+			}
 		case engineNeedTask:
 			runTasksTrap(c.engineHandle)
 		default:
@@ -884,6 +918,13 @@ func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
 		}
 		app := unwrapTrap(c.engineHandle, tmp[:n])
 		if app == nil {
+			// unwrap returns nil both for a clean peer close
+			// (close_notify) and for a record-layer failure. A real
+			// TLS error must surface as an error, never as io.EOF:
+			// callers treat EOF as graceful shutdown (review14-tls-error).
+			if err := tlsRecordError(c.engineHandle); err != nil {
+				return __tlsConnReadPair{0, err}
+			}
 			return __tlsConnReadPair{0, io.EOF}
 		}
 		if len(app) == 0 {
@@ -911,6 +952,12 @@ func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 	}
 	out := wrapTrap(c.engineHandle, b)
 	if out == nil {
+		// Keep the wrap path consistent with read: surface the recorded
+		// record-layer failure instead of a generic error
+		// (review14-tls-error).
+		if err := tlsRecordError(c.engineHandle); err != nil {
+			return __tlsConnWritePair{0, err}
+		}
 		return __tlsConnWritePair{0, errors.New("tls: wrap failed")}
 	}
 	if err := writeAll(c.conn, out); err != nil {
