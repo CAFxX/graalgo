@@ -943,7 +943,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues(files, info, pkg)
+	etaExpandMRFuncValues(files, info, pkg)
 
 	e := &exporter{
 		fset:    fset,
@@ -3064,15 +3064,6 @@ type exporter struct {
 	// statement. Maps a transformed *ast.FuncLit -> its pair info, so
 	// exportDefine/exportVarSpec can link the LHS variable(s).
 	funcLitMRInfo map[*ast.FuncLit]*userMRInfo
-	// General (real-x509 lane): maps Vars to their eta-expanded FuncLit
-	// initializers (from buildDiskPackage). Used by userMRInfoForVar to
-	// find the pair info for disk-package vars (e.g. path/filepath's
-	// lstat) where the link wasn't established during export.
-	etaVarLits map[*types.Var]*ast.FuncLit
-	// General (real-x509 lane): maps Vars to the multi-result Func they
-	// alias (e.g. path/filepath's lstat -> os.Lstat). Call sites through
-	// the Var desugar as the aliased Func via the table.
-	varFuncAliases map[*types.Var]*types.Func
 	// P4 (generic MR): Maps *instantiation -> pair info for generic
 	// instantiations of multi-result templates. The template itself is
 	// skipped (isTemplate), but each instantiation gets its own pair
