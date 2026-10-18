@@ -133,7 +133,7 @@ func __cmplxPolar(x complex128) cmplxPolarPair {
 // fail-fast body; 2-target call sites desugar to __cmplxPolar via the
 // m7MultiResultFuncs table.
 func Polar(x complex128) (r, θ float64) {
-	panic("math/cmplx: Polar: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/cmplx: Polar: unreachable (call sites desugar to __cmplxPolar")
 }
 
 // Copyright 2010 The Go Authors. All rights reserved.
