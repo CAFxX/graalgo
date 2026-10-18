@@ -19,8 +19,11 @@
 // (typeparam-exclusions.yaml, GG-0033). The scanner additionally detects
 // structural exclusions (multi-file .dir programs, cgo build constraints)
 // and reports them as exclude:<reason>; any such file missing from the
-// YAML is surfaced so the list can be completed — the coverage test then
-// enforces scan/YAML consistency, valid reason codes, and no stale entries.
+// YAML is surfaced so the list can be completed — the coverage test
+// (TypeparamDifferentialTest.testExclusionListCoversAllFiles in
+// internal/backend/truffle/src/test/java/graalgo/frontend/TypeparamDifferentialTest.java,
+// not the Go unit tests in this package) then enforces scan/YAML
+// consistency, valid reason codes, and no stale entries.
 package typeparam
 
 import (
@@ -238,8 +241,11 @@ type Comparison struct {
 	Reasons []string `json:"reasons"`
 }
 
-// WriteReportJSON writes {"report": {"summary": {...}, "comparisons": [...]}}.
-func WriteReportJSON(path string, comps []Comparison, skipped int) error {
+// WriteReportJSON writes {"summary": {...}, "comparisons": [...],
+// "xpass_programs": [...]}.
+// xpass names programs that passed unexpectedly in a --recheck-excluded run
+// (nil for a normal run); they are counted in summary["xpass"].
+func WriteReportJSON(path string, comps []Comparison, skipped int, xpass []string) error {
 	div := 0
 	for _, c := range comps {
 		if !c.Same {
@@ -251,8 +257,10 @@ func WriteReportJSON(path string, comps []Comparison, skipped int) error {
 			"total":    len(comps),
 			"diverged": div,
 			"skipped":  skipped,
+			"xpass":    len(xpass),
 		},
-		"comparisons": comps,
+		"comparisons":    comps,
+		"xpass_programs": xpass,
 	}
 	return writeJSON(path, doc)
 }

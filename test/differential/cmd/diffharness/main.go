@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -73,11 +74,18 @@ func usage() {
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
-  typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
+  typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-recheck-excluded]
   snapshot record -config PATH -corpus DIR -backend NAME -out FILE [-toolchain V] [-graalgo-commit SHA] [-runs N] [-jobs N]
   snapshot check  -config PATH -corpus DIR -backend NAME -snapshot FILE [-jobs N]
-  srctest scan -dir DIR -exclusions FILE -out PATH
-  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
+  srctest scan -dir DIR -exclusions FILE -out PATH [-verify-exclusions]
+  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC] [-recheck-excluded]
+
+  -recheck-excluded runs ONLY the YAML-excluded files (at their natural
+    scan class) and reports unexpected passes (XPASS) distinctly from
+    still-diverging files (XFAIL); exit status is non-zero on any XPASS.
+  -verify-exclusions (srctest scan) checks the YAML exclusion list against
+    the scan: no stale entries, valid reason codes, non-empty details, no
+    shadowed entries; exits non-zero on any problem.
 `)
 }
 
@@ -457,6 +465,7 @@ func cmdTypeparamRun(args []string) error {
 	refName := fs.String("ref", "gc-a", "reference backend name")
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
+	recheckExcluded := fs.Bool("recheck-excluded", false, "recheck mode: run only the YAML-excluded files and report unexpected passes (XPASS)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -478,6 +487,12 @@ func cmdTypeparamRun(args []string) error {
 	cfg, err := harness.LoadConfig(cfgPath)
 	if err != nil {
 		return err
+	}
+	if *recheckExcluded {
+		return runRecheck("typeparam",
+			func(noExcl map[string]typeparam.Exclusion) ([]typeparam.TFile, error) {
+				return typeparam.Scan(*dir, noExcl)
+			}, excl, *out, *jobs, *refName, *altName, cfg)
 	}
 	files, err := typeparam.Scan(*dir, excl)
 	if err != nil {
@@ -506,7 +521,7 @@ func cmdTypeparamRun(args []string) error {
 			skipped++
 		}
 	}
-	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+	if err := typeparam.WriteReportJSON(*out, comps, skipped, nil); err != nil {
 		return err
 	}
 	fmt.Printf("typeparam run: %d comparisons, %d diverged, %d excluded, report %s\n",
@@ -515,6 +530,109 @@ func cmdTypeparamRun(args []string) error {
 		return fmt.Errorf("%d divergences", div)
 	}
 	return nil
+}
+
+// runRecheck implements -recheck-excluded for the typeparam and srctest
+// runners: it runs ONLY the files on the YAML exclusion list (at their
+// natural scan class, with the YAML override lifted) and reports
+// unexpected passes (XPASS) distinctly from still-diverging files (XFAIL).
+//
+// Rationale: the exclusion list is write-once — nothing ever re-runs an
+// excluded file, so a fix that overtakes an exclusion rots silently.
+// Recheck mode is the staleness probe: XPASS means the differential now
+// agrees with gc on a file the list claims is broken, i.e. the entry may
+// be stale and needs re-triage. XFAIL (still divergent) is the expected
+// outcome and does not fail the run.
+//
+// Only YAML-excluded files are re-included. Structural exclusions (cgo,
+// non-main packages, multi-file .dir programs, stdlib imports, ...) stay
+// excluded: they are content-derived and deterministic at scan time, not
+// write-once list entries.
+//
+// Exit status is non-zero iff at least one file XPASSes.
+func runRecheck(adapter string, scan func(map[string]typeparam.Exclusion) ([]typeparam.TFile, error), excl map[string]typeparam.Exclusion, out string, jobs int, refName, altName string, cfg *harness.Config) error {
+	// Natural classes: the scan with no YAML applied.
+	plain, err := scan(nil)
+	if err != nil {
+		return err
+	}
+	natural := make(map[string]typeparam.TFile, len(plain))
+	for _, f := range plain {
+		natural[f.Name] = f
+	}
+	var toRun []typeparam.TFile
+	rechecked := make(map[string]typeparam.Exclusion)
+	var unrecheckable []string
+	names := make([]string, 0, len(excl))
+	for n := range excl {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		x := excl[name]
+		f, ok := natural[name]
+		if !ok {
+			unrecheckable = append(unrecheckable, name+" (stale entry: not in corpus)")
+			continue
+		}
+		if strings.HasPrefix(f.Class, "exclude") {
+			unrecheckable = append(unrecheckable, name+" (structurally excluded as "+f.Class+")")
+			continue
+		}
+		f.Detail += " [recheck: YAML-excluded as " + x.Reason + "]"
+		toRun = append(toRun, f)
+		rechecked[name] = x
+	}
+	comps, err := typeparam.Run(cfg, toRun, refName, altName, jobs)
+	if err != nil {
+		return err
+	}
+	xpass, xfail := splitRecheckResults(comps, rechecked)
+	xpassSet := make(map[string]bool, len(xpass))
+	for _, xp := range xpass {
+		xpassSet[xp] = true
+	}
+	for _, c := range comps {
+		status := "XFAIL   "
+		if xpassSet[c.Program] {
+			status = "XPASS   "
+		}
+		fmt.Printf("%s %s", status, c.Program)
+		for _, r := range c.Reasons {
+			fmt.Printf("\n           - %s", r)
+		}
+		fmt.Println()
+	}
+	if err := typeparam.WriteReportJSON(out, comps, len(unrecheckable), xpass); err != nil {
+		return err
+	}
+	fmt.Printf("%s recheck: %d rechecked, %d unexpected passes (XPASS), %d still divergent (XFAIL), %d unrecheckable, report %s\n",
+		adapter, len(toRun), len(xpass), len(xfail), len(unrecheckable), out)
+	for _, u := range unrecheckable {
+		fmt.Printf("  unrecheckable: %s\n", u)
+	}
+	if len(xpass) > 0 {
+		return fmt.Errorf("%d unexpected passes (XPASS): exclusion entries may be stale, re-triage needed: %s",
+			len(xpass), strings.Join(xpass, ", "))
+	}
+	return nil
+}
+
+// splitRecheckResults partitions recheck comparisons into unexpected passes
+// (XPASS: the differential agrees — the exclusion may be stale) and expected
+// failures (XFAIL: still diverges — the exclusion stands).
+func splitRecheckResults(comps []typeparam.Comparison, rechecked map[string]typeparam.Exclusion) (xpass, xfail []string) {
+	for _, c := range comps {
+		if _, ok := rechecked[c.Program]; !ok {
+			continue
+		}
+		if c.Same {
+			xpass = append(xpass, c.Program)
+		} else {
+			xfail = append(xfail, c.Program)
+		}
+	}
+	return xpass, xfail
 }
 
 // cmdSrctest implements the GOROOT/test differential adapter (conformance
@@ -538,11 +656,28 @@ func cmdSrctestScan(args []string) error {
 	dir := fs.String("dir", "", "GOROOT/test directory")
 	exclusions := fs.String("exclusions", "", "versioned exclusion YAML (GG-0033)")
 	out := fs.String("out", "", "scan JSON output path")
+	verifyExcl := fs.Bool("verify-exclusions", false, "verify the YAML exclusion list against the scan (no stale entries, valid reason codes, non-empty details, no shadowed entries); exits non-zero on any problem")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *dir == "" || *out == "" {
 		return fmt.Errorf("-dir and -out are required")
+	}
+	if *verifyExcl {
+		if *exclusions == "" {
+			return fmt.Errorf("-verify-exclusions requires -exclusions")
+		}
+		problems, err := srctest.VerifyExclusions(*dir, *exclusions)
+		if err != nil {
+			return err
+		}
+		if len(problems) > 0 {
+			for _, p := range problems {
+				fmt.Printf("exclusion problem: %s\n", p)
+			}
+			return fmt.Errorf("%d exclusion-list problems in %s", len(problems), *exclusions)
+		}
+		fmt.Printf("srctest exclusions verified: %s consistent with scan of %s\n", *exclusions, *dir)
 	}
 	var excl map[string]typeparam.Exclusion
 	if *exclusions != "" {
@@ -574,6 +709,7 @@ func cmdSrctestRun(args []string) error {
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
 	timeout := fs.Int("timeout", 0, "per-program timeout seconds (0 = config default)")
+	recheckExcluded := fs.Bool("recheck-excluded", false, "recheck mode: run only the YAML-excluded files and report unexpected passes (XPASS)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -597,6 +733,12 @@ func cmdSrctestRun(args []string) error {
 	}
 	if *timeout > 0 {
 		cfg.TimeoutSec = *timeout
+	}
+	if *recheckExcluded {
+		return runRecheck("srctest",
+			func(noExcl map[string]typeparam.Exclusion) ([]typeparam.TFile, error) {
+				return srctest.Scan(*dir, noExcl)
+			}, excl, *out, *jobs, *refName, *altName, cfg)
 	}
 	files, err := srctest.Scan(*dir, excl)
 	if err != nil {
@@ -625,7 +767,7 @@ func cmdSrctestRun(args []string) error {
 			skipped++
 		}
 	}
-	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+	if err := typeparam.WriteReportJSON(*out, comps, skipped, nil); err != nil {
 		return err
 	}
 	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",

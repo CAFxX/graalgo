@@ -109,6 +109,45 @@ Tamed, never silent (FEASIBILITY.md §7):
    backend) mechanically guards against flakiness: any divergence there
    fails validation (kill trigger K3).
 
+## Exclusion-list hygiene (GG-0033)
+
+The conformance adapters (`typeparam`, `srctest`) exclude files via
+versioned, reason-coded YAML lists
+([srctest-exclusions.yaml](srctest-exclusions.yaml),
+[typeparam-exclusions.yaml](typeparam-exclusions.yaml)). Those lists are
+write-once by default: nothing ever re-runs an excluded file, so a fix
+that overtakes an exclusion rots silently. Three mechanisms keep them
+honest:
+
+1. **Verify (every conformance run).** `diffharness srctest scan
+   --verify-exclusions` checks the YAML against a fresh scan: no stale
+   entries (a listed file the scan never sees), valid reason codes
+   (`backend-specific` / `unspecified-behavior` / `deferred-parity`),
+   non-empty human-readable details, and no shadowed entries (a listed
+   file the scanner already excludes structurally — redundant dead
+   weight). Any problem fails the run. Implemented in
+   [internal/srctest/verify.go](internal/srctest/verify.go); the typeparam
+   adapter's equivalent is the Java acceptance test
+   `TypeparamDifferentialTest.testExclusionListCoversAllFiles`.
+2. **Recheck (weekly cadence).** `diffharness {typeparam,srctest} run
+   --recheck-excluded` runs ONLY the YAML-excluded files at their natural
+   scan class and reports **XPASS** (unexpected pass — the differential now
+   agrees with gc, the entry may be stale) distinctly from **XFAIL** (still
+   divergent — the exclusion stands). Exit status is non-zero on any XPASS.
+   Structural exclusions (cgo, non-main, multi-file `.dir`, stdlib imports)
+   are NOT rechecked: they are content-derived and deterministic, not
+   write-once list entries.
+3. **Re-triage on XPASS.** An XPASS is a signal, not a verdict: re-triage
+   the entry — remove it if the fix stream overtook the exclusion (bump the
+   YAML `version:` with a dated note), keep it with an updated detail if the
+   pass is incidental. Never silently re-baseline a behavior change.
+
+`run_conformance.sh` runs the verify step on every invocation and the
+recheck step when `RECHECK_EXCLUDED=1`. Intended cadence: verify per
+conformance run, recheck weekly (scheduled job). The recheck must not run
+per-commit: it costs extra JVM batches and answers a different question
+than the differential gate.
+
 ## Oracle validation (red-green)
 
 `diffharness validate` does three things:
