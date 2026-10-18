@@ -216,3 +216,40 @@ func TestDirWithin(t *testing.T) {
 		t.Errorf("dirWithin(sub, link) = false, want true (symlink resolution)")
 	}
 }
+
+// TestImportAdmittedRejectsReflectM7 pins RV18-P1-09b: the private
+// "reflect_m7" M7-helper registration in syntheticSources is never
+// admitted as a user import — the gate rejects it even though the
+// synthetic source exists, and the end-to-end export fails with the WS G
+// scope error rather than handing user code the synthetic reflect
+// package.
+func TestImportAdmittedRejectsReflectM7(t *testing.T) {
+	userDir := t.TempDir()
+	if importAdmitted("reflect_m7", userDir) {
+		t.Errorf("importAdmitted(%q, %q) = true, want false", "reflect_m7", userDir)
+	}
+	// needsOverlayImporter is the same predicate's other view: the
+	// importer must resolve exactly what the gate admits.
+	if needsOverlayImporter("reflect_m7", userDir) {
+		t.Errorf("needsOverlayImporter(%q, %q) = true, want false", "reflect_m7", userDir)
+	}
+	// The M7 machinery itself must be unaffected: it resolves the helpers
+	// via getSyntheticPackage directly, bypassing the gate.
+	if sp := getSyntheticPackage("reflect_m7"); sp == nil || sp.pkg == nil {
+		t.Errorf("getSyntheticPackage(%q) = nil, M7 helper resolution broken", "reflect_m7")
+	}
+}
+
+// TestExportFileRejectsReflectM7Import pins the end-to-end behavior: user
+// code importing "reflect_m7" fails export with the import-overlay scope
+// error.
+func TestExportFileRejectsReflectM7Import(t *testing.T) {
+	src := "package main\n\nimport _ \"reflect_m7\"\n\nfunc main() {}\n"
+	_, err := ExportFile(writeSyncProg(t, src))
+	if err == nil {
+		t.Fatalf("ExportFile with import \"reflect_m7\": expected scope error, got nil")
+	}
+	if !strings.Contains(err.Error(), "imports are not supported") {
+		t.Errorf("ExportFile with import \"reflect_m7\": error %q is not the import-overlay scope error", err.Error())
+	}
+}

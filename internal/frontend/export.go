@@ -795,7 +795,9 @@ func internalImportVisible(importPath, importingDir string) bool {
 //     syntheticSources): runtime, fmt, unsafe.
 //  2. Any package with a synthetic source (syntheticSources map) —
 //     including future additions, no allow-list update needed — except
-//     internal packages, which follow Go's internal-visibility rule.
+//     internal packages, which follow Go's internal-visibility rule,
+//     and the private "reflect_m7" M7-helper registration (RV18-P1-09b),
+//     which is never a user import.
 //  3. Internal packages (any path with an "internal" element) visible
 //     from the importing package under Go's internal-visibility rule:
 //     e.g. the `graalgo test` driver for a stdlib package compiles as
@@ -805,6 +807,15 @@ func internalImportVisible(importPath, importingDir string) bool {
 //
 // Every other import is a scope error.
 func importAdmitted(path, importingDir string) bool {
+	// RV18-P1-09b: "reflect_m7" is a private M7-helper registration in
+	// syntheticSources (synth_machinery.go), not a real import path. It
+	// must never be admitted as a user import: the M7 desugaring resolves
+	// it via getSyntheticPackage directly, bypassing the import gate.
+	// Rejecting here (rather than documenting it) keeps the fake path
+	// unreachable from user code.
+	if path == "reflect_m7" {
+		return false
+	}
 	// The dedicated-constructor packages (sync and sync/atomic now resolve from disk).
 	if isDedicatedSyntheticStub(path) {
 		return true
@@ -847,6 +858,17 @@ func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 }
 
+// asGofrontendError converts a recovered panic value into a clean
+// gofrontend: error. Panics raised by buildSyntheticPackage already carry
+// the "gofrontend:" prefix; any other panic is reported as an internal
+// error — still a clean error, never a stack trace. (RV18-P1-09c.)
+func asGofrontendError(r any) error {
+	if msg := fmt.Sprint(r); strings.HasPrefix(msg, "gofrontend:") {
+		return errors.New(msg)
+	}
+	return fmt.Errorf("gofrontend: internal error: %v", r)
+}
+
 // ExportFiles type-checks the Go source files at paths — all files of one
 // package — and returns the frontend/v1 JSON document.
 //
@@ -858,7 +880,17 @@ func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 // testPackageDir is the `graalgo test` driver override
 // (testPackageDirFlag): the package dir whose internal-visibility
 // privileges the import gate applies. Empty for ordinary compiles.
-func ExportFiles(paths []string, testPackageDir string) (string, error) {
+func ExportFiles(paths []string, testPackageDir string) (out string, err error) {
+	// RV18-P1-09c: synthetic-package build failures (parse/type errors in
+	// generated sources) panic in buildSyntheticPackage, reached on the
+	// normal export path via overlayImporter.Import. Recover at this
+	// boundary and report a clean gofrontend: error instead of a raw Go
+	// stack trace (--check-synthetic mode already recovers in main.go).
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = "", asGofrontendError(r)
+		}
+	}()
 	if len(paths) == 0 {
 		return "", fmt.Errorf("gofrontend: no input files")
 	}
@@ -2492,11 +2524,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		doc.Objects = []ObjectEnt{}
 	}
 
-	out, err := json.MarshalIndent(doc, "", "  ")
+	jsonBytes, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("gofrontend: JSON encoding failed: %v", err)
 	}
-	return string(out), nil
+	return string(jsonBytes), nil
 }
 
 func scopeErrorf(format string, args ...any) error {
@@ -6830,10 +6862,20 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
+// isPackageQualifier reports whether ident resolves (via info.Uses) to a
+// *types.PkgName — i.e. it is a package qualifier in a selector
+// expression. Alias-invariant: the local import spelling is irrelevant;
+// only the type-checker resolution matters. (RV18-P1-09a.)
+func isPackageQualifier(info *types.Info, ident *ast.Ident) bool {
+	_, ok := info.Uses[ident].(*types.PkgName)
+	return ok
+}
+
 // isGoschedCall reports whether x is a call to runtime.Gosched (resolved
 // against the synthetic runtime overlay package, not merely named
 // "runtime" — the exportCall interception's package check, mirrored here
-// for the statement-position interceptions below).
+// for the statement-position interceptions below). Alias-invariant:
+// `import rt "runtime"` is recognized (RV18-P1-09a).
 func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 	c, ok := unparen(x).(*ast.CallExpr)
 	if !ok {
@@ -6844,11 +6886,11 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if !ok || !isPackageQualifier(info, pkgIdent) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8460,11 +8502,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
-		// local named runtime is not. The structural obj.Pkg().Name()
-		// check below stays as the second gate.
+		// local named runtime is not. The structural obj.Pkg().Path()
+		// check below stays as the second gate (RV18-P1-09a: path, not
+		// name — a package merely *named* runtime at another import path
+		// must not match).
 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
 				}
 				if len(c.Args) != 0 {
@@ -8484,8 +8528,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+		// RV18-P1-09a: alias-invariant gate — the left side must resolve
+		// to a package qualifier (any local import spelling) and the
+		// selected object must be declared in the package whose import
+		// path is "runtime". `import rt "runtime"` hits the same
+		// intrinsics (R2-P2-9 Goexit precedent).
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && isPackageQualifier(e.info, pkgIdent) {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
