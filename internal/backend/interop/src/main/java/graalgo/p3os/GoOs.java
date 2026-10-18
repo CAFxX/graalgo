@@ -666,6 +666,10 @@ public final class GoOs {
             // waiters (with pollErrClosing) and deregister the channel.
             // Idempotent: the normal FD.Close path already unblocked.
             graalgo.p3net.GoNetpoll.evictForClose(cookie);
+            // P1-31: evict the per-socket control state too, or the
+            // GoNet STATES map grows without bound on long-running
+            // accept loops.
+            graalgo.p3net.GoNet.evictSocket(cookie);
         }
         try {
             handle.close();
