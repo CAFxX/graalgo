@@ -398,7 +398,7 @@ func (di dirInfo) Name() string       { return di.fileInfo.Name() }
 func (di dirInfo) IsDir() bool        { return di.fileInfo.IsDir() }
 func (di dirInfo) Type() FileMode     { return di.fileInfo.Mode().Type() }
 func (di dirInfo) Info() (FileInfo, error) {
-	panic("fs.dirInfo.Info: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.dirInfo.Info: no Appendix-M table entry (fail-fast; needs helper + desugar coverage)")
 }
 
 func __dirInfoInfo(di dirInfo) fsStatPair { return fsStatPair{di.fileInfo, nil} }
@@ -482,11 +482,11 @@ func FormatDirEntry(dir DirEntry) string {
 // contents. If fsys implements ReadFileFS, ReadFile calls fsys.ReadFile;
 // otherwise it Opens the file and uses Read and Close.
 func ReadFile(fsys FS, name string) ([]byte, error) {
-	panic("fs.ReadFile: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.ReadFile: no Appendix-M table entry (fail-fast; needs __fsReadFile helper + desugar coverage)")
 }
 
 func __fsReadFile(fsys FS, name string) fsReadFilePair {
-	panic("fs.__fsReadFile: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsReadFile: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 // ---------------------------------------------------------------------------
@@ -497,11 +497,11 @@ func __fsReadFile(fsys FS, name string) fsReadFilePair {
 // entries sorted by filename. If fsys implements ReadDirFS, ReadDir calls
 // fsys.ReadDir; otherwise it Opens the directory and uses ReadDirFile.
 func ReadDir(fsys FS, name string) ([]DirEntry, error) {
-	panic("fs.ReadDir: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.ReadDir: no Appendix-M table entry (fail-fast; needs __fsReadDir helper + desugar coverage)")
 }
 
 func __fsReadDir(fsys FS, name string) fsReadDirPair {
-	panic("fs.__fsReadDir: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsReadDir: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 // __sortFsDirEntries sorts entries by filename (insertion sort; the sort
@@ -522,11 +522,11 @@ func __sortFsDirEntries(de []DirEntry) {
 // If fsys implements StatFS, Stat calls fsys.Stat; otherwise it opens the
 // file and stats it.
 func Stat(fsys FS, name string) (FileInfo, error) {
-	panic("fs.Stat: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.Stat: no Appendix-M table entry (fail-fast; needs __fsStat helper + desugar coverage)")
 }
 
 func __fsStat(fsys FS, name string) fsStatPair {
-	panic("fs.__fsStat: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsStat: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +881,7 @@ func fsCleanGlobPath(path string) string {
 // Glob ignores file system errors such as I/O errors reading directories;
 // the only possible returned error reports a malformed pattern.
 func Glob(fsys FS, pattern string) ([]string, error) {
-	panic("fs.Glob: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.Glob: no Appendix-M table entry (fail-fast; needs __fsGlob helper + desugar coverage)")
 }
 
 func __fsGlob(fsys FS, pattern string) fsGlobPair {
@@ -889,7 +889,7 @@ func __fsGlob(fsys FS, pattern string) fsGlobPair {
 }
 
 func __fsGlobWithLimit(fsys FS, pattern string, depth int) fsGlobPair {
-	panic("fs.__fsGlobWithLimit: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsGlobWithLimit: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 func __fsGlobDir(fsys FS, dir, pattern string, matches []string) fsGlobPair {
@@ -920,7 +920,7 @@ func __fsGlobDir(fsys FS, dir, pattern string, matches []string) fsGlobPair {
 // directory in the tree, including root. All errors that arise visiting
 // files and directories are filtered by fn.
 func WalkDir(fsys FS, root string, fn WalkDirFunc) error {
-	panic("fs.WalkDir: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.WalkDir: not implemented (needs 2-result interface dispatch in body; mrIfaceMethod desugar untested for fs)")
 }
 
 func __fsWalkDir(fsys FS, name string, d DirEntry, walkDirFn WalkDirFunc) error {
@@ -963,11 +963,11 @@ func __fsWalkDir(fsys FS, name string, d DirEntry, walkDirFn WalkDirFunc) error 
 // ".", Sub returns fsys unchanged. If fsys implements SubFS, Sub calls
 // fsys.Sub.
 func Sub(fsys FS, dir string) (FS, error) {
-	panic("fs.Sub: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.Sub: no Appendix-M table entry (fail-fast; needs __fsSub helper + desugar coverage)")
 }
 
 func __fsSub(fsys FS, dir string) fsSubPair {
-	panic("fs.__fsSub: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsSub: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 type subFS struct {
@@ -1012,43 +1012,43 @@ func __subFSFixErr(f *subFS, err error) error {
 }
 
 func (f *subFS) Open(name string) (File, error) {
-	panic("fs.subFS.Open: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.subFS.Open: no Appendix-M table entry (fail-fast; needs helper + desugar coverage)")
 }
 
 func __subFSOpen(f *subFS, name string) fsOpenPair {
-	panic("fs.__subFSOpen: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__subFSOpen: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 func (f *subFS) ReadDir(name string) ([]DirEntry, error) {
-	panic("fs.subFS.ReadDir: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.subFS.ReadDir: no Appendix-M table entry (fail-fast; needs helper + desugar coverage)")
 }
 
 func __subFSReadDir(f *subFS, name string) fsReadDirPair {
-	panic("fs.__subFSReadDir: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__subFSReadDir: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 func (f *subFS) ReadFile(name string) ([]byte, error) {
-	panic("fs.subFS.ReadFile: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.subFS.ReadFile: no Appendix-M table entry (fail-fast; needs helper + desugar coverage)")
 }
 
 func __subFSReadFile(f *subFS, name string) fsReadFilePair {
-	panic("fs.__subFSReadFile: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__subFSReadFile: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 func (f *subFS) Glob(pattern string) ([]string, error) {
-	panic("fs.subFS.Glob: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.subFS.Glob: no Appendix-M table entry (fail-fast; needs helper + desugar coverage)")
 }
 
 func __subFSGlob(f *subFS, pattern string) fsGlobPair {
-	panic("fs.__subFSGlob: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__subFSGlob: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 func (f *subFS) Sub(dir string) (FS, error) {
-	panic("fs.subFS.Sub: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.subFS.Sub: no Appendix-M table entry (fail-fast; needs helper + desugar coverage)")
 }
 
 func __subFSSub(f *subFS, dir string) fsSubPair {
-	panic("fs.__subFSSub: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__subFSSub: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,11 +1085,11 @@ type fsLstatPair struct {
 // (Appendix M: 2-target call sites desugar to __fsReadLink; every other
 // position fails fast. Body never runs.)
 func ReadLink(fsys FS, name string) (string, error) {
-	panic("fs.ReadLink: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.ReadLink: no Appendix-M table entry (fail-fast; needs __fsReadLink helper + desugar coverage)")
 }
 
 func __fsReadLink(fsys FS, name string) fsReadLinkPair {
-	panic("fs.__fsReadLink: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsReadLink: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 
 // Lstat returns a FileInfo describing the named file. If the file is a
@@ -1098,10 +1098,10 @@ func __fsReadLink(fsys FS, name string) fsReadLinkPair {
 // (Appendix M: 2-target call sites desugar to __fsLstat; every other
 // position fails fast. Body never runs.)
 func Lstat(fsys FS, name string) (FileInfo, error) {
-	panic("fs.Lstat: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("fs.Lstat: no Appendix-M table entry (fail-fast; needs __fsLstat helper + desugar coverage)")
 }
 
 func __fsLstat(fsys FS, name string) fsLstatPair {
-	panic("fs.__fsLstat: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+	panic("fs.__fsLstat: not implemented (helper body needs 2-result interface dispatch; mrIfaceMethod desugar untested for fs helpers)")
 }
 `
