@@ -609,7 +609,7 @@ __mrtmp12 := __tarsplitUSTARPath(s); if _, _, ok := __mrtmp12.prefix, __mrtmp12.
 }
 
 func (h Header) allowedFormats() (format Format, paxHdrs map[string]string, err error) {
-	panic("archive/tar.allowedFormats: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.allowedFormats: unreachable (call sites desugar to __tarHeaderallowedFormats")
 }
 
 
@@ -821,7 +821,7 @@ func __tarFileInfoHeader(fi fs.FileInfo, link string) __tarFileInfoHeaderPair {
 }
 
 func FileInfoHeader(fi fs.FileInfo, link string) (*Header, error) {
-	panic("archive/tar.FileInfoHeader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.FileInfoHeader: unreachable (call sites desugar to __tarFileInfoHeader")
 }
 
 
@@ -1120,7 +1120,7 @@ func __tarblockcomputeChecksum(b *block) __tarblockcomputeChecksumPair {
 }
 
 func (b *block) computeChecksum() (unsigned, signed int64) {
-	panic("archive/tar.computeChecksum: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.computeChecksum: unreachable (call sites desugar to __tarblockcomputeChecksum")
 }
 
 
@@ -1281,7 +1281,7 @@ __mrtmp28 := __tarReadernext(tr); hdr, err := __mrtmp28.f0, __mrtmp28.f1
 }
 
 func (tr *Reader) Next() (*Header, error) {
-	panic("archive/tar.Next: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Next: unreachable (call sites desugar to __tarReaderNext")
 }
 
 
@@ -1399,7 +1399,7 @@ __mrtmp8 := __tarreadSpecialFile(tr); realname, err := __mrtmp8.f0, __mrtmp8.f1
 }
 
 func (tr *Reader) next() (*Header, error) {
-	panic("archive/tar.next: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.next: unreachable (call sites desugar to __tarReadernext")
 }
 
 
@@ -1500,7 +1500,7 @@ func __tarReaderreadGNUSparsePAXHeaders(tr *Reader, hdr *Header) __tarReaderread
 }
 
 func (tr *Reader) readGNUSparsePAXHeaders(hdr *Header) (sparseDatas, error) {
-	panic("archive/tar.readGNUSparsePAXHeaders: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readGNUSparsePAXHeaders: unreachable (call sites desugar to __tarReaderreadGNUSparsePAXHeaders")
 }
 
 
@@ -1601,7 +1601,7 @@ __mrtmp14 := __tarparsePAXRecord(sbuf); key, value, residual, err := __mrtmp14.k
 }
 
 func parsePAX(r io.Reader) (map[string]string, error) {
-	panic("archive/tar.parsePAX: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.parsePAX: unreachable (call sites desugar to __tarparsePAX")
 }
 
 
@@ -1736,7 +1736,7 @@ func __tarReaderreadHeader(tr *Reader) __tarReaderreadHeaderPair {
 }
 
 func (tr *Reader) readHeader() (*Header, *block, error) {
-	panic("archive/tar.readHeader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readHeader: unreachable (call sites desugar to __tarReaderreadHeader")
 }
 
 
@@ -1805,7 +1805,7 @@ __mrtmp15 := __tarmustReadFull(tr.r, blk[:]); if _, err := __mrtmp15.f0, __mrtmp
 }
 
 func (tr *Reader) readOldGNUSparseMap(hdr *Header, blk *block) (sparseDatas, error) {
-	panic("archive/tar.readOldGNUSparseMap: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readOldGNUSparseMap: unreachable (call sites desugar to __tarReaderreadOldGNUSparseMap")
 }
 
 
@@ -1895,7 +1895,7 @@ __mrtmp4 := __tarappendSparseEntry(spd, sparseEntry{Offset: offset, Length: leng
 }
 
 func readGNUSparseMap1x0(r io.Reader) (sparseDatas, error) {
-	panic("archive/tar.readGNUSparseMap1x0: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readGNUSparseMap1x0: unreachable (call sites desugar to __tarreadGNUSparseMap1x0")
 }
 
 
@@ -1945,7 +1945,7 @@ __mrtmp5 := __tarappendSparseEntry(spd, sparseEntry{Offset: offset, Length: leng
 }
 
 func readGNUSparseMap0x1(paxHdrs map[string]string) (sparseDatas, error) {
-	panic("archive/tar.readGNUSparseMap0x1: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readGNUSparseMap0x1: unreachable (call sites desugar to __tarreadGNUSparseMap0x1")
 }
 
 
@@ -1964,7 +1964,7 @@ func __tarappendSparseEntry(spd sparseDatas, ent sparseEntry) __tarappendSparseE
 }
 
 func appendSparseEntry(spd sparseDatas, ent sparseEntry) (sparseDatas, error) {
-	panic("archive/tar.appendSparseEntry: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.appendSparseEntry: unreachable (call sites desugar to __tarappendSparseEntry")
 }
 
 
@@ -1997,7 +1997,7 @@ func __tarReaderRead(tr *Reader, b []byte) __tarReaderReadPair {
 }
 
 func (tr *Reader) Read(b []byte) (int, error) {
-	panic("archive/tar.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Read: unreachable (call sites desugar to __tarReaderRead")
 }
 
 
@@ -2030,7 +2030,7 @@ func __tarReaderwriteTo(tr *Reader, w io.Writer) __tarReaderwriteToPair {
 }
 
 func (tr *Reader) writeTo(w io.Writer) (int64, error) {
-	panic("archive/tar.writeTo: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.writeTo: unreachable (call sites desugar to __tarReaderwriteTo")
 }
 
 
@@ -2068,7 +2068,7 @@ func __tarregFileReaderRead(fr *regFileReader, b []byte) __tarregFileReaderReadP
 }
 
 func (fr *regFileReader) Read(b []byte) (n int, err error) {
-	panic("archive/tar.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Read: unreachable (call sites desugar to __tarregFileReaderRead")
 }
 
 
@@ -2084,7 +2084,7 @@ func __tarregFileReaderWriteTo(fr *regFileReader, w io.Writer) __tarregFileReade
 }
 
 func (fr *regFileReader) WriteTo(w io.Writer) (int64, error) {
-	panic("archive/tar.WriteTo: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.WriteTo: unreachable (call sites desugar to __tarregFileReaderWriteTo")
 }
 
 
@@ -2159,7 +2159,7 @@ __mrtmp23 := __tartryReadFull(zeroReader{}, bf); nf, err = __mrtmp23.n, __mrtmp2
 }
 
 func (sr *sparseFileReader) Read(b []byte) (n int, err error) {
-	panic("archive/tar.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Read: unreachable (call sites desugar to __tarsparseFileReaderRead")
 }
 
 
@@ -2226,7 +2226,7 @@ func __tarsparseFileReaderWriteTo(sr *sparseFileReader, w io.Writer) __tarsparse
 }
 
 func (sr *sparseFileReader) WriteTo(w io.Writer) (n int64, err error) {
-	panic("archive/tar.WriteTo: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.WriteTo: unreachable (call sites desugar to __tarsparseFileReaderWriteTo")
 }
 
 
@@ -2266,7 +2266,7 @@ __mrtmp24 := __tartryReadFull(r, b); n, err := __mrtmp24.n, __mrtmp24.err
 }
 
 func mustReadFull(r io.Reader, b []byte) (int, error) {
-	panic("archive/tar.mustReadFull: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.mustReadFull: unreachable (call sites desugar to __tarmustReadFull")
 }
 
 
@@ -2294,7 +2294,7 @@ func __tartryReadFull(r io.Reader, b []byte) __tartryReadFullPair {
 }
 
 func tryReadFull(r io.Reader, b []byte) (n int, err error) {
-	panic("archive/tar.tryReadFull: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.tryReadFull: unreachable (call sites desugar to __tartryReadFull")
 }
 
 
@@ -2316,7 +2316,7 @@ func __tarreadSpecialFile(r io.Reader) __tarreadSpecialFilePair {
 }
 
 func readSpecialFile(r io.Reader) ([]byte, error) {
-	panic("archive/tar.readSpecialFile: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readSpecialFile: unreachable (call sites desugar to __tarreadSpecialFile")
 }
 
 
@@ -2841,7 +2841,7 @@ func __tarsplitUSTARPath(name string) __tarsplitUSTARPathPair {
 }
 
 func splitUSTARPath(name string) (prefix, suffix string, ok bool) {
-	panic("archive/tar.splitUSTARPath: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.splitUSTARPath: unreachable (call sites desugar to __tarsplitUSTARPath")
 }
 
 
@@ -2871,7 +2871,7 @@ func __tarWriterWrite(tw *Writer, b []byte) __tarWriterWritePair {
 }
 
 func (tw *Writer) Write(b []byte) (int, error) {
-	panic("archive/tar.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Write: unreachable (call sites desugar to __tarWriterWrite")
 }
 
 
@@ -2904,7 +2904,7 @@ func __tarWriterreadFrom(tw *Writer, r io.Reader) __tarWriterreadFromPair {
 }
 
 func (tw *Writer) readFrom(r io.Reader) (int64, error) {
-	panic("archive/tar.readFrom: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.readFrom: unreachable (call sites desugar to __tarWriterreadFrom")
 }
 
 
@@ -2967,7 +2967,7 @@ func __tarregFileWriterWrite(fw *regFileWriter, b []byte) __tarregFileWriterWrit
 }
 
 func (fw *regFileWriter) Write(b []byte) (n int, err error) {
-	panic("archive/tar.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Write: unreachable (call sites desugar to __tarregFileWriterWrite")
 }
 
 
@@ -2983,7 +2983,7 @@ func __tarregFileWriterReadFrom(fw *regFileWriter, r io.Reader) __tarregFileWrit
 }
 
 func (fw *regFileWriter) ReadFrom(r io.Reader) (int64, error) {
-	panic("archive/tar.ReadFrom: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.ReadFrom: unreachable (call sites desugar to __tarregFileWriterReadFrom")
 }
 
 
@@ -3058,7 +3058,7 @@ func __tarsparseFileWriterWrite(sw *sparseFileWriter, b []byte) __tarsparseFileW
 }
 
 func (sw *sparseFileWriter) Write(b []byte) (n int, err error) {
-	panic("archive/tar.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.Write: unreachable (call sites desugar to __tarsparseFileWriterWrite")
 }
 
 
@@ -3127,7 +3127,7 @@ __mrtmp17 := __tarmustReadFull(rs, []byte{0}); _, err = __mrtmp17.f0, __mrtmp17.
 }
 
 func (sw *sparseFileWriter) ReadFrom(r io.Reader) (n int64, err error) {
-	panic("archive/tar.ReadFrom: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.ReadFrom: unreachable (call sites desugar to __tarsparseFileWriterReadFrom")
 }
 
 
@@ -3422,7 +3422,7 @@ func __tarparsePAXTime(s string) __tarparsePAXTimePair {
 }
 
 func parsePAXTime(s string) (time.Time, error) {
-	panic("archive/tar.parsePAXTime: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.parsePAXTime: unreachable (call sites desugar to __tarparsePAXTime")
 }
 
 
@@ -3496,7 +3496,7 @@ func __tarparsePAXRecord(s string) __tarparsePAXRecordPair {
 }
 
 func parsePAXRecord(s string) (k, v, r string, err error) {
-	panic("archive/tar.parsePAXRecord: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.parsePAXRecord: unreachable (call sites desugar to __tarparsePAXRecord")
 }
 
 
@@ -3528,7 +3528,7 @@ func __tarformatPAXRecord(k string, v string) __tarformatPAXRecordPair {
 }
 
 func formatPAXRecord(k, v string) (string, error) {
-	panic("archive/tar.formatPAXRecord: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/tar.formatPAXRecord: unreachable (call sites desugar to __tarformatPAXRecord")
 }
 
 
