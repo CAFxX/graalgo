@@ -18,11 +18,14 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# tools/fuzz-soak layout: harness/triage.py -> tools/fuzz-soak.
+FUZZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def diff_result(gofile, workdir):
+    # diff_one.sh expects the workdir to exist (it writes gc_build.err etc.
+    # into it); without this every call mis-reports GC_BUILD_FAIL.
+    os.makedirs(workdir, exist_ok=True)
     r = subprocess.run(
         ["bash", f"{FUZZ}/harness/diff_one.sh", gofile, workdir, "1"],
         capture_output=True, text=True, timeout=300)
@@ -117,7 +120,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--prog", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workdir", default="/tmp/triage")
+    # /tmp is a small shared tmpfs that is routinely full (the repo's
+    # standing pattern keeps all temp dirs on persistent disk): default the
+    # workdir under FUZZ_TMPDIR (exported by run_soak.sh as $OUT/tmp).
+    ap.add_argument("--workdir",
+                    default=os.environ.get("FUZZ_TMPDIR", "/tmp/triage"))
     args = ap.parse_args()
     os.makedirs(args.workdir, exist_ok=True)
     ok = minimize(args.prog, args.out, args.workdir)

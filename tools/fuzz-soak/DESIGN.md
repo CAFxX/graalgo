@@ -60,13 +60,20 @@ control flow, and a final deterministic state dump via `fmt.Println`.
 `diff_one.sh <go-file>`: 
 1. `go build` (gc 1.27.1) → gc binary; build failure = generator bug.
 2. Run gc binary, timeout 10s → stdout/exit.
-3. Run `graalgo.p3sync.launcher.P3SyncMain --gmp=1 -- <file>`,
-   timeout 120s (JVM startup dominates) → stdout/stderr/exit.
+3. Run the product launcher wrapper `internal/backend/graalgo-sync-run
+   --gmp=1 <file>` (`graalgo.p3sync.launcher.P3SyncMain`; classpath
+   assembled inside the wrapper — the same backend the per-push snapshot
+   gate records against, per the root Makefile), timeout 120s (JVM startup
+   dominates) → stdout/stderr/exit.
 4. Emit a JSON result record.
 
-`run_batch.py`: builds the Java modules once, generates N programs,
-runs `diff_one.sh` in parallel (`-P 4` default, respects load-shed
-backoff), classifies, dedups, writes `results.jsonl` + summary.
+`run_batch.py`: builds the backend once (`make build` at the repo root:
+truffle + runtime + interop Java modules; ensures `internal/frontend/gofrontend`
+exists via `internal/frontend/build.sh build`), smoke-checks the toolchain
+(`graalgo-run --check` on a hello program — a broken backend fails the batch
+fast instead of emitting N bogus findings), generates N programs,
+runs `diff_one.sh` in parallel (`--jobs 4` default), classifies, dedups,
+writes `results.jsonl` + summary.
 
 Classification:
 | Result | Meaning |
@@ -136,7 +143,7 @@ submits.
 ## 6. Files
 
 ```
-fuzzing/
+tools/fuzz-soak/
   DESIGN.md            this file
   gen/generator.py     seeded Go program generator
   harness/diff_one.sh  single-program differential

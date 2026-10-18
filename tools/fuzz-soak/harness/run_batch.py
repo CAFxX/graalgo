@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 """Batch differential fuzzing driver.
 
-1. Builds graalgo Java modules once.
-2. Generates N programs (seed range).
-3. Runs diff_one.sh in parallel.
-4. Classifies, dedups, writes results.jsonl + summary.
+1. Builds the graalgo backend (root `make build`: truffle + runtime +
+   interop Java modules) and ensures the gofrontend binary exists.
+2. Smoke-checks the toolchain (graalgo-sync-run --check on a stdlib-free
+   hello program) so a broken toolchain fails fast instead of producing
+   N bogus findings. The smoke program deliberately avoids imports: it
+   exercises the JVM launch, classpath, gofrontend handshake, AST build
+   and execution — backend bugs on real programs are the fuzz gate's
+   findings, not smoke failures.
+3. Generates N programs (seed range).
+4. Runs diff_one.sh in parallel.
+5. Classifies, dedups, writes results.jsonl + summary.
+
+The graalgo leg runs through the product launcher
+(internal/backend/graalgo-sync-run -> graalgo.p3sync.launcher.P3SyncMain),
+the same backend the per-push snapshot gate records against
+(test/differential/backends-p3.json).
 
 Usage: run_batch.py --seeds START:END --out DIR [--jobs J] [--gmp N]
 """
@@ -16,13 +28,21 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
-GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: harness/run_batch.py -> tools/fuzz-soak -> tools -> repo.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
+GRAALGO_RUN = os.path.join(GR, "internal", "backend", "graalgo-sync-run")
 
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, **kw)
+
+
+def fail(msg, detail=""):
+    print(msg)
+    if detail:
+        print(detail[-2000:])
+    sys.exit(1)
 
 
 def main():
@@ -30,7 +50,8 @@ def main():
     ap.add_argument("--seeds", required=True, help="START:END (e.g. 0:100)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--jobs", type=int, default=4)
-    ap.add_argument("--gmp", type=int, default=1)
+    ap.add_argument("--gmp", type=int, default=1,
+                    help="scheduler in-flight cap for the graalgo leg")
     args = ap.parse_args()
 
     start, end = map(int, args.seeds.split(":"))
@@ -39,15 +60,38 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build the backend (root `make build`: truffle + runtime + interop).
+    print("== building graalgo backend ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=1800)
     if r.returncode != 0:
-        print("BUILD FAILED")
-        print(r.stdout[-2000:])
-        print(r.stderr[-2000:])
-        sys.exit(1)
+        fail("BUILD FAILED", r.stdout + r.stderr)
     print("build ok", flush=True)
+
+    # 1b. Ensure the gofrontend binary exists (`make build` does not build it;
+    # the launcher resolves internal/frontend/gofrontend via ToolPaths).
+    gofrontend = os.path.join(GR, "internal", "frontend", "gofrontend")
+    if not (os.path.isfile(gofrontend) and os.access(gofrontend, os.X_OK)):
+        print("== building gofrontend ==", flush=True)
+        r = sh("./build.sh build",
+               cwd=os.path.join(GR, "internal", "frontend"), timeout=1800)
+        if r.returncode != 0:
+            fail("GOFRONTEND BUILD FAILED", r.stdout + r.stderr)
+        print("gofrontend ok", flush=True)
+
+    # 1c. Smoke-check the toolchain before generating N programs: a broken
+    # toolchain must fail the batch fast, not emit N bogus findings.
+    # Deliberately stdlib-free (no imports): this exercises the JVM launch,
+    # classpath, gofrontend handshake, AST build and execution. Backend bugs
+    # on real programs are the fuzz gate's findings, not smoke failures.
+    print("== toolchain smoke check ==", flush=True)
+    smoke = os.path.join(outdir, "smoke.go")
+    with open(smoke, "w") as f:
+        f.write('package main\n\nfunc main() { println("ok") }\n')
+    r = sh(f'"{GRAALGO_RUN}" --check "{smoke}"', timeout=300)
+    if r.returncode != 0:
+        fail("TOOLCHAIN SMOKE CHECK FAILED (graalgo-sync-run --check)",
+             r.stdout + r.stderr)
+    print("smoke check ok", flush=True)
 
     # 2. Generate programs.
     seeds = list(range(start, end))
