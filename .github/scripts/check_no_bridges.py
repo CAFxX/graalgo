@@ -103,14 +103,17 @@ def check_no_bridges(diff):
     # 1. New synth_*.go files. Only genuinely NEW files count (the --- line
     #    is /dev/null); modifying a grandfathered synth_*.go is not a new
     #    bridge — without this, every master push touching a synthetic file
-    #    would fail the gate.
+    #    would fail the gate. Test fixtures (synth_*_test.go) are excluded:
+    #    a _test.go file never builds into the binary, so it cannot be a
+    #    synthetic stdlib package.
     new_synth = set()
     prev_was_devnull = False
     for line in diff.split("\n"):
         if line.startswith("--- /dev/null"):
             prev_was_devnull = True
         elif line.startswith("+++ b/"):
-            if prev_was_devnull and "synth_" in line and line.endswith(".go"):
+            if (prev_was_devnull and "synth_" in line and line.endswith(".go")
+                    and not line.endswith("_test.go")):
                 new_synth.add(line[6:])
             prev_was_devnull = False
         elif line.startswith("--- "):
@@ -126,12 +129,29 @@ def check_no_bridges(diff):
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
         # Match: if pkg == "fmt", case "sync", pkg.Name == "os", etc.
+        is_java = fname.endswith(".java")
         for pkg in stdlib_pkgs:
             patterns = [
                 rf'==\s*"{pkg}"',
                 rf'case\s*"{pkg}"',
                 rf'Name\s*==\s*"{pkg}"',
             ]
+            if is_java:
+                # Java String forms of the same bypass: x.equals("sync.Pool"),
+                # x.startsWith("sync/atomic."), x.contains("sync."),
+                # x.endsWith("...sync"). (2026-10-17: the vetoed
+                # isOpaquePrimitive carve-out used exactly these method-call
+                # forms and dodged the operator-form patterns above.)
+                # The name must be followed by a package-path boundary
+                # (closing quote, '.', or '/') so that e.g. "synchronized"
+                # is not mistaken for the "sync" package.
+                boundary = r'(?=["./])'
+                patterns += [
+                    rf'\.equals\(\s*"{pkg}{boundary}',
+                    rf'\.startsWith\(\s*"{pkg}{boundary}',
+                    rf'\.contains\(\s*"{pkg}{boundary}',
+                    rf'\.endsWith\(\s*"{pkg}{boundary}',
+                ]
             for pat in patterns:
                 if re.search(pat, line):
                     # Allow in test files and docs. ("_test." covers
