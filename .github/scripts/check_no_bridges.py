@@ -89,6 +89,35 @@ def get_diff():
             return result.stdout, name
     return "", ""
 
+def _pkg_name_patterns(pkg):
+    """Regexes matching package-name-keyed conditionals for one stdlib pkg.
+
+    Covers Go forms (==, case, Name ==, strings.HasPrefix/HasSuffix/Contains)
+    and Java forms (.equals, reversed .equals, .startsWith, .contains).
+
+    The package-name boundary (?=["./]) requires the char after the name to
+    be the end of the literal, a qualified-symbol dot ("sync.Pool"), or an
+    import-path slash ("sync/atomic") — so words that merely start with the
+    package name ("synchronous", "osmand") do not match.
+    """
+    b = r'(?=["./])'  # package-name boundary inside the string literal
+    return [
+        rf'==\s*"{pkg}"',                        # Go:  if pkg == "fmt"
+        rf'case\s*"{pkg}"',                       # Go/Java: case "sync":
+        rf'Name\s*==\s*"{pkg}"',                  # Go:  pkg.Name == "os"
+        # Java name-comparison forms. (2026-10-18, review P1-3: the gate
+        # previously matched NONE of these — the vetoed isOpaquePrimitive
+        # carve-out dodged it via .equals("sync.P…") and only the human
+        # reviewer caught it.)
+        rf'\.equals\s*\(\s*"{pkg}{b}',            # x.equals("sync.Pool")
+        rf'"{pkg}{b}[^"]*"\s*\.\s*equals\s*\(',   # "sync.Pool".equals(x)
+        rf'\.startsWith\s*\(\s*"{pkg}{b}',        # p.startsWith("sync/atomic.")
+        rf'\.contains\s*\(\s*"{pkg}{b}',          # n.contains("sync")
+        # Go name-comparison forms:
+        rf'strings\.(?:HasPrefix|HasSuffix|Contains)\s*\([^,)]*,\s*"{pkg}{b}',
+    ]
+
+
 def check_no_bridges(diff):
     errors = []
     added_lines = []
@@ -125,20 +154,19 @@ def check_no_bridges(diff):
     for fname, line in added_lines:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
-        # Match: if pkg == "fmt", case "sync", pkg.Name == "os", etc.
+        # Match Go and Java name-comparison forms against stdlib package
+        # names; see _pkg_name_patterns for the full form list.
         for pkg in stdlib_pkgs:
-            patterns = [
-                rf'==\s*"{pkg}"',
-                rf'case\s*"{pkg}"',
-                rf'Name\s*==\s*"{pkg}"',
-            ]
-            for pat in patterns:
+            for pat in _pkg_name_patterns(pkg):
                 if re.search(pat, line):
                     # Allow in test files and docs. ("_test." covers
                     # *_test.go harnesses, e.g. drift-test importers that
                     # resolve synthetic import paths like the pre-existing
-                    # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
+                    # `if path == "bytes"` stubs; "Test.java" covers Java
+                    # *Test.java harnesses.)
+                    if ("/test" not in fname and "test_" not in fname
+                            and "_test." not in fname
+                            and not fname.endswith("Test.java")):
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 
@@ -193,7 +221,124 @@ def check_no_bridges(diff):
 
     return errors
 
+
+def _self_test_cases():
+    """Positive/negative controls for the no-bridges gate.
+
+    Each entry: (name, file, added line, expect_fail). Positive controls
+    prove the gate catches bridge shapes (including the vetoed
+    isOpaquePrimitive .equals("sync.P…") carve-out from review P1-3);
+    negative controls prove it stays silent on legitimate code. Every
+    control must be capable of failing in both directions — a control
+    that cannot fail is deleted.
+    """
+    return [
+        # --- positive: Java name-comparison forms (review P1-3) ---
+        ("java-equals-dotted",
+         "internal/backend/foo/Bar.java",
+         'if (typeName.equals("sync.Pool")) { return true; }',
+         True),
+        ("java-equals-exact",
+         "internal/backend/foo/Bar.java",
+         'if (name.equals("sync")) { return true; }',
+         True),
+        ("java-equals-reversed",
+         "internal/backend/foo/Bar.java",
+         'if ("sync.Pool".equals(typeName)) { return true; }',
+         True),
+        ("java-startswith",
+         "internal/backend/foo/Bar.java",
+         'if (path.startsWith("sync/atomic.")) { return true; }',
+         True),
+        ("java-contains",
+         "internal/backend/foo/Bar.java",
+         'if (names.contains("sync")) { return true; }',
+         True),
+        # --- positive: Go forms (old and new) ---
+        ("go-eq",
+         "internal/frontend/foo/bar.go",
+         'if pkg == "sync" { return true }',
+         True),
+        ("go-case",
+         "internal/frontend/foo/bar.go",
+         '\tcase "fmt":',
+         True),
+        ("go-name-eq",
+         "internal/frontend/foo/bar.go",
+         'if imp.Name == "os" { return true }',
+         True),
+        ("go-hasprefix",
+         "internal/frontend/foo/bar.go",
+         'if strings.HasPrefix(path, "sync/") { return true }',
+         True),
+        ("go-contains",
+         "internal/frontend/foo/bar.go",
+         'if strings.Contains(name, "sync") { return true }',
+         True),
+        # --- negative: legitimate code must not trip the gate ---
+        ("java-word-prefix",
+         "internal/backend/foo/Bar.java",
+         'if (mode.equals("synchronous")) { return true; }',
+         False),
+        ("java-other-literal",
+         "internal/backend/foo/Bar.java",
+         'if (kind.equals("osmand")) { return true; }',
+         False),
+        ("java-startswith-word",
+         "internal/backend/foo/Bar.java",
+         'if (s.startsWith("synchronized")) { return true; }',
+         False),
+        ("java-plain-string",
+         "internal/backend/foo/Bar.java",
+         'log.info("sync.Pool fast path enabled");',
+         False),
+        ("go-word-prefix",
+         "internal/frontend/foo/bar.go",
+         'if strings.HasPrefix(p, "synchronous") { return true }',
+         False),
+        ("go-plain-string",
+         "internal/frontend/foo/bar.go",
+         'fmt.Println("syncing caches")',
+         False),
+        # --- negative: test files are excluded ---
+        ("java-test-excluded",
+         "internal/backend/foo/BarTest.java",
+         'if (typeName.equals("sync.Pool")) { return true; }',
+         False),
+        ("go-test-excluded",
+         "internal/frontend/foo/bar_test.go",
+         'if pkg == "sync" { return true }',
+         False),
+    ]
+
+
+def run_self_test():
+    """Run the positive/negative control battery. Return 0 iff all pass."""
+    failures = []
+    for name, fname, line, expect_fail in _self_test_cases():
+        diff = ("--- /dev/null\n"
+                f"+++ b/{fname}\n"
+                "@@ -0,0 +1 @@\n"
+                f"+{line}\n")
+        errors = check_no_bridges(diff)
+        got_fail = bool(errors)
+        status = "ok" if got_fail == expect_fail else "MISMATCH"
+        print(f"  [{status}] {name}: expected "
+              f"{'FAIL' if expect_fail else 'PASS'}, got "
+              f"{'FAIL' if got_fail else 'PASS'}")
+        if got_fail != expect_fail:
+            failures.append(name)
+    if failures:
+        print(f"\nSELF-TEST FAILED: {len(failures)} control(s) mismatched: "
+              f"{', '.join(failures)}")
+        return 1
+    print(f"\nSelf-test passed: {len(_self_test_cases())} controls green.")
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        return run_self_test()
     diff, source = get_diff()
     if not diff.strip():
         # Never pass vacuously: on the standard integration path (wt.py
