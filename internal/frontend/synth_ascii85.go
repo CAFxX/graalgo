@@ -201,6 +201,6 @@ func __ascii85Decode(dst, src []byte, flush bool) ascii85DecodeTriple {
 // exporter desugars 3-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func Decode(dst, src []byte, flush bool) (ndst, nsrc int, err error) {
-	panic("encoding/ascii85: Decode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/ascii85: Decode: unreachable (call sites desugar to __ascii85Decode)")
 }
 `
