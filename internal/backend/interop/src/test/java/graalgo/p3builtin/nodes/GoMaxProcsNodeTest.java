@@ -69,8 +69,8 @@ public final class GoMaxProcsNodeTest {
         VirtualFrame frame = Truffle.getRuntime()
                 .createVirtualFrame(new Object[0], new FrameDescriptor());
         try {
-            long prev = newNode(1).executeLong(frame);
-            assertEq(prevReported, prev, "returns the previous GOMAXPROCS value");
+            long prevVal = newNode(1).executeLong(frame);
+            assertEq(prevReported, prevVal, "returns the previous GOMAXPROCS value");
             assertEq(1, GoMaxProcsNode.current(), "reported value follows GOMAXPROCS(1)");
             assertEq(1, sched.requestedCap(), "scheduler requestedCap follows GOMAXPROCS(1)");
             assertEq(1, sched.cap(), "scheduler cap follows GOMAXPROCS(1)");
