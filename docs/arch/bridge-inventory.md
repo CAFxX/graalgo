@@ -97,17 +97,28 @@ deliverable until the design lands.
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
-- **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
-  the *declared view* of the already-inventoried dedicated stubs
-  (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
-  `syntheticFmtPackage`, `syntheticUnsafePackage`) is NOT a new bridge.
-  The mechanical gate flags `addFunc(` lines in `export.go`, but the
-  overlay's existence is grandfathered by this entry — extending its
-  declared API surface toward gc's documented API adds no new bridge
-  machinery (no new synth files, no new wire nodes, no new
-  package-name-keyed branches). The PKG-023 reviewer judged the flag a
-  mechanical false positive, not a veto; the same judgment covers the
-  PKG-038 runtime-view completion.
+- **Note (2026-10-16, PKG-023 independent review + PKG-038; narrowed
+  2026-10-18):** completing the *declared view* of the
+  already-inventoried dedicated stubs (`syntheticRuntimePackage` in
+  [export.go](../../internal/frontend/export.go), `syntheticFmtPackage`,
+  `syntheticUnsafePackage`) toward gc's documented API adds no new bridge
+  *machinery* (no new synth files, no new package-name-keyed branches) —
+  but the mechanical gate does NOT bless such completions as a blanket
+  judgment. The gate flags every new `addFunc(` line and every new
+  stdlib-named wire-node kind in `export.go`, and passes only the
+  independently-adjudicated items in
+  [.github/scripts/check_no_bridges.py](../../.github/scripts/check_no_bridges.py)
+  `ADJUDICATED_WIRE_NODES` / `ADJUDICATED_REGISTRATIONS`, namely, in
+  `internal/frontend/export.go`:
+  - wire-node kinds `"runtimenumgoroutine"` and `"runtimegosched"`;
+  - registrations `addFunc("NumGoroutine", …)` and `addFunc("Gosched", …)`
+  (PKG-023, PKG-040 — recorded under
+  [Adjudicated non-bridges](#adjudicated-non-bridges) below).
+  Any *further* overlay completion — even one that merely completes the
+  declared view toward gc's documented API — fails the gate until it gets
+  its own independent review and is added to the gate's allowlist by exact
+  (file, symbol) name. Doc and gate agree on this: the carve-out is the
+  named 2+2 allowlist, nothing more.
 
 ### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
