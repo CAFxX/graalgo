@@ -267,7 +267,7 @@ func IsAbs(path string) bool {
 // (Appendix M: 2-target call sites desugar to __pathSplit; every other
 // position fails fast. Body never runs.)
 func Split(path string) (dir, file string) {
-	panic("path: Split: not in M9 scope (multi-result calls need the M9 desugar; re-test when WS D lands)")
+	panic("path: Split: unreachable (call sites desugar to __pathSplit)")
 }
 
 // After dropping the final element using [Split], the path is Cleaned and trailing
