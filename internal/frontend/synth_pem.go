@@ -435,7 +435,7 @@ func __pemDecode(data []byte) pemDecodePair {
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func Decode(data []byte) (p *Block, rest []byte) {
-	panic("encoding/pem: Decode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/pem: Decode: unreachable (call sites desugar to __pemDecode)")
 }
 
 // pemWriteString appends s to out.
