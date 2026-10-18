@@ -310,7 +310,7 @@ type outputWriter struct {
 }
 
 func (o *outputWriter) Write(p []byte) (int, error) {
-	panic("testing.outputWriter.Write: not in scope (multi-result calls need WS D; re-test when it lands)")
+	panic("testing.outputWriter.Write: not in scope (needs multi-result call support)")
 }
 
 // outputWriterWritePair is the Appendix M carrier for outputWriter.Write.
@@ -591,7 +591,7 @@ func writeToStdout(s string) {
 }
 
 func (w indenter) Write(b []byte) (n int, err error) {
-	panic("testing.indenter.Write: not in scope (multi-result calls need WS D; re-test when it lands)")
+	panic("testing.indenter.Write: not in scope (needs multi-result call support)")
 }
 
 // indenterWritePair is the Appendix M carrier for indenter.Write.
@@ -1181,7 +1181,7 @@ func (c *common) Setenv(key, value string) {
 func (c *common) Chdir(dir string) {
 	// NOTE: os.Getwd is multi-result (not callable from synthetic);
 	// Chdir without restore is not supported.
-	panic("testing: Chdir not in scope (os.Getwd multi-result; re-test when WS D lands)")
+	panic("testing: Chdir not in scope (os.Getwd multi-result)")
 }
 
 func (c *common) Context() context.Context {
