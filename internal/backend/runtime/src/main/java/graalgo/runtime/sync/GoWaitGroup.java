@@ -1,7 +1,9 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -11,9 +13,9 @@ import java.util.Deque;
  *
  * <p>{@code Wait} parks scheduler-aware until the counter reaches zero.
  * A {@code Wait} that starts when the counter is already zero returns
- * immediately (gc parity). Misuse (negative counter, Add concurrent with
- * Wait racing to zero) panics like gc — here simplified to
- * IllegalStateException on negative counter.
+ * immediately (gc parity). Misuse (negative counter) raises a Go panic
+ * with gc's message text ("sync: negative WaitGroup counter") — a real,
+ * recoverable Go panic on both gc and graalgo.
  */
 public final class GoWaitGroup {
     private int counter;
@@ -23,7 +25,10 @@ public final class GoWaitGroup {
     public synchronized void add(int delta) {
         int next = counter + delta;
         if (next < 0) {
-            throw new IllegalStateException("sync: negative WaitGroup counter");
+            // RV18-P1-10: a real Go panic with gc's message text (gc
+            // panics here too, recoverable on both) — never a host
+            // exception.
+            Panic.throwPanic(GoString.fromUtf8("sync: negative WaitGroup counter"));
         }
         counter = next;
         if (next == 0) {

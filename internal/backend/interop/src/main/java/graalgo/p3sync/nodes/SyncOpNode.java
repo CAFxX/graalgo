@@ -14,10 +14,8 @@ import graalgo.runtime.sync.GoMutex;
 import graalgo.runtime.sync.GoPool;
 import graalgo.runtime.sync.GoSyncMap;
 import graalgo.values.GoInterface;
-import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
-import java.nio.charset.StandardCharsets;
 import graalgo.runtime.sync.GoOnce;
 import graalgo.runtime.sync.GoPool;
 import graalgo.runtime.sync.GoRWMutex;
@@ -33,9 +31,9 @@ import java.util.Map;
  *
  * <p>The receiver evaluates to the Java primitive object itself
  * (ADR-0002 D1); a null receiver is a Go nil-pointer-dereference panic.
- * Misuse panics from the primitives ({@code IllegalStateException} with
- * gc's message text) are translated to Go panics via
- * {@link Panic#throwPanic} (ADR-0002 D4):
+ * Misuse of the primitives raises Go panics with gc's message text
+ * directly (ADR-0002 D4, RV18-P1-10 — previously the primitives threw
+ * {@code IllegalStateException} and this node translated it):
  * <ul>
  *   <li>{@code sync: negative WaitGroup counter} (WaitGroup.Add and
  *       WaitGroup.Done) — gc panics: full parity;</li>
@@ -126,13 +124,13 @@ public final class SyncOpNode extends GoExprNode {
         }
         switch (syncType + "." + op) {
             case "Mutex.Lock" -> ((GoMutex) r).lock();
-            case "Mutex.Unlock" -> panicOnMisuse(() -> ((GoMutex) r).unlock());
+            case "Mutex.Unlock" -> ((GoMutex) r).unlock();
             case "RWMutex.Lock" -> ((GoRWMutex) r).lock();
-            case "RWMutex.Unlock" -> panicOnMisuse(() -> ((GoRWMutex) r).unlock());
+            case "RWMutex.Unlock" -> ((GoRWMutex) r).unlock();
             case "RWMutex.RLock" -> ((GoRWMutex) r).rLock();
-            case "RWMutex.RUnlock" -> panicOnMisuse(() -> ((GoRWMutex) r).rUnlock());
-            case "WaitGroup.Add" -> panicOnMisuse(() -> ((GoWaitGroup) r).add((int) args[0].executeLong(frame)));
-            case "WaitGroup.Done" -> panicOnMisuse(() -> ((GoWaitGroup) r).done());
+            case "RWMutex.RUnlock" -> ((GoRWMutex) r).rUnlock();
+            case "WaitGroup.Add" -> ((GoWaitGroup) r).add((int) args[0].executeLong(frame));
+            case "WaitGroup.Done" -> ((GoWaitGroup) r).done();
             case "WaitGroup.Wait" -> ((GoWaitGroup) r).await();
             case "Once.Do" -> doOnce((GoOnce) r, frame);
             // P3-M11 (sync.Pool): the Go value IS the GoPool object
@@ -281,21 +279,6 @@ public final class SyncOpNode extends GoExprNode {
             }
         }
         return null;
-    }
-
-    /**
-     * Runs a primitive op, translating its {@code IllegalStateException}
-     * misuse signal (which carries gc's message text) into a Go panic
-     * (ADR-0002 D4).
-     */
-    private void panicOnMisuse(Runnable op) {
-        try {
-            op.run();
-        } catch (IllegalStateException e) {
-            // P3-M4: the message must be a D5 GoString, not a Java String —
-            // PanicRendering renders Java Strings as "(?) 0xADDR".
-            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)), null, null, this);
-        }
     }
 
     /**

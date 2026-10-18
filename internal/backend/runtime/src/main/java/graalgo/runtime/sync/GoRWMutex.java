@@ -1,7 +1,9 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -16,7 +18,10 @@ import java.util.Deque;
  *
  * <p>Go semantics: RLock of a write-locked mutex blocks; Lock blocks until
  * all readers release; recursive read-locking while a writer waits
- * deadlocks (as in gc — not special-cased).
+ * deadlocks (as in gc — not special-cased). Misuse (RUnlock/Unlock of an
+ * unlocked RWMutex) raises a Go panic with gc's message text; gc itself
+ * fatal-errors here (unrecoverable) — the recoverable-panic divergence is
+ * documented in ADR-0002 D4.
  */
 public final class GoRWMutex {
     private int readers;
@@ -43,11 +48,13 @@ public final class GoRWMutex {
 
     /** Releases a read lock. */
     public void rUnlock() {
-        SchedulerCore sched = SchedulerCore.current();
         Deque<GoroutineHandle> toWake = new ArrayDeque<>();
         synchronized (this) {
             if (readers <= 0) {
-                throw new IllegalStateException("sync: RUnlock of unlocked RWMutex");
+                // RV18-P1-10: Go panic with gc's message text, never a host
+                // exception. Checked before touching the scheduler (see
+                // GoMutex.unlock for why this never masks the fail-fast).
+                Panic.throwPanic(GoString.fromUtf8("sync: RUnlock of unlocked RWMutex"));
             }
             readers--;
             if (readers == 0 && waitingWriters > 0) {
@@ -58,8 +65,11 @@ public final class GoRWMutex {
                 toWake.add(w);
             }
         }
-        for (GoroutineHandle h : toWake) {
-            sched.unpark(h);
+        if (!toWake.isEmpty()) {
+            SchedulerCore sched = SchedulerCore.current();
+            for (GoroutineHandle h : toWake) {
+                sched.unpark(h);
+            }
         }
     }
 
@@ -82,11 +92,13 @@ public final class GoRWMutex {
 
     /** Releases the write lock; wakes all waiting readers first, else next writer. */
     public void unlock() {
-        SchedulerCore sched = SchedulerCore.current();
         Deque<GoroutineHandle> toWake = new ArrayDeque<>();
         synchronized (this) {
             if (!writer) {
-                throw new IllegalStateException("sync: Unlock of unlocked RWMutex");
+                // RV18-P1-10: Go panic with gc's message text, never a host
+                // exception. Checked before touching the scheduler (see
+                // GoMutex.unlock for why this never masks the fail-fast).
+                Panic.throwPanic(GoString.fromUtf8("sync: Unlock of unlocked RWMutex"));
             }
             writer = false;
             if (!readWaiters.isEmpty()) {
@@ -102,8 +114,11 @@ public final class GoRWMutex {
                 toWake.add(w);
             }
         }
-        for (GoroutineHandle h : toWake) {
-            sched.unpark(h);
+        if (!toWake.isEmpty()) {
+            SchedulerCore sched = SchedulerCore.current();
+            for (GoroutineHandle h : toWake) {
+                sched.unpark(h);
+            }
         }
     }
 }

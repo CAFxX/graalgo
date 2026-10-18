@@ -14,7 +14,7 @@ discharging the P2-M8 re-test trigger.
 | `sy02_mutex_defer.go` | deferred unlock across goroutines | — |
 | `sy03_mutex_unlock_misuse.go` | unlock-of-unlocked: message parity (panic, ADR-0002 D4) | `testMutexUnlockOfUnlockedPanics` |
 | `sy04_rwmutex.go` | 16 readers × 500 + 2 writers × 100; exact value, no torn reads | `testRWMutex` |
-| `sy05_rwmutex_runlock_misuse.go` | RUnlock-of-unlocked: message parity (panic, ADR-0002 D4) | — |
+| `sy05_rwmutex_runlock_misuse.go` | RUnlock-of-unlocked: message parity (panic, ADR-0002 D4) | `testRWMutexRUnlockOfUnlockedPanics` |
 | `sy06_waitgroup.go` | 50 workers + `Wait`; exact count | `testWaitGroup` |
 | `sy07_waitgroup_reuse.go` | `Add`/`Done`/`Wait` reuse across 3 rounds | — |
 | `sy08_waitgroup_negative.go` | negative counter: `panic: sync: negative WaitGroup counter` (full gc parity) | `testWaitGroupNegativePanics` |

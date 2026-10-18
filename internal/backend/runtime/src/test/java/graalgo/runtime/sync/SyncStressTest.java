@@ -1,5 +1,7 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.PanicException;
+import graalgo.runtime.PanicRendering;
 import graalgo.sched.SchedulerCore;
 
 import java.util.concurrent.CountDownLatch;
@@ -40,6 +42,16 @@ public final class SyncStressTest {
         if (expected != actual) {
             throw new AssertionError(msg + " expected=" + expected + " actual=" + actual);
         }
+    }
+
+    private static void assertEquals(String expected, String actual, String msg) {
+        if (!expected.equals(actual)) {
+            throw new AssertionError(msg + " expected=<" + expected + "> actual=<" + actual + ">");
+        }
+    }
+
+    private static void fail(String msg) {
+        throw new AssertionError(msg);
     }
 
     /**
@@ -106,16 +118,24 @@ public final class SyncStressTest {
         }
     }
 
-    /** Unlock of an unlocked mutex panics (gc parity). */
+    /**
+     * Unlock of an unlocked mutex is a Go panic with gc's message text
+     * (ADR-0002 D4, RV18-P1-10) — a {@link PanicException} carrying the
+     * Go string value, never a host {@code IllegalStateException}.
+     * gc itself fatal-errors here (unrecoverable); the recoverable-panic
+     * divergence is documented in the ADR, but the panic type and the
+     * message text are exact.
+     */
     public void testMutexUnlockOfUnlockedPanics() {
         GoMutex mu = new GoMutex();
-        boolean panicked = false;
         try {
             mu.unlock();
-        } catch (IllegalStateException e) {
-            panicked = true;
+            fail("unlock of unlocked mutex must panic");
+        } catch (PanicException pe) {
+            assertEquals("panic: sync: unlock of unlocked mutex",
+                    PanicRendering.renderPanicLine(pe),
+                    "mutex misuse panic text diverged from gc");
         }
-        assertTrue(panicked, "unlock of unlocked mutex must panic");
     }
 
     /**
@@ -172,6 +192,40 @@ public final class SyncStressTest {
     }
 
     /**
+     * RUnlock of an unlocked RWMutex is a Go panic with gc's message text
+     * (ADR-0002 D4, RV18-P1-10) — same contract as
+     * {@link #testMutexUnlockOfUnlockedPanics}.
+     */
+    public void testRWMutexRUnlockOfUnlockedPanics() {
+        GoRWMutex mu = new GoRWMutex();
+        try {
+            mu.rUnlock();
+            fail("RUnlock of unlocked RWMutex must panic");
+        } catch (PanicException pe) {
+            assertEquals("panic: sync: RUnlock of unlocked RWMutex",
+                    PanicRendering.renderPanicLine(pe),
+                    "rwmutex RUnlock misuse panic text diverged from gc");
+        }
+    }
+
+    /**
+     * Unlock of an unlocked RWMutex is a Go panic with gc's message text
+     * (ADR-0002 D4, RV18-P1-10) — note gc's capital-U "Unlock", distinct
+     * from the RUnlock message.
+     */
+    public void testRWMutexUnlockOfUnlockedPanics() {
+        GoRWMutex mu = new GoRWMutex();
+        try {
+            mu.unlock();
+            fail("Unlock of unlocked RWMutex must panic");
+        } catch (PanicException pe) {
+            assertEquals("panic: sync: Unlock of unlocked RWMutex",
+                    PanicRendering.renderPanicLine(pe),
+                    "rwmutex Unlock misuse panic text diverged from gc");
+        }
+    }
+
+    /**
      * WaitGroup: 50 workers, main awaits; also tests await-before-add
      * (zero counter returns immediately).
      */
@@ -205,16 +259,21 @@ public final class SyncStressTest {
         }
     }
 
-    /** WaitGroup negative counter panics. */
+    /**
+     * WaitGroup negative counter is a real Go panic with gc's message text
+     * (ADR-0002 D4, RV18-P1-10) — recoverable on both gc and graalgo, so
+     * this is full parity, not just the message.
+     */
     public void testWaitGroupNegativePanics() {
         GoWaitGroup wg = new GoWaitGroup();
-        boolean panicked = false;
         try {
             wg.add(-1);
-        } catch (IllegalStateException e) {
-            panicked = true;
+            fail("negative WaitGroup counter must panic");
+        } catch (PanicException pe) {
+            assertEquals("panic: sync: negative WaitGroup counter",
+                    PanicRendering.renderPanicLine(pe),
+                    "waitgroup negative-counter panic text diverged from gc");
         }
-        assertTrue(panicked, "negative WaitGroup counter must panic");
     }
 
     /** Zero-counter await returns immediately (no park). */

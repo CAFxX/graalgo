@@ -1,7 +1,9 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -17,8 +19,10 @@ import java.util.Deque;
  * it would bypass the in-flight cap accounting.
  *
  * <p>Go semantics: non-reentrant; {@code unlock} of an unlocked mutex
- * panics ("sync: unlock of unlocked mutex", gc parity); unlocking from a
- * different goroutine than the locker is allowed (as in gc).
+ * raises a Go panic with gc's message text ("sync: unlock of unlocked
+ * mutex"). gc itself reports a fatal error here (unrecoverable); the
+ * recoverable-panic divergence is documented in ADR-0002 D4. Unlocking
+ * from a different goroutine than the locker is allowed (as in gc).
  *
  * <p>verifies: GG-SCHED-0004 (scheduler-aware blocking).
  */
@@ -46,11 +50,17 @@ public final class GoMutex {
 
     /** Releases the lock, waking the longest-waiting contender (FIFO). */
     public void unlock() {
-        SchedulerCore sched = SchedulerCore.current();
         GoroutineHandle next;
         synchronized (this) {
             if (!locked) {
-                throw new IllegalStateException("sync: unlock of unlocked mutex");
+                // RV18-P1-10: misuse is a Go panic with gc's message text,
+                // never a host exception (previously IllegalStateException,
+                // which escaped as "graalgo-run: execution failed").
+                // Checked before touching the scheduler: misuse is a pure
+                // state condition, and the valid path is unreachable
+                // without a scheduler (lock() fail-fasts first), so this
+                // never masks the scheduler fail-fast.
+                Panic.throwPanic(GoString.fromUtf8("sync: unlock of unlocked mutex"));
             }
             next = waiters.pollFirst();
             if (next == null) {
@@ -59,7 +69,7 @@ public final class GoMutex {
             // else: locked stays true, ownership transfers to next.
         }
         if (next != null) {
-            sched.unpark(next);
+            SchedulerCore.current().unpark(next);
         }
     }
 

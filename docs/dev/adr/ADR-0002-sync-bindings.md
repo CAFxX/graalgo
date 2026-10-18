@@ -147,16 +147,20 @@ is greppable.
 
 ## D4. Misuse → Go panic with gc's message (known divergence, scoped)
 
-`GoMutex.unlock()`/`GoRWMutex.rUnlock()` throw `IllegalStateException`
-with gc's message text; `GoWaitGroup.add` throws on negative counters.
-The binding translates these to Go panics via `Panic.throwPanic`:
+`GoMutex.unlock()`, `GoRWMutex.rUnlock()`/`unlock()` and
+`GoWaitGroup.add` raise Go panics with gc's message text directly via
+`Panic.throwPanic` (RV18-P1-10: previously the primitives threw
+`IllegalStateException` and the `SyncOpNode` binding translated it —
+the host-signal layer is gone, so no caller can forget the translation
+and leak a host exception):
 
 - `sync: negative WaitGroup counter` — gc 1.27.1 panics (recoverable);
   full parity: `panic: sync: negative WaitGroup counter`, exit 2.
-- `sync: unlock of unlocked mutex`, `sync: RUnlock of unlocked RWMutex` —
-  gc 1.27.1 **fatal-errors** (`fatal error: ...`, unrecoverable, exit 2;
-  verified against `~/tools/go-1.27.1`). The binding panics with gc's
-  message text (`panic: sync: ...`, exit 2) per the P3-M2 brief
+- `sync: unlock of unlocked mutex`, `sync: RUnlock of unlocked RWMutex`,
+  `sync: Unlock of unlocked RWMutex` — gc 1.27.1 **fatal-errors**
+  (`fatal error: ...`, unrecoverable, exit 2; verified against
+  `~/tools/go-1.27.1`). The primitives panic with gc's message text
+  (`panic: sync: ...`, exit 2) per the P3-M2 brief
   ("unlock-of-unlocked panics with gc's message"). **Scoped divergence:**
   ours is recoverable, gc's is not; the `panic:`/`fatal error:` wrapper
   line differs. A true fatal-error path needs scheduler machinery Phase 2
