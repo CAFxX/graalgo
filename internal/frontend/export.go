@@ -9564,10 +9564,18 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 	// substituted instantiation (e.g. *Pointer[myStruct]), not the
 	// template — otherwise the backend builds the addrof against the
 	// wrong type. Apply the method's substitution before typeID.
-	savedSubst := e.subst
-	e.subst = subst
-	substRecv := e.substType(declRecv)
-	e.subst = savedSubst
+	// Narrowing: only apply substitution when the receiver actually
+	// mentions a type parameter (generic method). For concrete receivers,
+	// substitution is a no-op.
+	var substRecv types.Type
+	if subst != nil && mentionsTypeParam(declRecv) {
+		savedSubst := e.subst
+		e.subst = subst
+		substRecv = e.substType(declRecv)
+		e.subst = savedSubst
+	} else {
+		substRecv = declRecv
+	}
 	tid, err := e.typeID(substRecv)
 	if err != nil {
 		return false
@@ -9601,10 +9609,18 @@ func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *t
 	// receiver type, which for a generic method is the unsubstituted
 	// template. The wire type ID must name the substituted instantiation,
 	// not the template — apply the method's substitution before typeID.
-	savedSubst := e.subst
-	e.subst = subst
-	substRecv := e.substType(declRecv)
-	e.subst = savedSubst
+	// Narrowing: only apply substitution when the receiver actually
+	// mentions a type parameter (generic method). For concrete receivers,
+	// substitution is a no-op.
+	var substRecv types.Type
+	if subst != nil && mentionsTypeParam(declRecv) {
+		savedSubst := e.subst
+		e.subst = subst
+		substRecv = e.substType(declRecv)
+		e.subst = savedSubst
+	} else {
+		substRecv = declRecv
+	}
 	tid, err := e.typeID(substRecv)
 	if err != nil {
 		return false
