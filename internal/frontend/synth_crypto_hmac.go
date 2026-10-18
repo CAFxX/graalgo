@@ -57,7 +57,7 @@ func WriteSingle(h hash.Hash, p []byte) {
 		w.WriteSingle(p)
 		return
 	}
-	panic("crypto/hmac: non-synthetic hash.Hash (needs WS D; re-test when it lands)")
+	panic("crypto/hmac: non-synthetic hash.Hash (needs itab dispatch to user-defined pair-transformed Write; P4 general interface MR untested here)")
 }
 
 func New(h func() hash.Hash, key []byte) hash.Hash {
@@ -109,7 +109,7 @@ func (h *hmac) WriteSingle(p []byte) int {
 // Write implements hash.Hash (fail-fast stub; real logic is WriteSingle,
 // served via the mrM8 desugar to hash.__hashWrite). Re-test trigger: WS D.
 func (h *hmac) Write(p []byte) (nn int, err error) {
-	panic("crypto/hmac: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/hmac: Write: unreachable (call sites desugar to __hashWrite")
 }
 
 func (h *hmac) Size() int      { return h.outer.Size() }
@@ -178,7 +178,7 @@ func (h *hmac) CloneSinglePair() hash.ClonePair {
 // Clone implements hash.Cloner (fail-fast stub; real logic is CloneSinglePair,
 // served via the mrM8 desugar to hash.__hashClone). Re-test trigger: WS D.
 func (h *hmac) Clone() (hash.Cloner, error) {
-	panic("crypto/hmac: Clone: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/hmac: Clone: unreachable (call sites desugar to __hashClone")
 }
 
 // Equal compares two MACs for equality without leaking timing information.
