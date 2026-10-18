@@ -9,10 +9,14 @@
 package emit
 
 import (
+	"encoding/hex"
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
+	"math"
+	"math/big"
 	"sort"
 
 	"graalgo-frontend-v2/checker"
@@ -78,7 +82,9 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		if obj == nil {
 			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 		}
-		e.declareObject(obj)
+		if _, err := e.declareObject(obj); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, fd := range decls {
@@ -184,29 +190,58 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
 // declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
+// describeObject describes a types.Object for the object table.
+//
+// The "kind" is the object's true go/types kind — never a fallback:
+//   - *types.Var → "var" (with "param" for function parameters)
+//   - *types.Func → "func"
+//   - *types.Const → "const" (with the constant's "value"; see describeConst)
+//   - *types.TypeName → "typename"
+//   - *types.Nil → "nil"
+//
+// The backend switches on this kind: constants become ConstNodes (they are
+// immutable values, not frame slots), nil becomes a NilNode, and type names
+// only ever appear as the target of "conversion" nodes — never as callable
+// "var" objects. Object kinds the emitter cannot meaningfully describe
+// (*types.PkgName, *types.Label, *types.Builtin) are loud errors: reaching
+// here with one means an emitter bug (e.g. a bare package name used as a
+// value, which the checker should already have rejected).
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
+	// Reject undescribable object kinds BEFORE touching obj.Type():
+	// *types.PkgName.Type(), *types.Label.Type() and *types.Builtin.Type()
+	// are nil, so describing them as anything would be a lie built on a
+	// panic. Reaching here with one means an emitter bug.
+	switch obj.(type) {
+	case *types.Var, *types.Func, *types.Const, *types.TypeName, *types.Nil:
+	default:
+		return nil, fmt.Errorf("emit: unsupported object kind %T for %q", obj, obj.Name())
+	}
 	typ := e.typeID(obj.Type())
 	switch o := obj.(type) {
 	case *types.Var:
@@ -215,20 +250,118 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any 
 			"name":  o.Name(),
 			"type":  typ,
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
 			"type": typ,
+		}, nil
+	case *types.Const:
+		val, err := describeConst(o.Val())
+		if err != nil {
+			return nil, fmt.Errorf("emit: const %s: %v", o.Name(), err)
 		}
-	default:
 		return map[string]any{
-			"kind": "var",
+			"kind":  "const",
+			"name":  o.Name(),
+			"type":  typ,
+			"value": val,
+		}, nil
+	case *types.TypeName:
+		return map[string]any{
+			"kind": "typename",
 			"name": o.Name(),
 			"type": typ,
-		}
+		}, nil
+	case *types.Nil:
+		return map[string]any{
+			"kind": "nil",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	default:
+		// Unreachable: the guard above rejects everything else.
+		return nil, fmt.Errorf("emit: unsupported object kind %T for %q", obj, obj.Name())
 	}
+}
+
+// describeConst describes a go/constant.Value for a "const" object entry.
+// The encoding mirrors the v1 exporter's constant payloads
+// (internal/frontend/export.go foldedConst): integer constants carry the
+// low 64 bits ("bits") plus the exact decimal ("exact", for untyped
+// constants wider than 64 bits); float constants carry the correctly-rounded
+// IEEE bit patterns for both widths ("f32bits"/"f64bits", computed with
+// go/constant itself — the same rounding go/types uses); string constants
+// carry the exact bytes hex-encoded ("sbytes", since ExactString is a
+// quoted Go literal that is lossy to unquote by hand); complex constants
+// carry the real/imag parts as bit patterns ("creal32"/"creal64"/
+// "cimag32"/"cimag64"). All integers are int64 on the Go side; the v2
+// binary encoder zigzag-encodes every integer width, so the Java side
+// recovers the exact bit patterns.
+func describeConst(v constant.Value) (map[string]any, error) {
+	switch v.Kind() {
+	case constant.Int:
+		return map[string]any{
+			"ckind": "int",
+			"bits":  constIntBits(v),
+			"exact": v.ExactString(),
+		}, nil
+	case constant.Float:
+		f32, _ := constant.Float32Val(v)
+		f64, _ := constant.Float64Val(v)
+		return map[string]any{
+			"ckind":   "float",
+			"f32bits": int64(int32(math.Float32bits(f32))),
+			"f64bits": int64(math.Float64bits(f64)),
+			"exact":   v.ExactString(),
+		}, nil
+	case constant.Bool:
+		return map[string]any{
+			"ckind": "bool",
+			"value": constant.BoolVal(v),
+		}, nil
+	case constant.String:
+		return map[string]any{
+			"ckind":  "string",
+			"sbytes": hex.EncodeToString([]byte(constant.StringVal(v))),
+		}, nil
+	case constant.Complex:
+		real, imag := constant.Real(v), constant.Imag(v)
+		r32, _ := constant.Float32Val(real)
+		r64, _ := constant.Float64Val(real)
+		i32, _ := constant.Float32Val(imag)
+		i64, _ := constant.Float64Val(imag)
+		return map[string]any{
+			"ckind":   "complex",
+			"creal32": int64(int32(math.Float32bits(r32))),
+			"creal64": int64(math.Float64bits(r64)),
+			"cimag32": int64(int32(math.Float32bits(i32))),
+			"cimag64": int64(math.Float64bits(i64)),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown constant kind %v", v.Kind())
+	}
+}
+
+// constIntBits returns the low 64 bits of an integer constant, two's
+// complement. go/types guarantees typed constants fit their type, so the
+// exact path covers them; untyped constants wider than 64 bits (e.g. 1<<70)
+// are observed through the "exact" decimal instead — the low bits here are
+// only a carrier for ConstNode.ofUntypedInt.
+func constIntBits(v constant.Value) int64 {
+	if i, ok := constant.Int64Val(v); ok {
+		return i
+	}
+	if u, ok := constant.Uint64Val(v); ok {
+		return int64(u)
+	}
+	bi, ok := new(big.Int).SetString(v.ExactString(), 10)
+	if !ok {
+		return 0 // unreachable: Kind() == Int implies a decimal ExactString
+	}
+	mask := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(1))
+	return new(big.Int).And(bi, mask).Int64()
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
@@ -360,22 +493,30 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 }
 
 func basicClass(b *types.Basic) string {
-	switch b.Info() & types.IsNumeric {
-	case types.IsBoolean:
+	// NOTE: the cases test individual info bits — NOT b.Info() &
+	// types.IsNumeric. Masking with IsNumeric first makes the IsBoolean
+	// and IsUnsigned cases dead code: IsBoolean is not part of IsNumeric,
+	// so typed bool fell through to "unknown", and uints (whose masked
+	// info equals IsInteger) were misclassified as "int", which
+	// GoKind.fromBasic then rejects by name. Every class returned here
+	// must be one GoKind.fromBasic accepts ("int", "uint", "float",
+	// "bool", "string", "complex", "pointer", "untyped", "unknown").
+	info := b.Info()
+	switch {
+	case info&types.IsBoolean != 0:
 		return "bool"
-	case types.IsInteger:
-		return "int"
-	case types.IsUnsigned:
+	case info&types.IsUnsigned != 0:
 		return "uint"
-	case types.IsFloat:
+	case info&types.IsInteger != 0:
+		return "int"
+	case info&types.IsFloat != 0:
 		return "float"
-	case types.IsComplex:
+	case info&types.IsComplex != 0:
 		return "complex"
-	}
-	if b.Info()&types.IsString != 0 {
+	case info&types.IsString != 0:
 		return "string"
 	}
-	if b.Info()&types.IsUntyped != 0 {
+	if info&types.IsUntyped != 0 {
 		return "untyped"
 	}
 	return "unknown"

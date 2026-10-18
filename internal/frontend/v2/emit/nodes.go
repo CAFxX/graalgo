@@ -41,7 +41,10 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if pobj == nil {
 					continue
 				}
-				pid := e.declareParam(pobj)
+				pid, err := e.declareParam(pobj)
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", name, map[string]any{
 					"name": name.Name,
 					"obj":  pid,
@@ -152,7 +155,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -183,7 +188,11 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
 			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				objs = append(objs, oid)
 			} else {
 				objs = append(objs, -1)
 			}
@@ -287,14 +296,22 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				key = oid
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				value = oid
 			}
 		}
 	}
@@ -472,7 +489,10 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -480,7 +500,10 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -528,6 +551,23 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 	if c.Ellipsis.IsValid() {
 		return nil, fmt.Errorf("emit: unsupported expr *ast.Ellipsis (variadic spread)")
 	}
+	// Type conversion? go/types truth: a "call" whose fun denotes a type
+	// rather than a signature is a conversion T(x), never a function call.
+	// This is structural — keyed on the fun's go/types type, never on
+	// names: int(x), MyInt(x), []byte(s) all land here, while f(x) with f
+	// a func-typed value stays a call. Conversions skip fun emission
+	// entirely: the type name is not a value and must not become a fake
+	// "var" object the backend would try to read as a frame slot (L12).
+	if ft := e.info.Info.TypeOf(c.Fun); ft != nil {
+		if _, isSig := ft.(*types.Signature); !isSig {
+			// Builtins (len, make, ...) have no Types entry — their fun
+			// idents denote *types.Builtin via Uses only, so they never
+			// reach this branch; they keep the builtin marker path below.
+			return e.emitConversion(c)
+		}
+	} else if !isBuiltinCall(e.info.Info, c.Fun) {
+		return nil, fmt.Errorf("emit: no type for call fun %v", c.Fun)
+	}
 	fun, err := e.emitExpr(c.Fun)
 	if err != nil {
 		return nil, err
@@ -558,6 +598,40 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 	}), nil
 }
 
+// isBuiltinCall reports whether fun is an *ast.Ident denoting a builtin
+// (len, cap, make, ...). Builtin idents carry no Types entry in go/types;
+// they resolve through Uses to *types.Builtin only.
+func isBuiltinCall(info *types.Info, fun ast.Expr) bool {
+	id, ok := fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	obj := info.Uses[id]
+	if obj == nil {
+		return false
+	}
+	_, ok = obj.(*types.Builtin)
+	return ok
+}
+
+// emitConversion emits a type conversion T(x) as a "conversion" node:
+// {"x": <operand node>, "type": <target type id>}. Exactly one argument is
+// required — go/types guarantees this for conversions, so anything else is
+// an emitter bug and fails loudly.
+func (e *Emitter) emitConversion(c *ast.CallExpr) (map[string]any, error) {
+	if len(c.Args) != 1 {
+		return nil, fmt.Errorf("emit: conversion with %d args, want 1", len(c.Args))
+	}
+	x, err := e.emitExpr(c.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	return e.node("conversion", c, map[string]any{
+		"x":    x,
+		"type": e.exprType(c),
+	}), nil
+}
+
 func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	// Method call or field access — go/types Selection tells us.
 	if sel, ok := e.info.Info.Selections[s]; ok {
@@ -583,7 +657,11 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					toid, err := e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
+					oid = toid
 				}
 				_ = pkgname
 				return e.node("pkgref", s, map[string]any{

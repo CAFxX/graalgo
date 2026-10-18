@@ -12,6 +12,7 @@ import graalgo.frontend.CapNode;
 import graalgo.frontend.ClearNode;
 import graalgo.frontend.CompositeLitNode;
 import graalgo.frontend.ConstNode;
+import graalgo.frontend.ConvertNode;
 import graalgo.frontend.CopyNode;
 import graalgo.frontend.DeleteNode;
 import graalgo.frontend.ExprStmtNode;
@@ -44,10 +45,13 @@ import graalgo.frontend.SliceExprNode;
 import graalgo.frontend.UnaryOpNode;
 import graalgo.frontend.VarReadNode;
 import graalgo.values.GoKind;
+import graalgo.values.GoComplex32;
+import graalgo.values.GoComplex64;
 import graalgo.values.GoString;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -838,6 +842,9 @@ public final class NodeFactoryV2 {
             case "call": {
                 return buildCall(fields, where, scope);
             }
+            case "conversion": {
+                return buildConversion(fields, where, scope);
+            }
             case "selector": {
                 Object xObj = fields.get("x");
                 if (!(xObj instanceof Map)) {
@@ -933,6 +940,16 @@ public final class NodeFactoryV2 {
                 } else {
                     bits = Long.parseLong(value);
                 }
+                if (k.isUntyped()) {
+                    // Untyped integer constant: keep the exact decimal string
+                    // (the emitter provides it as "const" = go/constant
+                    // ExactString) so conversions like string(65) and
+                    // float64(1<<70) are exact even beyond 64 bits —
+                    // mirroring ConstNode's contract.
+                    Object c = fields.get("const");
+                    String decimal = c instanceof String ? (String) c : value;
+                    return ConstNode.ofUntypedInt(bits, decimal);
+                }
                 return ConstNode.ofInt(k, bits);
             } catch (NumberFormatException e) {
                 // Fall through to other kinds.
@@ -973,6 +990,14 @@ public final class NodeFactoryV2 {
     /**
      * Builds an identifier reference.
      */
+    /**
+     * Builds an identifier reference, dispatching on the object table's
+     * "kind" (see the Go emitter's describeObject): only "var" objects are
+     * frame-slot reads. Constants become ConstNodes (they are immutable
+     * values, not mutable variables), nil becomes a NilNode, and anything
+     * else fails loudly — a type name or function used as a value here
+     * would otherwise silently miscompile.
+     */
     private GoExprNode buildIdent(Map<String, Object> fields, String where, V2Scope scope) {
         // Builtin?
         Object builtinObj = fields.get("builtin");
@@ -983,12 +1008,123 @@ public final class NodeFactoryV2 {
         Object objIdObj = fields.get("obj");
         if (objIdObj instanceof Long) {
             int objId = ((Long) objIdObj).intValue();
-            int slot = scope.slotForObj(objId, where);
-            GoKind k = scope.kindForObj(objId, where);
-            return new VarReadNode(k, slot);
+            String objKind = objKind(scope.objects, objId, where);
+            switch (objKind) {
+                case "var": {
+                    int slot = scope.slotForObj(objId, where);
+                    GoKind k = scope.kindForObj(objId, where);
+                    return new VarReadNode(k, slot);
+                }
+                case "const":
+                    return buildConstObject(scope.types, scope.objects, objId, where);
+                case "nil":
+                    return new NilNode(GoKind.INTERFACE, null);
+                case "func":
+                    throw new FrontendException(where + ": function value \"" +
+                            objName(scope.objects, objId) + "\" not yet supported in v2");
+                case "typename":
+                    throw new FrontendException(where + ": type name \"" +
+                            objName(scope.objects, objId) +
+                            "\" used as a value (conversions are 'conversion' nodes)");
+                default:
+                    throw new FrontendException(where + ": unknown object kind \"" +
+                            objKind + "\" for object " + objId);
+            }
         }
         String name = (String) fields.get("name");
         throw new FrontendException(where + ": unresolved ident \"" + name + "\"");
+    }
+
+    /**
+     * Builds a reference to a "const" object: the constant's value carried
+     * in the object table's "value" map (see the Go emitter's
+     * describeConst), converted to the matching ConstNode factory. Mirrors
+     * the v1 NodeFactory's constant handling (f32bits/f64bits are the
+     * correctly-rounded IEEE bit patterns computed by go/constant;
+     * "sbytes" is the hex-encoded exact string bytes; complex constants
+     * carry real/imag bit patterns).
+     */
+    @SuppressWarnings("unchecked")
+    private static GoExprNode buildConstObject(List<Object> types, List<Object> objects,
+            int objId, String where) {
+        Object o = objects.get(objId);
+        if (!(o instanceof Map)) {
+            throw new FrontendException(where + ": object " + objId + " must be a map");
+        }
+        Map<String, Object> objMap = (Map<String, Object>) o;
+        GoKind kind = goKindForObj(types, objects, objId, where);
+        Map<String, Object> value = getMap(objMap, "value", where + ".const");
+        String ckind = getString(value, "ckind", where + ".const.value");
+        String vwhere = where + ".const.value";
+        boolean untyped = kind.isUntyped();
+        switch (ckind) {
+            case "int": {
+                long bits = getLong(value, "bits", vwhere);
+                if (untyped) {
+                    return ConstNode.ofUntypedInt(bits, getString(value, "exact", vwhere));
+                }
+                return ConstNode.ofInt(kind, bits);
+            }
+            case "float": {
+                int f32bits = (int) getLong(value, "f32bits", vwhere);
+                long f64bits = getLong(value, "f64bits", vwhere);
+                if (untyped) {
+                    return ConstNode.ofUntypedFloat(f32bits, f64bits);
+                }
+                return ConstNode.ofFloat(kind, f32bits, f64bits);
+            }
+            case "bool": {
+                Object b = value.get("value");
+                if (!(b instanceof Boolean)) {
+                    throw new FrontendException(vwhere + ": \"value\" must be a bool");
+                }
+                if (untyped) {
+                    return ConstNode.ofUntypedBool((Boolean) b);
+                }
+                return ConstNode.ofBool((Boolean) b);
+            }
+            case "string": {
+                byte[] raw = HexFormat.of().parseHex(getString(value, "sbytes", vwhere));
+                GoString gs = new GoString(raw);
+                if (untyped) {
+                    return ConstNode.ofUntypedString(gs);
+                }
+                return ConstNode.ofString(gs);
+            }
+            case "complex": {
+                int creal32 = (int) getLong(value, "creal32", vwhere);
+                long creal64 = getLong(value, "creal64", vwhere);
+                int cimag32 = (int) getLong(value, "cimag32", vwhere);
+                long cimag64 = getLong(value, "cimag64", vwhere);
+                if (kind == GoKind.COMPLEX64) {
+                    return ConstNode.ofObject(kind, new GoComplex32(
+                            Float.intBitsToFloat(creal32), Float.intBitsToFloat(cimag32)));
+                }
+                return ConstNode.ofObject(kind, new GoComplex64(
+                        Double.longBitsToDouble(creal64), Double.longBitsToDouble(cimag64)));
+            }
+            default:
+                throw new FrontendException(vwhere + ": unknown constant kind \"" + ckind + "\"");
+        }
+    }
+
+    /**
+     * Builds a type conversion T(x) (v2 "conversion" node, emitted by the
+     * Go frontend when the call's fun denotes a type rather than a
+     * signature). Uses the shared ConvertNode with its Go-exact conversion
+     * matrix.
+     * Fields: {x, type}.
+     */
+    @SuppressWarnings("unchecked")
+    private GoExprNode buildConversion(Map<String, Object> fields, String where, V2Scope scope) {
+        Object xObj = fields.get("x");
+        if (!(xObj instanceof Map)) {
+            throw new FrontendException(where + ": conversion.x must be a map");
+        }
+        GoExprNode x = buildExpr((Map<String, Object>) xObj, where + ".x", scope);
+        GoKind from = x.kind();
+        GoKind to = goKindForTypeId(scope.types, fields.get("type"), where);
+        return new ConvertNode(from, to, x);
     }
 
     /**
@@ -1163,6 +1299,36 @@ public final class NodeFactoryV2 {
             throw new FrontendException(where + ": \"" + key + "\" must be a list");
         }
         return (List<Object>) v;
+    }
+
+    private static long getLong(Map<String, Object> m, String key, String where) {
+        Object v = m.get(key);
+        if (v instanceof Long) {
+            return (Long) v;
+        }
+        throw new FrontendException(where + ": \"" + key + "\" must be an int");
+    }
+
+    /**
+     * Reads the "kind" of an entry in the objects table (see the Go
+     * emitter's describeObject). Unknown or missing kinds fail loudly:
+     * the factory must never silently treat a constant, type name, or nil
+     * as a mutable variable.
+     */
+    @SuppressWarnings("unchecked")
+    private static String objKind(List<Object> objects, int objId, String where) {
+        if (objId < 0 || objId >= objects.size()) {
+            throw new FrontendException(where + ": bad object id " + objId);
+        }
+        Object o = objects.get(objId);
+        if (!(o instanceof Map)) {
+            throw new FrontendException(where + ": object " + objId + " must be a map");
+        }
+        Object kind = ((Map<String, Object>) o).get("kind");
+        if (!(kind instanceof String)) {
+            throw new FrontendException(where + ": object " + objId + " has no kind");
+        }
+        return (String) kind;
     }
 
     // --- Result types ---
