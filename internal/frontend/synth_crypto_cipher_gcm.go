@@ -25,25 +25,25 @@ const (
 // Mode with the standard nonce length.
 //
 // P3-M8: fail-fast stub (exact gc signature). Real callers go through the
-// mrM8 desugar to __newGCM. Re-test trigger: WS D lands.
+// mrM8 desugar to __newGCM.
 func NewGCM(cipher Block) (AEAD, error) {
-	panic("crypto/cipher: NewGCM: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/cipher: NewGCM: unreachable (call sites desugar to __newGCM")
 }
 
 // NewGCMWithNonceSize returns the given 128-bit, block cipher wrapped in
 // Galois Counter Mode with the given nonce size.
 //
-// P3-M8: fail-fast stub. Re-test trigger: WS D lands.
+// P3-M8: fail-fast stub.
 func NewGCMWithNonceSize(cipher Block, size int) (AEAD, error) {
-	panic("crypto/cipher: NewGCMWithNonceSize: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/cipher: NewGCMWithNonceSize: unreachable (call sites desugar to __newGCMWithNonceSize")
 }
 
 // NewGCMWithTagSize returns the given 128-bit, block cipher wrapped in
 // Galois Counter Mode with the given tag size.
 //
-// P3-M8: fail-fast stub. Re-test trigger: WS D lands.
+// P3-M8: fail-fast stub.
 func NewGCMWithTagSize(cipher Block, tagSize int) (AEAD, error) {
-	panic("crypto/cipher: NewGCMWithTagSize: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/cipher: NewGCMWithTagSize: unreachable (call sites desugar to __newGCMWithTagSize")
 }
 
 // newGCMAEADPair is the single-result form of NewGCM's results.
@@ -156,7 +156,7 @@ func __aeadOpen(aead AEAD, dst, nonce, ciphertext, additionalData []byte) aeadOp
 	}); ok {
 		return o.OpenSingle(dst, nonce, ciphertext, additionalData)
 	}
-	panic("crypto/cipher: Open on non-synthetic AEAD (needs WS D; re-test when it lands)")
+	panic("crypto/cipher: Open on non-synthetic AEAD (needs itab dispatch to user-defined pair-transformed Open; P4 general interface MR untested here)")
 }
 
 func (g *gcmFallback) OpenSingle(dst, nonce, ciphertext, additionalData []byte) aeadOpenPair {
@@ -165,7 +165,7 @@ func (g *gcmFallback) OpenSingle(dst, nonce, ciphertext, additionalData []byte) 
 
 // Open decrypts and authenticates ciphertext, authenticates additionalData.
 func (g *gcmFallback) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
-	panic("crypto/cipher: Open: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/cipher: Open: unreachable (call sites desugar to __aeadOpen")
 }
 
 // P3-M8b: open returns the pair directly (WS D: the multi-result form
