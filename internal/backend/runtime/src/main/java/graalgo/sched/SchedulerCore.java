@@ -491,6 +491,73 @@ public final class SchedulerCore {
     }
 
     /**
+     * Test-only override for the per-instance verdict default below.
+     * Pre-existing unit tests park goroutines that the TEST thread later
+     * unparks — an external actor the watchdog cannot see (production has
+     * none: every unpark source is a goroutine or a timer). A mid-test
+     * verdict on such a scheduler is a harness artifact, not a program
+     * deadlock, and the production halt-the-VM default would kill the
+     * whole test JVM (e.g. SchedulerCoreTest.testNumGoroutines parks 8
+     * goroutines the test thread then unparks). SchedTestRunner installs
+     * a non-halting default here at startup; per-instance {@link
+     * #setDeadlockHandlerForTest} still takes precedence for precise
+     * assertions (DeadlockDetectorTest). Production never calls this.
+     */
+    private static volatile Runnable defaultDeadlockHandlerOverride;
+
+    /** Test hook: overrides the default verdict for subsequently created
+     * schedulers. Production never calls this. */
+    static void setDefaultDeadlockHandlerForTest(Runnable handler) {
+        defaultDeadlockHandlerOverride = handler;
+    }
+
+    /**
+     * Deadlock verdict action (L31, P1-28). Invoked on the drainer thread
+     * when the quiescence watchdog ({@code Drainer.maybeDeadlock})
+     * concludes no progress is possible. Replaceable per-instance in tests
+     * via {@link #setDeadlockHandlerForTest} (or JVM-wide via {@link
+     * #setDefaultDeadlockHandlerForTest}); the production default reports
+     * like gc and halts the VM — a deadlocked program can never make
+     * progress, so returning would hang {@code awaitQuiescence} forever.
+     */
+    private volatile Runnable deadlockHandler = defaultDeadlockHandlerOverride != null
+            ? defaultDeadlockHandlerOverride
+            : this::defaultDeadlockVerdict;
+
+    private void defaultDeadlockVerdict() {
+        // A recorded panic/crash already doomed the program — its message
+        // was printed by recordPanic/recordCrash. Don't append a
+        // misleading deadlock line; exit with the recorded status (gc
+        // fatal → exit 2; graalgo internal error → exit 1, matching the
+        // launcher's crashed() branch).
+        if (crashed()) {
+            Runtime.getRuntime().halt(1);
+        }
+        if (!panicked()) {
+            // gc checkdead text, verbatim.
+            System.err.println(
+                    "fatal error: all goroutines are asleep - deadlock!");
+        }
+        Runtime.getRuntime().halt(2);
+    }
+
+    /** Drainer-side entry point for the L31 deadlock verdict. */
+    void fireDeadlockVerdict() {
+        deadlockHandler.run();
+    }
+
+    /**
+     * Test hook: replaces the halt-the-VM deadlock verdict with {@code
+     * handler} (e.g. a latch countdown). Production never calls this.
+     */
+    void setDeadlockHandlerForTest(Runnable handler) {
+        if (handler == null) {
+            throw new IllegalArgumentException("deadlock handler must not be null");
+        }
+        deadlockHandler = handler;
+    }
+
+    /**
      * The M10 self-attack's stack-overflow cascade: Truffle's exception
      * profiler can blow the exhausted stack while handling a
      * StackOverflowError, masking it as a class-init failure.

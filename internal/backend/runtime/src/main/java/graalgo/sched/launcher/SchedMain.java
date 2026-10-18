@@ -158,13 +158,15 @@ public final class SchedMain {
                 try {
                     program.root().execute(frame);
                 } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
-                    // goroutine is live; otherwise main just dies.
+                    // Main called Goexit: gc fatal deadlock iff no other
+                    // goroutine is live (go1.27 runtime/proc.go checkdead:
+                    // "no goroutines (main called runtime.Goexit) -
+                    // deadlock!", exit 2); otherwise main just dies.
                     if (sched.runnableCount() > 1) {
                         return;
                     }
                     System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
+                            "fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
                     exitCode[0] = EXIT_PANIC;
                 }
             });

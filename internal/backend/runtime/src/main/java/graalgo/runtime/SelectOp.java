@@ -258,7 +258,10 @@ public final class SelectOp {
                     Panic.throwPanic(GoStrings.of("send on closed channel"));
                 }
                 // Zero cases: `select {}` blocks forever (gc deadlock).
-                // Park indefinitely; the deadlock detector (P2-M10) owns it.
+                // Park indefinitely; the drainer-side quiescence watchdog
+                // (L31: Drainer.maybeDeadlock) owns the verdict — it fires
+                // once every goroutine is parked with no timers or
+                // blocking I/O outstanding.
                 // P2-M6: it genuinely blocks — record with channelId -1
                 // (multi-channel select has no single channel).
                 JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);

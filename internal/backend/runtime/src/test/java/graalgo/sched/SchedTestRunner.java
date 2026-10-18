@@ -42,6 +42,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.jfr.JfrRegistrationTest.class);
         TESTS.add(graalgo.sched.audit.PinAuditTest.class);
         TESTS.add(graalgo.sched.SchedulerCoreTest.class);
+        TESTS.add(graalgo.sched.DeadlockDetectorTest.class);
         TESTS.add(graalgo.sched.ChannelTest.class);
         TESTS.add(graalgo.sched.ChannelDifferentialTest.class);
         TESTS.add(graalgo.sched.IoSlotsTest.class);
@@ -65,6 +66,15 @@ public final class SchedTestRunner {
     }
 
     public static void main(String[] args) {
+        // L31: the deadlock watchdog's production verdict halts the VM.
+        // Pre-existing tests park goroutines that the TEST thread later
+        // unparks (an external actor the watchdog cannot see); a mid-test
+        // verdict on such a scheduler must not kill the suite. Install a
+        // non-halting default for every scheduler created in this JVM.
+        // DeadlockDetectorTest installs per-instance recorders for its own
+        // precise verdict assertions (those take precedence).
+        SchedulerCore.setDefaultDeadlockHandlerForTest(() -> {
+        });
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {

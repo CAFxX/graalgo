@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 /**
@@ -47,6 +48,17 @@ public final class Drainer {
     // released, vthread blocked in the syscall (not parked). IO_EXIT
     // re-admits through the WAKE lane.
     private final java.util.Set<Long> inIo = new java.util.HashSet<>();
+
+    /**
+     * Idle inbox-poll quantum for the L31 quiescence watchdog. When no
+     * token arrives within this window the drainer re-runs the deadlock
+     * check: quiescence can be reached without any drainer token (e.g. a
+     * timer callback that fires and unblocks nobody). The tick only
+     * schedules evaluations — the verdict itself is purely state-based
+     * (see {@link #maybeDeadlock}), so the timeout can never cause a
+     * false positive.
+     */
+    private static final long IDLE_POLL_MILLIS = 100;
 
     /**
      * Admission provenance counters (P2-M8, M6 watch-item investigation):
@@ -101,7 +113,11 @@ public final class Drainer {
         for (;;) {
             final ResumeToken token;
             try {
-                token = inbox.take();
+                // L31: poll (not take) so the quiescence watchdog below
+                // re-runs even when no token ever arrives. poll returns
+                // immediately when a token is available — admission
+                // latency is unchanged.
+                token = inbox.poll(IDLE_POLL_MILLIS, TimeUnit.MILLISECONDS);
             } catch (InterruptedException ie) {
                 // Non-terminating drainer: a stray interrupt must not kill
                 // the scheduler. Swallow and continue.
@@ -109,9 +125,16 @@ public final class Drainer {
             }
             try {
                 synchronized (lock) {
+                    if (token == null) {
+                        // Watchdog tick: the inbox has been quiet;
+                        // re-run the quiescence check (see maybeDeadlock).
+                        maybeDeadlock();
+                        continue;
+                    }
                     route(token);
                     admit();
                     checkInvariants();
+                    maybeDeadlock();
                 }
             } catch (Throwable t) {
                 // Fail LOUD, never silent: a violated invariant (or any
@@ -257,6 +280,93 @@ public final class Drainer {
         if (inflight < 0) {
             throw new AssertionError("inflight negative: " + inflight);
         }
+    }
+
+    /**
+     * Drainer-side quiescence watchdog (L31, P1-28; gc
+     * {@code checkdead} parity). Called with the drainer lock held
+     * whenever the drainer has nothing left to do: after each token's
+     * route+admit, and on every idle inbox-poll timeout.
+     *
+     * <p>Verdict — the program is deadlocked — iff ALL of:
+     * <ol>
+     *   <li>a goroutine is still live ({@code numGoroutines() > 0}).
+     *       The last EXIT means normal termination: {@code
+     *       awaitQuiescence} is about to return (the vthread decrements
+     *       the live count <em>before</em> offering EXIT, and the
+     *       no-concurrent-spawn contract makes live==0 terminal), so it
+     *       is never a deadlock;
+     *   <li>{@code inflight == 0} — nothing admitted-but-not-parked;
+     *   <li>all three lanes empty — nothing queued for admission;
+     *   <li>{@code inIo} empty — nobody blocked in a syscall (gc's
+     *       {@code _Gsyscall} keeps its M non-idle, so it is not
+     *       "asleep"; the syscall completing is external progress);
+     *   <li>the timer heap quiescent — no pending entries and no fire
+     *       in progress (gc: any P with timers suppresses checkdead,
+     *       even far-future ones, even ones whose callback unblocks
+     *       nobody).
+     * </ol>
+     *
+     * <p>No false positives on legitimate parks: a {@code time.Sleep} /
+     * {@code time.After} / ticker waiter fails (5); a goroutine in
+     * blocking I/O fails (4); quantum/yield parks leave RESUME tokens
+     * behind, failing (2)/(3).
+     *
+     * <p>Race-freedom (the subtle part): the timer thread is the only
+     * party that can offer a token while (2)–(4) hold — a SLEEP unpark
+     * (or a channel-callback unpark) can be sitting in the inbox while
+     * the heap already looks quiescent. So the verdict is a two-phase
+     * commit under the heap lock ({@code TimerHeap.runIfQuiescent}):
+     * first drain the inbox and route everything, then re-verify
+     * (2)–(4). Any fire whose unpark lands after that drain still holds
+     * {@code active > 0} (or the heap lock, for channel fires) at the
+     * quiescence check, so it fails (5). New timers can only be armed by
+     * a running goroutine (fails 2) or by a firing callback (fails 5).
+     * Lock order is drainer → heap; the timer thread never takes the
+     * drainer lock while holding the heap lock (its wakeups go through
+     * the lock-free inbox), so this cannot deadlock.
+     */
+    private void maybeDeadlock() {
+        if (sched.numGoroutines() == 0) {
+            return;
+        }
+        if (!looksQuiescent()) {
+            return; // fast path: obviously busy; skip the heap lock
+        }
+        sched.timerHeap().runIfQuiescent(() -> {
+            // Definitive phase: a wakeup may have been offered after the
+            // fast-path check (e.g. a timer unpark still in the inbox).
+            // Route everything first, then re-verify before verdicting.
+            drainInboxLocked();
+            if (!looksQuiescent()) {
+                return;
+            }
+            sched.fireDeadlockVerdict();
+        });
+    }
+
+    /**
+     * Guards (2)–(4) of the deadlock verdict: no admitted goroutine,
+     * nothing queued for admission, nobody in blocking I/O. Caller holds
+     * the drainer lock.
+     */
+    private boolean looksQuiescent() {
+        return inflight == 0 && wakeFifo.isEmpty() && initFifo.isEmpty()
+                && runFifo.isEmpty() && inIo.isEmpty();
+    }
+
+    /**
+     * Routes every token currently in the inbox, then admits and checks
+     * invariants — the same work the drain loop does per token, applied
+     * to the backlog. Caller holds the drainer lock.
+     */
+    private void drainInboxLocked() {
+        ResumeToken token;
+        while ((token = inbox.poll()) != null) {
+            route(token);
+        }
+        admit();
+        checkInvariants();
     }
 
     // ---- test hooks (package-visible; production never calls these) ----

@@ -92,6 +92,14 @@ public final class TimerHeap {
     private final AtomicLong idGen = new AtomicLong(1);
     private final AtomicLong seqGen = new AtomicLong(1);
     private Thread timerThread;
+    /**
+     * Fires popped from the heap but not yet completed (L31 deadlock
+     * detector). Non-channel entries fire outside the heap lock (see
+     * {@link #fireNonChan}); while one is in flight the heap can look
+     * empty ({@link #byId}) yet a wakeup is imminent — the drainer's
+     * quiescence check must not verdict. Guarded by {@link #lock}.
+     */
+    private int active;
 
     public TimerHeap(SchedulerCore sched) {
         if (sched == null) {
@@ -311,6 +319,32 @@ public final class TimerHeap {
         }
     }
 
+    /**
+     * Runs {@code action} while holding the heap lock, iff the heap is
+     * quiescent: no pending (uncancelled, unfired) entries and no fire
+     * in progress. Returns true iff the action ran.
+     *
+     * <p>L31 deadlock detector: this lets the drainer make its deadlock
+     * verdict atomically with respect to timer fires. Channel fires hold
+     * the heap lock throughout ({@link #fireChanLocked}); sleep/callback
+     * fires hold {@code active > 0} across the unlock window and offer
+     * any unpark to the drainer's inbox before {@code active} is
+     * decremented. The drainer's action first drains that inbox and
+     * re-verifies its own guards (a SLEEP unpark can be sitting in the
+     * inbox while the heap already looks quiescent), so no racing wakeup
+     * — before, during, or just after the check — can cause a false
+     * deadlock verdict.
+     */
+    public boolean runIfQuiescent(Runnable action) {
+        synchronized (lock) {
+            if (!byId.isEmpty() || active != 0) {
+                return false;
+            }
+            action.run();
+            return true;
+        }
+    }
+
     private void timerLoop() {
         for (;;) {
             final Entry e;
@@ -356,8 +390,23 @@ public final class TimerHeap {
                     fireChanLocked(e);
                     continue;
                 }
+                // L31: mark the fire in progress before leaving the heap
+                // lock. A SLEEP unpark or raw callback runs outside the
+                // lock; the drainer's quiescence check must observe it —
+                // a wakeup may be imminent even with byId empty.
+                active++;
             }
-            fireNonChan(e);
+            try {
+                fireNonChan(e);
+            } finally {
+                // L31: the fire completed. Any unpark it caused was
+                // already offered to the drainer's inbox (offer precedes
+                // this decrement), so the drainer either already has the
+                // token or will re-check on its idle poll tick.
+                synchronized (lock) {
+                    active--;
+                }
+            }
         }
     }
 
