@@ -3710,7 +3710,7 @@ func Log(x float64) float64 {
 // NOT IN M7 SCOPE (fail-fast): multi-result calls need WS D (F4 precedent).
 // The single-result internal __frexp is used by Pow/Log2.
 func Frexp(f float64) (frac float64, exp int) {
-	panic("math.Frexp not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("math.Frexp: unreachable (call sites desugar to __frexp")
 }
 
 // Modf returns integer and fractional floating-point numbers that sum to f.
@@ -3719,7 +3719,7 @@ func Frexp(f float64) (frac float64, exp int) {
 // NOT IN M7 SCOPE (fail-fast): multi-result calls need WS D (F4 precedent).
 // The single-result internal __modf is used by Pow/Gamma.
 func Modf(f float64) (int float64, frac float64) {
-	panic("math.Modf not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("math.Modf: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // Lgamma returns the natural logarithm of the absolute value of the
@@ -3727,14 +3727,14 @@ func Modf(f float64) (int float64, frac float64) {
 //
 // NOT IN M7 SCOPE (fail-fast): multi-result calls need WS D (F4 precedent).
 func Lgamma(x float64) (lgamma float64, sign int) {
-	panic("math.Lgamma not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("math.Lgamma: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // Sincos returns Sin(x), Cos(x).
 //
 // NOT IN M7 SCOPE (fail-fast): multi-result calls need WS D (F4 precedent).
 func Sincos(x float64) (sin, cos float64) {
-	panic("math.Sincos not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("math.Sincos: unreachable (call sites desugar to __sincos")
 }
 `
 
