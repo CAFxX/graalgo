@@ -57,6 +57,42 @@ import graalgo.values.GoString;
  * certificate verification (chain building, hostname) is implemented in Go
  * (synthetic crypto/x509 Verify) for exact Go semantics. The Go side calls
  * {@link #peerCertificates} after the handshake and verifies itself.
+ *
+ * <h2>Error channel (R23-P1-3)</h2>
+ *
+ * <p>No {@code Throwable} of type {@code Exception} ever escapes a
+ * {@code graalgo.tls.*} trap: host exceptions would abort the whole process,
+ * while gc surfaces the same conditions as Go {@code error} values. Failures
+ * are signalled with in-band sentinels instead:
+ *
+ * <ul>
+ *   <li>Every {@code long}-returning trap returns a <b>negative error-slot
+ *       key</b> on failure (valid results are provably never negative:
+ *       handles start at 1, statuses are 0-3, packed connection state is
+ *       non-negative). The Go side passes the key to
+ *       {@link #lastError(Object)} to retrieve the message.</li>
+ *   <li>{@code Object}-returning traps ({@link #wrap}, {@link #unwrap},
+ *       {@link #peerCertificates}) keep their existing {@code null}/empty
+ *       meanings and stash detail under the engine-handle key, also read via
+ *       {@link #lastError(Object)}.</li>
+ * </ul>
+ *
+ * <p>One {@link ConcurrentHashMap} ({@code ERRORS}) serves both key spaces:
+ * negative keys are consume-on-read error slots, positive keys are
+ * handle-scoped errors. Slot allocation is via {@link AtomicLong}; no locks,
+ * no {@code ThreadLocal} (trap calls from one goroutine may migrate across
+ * host threads under Truffle, so thread-identity-keyed state would be
+ * unsound).
+ *
+ * <p>Every trap body is wrapped in {@code catch (Exception)}: an
+ * {@code Error} ({@code OutOfMemoryError}, linkage errors, ...) still
+ * propagates and aborts, matching gc's fatal treatment of truly fatal
+ * conditions.
+ *
+ * <p>Single-driver-per-handle discipline (R23-6, unchanged): the Go driver
+ * issues at most one failing call per handle before reading the error. Two
+ * failing calls without an intervening {@code lastError} lose the first
+ * message (last-write-wins) — the documented protocol, not a race.
  */
 public final class TlsRuntime {
     private TlsRuntime() {}
@@ -64,6 +100,13 @@ public final class TlsRuntime {
     private static final ConcurrentHashMap<Long, SSLEngine> ENGINES =
             new ConcurrentHashMap<>();
     private static final AtomicLong NEXT_ENGINE_ID = new AtomicLong(1);
+
+    /** Error detail store. Negative keys: error slots (consume-on-read).
+     *  Positive keys: handle-scoped errors for Object-returning traps. */
+    private static final ConcurrentHashMap<Long, String> ERRORS =
+            new ConcurrentHashMap<>();
+    private static final AtomicLong NEXT_ERROR_ID = new AtomicLong(1);
+    private static final int MAX_ERROR_LEN = 512;
 
     /**
      * Unconsumed network input per engine. SSLEngine.unwrap() may consume
@@ -143,26 +186,28 @@ public final class TlsRuntime {
         }
     }
 
-    private static long num(Object o) {
-        if (o instanceof Number) {
-            return ((Number) o).longValue();
-        }
-        throw new IllegalArgumentException("expected Number, got " + o.getClass());
+    private static Long optNum(Object o) {
+        return (o instanceof Number) ? ((Number) o).longValue() : null;
     }
 
-    private static String str(Object o) {
+    private static String optStr(Object o) {
         if (o instanceof GoString) {
-            return new String(((GoString) o).bytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return new String(((GoString) o).bytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
         }
-        throw new IllegalArgumentException("expected GoString, got " + o.getClass());
+        return null;
     }
 
-    private static byte[] bytes(Object o) {
+    /**
+     * As before: a Go nil slice (Java null) becomes the empty array.
+     * Wrong host type yields null (callers route it to the error channel).
+     */
+    private static byte[] optBytes(Object o) {
         // A Go nil slice arrives as Java null: treat it as empty (Go
         // semantics: ranging/reading a nil slice yields nothing). Without
-        // this, wrap(handle, nil) in the handshake loop threw, wrap
-        // returned null, and the Go loop spun forever on NEED_WRAP with
-        // no output (01_handshake legs red in legs-rebased).
+        // this, wrap(handle, nil) in the handshake loop produced no output
+        // and the Go loop spun forever on NEED_WRAP (01_handshake legs red
+        // in legs-rebased).
         if (o == null) {
             return new byte[0];
         }
@@ -176,7 +221,73 @@ public final class TlsRuntime {
             System.arraycopy(arr, off, out, 0, len);
             return out;
         }
-        throw new IllegalArgumentException("expected GoSlice, got " + o.getClass());
+        return null;
+    }
+
+    private static String typeName(Object o) {
+        return o == null ? "null" : o.getClass().getName();
+    }
+
+    /** Allocates an error slot; returns the (negative) key to hand to Go. */
+    private static long fail(String what, Throwable e) {
+        long key = -NEXT_ERROR_ID.getAndIncrement();
+        ERRORS.put(key, truncate("tls." + what + " failed: " + flat(e)));
+        return key;
+    }
+
+    private static long failArg(String what, Object badArg, String expected) {
+        long key = -NEXT_ERROR_ID.getAndIncrement();
+        ERRORS.put(key, truncate("tls." + what + ": expected " + expected
+                + ", got " + typeName(badArg)));
+        return key;
+    }
+
+    /** Handle-scoped variants for Object-returning traps. */
+    private static void failHandle(long handle, String what, Throwable e) {
+        ERRORS.put(handle, truncate("tls." + what + " failed: " + flat(e)));
+    }
+
+    private static void failHandleArg(long handle, String what,
+                                      Object badArg, String expected) {
+        ERRORS.put(handle, truncate("tls." + what + ": expected " + expected
+                + ", got " + typeName(badArg)));
+    }
+
+    private static String flat(Throwable e) {
+        // One line: SimpleName + message, plus one cause level. No stack trace.
+        StringBuilder sb = new StringBuilder();
+        sb.append(e.getClass().getSimpleName()).append(": ")
+          .append(String.valueOf(e.getMessage()));
+        Throwable c = e.getCause();
+        if (c != null && c != e) {
+            sb.append(" caused by ").append(c.getClass().getSimpleName())
+              .append(": ").append(String.valueOf(c.getMessage()));
+        }
+        return sb.toString();
+    }
+
+    private static String truncate(String s) {
+        String noNewlines = s.replace('\n', ' ').replace('\r', ' ');
+        return noNewlines.length() <= MAX_ERROR_LEN ? noNewlines
+                : noNewlines.substring(0, MAX_ERROR_LEN);
+    }
+
+    private static Object toGoString(String s) {
+        // Same pattern as p3x509.GoX509.toGoString: Go declares `string` return.
+        return new GoString(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Consumes and returns the error detail for a failed trap call.
+     * key: the negative value a long-returning trap returned (error slot),
+     *      or an engine handle (handle-scoped error from an Object-returning
+     *      trap). Returns "" when nothing is recorded. Never throws.
+     * graalgo.tls.lastError(key) -> string
+     */
+    public static Object lastError(Object keyArg) {
+        Long k = optNum(keyArg);
+        String m = (k == null) ? null : ERRORS.remove(k);
+        return toGoString(m == null ? "" : m);
     }
 
     private static Object toGoBytes(byte[] b) {
@@ -274,18 +385,33 @@ public final class TlsRuntime {
     }
 
     /**
-     * Creates a client-side SSLEngine. Returns engine handle.
+     * Creates a client-side SSLEngine. Returns the engine handle (>= 1),
+     * or a negative error-slot key on failure (see the class javadoc).
      * graalgo.tls.newClientEngine(serverName, insecureSkipVerify,
-     *     minVersion, maxVersion, cipherSuites) -> handle
+     *     minVersion, maxVersion, cipherSuites) -> handle | -slot
      */
     public static long newClientEngine(Object serverNameArg, Object insecureArg,
                                        Object minVersionArg, Object maxVersionArg,
                                        Object cipherSuitesArg) {
+        String serverName = optStr(serverNameArg);
+        if (serverName == null) {
+            return failArg("newClientEngine.serverName", serverNameArg, "GoString");
+        }
+        Long minVersion = optNum(minVersionArg);
+        if (minVersion == null) {
+            return failArg("newClientEngine.minVersion", minVersionArg, "Number");
+        }
+        Long maxVersion = optNum(maxVersionArg);
+        if (maxVersion == null) {
+            return failArg("newClientEngine.maxVersion", maxVersionArg, "Number");
+        }
+        byte[] suitesBE = optBytes(cipherSuitesArg);
+        if (suitesBE == null) {
+            return failArg("newClientEngine.cipherSuites", cipherSuitesArg, "GoSlice");
+        }
+        // insecureArg is accepted but ignored (trust is always permissive;
+        // Go verifies post-handshake). Pre-existing; out of scope (R23-P1-3).
         try {
-            String serverName = str(serverNameArg);
-            long minVersion = num(minVersionArg);
-            long maxVersion = num(maxVersionArg);
-            byte[] suitesBE = bytes(cipherSuitesArg);
             SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(null, new TrustManager[]{new PermissiveTrustManager()},
                     new SecureRandom());
@@ -311,14 +437,15 @@ public final class TlsRuntime {
             ENGINES.put(id, engine);
             return id;
         } catch (Exception e) {
-            throw new IllegalStateException("TlsRuntime.newClientEngine failed", e);
+            return fail("newClientEngine", e);
         }
     }
 
     /**
-     * Creates a server-side SSLEngine. Returns engine handle.
+     * Creates a server-side SSLEngine. Returns the engine handle (>= 1),
+     * or a negative error-slot key on failure (see the class javadoc).
      * graalgo.tls.newServerEngine(chainDER, keyAlg, keyParams,
-     *     minVersion, maxVersion, cipherSuites) -> handle
+     *     minVersion, maxVersion, cipherSuites) -> handle | -slot
      * chainDER: length-prefixed DER certs (leaf first).
      * keyParams: length-prefixed components:
      *   RSA: n, e, d, p, q | ECDSA: curveName, x, y, d | Ed25519: seed
@@ -326,13 +453,31 @@ public final class TlsRuntime {
     public static long newServerEngine(Object chainDERArg, Object keyAlgArg,
                                        Object keyParamsArg, Object minVersionArg,
                                        Object maxVersionArg, Object cipherSuitesArg) {
+        byte[] chainDER = optBytes(chainDERArg);
+        if (chainDER == null) {
+            return failArg("newServerEngine.chainDER", chainDERArg, "GoSlice");
+        }
+        String keyAlg = optStr(keyAlgArg);
+        if (keyAlg == null) {
+            return failArg("newServerEngine.keyAlg", keyAlgArg, "GoString");
+        }
+        byte[] keyParams = optBytes(keyParamsArg);
+        if (keyParams == null) {
+            return failArg("newServerEngine.keyParams", keyParamsArg, "GoSlice");
+        }
+        Long minVersion = optNum(minVersionArg);
+        if (minVersion == null) {
+            return failArg("newServerEngine.minVersion", minVersionArg, "Number");
+        }
+        Long maxVersion = optNum(maxVersionArg);
+        if (maxVersion == null) {
+            return failArg("newServerEngine.maxVersion", maxVersionArg, "Number");
+        }
+        byte[] suitesBE = optBytes(cipherSuitesArg);
+        if (suitesBE == null) {
+            return failArg("newServerEngine.cipherSuites", cipherSuitesArg, "GoSlice");
+        }
         try {
-            byte[] chainDER = bytes(chainDERArg);
-            String keyAlg = str(keyAlgArg);
-            byte[] keyParams = bytes(keyParamsArg);
-            long minVersion = num(minVersionArg);
-            long maxVersion = num(maxVersionArg);
-            byte[] suitesBE = bytes(cipherSuitesArg);
 
             List<byte[]> certDERs = splitLengthPrefixed(chainDER);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
@@ -342,6 +487,10 @@ public final class TlsRuntime {
                         new java.io.ByteArrayInputStream(certDERs.get(i)));
             }
             PrivateKey privateKey = buildPrivateKey(keyAlg, splitLengthPrefixed(keyParams));
+            if (privateKey == null) {
+                return fail("newServerEngine",
+                        new IllegalArgumentException("unsupported keyAlg: " + keyAlg));
+            }
 
             SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(new KeyManager[]{new FixedKeyManager(chain, privateKey)},
@@ -359,7 +508,7 @@ public final class TlsRuntime {
             ENGINES.put(id, engine);
             return id;
         } catch (Exception e) {
-            throw new IllegalStateException("TlsRuntime.newServerEngine failed", e);
+            return fail("newServerEngine", e);
         }
     }
 
@@ -401,64 +550,95 @@ public final class TlsRuntime {
                     NamedParameterSpec.ED25519, seed);
             return KeyFactory.getInstance("Ed25519").generatePrivate(spec);
         }
-        throw new IllegalArgumentException("unsupported keyAlg: " + keyAlg);
+        // Unsupported keyAlg: return null; the caller converts this to a
+        // channeled error (no `throw` may remain in this file — R23-P1-3;
+        // the exception still travels through fail(), preserving the
+        // IllegalArgumentException type and message in the error text).
+        return null;
     }
 
     /**
-     * Begins the TLS handshake. Returns 0 on success.
-     * graalgo.tls.beginHandshake(handle) -> 0 | -1
+     * Begins the TLS handshake. Returns 0 on success, or a negative
+     * error-slot key on failure (see the class javadoc).
+     * graalgo.tls.beginHandshake(handle) -> 0 | -slot
      */
     public static long beginHandshake(Object handleArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return failArg("beginHandshake.handle", handleArg, "Number");
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
-            return -1;
+            return fail("beginHandshake",
+                    new IllegalArgumentException("unknown engine handle " + h));
         }
         try {
             engine.beginHandshake();
             return 0;
         } catch (Exception e) {
-            return -1;
+            return fail("beginHandshake", e);
         }
     }
 
     /**
      * Current handshake status: 0=FINISHED/NOT_HANDSHAKING, 1=NEED_WRAP,
-     * 2=NEED_UNWRAP, 3=NEED_TASK, -1=bad handle.
-     * graalgo.tls.engineStatus(handle) -> status
+     * 2=NEED_UNWRAP, 3=NEED_TASK; a negative error-slot key on failure
+     * (see the class javadoc).
+     * graalgo.tls.engineStatus(handle) -> status | -slot
      */
     public static long engineStatus(Object handleArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return failArg("engineStatus.handle", handleArg, "Number");
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
-            return -1;
+            return fail("engineStatus",
+                    new IllegalArgumentException("unknown engine handle " + h));
         }
-        long st;
-        switch (engine.getHandshakeStatus()) {
-            case FINISHED:
-            case NOT_HANDSHAKING:
-                st = 0; break;
-            case NEED_WRAP:
-                st = 1; break;
-            case NEED_UNWRAP:
-                st = 2; break;
-            case NEED_TASK:
-                st = 3; break;
-            default:
-                st = -1; break;
+        try {
+            long st;
+            switch (engine.getHandshakeStatus()) {
+                case FINISHED:
+                case NOT_HANDSHAKING:
+                    st = 0; break;
+                case NEED_WRAP:
+                    st = 1; break;
+                case NEED_UNWRAP:
+                    st = 2; break;
+                case NEED_TASK:
+                    st = 3; break;
+                default:
+                    st = -1; break;
+            }
+            return st;
+        } catch (Exception e) {
+            return fail("engineStatus", e);
         }
-        return st;
     }
 
     /**
      * Wraps application/handshake data into TLS records.
-     * graalgo.tls.wrap(handle, plaintext) -> ciphertext (may be empty).
+     * graalgo.tls.wrap(handle, plaintext) -> ciphertext (may be empty),
+     * or null on failure (detail stashed under the handle key; see the
+     * class javadoc). A null handle argument also yields null with no
+     * retrievable detail ("no key" limitation).
      */
     public static Object wrap(Object handleArg, Object plaintextArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return null;
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
             return null;
         }
         try {
-            byte[] plain = bytes(plaintextArg);
+            byte[] plain = optBytes(plaintextArg);
+            if (plain == null) {
+                failHandleArg(h, "wrap.plaintext", plaintextArg, "GoSlice");
+                return null;
+            }
             ByteBuffer src = ByteBuffer.wrap(plain);
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             while (src.hasRemaining()) {
@@ -520,26 +700,37 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            failHandle(h, "wrap", e);
             return null;
         }
     }
 
     /**
      * Unwraps TLS records into application data.
-     * Returns app bytes (may be empty); null if the peer closed or on error.
+     * Returns app bytes (may be empty); null if the peer closed (no detail
+     * stashed — the Go side maps it to io.EOF) or on error (detail stashed
+     * under the handle key; see the class javadoc). A null handle argument
+     * also yields null with no retrievable detail ("no key" limitation).
      * graalgo.tls.unwrap(handle, netData) -> appdata | null
      */
     public static Object unwrap(Object handleArg, Object netDataArg) {
-        long handle = num(handleArg);
-        SSLEngine engine = ENGINES.get(handle);
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return null;
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
             return null;
         }
         try {
-            byte[] netData = bytes(netDataArg);
+            byte[] netData = optBytes(netDataArg);
+            if (netData == null) {
+                failHandleArg(h, "unwrap.netData", netDataArg, "GoSlice");
+                return null;
+            }
             // Prepend any unconsumed bytes from the previous call: the
             // engine must see the peer's bytes in order, with none lost.
-            byte[] pending = PENDING.remove(handle);
+            byte[] pending = PENDING.remove(h);
             byte[] input;
             if (pending != null && pending.length > 0) {
                 input = new byte[pending.length + netData.length];
@@ -605,37 +796,54 @@ public final class TlsRuntime {
             if (remaining > 0) {
                 byte[] rest = new byte[remaining];
                 src.get(rest);
-                PENDING.put(handle, rest);
+                PENDING.put(h, rest);
             }
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            failHandle(h, "unwrap", e);
             return null;
         }
     }
 
     /**
-     * Runs delegated handshake tasks.
-     * graalgo.tls.runTasks(handle) -> 0
+     * Runs delegated handshake tasks. Returns 0, or a negative error-slot
+     * key on failure (see the class javadoc).
+     * graalgo.tls.runTasks(handle) -> 0 | -slot
      */
     public static long runTasks(Object handleArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return failArg("runTasks.handle", handleArg, "Number");
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
-            return -1;
+            return fail("runTasks",
+                    new IllegalArgumentException("unknown engine handle " + h));
         }
-        Runnable task;
-        while ((task = engine.getDelegatedTask()) != null) {
-            task.run();
+        try {
+            Runnable task;
+            while ((task = engine.getDelegatedTask()) != null) {
+                task.run();
+            }
+            return 0;
+        } catch (Exception e) {
+            return fail("runTasks", e);
         }
-        return 0;
     }
 
     /**
      * Peer certificate chain as length-prefixed DERs (leaf first).
      * graalgo.tls.peerCertificates(handle) -> bytes (may be empty).
+     * On failure returns empty bytes, stashing detail under the handle key
+     * (see the class javadoc).
      */
     public static Object peerCertificates(Object handleArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return toGoBytes(new byte[0]);
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
             return toGoBytes(new byte[0]);
         }
@@ -653,18 +861,25 @@ public final class TlsRuntime {
             }
             return toGoBytes(out.toByteArray());
         } catch (Exception e) {
+            failHandle(h, "peerCertificates", e);
             return toGoBytes(new byte[0]);
         }
     }
 
     /**
-     * Returns negotiated parameters packed as (version << 32 | cipherSuite).
-     * graalgo.tls.connectionState(handle) -> packed
+     * Returns negotiated parameters packed as (version << 32 | cipherSuite),
+     * or a negative error-slot key on failure (see the class javadoc).
+     * graalgo.tls.connectionState(handle) -> packed | -slot
      */
     public static long connectionState(Object handleArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return failArg("connectionState.handle", handleArg, "Number");
+        }
+        SSLEngine engine = ENGINES.get(h);
         if (engine == null) {
-            return -1;
+            return fail("connectionState",
+                    new IllegalArgumentException("unknown engine handle " + h));
         }
         try {
             String protocol = engine.getSession().getProtocol();
@@ -673,7 +888,7 @@ public final class TlsRuntime {
             int suite = parseCipherSuite(cipher);
             return ((long) vers << 32) | (suite & 0xFFFFFFFFL);
         } catch (Exception e) {
-            return -1;
+            return fail("connectionState", e);
         }
     }
 
@@ -764,22 +979,36 @@ public final class TlsRuntime {
      * Whether the engine holds unconsumed input bytes (see PENDING).
      * The Go driving loop checks this before blocking on a network read:
      * if pending bytes exist, it must call unwrap() to drain them first.
-     * Returns 1 if pending bytes exist, 0 otherwise.
-     * graalgo.tls.hasPending(handle) -> 1/0
+     * Returns 1 if pending bytes exist, 0 otherwise, or a negative
+     * error-slot key if the handle argument has the wrong host type
+     * (see the class javadoc).
+     * graalgo.tls.hasPending(handle) -> 1/0 | -slot
      */
     public static long hasPending(Object handleArg) {
-        byte[] pending = PENDING.get(num(handleArg));
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return failArg("hasPending.handle", handleArg, "Number");
+        }
+        byte[] pending = PENDING.get(h);
         return (pending != null && pending.length > 0) ? 1 : 0;
     }
 
     /**
-     * Closes the SSLEngine and releases resources.
-     * graalgo.tls.close(handle) -> void
+     * Closes the SSLEngine and releases resources. Idempotent.
+     * Returns 0; a negative error-slot key only if the handle argument has
+     * the wrong host type. Handle-scoped errors die with the handle.
+     * graalgo.tls.close(handle) -> 0 | -slot
      */
-    public static void close(Object handleArg) {
-        long handle = num(handleArg);
-        SSLEngine engine = ENGINES.remove(handle);
-        PENDING.remove(handle);
+    public static long close(Object handleArg) {
+        Long h = optNum(handleArg);
+        if (h == null) {
+            return failArg("close.handle", handleArg, "Number");
+        }
+        SSLEngine engine = ENGINES.remove(h);
+        PENDING.remove(h);
+        if (h > 0) {
+            ERRORS.remove(h);   // handle-scoped errors die with the handle
+        }
         if (engine != null) {
             try {
                 engine.closeInbound();
@@ -790,5 +1019,6 @@ public final class TlsRuntime {
             } catch (Exception ignored) {
             }
         }
+        return 0;
     }
 }

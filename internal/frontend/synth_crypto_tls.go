@@ -312,12 +312,17 @@ func loadX509KeyPairImpl(certFile, keyFile string) __mrLoadX509KeyPairPair {
 type Conn struct {
 	// engineHandle is an opaque handle to the Java SSLEngine state
 	// (managed by TlsRuntime; not directly accessible from Go).
+	// It never holds a negative value: a failed engine construction
+	// stores the error in engineErr and leaves engineHandle 0.
 	engineHandle int64
 	conn         net.Conn
 	config       *Config
 	isClient     bool
 	// handshakeComplete tracks whether doHandshake finished.
 	handshakeComplete bool
+	// engineErr records a failed engine construction (Client/Server cannot
+	// return errors under the gc API); surfaced by Handshake.
+	engineErr error
 }
 
 // Client creates a TLS client over conn. The handshake runs on Handshake().
@@ -326,13 +331,17 @@ func Client(conn net.Conn, config *Config) *Conn {
 		config = &Config{}
 	}
 	c := &Conn{conn: conn, config: config, isClient: true}
-	c.engineHandle = newClientEngineTrap(
+	if h := newClientEngineTrap(
 		config.ServerName,
 		config.InsecureSkipVerify,
 		int64(config.MinVersion),
 		int64(config.MaxVersion),
 		encodeCipherSuites(config.CipherSuites),
-	)
+	); h < 0 {
+		c.engineErr = tlsErrorFromSlot(h)
+	} else {
+		c.engineHandle = h
+	}
 	return c
 }
 
@@ -349,16 +358,21 @@ func Server(conn net.Conn, config *Config) *Conn {
 	__tmpKC := keyComponents(cert.PrivateKey)
 	keyAlg, keyParams, err := __tmpKC.v0, __tmpKC.v1, __tmpKC.v2
 	if err != nil {
+		c.engineErr = err
 		return c
 	}
-	c.engineHandle = newServerEngineTrap(
+	if h := newServerEngineTrap(
 		encodeLengthPrefixed(cert.Certificate),
 		keyAlg,
 		keyParams,
 		int64(config.MinVersion),
 		int64(config.MaxVersion),
 		encodeCipherSuites(config.CipherSuites),
-	)
+	); h < 0 {
+		c.engineErr = tlsErrorFromSlot(h)
+	} else {
+		c.engineHandle = h
+	}
 	return c
 }
 
@@ -710,6 +724,28 @@ func peerCertificatesTrap(engineHandle int64) []byte
 //go:linkname connectionStateTrap graalgo.tls.connectionState
 func connectionStateTrap(engineHandle int64) int64
 
+//go:linkname lastErrorTrap graalgo.tls.lastError
+func lastErrorTrap(key int64) string
+
+// tlsErrorFromSlot materializes the Java-side error detail for a negative
+// trap return into a Go error, consuming the slot.
+func tlsErrorFromSlot(slot int64) error {
+	msg := lastErrorTrap(slot)
+	if msg == "" {
+		msg = "unknown error"
+	}
+	return errors.New("tls: " + msg)
+}
+
+// tlsHandleError returns the stashed per-handle error, if any, consuming it.
+// Nil means "no recorded error" (e.g. unwrap's peer-closed path).
+func tlsHandleError(handle int64) error {
+	if msg := lastErrorTrap(handle); msg != "" {
+		return errors.New("tls: " + msg)
+	}
+	return nil
+}
+
 // Handshake performs the TLS handshake, driving the Java SSLEngine state
 // machine: shuttling handshake records between the engine and the raw
 // net.Conn until the engine reports FINISHED. Afterwards (client side,
@@ -721,6 +757,9 @@ func (c *Conn) NetConn() net.Conn {
 }
 
 func (c *Conn) Handshake() error {
+	if c.engineErr != nil {
+		return c.engineErr
+	}
 	if c.engineHandle == 0 {
 		return errors.New("tls: nil engine")
 	}
@@ -728,11 +767,17 @@ func (c *Conn) Handshake() error {
 		return nil
 	}
 	if rc := beginHandshakeTrap(c.engineHandle); rc != 0 {
+		if rc < 0 {
+			return tlsErrorFromSlot(rc)
+		}
 		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
 	}
 	tmp := make([]byte, 1<<14)
 	for {
 		st := engineStatusTrap(c.engineHandle)
+		if st < 0 {
+			return tlsErrorFromSlot(st)
+		}
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
@@ -752,6 +797,11 @@ func (c *Conn) Handshake() error {
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
+			if out == nil {
+				if herr := tlsHandleError(c.engineHandle); herr != nil {
+					return herr
+				}
+			}
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
 			// the engine may have more (e.g. Finished) — wrap again
@@ -779,7 +829,9 @@ func (c *Conn) Handshake() error {
 			// from a previous unwrap (buffered Java-side). Drain those
 			// first — do NOT block on a network read when there is
 			// already input waiting, or the handshake deadlocks.
-			if hasPendingTrap(c.engineHandle) != 0 {
+			if hp := hasPendingTrap(c.engineHandle); hp < 0 {
+				return tlsErrorFromSlot(hp)
+			} else if hp != 0 {
 				_ = unwrapTrap(c.engineHandle, nil)
 				continue
 			}
@@ -790,9 +842,17 @@ func (c *Conn) Handshake() error {
 			if n == 0 {
 				continue
 			}
-			_ = unwrapTrap(c.engineHandle, tmp[:n])
+			if app := unwrapTrap(c.engineHandle, tmp[:n]); app == nil {
+				if herr := tlsHandleError(c.engineHandle); herr != nil {
+					return herr
+				}
+				// Peer closed without detail: keep previous behavior —
+				// loop around; the next status check observes the closure.
+			}
 		case engineNeedTask:
-			runTasksTrap(c.engineHandle)
+			if rc := runTasksTrap(c.engineHandle); rc < 0 {
+				return tlsErrorFromSlot(rc)
+			}
 		default:
 			return fmt.Errorf("tls: handshake failed (status %d)", st)
 		}
@@ -810,6 +870,9 @@ func (c *Conn) verifyPeer() error {
 	}
 	peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
 	if len(peerDERs) == 0 {
+		if herr := tlsHandleError(c.engineHandle); herr != nil {
+			return herr
+		}
 		return errors.New("tls: no peer certificates")
 	}
 	leaf, err := x509.ParseCertificate(peerDERs[0])
@@ -842,6 +905,10 @@ func writeAll(conn net.Conn, b []byte) error {
 // ConnectionState returns the negotiated connection parameters.
 func (c *Conn) ConnectionState() ConnectionState {
 	packed := connectionStateTrap(c.engineHandle)
+	if packed < 0 {
+		lastErrorTrap(packed) // consume; nowhere to report (gc API has no error)
+		packed = 0
+	}
 	cs := ConnectionState{
 		Version:           uint16(packed >> 32),
 		HandshakeComplete: c.handshakeComplete,
@@ -884,6 +951,9 @@ func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
 		}
 		app := unwrapTrap(c.engineHandle, tmp[:n])
 		if app == nil {
+			if herr := tlsHandleError(c.engineHandle); herr != nil {
+				return __tlsConnReadPair{0, herr}
+			}
 			return __tlsConnReadPair{0, io.EOF}
 		}
 		if len(app) == 0 {
@@ -911,6 +981,9 @@ func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 	}
 	out := wrapTrap(c.engineHandle, b)
 	if out == nil {
+		if herr := tlsHandleError(c.engineHandle); herr != nil {
+			return __tlsConnWritePair{0, herr}
+		}
 		return __tlsConnWritePair{0, errors.New("tls: wrap failed")}
 	}
 	if err := writeAll(c.conn, out); err != nil {
@@ -921,11 +994,13 @@ func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 
 // Close closes the TLS connection.
 //go:linkname tlsCloseTrap graalgo.tls.close
-func tlsCloseTrap(engineHandle int64)
+func tlsCloseTrap(engineHandle int64) int64
 
 func (c *Conn) Close() error {
 	if c.engineHandle != 0 {
-		tlsCloseTrap(c.engineHandle)
+		if rc := tlsCloseTrap(c.engineHandle); rc < 0 {
+			lastErrorTrap(rc) // consume; Close's error comes from conn.Close
+		}
 		c.engineHandle = 0
 	}
 	return c.conn.Close()

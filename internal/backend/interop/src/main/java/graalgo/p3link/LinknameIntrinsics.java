@@ -712,12 +712,17 @@ public final class LinknameIntrinsics {
     }
 
     /**
-     * Registers the 11 {@code graalgo.tls.*} intrinsics implemented by
+     * Registers the 12 {@code graalgo.tls.*} intrinsics implemented by
      * {@link TlsRuntime} (P3-M9 tier-5, SSLEngine delegation). The Go side
      * (synth_crypto_tls.go) drives the handshake state machine; these traps
      * only implement the cryptographic operations. Engine handles are longs
      * into TlsRuntime's table; []byte arrives as GoSlice; strings as
      * GoString; ints/bools as Long.
+     *
+     * <p>Error channel (R23-P1-3): no trap throws across the boundary.
+     * {@code graalgo.tls.lastError} retrieves the detail for a negative
+     * error-slot key (long-returning traps) or a handle-scoped error
+     * (Object-returning traps); see TlsRuntime's class javadoc.
      */
     private static void registerTlsIntrinsics() {
         Linknames.register("graalgo.tls.newClientEngine",
@@ -743,7 +748,9 @@ public final class LinknameIntrinsics {
         Linknames.register("graalgo.tls.connectionState",
                 args -> TlsRuntime.connectionState(args[0]), 1);
         Linknames.register("graalgo.tls.close",
-                args -> { TlsRuntime.close(args[0]); return null; }, 1);
+                args -> TlsRuntime.close(args[0]), 1);
+        Linknames.register("graalgo.tls.lastError",
+                args -> TlsRuntime.lastError(args[0]), 1);
     }
 
     /**
