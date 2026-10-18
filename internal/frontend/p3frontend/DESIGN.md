@@ -162,6 +162,19 @@ rewrite **shadowing-correct**:
   in `Uses` to the field `*types.Var` and are renamed to the renamed type
   name. Without this, an embedded field would silently rebind to a
   colliding local type of the same name.
+- Reverse hazard (RV18-P1-06): the type-driven rewrite is only safe if
+  no user identifier lives in the encoding's `p3i_` namespace. A
+  user-written local, parameter, field, or method named e.g.
+  `p3i_9f2ac41b_Foo` would bind the renamed reference (`d.Foo` →
+  `p3i_9f2ac41b_Foo`) to the local instead of the renamed global — a
+  silent miscompile the shadowing-correct rewrite cannot see (it only
+  renames, never rejects). So `Flatten` rejects **every**
+  `p3i_`-prefixed identifier — every entry of `Info.Defs` and
+  `Info.Uses` in every flattened package — loudly at flatten time,
+  before any rewriting. The old guard walked only
+  `pkg.Scope().Names()` (package scope); the new one is the whole
+  identifier space. See `rejectReservedPrefix` in
+  [flatten.go](flatten.go).
 
 Import specs for flattened packages are dropped (blank imports
 `import _ "x"` are flattened for side effects, then dropped; the M1

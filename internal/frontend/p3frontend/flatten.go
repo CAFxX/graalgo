@@ -62,14 +62,16 @@ func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*Pa
 			return "", fmt.Errorf("p3frontend: dependency %q declares package main", dep.ImportPath)
 		}
 	}
-	// The p3i_ namespace belongs to the encoding: a user identifier there
-	// would silently collide with a renamed one, so it is rejected.
+	// The p3i_ namespace belongs to the encoding: any user identifier in it
+	// would silently collide with a renamed dependency identifier
+	// (d.Foo -> p3i_<hash>_Foo), so it is rejected loudly here, before
+	// any rewriting. RV18-P1-06: the previous guard walked only
+	// pkg.Scope().Names(), so a user-written local variable or parameter
+	// named e.g. p3i_9f2ac41b_Foo bound the renamed reference to the
+	// local instead of the renamed global — a silent miscompile.
 	for _, ref := range allRefs {
-		pkg := imp.Package(ref.ImportPath)
-		for _, name := range pkg.Scope().Names() {
-			if strings.HasPrefix(name, "p3i_") {
-				return "", fmt.Errorf("p3frontend: package %q: identifier %q uses the reserved p3i_ prefix", ref.ImportPath, name)
-			}
+		if err := rejectReservedPrefix(fset, ref, imp.Info(ref.ImportPath)); err != nil {
+			return "", err
 		}
 	}
 
@@ -184,6 +186,53 @@ func retainedComments(f *ast.File) []*ast.CommentGroup {
 		}
 	}
 	return out
+}
+
+// rejectReservedPrefix rejects every identifier defined or used in the
+// package whose name starts with the reserved p3i_ encoding namespace.
+// go/types records every definition in info.Defs (package-level names,
+// locals, parameters, results, receivers, type parameters, struct
+// fields, methods, import names) and every use in info.Uses (including
+// selector Sels, so struct fields and methods are covered on the use
+// side too), so walking both covers everything that could capture a
+// renamed p3i_<hash>_<name> reference. (Statement labels are not
+// recorded by go/types, but they live in Go's separate label namespace
+// and cannot bind a renamed identifier expression, so they are not part
+// of this hazard.) Offenders are reported in source order so the error
+// is deterministic.
+func rejectReservedPrefix(fset *token.FileSet, ref *PackageRef, info *types.Info) error {
+	if info == nil {
+		return nil
+	}
+	var bad []*ast.Ident
+	for id := range info.Defs {
+		if strings.HasPrefix(id.Name, "p3i_") {
+			bad = append(bad, id)
+		}
+	}
+	for id := range info.Uses {
+		if strings.HasPrefix(id.Name, "p3i_") {
+			if _, dup := info.Defs[id]; !dup {
+				bad = append(bad, id)
+			}
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Slice(bad, func(i, j int) bool {
+		pi, pj := fset.Position(bad[i].Pos()), fset.Position(bad[j].Pos())
+		if pi.Filename != pj.Filename {
+			return pi.Filename < pj.Filename
+		}
+		return bad[i].Pos() < bad[j].Pos()
+	})
+	id := bad[0]
+	kind := "definition"
+	if _, ok := info.Defs[id]; !ok {
+		kind = "use"
+	}
+	return fmt.Errorf("p3frontend: package %q: %s of identifier %q collides with the reserved p3i_ encoding namespace (%s)", ref.ImportPath, kind, id.Name, fset.Position(id.Pos()))
 }
 
 // rejectInitFunc fails fast on func init: the frozen exporter type-checks
