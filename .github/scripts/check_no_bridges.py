@@ -14,17 +14,26 @@ docs/arch/bridge-inventory.md). This check only looks at ADDED lines in the diff
 
 Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
-  2. git diff HEAD         (uncommitted working-tree changes)
-  3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
-                           checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+  2. <before>...HEAD       (direct master push: --before/NO_BRIDGES_BEFORE
+                           carries the pre-push head — CI passes
+                           github.event.before. wt.py integrate
+                           fast-forward-merges multi-commit lane branches,
+                           so HEAD~1 alone would inspect only the tip commit;
+                           the push's FULL range must be diffed)
+  3. git diff HEAD         (uncommitted working-tree changes)
+  4. git diff --cached     (staged changes)
+  5. HEAD~1...HEAD         (fallback when no pre-push head is known; covers
+                           only the tip commit)
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
-shallow checkout with no history), it fails loudly instead of skipping.
-CI must check out full history (fetch-depth: 0) for source 4 to resolve.
+shallow checkout with no history, or an unresolvable --before SHA), it fails
+loudly instead of skipping.
+CI must check out full history (fetch-depth: 0) for the pre-push range to
+resolve.
 """
 
+import argparse
+import os
 import re
 import subprocess
 import sys
@@ -65,20 +74,46 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="No-bridges gate: fail if the diff introduces new bridge "
+                    "patterns (synthetic stdlib, package-name conditionals, "
+                    "panic stubs, stdlib wire nodes, synthetic registrations).")
+    parser.add_argument(
+        "--before",
+        default=os.environ.get("NO_BRIDGES_BEFORE", ""),
+        help="Pre-push head SHA for direct master pushes (CI passes "
+             "github.event.before). Diffs the push's full commit range "
+             "instead of just the tip commit. Also read from "
+             "$NO_BRIDGES_BEFORE; empty disables this diff source.",
+    )
+    return parser.parse_args(argv)
+
+
+def get_diff(before=None):
     """Get the diff of added lines, plus a label naming the diff source.
 
     Returns ("", "") when no diff could be determined — the caller must
     treat that as a loud failure, never a vacuous pass.
     """
-    # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
+    # Try vs origin/master first (for PRs), then the pre-push head (for
+    # direct master pushes), fall back to working tree, then to the
+    # tip-commit delta. A shallow checkout (no resolvable history) yields
+    # nothing from the history-based sources — that is a failure, not a
+    # skip. An all-zero or unresolvable --before SHA is dropped (the git
+    # diff exits nonzero and the candidate is skipped, as below).
     candidates = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
+    ]
+    if before and not re.fullmatch(r"0+", before):
+        candidates.append(
+            (f"{before}...HEAD (master push, full range)",
+             ["git", "diff", f"{before}...HEAD", "--", "."]),
+        )
+    candidates += [
         ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
-        ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
+        ("HEAD~1...HEAD (tip only)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
     ]
     for name, cmd in candidates:
         try:
@@ -154,10 +189,27 @@ def check_no_bridges(diff):
         # Stub keyword anywhere in the first string arg of a composed panic.
         r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet)',
     ]
+    # Java fail-fast stubs. A `throw new UnsupportedOperationException` is a
+    # stub by construction (the operation is declared but refused outright);
+    # other exception types are flagged when the thrown message carries a
+    # stub keyword, literally or composed via String.format. As with the Go
+    # patterns, a human adjudicates each flag — a legitimate invariant throw
+    # is fine, a "not implemented yet" placeholder is not.
+    java_stub_res = [
+        r'throw\s+new\s+UnsupportedOperationException\s*\(',
+        r'throw\s+new\s+[\w.]+\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd|stub)',
+        r'throw\s+new\s+[\w.]+\s*\(\s*String\.format\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd|stub)',
+    ]
     for fname, line in added_lines:
-        if not fname or not fname.endswith(".go"):
+        if not fname:
             continue
-        for pat in panic_stub_res:
+        if fname.endswith(".go"):
+            pats = panic_stub_res
+        elif fname.endswith(".java"):
+            pats = java_stub_res
+        else:
+            continue
+        for pat in pats:
             if re.search(pat, line, re.I):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
@@ -193,17 +245,20 @@ def check_no_bridges(diff):
 
     return errors
 
-def main():
-    diff, source = get_diff()
+def main(argv=None):
+    args = parse_args(argv)
+    diff, source = get_diff((args.before or "").strip() or None)
     if not diff.strip():
         # Never pass vacuously: on the standard integration path (wt.py
         # integrate + push, no PR) every diff source above is empty only when
-        # the checkout has no history to diff against. Skipping here is
-        # exactly the false-green hole this check exists to close.
+        # the checkout has no history to diff against, or when the pre-push
+        # head could not be resolved. Skipping here is exactly the
+        # false-green hole this check exists to close.
         print("NO-BRIDGES CHECK FAILED:")
         print("  could not determine any diff to inspect (no PR diff, no")
-        print("  working-tree changes, and HEAD~1 is unavailable — is this a")
-        print("  shallow checkout? CI must use fetch-depth: 0).")
+        print("  --before/NO_BRIDGES_BEFORE range, no working-tree changes,")
+        print("  and HEAD~1 is unavailable — is this a shallow checkout?")
+        print("  CI must use fetch-depth: 0).")
         print("  Refusing to pass vacuously.")
         return 1
 
