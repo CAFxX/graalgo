@@ -15,7 +15,8 @@ public final class NilNode extends GoExprNode {
     /**
      * Recursive zero template for STRUCT/ARRAY kinds (null otherwise):
      * the zero of a struct kind must be fully materialized — GoStruct.zero
-     * would leave nested struct fields null (P3-M9).
+     * also recurses (RV18-P1-12); the template additionally materializes
+     * sync-primitive fields as usable Java objects.
      */
     private final Object zeroTemplate;
 

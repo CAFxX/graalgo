@@ -163,6 +163,156 @@ public final class ValuesTest {
         assertTrue(z.equals(z.copy()), "struct equals");
     }
 
+    // RV18-P1-12 (review-p1-structzero-nested): a nested struct field's zero
+    // value is the zero struct, never Java null. Pre-fix RED: zero() had no
+    // STRUCT branch, so the nested slot stayed null and s.inner.x panicked
+    // with a nil dereference on a non-nil Go value (gc yields 0).
+    public void testGoStructZeroNestedStruct() {
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("x"), List.of(GoKind.INT32));
+        GoStructDescriptor outer = GoStructDescriptor.layout("Outer",
+                List.of("n", "inner"),
+                List.of(GoKind.INT64, GoKind.STRUCT),
+                List.of(-1, -1),
+                Arrays.asList(null, null),
+                Arrays.asList(null, null),
+                Arrays.asList(null, inner));
+        GoStruct z = GoStruct.zero(outer);
+        assertEq(0, z.getLong(0), "zero outer int field");
+        // Field indices: 0 = "n" (longs-carried), 1 = "inner" (objects-carried).
+        Object nested = z.getObject(1);
+        assertTrue(nested instanceof GoStruct,
+                "nested struct field is a GoStruct, not null");
+        assertEq(0, ((GoStruct) nested).getLong(0),
+                "nested struct field zero (s.inner.x == 0)");
+        // Each zero() call mints fresh nested structs: no aliasing between
+        // two zero values (Go value semantics).
+        GoStruct z2 = GoStruct.zero(outer);
+        assertTrue(z.getObject(1) != z2.getObject(1),
+                "nested zero struct not shared across zero() calls");
+    }
+
+    // RV18-P1-12: recursion is deep, not one level — struct in struct in
+    // struct, with a string leaf (GoString.EMPTY, not null).
+    public void testGoStructZeroDeeplyNestedStruct() {
+        GoStructDescriptor deep = GoStructDescriptor.layout("Deep",
+                List.of("s"), List.of(GoKind.STRING));
+        GoStructDescriptor mid = GoStructDescriptor.layout("Mid",
+                List.of("d"),
+                List.of(GoKind.STRUCT),
+                List.of(-1),
+                Arrays.asList((GoKind) null),
+                Arrays.asList((GoStructDescriptor) null),
+                Arrays.asList(deep));
+        GoStructDescriptor top = GoStructDescriptor.layout("Top",
+                List.of("m"),
+                List.of(GoKind.STRUCT),
+                List.of(-1),
+                Arrays.asList((GoKind) null),
+                Arrays.asList((GoStructDescriptor) null),
+                Arrays.asList(mid));
+        GoStruct z = GoStruct.zero(top);
+        Object m = z.getObject(0);
+        assertTrue(m instanceof GoStruct, "level-1 nested struct non-null");
+        Object d = ((GoStruct) m).getObject(0);
+        assertTrue(d instanceof GoStruct, "level-2 nested struct non-null");
+        assertTrue(((GoStruct) d).getObject(0) == GoString.EMPTY,
+                "level-2 string leaf is GoString.EMPTY");
+    }
+
+    // RV18-P1-12, "one level down": array-of-struct fields. The ARRAY branch
+    // zero-fills via Boxing.newArray, whose per-element GoStruct.zero now
+    // recurses — elements are deep zeros, not shallow ones.
+    public void testGoStructZeroArrayOfStruct() {
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("x"), List.of(GoKind.INT32));
+        GoStructDescriptor elem = GoStructDescriptor.layout("Elem",
+                List.of("x", "inner"),
+                List.of(GoKind.INT32, GoKind.STRUCT),
+                List.of(-1, -1),
+                Arrays.asList(null, null),
+                Arrays.asList(null, null),
+                Arrays.asList(null, inner));
+        GoStructDescriptor holder = GoStructDescriptor.layout("Holder",
+                List.of("arr"),
+                List.of(GoKind.ARRAY),
+                List.of(3),
+                List.of(GoKind.STRUCT),
+                List.of(elem),
+                Arrays.asList((GoStructDescriptor) null));
+        GoStruct z = GoStruct.zero(holder);
+        Object arr = z.getObject(0);
+        assertTrue(arr instanceof Object[], "array field pre-allocated");
+        Object[] oa = (Object[]) arr;
+        assertEq(3, oa.length, "array field length");
+        for (int i = 0; i < oa.length; i++) {
+            assertTrue(oa[i] instanceof GoStruct,
+                    "array element " + i + " is a zero struct, not null");
+            GoStruct e = (GoStruct) oa[i];
+            assertEq(0, e.getLong(0), "array element int field zero");
+            // elem fields: 0 = "x" (longs), 1 = "inner" (objects).
+            Object nested = e.getObject(1);
+            assertTrue(nested instanceof GoStruct,
+                    "nested struct inside array element " + i + " non-null");
+            assertEq(0, ((GoStruct) nested).getLong(0),
+                    "nested struct inside array element " + i + " zero");
+        }
+        assertTrue(oa[0] != oa[1] && oa[1] != oa[2],
+                "array elements are distinct instances");
+    }
+
+    // RV18-P1-12: the make([]T,n) path — Intrinsics.makeslice ->
+    // Boxing.newArray(STRUCT, elemDesc, n) — must yield elements whose
+    // nested struct fields read as zero, i.e. s[0].inner.x == 0, not a
+    // nil-dereference panic.
+    public void testNewArrayStructElementsDeepZero() {
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("x"), List.of(GoKind.INT32));
+        GoStructDescriptor t = GoStructDescriptor.layout("T",
+                List.of("x", "inner"),
+                List.of(GoKind.INT32, GoKind.STRUCT),
+                List.of(-1, -1),
+                Arrays.asList(null, null),
+                Arrays.asList(null, null),
+                Arrays.asList(null, inner));
+        Object arr = graalgo.frontend.Boxing.newArray(GoKind.STRUCT, t, 2);
+        assertTrue(arr instanceof Object[], "makeslice backing is Object[]");
+        Object[] oa = (Object[]) arr;
+        assertEq(2, oa.length, "makeslice length");
+        for (int i = 0; i < oa.length; i++) {
+            assertTrue(oa[i] instanceof GoStruct,
+                    "slice element " + i + " is a zero struct, not null");
+            GoStruct e = (GoStruct) oa[i];
+            // T fields: 0 = "x" (longs-carried), 1 = "inner" (objects-carried).
+            Object nested = e.getObject(1);
+            assertTrue(nested instanceof GoStruct,
+                    "s[" + i + "].inner is a GoStruct, not null");
+            assertEq(0, ((GoStruct) nested).getLong(0),
+                    "s[" + i + "].inner.x == 0");
+        }
+        assertTrue(oa[0] != oa[1], "slice elements are distinct instances");
+    }
+
+    // RV18-P1-12 (negative): a STRUCT-kind field with no nested descriptor
+    // is a broken descriptor — fail fast instead of materializing a null
+    // nested struct that later panics as a nil dereference.
+    public void testGoStructZeroMissingNestedDescFailsFast() {
+        GoStructDescriptor broken = GoStructDescriptor.layout("Broken",
+                List.of("inner"),
+                List.of(GoKind.STRUCT),
+                List.of(-1),
+                Arrays.asList((GoKind) null),
+                Arrays.asList((GoStructDescriptor) null),
+                Arrays.asList((GoStructDescriptor) null));
+        boolean threw = false;
+        try {
+            GoStruct.zero(broken);
+        } catch (IllegalStateException expected) {
+            threw = true;
+        }
+        assertTrue(threw, "missing nested struct descriptor fails fast");
+    }
+
     public void testGoInterface() {
         assertTrue(GoInterface.NIL.isNil(), "nil interface");
         GoInterface v = new GoInterface("desc", 42L, "itab");

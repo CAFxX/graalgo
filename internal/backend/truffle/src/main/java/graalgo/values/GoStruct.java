@@ -33,11 +33,29 @@ public final class GoStruct {
             GoStructDescriptor.Field f = descriptor.field(i);
             if (!f.inLongs() && f.kind() == GoKind.STRING) {
                 objects[f.index()] = GoString.EMPTY;
+            } else if (!f.inLongs() && f.kind() == GoKind.STRUCT) {
+                // RV18-P1-12 (review-p1-structzero-nested): a nested struct
+                // field's zero value is the zero struct, never Java null. The
+                // old null here surfaced as a nil-dereference panic on reads
+                // like s[0].inner.x for non-nil Go values (gc yields 0),
+                // reachable via make([]T,n) -> Intrinsics.makeslice ->
+                // Boxing.newArray(STRUCT, ...) and via Boxing.zero(STRUCT).
+                // The recursion terminates: direct struct-value recursion is
+                // illegal Go, and the frontend fails fast on cyclic type
+                // graphs when building descriptors (structDescVisiting).
+                GoStructDescriptor nested = f.structDesc();
+                if (nested == null) {
+                    throw new IllegalStateException("struct zero needs a nested descriptor for field "
+                            + f.name() + " of " + descriptor.typeName() + " (RV18-P1-12)");
+                }
+                objects[f.index()] = zero(nested);
             } else if (!f.inLongs() && f.kind() == GoKind.ARRAY && f.arrayLen() >= 0 && f.arrayElemKind() != null) {
                 // P3-M8b: Go new(T) gives zero-valued arrays, not null.
                 // Pre-allocate so d.h[0]=x doesn't NPE. P3-M9: struct array
                 // elements are zero-filled via the element descriptor (same
                 // root cause as the make([]T,n) slice fix in Intrinsics).
+                // RV18-P1-12: struct elements now recurse through the STRUCT
+                // branch above, so array-of-struct elements are fully deep.
                 objects[f.index()] = graalgo.frontend.Boxing.newArray(
                         f.arrayElemKind(), f.arrayElemDesc(), f.arrayLen());
             } else if (!f.inLongs() && f.kind().isComplexKind()) {

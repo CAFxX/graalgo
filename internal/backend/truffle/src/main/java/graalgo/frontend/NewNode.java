@@ -23,9 +23,10 @@ public final class NewNode extends GoExprNode {
     /**
      * Recursive zero template for STRUCT/ARRAY element kinds (built by the
      * factory via NodeFactory.zeroTemplateFor); null for scalar kinds.
-     * P3-M9: GoStruct.zero (the descriptor-only path) leaves nested struct
-     * fields null — a new(T) referent must be the fully recursive zero
-     * value, deep-copied per allocation (Boxing.freshZeroCopy).
+     * GoStruct.zero also recurses (RV18-P1-12); the template is kept so a
+     * new(T) referent is the fully recursive zero value with
+     * sync-primitive fields materialized, deep-copied per allocation
+     * (Boxing.freshZeroCopy).
      */
     private final Object zeroTemplate;
 
@@ -58,7 +59,8 @@ public final class NewNode extends GoExprNode {
     public Object executeObject(VirtualFrame frame) {
         if (zeroTemplate != null) {
             // STRUCT/ARRAY referent: fresh deep copy of the recursive zero
-            // template — never the shallow GoStruct.zero (null nested fields).
+            // template — with sync-primitive fields materialized (a
+            // descriptor-only GoStruct.zero cannot mint those).
             return new GoPointer(Boxing.freshZeroCopy(zeroTemplate));
         }
         // P3-M8b: each new() must allocate a FRESH referent object. Boxing.zero
