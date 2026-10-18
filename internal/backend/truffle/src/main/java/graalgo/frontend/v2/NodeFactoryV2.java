@@ -331,26 +331,20 @@ public final class NodeFactoryV2 {
                 if (results.isEmpty()) {
                     return new ReturnNode(new NilNode(GoKind.INTERFACE, null));
                 }
-                // Build all results; for multi-value, wrap in a tuple-like.
-                // v2 currently supports single-value returns directly.
-                // Multi-value uses the first value (documented limitation for
-                // the factory; the emitter produces single-value in practice
-                // for the tested subset).
-                List<GoExprNode> built = new ArrayList<>();
-                for (int i = 0; i < results.size(); i++) {
-                    Object r = results.get(i);
-                    if (!(r instanceof Map)) {
-                        throw new FrontendException(where + ".results[" + i + "]: must be a map");
-                    }
-                    built.add(buildExpr((Map<String, Object>) r, where + ".results[" + i + "]", scope));
+                // v2 represents single-value returns directly. Multi-value
+                // returns have no tuple representation in the factory yet,
+                // so fail fast rather than silently dropping every value
+                // after the first (P0-3).
+                if (results.size() > 1) {
+                    throw new FrontendException(where + ": multi-value return with "
+                        + results.size() + " results is not supported by frontend/v2");
                 }
-                if (built.size() == 1) {
-                    return new ReturnNode(built.get(0));
+                Object r = results.get(0);
+                if (!(r instanceof Map)) {
+                    throw new FrontendException(where + ".results[0]: must be a map");
                 }
-                // Multi-result: build a block that evaluates all, return first.
-                // (Full multi-value return requires result slots; the v2
-                // factory uses single-value ReturnNode for the common case.)
-                return new ReturnNode(built.get(0));
+                return new ReturnNode(
+                    buildExpr((Map<String, Object>) r, where + ".results[0]", scope));
             }
             case "if": {
                 Object initObj = fields.get("init");
