@@ -25,7 +25,7 @@ import java.util.Map;
  * <pre>
  *   document := magic version value
  *   magic    := 0x67 0x32 0x62 0x69 ("g2bi": Go→Java binary interface)
- *   version  := varint format version (currently 1)
+ *   version  := varint format version (currently 2)
  *   value    := tag payload
  *   tag      := 0x00 (null) | 0x01 (bool) | 0x02 (int) | 0x03 (string)
  *              | 0x04 (list) | 0x05 (map)
@@ -52,8 +52,16 @@ public final class BinaryDecoder {
      * Current wire format version. Bump on any incompatible change, in
      * lockstep with the Go encoder's formatVersion
      * (internal/frontend/v2/encode/encode.go).
+     *
+     * <p>Version history:
+     * <ul>
+     *   <li>1: initial binary interface.
+     *   <li>2: basiclit nodes carry the decoded string/rune literal value in
+     *       a required "str" field (L02: the raw source text in "value" was
+     *       silently misdecoded by quote-stripping on the Java side).
+     * </ul>
      */
-    private static final long FORMAT_VERSION = 1;
+    private static final long FORMAT_VERSION = 2;
 
     private static final int TAG_NULL = 0x00;
     private static final int TAG_BOOL = 0x01;

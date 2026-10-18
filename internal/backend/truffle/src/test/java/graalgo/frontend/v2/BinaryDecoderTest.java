@@ -21,7 +21,7 @@ import java.util.Map;
 public final class BinaryDecoderTest {
 
     private static final String MAGIC_HEX = "67326269"; // "g2bi"
-    private static final String VERSION_HEX = "01"; // version 1
+    private static final String VERSION_HEX = "02"; // version 2
 
     /**
      * Golden document, byte-identical to the Go

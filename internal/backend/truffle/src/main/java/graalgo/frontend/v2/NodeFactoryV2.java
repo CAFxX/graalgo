@@ -920,8 +920,20 @@ public final class NodeFactoryV2 {
         String value = getString(fields, "value", where);
         GoKind k = goKindForTypeId(scope.types, fields.get("type"), where);
 
-        // Try integer first.
+        // Try integer first. Prefer the emitter's canonical decimal in
+        // "const" (from go/constant): it normalizes 0x/0o/0b prefixes, legacy
+        // octal (017 -> 15) and digit separators, which the raw source text
+        // in "value" does not. This also covers rune literals, whose const
+        // is the code point.
         if (k.isIntKind()) {
+            Object constObj = fields.get("const");
+            if (constObj instanceof String) {
+                try {
+                    return ConstNode.ofInt(k, Long.parseLong((String) constObj));
+                } catch (NumberFormatException ignored) {
+                    // Fall through to raw source parsing below.
+                }
+            }
             try {
                 long bits;
                 if (value.startsWith("0x") || value.startsWith("0X")) {
@@ -951,20 +963,38 @@ public final class NodeFactoryV2 {
             }
         }
         if (k == GoKind.STRING || k == GoKind.UNTYPED_STRING) {
-            // Strip quotes.
-            String s = value;
-            if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
-                s = s.substring(1, s.length() - 1);
+            // Wire contract (format v2): the emitter sends the DECODED string
+            // in "str" (see emitBasicLit). The raw source text in "value" still
+            // carries Go escapes and quote characters; re-parsing it here would
+            // duplicate Go's literal syntax and was the L02 silent-corruption
+            // bug (quote-stripping only). A missing "str" is a corrupt document
+            // — the format version gate already rejected v1 payloads — so fail
+            // loudly instead of misdecoding.
+            Object strObj = fields.get("str");
+            if (!(strObj instanceof String)) {
+                throw new FrontendException(
+                    where + ": string literal is missing the decoded \"str\" field");
             }
+            String s = (String) strObj;
             return ConstNode.ofString(new GoString(s.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         }
         if (k == GoKind.BOOL || k == GoKind.UNTYPED_BOOL) {
             return ConstNode.ofBool("true".equals(value));
         }
-        // Character literal (rune).
+        // Character literal (rune). Rune-typed literals are int kinds, so when
+        // the canonical "const" was present the integer branch above already
+        // returned the code point. Reaching here means "const" was absent or
+        // unparseable: decode from the emitter's decoded "str" field (format
+        // v2 wire contract). The raw source text cannot be decoded safely here
+        // (escapes like '\n' or '\x41' do not survive quote-stripping — that
+        // was the L02 silent-corruption bug), so a missing "str" fails loudly.
         if (value.startsWith("'") && value.endsWith("'") && value.length() >= 3) {
-            String inner = value.substring(1, value.length() - 1);
-            long runeVal = inner.codePointAt(0);
+            Object strObj = fields.get("str");
+            if (!(strObj instanceof String) || ((String) strObj).isEmpty()) {
+                throw new FrontendException(
+                    where + ": rune literal is missing the decoded \"str\" field");
+            }
+            long runeVal = ((String) strObj).codePointAt(0);
             return ConstNode.ofInt(k, runeVal);
         }
         throw new FrontendException(where + ": unsupported literal \"" + value + "\" of kind " + k);

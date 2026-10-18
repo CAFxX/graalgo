@@ -11,6 +11,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"strconv"
 )
 
 // node is the in-memory representation of one AST node.
@@ -501,6 +502,21 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	}
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
+	}
+	// L02: the wire carries the DECODED value for string and rune literals
+	// in "str". The raw source text in "value" is not sufficient: Go escape
+	// sequences (\n, \x41, \u0041, octal, ...), raw-string backquotes, and
+	// multi-byte runes cannot be re-derived by quote-stripping on the Java
+	// side. strconv.Unquote is the canonical Go implementation, so decoding
+	// here keeps a single source of truth for literal syntax. "value" keeps
+	// the raw source for diagnostics.
+	switch l.Kind {
+	case token.STRING, token.CHAR:
+		s, err := strconv.Unquote(l.Value)
+		if err != nil {
+			return nil, fmt.Errorf("emit: cannot unquote %s literal %s: %v", l.Kind, l.Value, err)
+		}
+		fields["str"] = s
 	}
 	_ = constant.MakeInt64(0)
 	return e.node("basiclit", l, fields), nil
