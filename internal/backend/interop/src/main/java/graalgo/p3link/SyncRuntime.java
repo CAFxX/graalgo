@@ -455,7 +455,9 @@ public final class SyncRuntime {
     public static void syncThrow(Object arg) {
         System.err.println("fatal error: " + goString(arg, "sync.throw"));
         System.err.flush();
-        System.exit(2);
+        // A program outcome (like a panic: gc exits 2), not a backend
+        // failure — report it before dying (see ExitReport).
+        graalgo.launcher.ExitReport.programExit(2);
     }
 
     /**
@@ -465,7 +467,9 @@ public final class SyncRuntime {
     public static void syncFatal(Object arg) {
         System.err.println("fatal error: " + goString(arg, "sync.fatal"));
         System.err.flush();
-        System.exit(2);
+        // A program outcome (like a panic: gc exits 2), not a backend
+        // failure — report it before dying (see ExitReport).
+        graalgo.launcher.ExitReport.programExit(2);
     }
 
     /**

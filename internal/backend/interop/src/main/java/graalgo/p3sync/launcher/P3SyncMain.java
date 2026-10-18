@@ -96,6 +96,13 @@ import graalgo.sched.nodes.GoStatementNode;
  * <p>Exit codes match Phase 1/2: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
  *
+ * <p>Exit-outcome reporting: the driver's {@code graalgo run} needs to
+ * distinguish "the program ran and exited N" from "the backend failed on
+ * its own" (codes 1 and 2 are ambiguous — see {@link
+ * graalgo.launcher.ExitReport}), so when invoked with
+ * {@code --exit-report=PATH} the launcher records the outcome category in
+ * that file before exiting. The codes themselves are unchanged.
+ *
  * <p>verifies: GG-0017 (sync slice)
  */
 public final class P3SyncMain {
@@ -106,18 +113,57 @@ public final class P3SyncMain {
     static final int EXIT_BUILD_FAILURE = 2;
     static final int EXIT_PANIC = 2;
 
+    /**
+     * Terminal outcome of {@link #runOutcome}: the process exit code plus
+     * its category. The category is what the exit code alone cannot carry:
+     * 1 is both "input error" and a program's {@code os.Exit(1)}, 2 is
+     * both "build failure" and "uncaught Go panic" (and {@code os.Exit(2)}).
+     */
+    enum OutcomeKind {
+        /** The Go program ran (to completion, panic, or os.Exit). */
+        PROGRAM_EXIT,
+        /** The backend failed on its own (input/build/internal error). */
+        BACKEND_FAILURE,
+    }
+
+    /** Terminal outcome of a launcher run: exit code plus its category. */
+    static final class Outcome {
+        final int code;
+        final OutcomeKind kind;
+
+        private Outcome(int code, OutcomeKind kind) {
+            this.code = code;
+            this.kind = kind;
+        }
+
+        static Outcome programExit(int code) {
+            return new Outcome(code, OutcomeKind.PROGRAM_EXIT);
+        }
+
+        static Outcome backendFailure(int code) {
+            return new Outcome(code, OutcomeKind.BACKEND_FAILURE);
+        }
+    }
+
     public static void main(String[] args) {
-        System.exit(run(args));
+        Outcome o = runOutcome(args);
+        System.exit(graalgo.launcher.ExitReport.terminal(
+                o.kind == OutcomeKind.PROGRAM_EXIT, o.code));
     }
 
     /** Entry point without System.exit, for tests. */
     static int run(String[] args) {
+        return runOutcome(args).code;
+    }
+
+    /** Full terminal outcome (code plus category), for the driver. */
+    static Outcome runOutcome(String[] args) {
         // P2-M5 (WS E): GODEBUG surface triage — same as SchedMain.
         try {
             GoDebug.apply();
         } catch (GoDebug.GoDebugException e) {
             System.err.println("graalgo-sync-run: fatal error: " + e.getMessage());
-            return 2;
+            return Outcome.backendFailure(2);
         }
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
@@ -140,6 +186,9 @@ public final class P3SyncMain {
         // captures the frontend output at build time for embedding in the
         // artifact.
         String emitWire = null;
+        // Driver exit-outcome reporting (see ExitReport): path of the file
+        // receiving the "program-exit" / "backend-failure" verdict.
+        String exitReport = null;
         java.util.List<String> files = new java.util.ArrayList<>();
         // P3-M8 (wave 2, R6): program argv. Everything after a bare
         // "--" is the Go program's argv (os.Args); the first element is
@@ -161,32 +210,42 @@ public final class P3SyncMain {
                 try {
                     gmp = Integer.parseInt(a.substring("--gmp=".length()));
                 } catch (NumberFormatException e) {
-                    return usageError("bad --gmp value: " + a);
+                    return Outcome.backendFailure(usageError("bad --gmp value: " + a));
                 }
                 if (gmp < 1) {
-                    return usageError("--gmp must be >= 1");
+                    return Outcome.backendFailure(usageError("--gmp must be >= 1"));
                 }
                 continue;
             }
             if (a.startsWith("--test-package-dir=")) {
                 testPackageDir = a.substring("--test-package-dir=".length());
                 if (testPackageDir.isEmpty()) {
-                    return usageError("--test-package-dir must not be empty");
+                    return Outcome.backendFailure(usageError("--test-package-dir must not be empty"));
                 }
                 continue;
             }
             if (a.startsWith("--wire-input=")) {
                 wireInput = a.substring("--wire-input=".length());
                 if (wireInput.isEmpty()) {
-                    return usageError("--wire-input must not be empty");
+                    return Outcome.backendFailure(usageError("--wire-input must not be empty"));
                 }
                 continue;
             }
             if (a.startsWith("--emit-wire=")) {
                 emitWire = a.substring("--emit-wire=".length());
                 if (emitWire.isEmpty()) {
-                    return usageError("--emit-wire must not be empty");
+                    return Outcome.backendFailure(usageError("--emit-wire must not be empty"));
                 }
+                continue;
+            }
+            if (a.startsWith("--exit-report=")) {
+                exitReport = a.substring("--exit-report=".length());
+                if (exitReport.isEmpty()) {
+                    return Outcome.backendFailure(usageError("--exit-report must not be empty"));
+                }
+                // Install immediately: later usage errors must still be
+                // categorized for the driver.
+                graalgo.launcher.ExitReport.install(exitReport);
                 continue;
             }
             switch (a) {
@@ -199,21 +258,21 @@ public final class P3SyncMain {
                 case "--dump-polymorphism" -> dumpPolymorphism = true;
                 case "--help", "-h" -> {
                     usage();
-                    return EXIT_OK;
+                    return Outcome.programExit(EXIT_OK);
                 }
                 default -> {
                     if (a.startsWith("-")) {
-                        return usageError("unknown flag: " + a);
+                        return Outcome.backendFailure(usageError("unknown flag: " + a));
                     }
                     files.add(a);
                 }
             }
         }
         if (files.isEmpty() && wireInput == null) {
-            return usageError("no input file");
+            return Outcome.backendFailure(usageError("no input file"));
         }
         if (!files.isEmpty() && wireInput != null) {
-            return usageError("--wire-input cannot be combined with input files");
+            return Outcome.backendFailure(usageError("--wire-input cannot be combined with input files"));
         }
         if (gmp == 0) {
             gmp = Runtime.getRuntime().availableProcessors();
@@ -223,7 +282,7 @@ public final class P3SyncMain {
             Path p = Paths.get(f);
             if (!Files.isReadable(p)) {
                 System.err.println("graalgo-sync-run: cannot read input file: " + f);
-                return EXIT_INPUT_ERROR;
+                return Outcome.backendFailure(EXIT_INPUT_ERROR);
             }
             paths.add(p);
         }
@@ -235,7 +294,7 @@ public final class P3SyncMain {
                 json = Files.readString(Paths.get(wireInput), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 System.err.println("graalgo-sync-run: cannot read --wire-input file: " + e.getMessage());
-                return EXIT_INPUT_ERROR;
+                return Outcome.backendFailure(EXIT_INPUT_ERROR);
             }
         } else try {
             json = runGofrontend(paths, testPackageDir);
@@ -250,10 +309,10 @@ public final class P3SyncMain {
             } else {
                 System.err.print(e.buildLog);
             }
-            return e.exit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR;
+            return Outcome.backendFailure(e.exit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR);
         } catch (IOException e) {
             System.err.println("graalgo-sync-run: cannot launch gofrontend: " + e.getMessage());
-            return EXIT_INPUT_ERROR;
+            return Outcome.backendFailure(EXIT_INPUT_ERROR);
         }
 
         // Phase 4 (build-artifact): dump the frontend JSON and exit.
@@ -264,9 +323,9 @@ public final class P3SyncMain {
                 Files.writeString(Paths.get(emitWire), json, StandardCharsets.UTF_8);
             } catch (IOException e) {
                 System.err.println("graalgo-sync-run: cannot write --emit-wire file: " + e.getMessage());
-                return EXIT_INPUT_ERROR;
+                return Outcome.backendFailure(EXIT_INPUT_ERROR);
             }
-            return EXIT_OK;
+            return Outcome.backendFailure(EXIT_OK);
         }
 
         // Build one Truffle Source per input file; the frontend's position
@@ -278,7 +337,7 @@ public final class P3SyncMain {
                 srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
-                return EXIT_INPUT_ERROR;
+                return Outcome.backendFailure(EXIT_INPUT_ERROR);
             }
             sources[i] = Source.newBuilder("go", srcText,
                     paths.get(i).getFileName().toString()).build();
@@ -471,10 +530,10 @@ public final class P3SyncMain {
             LinknameIntrinsics.install(doc, program);
         } catch (FrontendException e) {
             System.err.println("graalgo-sync-run: internal error building AST: " + e.getMessage());
-            return EXIT_INPUT_ERROR;
+            return Outcome.backendFailure(EXIT_INPUT_ERROR);
         }
         if (check) {
-            return EXIT_OK;
+            return Outcome.backendFailure(EXIT_OK);
         }
         // M10 (self-attack D3): preload all graalgo classes before guest
         // execution, so a guest that exhausts the process's fds cannot
@@ -541,7 +600,7 @@ public final class P3SyncMain {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
-            return EXIT_INPUT_ERROR;
+            return Outcome.backendFailure(EXIT_INPUT_ERROR);
         } finally {
             SchedulerCore.install(prev);
         }
@@ -552,12 +611,12 @@ public final class P3SyncMain {
             dumpPolymorphism();
         }
         if (sched.panicked()) {
-            return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
+            return Outcome.programExit(EXIT_PANIC); // uncaught Go panic in some goroutine (gc: exit 2)
         }
         if (sched.crashed()) {
-            return EXIT_INPUT_ERROR; // internal error, already reported on stderr
+            return Outcome.backendFailure(EXIT_INPUT_ERROR); // internal error, already reported on stderr
         }
-        return exitCode[0];
+        return Outcome.programExit(exitCode[0]);
     }
 
     /**
@@ -693,5 +752,8 @@ public final class P3SyncMain {
         System.err.println("      gofrontend (used by `graalgo build` artifacts; cannot combine with files)");
         System.err.println("  --emit-wire=FILE  write the frontend/v1 JSON to FILE and exit (implies --check;");
         System.err.println("      used by `graalgo build` to capture the frontend output at build time)");
+        System.err.println("  --exit-report=FILE  write the exit-outcome verdict (\"program-exit N\" or");
+        System.err.println("      \"backend-failure N\") to FILE before exiting (used by `graalgo run`");
+        System.err.println("      to emulate `go run`'s exit contract)");
     }
 }

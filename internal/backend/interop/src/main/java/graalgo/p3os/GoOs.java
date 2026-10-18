@@ -1594,7 +1594,10 @@ public final class GoOs {
 
     /** graalgo.os.exit */
     public static long exit(Object codeArg) {
-        System.exit(num32(codeArg));
+        // Report the outcome before dying: the driver distinguishes a
+        // program exit from a backend failure via the --exit-report file
+        // (see graalgo.launcher.ExitReport). Never returns.
+        graalgo.launcher.ExitReport.programExit(num32(codeArg));
         return 0; // unreachable
     }
 
