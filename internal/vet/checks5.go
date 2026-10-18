@@ -27,6 +27,7 @@ func runDirective(pass *Pass) []Diagnostic {
 		"linkname": true, "embed": true,
 		"debug": true, "aligncheck": true,
 		"uintptrescapes": true,
+		"wasmimport":     true, // valid since go1.24
 		"dyld":           true, "cgo_import_dynamic": true, "cgo_import_static": true,
 		"cgo_export_dynamic": true, "cgo_export_static": true,
 		"cgo_unsafe_args": true, "cgo_dynamic_linker": true,

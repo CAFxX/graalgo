@@ -1,8 +1,10 @@
 package vet
 
 import (
+	"bytes"
 	"go/ast"
 	"go/constant"
+	"go/printer"
 	"go/token"
 	"go/types"
 	"reflect"
@@ -126,39 +128,102 @@ func runAssign(pass *Pass) []Diagnostic {
 				return true
 			}
 			for i := range assign.Lhs {
-				lhs, ok1 := assign.Lhs[i].(*ast.Ident)
-				rhs, ok2 := assign.Rhs[i].(*ast.Ident)
-				if ok1 && ok2 && lhs.Name == rhs.Name {
-					// Make sure they refer to the same object (not shadowed).
-					lo := pass.Info.Uses[lhs]
-					ro := pass.Info.Uses[rhs]
-					if lo == nil || ro == nil || lo != ro {
-						// Fall back to Defs for definitions.
-						if d, ok := pass.Info.Defs[lhs]; ok && d != nil {
-							lo = d
-						}
-						if d, ok := pass.Info.Defs[rhs]; ok && d != nil {
-							ro = d
-						}
-					}
-					if lo != nil && lo == ro {
-						out = append(out, Diagnostic{
-							pass.position(assign),
-							"self-assignment of " + lhs.Name,
-						})
-					} else if lo == nil && ro == nil {
-						// No type info; use syntactic match.
-						out = append(out, Diagnostic{
-							pass.position(assign),
-							"self-assignment of " + lhs.Name,
-						})
-					}
+				desc, ok := selfAssignDesc(pass, assign.Lhs[i], assign.Rhs[i])
+				if !ok {
+					continue
 				}
+				out = append(out, Diagnostic{
+					pass.position(assign),
+					"self-assignment of " + desc,
+				})
 			}
 			return true
 		})
 	}
 	return out
+}
+
+// selfAssignDesc reports whether lhs = rhs is a self-assignment, returning a
+// description of the assigned location. Plain identifiers are verified to
+// denote the same object via type info (so shadowing is not misreported).
+// Structurally identical composite lvalues such as s.x = s.x, a[i] = a[i]
+// or *p = *p are also self-assignments: both sides are evaluated in the
+// same statement, so identical syntax denotes the same location. Expressions
+// containing function calls are skipped: m[k()] = m[k()] may address
+// different locations when k has side effects.
+func selfAssignDesc(pass *Pass, lhs, rhs ast.Expr) (string, bool) {
+	if li, ok := lhs.(*ast.Ident); ok {
+		ri, ok := rhs.(*ast.Ident)
+		if !ok || li.Name != ri.Name {
+			return "", false
+		}
+		// Make sure they refer to the same object (not shadowed).
+		lo := pass.Info.Uses[li]
+		ro := pass.Info.Uses[ri]
+		if lo == nil || ro == nil || lo != ro {
+			// Fall back to Defs for definitions.
+			if d, ok := pass.Info.Defs[li]; ok && d != nil {
+				lo = d
+			}
+			if d, ok := pass.Info.Defs[ri]; ok && d != nil {
+				ro = d
+			}
+		}
+		if (lo != nil && lo == ro) || (lo == nil && ro == nil) {
+			return li.Name, true
+		}
+		return "", false
+	}
+	// Composite lvalue: require structural equality and no calls.
+	lhs = unwrapParens(lhs)
+	rhs = unwrapParens(rhs)
+	if !exprEqual(pass.Fset, lhs, rhs) {
+		return "", false
+	}
+	if exprHasCall(lhs) {
+		return "", false
+	}
+	return exprString(pass.Fset, lhs), true
+}
+
+// unwrapParens strips redundant parentheses from e.
+func unwrapParens(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}
+
+// exprString renders e without source positions, for structural comparison
+// and diagnostic messages.
+func exprString(fset *token.FileSet, e ast.Expr) string {
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, e); err != nil {
+		return ""
+	}
+	return buf.String()
+}
+
+// exprEqual reports whether a and b are structurally identical expressions.
+func exprEqual(fset *token.FileSet, a, b ast.Expr) bool {
+	sa, sb := exprString(fset, a), exprString(fset, b)
+	return sa != "" && sa == sb
+}
+
+// exprHasCall reports whether e contains any function or method call.
+func exprHasCall(e ast.Expr) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		if _, ok := n.(*ast.CallExpr); ok {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // shift checks for shifts where the shift count equals or exceeds the

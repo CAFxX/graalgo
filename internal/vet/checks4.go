@@ -396,7 +396,8 @@ type errorString string
 
 func (e errorString) Error() string { return string(e) }
 
-// hostport checks the format of addresses passed to net.Dial:
+// hostport checks the format of addresses passed to net.Dial,
+// net.DialTimeout, net.Dialer.Dial and (*net.Dialer).DialContext:
 // - should use net.JoinHostPort instead of string concatenation
 // - address should have a port
 func runHostPort(pass *Pass) []Diagnostic {
@@ -404,13 +405,14 @@ func runHostPort(pass *Pass) []Diagnostic {
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 {
+			if !ok {
 				return true
 			}
-			if !pass.isPkgFunc(call, "net", "Dial") && !pass.isPkgFunc(call, "net", "DialTimeout") {
+			addrIdx := hostPortAddrIndex(pass, call)
+			if addrIdx < 0 || len(call.Args) <= addrIdx {
 				return true
 			}
-			addr := call.Args[1]
+			addr := call.Args[addrIdx]
 			// Check for string concatenation: "host" + ":" + port
 			if be, ok := addr.(*ast.BinaryExpr); ok && be.Op == token.ADD {
 				out = append(out, Diagnostic{
@@ -433,4 +435,49 @@ func runHostPort(pass *Pass) []Diagnostic {
 		})
 	}
 	return out
+}
+
+// hostPortAddrIndex returns the argument index holding the network address
+// for dial-like calls, or -1 if call is not one. Method calls on net.Dialer
+// are identified via type info (not the method name alone, which could be
+// any type's Dial method); without type info they are not checked.
+func hostPortAddrIndex(pass *Pass, call *ast.CallExpr) int {
+	if pass.isPkgFunc(call, "net", "Dial") || pass.isPkgFunc(call, "net", "DialTimeout") {
+		return 1
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return -1
+	}
+	var addrIdx int
+	switch sel.Sel.Name {
+	case "Dial":
+		addrIdx = 1
+	case "DialContext":
+		addrIdx = 2
+	default:
+		return -1
+	}
+	if !isNetDialer(pass, sel.X) {
+		return -1
+	}
+	return addrIdx
+}
+
+// isNetDialer reports whether e has type net.Dialer (or *net.Dialer).
+func isNetDialer(pass *Pass, e ast.Expr) bool {
+	tv, ok := pass.Info.Types[e]
+	if !ok || tv.Type == nil {
+		return false
+	}
+	t := tv.Type
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	if named, ok := t.(*types.Named); ok && named.Obj() != nil &&
+		named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "net" &&
+		named.Obj().Name() == "Dialer" {
+		return true
+	}
+	return false
 }

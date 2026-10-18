@@ -65,6 +65,32 @@ func f() {
 	y = 3
 	_ = y
 }
+
+type S struct{ X int }
+
+func g() {
+	s := S{}
+	s.X = s.X // bad: composite self-assignment
+	s2 := S{}
+	s2.X = 1 // good
+	s2.X = s.X // good: different locations
+	_ = s2
+
+	arr := [3]int{1, 2, 3}
+	i := 0
+	arr[i] = arr[i] // bad: index self-assignment
+	arr[1] = arr[2] // good
+	_ = arr
+
+	p := &i
+	*p = *p // bad: deref self-assignment
+	_ = p
+
+	m := map[string]int{}
+	mk := func() string { return "k" }
+	m[mk()] = m[mk()] // good: calls skipped (may address different locations)
+	_ = m
+}
 `
 	joined := runVetOnSrc(t, src)
 	if !strings.Contains(joined, "self-assignment of x") {
@@ -72,6 +98,20 @@ func f() {
 	}
 	if strings.Contains(joined, "self-assignment of y") {
 		t.Errorf("false positive on y = 3:\n%s", joined)
+	}
+	for _, want := range []string{
+		"self-assignment of s.X",
+		"self-assignment of arr[i]",
+		"self-assignment of *p",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected %q diagnostic, got:\n%s", want, joined)
+		}
+	}
+	// x, s.X, arr[i], *p: exactly 4 diagnostics; nothing else may fire.
+	count := strings.Count(joined, "self-assignment of")
+	if count != 4 {
+		t.Errorf("expected exactly 4 self-assignment diagnostics, got %d:\n%s", count, joined)
 	}
 }
 
@@ -368,6 +408,7 @@ func TestDirective(t *testing.T) {
 	src := `package main
 
 //go:generate echo hello
+//go:wasmimport env imported
 //go:unknown_directive
 
 func f() {}
@@ -375,6 +416,15 @@ func f() {}
 	joined := runVetOnSrc(t, src)
 	if !strings.Contains(joined, "unknown go: directive") {
 		t.Errorf("expected directive diagnostic, got:\n%s", joined)
+	}
+	// //go:wasmimport is valid since go1.24: exactly one diagnostic
+	// (for unknown_directive) and none mentioning wasmimport.
+	count := strings.Count(joined, "unknown go: directive")
+	if count != 1 {
+		t.Errorf("expected exactly 1 directive diagnostic, got %d:\n%s", count, joined)
+	}
+	if strings.Contains(joined, "wasmimport") {
+		t.Errorf("false positive on //go:wasmimport:\n%s", joined)
 	}
 }
 
@@ -420,6 +470,40 @@ func f() {
 	}
 }
 
+func TestHostPortDialer(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"net"
+)
+
+func f(ctx context.Context) {
+	var d net.Dialer
+	_, _ = d.Dial("tcp", "localhost:80")              // good
+	_, _ = d.Dial("tcp", "localhost")                 // bad: missing port
+	_, _ = d.Dial("tcp", "localhost"+":80")           // bad: concatenation
+	_, _ = d.DialContext(ctx, "tcp", "example.com")   // bad: missing port
+	_, _ = d.DialContext(ctx, "tcp", "example.com:443") // good
+
+	// A Dial method on another type must not be flagged.
+	x := &other{}
+	_, _ = x.Dial("localhost")
+}
+
+type other struct{}
+
+func (o *other) Dial(addr string) (string, error) { return addr, nil }
+`
+	joined := runVetOnSrc(t, src)
+	if got := strings.Count(joined, "missing port"); got != 2 {
+		t.Errorf("expected exactly 2 missing-port diagnostics, got %d:\n%s", got, joined)
+	}
+	if got := strings.Count(joined, "JoinHostPort"); got != 1 {
+		t.Errorf("expected exactly 1 JoinHostPort diagnostic, got %d:\n%s", got, joined)
+	}
+}
+
 func TestHTTPResponse(t *testing.T) {
 	src := `package main
 
@@ -445,13 +529,59 @@ func g(url string) {
 	defer resp.Body.Close() // good: after error check
 	_ = resp
 }
+
+func h(url string) {
+	resp, err := http.Get(url)
+	defer func() {
+		resp.Body.Close()
+	}() // bad: wrapped, before error check
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = resp
+}
+
+func k(url string) {
+	resp, err := http.Get(url)
+	log.Println("fetching", url)
+	defer resp.Body.Close() // bad: non-adjacent, before error check
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = resp
+}
+
+func m(url string) {
+	resp, err := http.Get(url)
+	log.Println("fetching", url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close() // good: after error check
+	_ = resp
+}
+
+func n(url string) {
+	resp, err := http.Get(url)
+	defer func() {
+		if err != nil {
+			return
+		}
+		resp.Body.Close()
+	}() // good: wrapper guards on err
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = resp
+}
 `
 	joined := runVetOnSrc(t, src)
 	if !strings.Contains(joined, "before checking for errors") {
 		t.Errorf("expected httpresponse diagnostic, got:\n%s", joined)
 	}
+	// f (adjacent), h (wrapped), k (non-adjacent): exactly 3 diagnostics.
 	count := strings.Count(joined, "before checking for errors")
-	if count != 1 {
-		t.Errorf("expected exactly 1 httpresponse diagnostic, got %d:\n%s", count, joined)
+	if count != 3 {
+		t.Errorf("expected exactly 3 httpresponse diagnostics, got %d:\n%s", count, joined)
 	}
 }

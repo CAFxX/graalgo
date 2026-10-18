@@ -249,8 +249,12 @@ func checkHTTPResponseInFunc(pass *Pass, body *ast.BlockStmt) []Diagnostic {
 	// Walk statements looking for:
 	//   resp, err := http.Get(...)
 	//   defer resp.Body.Close()
-	// with no error check in between.
-	for i := 0; i+1 < len(body.List); i++ {
+	// with no error check in between. The defer may be wrapped in a func
+	// literal (defer func() { resp.Body.Close() }()) and need not be the
+	// immediately following statement, as long as no statement in between
+	// references the error variable (which we conservatively treat as a
+	// possible error check).
+	for i := 0; i < len(body.List); i++ {
 		assign, ok := body.List[i].(*ast.AssignStmt)
 		if !ok || len(assign.Lhs) < 1 || len(assign.Rhs) != 1 {
 			continue
@@ -263,27 +267,29 @@ func checkHTTPResponseInFunc(pass *Pass, body *ast.BlockStmt) []Diagnostic {
 		if !ok {
 			continue
 		}
-		// Next statement should be defer resp.Body.Close().
-		def, ok := body.List[i+1].(*ast.DeferStmt)
-		if !ok {
-			continue
+		errName := ""
+		if len(assign.Lhs) > 1 {
+			if errIdent, ok := assign.Lhs[1].(*ast.Ident); ok {
+				errName = errIdent.Name
+			}
 		}
-		// Check if it's resp.Body.Close().
-		sel, ok := def.Call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "Close" {
-			continue
+		// Scan forward for the deferred close before any error check.
+		for j := i + 1; j < len(body.List); j++ {
+			stmt := body.List[j]
+			if def, ok := stmt.(*ast.DeferStmt); ok &&
+				isRespBodyCloseDefer(def, respIdent.Name, errName) {
+				out = append(out, Diagnostic{
+					pass.position(def),
+					"using " + respIdent.Name + " before checking for errors",
+				})
+				break
+			}
+			if errName != "" && errName != "_" && stmtMentionsIdent(stmt, errName) {
+				// The error variable is referenced first: the author may
+				// have checked it, so do not report.
+				break
+			}
 		}
-		inner, ok := sel.X.(*ast.SelectorExpr)
-		if !ok || inner.Sel.Name != "Body" {
-			continue
-		}
-		if id, ok := inner.X.(*ast.Ident); !ok || id.Name != respIdent.Name {
-			continue
-		}
-		out = append(out, Diagnostic{
-			pass.position(def),
-			"using " + respIdent.Name + " before checking for errors",
-		})
 	}
 	// Recurse into nested blocks.
 	for _, stmt := range body.List {
@@ -296,6 +302,64 @@ func checkHTTPResponseInFunc(pass *Pass, body *ast.BlockStmt) []Diagnostic {
 		})
 	}
 	return out
+}
+
+// isRespBodyCloseDefer reports whether d defers closing resp.Body, either
+// directly (defer resp.Body.Close()) or wrapped in a func literal
+// (defer func() { resp.Body.Close() }()). A wrapper that references the
+// error variable is not a match: it may guard the close on the error, in
+// which case deferring before the explicit check is safe.
+func isRespBodyCloseDefer(d *ast.DeferStmt, respName, errName string) bool {
+	if isCloseCall(d.Call, respName) {
+		return true
+	}
+	lit, ok := d.Call.Fun.(*ast.FuncLit)
+	if !ok {
+		return false
+	}
+	foundClose := false
+	refsErr := false
+	ast.Inspect(lit.Body, func(n ast.Node) bool {
+		if ce, ok := n.(*ast.CallExpr); ok && isCloseCall(ce, respName) {
+			foundClose = true
+		}
+		if errName != "" && errName != "_" {
+			if id, ok := n.(*ast.Ident); ok && id.Name == errName {
+				refsErr = true
+			}
+		}
+		return true
+	})
+	return foundClose && !refsErr
+}
+
+// isCloseCall reports whether call is R.Body.Close() for the given
+// response variable name R.
+func isCloseCall(call *ast.CallExpr, respName string) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Close" {
+		return false
+	}
+	inner, ok := sel.X.(*ast.SelectorExpr)
+	if !ok || inner.Sel.Name != "Body" {
+		return false
+	}
+	id, ok := inner.X.(*ast.Ident)
+	return ok && id.Name == respName
+}
+
+// stmtMentionsIdent reports whether stmt contains any reference to the
+// identifier name.
+func stmtMentionsIdent(stmt ast.Stmt, name string) bool {
+	found := false
+	ast.Inspect(stmt, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // defers reports a common mistake in defer statements: calling time.Since
