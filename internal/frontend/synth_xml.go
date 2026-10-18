@@ -21,19 +21,21 @@
 //     declarations.
 //   - OUT (fail fast, never silent): Unmarshal/Marshal/MarshalIndent/
 //     Decode/DecodeElement/Encode/EncodeElement (need reflect, P3-M8);
-//     InputPos (multi-result, WS D); Decoder.CharsetReader (needs io,
-//     P3-M8); NewTokenDecoder for non-*Decoder readers (needs WS D).
+//     InputPos (multi-result: no Appendix-M table entry yet);
+//     Decoder.CharsetReader (needs io, P3-M8); NewTokenDecoder for
+//     non-*Decoder readers (needs 2-result interface dispatch).
 //   - P3-M8: io landed, but NewDecoder keeps the structural Reader
 //     interface (single-result Next) and NewEncoder/EscapeText/Escape
 //     keep Writer. Switching to io.Reader/io.Writer needs 2-result
-//     interface dispatch (r.Read/w.Write in the decoder/encoder bodies —
-//     WS D), not just nameable signatures. Re-test when WS D lands;
-//     until then the stand-ins are the honest subset (the corpus
-//     dual-mode reader/writer documents the migration).
-//   - v1 cannot call multi-result functions (WS D): Token/RawToken keep
+//     interface dispatch (r.Read/w.Write in the decoder/encoder bodies),
+//     not just nameable signatures. Revisit once that dispatch is
+//     expressible; until then the stand-ins are the honest subset (the
+//     corpus dual-mode reader/writer documents the migration).
+//   - Multi-result declarations are not emitted: Token/RawToken keep
 //     exact gc signatures with panic bodies; 2-target := and = call
-//     sites desugar to the __tokenOf/__rawTokenOf single-result helpers.
-//     Every other position fails fast with a named scope error.
+//     sites desugar to the __tokenOf/__rawTokenOf single-result helpers
+//     (Appendix M). Every other position fails fast with a named scope
+//     error.
 //
 // The grammar is a faithful port of gc 1.27.1 encoding/xml's rawToken,
 // text, and Token (namespace translation + element stack). `io` is
@@ -319,17 +321,18 @@ func xmlClone(b []byte) []byte {
 // including a [Decoder].
 //
 // The 2-result Token method is declared for exact gc API fidelity; v1
-// cannot emit or dispatch multi-result methods (WS D), so calling Token
+// cannot emit or dispatch multi-result methods, so calling Token
 // through this interface fails fast. The only v1-constructible
 // TokenReader is *Decoder itself (user types cannot declare 2-result
-// methods); use NewTokenDecoder for the gc fast path. Re-test WS D.
+// methods); use NewTokenDecoder for the gc fast path.
 type TokenReader interface {
 	Token() (Token, error)
 }
 
 // NewTokenDecoder creates a new XML parser reading from t. The gc fast
-// path (t already a *Decoder) is real; any other TokenReader needs WS D
-// to call Token and fails fast. Re-test WS D.
+// path (t already a *Decoder) is real; any other TokenReader needs
+// 2-result interface dispatch to call Token and fails fast until that
+// dispatch is expressible.
 func NewTokenDecoder(t TokenReader) *Decoder {
 	if d, ok := t.(*Decoder); ok {
 		return d
@@ -350,8 +353,9 @@ func NewTokenDecoder(t TokenReader) *Decoder {
 //     exactly as gc fails with a nil CharsetReader:
 //     'xml: encoding %q declared but Decoder.CharsetReader is nil'.
 //     P3-M8: io landed so the type is nameable, but calling the field
-//     needs 2-result dispatch (WS D); declaring it without calling it
-//     would silently drop user charsets. Re-test when WS D lands.
+//     needs 2-result interface dispatch; declaring it without calling it
+//     would silently drop user charsets, so the field stays omitted
+//     until that dispatch is expressible.
 //   - The Unmarshal stack (stk/free/saved/inUnmarshalXML) is omitted:
 //     Decode/DecodeElement/Unmarshal need reflect (P3-M8) and fail fast.
 //     The Token()-level element/namespace stack below is the part of
@@ -723,9 +727,9 @@ func (d *Decoder) InputOffset() int64 {
 // InputPos returns the line of the current decoder position and the 1 based
 // input position of the line.
 //
-// M7: exact gc signature for type-checking, fail-fast body — 2 results
-// need WS D (the mrXmlToken desugar only covers Token/RawToken).
-// Re-test when WS D lands.
+// M7: exact gc signature for type-checking, fail-fast body — no
+// Appendix-M table entry yet (the mrXmlToken desugar only covers
+// Token/RawToken); needs a __-helper + desugar coverage.
 func (d *Decoder) InputPos() (line, column int) {
 	panic("xml.Decoder.InputPos: not in M7 scope (no Appendix-M table entry; needs __-helper + desugar coverage)")
 }
@@ -2403,7 +2407,7 @@ func (d *Decoder) DecodeElement(v any, start *StartElement) error {
 }
 
 // Marshal returns the XML encoding of v. M7: needs reflect (P3-M8).
-// (2 results: skipped at export; call sites fail fast. Re-test WS D.)
+// (2 results: skipped at export; call sites fail fast.)
 func Marshal(v any) ([]byte, error) {
 	panic("xml.Marshal: not in M7 scope (needs reflect; re-test when reflect lands)")
 }
