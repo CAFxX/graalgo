@@ -13,10 +13,10 @@ func TestSplitRecheckResults(t *testing.T) {
 		"b.go": {File: "b.go", Reason: "deferred-parity"},
 	}
 	comps := []typeparam.Comparison{
-		{Program: "a.go", Same: true},                            // XPASS
+		{Program: "a.go", Same: true},                             // XPASS
 		{Program: "b.go", Same: false, Reasons: []string{"boom"}}, // XFAIL
-		{Program: "c.go", Same: true},                            // not rechecked: ignored
-		{Program: "d.go", Same: false},                           // not rechecked: ignored
+		{Program: "c.go", Same: true},                             // not rechecked: ignored
+		{Program: "d.go", Same: false},                            // not rechecked: ignored
 	}
 	xpass, xfail := splitRecheckResults(comps, rechecked)
 	if !reflect.DeepEqual(xpass, []string{"a.go"}) {
