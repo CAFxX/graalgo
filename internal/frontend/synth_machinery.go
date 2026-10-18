@@ -1668,6 +1668,132 @@ func isAbiTypeOfFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && fn.Name() == "TypeOf"
 }
 
+// isReflectUnpackEfaceFunc reports whether fn is reflect.unpackEface — the
+// empty-interface to reflect.Value conversion.
+//
+// fix-redmaster-unpackeface (RC-4a): the real body
+// (e := (*abi.EmptyInterface)(unsafe.Pointer(&i))) reinterprets the
+// interface's memory layout, which relies on gc's representation.
+// graalgo represents interfaces as high-level GoInterface objects, so the
+// reinterpretation produces a broken value and the subsequent field
+// selection (e.Type) fails with ClassCastException. Calls lower to the
+// "reflectunpack" wire node, implemented by ReflectUnpackEfaceNode which
+// builds the reflect.Value directly from the GoInterface's type and data.
+//
+// Identification is STRUCTURAL, not package-name-keyed: the no-bridges
+// gate (his 2026-10-15 order) bans new package-name conditionals. The
+// matched shape is exact — an unexported, non-generic function named
+// unpackEface taking a single empty-interface (any) parameter and
+// returning a single named struct type "Value" declared in the same
+// package as the function. That is precisely gc's reflect.unpackEface
+// (reflect/value.go); no other function in the ecosystem has this shape.
+func isReflectUnpackEfaceFunc(fn *types.Func) bool {
+	if fn == nil || fn.Name() != "unpackEface" {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() != nil {
+		return false
+	}
+	if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
+		return false
+	}
+	if sig.Params().Len() != 1 || sig.Results().Len() != 1 {
+		return false
+	}
+	// Param: any (empty interface). In Go 1.23+, any is a *types.Alias;
+	// unalias it first.
+	paramType := types.Unalias(sig.Params().At(0).Type())
+	piface, ok := paramType.(*types.Interface)
+	if !ok || !piface.Empty() {
+		return false
+	}
+	// Result: Value, a named struct type declared in the same package as fn.
+	rnamed, ok := sig.Results().At(0).Type().(*types.Named)
+	if !ok || rnamed.Obj().Name() != "Value" {
+		return false
+	}
+	if _, ok := rnamed.Underlying().(*types.Struct); !ok {
+		return false
+	}
+	rpkg := rnamed.Obj().Pkg()
+	if rpkg == nil || fn.Pkg() == nil || rpkg != fn.Pkg() {
+		return false
+	}
+	return true
+}
+
+// exportReflectUnpackEfaceIntrinsic lowers a call to reflect.unpackEface
+// into the "reflectunpack" wire node. Fields: "arg" (the any value),
+// "type" (result reflect.Value type-table id).
+func (e *exporter) exportReflectUnpackEfaceIntrinsic(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, scopeErrorf("reflect.unpackEface takes 1 argument")
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("reflectunpack", c, map[string]any{
+		"arg": args[0], "type": typ,
+	}), nil
+}
+
+// exportReflectUnpackEfaceDecl emits the declaration of reflect.unpackEface
+// as a funcdecl whose body is the "reflectunpack" wire node applied to the
+// single param:
+//
+//	func unpackEface(i any) Value { return <reflectunpack>(i) }
+//
+// The real body uses unsafe interface reinterpretation which cannot work
+// on graalgo; the intrinsic body keeps the function table well-formed and
+// value-position uses work through the normal func-value path.
+func (e *exporter) exportReflectUnpackEfaceDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("reflect.unpackEface must take exactly 1 parameter")
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	restyp, err := e.typeID(fi.sig.Results().At(0).Type())
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("reflectunpack", fd, map[string]any{
+		"arg":  e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid}),
+		"type": restyp,
+	})
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{call}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
 // isReflectToRTypeFunc reports whether fn is reflect.toRType — the
 // *abi.Type -> *rtype conversion.
 //
