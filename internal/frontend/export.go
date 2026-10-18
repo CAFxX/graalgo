@@ -5998,6 +5998,15 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if fi.obj != nil && isAbiTypeOfFunc(fi.obj) {
 		return e.exportAbiTypeOfDecl(fi)
 	}
+	// fix-redmaster-unpackeface (RC-4a): reflect.unpackEface has a body,
+	// but the body uses unsafe interface reinterpretation
+	// (*(*abi.EmptyInterface)(unsafe.Pointer(&i))) which cannot work on
+	// graalgo. Replace the body with the "reflectunpack" intrinsic, so
+	// function values and indirect calls work. Direct call sites are
+	// intercepted (see exportReflectUnpackEfaceIntrinsic).
+	if fi.obj != nil && isReflectUnpackEfaceFunc(fi.obj) {
+		return e.exportReflectUnpackEfaceDecl(fi)
+	}
 	// fix-redmaster-buildok (r5): reflect.toRType has a body, but the body
 	// reinterprets *abi.Type as *rtype via unsafe.Pointer. Replace with
 	// reflectop{op:tortype} which builds a proper rtype struct.
@@ -9389,6 +9398,15 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// body (see exportAbiTypeOfDecl).
 	if isAbiTypeOfFunc(fn) {
 		return e.exportAbiTypeOfIntrinsic(c)
+	}
+	// fix-redmaster-unpackeface (RC-4a): reflect.unpackEface uses unsafe
+	// interface reinterpretation (*(*abi.EmptyInterface)(unsafe.Pointer(&i)))
+	// which cannot work on graalgo. Lower to the "reflectunpack" wire node
+	// (direct GoInterface to reflect.Value construction). Intercepted before
+	// the funcByObj lookup; the declaration emits a synthesized intrinsic
+	// body (see exportReflectUnpackEfaceDecl).
+	if isReflectUnpackEfaceFunc(fn) {
+		return e.exportReflectUnpackEfaceIntrinsic(c)
 	}
 	// fix-redmaster-buildok (r5): reflect.toRType reinterprets *abi.Type as
 	// *rtype via unsafe.Pointer; the backend needs an actual rtype struct.
