@@ -202,6 +202,30 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 	if !srcIsPtr && !dstIsPtr {
 		return nil, false, nil
 	}
+	// fix-redmaster-exitcode-drift: element-indexed pointer arithmetic.
+	// unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T)) is the standard Go
+	// idiom for &p[k] when p is an unsafe.Pointer to element 0 of an
+	// array/slice. The D5 handle model cannot materialize a handle from
+	// integer arithmetic, but when the offset is structurally a whole
+	// number of T-sized elements, it lowers to the "unsafeptradd" wire
+	// node (element-indexed ArrayRef arithmetic in the backend). This is
+	// general: any Go code using this idiom works, not just sync.Pool.
+	// Byte-arithmetic (no Sizeof factor) still traps via unsafefromuint.
+	if dstIsPtr && isUintptr(srcT) {
+		if base, index, ok := e.matchUnsafePtrAdd(c.Args[0]); ok {
+			baseNode, err := e.exportExpr(base)
+			if err != nil {
+				return nil, true, err
+			}
+			indexNode, err := e.exportExpr(index)
+			if err != nil {
+				return nil, true, err
+			}
+			return e.node("unsafeptradd", c, map[string]any{
+				"ptr": baseNode, "index": indexNode, "type": to,
+			}), true, nil
+		}
+	}
 	switch {
 	case srcIsPtr && dstIsPtr:
 		// Pointer->Pointer: identity.
@@ -246,4 +270,87 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 func isUintptr(t types.Type) bool {
 	b, ok := types.Unalias(t).(*types.Basic)
 	return ok && b.Kind() == types.Uintptr
+}
+
+// matchUnsafePtrAdd recognizes the element-indexed pointer arithmetic
+// idiom: uintptr(p) + k*unsafe.Sizeof(T) (in either operand order, and
+// with the multiplication in either order). p must have type
+// unsafe.Pointer. Returns the p and k expressions.
+//
+// The match is structural, not name-keyed: it works for any Go code using
+// this idiom (sync.Pool.indexLocal, slice growth, etc.). Byte-arithmetic
+// without a Sizeof factor does not match and still traps (D5).
+func (e *exporter) matchUnsafePtrAdd(expr ast.Expr) (base, index ast.Expr, ok bool) {
+	add, ok := expr.(*ast.BinaryExpr)
+	if !ok || add.Op != token.ADD {
+		return nil, nil, false
+	}
+	// Try both operand orders: base+offset or offset+base.
+	if b, k, ok := e.splitPtrAddOperands(add.X, add.Y); ok {
+		return b, k, true
+	}
+	if b, k, ok := e.splitPtrAddOperands(add.Y, add.X); ok {
+		return b, k, true
+	}
+	return nil, nil, false
+}
+
+// splitPtrAddOperands checks if baseExpr is uintptr(p) with p: unsafe.Pointer
+// and offsetExpr is k*unsafe.Sizeof(T) (either multiplication order).
+func (e *exporter) splitPtrAddOperands(baseExpr, offsetExpr ast.Expr) (base, index ast.Expr, ok bool) {
+	// Base: uintptr(p) where p is unsafe.Pointer.
+	baseCall, ok := baseExpr.(*ast.CallExpr)
+	if !ok || len(baseCall.Args) != 1 {
+		return nil, nil, false
+	}
+	bt := e.info.TypeOf(baseCall)
+	if !isUintptr(bt) {
+		return nil, nil, false
+	}
+	p := baseCall.Args[0]
+	pt := e.info.TypeOf(p)
+	if !isUnsafePointerType(pt) {
+		return nil, nil, false
+	}
+	// Offset: k * unsafe.Sizeof(T) or unsafe.Sizeof(T) * k.
+	mul, ok := offsetExpr.(*ast.BinaryExpr)
+	if !ok || mul.Op != token.MUL {
+		return nil, nil, false
+	}
+	if idx, ok := e.extractSizeofFactor(mul.X, mul.Y); ok {
+		return p, idx, true
+	}
+	if idx, ok := e.extractSizeofFactor(mul.Y, mul.X); ok {
+		return p, idx, true
+	}
+	return nil, nil, false
+}
+
+// extractSizeofFactor checks if sizeofExpr is unsafe.Sizeof(...) and returns
+// the other operand as the index. The first return is the index expr.
+func (e *exporter) extractSizeofFactor(sizeofExpr, indexExpr ast.Expr) (ast.Expr, bool) {
+	sizeCall, ok := sizeofExpr.(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
+	sel, ok := sizeCall.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Sizeof" {
+		return nil, false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	if !ok || ident.Name != "unsafe" {
+		return nil, false
+	}
+	// Verify it's the real unsafe.Sizeof builtin, not a shadowed name.
+	if obj, ok := e.info.Uses[ident]; !ok || obj.Name() != "unsafe" {
+		// The "unsafe" ident should resolve to the package name.
+		// If it doesn't, be conservative and don't match.
+		return nil, false
+	}
+	return indexExpr, true
+}
+
+// isUnsafePointerType reports whether t is unsafe.Pointer.
+func isUnsafePointerType(t types.Type) bool {
+	return t != nil && types.Unalias(t) == types.Typ[types.UnsafePointer]
 }
