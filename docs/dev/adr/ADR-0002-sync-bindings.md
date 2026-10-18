@@ -1,16 +1,23 @@
 # ADR-0002 — Phase-3 `sync` Go bindings: freeze exception for a synthetic `sync` package
 
 **Date:** 2026-10-06
-**Status:** accepted 2026-10-06 — coordinator design direction (P3-M2b
-brief) validated as workable by the implementer; implementation follows this
-ADR. Spec-first ordering honored: ADR committed before the exporter change.
+**Status:** SUPERSEDED 2026-10-18 — was accepted 2026-10-06 (coordinator
+design direction (P3-M2b brief) validated as workable by the implementer;
+the synthetic implementation was built per this ADR). The synthetic `sync`
+and `sync/atomic` packages this ADR designed were **retired** by NOTE
+`503608ea` in
+[`internal/frontend/export.go`](../../../internal/frontend/export.go): both
+packages now resolve from disk (real GOROOT packages) via the general disk
+importer. This ADR is retained as the historical design record of the
+synthetic implementation. Do not treat its "Decision" section as current.
 **Scope:** closes PLAN.md §4 P3-M2 (WS D) `sync` slice; discharges the P2-M8
 re-test trigger ("when WS G overlay lands, bind the four primitives and
 re-run stress as Go programs differential vs gc",
 `phases/phase2/hidden_files/torture/REPORT.md` §5).
-**Normative basis:** `phases/phase1/INTERFACE_FREEZE.md` (v1, in force) §§1,
-2, 5; PLAN.md §§2–5 (WS D; GG-0017 sync slice, GG-0048); SPEC §§2.8, 3.2,
-3.3, 3.6, 3.8, 5.
+**Normative basis:**
+[`docs/spec/INTERFACE_FREEZE.md`](../../../docs/spec/INTERFACE_FREEZE.md)
+(freeze v2, in force) §§1, 2, 5; PLAN.md §§2–5 (WS D; GG-0017 sync slice,
+GG-0048); SPEC §§2.8, 3.2, 3.3, 3.6, 3.8, 5.
 
 ## Context
 
