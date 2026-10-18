@@ -228,24 +228,118 @@ public final class TlsRuntime {
         return protos.toArray(new String[0]);
     }
 
-    private static String cipherSuiteName(int suite) {
-        switch (suite) {
-            case 0x1301: return "TLS_AES_128_GCM_SHA256";
-            case 0x1302: return "TLS_AES_256_GCM_SHA384";
-            case 0x1303: return "TLS_CHACHA20_POLY1305_SHA256";
-            case 0xc02f: return "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256";
-            case 0xc02b: return "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256";
-            case 0xc030: return "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384";
-            case 0xc02c: return "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384";
-            case 0xcca8: return "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305";
-            case 0xcca9: return "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305";
-            case 0x009c: return "TLS_RSA_WITH_AES_128_GCM_SHA256";
-            case 0x009d: return "TLS_RSA_WITH_AES_256_GCM_SHA384";
-            default: return null;
-        }
+    /**
+     * Single bidirectional cipher-suite table (R23-P1-1+2): the SOLE source
+     * of truth for IANA cipher-suite id &lt;-&gt; JDK cipher-suite name.
+     * Both directions ({@link #cipherSuiteName} and {@link #parseCipherSuite})
+     * derive from the pairs below, so they cannot disagree.
+     *
+     * <p>Names are the exact canonical names the JDK reports via
+     * {@code SSLEngine.getSession().getCipherSuite()} and accepts in
+     * {@code setEnabledCipherSuites} — in particular the CHACHA20_POLY1305
+     * suites carry the {@code _SHA256} suffix the JDK requires.
+     *
+     * <p>Covers the TLS 1.3 suites (RFC 8446) and every TLS 1.2 suite the
+     * JDK can negotiate, so an explicit user {@code CipherSuites}
+     * preference is honored suite-for-suite with no silent drops. Names
+     * are canonical even where this JDK's provider implements no
+     * corresponding suite (e.g. the TLS 1.3 CCM suites, which SunJSSE
+     * does not implement): configuring such an id fails LOUD at engine
+     * creation via {@code setEnabledCipherSuites}, never silently.
+     */
+    private static java.util.Map<Integer, String> buildCipherSuiteNames() {
+        java.util.Map<Integer, String> m = new java.util.LinkedHashMap<>();
+        // TLS 1.3 (RFC 8446).
+        m.put(0x1301, "TLS_AES_128_GCM_SHA256");
+        m.put(0x1302, "TLS_AES_256_GCM_SHA384");
+        m.put(0x1303, "TLS_CHACHA20_POLY1305_SHA256");
+        m.put(0x1304, "TLS_AES_128_CCM_SHA256");
+        m.put(0x1305, "TLS_AES_128_CCM_8_SHA256");
+        // TLS 1.2 ECDHE.
+        m.put(0xc02b, "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256");
+        m.put(0xc02c, "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384");
+        m.put(0xc02f, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256");
+        m.put(0xc030, "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384");
+        m.put(0xcca8, "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256");
+        m.put(0xcca9, "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256");
+        m.put(0xc023, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256");
+        m.put(0xc024, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384");
+        m.put(0xc027, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256");
+        m.put(0xc028, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384");
+        m.put(0xc009, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA");
+        m.put(0xc00a, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA");
+        m.put(0xc013, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA");
+        m.put(0xc014, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA");
+        m.put(0xc008, "TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA");
+        m.put(0xc012, "TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA");
+        // TLS 1.2 DHE.
+        m.put(0x009e, "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256");
+        m.put(0x009f, "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384");
+        m.put(0xccaa, "TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256");
+        m.put(0x0067, "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256");
+        m.put(0x006b, "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256");
+        m.put(0x0033, "TLS_DHE_RSA_WITH_AES_128_CBC_SHA");
+        m.put(0x0039, "TLS_DHE_RSA_WITH_AES_256_CBC_SHA");
+        m.put(0x0016, "TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA");
+        // TLS 1.2 RSA key exchange.
+        m.put(0x009c, "TLS_RSA_WITH_AES_128_GCM_SHA256");
+        m.put(0x009d, "TLS_RSA_WITH_AES_256_GCM_SHA384");
+        m.put(0x003c, "TLS_RSA_WITH_AES_128_CBC_SHA256");
+        m.put(0x003d, "TLS_RSA_WITH_AES_256_CBC_SHA256");
+        m.put(0x002f, "TLS_RSA_WITH_AES_128_CBC_SHA");
+        m.put(0x0035, "TLS_RSA_WITH_AES_256_CBC_SHA");
+        m.put(0x000a, "TLS_RSA_WITH_3DES_EDE_CBC_SHA");
+        return m;
     }
 
-    private static String[] enabledCipherSuites(byte[] suitesBE) {
+    // IANA id -> JDK name. Package-visible for regression tests.
+    static final java.util.Map<Integer, String> CIPHER_SUITE_NAMES =
+            buildCipherSuiteNames();
+
+    // JDK name -> IANA id, derived from the same pairs (single source of
+    // truth). IANA cipher-suite registry names (as returned by
+    // SSLEngine.getSession().getCipherSuite()). Exact match only —
+    // substring matching mis-maps (e.g. a suite name that contains another
+    // as a substring). Package-visible for regression tests.
+    static final java.util.Map<String, Integer> CIPHER_SUITES =
+            buildCipherSuites();
+
+    private static java.util.Map<String, Integer> buildCipherSuites() {
+        java.util.Map<String, Integer> m = new java.util.HashMap<>();
+        for (java.util.Map.Entry<Integer, String> e
+                : CIPHER_SUITE_NAMES.entrySet()) {
+            m.put(e.getValue(), e.getKey());
+        }
+        return m;
+    }
+
+    /**
+     * IANA cipher-suite id to the JDK cipher-suite name, or null if the id
+     * is unknown. Package-visible for regression tests.
+     */
+    static String cipherSuiteName(int suite) {
+        return CIPHER_SUITE_NAMES.get(suite);
+    }
+
+    /**
+     * Maps the Go side's explicit cipher-suite preference (big-endian
+     * uint16 ids) to the JDK names for {@code setEnabledCipherSuites},
+     * preserving the user's exact preference order.
+     *
+     * <p>Package-visible for regression tests.
+     *
+     * <p>An unknown suite id is a LOUD {@code IllegalArgumentException},
+     * never a silent drop: silently skipping an id would mutilate the
+     * user's explicit preference order — a security-relevant
+     * misconfiguration (the connection could negotiate a suite the user
+     * excluded). Fail closed instead. (Deliberate divergence from gc,
+     * which silently ignores unknown ids in {@code Config.CipherSuites}.)
+     * The exception propagates through {@link #newClientEngine} /
+     * {@link #newServerEngine} as a host error naming the offending id;
+     * translating host config errors into Go {@code error} values is the
+     * R23-3 error-channel work.
+     */
+    static String[] enabledCipherSuites(byte[] suitesBE) {
         if (suitesBE == null || suitesBE.length == 0) {
             // Go's default cipher suite preference order (crypto/tls
             // defaultCipherSuites), not the JDK's: gc negotiates 0x1301
@@ -262,15 +356,23 @@ public final class TlsRuntime {
                 "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
             };
         }
+        if ((suitesBE.length & 1) != 0) {
+            throw new IllegalArgumentException(
+                    "tls: cipher suite list has odd length " + suitesBE.length
+                    + " (truncated id must not be silently ignored)");
+        }
         List<String> names = new ArrayList<>();
-        for (int i = 0; i + 1 < suitesBE.length; i += 2) {
+        for (int i = 0; i < suitesBE.length; i += 2) {
             int suite = ((suitesBE[i] & 0xFF) << 8) | (suitesBE[i + 1] & 0xFF);
             String name = cipherSuiteName(suite);
-            if (name != null) {
-                names.add(name);
+            if (name == null) {
+                throw new IllegalArgumentException(
+                        "tls: unknown cipher suite id 0x"
+                        + Integer.toHexString(suite));
             }
+            names.add(name);
         }
-        return names.isEmpty() ? null : names.toArray(new String[0]);
+        return names.toArray(new String[0]);
     }
 
     /**
@@ -697,61 +799,14 @@ public final class TlsRuntime {
         }
     }
 
-    // IANA cipher-suite registry names (as returned by
-    // SSLEngine.getSession().getCipherSuite()) to suite IDs. Covers the
-    // TLS 1.3 suites and the TLS 1.2 suites the JDK negotiates. Exact
-    // match only — substring matching mis-maps (e.g. a suite name that
-    // contains another as a substring). Unknown names map to -1, never
-    // to a plausible-but-wrong suite ID.
-    private static final java.util.Map<String, Integer> CIPHER_SUITES =
-            buildCipherSuites();
-
-    private static java.util.Map<String, Integer> buildCipherSuites() {
-        java.util.Map<String, Integer> m = new java.util.HashMap<>();
-        // TLS 1.3 (RFC 8446).
-        m.put("TLS_AES_128_GCM_SHA256", 0x1301);
-        m.put("TLS_AES_256_GCM_SHA384", 0x1302);
-        m.put("TLS_CHACHA20_POLY1305_SHA256", 0x1303);
-        m.put("TLS_AES_128_CCM_SHA256", 0x1304);
-        m.put("TLS_AES_128_CCM_8_SHA256", 0x1305);
-        // TLS 1.2 ECDHE.
-        m.put("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", 0xC02B);
-        m.put("TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", 0xC02C);
-        m.put("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", 0xC02F);
-        m.put("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", 0xC030);
-        m.put("TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", 0xCCA8);
-        m.put("TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", 0xCCA9);
-        m.put("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256", 0xC023);
-        m.put("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384", 0xC024);
-        m.put("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256", 0xC027);
-        m.put("TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384", 0xC028);
-        m.put("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", 0xC009);
-        m.put("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", 0xC00A);
-        m.put("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", 0xC013);
-        m.put("TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA", 0xC014);
-        m.put("TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA", 0xC008);
-        m.put("TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA", 0xC012);
-        // TLS 1.2 DHE.
-        m.put("TLS_DHE_RSA_WITH_AES_128_GCM_SHA256", 0x009E);
-        m.put("TLS_DHE_RSA_WITH_AES_256_GCM_SHA384", 0x009F);
-        m.put("TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256", 0xCCAA);
-        m.put("TLS_DHE_RSA_WITH_AES_128_CBC_SHA256", 0x0067);
-        m.put("TLS_DHE_RSA_WITH_AES_256_CBC_SHA256", 0x006B);
-        m.put("TLS_DHE_RSA_WITH_AES_128_CBC_SHA", 0x0033);
-        m.put("TLS_DHE_RSA_WITH_AES_256_CBC_SHA", 0x0039);
-        m.put("TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA", 0x0016);
-        // TLS 1.2 RSA key exchange.
-        m.put("TLS_RSA_WITH_AES_128_GCM_SHA256", 0x009C);
-        m.put("TLS_RSA_WITH_AES_256_GCM_SHA384", 0x009D);
-        m.put("TLS_RSA_WITH_AES_128_CBC_SHA256", 0x003C);
-        m.put("TLS_RSA_WITH_AES_256_CBC_SHA256", 0x003D);
-        m.put("TLS_RSA_WITH_AES_128_CBC_SHA", 0x002F);
-        m.put("TLS_RSA_WITH_AES_256_CBC_SHA", 0x0035);
-        m.put("TLS_RSA_WITH_3DES_EDE_CBC_SHA", 0x000A);
-        return m;
-    }
-
-    private static int parseCipherSuite(String cipher) {
+    // The reverse direction of the single bidirectional cipher-suite table
+    // lives with the table itself (see CIPHER_SUITES above): both maps
+    // derive from the same pairs. Exact match only — substring matching
+    // mis-maps (e.g. a suite name that contains another as a substring).
+    // Unknown names map to -1, never to a plausible-but-wrong suite ID.
+    //
+    // Package-visible for regression tests.
+    static int parseCipherSuite(String cipher) {
         if (cipher == null) {
             return -1;
         }

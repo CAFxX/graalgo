@@ -35,6 +35,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // R23-P1-1+2 (2026-10-18): TlsRuntime cipher-suite table is a single
+        // bidirectional source of truth; unknown ids are loud errors.
+        TESTS.add(graalgo.p3tls.TlsCipherSuiteTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         TESTS.add(FmtStateItabTest.class);
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
