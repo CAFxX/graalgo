@@ -251,7 +251,7 @@ func Search(n int, f func(int) bool) int {
 // ParseDuration precedent) and every call site fails fast. Re-test when
 // WS D lands.
 func Find(n int, cmp func(int) int) (i int, found bool) {
-	panic("sort.Find: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("sort.Find: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // SearchInts searches for x in a sorted slice of ints and returns the index
