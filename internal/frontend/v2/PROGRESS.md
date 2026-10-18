@@ -16,10 +16,13 @@ for the design.
 - [x] Driver CLI + hello-world smoke test (passes)
 - [x] End-to-end: hello-world Go → in-memory program (no JSON wire format)
 - [x] Mechanical AST-node coverage matrix (`emit/coverage_test.go`):
-      60 AST node types classified — 18 handled, 6 via go/types,
-      8 structural, 3 non-Node (documented), 25 loudly rejected
-- [x] Negative tests (`emit/negative_test.go`): 17 unhandled constructs
-      proven to fail loudly with "unsupported" (no silent drops)
+      60 AST node types classified — 22 handled, 6 via go/types,
+      8 structural, 3 non-Node (documented), 21 loudly rejected.
+      Node list derived from go/ast sources (Pos/End method sets), each
+      class asserted against actual emitter behavior (L19, 2026-10-18).
+- [x] Negative tests (`emit/negative_test.go` + direct probes in
+      `coverage_test.go`): all 21 rejected constructs proven to fail
+      loudly with "unsupported" (no silent drops)
 
 ## 2026-10-16 — V2-12 deterministic emission
 

@@ -10,13 +10,8 @@
 package emit
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"graalgo-frontend-v2/checker"
-	"graalgo-frontend-v2/parser"
 )
 
 // negativeCase is one unhandled construct.
@@ -165,33 +160,55 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
-		name: "IndexListExpr_generics",
+		name: "IndexExpr_generics",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
+	{
+		// A single type argument parses as IndexExpr (see the case above,
+		// which exercises emitIndex's generics branch); two or more parse
+		// as IndexListExpr and hit emitExpr's default.
+		name: "IndexListExpr",
+		src: `package main
+func pair[T any, U any](a T, b U) (T, U) { return a, b }
+func main() {
+	a, b := pair[int, string](1, "x")
+	println(a)
+	println(b)
+}
+`,
+		want: "unsupported expr",
+	},
+	{
+		name: "GenDecl",
+		src: `package main
+func main() {
+	const k = 1
+	println(k)
+}
+`,
+		want: "unsupported decl",
+	},
+	{
+		name: "TypeSpec",
+		src: `package main
+func main() {
+	type T int
+	var t T = 3
+	println(t)
+}
+`,
+		want: "unsupported decl",
+	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {
 	for _, tc := range negativeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			fn := filepath.Join(dir, "neg.go")
-			if err := os.WriteFile(fn, []byte(tc.src), 0644); err != nil {
-				t.Fatal(err)
-			}
-
-			pres, err := parser.ParseFiles([]string{fn})
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
-			cres, err := checker.Check(pres.Fset, pres.Pkg, &checker.Config{GoVersion: "go1.27"})
-			if err != nil {
-				t.Fatalf("check: %v", err)
-			}
-			_, err = Emit(cres, pres.Pkg, pres.Files)
+			_, err := emitProgram(t, tc.src)
 			if err == nil {
 				t.Fatalf("%s: expected loud failure, got success (silent acceptance)", tc.name)
 			}
