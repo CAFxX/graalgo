@@ -1655,6 +1655,223 @@ func isAbiFuncPCIntrinsicFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && abiFuncPCIntrinsicNames[fn.Name()]
 }
 
+// isAbiTypeOfFunc reports whether fn is internal/abi.TypeOf.
+//
+// fix-redmaster-buildok (r5): abi.TypeOf is implemented via unsafe
+// interface reinterpretation (*(*EmptyInterface)(unsafe.Pointer(&a))),
+// which relies on gc's memory layout of interfaces. graalgo represents
+// interfaces as high-level GoInterface objects, so the reinterpretation
+// cannot work. TypeOf is therefore lowered to the "abitypeof" wire node
+// (a proper intrinsic, like the FuncPC* intrinsics above), implemented
+// by AbiTypeOfNode via ReflectTypes.materialize.
+func isAbiTypeOfFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && fn.Name() == "TypeOf"
+}
+
+// isReflectToRTypeFunc reports whether fn is reflect.toRType — the
+// *abi.Type -> *rtype conversion.
+//
+// fix-redmaster-buildok (r5): the real body ((*rtype)(unsafe.Pointer(t)))
+// reinterprets the pointer, but the backend's GoStruct model needs an
+// actual rtype struct ({ t abi.Type }) wrapping the abi.Type for promoted
+// field accesses to work. Calls lower to reflectop{op:tortype}.
+func isReflectToRTypeFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" && fn.Name() == "toRType"
+}
+
+// exportReflectToRType lowers reflect.toRType(t) to reflectop{op:tortype}.
+func (e *exporter) exportReflectToRType(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, scopeErrorf("reflect.toRType takes 1 argument")
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("reflectop", c, map[string]any{
+		"op":   "tortype",
+		"args": []*Node{args[0]},
+		"type": typ,
+	}), nil
+}
+
+// isAbiNoEscapeFunc reports whether fn is internal/abi.NoEscape.
+//
+// fix-redmaster-buildok (r5): NoEscape is the escape-analysis hint whose
+// body (uintptr(p) -> unsafe.Pointer(x^0)) traps under D5. Semantically it
+// is the identity function; calls lower to the argument itself.
+func isAbiNoEscapeFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && fn.Name() == "NoEscape"
+}
+
+// exportAbiNoEscape lowers abi.NoEscape(p) to p itself.
+func (e *exporter) exportAbiNoEscape(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, scopeErrorf("abi.NoEscape takes 1 argument")
+	}
+	return args[0], nil
+}
+
+// exportReflectToRTypeDecl emits the declaration of reflect.toRType as a
+// funcdecl whose body is the tortype reflectop applied to the single param.
+func (e *exporter) exportReflectToRTypeDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("reflect.toRType must take exactly 1 parameter")
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	restyp, err := e.typeID(fi.sig.Results().At(0).Type())
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("reflectop", fd, map[string]any{
+		"op":   "tortype",
+		"args": []*Node{e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid})},
+		"type": restyp,
+	})
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{call}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
+// exportAbiNoEscapeDecl emits the declaration of internal/abi.NoEscape as
+// a funcdecl whose body returns the param unchanged (identity).
+func (e *exporter) exportAbiNoEscapeDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("abi.NoEscape must take exactly 1 parameter")
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	ident := e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid})
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{ident}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
+// exportAbiTypeOfIntrinsic lowers a call to abi.TypeOf into the "abitypeof"
+// wire node. Fields: "arg" (the any value), "type" (result *abi.Type id).
+func (e *exporter) exportAbiTypeOfIntrinsic(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, scopeErrorf("abi.TypeOf takes 1 argument")
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("abitypeof", c, map[string]any{
+		"arg": args[0], "type": typ,
+	}), nil
+}
+
+// exportAbiTypeOfDecl emits the declaration of internal/abi.TypeOf as a
+// funcdecl whose body is the "abitypeof" wire node applied to the single
+// param:
+//
+//	func TypeOf(a any) *Type { return <abitypeof>(a) }
+//
+// The real body uses unsafe interface reinterpretation which cannot work
+// on graalgo; the intrinsic body keeps the function table well-formed and
+// value-position uses work through the normal func-value path.
+func (e *exporter) exportAbiTypeOfDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("abi.TypeOf must take exactly 1 parameter")
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	restyp, err := e.typeID(fi.sig.Results().At(0).Type())
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("abitypeof", fd, map[string]any{
+		"arg":  e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid}),
+		"type": restyp,
+	})
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{call}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
 // exportAbiFuncPCIntrinsic lowers a call to abi.FuncPCABI0/FuncPCABIInternal
 // into the "abifuncpc" wire node. Fields: "kind" (the intrinsic name),
 // "arg" (the func value, as any), "type" (result uintptr type id).

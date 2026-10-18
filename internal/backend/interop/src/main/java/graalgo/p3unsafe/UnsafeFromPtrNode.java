@@ -45,6 +45,15 @@ public final class UnsafeFromPtrNode extends GoExprNode {
             return 0;
         }
         if (!(p instanceof GoPointer gp)) {
+            // fix-redmaster-buildok (r5): a materialized *abi.Type descriptor
+            // is allocated as the most-derived GoStruct, not wrapped in a
+            // GoPointer. unsafe.Pointer(t) on it interns the descriptor
+            // object directly; unsafetooptr round-trips the same object
+            // (handle-based pointer model), so (*rtype)(unsafe.Pointer(t))
+            // and the (*PtrType) downcast work.
+            if (p instanceof graalgo.values.GoStruct gs) {
+                return UnsafeTable.current().intern(gs);
+            }
             throw new FrontendException("unsafefromptr: expected a *T value, got "
                     + p.getClass().getSimpleName());
         }
