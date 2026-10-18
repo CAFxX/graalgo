@@ -59,18 +59,18 @@ type Result struct {
 // original to complete and receives the same results.
 // The return value shared indicates whether v was given to multiple callers.
 func (g *Group) Do(key string, fn func() (any, error)) (v any, err error, shared bool) {
-	panic("singleflight.Group.Do: not in M9 scope (re-test: WS D multi-result func-value invocation)")
+	panic("singleflight.Group.Do: not in M9 scope (needs multi-result func-value invocation support)")
 }
 
 // DoChan is like Do but returns a channel that will receive the
 // results when they are ready.
 func (g *Group) DoChan(key string, fn func() (any, error)) <-chan Result {
-	panic("singleflight.Group.DoChan: not in M9 scope (re-test: WS D multi-result func-value invocation)")
+	panic("singleflight.Group.DoChan: not in M9 scope (needs multi-result func-value invocation support)")
 }
 
 // doCall handles the single call for a key.
 func (g *Group) doCall(c *call, key string, fn func() (any, error)) {
-	panic("singleflight.Group.doCall: not in M9 scope (re-test: WS D multi-result func-value invocation)")
+	panic("singleflight.Group.doCall: not in M9 scope (needs multi-result func-value invocation support)")
 }
 
 // ForgetUnshared tells the singleflight to forget about a key if it is not
