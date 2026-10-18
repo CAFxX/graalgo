@@ -170,7 +170,7 @@ func VolumeName(path string) string { return "" }
 
 // Split splits path immediately following the final Separator.
 func Split(path string) (dir, file string) {
-	panic("filepath.Split: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.Split: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 type filepathSplitPair struct {
@@ -312,7 +312,7 @@ func fpCut(p string) fpCutResult {
 
 // Localize returns path if it is a valid, local fs path.
 func Localize(path string) (string, error) {
-	panic("filepath.Localize: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.Localize: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 func __filepathLocalize(path string) filepathPair {
@@ -333,7 +333,7 @@ func __filepathLocalize(path string) filepathPair {
 
 // Abs returns an absolute representation of path.
 func Abs(path string) (string, error) {
-	panic("filepath.Abs: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.Abs: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 func __filepathAbs(path string) filepathPair {
@@ -350,7 +350,7 @@ func __filepathAbs(path string) filepathPair {
 // Rel returns a relative path that is lexically equivalent to targPath
 // when joined to basePath.
 func Rel(basePath, targPath string) (string, error) {
-	panic("filepath.Rel: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.Rel: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 func __filepathRel(basePath, targPath string) filepathPair {
@@ -440,7 +440,7 @@ func fpCountSeparator(s string) int {
 // EvalSymlinks returns the path name after the evaluation of any symbolic
 // links.
 func EvalSymlinks(path string) (string, error) {
-	panic("filepath.EvalSymlinks: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.EvalSymlinks: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 func __filepathEvalSymlinks(path string) filepathPair {
@@ -546,7 +546,7 @@ func walkSymlinks(path string) filepathPair {
 
 // Match reports whether name matches the shell file name pattern.
 func Match(pattern, name string) (matched bool, err error) {
-	panic("filepath.Match: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.Match: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 type filepathMatchPair struct {
@@ -816,7 +816,7 @@ func fpDecodeRune(s string) fpDecodeRuneResult {
 // Glob ignores I/O errors reading directories; the only possible returned
 // error is ErrBadPattern.
 func Glob(pattern string) (matches []string, err error) {
-	panic("filepath.Glob: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+	panic("filepath.Glob: no Appendix-M table entry (fail-fast; needs __-helper + desugar coverage)")
 }
 
 func __filepathGlob(pattern string) filepathGlobPair {
