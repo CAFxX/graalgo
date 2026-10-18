@@ -193,7 +193,7 @@ func (bz2 *reader) setup(needMagic bool) error {
 }
 
 func (bz2 *reader) Read(buf []byte) (n int, err error) {
-	panic("bzip2.reader.Read: use __bzip2ReaderRead helper (WS D)")
+	panic("bzip2.reader.Read: unreachable (call sites desugar to __bzip2ReaderRead)")
 }
 
 func (bz2 *reader) readFromBlock(buf []byte) int {
