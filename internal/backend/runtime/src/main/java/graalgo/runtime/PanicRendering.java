@@ -23,6 +23,10 @@ import graalgo.values.GoTypeDescriptor;
  *       {@code Name("quoted")});
  *   <li>everything else (slices, maps, structs, arrays, pointers, chans,
  *       funcs) → {@code (gotype) 0xADDR};
+ *   <li>a null (nil) value → {@code nil}. A nil only reaches the renderer
+ *       on the {@code GODEBUG=panicnil=1} path (the default wraps nil in
+ *       {@code *PanicNilError} before rendering); gc's pre-1.21 behavior
+ *       prints {@code panic: nil} (GG-0055);
  *   <li>error values → the {@code Error()} text (which already contains any
  *       {@code "runtime error: "} prefix, as gc's implementations do).
  * </ul>
@@ -57,6 +61,18 @@ public final class PanicRendering {
      *                 (e.g. {@code []int}), null for predeclared basics.
      */
     public static String renderValue(Object value, GoKind kind, String typeName) {
+        // P0-F (independent review 2026-10-18): a null value is the Go nil
+        // value (D5 mapping: nil is Java null — cf. Boxing.zero). With
+        // GODEBUG=panicnil=1, Panic.throwPanic preserves nil (v = null,
+        // d = null) and gc's pre-1.21 behavior prints "panic: nil"; without
+        // this the null fell into the kind==null degraded path and rendered
+        // "(?) 0xADDR". The default knob wraps nil in *PanicNilError before
+        // rendering, so this branch is unreachable there — default output
+        // is unchanged. A nil renders as "nil" regardless of any kind or
+        // type name the caller may have supplied: nil has no kind.
+        if (value == null) {
+            return "nil";
+        }
         if (value instanceof GoErrorValue e) {
             return printIndented(e.errorString());
         }
