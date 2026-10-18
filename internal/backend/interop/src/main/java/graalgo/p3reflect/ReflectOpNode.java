@@ -35,11 +35,20 @@ public final class ReflectOpNode extends GoExprNode {
     private final String op;
     @Children
     private final GoExprNode[] args;
+    /**
+     * Result pair descriptor for ops that pack a struct (selectimpl,
+     * tryrecv). Resolved at build time from the node's "type" id so the
+     * backend packs the caller's pair type (e.g. the disk transform's
+     * __SelectPair), not a hardcoded synthetic type. Null for ops that
+     * don't pack a pair.
+     */
+    private final GoStructDescriptor pairDesc;
 
-    private ReflectOpNode(String op, GoExprNode[] args, GoKind kind) {
+    private ReflectOpNode(String op, GoExprNode[] args, GoKind kind, GoStructDescriptor pairDesc) {
         super(kind);
         this.op = op;
         this.args = args;
+        this.pairDesc = pairDesc;
     }
 
     /**
@@ -76,7 +85,18 @@ public final class ReflectOpNode extends GoExprNode {
             typeId = (int) n.longValue();
             kind = NodeFactory.kindOf(ctx, typeId, path);
         }
-        GoExprNode n = new ReflectOpNode(op, args, kind);
+        // Ops that pack a result pair struct resolve the descriptor from
+        // the type id at build time, so the packed struct matches the
+        // frontend's pair type (disk __SelectPair / __Value_TryRecvPair).
+        GoStructDescriptor pairDesc = null;
+        if (typeId >= 0 && (op.equals("selectimpl") || op.equals("tryrecv"))) {
+            if (NodeFactory.kindOf(ctx, typeId, path) != GoKind.STRUCT) {
+                throw new FrontendException(
+                        path + ": " + op + " result type must be a struct kind");
+            }
+            pairDesc = NodeFactory.structDescriptorFor(ctx, typeId, path);
+        }
+        GoExprNode n = new ReflectOpNode(op, args, kind, pairDesc);
         if (typeId >= 0) {
             n.setTypeId(typeId);
         }
@@ -95,7 +115,7 @@ public final class ReflectOpNode extends GoExprNode {
         for (int i = 0; i < args.length; i++) {
             argv[i] = boxArg(args[i], frame);
         }
-        return dispatch(op, argv);
+        return dispatch(op, argv, pairDesc);
     }
 
     /**
@@ -259,7 +279,7 @@ public final class ReflectOpNode extends GoExprNode {
     // Dispatch.
     // ------------------------------------------------------------------
 
-    private static Object dispatch(String op, Object[] argv) {
+    private static Object dispatch(String op, Object[] argv, GoStructDescriptor pairDesc) {
         return switch (op) {
             case "tKind" -> (long) ReflectTypes.kindOf(asTok(argv[0]));
             case "tString" -> GoString.fromUtf8(ReflectTypes.typeString(asTok(argv[0])));
@@ -449,7 +469,8 @@ public final class ReflectOpNode extends GoExprNode {
                 reflectSwap(asValue(argv[0]), asInt(argv[1]), asInt(argv[2]));
                 yield null;
             }
-            case "selectimpl" -> reflectSelect(asSlice(argv[0]));
+            case "selectimpl" -> reflectSelect(pairDesc, asSlice(argv[0]));
+            case "tryrecv" -> chanTryRecv(pairDesc, asValue(argv[0]));
             case "mapiterinit" -> mapIterInit(asValue(argv[0]));
             case "mapiternext" -> mapIterNext(asTok(argv[0]));
             case "mapiterkey" -> mapIterKey(asTok(argv[0]));
@@ -1507,6 +1528,27 @@ public final class ReflectOpNode extends GoExprNode {
         return packValueBoolPair(r.value(), r.ok(), v);
     }
 
+    /**
+     * (reflect.Value).TryRecv: non-blocking receive, packed into the
+     * caller's pair struct (the disk transform's __Value_TryRecvPair{f1
+     * Value, f2 bool}). Implemented as a select with a default case,
+     * mirroring chanTrySend below.
+     */
+    private static GoStruct chanTryRecv(GoStructDescriptor pairDesc, GoStruct v) {
+        graalgo.runtime.ChanOps.Chan ch = asChan(v);
+        graalgo.runtime.ChanOps.SelectCase[] cases = {
+                new graalgo.runtime.ChanOps.SelectCase(ch, false, null),
+                new graalgo.runtime.ChanOps.SelectCase(null, false, null),
+        };
+        int chosen = graalgo.runtime.ChanOps.selectGo(cases);
+        if (chosen == 1) {
+            return packValueBoolPair(pairDesc, null, false, v);
+        }
+        Object recvVal = graalgo.runtime.ChanOps.selectRecvValue();
+        boolean recvOK = graalgo.runtime.ChanOps.selectRecvOk();
+        return packValueBoolPair(pairDesc, recvVal, recvOK, v);
+    }
+
     private static boolean chanTrySend(GoStruct v, GoStruct x) {
         graalgo.runtime.ChanOps.Chan ch = asChan(v);
         Object d5x = unboxValue(x);
@@ -1524,13 +1566,16 @@ public final class ReflectOpNode extends GoExprNode {
     }
 
     /**
-     * Packs a reflectValueBoolPair struct {x Value, ok bool}. The field
-     * layout comes from the synthetic source: x (Value struct) then ok.
+     * Packs a {x Value, ok bool} pair struct. The field layout is
+     * positional: x (Value struct) then ok.
      */
     private static GoStruct packValueBoolPair(Object d5val, boolean ok, GoStruct chanValue) {
+        return packValueBoolPair(pairDescriptor(), d5val, ok, chanValue);
+    }
+
+    private static GoStruct packValueBoolPair(GoStructDescriptor desc, Object d5val, boolean ok, GoStruct chanValue) {
         // The element type for the received value.
         TypeInfo t = ReflectTypes.table().info(ReflectValues.parts(chanValue).typ());
-        GoStructDescriptor desc = pairDescriptor();
         long[] longs = new long[desc.longsCount()];
         Object[] objects = new Object[desc.objectsCount()];
         GoStruct xv;
@@ -1550,10 +1595,6 @@ public final class ReflectOpNode extends GoExprNode {
         return ReflectTypes.structDescriptorFor("reflect.reflectValueBoolPair");
     }
 
-    private static GoStructDescriptor pairDescFor(String name) {
-        return ReflectTypes.structDescriptorFor(name);
-    }
-
     private static void setPairField(GoStructDescriptor desc, long[] longs,
             Object[] objects, int fieldIdx, Object val) {
         GoStructDescriptor.Field f = desc.field(fieldIdx);
@@ -1564,8 +1605,13 @@ public final class ReflectOpNode extends GoExprNode {
         }
     }
 
-    /** __reflect_selectimpl: returns a reflectSelectTriple struct. */
-    private static GoStruct reflectSelect(GoSlice cases) {
+    /**
+     * reflect.Select: builds the wire select cases from a []SelectCase
+     * slice and packs the result into the caller's pair struct (the disk
+     * transform's __SelectPair{f1 int, f2 Value, f3 bool}, resolved at
+     * build time — not the retired synthetic reflectSelectTriple).
+     */
+    private static GoStruct reflectSelect(GoStructDescriptor pairDesc, GoSlice cases) {
         Object arr = cases.array();
         int off = cases.offset();
         int n = cases.len();
@@ -1612,12 +1658,11 @@ public final class ReflectOpNode extends GoExprNode {
             recvVal = graalgo.runtime.ChanOps.selectRecvValue();
             recvOK = graalgo.runtime.ChanOps.selectRecvOk();
         }
-        return packSelectTriple(origChosen, recvVal, recvOK, chosenCs);
+        return packSelectTriple(pairDesc, origChosen, recvVal, recvOK, chosenCs);
     }
 
-    private static GoStruct packSelectTriple(int chosen, Object recvVal,
+    private static GoStruct packSelectTriple(GoStructDescriptor desc, int chosen, Object recvVal,
             boolean recvOK, GoStruct chosenCase) {
-        GoStructDescriptor desc = pairDescFor("reflect.reflectSelectTriple");
         long[] longs = new long[desc.longsCount()];
         Object[] objects = new Object[desc.objectsCount()];
         // Fields: chosen int, recv Value, recvOK bool.

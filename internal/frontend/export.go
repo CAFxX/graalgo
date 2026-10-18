@@ -9805,6 +9805,18 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	if mc.ifaceFallback != nil {
 		return nil, scopeErrorf("method value %s via type parameter is not supported (WS H: iface fallback is call-only)", sel.Sel.Name)
 	}
+	// Multi-result methods have no single function value: the wire
+	// methodvalue node would bind the pair-returning __-helper's stub
+	// (funcID 0, dangling). Fail fast with a named scope error instead
+	// of emitting the dangling node (mirrors mrPlanForFuncValue, which
+	// classifies multi-result functions in value position).
+	// User-defined methods pair-transformed at definition (mrUser) are
+	// exempt: their funcdecl is real, so the bound value works.
+	if fn, ok := selection.Obj().(*types.Func); ok {
+		if plan := e.mrPlanForFuncValue(fn); plan != nil && plan.kind != mrUser {
+			return nil, scopeErrorf("method value of multi-result method %s is not supported (WS D: use an explicit call)", sel.Sel.Name)
+		}
+	}
 	declRecv := mc.decl.sig.Recv().Type()
 	xt, ok := e.info.Types[sel.X]
 	if !ok || xt.Type == nil {

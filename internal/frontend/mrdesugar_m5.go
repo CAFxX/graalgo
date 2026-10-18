@@ -125,6 +125,17 @@ const (
 	// extraction proceeds like mrM7. syncMapOp carries the method name
 	// for wire-node construction and arity checks.
 	mrSyncMap
+	// mrReflectOp: real (disk-imported) reflect multi-result members
+	// whose bodies cannot run on the wire backend — they bottom out in
+	// bodyless //go:noescape runtime functions (rselect, chanrecv,
+	// unsafe_New) with no Go implementation. The desugar builds the
+	// "reflectop" wire node directly (desugarReflectOp), reusing the
+	// backend's tested select/receive implementations, with the pair
+	// type from the disk transform (transformDiskMultiResult still
+	// generates the pair types and specs; only the __-helper call is
+	// bypassed). reflectOp selects the wire op ("selectimpl" for
+	// reflect.Select, "tryrecv" for (reflect.Value).TryRecv).
+	mrReflectOp
 )
 
 // rtStackOpKind selects the intrinsic wire node for an mrRuntimeStack plan.
@@ -262,15 +273,6 @@ func hasStaticIfaceMREntry(method string) bool {
 // desugars through base32DecodeStringPair{b, err} — there is no
 // base32AppendPair).
 //
-// m7HelperPkgOverride maps a package path to the synthetic package
-// holding its M7 __-helpers and pair types. Used when a package was
-// retired from synthetic (e.g. reflect now uses the disk importer)
-// but the M7 desugaring still needs the helpers. The override package
-// must be registered in syntheticSources.
-var m7HelperPkgOverride = map[string]string{
-	"reflect": "reflect_m7",
-}
-
 var m7MultiResultFuncs = []m7MultiResultFunc{
 	// errors: AsType[E error] (P4 — was M7 fail-fast). The pair struct
 	// and helper are generic; the desugar instantiates both with the
@@ -405,19 +407,6 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
-	// P3-M8 (wave 2, reflect): multi-result members desugared via the
-	// single-result __-helpers. Select is package-level; the Value methods
-	// are on the Value struct; the Type methods are on rtype but usually
-	// called via the Type interface (the classify function retries with
-	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
-	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}, false},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}, false},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}, false},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}, true},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}, false},
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
@@ -1292,14 +1281,6 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// interfaces with the same shape dispatch too.
 	{"io", "WriteTo", "ioWriteToPair", []string{"n", "err"}},
 	{"io", "ReadFrom", "ioReadFromPair", []string{"n", "err"}},
-	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods.
-	// The itab maps each to the concrete rtype's pair-returning
-	// __-helper (wired via multiResultHelperFor/methodTableEntries); the
-	// pair field names/types are positionally identical to the method's
-	// results (checked by classifyIfaceMultiResultCall).
-	{"reflect", "MethodByName", "reflectMethodPair", []string{"m", "ok"}},
-	{"reflect", "FieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "FieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
 	// P3-M8b (wave 2, crypto): hash.Cloner.Clone and the
 	// encoding.BinaryMarshaler/BinaryAppender methods, dispatched on the
 	// hash.Cloner / encoding.BinaryMarshaler interfaces. The itab maps
@@ -1403,6 +1384,10 @@ type mrPlan struct {
 	// (Load/LoadOrStore/LoadAndDelete/Swap), selecting the syncop wire
 	// node op and its arity check in desugarSyncMap.
 	syncMapOp string
+	// For mrReflectOp: the reflectop wire node op ("selectimpl" or
+	// "tryrecv"), selecting the backend implementation in
+	// desugarReflectOp.
+	reflectOp string
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -1673,6 +1658,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				return plan
 			}
 			// WS G (P3-M9): disk-package multi-result (dynamic table).
+			// mrReflectOp: reflect.Select is intercepted first — its
+			// real body needs the bodyless rselect runtime function, so
+			// the disk __-helper cannot run.
+			if plan := classifyReflectSelect(fn); plan != nil {
+				return plan
+			}
 			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
@@ -1801,6 +1792,13 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// methods (Load/LoadOrStore/LoadAndDelete/Swap). The
 			// receiver's named type must be the sync overlay's Map.
 			if plan := classifySyncMapMethod(f, selection); plan != nil {
+				return plan
+			}
+			// mrReflectOp: (reflect.Value).TryRecv. The real body bottoms
+			// out in the bodyless //go:noescape chanrecv/unsafe_New
+			// runtime functions, so the disk __-helper cannot run.
+			// Desugars directly to the "reflectop"/"tryrecv" wire node.
+			if plan := classifyReflectTryRecv(f); plan != nil {
 				return plan
 			}
 			// mrTrivialFwd: a synthetic stub method whose body trivially
@@ -2211,11 +2209,7 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		helperPkg := mf.pkgPath
-		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
-			helperPkg = override
-		}
-		sp := getSyntheticPackage(helperPkg)
+		sp := getSyntheticPackage(mf.pkgPath)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2226,7 +2220,7 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
-			kind: mrM7, helperPkg: helperPkg,
+			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
@@ -2343,6 +2337,89 @@ func classifySyncMapMethod(f *types.Func, selection *types.Selection) *mrPlan {
 		}
 	}
 	return nil
+}
+
+// classifyReflectSelect recognizes reflect.Select: the real
+// (disk-imported) body's call chain bottoms out in the bodyless
+// //go:noescape rselect runtime function (plus unsafe_New for receive
+// cases) with no Go implementation, so the mechanical __-helper cannot
+// run on the wire backend. The plan desugars (mrReflectOp) directly to
+// the "reflectop"/"selectimpl" wire node; the backend implements select
+// over []SelectCase. The function must be the real reflect package's
+// Select — a user function named Select is never desugared.
+func classifyReflectSelect(f *types.Func) *mrPlan {
+	if f == nil || f.Pkg() == nil || f.Pkg().Path() != "reflect" || f.Name() != "Select" {
+		return nil
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 3 {
+		return nil
+	}
+	// Build the disk package first (registers the specs), then look up
+	// the Select spec for the pair type.
+	sp, err := getDiskPackage("reflect")
+	if err != nil {
+		return nil
+	}
+	spec := lookupDiskMR("reflect", "Select", "")
+	if spec == nil {
+		return nil
+	}
+	nt := diskMRPairType(sp, spec)
+	if nt == nil {
+		return nil
+	}
+	return &mrPlan{
+		kind:       mrReflectOp,
+		reflectOp:  "selectimpl",
+		tmpType:    nt,
+		pairFields: spec.pairFields,
+	}
+}
+
+// classifyReflectTryRecv recognizes (reflect.Value).TryRecv: the real
+// (disk-imported) body's call chain (recv -> chanrecv, unsafe_New)
+// bottoms out in bodyless //go:noescape runtime functions with no Go
+// implementation, so the mechanical __-helper cannot run on the wire
+// backend. The plan desugars (mrReflectOp) directly to the
+// "reflectop"/"tryrecv" wire node; the backend implements the
+// non-blocking receive on the Value. The receiver's named type must be
+// the real reflect package's Value — a user type's TryRecv method is
+// never desugared.
+func classifyReflectTryRecv(f *types.Func) *mrPlan {
+	if f == nil || f.Pkg() == nil || f.Pkg().Path() != "reflect" || f.Name() != "TryRecv" {
+		return nil
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 2 || sig.Recv() == nil {
+		return nil
+	}
+	rt := sig.Recv().Type()
+	nt, ok := rt.(*types.Named)
+	if !ok || nt.Obj() == nil || nt.Obj().Name() != "Value" ||
+		nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "reflect" {
+		return nil
+	}
+	// Build the disk package first (registers the specs), then look up
+	// the TryRecv spec.
+	sp, err := getDiskPackage("reflect")
+	if err != nil {
+		return nil
+	}
+	spec := lookupDiskMR("reflect", "TryRecv", "Value")
+	if spec == nil {
+		return nil
+	}
+	pt := diskMRPairType(sp, spec)
+	if pt == nil {
+		return nil
+	}
+	return &mrPlan{
+		kind:       mrReflectOp,
+		reflectOp:  "tryrecv",
+		tmpType:    pt,
+		pairFields: spec.pairFields,
+	}
 }
 
 func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
@@ -2533,11 +2610,7 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		helperPkg := mf.pkgPath
-		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
-			helperPkg = override
-		}
-		sp := getSyntheticPackage(helperPkg)
+		sp := getSyntheticPackage(mf.pkgPath)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2548,7 +2621,7 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
-			kind: mrM7, helperPkg: helperPkg,
+			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
@@ -2580,15 +2653,7 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		// The pair type may live in an override package (m7HelperPkgOverride):
-		// reflect retired from synthetic to the disk importer, but its M7
-		// __-helpers and pair types still live in the synthetic reflect_m7
-		// package. Same pattern as classifyM7MultiResultCall.
-		helperPkg := m.pkgPath
-		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
-			helperPkg = override
-		}
-		sp := getSyntheticPackage(helperPkg)
+		sp := getSyntheticPackage(m.pkgPath)
 		if sp == nil {
 			continue
 		}
@@ -2620,7 +2685,7 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 			continue
 		}
 		return &mrPlan{
-			kind: mrIfaceMethod, helperPkg: helperPkg,
+			kind: mrIfaceMethod, helperPkg: m.pkgPath,
 			tmpType: nt, pairFields: m.pairFields,
 		}
 	}
@@ -2656,15 +2721,7 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		// The pair type may live in an override package (m7HelperPkgOverride):
-		// reflect retired from synthetic to the disk importer, but its M7
-		// __-helpers and pair types still live in the synthetic reflect_m7
-		// package. Same pattern as classifyM7MultiResultCall.
-		helperPkg := m.pkgPath
-		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
-			helperPkg = override
-		}
-		sp := getSyntheticPackage(helperPkg)
+		sp := getSyntheticPackage(m.pkgPath)
 		if sp == nil {
 			continue
 		}
@@ -2705,7 +2762,7 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 			continue
 		}
 		return &mrPlan{
-			kind: mrIfaceMethod, helperPkg: helperPkg,
+			kind: mrIfaceMethod, helperPkg: m.pkgPath,
 			tmpType: nt, pairFields: m.pairFields,
 		}
 	}
@@ -3018,11 +3075,7 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		helperPkg := mf.pkgPath
-		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
-			helperPkg = override
-		}
-		sp := getSyntheticPackage(helperPkg)
+		sp := getSyntheticPackage(mf.pkgPath)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -3033,7 +3086,7 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
-			kind: mrM7, helperPkg: helperPkg,
+			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
@@ -3163,6 +3216,12 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	// "syncop" wire node directly (no __-helper exists).
 	if plan.kind == mrSyncMap {
 		return e.desugarSyncMap(s, c, plan, define)
+	}
+	// mrReflectOp: real reflect multi-result members whose bodies need
+	// runtime support (reflect.Select, (reflect.Value).TryRecv) build
+	// the "reflectop" wire node directly (no __-helper call).
+	if plan.kind == mrReflectOp {
+		return e.desugarReflectOp(s, c, plan, define)
 	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
@@ -3294,6 +3353,74 @@ func (e *exporter) desugarSyncMap(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 	call := e.node("syncop", c, map[string]any{
 		"op": plan.syncMapOp, "synctyp": "Map", "recv": recv, "args": args, "type": pairTid,
 	})
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, pairTid, call, nil)
+}
+
+// reflectOpCallNode builds the "reflectop" wire node for an mrReflectOp
+// plan (reflect.Select -> selectimpl, (reflect.Value).TryRecv ->
+// tryrecv). The result type is the plan's pair type.
+func (e *exporter) reflectOpCallNode(c *ast.CallExpr, plan *mrPlan) (*Node, error) {
+	var args []*Node
+	switch plan.reflectOp {
+	case "selectimpl":
+		// reflect.Select(cases): the single argument is the []SelectCase.
+		var err error
+		args, err = e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
+		if len(args) != 1 {
+			return nil, fmt.Errorf("gofrontend: reflect.Select takes 1 argument, got %d", len(args))
+		}
+	case "tryrecv":
+		// v.TryRecv(): the receiver is the channel Value.
+		sel, ok := unwrapSelector(c.Fun)
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: TryRecv call has non-selector fun %T", c.Fun)
+		}
+		recv, err := e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+		args = []*Node{recv}
+	default:
+		return nil, fmt.Errorf("gofrontend: unknown reflectop %q", plan.reflectOp)
+	}
+	pairTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("reflectop", c, map[string]any{
+		"op": plan.reflectOp, "args": args, "type": pairTid,
+	}), nil
+}
+
+// desugarReflectOp desugars real (disk-imported) reflect multi-result
+// members whose Go bodies cannot run on the wire backend (mrReflectOp):
+// reflect.Select and (reflect.Value).TryRecv. Unlike every other
+// Appendix M kind there is no __-helper call — the real bodies bottom
+// out in bodyless //go:noescape runtime functions (rselect, chanrecv,
+// unsafe_New) — so the "reflectop" wire node is built directly with the
+// pair-typed result; the __p5mr_N temp declaration and field extraction
+// then proceed exactly like mrM7 via desugarExtract. The pair type is
+// the disk transform's (e.g. __SelectPair), so field extraction is by
+// the spec's positional f1..fN names.
+func (e *exporter) desugarReflectOp(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	call, err := e.reflectOpCallNode(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	pairTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
 	e.chanSeq++
 	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
 	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
@@ -3595,6 +3722,26 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 			return nil, nil, err
 		}
 		return []*Node{x}, nil, nil
+	} else if plan.kind == mrReflectOp {
+		// Real reflect MR in argument position (f(reflect.Select(c))):
+		// build the reflectop node directly (no __-helper exists).
+		var err error
+		callNode, err = e.reflectOpCallNode(inner, plan)
+		if err != nil {
+			return nil, nil, err
+		}
+		resTid, err := e.typeID(plan.tmpType)
+		if err != nil {
+			return nil, nil, err
+		}
+		e.chanSeq++
+		tmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
+		v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+		tmpID, err = e.defVar(v, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		tmpTid = resTid
 	} else {
 		// Synthetic/disk MR: export args (with nested hoisting), then
 		// build the __-helper call.
@@ -3847,7 +3994,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack, mrSyncMap:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack, mrSyncMap, mrReflectOp:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

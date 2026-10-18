@@ -113,12 +113,6 @@ var syntheticSources = map[string]string{
 	// internal/reflectlite from GOROOT via disk importer (needed by real
 	// reflect and real errors)
 	"iter":                 syntheticIterSource,
-	// M7 helpers for reflect (disk-imported): the M7 desugaring table
-	// still needs the __-helpers and pair types (e.g. __reflect_taglookup,
-	// reflectTagPair). They live in the retired synth_reflect.go source,
-	// registered here under a distinct name so getSyntheticPackage works.
-	// The helperPkg override in m7MultiResultFunc points reflect entries here.
-	"reflect_m7": syntheticReflectSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
 	// synth_bytealg.go). internal/bytealg is synthetic-only, like
 	// internal/reflectlite: user imports of internal/* are not admitted by
