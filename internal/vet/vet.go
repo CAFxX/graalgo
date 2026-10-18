@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"sort"
 )
 
 // Analyzer is a single static check.
@@ -46,6 +47,11 @@ func Analyzers() []*Analyzer {
 // It parses with comments (for directive checks) and type-checks on a
 // best-effort basis: if type checking fails, analyzers still run on the
 // AST with whatever type info was gathered.
+//
+// Files are grouped by their package clause (like go list does): a package
+// and its external test package (foo and foo_test) are type-checked as
+// separate packages rather than merged into one pseudo-package, so every
+// type-keyed analyzer sees correct type info for every input file.
 func Run(paths []string) ([]Diagnostic, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
@@ -64,6 +70,47 @@ func Run(paths []string) ([]Diagnostic, error) {
 		return nil, fmt.Errorf("vet: no files")
 	}
 
+	imp := &groupImporter{}
+	var out []Diagnostic
+	for _, group := range groupByPackageClause(files) {
+		out = append(out, runPackageGroup(fset, imp, group)...)
+	}
+	return SortDiagnostics(out), nil
+}
+
+// packageGroup is one package clause's share of the input files.
+type packageGroup struct {
+	name  string // package clause, e.g. "foo" or "foo_test"
+	files []*ast.File
+}
+
+// groupByPackageClause groups files by their package clause name, in
+// sorted clause order for deterministic output. Sorting also guarantees a
+// tested package is checked before its external test package ("foo"
+// sorts before "foo_test"), so the test package's imports can resolve
+// against it.
+func groupByPackageClause(files []*ast.File) []packageGroup {
+	byName := make(map[string][]*ast.File)
+	for _, f := range files {
+		name := f.Name.Name
+		byName[name] = append(byName[name], f)
+	}
+	names := make([]string, 0, len(byName))
+	for name := range byName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	groups := make([]packageGroup, 0, len(names))
+	for _, name := range names {
+		groups = append(groups, packageGroup{name: name, files: byName[name]})
+	}
+	return groups
+}
+
+// runPackageGroup type-checks one group's files as a single package and
+// runs every analyzer over it. Type errors are tolerated: analyzers use
+// best-effort info.
+func runPackageGroup(fset *token.FileSet, imp *groupImporter, group packageGroup) []Diagnostic {
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
 		Defs:       make(map[*ast.Ident]types.Object),
@@ -72,19 +119,49 @@ func Run(paths []string) ([]Diagnostic, error) {
 		Scopes:     make(map[ast.Node]*types.Scope),
 	}
 	conf := types.Config{
-		Importer:                 importer.Default(),
+		Importer:                 imp,
 		IgnoreFuncBodies:         false,
 		DisableUnusedImportCheck: true,
 	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
+	pkg, _ := conf.Check(group.name, fset, group.files, info)
 	// Type errors are tolerated: analyzers use best-effort info.
+	if pkg != nil {
+		imp.add(group.name, pkg)
+	}
 
-	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
+	pass := &Pass{Fset: fset, Files: group.files, Info: info, Pkg: pkg}
 	var out []Diagnostic
 	for _, a := range analyzers {
 		out = append(out, a.Run(pass)...)
 	}
-	return SortDiagnostics(out), nil
+	return out
+}
+
+// groupImporter resolves imports for a single Run call. It delegates to
+// the default importer first; when that fails it falls back to packages
+// already type-checked in this run, matched by package clause name. This
+// lets an external test package (foo_test) resolve the package under test
+// (foo) when both are passed to Run together, even though the tested
+// package's real import path is unknown.
+type groupImporter struct {
+	byName map[string]*types.Package
+}
+
+func (g *groupImporter) Import(path string) (*types.Package, error) {
+	if p, err := importer.Default().Import(path); err == nil {
+		return p, nil
+	}
+	if p, ok := g.byName[path]; ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("vet: cannot import %q", path)
+}
+
+func (g *groupImporter) add(name string, pkg *types.Package) {
+	if g.byName == nil {
+		g.byName = make(map[string]*types.Package)
+	}
+	g.byName[name] = pkg
 }
 
 // position returns the source position of n.
