@@ -193,6 +193,70 @@ public final class IfaceMethodTablesTest {
     }
 
     /**
+     * ADR-0009: a method objID missing from Program.functions() but
+     * present in the document's "diskMRStubObjIDs" attested stub set is a
+     * vestigial disk-MR stub entry — skipped silently, no exception, and
+     * the remaining methods still resolve.
+     * verifies: GG-0014
+     */
+    public void testAttestedDiskMRStubIdSkips() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "named", "detail": {"name": "main.T", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 7, "recv": "value"}]}},
+                   {"kind": "pointer", "detail": {"elem": 1,
+                     "methods": [{"name": "M", "obj": 8, "recv": "pointer", "index": []},
+                                 {"name": "N", "obj": 9, "recv": "pointer", "index": [0]}]}}
+                 ],
+                 "diskMRStubObjIDs": [9],
+                 "objects": [], "funcs": []}""";
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of(7, goFunc(), 8, goFunc()));
+        assertTrue(out.get("main.T").get("M") != null, "M still resolves");
+        String ptrName = DescriptorNames.descriptorName(
+                new graalgo.frontend.TypeTable(
+                        ((graalgo.frontend.Json.Object) graalgo.frontend.Json.parse(doc))
+                                .array("types", "t")),
+                2);
+        Map<String, IfaceMethodTarget> ptrMethods = out.get(ptrName);
+        assertTrue(ptrMethods != null, "pointer entry present");
+        assertTrue(ptrMethods.get("M") != null, "attested set does not drop M");
+        assertTrue(!ptrMethods.containsKey("N"), "attested stub id 9 skips N silently");
+    }
+
+    /**
+     * ADR-0009: the attested stub set is not a blanket pass — an unknown
+     * objID absent from the set still fails fast, naming the method and
+     * the objID. (Guards against a regression that treats every missing
+     * id as a stub.)
+     * verifies: GG-0014
+     */
+    public void testUnattestedIdFailsFastDespiteStubSet() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "named", "detail": {"name": "main.T", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 7, "recv": "value"},
+                                 {"name": "Bogus", "obj": 9, "recv": "value"}]}}
+                 ],
+                 "diskMRStubObjIDs": [42],
+                 "objects": [], "funcs": []}""";
+        try {
+            IfaceMethodTables.resolve(parseDoc(doc), Map.of(7, goFunc()));
+        } catch (FrontendException fe) {
+            String msg = fe.getMessage();
+            assertTrue(msg.contains("\"Bogus\""), "names the method: " + msg);
+            assertTrue(msg.contains("9"), "names the objID: " + msg);
+            assertTrue(!msg.contains("42"), "must not blame the attested id: " + msg);
+            return;
+        }
+        throw new AssertionError("expected FrontendException for unattested objID 9");
+    }
+
+    /**
      * PKG-036: "struct"-kind entries (anonymous structs with promoted
      * methods, e.g. hex_test.go's {@code struct{ Reader io.Reader }})
      * install under the factory's structural descriptor name — the same

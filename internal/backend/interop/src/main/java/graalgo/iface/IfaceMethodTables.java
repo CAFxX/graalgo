@@ -1,14 +1,15 @@
 package graalgo.iface;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
 import graalgo.frontend.TypeTable;
-import graalgo.p3log.P3Log;
 import graalgo.values.GoFunc;
 
 /**
@@ -32,9 +33,13 @@ import graalgo.values.GoFunc;
  * informational only; {@code "index"} is the receiver adaptation path,
  * empty for direct methods).
  *
- * <p>Fail-fast: a method entry without a name/obj, or an obj id absent
- * from {@code Program.functions()}, is a {@link FrontendException} naming
- * the descriptor, method, and obj id.
+ * <p>Fail-fast: a method entry without a name/obj is a {@link
+ * FrontendException}; so is an obj id absent from {@code
+ * Program.functions()}, unless the id is in the document's {@code
+ * "diskMRStubObjIDs"} attested stub set (ADR-0009) — those are vestigial
+ * disk-MR stub entries the frontend deliberately emitted no function for,
+ * and are skipped silently. The exception names the descriptor, method,
+ * and obj id.
  */
 public final class IfaceMethodTables {
     private IfaceMethodTables() {}
@@ -50,6 +55,7 @@ public final class IfaceMethodTables {
     public static Map<String, Map<String, IfaceMethodTarget>> resolve(Json.Object doc,
             Map<Integer, GoFunc> functions) {
         TypeTable types = new TypeTable(doc.array("types", "document"));
+        Set<Integer> stubObjIds = readStubObjIds(doc);
         Map<String, Map<String, MethodRef>> objIds = new LinkedHashMap<>();
         for (int id = 0; id < types.size(); id++) {
             String path = "types[" + id + "]";
@@ -101,15 +107,20 @@ public final class IfaceMethodTables {
                 } else {
                     f = functions.get(ref.objId);
                     if (f == null) {
-                        // Disk-MR stubs are skipped by the frontend (desugar
-                        // rewrites all calls to the __-helper); the method
-                        // table entry is vestigial. Skip instead of failing.
-                        P3Log.warn(IfaceMethodTables.class,
-                                "ifacemethod: method \"" + m.getKey()
+                        if (stubObjIds.contains(ref.objId)) {
+                            // ADR-0009: attested disk-MR stub — the frontend
+                            // deliberately emitted no function for it (the
+                            // desugar rewrote every call to the __-helper),
+                            // so the method-table entry is vestigial. Skip
+                            // silently: attested skips are expected, not
+                            // warnings (the old warn masked real bugs here).
+                            continue;
+                        }
+                        throw new FrontendException("ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
                                 + "\" refers to unknown function object id " + ref.objId
-                                + " (skipped; likely a disk-MR stub)");
-                        continue;
+                                + " (not in Program.functions() and not a frontend-attested"
+                                + " disk-MR stub; probable exporter bug)");
                     }
                     embMethods = List.of();
                 }
@@ -124,6 +135,37 @@ public final class IfaceMethodTables {
     /** Wire method entry: object id + receiver adaptation data. */
     private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver, boolean addrOf,
             int embeddedIfaceId) {}
+
+    /**
+     * Reads the frontend-attested disk-MR stub obj ids (ADR-0009): the
+     * {@code "diskMRStubObjIDs"} top-level array lists the object ids the
+     * frontend deliberately emitted no function for. Absent or null
+     * (pre-ADR-0009 documents) means the empty set — such documents fail
+     * fast on any vestigial entry, which is the correct strict behavior.
+     */
+    private static Set<Integer> readStubObjIds(Json.Object doc) {
+        Json.Value v = doc.opt("diskMRStubObjIDs");
+        Set<Integer> out = new HashSet<>();
+        if (v == null || v instanceof Json.Null) {
+            return out;
+        }
+        if (!(v instanceof Json.Array arr)) {
+            throw new FrontendException("document: \"diskMRStubObjIDs\" must be an array");
+        }
+        for (int i = 0; i < arr.size(); i++) {
+            String ip = "document.diskMRStubObjIDs[" + i + "]";
+            Json.Value e = arr.get(i);
+            if (!(e instanceof Json.Num n)) {
+                throw new FrontendException(ip + ": stub obj id must be an integer");
+            }
+            long l = n.asLong(ip);
+            if (l != (int) l) {
+                throw new FrontendException(ip + ": stub obj id out of int range: " + l);
+            }
+            out.add((int) l);
+        }
+        return out;
+    }
 
     /**
      * Method names of the embedded interface's {@code interface}-kind

@@ -80,6 +80,16 @@ type Doc struct {
 	// Obj == -1 means "evaluate Init for side effects, discard"
 	// (package-level `var _ = ...`).
 	Globals []GlobalEnt `json:"globals"`
+	// DiskMRStubObjIDs lists the object ids of disk-package
+	// multi-result stubs (WS G, P3-M9) that the exporter deliberately
+	// did not emit: the desugar rewrote every call to the
+	// pair-returning __-helper, so no funcdecl exists for them.
+	// Method-table entries referencing these ids are vestigial; the
+	// backend skips them. Any other method-table obj id missing from
+	// the emitted functions is an exporter bug and fails fast on the
+	// backend (ADR-0009). Sorted ascending for determinism; empty
+	// (never null) when no stub was skipped.
+	DiskMRStubObjIDs []int `json:"diskMRStubObjIDs"`
 }
 
 // GlobalEnt is one package-level variable (M7): the object-table id of
@@ -2491,6 +2501,8 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if doc.Objects == nil {
 		doc.Objects = []ObjectEnt{}
 	}
+	// ADR-0009: attest the withheld disk-MR stub obj ids.
+	doc.DiskMRStubObjIDs = e.attestedStubObjIDs()
 
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -3091,6 +3103,12 @@ type exporter struct {
 	// its own execution (tracked via length), so nested statements flush
 	// correctly.
 	mrHoistPre []*Node
+	// ADR-0009: object ids of disk-package multi-result stubs withheld
+	// from emission by exportFuncDecl (the desugar rewrote every call to
+	// the __-helper). Recorded here so the document can attest exactly
+	// which method-table obj ids are vestigial; the backend fails fast
+	// on any other unknown id instead of guessing.
+	diskMRStubObjIDs map[int]bool
 }
 
 // userMRInfo describes a user-defined multi-result function transformed
@@ -5949,6 +5967,19 @@ func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, err
 
 // exportFuncDecl emits a non-generic top-level function or method. Methods
 // export their receiver as params[0] (the wire "signature" matches).
+// attestedStubObjIDs returns the obj ids of the disk-package
+// multi-result stubs withheld from emission (ADR-0009), sorted ascending
+// for determinism. Empty (never nil) when no stub was skipped, so the
+// wire field keeps its [] shape.
+func (e *exporter) attestedStubObjIDs() []int {
+	ids := make([]int, 0, len(e.diskMRStubObjIDs))
+	for id := range e.diskMRStubObjIDs {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
+}
+
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	// WS G (P3-M9): skip disk-package multi-result stubs. The stub
@@ -5972,6 +6003,18 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 			if lookupDiskMR(pkgPath, name, recvType) != nil {
 				// Stub: skip export (desugar handles all calls).
+				// ADR-0009: attest the withheld obj id so the backend
+				// can tell this vestigial method-table entry apart from
+				// a genuinely bogus id (which must fail fast instead of
+				// being silently dropped). The >= 0 guard keeps the
+				// attestation to real obj ids; anything else fails fast
+				// downstream, which is the safe direction.
+				if fi.funcID >= 0 {
+					if e.diskMRStubObjIDs == nil {
+						e.diskMRStubObjIDs = make(map[int]bool)
+					}
+					e.diskMRStubObjIDs[fi.funcID] = true
+				}
 				return nil, nil
 			}
 		}

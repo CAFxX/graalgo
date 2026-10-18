@@ -26,7 +26,8 @@ byte-identical (`TestDeterministic`).
   "package":   { "name": "main", "files": ["hello.go"], "lang": "go1.27" },
   "types":     [ ... ],
   "objects":   [ ... ],
-  "funcs":     [ ... ]
+  "funcs":     [ ... ],
+  "diskMRStubObjIDs": [ ... ]
 }
 ```
 
@@ -40,6 +41,7 @@ byte-identical (`TestDeterministic`).
 | `types` | Type table (§4). |
 | `objects` | Object table (§5). |
 | `funcs` | Top-level `funcdecl` nodes, in source order (§6). |
+| `diskMRStubObjIDs` | Object ids of disk-package multi-result stubs (WS G) the exporter deliberately did not emit — the desugar rewrote every call to the pair-returning `__`-helper. Method-table entries referencing these ids are vestigial; the backend skips them. Any other method-table obj id missing from `funcs` is an exporter bug and fails fast on the backend (ADR-0009). Sorted ascending; `[]` when none. |
 
 ## 3. Source positions
 

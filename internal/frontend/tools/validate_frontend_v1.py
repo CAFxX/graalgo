@@ -493,6 +493,13 @@ def validate(doc):
             check_node(ctx, f"funcs[{i}]", fn, False)
             if isinstance(fn, dict) and fn.get("kind") != "funcdecl":
                 ctx.err(f"funcs[{i}]", "top-level entries must be funcdecl")
+    # ADR-0009: the attested disk-MR stub obj ids — absent (pre-ADR-0009
+    # documents) or an array of non-negative ints.
+    if "diskMRStubObjIDs" in doc:
+        sids = doc["diskMRStubObjIDs"]
+        if not isinstance(sids, list) or any(
+                not isinstance(i, int) or isinstance(i, bool) or i < 0 for i in sids):
+            ctx.err("diskMRStubObjIDs", "must be an array of non-negative ints")
     return ctx.errors
 
 
@@ -524,6 +531,15 @@ def selftest():
         cases.append((name, d, want_substr))
 
     bad("ok-positive", lambda d: None, None)
+    bad("stubids-present-ok",
+        lambda d: d.update(diskMRStubObjIDs=[3, 7]),
+        None)
+    bad("stubids-not-array",
+        lambda d: d.update(diskMRStubObjIDs="x"),
+        "diskMRStubObjIDs")
+    bad("stubids-bad-elem",
+        lambda d: d.update(diskMRStubObjIDs=[3, -1]),
+        "diskMRStubObjIDs")
     bad("bad-version", lambda d: d.update(frontend="v2"), "frontend")
     bad("unknown-node-kind",
         lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
