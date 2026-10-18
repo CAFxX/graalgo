@@ -136,3 +136,95 @@ This is a general WS D gap for disk-imported packages, not uuid-specific.
 `exportSelector` has a hardcoded list of synthetic package paths for qualified const/var access. Disk-built packages (e.g., `github.com/google/uuid`) are not in the list, so they fall through to `exportExpr(x.X)` which fails on the PkgName.
 
 **Fix (general):** after the hardcoded list, check `getDiskPackage(p)`; if it resolves, use `exportSyntheticQualified` (disk packages are in syntheticPackage shape).
+
+## BUG-MODPROBE-008: statement-position multi-result call on unlisted interface method emits invalid assign (uuid probe 0/8)
+
+**Date:** 2026-10-18
+**Status:** BLOCKED on `wt/graalgo-independent-codebase-review/fix-p0-ss-readrune` (fix written, awaiting independent review + integration)
+**Owner:** coordinator (review + integrate existing branch); no new fix work needed
+
+**Symptom:**
+Full end-to-end proof (`make build` exit=0, `make generate` exit=0, then
+`test/e2e/run_module.sh test/e2e/uuid`, all 8 cases, gc leg vs graalgo legs
+at `--gmp=1` and `--gmp=4`): **0 passed, 8 failed**. Every graalgo leg dies
+at export with:
+```
+graalgo-sync-run: internal error building AST: assign.fields: lhs/rhs length mismatch
+```
+(exit 1; empty stdout). All gc legs pass. Per-case table in the proof log:
+`FAIL case01..case07 [stdout@1; exit1(1!=0); stdout@4; exit4(1!=0);]`
+(`case07` gr4 leg hung — see BUG-MODPROBE-009, killed → exit 143;
+`case08` is the panic-path case: gc exit=2, graalgo exit=1, stderr first
+lines also differ).
+
+**Root cause (verified against the wire, not inferred):**
+`gofrontend` exits 0 on the probe but emits exactly one malformed `assign`
+node in the whole 182 MB export (found by scanning the wire JSON for
+`len(lhs) != len(rhs)` outside the comma-ok shape): a 3-lhs / 1-rhs assign
+whose rhs is an `ifacemethod` call — `r, size, err = s.rs.ReadRune()` at
+`fmt/scan.go:189` (disk-imported `fmt`; `s.rs` is `io.RuneScanner`).
+`NodeFactory.buildAssign` (`internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java:4525`)
+rejects it. The statement-position classifier (`classifyMultiResultCall`,
+`internal/frontend/mrdesugar_m5.go:1518`) misses this call shape: the
+interface arm only tries the `m8IfaceMultiResultMethods` whitelist (no
+`ReadRune` entry) and the disk-iface classifier, with no general fallback
+on master — so the raw node reaches the backend. This is the known
+DESIGN-RV-P0-ss-readrune defect (`hidden_files/codebase-review/DESIGN-RV-P0-ss-readrune.md`).
+
+**Reproducer:** `test/e2e/uuid/case01/main.go` (any probe case; `fmt` is in
+every case's closure). Module sources unmodified (hard rule 1).
+
+**Fix (general, already written — do NOT re-fix):**
+branch `wt/graalgo-independent-codebase-review/fix-p0-ss-readrune`, tip
+`0c966680` "Fix statement-position multi-result desugar for unlisted
+interface methods": adds the general fallback `classifyUserIfaceMultiResultCall`
+(synthesize the interface pair on first use; itab dispatches to the concrete
+type's pair-returning `__`-helper). The branch is based on master `56a3dd68`
+and is also pushed to origin. What remains is independent review + integration
+— coordinator territory.
+
+**Diagnostics gap (observation for the fixing lane):** the frontend emits the
+invalid node and exits 0; the backend error carries no source position, so the
+failure was only localizable by scanning the wire. A frontend-side arity
+validation (or position info on `FrontendException`) would have pointed at
+`fmt/scan.go:189` immediately.
+
+**Blocks:** uuid probe case01..case08 (whole corpus); the milestone's
+"published module end-to-end" criterion.
+
+## BUG-MODPROBE-009: graalgo-sync-run --gmp=4 hangs intermittently with no output
+
+**Date:** 2026-10-18
+**Status:** OPEN, needs diagnosis (mechanism unverified — out of scope for the e2e lane)
+**Owner:** fixing lane (general launcher/runtime fix)
+
+**Symptom:**
+During the same proof run, two of the eight `--gmp=4` legs hung: the JVM
+started, printed nothing (stdout and stderr both 0 bytes), consumed ~0 CPU
+(00:00:00–00:00:06 over 1.5–9 min), sat with ~11–19 threads in futex wait,
+spawned no `gofrontend` child, and never exited. Observed:
+- `case07` gr4 leg: hung ~9 min, killed by the lane (SIGTERM) → leg exit 143.
+- `case08` gr4 leg: hung, SIGTERM ignored, SIGKILL required.
+The other six `--gmp=4` legs completed normally (export error + exit 1, same
+as the `--gmp=1` legs). All eight `--gmp=1` legs completed normally.
+
+**Correlation (not root cause):** only `--gmp=4` legs hung; both hangs
+occurred while box load was elevated (11.66/9.47/10.91, other lanes'
+runners active). Earlier `--gmp=4` legs under lower load exited fine —
+intermittent, possibly a scheduler/carrier startup race under load. The
+mechanism was not diagnosed (out of scope for this lane).
+
+**Impact on the probe:** `run_module.sh` has no per-leg timeout, so a hung
+leg stalls the whole corpus indefinitely; the lane killed the JVMs manually
+to complete the proof. The recorded `exit4(143!=0)` rows reflect the kills,
+not launcher behavior.
+
+**Reproducer (intermittent):**
+`internal/backend/graalgo-sync-run --gmp=4 test/e2e/uuid/case07/main.go`
+under concurrent box load. Prerequisites: `make build`, `make generate`.
+
+**Fix required (general):** diagnose the `--gmp=4` startup hang (launcher
+init vs scheduler carrier bring-up) and make the launcher exit promptly on
+all failure paths; consider a per-leg timeout in `run_module.sh` as defense
+in depth (separate runner-hardening change, not a substitute for the
+launcher fix).
