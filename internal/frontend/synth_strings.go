@@ -34,11 +34,12 @@
 //
 // Out-of-scope members (exact gc signatures + panic bodies — fail fast,
 // NEVER silent):
-//   - Multi-result methods (Builder.Write/WriteRune/WriteString,
-//     Reader.Read/ReadAt/ReadByte/ReadRune/Seek): declared for
-//     type-checking, skipped at emission, every call site fails fast via
-//     isMultiResultSynthetic (WS D; the P3-M5 time.ParseDuration
-//     precedent). Re-test when WS D lands.
+//   - Multi-result methods: Builder.Write/WriteRune/WriteString and
+//     Reader.Read/ReadAt/ReadByte/ReadRune/Seek are Appendix-M
+//     table-covered (2-target call sites desugar to __-helpers; the
+//     panic bodies are unreachable). Reader.WriteTo and
+//     Replacer.WriteString have no table entry yet (fail-fast; need a
+//     __-helper + desugar coverage).
 //   - Title: deprecated upstream; needs the unicode Letter/Digit tables
 //     (too large to inline for a deprecated function). Exact signature,
 //     panic body. Re-test when the unicode wave lands.
@@ -2107,11 +2108,9 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	}
 
 	// ---------------------------------------------------------------------------
-	// Multi-result functions: exact gc signatures with fail-fast bodies.
-	// v1 cannot emit or call multi-result functions (WS D; the P3-M5
-	// time.ParseDuration precedent) — the declarations exist for type-checking
-	// but are skipped at emission, and every call site fails fast via
-	// isMultiResultSynthetic. Re-test when WS D lands.
+	// Multi-result functions: exact gc signatures with REAL bodies —
+	// pair-transformed via the general userMRFuncs mechanism (the P3-M5
+	// time.ParseDuration precedent), not table-driven.
 	// ---------------------------------------------------------------------------
 
 	// Cut slices s around the first instance of sep.
@@ -2481,8 +2480,8 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	}
 
 	// WriteTo implements io.WriterTo. M8 scope: exact gc signature (now
-	// nameable); the body stays fail-fast — it needs w.Write, a 2-result
-	// interface call (WS D). Re-test when WS D lands.
+	// nameable); the body stays fail-fast — it has no Appendix-M table
+	// entry yet (needs w.Write desugared through a __-helper).
 	func (r *Reader) WriteTo(w io.Writer) (n int64, err error) {
 		panic("strings.Reader.WriteTo: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 	}
@@ -2535,8 +2534,8 @@ func stringsAppendRune(b []byte, r rune) []byte {
 
 	// WriteString writes s to w with all replacements performed. M8 scope:
 	// exact gc signature (now nameable); the body stays fail-fast — it
-	// needs w.Write, a 2-result interface call (WS D). Re-test when WS D
-	// lands.
+	// has no Appendix-M table entry yet (needs w.Write desugared through
+	// a __-helper).
 	func (r *Replacer) WriteString(w io.Writer, s string) (n int, err error) {
 		panic("strings.Replacer.WriteString: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 	}
