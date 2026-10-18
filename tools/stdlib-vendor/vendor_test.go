@@ -262,6 +262,36 @@ func TestMalformedVersionRefused(t *testing.T) {
 	}
 }
 
+// The default in-repo fork dir must resolve to the real tools/stdlib-fork
+// tree (which holds vendor-manifest.json and pinned-version.txt), not to
+// the long-removed phases/phase3/stdlib-fork tree. This test pins the
+// default against the actual checkout layout so a stale default fails.
+func TestDefaultForkDirResolvesToRealTree(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := repoRoot(cwd)
+	if err != nil {
+		t.Fatalf("cannot discover repo root from %q: %v", cwd, err)
+	}
+	dir := stdlibForkDir(repo)
+	if strings.Contains(dir, "phases") {
+		t.Fatalf("stdlibForkDir(%q) = %q, still references the removed phases/ tree", repo, dir)
+	}
+	for _, name := range []string{"vendor-manifest.json", "pinned-version.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Fatalf("expected %s under default fork dir %q: %v", name, dir, err)
+		}
+	}
+	if got := defaultManifestPath(repo); got != filepath.Join(dir, "vendor-manifest.json") {
+		t.Fatalf("defaultManifestPath = %q, want it under %q", got, dir)
+	}
+	if got := defaultPinPath(repo); got != filepath.Join(dir, "pinned-version.txt") {
+		t.Fatalf("defaultPinPath = %q, want it under %q", got, dir)
+	}
+}
+
 // Manifest entries carry real SHA-256 digests, not placeholders.
 func TestManifestHashesAreReal(t *testing.T) {
 	goroot := fakeGoroot(t, "go1.27.1", stdFiles)

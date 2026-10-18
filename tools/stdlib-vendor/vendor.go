@@ -54,8 +54,8 @@ type manifest struct {
 type vendorOptions struct {
 	Goroot            string // GOROOT; "" => `go env GOROOT`
 	Target            string // vendored tree dir; "" => $HOME/workspace/graalgo-stdlib/<ver>/
-	ManifestPath      string // in-repo manifest; "" => <repo>/phases/phase3/stdlib-fork/vendor-manifest.json
-	PinPath           string // in-repo pin; "" => <repo>/.../stdlib-fork/pinned-version.txt
+	ManifestPath      string // in-repo manifest; "" => <repo>/tools/stdlib-fork/vendor-manifest.json
+	PinPath           string // in-repo pin; "" => <repo>/tools/stdlib-fork/pinned-version.txt
 	Repo              string // explicit repo root; "" => discover from CWD
 	Force             bool
 	AllowVersionDrift bool
@@ -354,7 +354,7 @@ func runVendorCmd(argv []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	gorootFlag := fs.String("goroot", "", "GOROOT to vendor from (default: `go env GOROOT`)")
 	targetFlag := fs.String("target", "", "target directory (default: $HOME/workspace/graalgo-stdlib/<goVersion>/)")
-	manifestFlag := fs.String("manifest", "", "manifest output path (default: <repo>/phases/phase3/stdlib-fork/vendor-manifest.json)")
+	manifestFlag := fs.String("manifest", "", "manifest output path (default: <repo>/tools/stdlib-fork/vendor-manifest.json)")
 	repoFlag := fs.String("repo", "", "repo root (default: discovered from CWD)")
 	forceFlag := fs.Bool("force", false, "vendor into an existing non-empty target directory")
 	driftFlag := fs.Bool("allow-version-drift", false, "proceed when GOROOT version differs from the pin")
