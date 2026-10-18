@@ -101,12 +101,19 @@ check: main $(OUT_TEST)/.built
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
-	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
-		if [ -x "$(HOME)/tools/go/bin/go" ]; then \
-			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local $(HOME)/tools/go/bin/go run . validate --list ../stdlib-fork/exclusions.yaml; \
-		else \
-			echo "WARNING: $(HOME)/tools/go/bin/go not found; exclusion-list gate skipped"; \
-		fi; \
+# Fail-closed: the gate MUST run whenever `make check` runs. The toolchain is
+# resolved the same way as the neighboring p3frontend gate (env GO, falling
+# back to the pinned local toolchain), and CI exports GO=$(which go) into the
+# environment, so this also fixes the CI fail-open where
+# $(HOME)/tools/go/bin/go does not exist on GHA runners. A missing
+# exclusions.yaml file is an error, not a skip.
+	@GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
+	if [ ! -f $(STDLIB_FORK)/exclusions.yaml ]; then \
+		echo "EXCLUSION-LIST GATE FAILED: $(STDLIB_FORK)/exclusions.yaml not found"; exit 1; \
+	elif [ ! -x "$$GO_BIN" ]; then \
+		echo "EXCLUSION-LIST GATE FAILED: Go toolchain not found ($$GO_BIN)"; exit 1; \
+	else \
+		cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local "$$GO_BIN" run . validate --list ../stdlib-fork/exclusions.yaml; \
 	fi
 	@echo "== asm-inventory sync gate (P3-M6) =="
 	@if [ -n "$(GO)" ]; then \
