@@ -558,6 +558,10 @@ public final class NodeFactory {
         if (!(v instanceof Json.Object doc)) {
             throw new FrontendException("document: must be a JSON object");
         }
+        // B-2: the wire-id registries are build-scoped (wire type ids are
+        // per-document) — a previous program's mappings must not leak into
+        // this build.
+        resetWireIdRegistries();
         this.document = doc;
         String fv = doc.string("frontend", "document");
         if (!"v1".equals(fv)) {
@@ -1206,10 +1210,14 @@ public final class NodeFactory {
      * in one function could never match a {@code struct{a int}} value
      * boxed in another (the descriptors were never identical). Unnamed
      * struct/array/slice/map/pointer types now canonicalize by structure
-     * in a process-wide cache. Named types stay per-ctx by qualified name
-     * (a named type and its underlying type are different dynamic types);
-     * sharing an instance across programs is benign — a descriptor is an
-     * immutable identity token and dynamic-type universes never mix.
+     * in a process-wide cache. Named types canonicalize by qualified
+     * name <em>plus</em> kind and bug-019 comparability (B-2): a named
+     * type and its underlying type are different dynamic types, and two
+     * programs can define the same qualified name with different kinds,
+     * so the name alone does not identify the descriptor. Sharing an
+     * instance across programs for an identical (name, kind,
+     * comparability) triple is benign — a descriptor is an immutable
+     * identity token and dynamic-type universes never mix.
      */
     static graalgo.values.GoTypeDescriptor typeDescriptorFor(BuildCtx ctx, int typeId, String path) {
         typeId = resolveAlias(ctx, typeId, path);
@@ -1240,11 +1248,13 @@ public final class NodeFactory {
             Json.Object elemEntry = ctx.types.entry(elemId, path);
             if ("named".equals(elemEntry.string("kind", path))) {
                 String name = "*" + elemEntry.object("detail", path).string("name", path);
-                graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(name);
+                graalgo.values.GoKind ptrKind = kindOf(ctx, typeId, path);
+                String key = namedDescKey(name, ptrKind, comparable);
+                graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(key);
                 if (nd == null) {
                     nd = new graalgo.values.GoTypeDescriptor(name,
-                            kindOf(ctx, typeId, path), false, comparable);
-                    graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(name, nd);
+                            ptrKind, false, comparable);
+                    graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(key, nd);
                     if (prev != null) {
                         nd = prev;
                     }
@@ -1296,11 +1306,13 @@ public final class NodeFactory {
             // encoding/json.RawMessage displays as jsontext.Value (gc 1.27
             // alias).
             String qname = entry.object("detail", path).string("name", path);
-            graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qname);
+            graalgo.values.GoKind namedKind = kindOf(ctx, typeId, path);
+            String key = namedDescKey(qname, namedKind, comparable);
+            graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(key);
             if (nd == null) {
                 nd = new graalgo.values.GoTypeDescriptor(displayNameFor(qname),
-                        kindOf(ctx, typeId, path), false, comparable);
-                graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(qname, nd);
+                        namedKind, false, comparable);
+                graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(key, nd);
                 if (prev != null) {
                     nd = prev;
                 }
@@ -1517,11 +1529,30 @@ public final class NodeFactory {
                 || "chan".equals(k);
     }
 
-    /** Process-wide canonical descriptors for named types, keyed by qualified
-     * name (M6, WS H); see {@link #typeDescriptorFor}. */
+    /** Process-wide canonical descriptors for named types, keyed by
+     * qualified name <em>plus</em> the kind and the bug-019 comparability
+     * flag (B-2): the key carries everything the cached descriptor
+     * depends on (the STRUCT_DESCS name+layout precedent). A second
+     * program defining {@code main.Foo} with a different kind or
+     * comparability must not inherit the first program's descriptor;
+     * identical (name, kind, comparability) triples still share the
+     * immutable instance across functions, packages, and programs (the
+     * M6 cross-BuildCtx identity requirement; dynamic-type universes
+     * never mix). See {@link #typeDescriptorFor}. */
     private static final java.util.concurrent.ConcurrentHashMap<String,
             graalgo.values.GoTypeDescriptor> NAMED_DESCS =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Cache key for a named-type descriptor (B-2): the qualified name
+     * (or {@code "*"}+name for pointer-to-named) plus the kind and the
+     * bug-019 comparability flag — exactly the observables the cached
+     * {@link graalgo.values.GoTypeDescriptor} carries (the display name
+     * derives from the qualified name).
+     */
+    private static String namedDescKey(String qname, graalgo.values.GoKind kind, boolean comparable) {
+        return qname + "|" + kind + "|" + comparable;
+    }
 
     /**
      * Process-wide canonical descriptors for unnamed composite types (M6,
@@ -1550,6 +1581,14 @@ public final class NodeFactory {
      * its inverse. Recorded additively in {@link #typeDescriptorFor}; zero
      * behavior change. Consumed by the reflect package to map a
      * GoTypeDescriptor (from a GoInterface) to its canonical reflect token.
+     *
+     * <p>B-2: wire type ids are per-document, so this registry is only
+     * meaningful for the current build — it is cleared at the start of
+     * every {@link #buildProgram} (the build is single-threaded, so no
+     * concurrent build can interleave; the maps stay
+     * {@code ConcurrentHashMap} for concurrent reads during execution).
+     * A second program built in the same JVM repopulates it with its own
+     * ids instead of inheriting the first program's mappings.
      */
     private static final java.util.concurrent.ConcurrentHashMap<
             graalgo.values.GoTypeDescriptor, Integer> DESCRIPTOR_WIRE_IDS =
@@ -1557,6 +1596,15 @@ public final class NodeFactory {
     private static final java.util.concurrent.ConcurrentHashMap<
             Integer, graalgo.values.GoTypeDescriptor> WIRE_ID_DESCRIPTORS =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Clears the build-scoped wire-id registries (B-2). Called at the
+     * start of every {@link #buildProgram}; package-private for tests.
+     */
+    static void resetWireIdRegistries() {
+        DESCRIPTOR_WIRE_IDS.clear();
+        WIRE_ID_DESCRIPTORS.clear();
+    }
 
     /** Wire type id for a descriptor, or null when unknown. */
     public static Integer wireIdForDescriptor(graalgo.values.GoTypeDescriptor d) {
@@ -1571,23 +1619,26 @@ public final class NodeFactory {
     /**
      * P3-M9 (reflect): canonical GoTypeDescriptor for a named type by
      * qualified name, for reflect's {@code Interface()} boxing. The
-     * reflect package's per-run type table knows a type's qualified name
-     * and kind but has no BuildCtx; this builds the same canonical
-     * instance {@link #typeDescriptorFor} would (process-wide
-     * {@code NAMED_DESCS} keyed by qualified name, display name via
-     * {@link #displayNameFor}), so descriptor identity holds whether the
-     * descriptor was first materialized by the frontend or by reflect.
+     * reflect package's per-run type table knows a type's qualified name,
+     * kind, and bug-019 comparability but has no BuildCtx; this builds
+     * the same canonical instance {@link #typeDescriptorFor} would (the
+     * {@code NAMED_DESCS} key carries name+kind+comparability, B-2 -- the
+     * kind alone does not identify the descriptor, since two programs can
+     * define the same qualified name with different kinds), so descriptor
+     * identity holds whether the descriptor was first materialized by the
+     * frontend or by reflect.
      * Callers pass {@code "*" + qname} for pointer-to-named, mirroring
      * {@code typeDescriptorFor}'s naming.
      */
     public static graalgo.values.GoTypeDescriptor namedDescriptorFor(
-            String qualifiedName, graalgo.values.GoKind kind) {
-        graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qualifiedName);
+            String qualifiedName, graalgo.values.GoKind kind, boolean comparable) {
+        String key = namedDescKey(qualifiedName, kind, comparable);
+        graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(key);
         if (nd == null) {
             nd = new graalgo.values.GoTypeDescriptor(
-                    displayNameFor(qualifiedName), kind, false);
+                    displayNameFor(qualifiedName), kind, false, comparable);
             graalgo.values.GoTypeDescriptor prev =
-                    NAMED_DESCS.putIfAbsent(qualifiedName, nd);
+                    NAMED_DESCS.putIfAbsent(key, nd);
             if (prev != null) {
                 nd = prev;
             }

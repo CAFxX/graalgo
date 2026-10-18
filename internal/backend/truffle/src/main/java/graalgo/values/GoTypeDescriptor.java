@@ -13,12 +13,14 @@ package graalgo.values;
  *       an untyped constant ({@code int}, {@code float64}, {@code string},
  *       {@code bool}) shares the instance with the corresponding basic
  *       type-table entry;</li>
- *   <li>named types: one instance per <em>qualified name</em> (process-wide) —
- *       a named type and its underlying type are <em>different</em> dynamic
- *       types (gc-verified: {@code case MyInt} does not match a dynamic
- *       {@code int}); the name key is safe because qualified names are
- *       unique within a program and descriptors are immutable identity
- *       tokens;</li>
+ *   <li>named types: one instance per <em>(qualified name, kind,
+ *       comparability)</em> triple (process-wide) — a named type and its
+ *       underlying type are <em>different</em> dynamic types (gc-verified:
+ *       {@code case MyInt} does not match a dynamic {@code int}); the name
+ *       key alone is not safe because two programs built in one JVM can
+ *       define the same qualified name with different kinds (B-2), so the
+ *       key carries everything the descriptor depends on. Descriptors are
+ *       immutable identity tokens;</li>
  *   <li>aliases resolve to their right-hand side (an alias <em>is</em> its
  *       rhs as a dynamic type);</li>
  *   <li>unnamed struct/array/slice/map/pointer types: one instance per

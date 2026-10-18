@@ -251,28 +251,78 @@ public final class ReflectTypes {
      * Canonical GoTypeDescriptor for a token, for boxing D5 values as
      * {@code any} (the {@code interface}/{@code rawinterface} intrinsics).
      *
-     * <p>Named and basic types canonicalize by name process-wide, so they
+     * <p>Named and basic types canonicalize process-wide (named by
+     * (qualified name, kind, comparability), basic by name), so they
      * are built directly via the frontend's canonical maps — identical to
      * the instance {@code typeDescriptorFor} would build, and immune to
-     * cross-document wire-id collisions in the process-wide
+     * cross-document wire-id collisions in the build-scoped
      * {@code WIRE_ID_DESCRIPTORS} registry (wire ids are per-document).
      * Unnamed composites fall back to the wire-id registry, then to
      * on-demand structural construction.
      */
+    /**
+     * bug-019 comparability of a {@link TypeInfo} tree (B-2): mirrors
+     * {@code NodeFactory.isComparableType} over the wire type table —
+     * func, slice, and map types are never comparable; structs and
+     * arrays are comparable iff all fields/elements are; everything
+     * else (basic, pointer, chan, interface) is comparable. Needed so
+     * {@link #descriptorForTok} can build the same canonical named-type
+     * descriptor the frontend would (the {@code NAMED_DESCS} key carries
+     * comparability).
+     */
+    static boolean isComparableType(TypeInfo t) {
+        return isComparableType(t, new java.util.HashSet<>());
+    }
+
+    private static boolean isComparableType(TypeInfo t, java.util.Set<TypeInfo> visiting) {
+        if (t == null) {
+            return true;
+        }
+        switch (t.kind) {
+            case SLICE:
+            case MAP:
+            case FUNC:
+                return false;
+            case ARRAY:
+                return isComparableType(t.elem, visiting);
+            case STRUCT: {
+                if (!visiting.add(t)) {
+                    return true;
+                }
+                try {
+                    if (t.fields == null) {
+                        return true;
+                    }
+                    for (FieldInfo f : t.fields) {
+                        if (!isComparableType(f.type, visiting)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } finally {
+                    visiting.remove(t);
+                }
+            }
+            default:
+                return true;
+        }
+    }
+
     public static graalgo.values.GoTypeDescriptor descriptorForTok(long tok) {
         Table table = table();
         graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
         if (d == null) {
             TypeInfo t = table.info(tok);
             if (t.isNamed()) {
-                d = graalgo.frontend.NodeFactory.namedDescriptorFor(t.name, t.kind);
+                d = graalgo.frontend.NodeFactory.namedDescriptorFor(
+                        t.name, t.kind, isComparableType(t));
             } else if (!t.basicName.isEmpty()) {
                 d = graalgo.frontend.NodeFactory.basicDescriptorForName(
                         canonicalBasicName(t.basicName), t.kind);
             } else if (t.kind == graalgo.values.GoKind.POINTER
                     && t.elem != null && t.elem.isNamed()) {
                 d = graalgo.frontend.NodeFactory.namedDescriptorFor(
-                        "*" + t.elem.name, t.kind);
+                        "*" + t.elem.name, t.kind, isComparableType(t));
             } else {
                 d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
                 if (d == null) {

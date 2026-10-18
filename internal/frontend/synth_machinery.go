@@ -892,6 +892,20 @@ var timeIntrinsicNames = map[string]bool{
 	"NewTimer": true, "NewTicker": true, "AfterFunc": true,
 }
 
+// reflectIntrinsicPkgPath reports whether path is a synthetic package
+// whose source is syntheticReflectSource, so the __reflect_* intrinsics
+// are call-site-intercepted there. "reflect" is the retired canonical
+// entry; "reflect_m7" is the M7-helper alias registered under a distinct
+// name (m7HelperPkgOverride) but built from the same source. Both must
+// agree: intrinsics are never emitted as funcdecls (isSyntheticIntrinsic)
+// and every call site lowers to the "reflectop" wire node
+// (isReflectIntrinsicFunc) — otherwise the panic-body declarations would
+// ship on the wire and bindGoFuncs would expose them to //go:linkname
+// dispatch (B-1).
+func reflectIntrinsicPkgPath(path string) bool {
+	return path == "reflect" || path == "reflect_m7"
+}
+
 // isSyntheticIntrinsic reports whether a synthetic package declaration is
 // an intrinsic (intercepted at call sites, no funcdecl emitted).
 func isSyntheticIntrinsic(path, name string) bool {
@@ -901,7 +915,7 @@ func isSyntheticIntrinsic(path, name string) bool {
 	if path == "math" {
 		return mathIntrinsicNames[name]
 	}
-	if path == "reflect" {
+	if reflectIntrinsicPkgPath(path) {
 		return reflectIntrinsicNames[name]
 	}
 	return false

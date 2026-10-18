@@ -2904,9 +2904,10 @@ var reflectIntrinsicNames = map[string]bool{
 }
 
 // isReflectIntrinsicFunc reports whether fn is a synthetic reflect
-// intrinsic (package-level __reflect_* in the synthetic reflect package).
+// intrinsic (package-level __reflect_* in a synthetic package built from
+// syntheticReflectSource — see reflectIntrinsicPkgPath).
 func isReflectIntrinsicFunc(fn *types.Func) bool {
-	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" && reflectIntrinsicNames[fn.Name()]
+	return fn.Pkg() != nil && reflectIntrinsicPkgPath(fn.Pkg().Path()) && reflectIntrinsicNames[fn.Name()]
 }
 
 // exportReflectIntrinsic lowers a call to a synthetic reflect intrinsic
