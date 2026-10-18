@@ -64,6 +64,12 @@ public final class GoBox implements GoCell {
     }
 
     @Override
+    public int storageHash() {
+        // sameStorageAs is object identity: identityHashCode is consistent.
+        return System.identityHashCode(this);
+    }
+
+    @Override
     public String toString() {
         return "GoBox{" + value + "}";
     }

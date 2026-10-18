@@ -208,6 +208,28 @@ telemetry usable from `java.lang.management` (or JVMTI agent support
 lands in this backend), re-check whether `TotalAlloc`/`Mallocs`/`Frees`
 can be reported with the real gc semantics, and update this entry.
 
+### DIV-M4-12: `SetFinalizer` keys finalizers per field, not per object (finer than gc)
+
+gc associates a finalizer with the *object* containing an interior
+pointer: `SetFinalizer(&s.f, f)` followed by `SetFinalizer(&s.g, g)` on
+two fields of the same struct collides in gc ("finalizer already set").
+graalgo keys the finalizer registry by *storage identity* — the
+`(struct, fieldIndex)` pair — so the two registrations above coexist
+without a signal.
+
+Rationale: collapsing to per-object keys would contradict the pinned
+guest-visible pointer equality (`&s.a != &s.b`, asserted by
+`CellIdentityTest.testFieldCellDifferentField` and
+`GcInteropTest.testSetFinalizerDifferentFields`): the registry key
+mirrors `GoPointer.sameStorageAs` exactly, and that equivalence treats
+distinct fields as distinct storage. The permissive direction (accepting
+programs gc would reject) is preferred over breaking a pinned equality.
+
+Consequence: a program that sets finalizers on two fields of one struct
+runs cleanly on graalgo and fatals on gc. If the project later chooses
+gc-exact per-object granularity, `testSetFinalizerDifferentFields`
+encodes the decision point.
+
 ## Template for new entries
 
 ### DIV-<M>-<N>: short title

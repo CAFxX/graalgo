@@ -48,4 +48,10 @@ public final class GoArrayCell implements GoCell {
         // pointing into the original backing array, matching gc).
         return other instanceof GoArrayCell a && array == a.array && index == a.index;
     }
+
+    @Override
+    public int storageHash() {
+        // Hashes exactly the components sameStorageAs compares.
+        return System.identityHashCode(array) * 31 + index;
+    }
 }

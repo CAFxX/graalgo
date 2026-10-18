@@ -40,4 +40,17 @@ public interface GoCell {
      * {@link GoPointer#sameStorageAs}).
      */
     boolean sameStorageAs(GoCell other);
+
+    /**
+     * Storage-identity hash, consistent with {@link #sameStorageAs}: whenever
+     * {@code a.sameStorageAs(b)} is true, {@code a.storageHash() ==
+     * b.storageHash()} must hold. Needed because storage identity (not Java
+     * object identity) is the equivalence the finalizer registry keys on —
+     * two distinct cell objects over the same storage must hash alike.
+     *
+     * <p>Polymorphic by design (like {@code sameStorageAs}): each cell shape
+     * hashes exactly the components its {@code sameStorageAs} compares, so no
+     * caller needs {@code instanceof} dispatch over cell types.
+     */
+    int storageHash();
 }

@@ -1,6 +1,8 @@
 package graalgo.runtime;
 
 import graalgo.values.GoFunc;
+import graalgo.values.GoPointer;
+import graalgo.values.GoStorageKey;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -72,22 +74,27 @@ public final class GcInterop {
      */
     private static final java.lang.ref.Cleaner CLEANER = java.lang.ref.Cleaner.create();
     /**
-     * Obj -> registration, for {@code SetFinalizer(obj, nil)} removal.
-     * STRONG keys: the registration keeps the GoPointer alive until the
-     * program either cancels (SetFinalizer(x, nil)) or calls runtime.GC().
-     * This is necessary because the interpreter frame's reference may not
-     * be a timely GC root (JIT liveness can collect the GoPointer between
-     * the register and cancel calls, before the Go program nils x).
+     * Storage identity -> registration, for {@code SetFinalizer(obj, nil)}
+     * removal and double-set detection. Keyed by {@link GoStorageKey} — the
+     * storage a pointer addresses — not by the {@code GoPointer} wrapper
+     * object: every {@code &x} evaluation mints a fresh wrapper over the
+     * same storage, so wrapper identity misses double-sets (R15-P1-3).
+     * STRONG values / weak keys: the registration keeps the GoPointer alive
+     * until the program either cancels (SetFinalizer(x, nil)) or calls
+     * runtime.GC(). This is necessary because the interpreter frame's
+     * reference may not be a timely GC root (JIT liveness can collect the
+     * GoPointer between the register and cancel calls, before the Go
+     * program nils x).
      *
      * <p>Weak keys so the registry never keeps a finalizable object alive
      * (that would defeat the phantom). The weak key is safe because
      * {@link #PINNED} keeps the GoPointer strongly reachable until the
-     * program calls {@link #gc()} or cancels. GoPointer uses identity
-     * equality, so weak-key semantics are identity semantics here. Guarded
-     * by {@link #FINALIZER_LOCK}.
+     * program calls {@link #gc()} or cancels, and the fired action removes
+     * its own entry (see {@link FinalizerAction#run}). Guarded by
+     * {@link #FINALIZER_LOCK}.
      */
     private static final Object FINALIZER_LOCK = new Object();
-    private static final Map<Object, FinalizerAction> BY_OBJ =
+    private static final Map<GoStorageKey, FinalizerAction> BY_OBJ =
             new WeakHashMap<>();
     /**
      * Strong references to registered GoPointers, released on {@link #gc()}.
@@ -101,17 +108,34 @@ public final class GcInterop {
     /**
      * A cancellable finalizer action. The Cleaner API has no "unregister"
      * (Cleanable.clean() *runs* the action); cancellation is via flag.
+     *
+     * <p>The action captures its {@link GoStorageKey} (not the
+     * {@code GoPointer} wrapper — the Cleaner phantom constraint forbids
+     * capturing the referent) so {@link #run} can drop the registration
+     * when the finalizer fires: finalizers are one-shot, and a later
+     * {@code SetFinalizer} for the same storage must re-arm cleanly
+     * instead of wrongly reporting "already set" (R15-P1-3 companion
+     * change). Capturing the key extends no lifetime beyond the wrapper's:
+     * the key's storage edge mirrors edges the wrapper already has.
      */
     private static final class FinalizerAction implements Runnable {
         final GoFunc fn;
+        final GoStorageKey key;
         final int objHash; // for debug
         volatile boolean cancelled;
-        FinalizerAction(GoFunc fn, int objHash) {
+        FinalizerAction(GoFunc fn, GoStorageKey key, int objHash) {
             this.fn = fn;
+            this.key = key;
             this.objHash = objHash;
         }
         @Override
         public void run() {
+            // One-shot: drop this registration. Conditional remove — a
+            // cancelled action must not evict a re-armed registration for
+            // the same storage key.
+            synchronized (FINALIZER_LOCK) {
+                BY_OBJ.remove(key, this);
+            }
             if (cancelled) {
                 return;
             }
@@ -137,7 +161,7 @@ public final class GcInterop {
             throw new IllegalArgumentException(
                     "runtime.SetFinalizer: nil object");
         }
-        if (!(obj instanceof graalgo.values.GoPointer)) {
+        if (!(obj instanceof GoPointer)) {
             throw new IllegalArgumentException(
                     "runtime.SetFinalizer: first argument must be a pointer");
         }
@@ -151,13 +175,15 @@ public final class GcInterop {
                     "runtime.SetFinalizer: finalizer must be a function");
         }
         synchronized (FINALIZER_LOCK) {
-            FinalizerAction old = BY_OBJ.remove(obj);
+            // Key by storage identity, not by wrapper object (R15-P1-3).
+            final GoStorageKey key = GoStorageKey.of((GoPointer) obj);
+            FinalizerAction old = BY_OBJ.remove(key);
             if (old != null) {
                 if (fn != null) {
                     // gc fatals "finalizer already set" — setting twice
                     // without an intervening nil is a programming bug.
                     // Restore the registration before throwing.
-                    BY_OBJ.put(obj, old);
+                    BY_OBJ.put(key, old);
                     throw new IllegalStateException(
                             "runtime.SetFinalizer: finalizer already set");
                 }
@@ -169,9 +195,9 @@ public final class GcInterop {
             }
             // The action must not capture obj (else the phantom never clears).
             // fn is the Go closure; the nil argument is DIV-M4-1.
-            FinalizerAction action = new FinalizerAction(fn, System.identityHashCode(obj));
+            FinalizerAction action = new FinalizerAction(fn, key, System.identityHashCode(obj));
             CLEANER.register(obj, action);
-            BY_OBJ.put(obj, action);
+            BY_OBJ.put(key, action);
             PINNED.add(obj);
             // Fence: keep obj alive until the registration is complete.
             // Without this, the JIT may consider obj dead after its last use
