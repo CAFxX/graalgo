@@ -20,6 +20,25 @@ The harness synthesizes single-file drivers from stdlib test sources:
 4. **run.py** — differential runner: builds driver via `go run` (gc) and
    `graalgo-run`, compares per-test PASS/FAIL/SKIP.
 
+## Verdict semantics
+
+`run.py` decides the package verdict from the two driver exit codes
+*before* comparing per-test output:
+
+| gc leg | graalgo leg | Verdict | Meaning |
+|---|---|---|---|
+| ok | ok | PASS / DIVERGE | per-test comparison decides |
+| crash/timeout | ok | SKIP | harness issue (gc cannot validate this package) |
+| ok | crash/timeout | DIVERGE | graalgo failed where gc passed |
+| crash/timeout | crash/timeout | **SKIP** | double-crash: strongest failure signal, never PASS |
+
+The double-crash case is explicitly SKIP-with-cause (never PASS): with no
+baseline and no challenger output there is nothing to compare, and a
+simultaneous crash must not be blessed as agreement.
+
+Unit tests for the verdict logic (pure, no drivers built):
+`python3 -B tools/gate1/test_run.py`.
+
 ## Usage
 
 ```bash

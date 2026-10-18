@@ -26,6 +26,39 @@ def run_cmd(cmd, env=None, timeout=300):
     except subprocess.TimeoutExpired:
         return -1, "", "TIMEOUT"
 
+def compute_verdict(rc_gc, rc_gr, gc_res, gr_res):
+    """Decide the gate1 verdict from the two driver exit codes and parsed results.
+
+    Args:
+        rc_gc, rc_gr: exit codes of the gc and graalgo driver legs
+            (rc == -1 means the leg timed out).
+        gc_res, gr_res: {test_name: "PASS"|"FAIL"|"SKIP"} parsed from leg stdout.
+
+    Returns:
+        (verdict, divergences) where verdict is one of "PASS", "DIVERGE",
+        "SKIP" and divergences is a list of (name, gc_result, graalgo_result)
+        triples for per-test mismatches.
+    """
+    if rc_gc != 0 and rc_gr != 0:
+        # Both driver legs crashed. A double-crash is the strongest failure
+        # signal the harness can produce: with no baseline and no challenger
+        # output there is nothing to compare. SKIP-with-cause, never PASS.
+        return "SKIP", []
+    if rc_gc != 0:
+        # gc itself failed (e.g. unsupported test helper) — harness issue,
+        # not graalgo.
+        return "SKIP", []
+    if rc_gr != 0:
+        return "DIVERGE", []
+    divergences = []
+    for name in sorted(set(gc_res) | set(gr_res)):
+        g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
+        if g != r:
+            divergences.append((name, g, r))
+    if divergences:
+        return "DIVERGE", divergences
+    return "PASS", []
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: run.py <package> [--goroot PATH] [--graalgo-run PATH] [--out DIR]")
@@ -114,28 +147,25 @@ def main():
     print(f"gc:     rc={rc_gc} {gc_sum}")
     print(f"graalgo: rc={rc_gr} {gr_sum}")
 
-    verdict = "PASS"
-    divergences = []
-    if rc_gc != 0 and rc_gr == 0:
-        # gc itself failed (e.g. unsupported test helper) — harness issue, not graalgo
-        verdict = "SKIP"
-        print(f"SKIP: gc driver failed (rc={rc_gc}); harness cannot validate this package")
-        print(f"gc stderr tail: {err_gc[-500:]}")
-    elif rc_gr != 0 and rc_gc == 0:
-        verdict = "DIVERGE"
-        print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
-        print(f"graalgo stderr tail: {err_gr[-800:]}")
-    else:
-        for name in sorted(set(gc_res) | set(gr_res)):
-            g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
-            if g != r:
-                divergences.append((name, g, r))
-        if divergences:
-            verdict = "DIVERGE"
+    verdict, divergences = compute_verdict(rc_gc, rc_gr, gc_res, gr_res)
+    if verdict == "SKIP":
+        if rc_gc != 0 and rc_gr != 0:
+            print(f"SKIP: both driver legs crashed (gc rc={rc_gc}, graalgo rc={rc_gr}); "
+                  f"harness cannot validate this package")
+            print(f"gc stderr tail: {err_gc[-500:]}")
+            print(f"graalgo stderr tail: {err_gr[-800:]}")
+        else:
+            print(f"SKIP: gc driver failed (rc={rc_gc}); harness cannot validate this package")
+            print(f"gc stderr tail: {err_gc[-500:]}")
+    elif verdict == "DIVERGE":
+        if rc_gr != 0 and rc_gc == 0:
+            print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
+            print(f"graalgo stderr tail: {err_gr[-800:]}")
+        else:
             for name, g, r in divergences:
                 print(f"  DIVERGE {name}: gc={g} graalgo={r}")
-        else:
-            print(f"  {len(gc_res)} tests agree")
+    else:
+        print(f"  {len(gc_res)} tests agree")
 
     print(f"VERDICT {pkg}: {verdict}")
     with open(os.path.join(workdir, "verdict.txt"), "w") as f:
