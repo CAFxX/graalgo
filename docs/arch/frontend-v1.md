@@ -6,12 +6,12 @@
 
 ## 1. Overview
 
-`gofrontend` type-checks one single-file Go program with the vendored `go/*`
-packages and emits a single JSON document: the AST with per-expression type
-references into a serialized type table (from `go/types`), source positions on
-every node, and package metadata. `NodeFactory` parses the document and builds
-Truffle nodes. The format is debuggable, versionable, and process-boundary
-clean (PLAN.md D1).
+`gofrontend` type-checks a Go package (one or more files) with the
+vendored `go/*` packages and emits a single JSON document: the AST with
+per-expression type references into a serialized type table (from
+`go/types`), source positions on every node, and package metadata.
+`NodeFactory` parses the document and builds Truffle nodes. The format is
+debuggable, versionable, and process-boundary clean (PLAN.md D1).
 
 Conventions: JSON objects marshal with sorted keys; arrays preserve emission
 order. The exporter is deterministic — two runs on the same input are
@@ -22,7 +22,7 @@ byte-identical (`TestDeterministic`).
 ```json
 {
   "frontend": "v1",
-  "generator": { "tool": "gofrontend", "version": "0.1.0", "goroot": "go1.27.1" },
+  "generator": { "tool": "gofrontend", "version": "0.7.0", "goroot": "go1.27.1" },
   "package":   { "name": "main", "files": ["hello.go"], "lang": "go1.27" },
   "types":     [ ... ],
   "objects":   [ ... ],
@@ -34,7 +34,10 @@ byte-identical (`TestDeterministic`).
 |---|---|
 | `frontend` | Wire version this document conforms to. Consumers reject anything else. |
 | `generator.tool` / `version` | Producer identity. |
-| `generator.goroot` | `runtime.Version()` of the toolchain the vendored `go/*` came from (the `-overlay` build in `frontend/build.sh` guarantees the compiled sources are the vendored ones; see `frontend/VENDORING.md`). |
+| `generator.goroot` | `runtime.Version()` of the toolchain the vendored `go/*` came from (the `-overlay` build in
+[internal/frontend/build.sh](../../internal/frontend/build.sh) guarantees
+the compiled sources are the vendored ones; see
+[internal/frontend/VENDORING.md](../../internal/frontend/VENDORING.md)). |
 | `package.name` / `files` | Package name; base names of input files (positions index into this array). |
 | `package.lang` | Go language version assumed at type-check (`go1.27` = vendored toolchain default; per-file `-lang` gates arrive with WS G, GG-0013). |
 | `types` | Type table (§4). |
@@ -187,7 +190,8 @@ Normalizations (applied by the exporter, part of the contract):
 
 Monomorphization (M6, WS H): generics are erased on the wire — the
 factory never sees a type parameter. The exporter computes the full
-instantiation fixpoint (`enumerateInstantiations` in `frontend/export.go`):
+instantiation fixpoint (`enumerateInstantiations` in
+[internal/frontend/export.go](../../internal/frontend/export.go)):
 roots come from `go/types` `info.Instances`/`info.Selections` in
 non-generic code; nested instantiations inside generic bodies are found by
 walking each template with its type substitution. Every needed
@@ -199,7 +203,7 @@ Dedup is by instantiation key (`F:<name>|<targs>` for functions,
 distinct instantiation, no matter how many call sites. Method-level type
 arguments bind positionally (`bind[mtps.At(i)] = methodTargs[i]`) with loud
 arity/concreteness errors; the path is covered differentially by
-`corpus/generics/gn04_generic_method_targs.go` (`s.MapTo[string](...)`,
+[test/corpus/phase1/generics/gn04_generic_method_targs.go](../../test/corpus/phase1/generics/gn04_generic_method_targs.go) (`s.MapTo[string](...)`,
 `s.MapTo[int](...)` vs stock gc). The generic
 template itself is *not* emitted — only reachable instantiations are.
 Termination is guaranteed by `go/types` (instantiation cycles are type
@@ -213,7 +217,8 @@ Type identity across instantiations (M6, WS H): a `*types.Named` with
 substituted type arguments (e.g. `Some[T]` under `T=int`) denotes the same
 type as the `Some[int]` from non-generic code. The exporter substitutes
 bound type parameters before the type-table memo lookup (`substType` in
-`frontend/export.go`) and deduplicates named types by qualified name
+[internal/frontend/export.go](../../internal/frontend/export.go)) and
+deduplicates named types by qualified name
 (including type arguments), so both sides share one wire type id — without
 this, a value boxed in a monomorphized body could never satisfy a type
 assertion in the caller (issue52026).
@@ -241,13 +246,37 @@ The exporter fails fast — non-zero exit, message on stderr, no JSON on
 stdout — outside this scope. Every rejection names the workstream that owns
 the extension:
 
-- one input file; **no imports** except `fmt` via the Phase-1 import
-  overlay (WS G) and `runtime` for `runtime.Goexit` only (M5, WS F):
-  the overlay synthesizes a `fmt` package exposing only
-  the seven D4 symbols (`Print`, `Printf`, `Println`, `Sprint`, `Sprintf`,
-  `Sprintln`, `Errorf`) with exact variadic signatures; any other `fmt.X`
-  is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
-  `fmtcall` wire nodes.
+- one or more input files, all of the same package; imports are admitted
+  through the single WS G import gate `importAdmitted`
+  ([internal/frontend/export.go](../../internal/frontend/export.go)), in
+  order: (1) the dedicated synthetic constructors `runtime` — which
+  exposes `runtime.Goexit` plus the P2-M4 GC-interop surface and the
+  stack-inspection family (Callers/CallersFrames/Caller/FuncForPC,
+  Frames/Frame/Func), not "Goexit only" — and `unsafe`; (2) any package
+  in the embedded `syntheticSources` map (`time`, `context`, `errors`,
+  `sort`, `bytes`, `math`, `strings`, `math/bits`, `math/cmplx`,
+  `encoding/csv`, `encoding/gob`, `strconv`, `encoding/json`, `os`,
+  `io/fs`, `iter`, `unique`, `structs`, `cmp`, `slices`, `maps`,
+  `unicode`/`unicode/utf8`/`unicode/utf16`, `crypto` and its subpackages —
+  P3-M7/M8/M9 waves), except `internal/*` packages, which follow Go's
+  internal-visibility rule; (3) non-synthetic internal packages visible
+  under Go's internal-visibility rule; (4) anything that resolves on
+  local disk (`isDiskImportable` /
+  [internal/frontend/diskimport.go](../../internal/frontend/diskimport.go)):
+  the Go module cache (highest cached version wins, subpackage-aware),
+  then `GOPATH/src`, then `GOROOT/src` of the toolchain that built
+  gofrontend (WS G P3-M9 module probe, also covering third-party modules).
+  The overlay importer resolves every admitted import through the same
+  chain (`overlayImporter.Import`): dedicated stubs, embedded synthetic
+  sources via `getSyntheticPackage`, and disk packages parsed and
+  type-checked from their real sources (cached). Any other import is a
+  scope error naming WS G. The retired Phase-1 `fmt` overlay is gone:
+  `fmt` now resolves from real GOROOT sources through the general disk
+  importer — as do `sync` and `sync/atomic` (NOTE 503608ea in
+  [internal/frontend/export.go](../../internal/frontend/export.go)) and
+  `reflect` — and calls to
+  `fmt.Println` et al. are ordinary call nodes typed against the real
+  package; there are no `fmtcall` wire nodes.
 - package-level declarations: `func main` plus any number of named
   functions, generic or not (M6, WS H); package-level `const` (references
   fold through go/types, iota included) and `var` (M7 — initialized in
@@ -287,8 +316,9 @@ the extension:
   `&T{}`), indexing (array/slice/string/map, incl. comma-ok), slicing
   (2- and 3-index), selectors (incl. embedded/promoted), type assertions
   (incl. comma-ok), `nil`, function literals (M5, WS F);
-- calls: builtins per the WS G builtin surface (see freeze-stub.md
-  "Builtin nodes"); `panic`/`recover` are builtins (M5, WS F/G);
+- calls: builtins per the WS G builtin surface (see
+  [freeze-stub.md](../spec/freeze-stub.md) "Builtin nodes");
+  `panic`/`recover` are builtins (M5, WS F/G);
   user-defined function calls (M6, WS H) and method calls (M6, WS H):
   methods dispatch by object id via `methodref` fun targets
   (receiver-based dispatch only — implicit address-of/deref on the
@@ -366,7 +396,7 @@ Deliberate M2 stand-ins, each replaced by its owning workstream:
 
 ## 10. Worked example
 
-`frontend/testdata/straight01.go`:
+[internal/frontend/testdata/straight01.go](../../internal/frontend/testdata/straight01.go):
 ```go
 package main
 
@@ -377,8 +407,9 @@ func main() {
 	z = z
 }
 ```
-exports to `frontend/testdata/straight01.json` (checked in; golden test).
-`frontend/javatest/` replays it: `NodeFactoryTest` builds the program from
+exports to [internal/frontend/testdata/straight01.json](../../internal/frontend/testdata/straight01.json) (checked in; golden test).
+[internal/frontend/javatest/](../../internal/frontend/javatest/) replays
+it: `NodeFactoryTest` builds the program from
 the JSON, executes it on the Truffle runtime, and asserts `z == 42`,
 including a position cross-check (`SourceSection` char index/length vs the
 exporter's `off`/`len`) and gc-oracle value checks for `straight02`.
