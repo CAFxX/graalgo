@@ -19,10 +19,15 @@ Diff sources, in order:
                            github.event.before. wt.py integrate
                            fast-forward-merges multi-commit lane branches,
                            so HEAD~1 alone would inspect only the tip commit;
-                           the push's FULL range must be diffed)
+                           the push's FULL range must be diffed). An
+                           explicitly provided, non-all-zero --before that
+                           cannot be diffed fails LOUDLY (never a silent
+                           downgrade to the tip-only diff); an all-zero
+                           --before (new branch) is skipped like an absent
+                           one.
   3. git diff HEAD         (uncommitted working-tree changes)
   4. git diff --cached     (staged changes)
-  5. HEAD~1...HEAD         (fallback when no pre-push head is known; covers
+  5. HEAD~1...HEAD         (fallback when no --before is given; covers
                            only the tip commit)
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
@@ -95,17 +100,31 @@ def get_diff(before=None):
 
     Returns ("", "") when no diff could be determined — the caller must
     treat that as a loud failure, never a vacuous pass.
+
+    An explicitly provided, non-all-zero --before is authoritative: if it
+    cannot be diffed (pruned history, unknown SHA) the function raises
+    RuntimeError — a loud failure, never a silent downgrade to the tip-only
+    fallback (never pass vacuously). An all-zero --before (new branch) is
+    skipped exactly like an absent --before, keeping the tip-only fallback.
     """
+    before = (before or "").strip()
+    # An all-zero --before (new branch / github.event.before == 0{40}) is
+    # skipped exactly like an absent --before: the tip-only fallback below
+    # stays available. Only an explicitly provided, non-all-zero --before
+    # is authoritative, and only it fails loudly when unresolvable.
+    before_usable = bool(before) and not re.fullmatch(r"0+", before)
     # Try vs origin/master first (for PRs), then the pre-push head (for
     # direct master pushes), fall back to working tree, then to the
     # tip-commit delta. A shallow checkout (no resolvable history) yields
     # nothing from the history-based sources — that is a failure, not a
-    # skip. An all-zero or unresolvable --before SHA is dropped (the git
-    # diff exits nonzero and the candidate is skipped, as below).
+    # skip. The tip-only fallback is for the no---before case only: when
+    # --before was explicitly provided, the push's full range must be
+    # diffed, and an unresolvable --before fails loudly instead of
+    # degrading to one commit.
     candidates = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
     ]
-    if before and not re.fullmatch(r"0+", before):
+    if before_usable:
         candidates.append(
             (f"{before}...HEAD (master push, full range)",
              ["git", "diff", f"{before}...HEAD", "--", "."]),
@@ -113,15 +132,36 @@ def get_diff(before=None):
     candidates += [
         ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
-        ("HEAD~1...HEAD (tip only)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
     ]
+    if not before_usable:
+        candidates.append(
+            ("HEAD~1...HEAD (tip only)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
+        )
     for name, cmd in candidates:
+        is_before = before_usable and name.startswith(f"{before}...HEAD")
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        except Exception:
+        except Exception as e:
+            if is_before:
+                raise RuntimeError(
+                    f"could not diff the --before range {before}...HEAD: {e}")
             continue
-        if result.returncode == 0 and result.stdout.strip():
+        if result.returncode != 0:
+            if is_before:
+                raise RuntimeError(
+                    f"--before {before} is unresolvable "
+                    f"(git diff exited {result.returncode}: "
+                    f"{result.stderr.strip()[:160]}). The push's full range "
+                    f"cannot be inspected; fetch full history (fetch-depth: 0) "
+                    f"and re-run. Refusing to fall back to the tip-only diff.")
+            continue
+        if result.stdout.strip():
             return result.stdout, name
+        if is_before:
+            # Resolvable but empty: the push genuinely added nothing —
+            # nothing to flag. Return the source label so the caller can
+            # report an explicit pass instead of a vacuous skip.
+            return "", name
     return "", ""
 
 def check_no_bridges(diff):
@@ -189,14 +229,25 @@ def check_no_bridges(diff):
         # Stub keyword anywhere in the first string arg of a composed panic.
         r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet)',
     ]
-    # Java fail-fast stubs. A `throw new UnsupportedOperationException` is a
-    # stub by construction (the operation is declared but refused outright);
-    # other exception types are flagged when the thrown message carries a
-    # stub keyword, literally or composed via String.format. As with the Go
-    # patterns, a human adjudicates each flag — a legitimate invariant throw
-    # is fine, a "not implemented yet" placeholder is not.
+    # Java fail-fast stubs. A bare `throw new UnsupportedOperationException`
+    # was once treated as a stub by construction, but that pattern
+    # false-positives on the codebase's own defensive-throw idiom
+    # (e.g. `default -> throw new UnsupportedOperationException("not an
+    # integer op: " + op);` in frontend op-dispatch switches), which is a
+    # legitimate invariant throw, not a placeholder. So the
+    # UnsupportedOperationException patterns are keyword-restricted exactly
+    # like the others: flag stub keywords literally or composed via
+    # String.format, and keep flagging bare no-arg throws (mirrors Go's
+    # bare-panic rule — nothing to go on). Other exception types are flagged
+    # when the thrown message carries a stub keyword, literally or composed
+    # via String.format. As with the Go patterns, a human adjudicates each
+    # flag — a legitimate invariant throw is fine, a "not implemented yet"
+    # placeholder is not.
     java_stub_res = [
-        r'throw\s+new\s+UnsupportedOperationException\s*\(',
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*\)',  # bare — nothing to go on
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd|stub)',
+        # Stub keyword in a String.format-composed message.
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*String\.format\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd|stub)',
         r'throw\s+new\s+[\w.]+\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd|stub)',
         r'throw\s+new\s+[\w.]+\s*\(\s*String\.format\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd|stub)',
     ]
@@ -247,13 +298,20 @@ def check_no_bridges(diff):
 
 def main(argv=None):
     args = parse_args(argv)
-    diff, source = get_diff((args.before or "").strip() or None)
-    if not diff.strip():
+    try:
+        diff, source = get_diff((args.before or "").strip() or None)
+    except RuntimeError as e:
+        # An explicitly provided --before that cannot be diffed is a loud
+        # failure (never pass vacuously, never fall back to tip-only).
+        print("NO-BRIDGES CHECK FAILED:")
+        print(f"  {e}")
+        print("  Refusing to pass vacuously or fall back to the tip-only diff.")
+        return 1
+    if not source:
         # Never pass vacuously: on the standard integration path (wt.py
         # integrate + push, no PR) every diff source above is empty only when
-        # the checkout has no history to diff against, or when the pre-push
-        # head could not be resolved. Skipping here is exactly the
-        # false-green hole this check exists to close.
+        # the checkout has no history to diff against. Skipping here is
+        # exactly the false-green hole this check exists to close.
         print("NO-BRIDGES CHECK FAILED:")
         print("  could not determine any diff to inspect (no PR diff, no")
         print("  --before/NO_BRIDGES_BEFORE range, no working-tree changes,")
@@ -261,6 +319,13 @@ def main(argv=None):
         print("  CI must use fetch-depth: 0).")
         print("  Refusing to pass vacuously.")
         return 1
+    if not diff.strip():
+        # The diff source resolved (an explicitly provided --before range)
+        # and is genuinely empty: the push added nothing, so there is
+        # nothing to flag. Report the pass explicitly.
+        print(f"No-bridges check: {source} — no added lines to inspect.")
+        print("No-bridges check passed.")
+        return 0
 
     print(f"No-bridges check: inspecting added lines from {source}.")
     errors = check_no_bridges(diff)
