@@ -1195,7 +1195,7 @@ func __rawMessageMarshalJSON(m RawMessage) rawMessageMarshalJSONPair {
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing through
 // m needs store-through-pointer (*m = ...), which frontend/v1 cannot
-// emit (WS D). Re-test when WS D lands.
+// emit yet.
 func (m *RawMessage) UnmarshalJSON(data []byte) error {
 	panic("json.RawMessage.UnmarshalJSON: not in M7 scope (needs store-through-pointer)")
 }
@@ -1948,10 +1948,10 @@ func (p *jsonParser) parseLiteralRest(full, rest string) jsonValuePair {
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing the
 // parsed value through v needs store-through-pointer (*p = val), which
-// frontend/v1 cannot emit (WS D); moreover v1 user code cannot produce
+// frontend/v1 cannot emit; moreover v1 user code cannot produce
 // a readable *any (no & on variables, no pointer dereference), so
-// Unmarshal has no reachable use in M7 scope. Re-test when WS D lands
-// (store-through-pointer + pointer dereference).
+// Unmarshal has no reachable use in M7 scope until store-through-pointer
+// and pointer dereference are expressible.
 func Unmarshal(data []byte, v any) error {
 	panic("json.Unmarshal: not in M7 scope (needs store-through-pointer)")
 }
@@ -2407,10 +2407,11 @@ func (dec *Decoder) UseNumber() {
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing the
 // parsed value through v needs store-through-pointer (*p = val), which
-// frontend/v1 cannot emit (WS D); moreover a *Decoder value is not
+// frontend/v1 cannot emit; moreover a *Decoder value is not
 // constructible from v1 user code (NewDecoder needs a user-defined
-// 2-result Read method), so Decode has no reachable use in M7 scope.
-// Re-test when WS D lands.
+// 2-result Read method), so Decode has no reachable use in M7 scope
+// until store-through-pointer and 2-result interface methods are
+// expressible.
 func (dec *Decoder) Decode(v any) error {
 	panic("json.Decoder.Decode: not in M7 scope (needs store-through-pointer)")
 }
@@ -2573,13 +2574,13 @@ func (dec *Decoder) InputOffset() int64 {
 // design (the Decoder.buf/off fields are never populated). Implementing
 // Buffered faithfully needs the streaming decode path — incremental
 // reads through the 2-result Read method plus a consumption cursor —
-// which v1 cannot emit (WS D). Re-test when WS D lands.
+// which v1 cannot emit yet.
 func (dec *Decoder) Buffered() jsonReader {
 	panic("json.Decoder.Buffered: not in M7 scope (needs streaming decode)")
 }
 
-// jsonReadAllPair is the single-result form of jsonReadAll (WS D:
-// v1 cannot emit multi-result functions).
+// jsonReadAllPair is the single-result form of jsonReadAll (v1 cannot
+// emit multi-result functions).
 type jsonReadAllPair struct {
 	data []byte
 	err  error
@@ -2588,9 +2589,9 @@ type jsonReadAllPair struct {
 // jsonReadAll reads all bytes from r.
 //
 // M7 scope: fail-fast body. Reading through the jsonReader interface
-// needs the 2-result Read method, which v1 cannot emit or dispatch
-// (WS D); moreover no jsonReader implementation is constructible from
-// v1 user code. Re-test when WS D lands.
+// needs the 2-result Read method, which v1 cannot emit or dispatch;
+// moreover no jsonReader implementation is constructible from
+// v1 user code.
 func jsonReadAll(r jsonReader) jsonReadAllPair {
 	panic("json.jsonReadAll: not in M7 scope (needs 2-result interface methods)")
 }
@@ -2626,9 +2627,9 @@ func (enc *Encoder) SetIndent(prefix, indent string) {
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing through
 // the jsonWriter interface needs the 2-result Write method, which v1
-// cannot emit or dispatch (WS D); moreover no jsonWriter implementation
+// cannot emit or dispatch; moreover no jsonWriter implementation
 // is constructible from v1 user code (NewEncoder needs a user-defined
-// 2-result Write method). Re-test when WS D lands.
+// 2-result Write method).
 func (enc *Encoder) Encode(v any) error {
 	panic("json.Encoder.Encode: not in M7 scope (needs 2-result interface methods)")
 }
@@ -2649,9 +2650,9 @@ func Valid(data []byte) bool {
 // Indent appends to dst an indented form of the JSON-encoded src.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. Calling Indent
-// needs &buf (address of a bytes.Buffer variable), which v1 cannot emit
-// (WS D), so Indent has no reachable use in M7 scope. Re-test when WS D
-// lands.
+// needs &buf (address of a bytes.Buffer variable), which v1 cannot emit,
+// so Indent has no reachable use in M7 scope until address-of on
+// variables is expressible.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	panic("json.Indent: not in M7 scope (needs address-of variable)")
 }
