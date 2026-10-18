@@ -12,16 +12,17 @@ import (
 )
 
 // Importer is a types.Importer that graduates the frozen overlayImporter:
-//   - "runtime" and "fmt" resolve to synthetic packages with the exact
-//     frozen signatures (reimplemented here from the freeze spec —
-//     export.go's overlayImporter is unexported and frozen, so it cannot
-//     be reused, only matched);
-//   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
-//     exact frozen signatures (four primitives + the defined-but-out-of-
-//     scope methods, so the same named scope errors fire);
-//   - "errors" and "sort" resolve to the synthetic P3-M7 wave-1 packages
-//     (real-Go implementations; fail-fast members keep exact gc 1.27.1
-//     signatures);
+//   - synthetic import paths resolve to the mirror packages in the
+//     syntheticPackages table (synthetic.go — the single source of truth,
+//     shared with Loader.ResolveImport; L22 parity). "runtime" and "fmt"
+//     carry the exact frozen signatures (reimplemented here from the
+//     freeze spec — export.go's overlayImporter is unexported and frozen,
+//     so it cannot be reused, only matched); "sync" is the synthetic
+//     P3-M2b package (ADR-0002) with the exact frozen signatures (four
+//     primitives + the defined-but-out-of-scope methods, so the same
+//     named scope errors fire); "errors" and "sort" are the synthetic
+//     P3-M7 wave-1 packages (real-Go implementations; fail-fast members
+//     keep exact gc 1.27.1 signatures);
 //   - module-local packages are type-checked from source with go/types,
 //     recursively, with results cached by import path;
 //   - stdlib packages resolve (proving the GOROOT mapping) but fail with
@@ -63,166 +64,13 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 			return nil, fmt.Errorf("p3frontend: import cycle: %s", strings.Join(cycle, " -> "))
 		}
 	}
-	switch path {
-	case "runtime":
-		pkg := syntheticRuntimePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "fmt":
-		pkg := syntheticFmtPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync":
-		pkg := syntheticSyncPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync/atomic":
-		pkg := syntheticAtomicPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "time":
-		pkg := syntheticTimePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "context":
-		// Context references time.Time/time.Duration: ensure the
-		// synthetic time package is built and cached first.
-		timePkg, ok := imp.pkgs["time"]
-		if !ok {
-			timePkg = syntheticTimePackage()
-			imp.pkgs["time"] = timePkg
-		}
-		pkg := syntheticContextPackage(timePkg)
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "errors":
-		// P3-M7 (wave 1): synthetic errors package (real-Go New/Is/Unwrap/
-		// Join/AsType; As fail-fast). Self-contained: no synthetic
-		// dependencies.
-		pkg := syntheticErrorsPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sort":
-		// P3-M7 (wave 1): synthetic sort package (real-Go pdqsort/stable/
-		// search; Find/Slice/SliceStable/SliceIsSorted fail-fast).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticSortPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "io":
-		// P3-M10: synthetic io package (minimal: Reader/Writer only;
-		// see synth_io.go). Required by bytes/strings (P3-M8).
-		pkg := syntheticIoPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "bytes":
-		// P3-M7 (wave 1): synthetic bytes package (synth_bytes.go).
-		// Requires the synthetic io package for io.Reader/io.Writer
-		// (P3-M8).
-		ioPkg, err := imp.Import("io")
+	// Synthetic packages: single source of truth in synthetic.go (L22
+	// parity) — the same table the loader consults in ResolveImport.
+	if build, ok := syntheticPackages[path]; ok {
+		pkg, err := build(imp)
 		if err != nil {
 			return nil, err
 		}
-		pkg := syntheticBytesPackage(ioPkg)
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "strings":
-		// P3-M7 (wave 1): synthetic strings package (synth_strings.go).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticStringsPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "unsafe":
-		pkg := syntheticUnsafePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "math":
-		// P3-M7 (wave 1): synthetic math package (real-Go ports +
-		// bit-conversion/Sqrt/FMA intrinsics; see synth_math.go).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticMathPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/xml":
-		// P3-M7 (wave 1): synthetic encoding/xml (see synth_xml.go).
-		// Self-contained: no synthetic->synthetic imports.
-		pkg := syntheticXmlPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/csv":
-		// P3-M7 (wave 1): synthetic encoding/csv (see synth_enc_csv_gob.go).
-		pkg := syntheticCsvPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/gob":
-		// P3-M7 (wave 1): synthetic encoding/gob (see synth_enc_csv_gob.go).
-		pkg := syntheticGobPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "strconv":
-		// P3-M7 (wave 1): synthetic strconv (see synth_strconv.go).
-		pkg := syntheticStrconvPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/json":
-		// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
-		pkg := syntheticJsonPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/base32":
-		// P3-M7 (wave 1): synthetic encoding/base32 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticBase32Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/base64":
-		// P3-M7 (wave 1): synthetic encoding/base64 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticBase64Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/hex":
-		// P3-M7 (wave 1): synthetic encoding/hex (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticHexPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/binary":
-		// P3-M7 (wave 1): synthetic encoding/binary (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticBinaryPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/ascii85":
-		// P3-M7 (wave 1): synthetic encoding/ascii85 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticAscii85Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/pem":
-		// P3-M7 (wave 1): synthetic encoding/pem (m7-wenc-core).
-		// Imports synthetic encoding/base64: ensure the base64 mirror is
-		// built and cached first (the context->time precedent).
-		base64Pkg, ok := imp.pkgs["encoding/base64"]
-		if !ok {
-			base64Pkg = syntheticBase64Package()
-			imp.pkgs["encoding/base64"] = base64Pkg
-		}
-		_ = base64Pkg
-		pkg := syntheticPemPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/asn1":
-		// P3-M7 (wave 1): synthetic encoding/asn1 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticAsn1Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding":
-		// P3-M7 (wave 1): synthetic top-level encoding (m7-wenc-core):
-		// the six marshaling interfaces only.
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticEncodingPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
 	}

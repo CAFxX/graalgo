@@ -89,7 +89,7 @@ type PackageRef struct {
 type refKind int
 
 const (
-	kindSynthetic refKind = iota // "runtime"/"fmt"/"sync"/"time"/"context"/"errors"/"sort": resolved by the frozen overlay
+	kindSynthetic refKind = iota // synthetic mirror (synthetic.go table): resolved by the frozen overlay, never GOROOT
 	kindStdlib                   // $GOROOT/src/<path>: resolvable, not compilable in M1
 	kindLocal                    // module-local package: flattened
 )
@@ -400,14 +400,14 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // in internal/frontend/synth_errors.go / synth_sort.go). The 8
 // encoding/* primitives (m7-wenc-core) resolve to synthetic markers
 // likewise.
+//
+// The synthetic set itself is defined ONCE in synthetic.go
+// (syntheticPackages) — this function and Importer.Import consult the same
+// table (L22 parity); do not re-enumerate paths here.
 func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
-	switch path {
-	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings",
-		"encoding/xml", "encoding/csv", "encoding/gob", "strconv", "encoding/json",
-		"encoding/base32", "encoding/base64", "encoding/hex", "encoding/binary",
-		"encoding/ascii85", "encoding/pem", "encoding/asn1", "encoding":
+	if _, ok := syntheticPackages[path]; ok {
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
 	}
 	anchor, err := filepath.Abs(fromDir)
@@ -542,7 +542,8 @@ func importsOf(ref *PackageRef) ([]importSpec, error) {
 
 // LoadClosure returns the main package's local dependencies in dependency
 // order (dependencies before dependents; ties broken by import path).
-// Synthetic (runtime/fmt/sync) imports are not part of the closure. An import
+// Synthetic imports (the syntheticPackages table in synthetic.go) are not
+// part of the closure. An import
 // cycle is a fail-fast error containing "import cycle" and naming the
 // full path — the walk is iterative over a visited set plus an explicit
 // stack, so it cannot hang.
