@@ -138,6 +138,8 @@ public final class PanicCorpusTest {
     public void testPn18NilDeref() throws Exception { checkProgram("pn18_nil_deref"); }
     public void testPn19DivZero() throws Exception { checkProgram("pn19_div_zero"); }
     public void testPn20PanicSliceValue() throws Exception { checkProgram("pn20_panic_slice_value"); }
+    public void testPn21MakesliceLenRange() throws Exception { checkProgram("pn21_makeslice_len_range"); }
+    public void testPn22MakesliceCapRange() throws Exception { checkProgram("pn22_makeslice_cap_range"); }
 
     /** Dispatches on the trailer kind: {@code // observe:} vs {@code // panic:}. */
     static void checkProgram(String base) throws Exception {

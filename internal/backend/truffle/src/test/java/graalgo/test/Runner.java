@@ -23,6 +23,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.ControlFlowCorpusTest.class);
         TESTS.add(graalgo.frontend.CompositeCorpusTest.class);
         TESTS.add(graalgo.frontend.PanicCorpusTest.class);
+        TESTS.add(graalgo.frontend.MakeNodeTest.class);
         TESTS.add(graalgo.frontend.GenericsCorpusTest.class);
         TESTS.add(graalgo.frontend.FrontendRobustnessTest.class);
         TESTS.add(graalgo.frontend.VarsCorpusTest.class);

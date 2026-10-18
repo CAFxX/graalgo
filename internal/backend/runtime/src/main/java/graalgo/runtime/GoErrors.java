@@ -94,6 +94,33 @@ public final class GoErrors {
                 "runtime.errorString", quote(s), s);
     }
 
+    /**
+     * makeslice with a len that cannot be addressed (RV18-P1-13): gc's
+     * {@code panicmakeslicelen} panics with {@code errorString("makeslice:
+     * len out of range")}, a {@code runtime.errorString} whose Error()
+     * prepends {@code "runtime error: "} (verified against gc 1.27.1:
+     * {@code make([]byte, 1<<62)} prints
+     * {@code panic: runtime error: makeslice: len out of range}).
+     */
+    public static GoErrorValue makesliceLenOutOfRange() {
+        String s = "makeslice: len out of range";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
+    }
+
+    /**
+     * makeslice with a cap that cannot be addressed (RV18-P1-13): gc's
+     * {@code panicmakeslicecap} panics with {@code errorString("makeslice:
+     * cap out of range")} (verified against gc 1.27.1:
+     * {@code make([]byte, 0, 1<<62)} prints
+     * {@code panic: runtime error: makeslice: cap out of range}).
+     */
+    public static GoErrorValue makesliceCapOutOfRange() {
+        String s = "makeslice: cap out of range";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
+    }
+
     /** Negative shift amount. */
     public static GoErrorValue negativeShift() {
         String s = "negative shift amount";
