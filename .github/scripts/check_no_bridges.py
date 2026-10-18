@@ -89,6 +89,31 @@ def get_diff():
             return result.stdout, name
     return "", ""
 
+def is_test_file(fname):
+    """Test-file exemption for check #2, matched on path structure.
+
+    The old exemption used substring matching (`"test_" not in fname`,
+    `"/test" not in fname`), which exempted any file whose path merely
+    contained the substring — e.g. contest.go, latest.go, fastest.go, or
+    cmd/graalgo/testsynth.go — even though none of them is a test file.
+    That was a latent gate hole: a package-name conditional added to such
+    a file would have been silently skipped.
+
+    Match structure instead: a file is a test file only if it sits under a
+    `test/` directory, its basename starts with `test_`, or it is a
+    `*_test.go` harness. Non-test files with "test" in the name (test.go,
+    testsynth.go, .../testing/...) are deliberately NOT exempt — added
+    package-name conditionals in them deserve scrutiny.
+    """
+    if not fname:
+        return False
+    parts = fname.split("/")
+    return (
+        "test" in parts[:-1]
+        or parts[-1].startswith("test_")
+        or parts[-1].endswith("_test.go")
+    )
+
 def check_no_bridges(diff):
     errors = []
     added_lines = []
@@ -134,11 +159,10 @@ def check_no_bridges(diff):
             ]
             for pat in patterns:
                 if re.search(pat, line):
-                    # Allow in test files and docs. ("_test." covers
-                    # *_test.go harnesses, e.g. drift-test importers that
-                    # resolve synthetic import paths like the pre-existing
-                    # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
+                    # Exempt genuine test files only (path-structure match, not
+                    # substrings — the old substring match silently exempted
+                    # non-test files like contest.go / latest.go / fastest.go).
+                    if not is_test_file(fname):
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 
