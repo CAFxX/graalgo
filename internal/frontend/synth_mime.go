@@ -266,7 +266,7 @@ __mrtmp1 := __mimepercentHexUnescape(v); decv, _ := __mrtmp1.f0, __mrtmp1.f1
 }
 
 func ParseMediaType(v string) (mediatype string, params map[string]string, err error) {
-	panic("mime.ParseMediaType: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.ParseMediaType: unreachable (call sites desugar to __mimeParseMediaType")
 }
 
 
@@ -302,7 +302,7 @@ func __mimedecode2231Enc(v string) __mimedecode2231EncPair {
 }
 
 func decode2231Enc(v string) (string, bool) {
-	panic("mime.decode2231Enc: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.decode2231Enc: unreachable (call sites desugar to __mimedecode2231Enc")
 }
 
 
@@ -327,7 +327,7 @@ func __mimeconsumeToken(v string) __mimeconsumeTokenPair {
 }
 
 func consumeToken(v string) (token, rest string) {
-	panic("mime.consumeToken: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.consumeToken: unreachable (call sites desugar to __mimeconsumeToken")
 }
 
 
@@ -385,7 +385,7 @@ func __mimeconsumeValue(v string) __mimeconsumeValuePair {
 }
 
 func consumeValue(v string) (value, rest string) {
-	panic("mime.consumeValue: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.consumeValue: unreachable (call sites desugar to __mimeconsumeValue")
 }
 
 
@@ -428,7 +428,7 @@ __mrtmp8 := __mimeconsumeValue(rest); value, rest2 := __mrtmp8.value, __mrtmp8.r
 }
 
 func consumeMediaParam(v string) (param, value, rest string) {
-	panic("mime.consumeMediaParam: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.consumeMediaParam: unreachable (call sites desugar to __mimeconsumeMediaParam")
 }
 
 
@@ -475,7 +475,7 @@ func __mimepercentHexUnescape(s string) __mimepercentHexUnescapePair {
 }
 
 func percentHexUnescape(s string) (string, bool) {
-	panic("mime.percentHexUnescape: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.percentHexUnescape: unreachable (call sites desugar to __mimepercentHexUnescape")
 }
 
 
@@ -751,7 +751,7 @@ __mrtmp12 := __mimedecode(encoding[0], text); content, err := __mrtmp12.f0, __mr
 }
 
 func (d *WordDecoder) Decode(word string) (string, error) {
-	panic("mime.Decode: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.Decode: unreachable (call sites desugar to __mimeWordDecoderDecode")
 }
 
 
@@ -839,7 +839,7 @@ __mrtmp13 := __mimedecode(encoding, text); content, err := __mrtmp13.f0, __mrtmp
 }
 
 func (d *WordDecoder) DecodeHeader(header string) (string, error) {
-	panic("mime.DecodeHeader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.DecodeHeader: unreachable (call sites desugar to __mimeWordDecoderDecodeHeader")
 }
 
 
@@ -862,7 +862,7 @@ func __mimedecode(encoding byte, text string) __mimedecodePair {
 }
 
 func decode(encoding byte, text string) ([]byte, error) {
-	panic("mime.decode: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.decode: unreachable (call sites desugar to __mimedecode")
 }
 
 
@@ -953,7 +953,7 @@ __mrtmp9 := __mimereadHexByte(s[i+1], s[i+2]); b, err := __mrtmp9.f0, __mrtmp9.f
 }
 
 func qDecode(s string) ([]byte, error) {
-	panic("mime.qDecode: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.qDecode: unreachable (call sites desugar to __mimeqDecode")
 }
 
 
@@ -978,7 +978,7 @@ __mrtmp11 := __mimefromHex(b); if lb, err = __mrtmp11.f0, __mrtmp11.f1; err != n
 }
 
 func readHexByte(a, b byte) (byte, error) {
-	panic("mime.readHexByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.readHexByte: unreachable (call sites desugar to __mimereadHexByte")
 }
 
 
@@ -1003,7 +1003,7 @@ func __mimefromHex(b byte) __mimefromHexPair {
 }
 
 func fromHex(b byte) (byte, error) {
-	panic("mime.fromHex: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime.fromHex: unreachable (call sites desugar to __mimefromHex")
 }
 
 
