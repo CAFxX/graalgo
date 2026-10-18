@@ -4708,10 +4708,6 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4751,13 +4747,21 @@ type methodCall struct {
 func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Selection, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
 	mname := sel.Sel.Name
 	rn := derefNamed(selection.Recv())
-	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
+	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name in a
+	// non-call position (method value, method expression). The type
 	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
+	// methodIndex, and the runtimefuncname wire node is call-shaped,
+	// so there is nothing honest to lower it to. The old panicMsg stub
+	// compiled legal Go to a runtime panic (and methodValueNode did not
+	// even handle the marker — it crashed the exporter with a nil
+	// dereference). Fail fast at compile time with the named scope error
+	// instead: a runtime panic on a compilable program is not an option
+	// (RV-P1-01 option-b precedent; P3-M4 "named scope error, never a
+	// confusing undefined"). Direct calls fn.Name() never reach here:
+	// exportCall intercepts them via runtimeStackMethod first.
 	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
 		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
+		return nil, scopeErrorf("runtime.Func.Name requires a PC-to-function table (B-7); not supported in frontend/v1 scope (WS D)")
 	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
@@ -5766,6 +5770,14 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			// P3-M3 (WS D, ADR-0003): interface method calls need no
 			// instantiation (same as the roots loop above).
 			if recvIface(selection.Recv()) != nil {
+				return true
+			}
+			// mrRuntimeStack (same as the roots loop above): the synthetic
+			// runtime stack-inspection methods ((*Frames).Next,
+			// (*Func).Name/Entry/FileLine) lower to intrinsic wire nodes,
+			// never through resolveMethodCall/methodIndex (the synthetic
+			// runtime overlay declares no funcdecls to instantiate).
+			if _, isRt := runtimeStackMethod(selection); isRt {
 				return true
 			}
 			var mtargs []types.Type
@@ -9642,17 +9654,6 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
 	if err != nil {
 		return nil, err
-	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a

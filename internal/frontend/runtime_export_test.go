@@ -155,6 +155,41 @@ func TestRuntimeStackFailFast(t *testing.T) {
 	}
 }
 
+// TestRuntimeFuncNameMethodValueScopeError: (*runtime.Func).Name used in
+// a non-call position (method value `f := fn.Name`) cannot lower to the
+// runtimefuncname wire node, which is call-shaped. It must fail fast at
+// compile time with the named scope error — never a runtime panic stub,
+// never an exporter crash. Red-green: on the base the method value
+// crashed the exporter (nil dereference in methodValueNode: the panicMsg
+// marker carried a nil decl); `go fn.Name()` compiled to the panic stub.
+func TestRuntimeFuncNameMethodValueScopeError(t *testing.T) {
+	// Method value: compile-time scope error naming the missing feature.
+	src := "package main\n\nimport \"runtime\"\n\nfunc main() {\n\tvar pcs [8]uintptr\n\tn := runtime.Callers(1, pcs[:])\n\tfn := runtime.FuncForPC(pcs[0])\n\t_, _ = n, fn\n\tf := fn.Name\n\t_ = f\n}\n"
+	_, err := ExportFile(writeSyncProg(t, src))
+	if err == nil {
+		t.Errorf("method value fn.Name: expected compile-time scope error, got success")
+	} else {
+		for _, want := range []string{"runtime.Func.Name", "PC-to-function table", "frontend/v1 scope"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("method value fn.Name: error %q does not contain %q", err, want)
+			}
+		}
+	}
+
+	// `go fn.Name()` is a call in go position: exportGoStmt routes through
+	// exportCall, so it must KEEP lowering to the runtimefuncname wire
+	// node. The scope error is only for value positions (behavior-neutral
+	// for working programs).
+	src = "package main\n\nimport \"runtime\"\n\nfunc main() {\n\tvar pcs [8]uintptr\n\tn := runtime.Callers(1, pcs[:])\n\tfn := runtime.FuncForPC(pcs[0])\n\t_ = n\n\tgo fn.Name()\n}\n"
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("go fn.Name(): expected success, got %v", err)
+	}
+	if !strings.Contains(out, `"kind": "runtimefuncname"`) {
+		t.Errorf("go fn.Name(): exported JSON missing \"kind\": \"runtimefuncname\"")
+	}
+}
+
 // TestRuntimeStackFrameFields: the runtime.Frame struct exposes gc's
 // exact field set (PC, Func, Function, File, Line, Entry).
 func TestRuntimeStackFrameFields(t *testing.T) {
