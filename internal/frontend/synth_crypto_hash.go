@@ -102,10 +102,9 @@ type XOF interface {
 // ClonePair is the result of cloning a hash. It is exported only so that
 // synthetic hash implementations in other packages (crypto/hmac) can
 // implement hash cloning with single-result methods: the v1 frontend
-// cannot emit or call multi-result functions (WS D), so Clone is served
-// through the mrM8 desugar (see m8-staging/crypto/03-mrdesugar.patch)
+// Clone is served through the mrM8 desugar (see m8-staging/crypto/03-mrdesugar.patch)
 // and the real logic lives in cloneSinglePair. Not part of the gc hash
-// API. Re-test trigger: WS D lands.
+// API.
 type ClonePair struct {
 	C   Cloner
 	Err error
@@ -133,12 +132,12 @@ type singleWriter interface {
 // real logic is the single-result WriteSingle, which every synthetic
 // digest implements. Custom (non-synthetic) hash.Hash implementations
 // fail fast here: there is no v1-expressible way to call their
-// multi-result Write (re-test: WS D).
+// multi-result Write (P4 general interface MR).
 func __hashWrite(h Hash, p []byte) hashWritePair {
 	if w, ok := h.(singleWriter); ok {
 		return hashWritePair{w.WriteSingle(p), nil}
 	}
-	panic("hash: Write on non-synthetic hash.Hash implementation (needs WS D; re-test when it lands)")
+	panic("hash: Write on non-synthetic hash.Hash implementation (needs itab dispatch to user-defined pair-transformed Write; P4 general interface MR untested here)")
 }
 
 // __hashRead serves x.Read(p) for hash.XOF through the mrM8 desugar.
@@ -146,7 +145,7 @@ func __hashRead(x XOF, p []byte) hashReadPair {
 	if r, ok := x.(interface{ ReadSingle([]byte) int }); ok {
 		return hashReadPair{r.ReadSingle(p), nil}
 	}
-	panic("hash: Read on non-synthetic hash.XOF implementation (needs WS D; re-test when it lands)")
+	panic("hash: Read on non-synthetic hash.XOF implementation (needs itab dispatch to user-defined pair-transformed Read; P4 general interface MR untested here)")
 }
 
 // __hashClone serves h.Clone() through the mrM8 desugar.
@@ -154,7 +153,7 @@ func __hashClone(h Hash) ClonePair {
 	if c, ok := h.(interface{ CloneSinglePair() ClonePair }); ok {
 		return c.CloneSinglePair()
 	}
-	panic("hash: Clone on non-synthetic hash.Hash implementation (needs WS D; re-test when it lands)")
+	panic("hash: Clone on non-synthetic hash.Hash implementation (needs itab dispatch to user-defined pair-transformed Clone; P4 general interface MR untested here)")
 }
 
 // binaryMarshalPair is the single-result form of MarshalBinary's results.
@@ -173,7 +172,6 @@ type binaryAppendPair struct {
 // (table entry pkgPath "encoding", helperPkg "hash"; see
 // m8-staging/crypto/03-mrdesugar.patch). The marshaler is referenced
 // structurally so this package does not import encoding.
-// Re-test trigger: WS D lands.
 func __binaryMarshal(m interface {
 	MarshalSingle() []byte
 }) binaryMarshalPair {
