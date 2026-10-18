@@ -10582,6 +10582,22 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 					})
 					continue
 				}
+				// Mark as unsupported (not skipped): the itab build
+				// succeeds, and dispatch fails fast with "not supported"
+				// only if actually called. This is general: any method
+				// whose funcdecl is unavailable (e.g. disk-package
+				// multi-result stubs). Skipping caused "missing method"
+				// itab build failures (e.g. reflect.Type.FieldByName).
+				msig2, ok2 := mobj.Type().(*types.Signature)
+				if !ok2 {
+					return nil, false, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
+						mobj.Name(), mobj.Type())
+				}
+				entries = append(entries, methodEntry{
+					name: mobj.Name(), obj: -1, recv: "value",
+					index: nil, implkey: implKeyOf(mobj, msig2),
+					unsupported: true, embeddedIface: -1,
+				})
 				continue
 			}
 			fi = hfi

@@ -1048,7 +1048,18 @@ public final class ReflectTypes {
             // NumMethod/MethodByName. Build a MethodInfo with the
             // interface method's signature (receiver prepended) and a
             // synthetic GoFunc that performs the redispatch.
+            //
+            // Unsupported entries (obj -1, wire "index" null, no
+            // "embeddedIface") are skipped: the method is not available
+            // for reflection (e.g. disk-package multi-result stubs).
+            // This is general: any method whose funcdecl is unavailable.
             if (objId == -1) {
+                Json.Value idxv = m.opt("index");
+                Json.Value embv = m.opt("embeddedIface");
+                if (idxv instanceof Json.Null && !(embv instanceof Json.Num)) {
+                    // Unsupported: skip (not in reflect method table).
+                    continue;
+                }
                 MethodInfo redispatch = readRedispatchMethod(table, types, shells,
                         path, functions, funcdeclSig, m, name, receiver,
                         sorted.size());
