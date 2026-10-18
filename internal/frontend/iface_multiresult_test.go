@@ -599,72 +599,131 @@ func main() {
 	}
 }
 
-// TestD1IfaceMultiResultAssignPosition: an unlisted multi-result
-// interface method in `=` assignment position (not `:=`) desugars via
-// the general classifier (classifyUserIfaceMultiResultCall), exactly
-// like expression position. Regression test for the red-master
-// incident where fmt/scan.go's `r, size, err = s.rs.ReadRune()`
-// (io.RuneReader, 3 results, in no whitelist) fell through
-// classifyMultiResultCall to a plain 3-target/1-rhs assign, which the
-// v1 backend rejects (assign.fields: lhs/rhs length mismatch) —
-// failing all 38 snapshot programs' builds.
-func TestD1IfaceMultiResultAssignPosition(t *testing.T) {
+// TestGeneralIfaceMultiResultAssignDesugar: N-target assignment (= and :=)
+// of a general (non-whitelisted, non-disk) interface multi-result call must
+// desugar to the pair-temp + field-extraction form — never a raw
+// assign/vardecl with a multi-valued rhs, which violates the v1 wire
+// contract and fail-fasts the backend ("assign.fields: lhs/rhs length
+// mismatch"). io.RuneReader.ReadRune (3 results) is not in
+// m8IfaceMultiResultMethods, so this exercises the general
+// classifyUserIfaceMultiResultCall fallback in classifyMultiResultCall.
+// Regression: real fmt's scan.go (r, size, err = s.rs.ReadRune()) broke
+// every corpus program's build after the real-fmt2 GOROOT switch.
+func TestGeneralIfaceMultiResultAssignDesugar(t *testing.T) {
 	const src = `package main
 
 import "io"
 
-func readRune3(r io.RuneReader) (rune, int, error) {
-	var ch rune
-	var size int
-	var err error
+func assign3(r io.RuneReader) (ch rune, size int, err error) {
 	ch, size, err = r.ReadRune()
 	return ch, size, err
 }
 
+func define3(r io.RuneReader) (ch rune, size int, err error) {
+	c, s, e := r.ReadRune()
+	return c, s, e
+}
+
 func main() {
-	ch, _, _ := readRune3(nil)
-	println(ch)
+	var _ = assign3
+	var _ = define3
 }
 `
 	doc := d1ExportIfaceProg(t, src)
-	// The v1 backend invariant: every assign has len(lhs)==len(rhs)
-	// or is a comma-ok form. A 3-lhs/1-rhs assign must never be
-	// emitted.
-	for _, n := range findAllKind(doc, "assign") {
-		f := n["fields"].(map[string]any)
-		lhs, _ := f["lhs"].([]any)
-		rhs, _ := f["rhs"].([]any)
-		if len(lhs) == 3 && len(rhs) == 1 {
-			t.Fatalf("emitted 3-target/1-rhs assign (backend would reject): %v", n)
+	// 1. Wire-contract pin on the functions under test: no assign node
+	//    with lhs/rhs length mismatch, and no vardecl with values whose
+	//    name/value counts differ. (Synthetic dependency bodies are out
+	//    of scope — they legitimately use comma-ok forms.)
+	checkFn := func(want string) map[string]any {
+		t.Helper()
+		for _, fn := range doc["funcs"].([]any) {
+			fm, _ := fn.(map[string]any)
+			fl, _ := fm["fields"].(map[string]any)
+			if fl["name"] == want {
+				return fm
+			}
+		}
+		t.Fatalf("function %s not in wire doc", want)
+		return nil
+	}
+	for _, want := range []string{"assign3", "define3"} {
+		fm := checkFn(want)
+		for _, n := range findAllKind(fm, "assign") {
+			f := n["fields"].(map[string]any)
+			lhs, _ := f["lhs"].([]any)
+			rhs, _ := f["rhs"].([]any)
+			if len(lhs) != len(rhs) {
+				t.Fatalf("%s: wire violation: assign with %d lhs, %d rhs", want, len(lhs), len(rhs))
+			}
+		}
+		for _, n := range findAllKind(fm, "vardecl") {
+			f := n["fields"].(map[string]any)
+			names, _ := f["names"].([]any)
+			vals, _ := f["values"].([]any)
+			// A vardecl with values must pair each name with a value; a
+			// valueless vardecl is a pure declaration (fine).
+			if len(vals) > 0 && len(names) != len(vals) {
+				t.Fatalf("%s: wire violation: vardecl with %d names, %d values", want, len(names), len(vals))
+			}
 		}
 	}
-	// The desugared block: __p5mr_N := <ifacemethod ReadRune>, then
-	// three extractions assigned to ch, size, err.
-	blocks := findAllKind(doc, "block")
-	found := false
-	for _, b := range blocks {
-		stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
-		if len(stmts) != 4 {
-			continue
+	// 2. Both functions desugared through the pair temp: a __p5mr_N
+	//    vardecl holding an ifacemethod ReadRune node, inside a block
+	//    that also assigns the three extracted fields.
+	for _, want := range []string{"assign3", "define3"} {
+		fm := checkFn(want)
+		found := false
+		for _, b := range findAllKind(fm, "block") {
+			stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
+			if len(stmts) != 4 {
+				continue
+			}
+			s0, _ := stmts[0].(map[string]any)
+			if s0["kind"] != "vardecl" {
+				continue
+			}
+			vals, _ := s0["fields"].(map[string]any)["values"].([]any)
+			if len(vals) != 1 {
+				continue
+			}
+			v0, _ := vals[0].(map[string]any)
+			if v0["kind"] != "ifacemethod" {
+				continue
+			}
+			if v0["fields"].(map[string]any)["method"] != "ReadRune" {
+				continue
+			}
+			found = true
 		}
-		s0, _ := stmts[0].(map[string]any)
-		if s0["kind"] != "vardecl" {
-			continue
+		if !found {
+			t.Fatalf("no desugared __p5mr_N := <ifacemethod ReadRune> block in %s", want)
 		}
-		vals, _ := s0["fields"].(map[string]any)["values"].([]any)
-		if len(vals) != 1 {
-			continue
-		}
-		v0, _ := vals[0].(map[string]any)
-		if v0["kind"] != "ifacemethod" {
-			continue
-		}
-		if v0["fields"].(map[string]any)["method"] != "ReadRune" {
-			continue
-		}
-		found = true
 	}
-	if !found {
-		t.Fatal("no desugared block __p5mr_N := r.ReadRune(); ch = ...; size = ...; err = ... found")
+}
+
+// TestGeneralIfaceMultiResultVarDeclFailFast: a general interface
+// multi-result call in `var` declaration (ValueSpec) position keeps the
+// named M8 limitation fail-fast (never a 3-name/1-pair-value vardecl),
+// uniformly with the whitelisted interfaces (TestD1VarDeclMultiResultFailFast).
+func TestGeneralIfaceMultiResultVarDeclFailFast(t *testing.T) {
+	const src = `package main
+
+import "io"
+
+func f(r io.RuneReader) {
+	var ch, size, err = r.ReadRune()
+	_, _, _ = ch, size, err
+}
+
+func main() {
+	var _ = f
+}
+`
+	_, err := ExportFile(writeIfaceProg(t, src))
+	if err == nil {
+		t.Fatal("expected fail-fast for multi-result interface call in var declaration, got success")
+	}
+	if !strings.Contains(err.Error(), "var declaration") {
+		t.Fatalf("expected var-declaration scope error, got: %v", err)
 	}
 }
