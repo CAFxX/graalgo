@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"graalgo-frontend-v2/checker"
@@ -12,10 +14,18 @@ import (
 )
 
 // TestEncodeAllKinds exercises every v2 emitter node kind through the
-// full pipeline: parse → check → emit → encode. If any kind is missing
-// from the emitter or encoder, this test fails.
+// full pipeline: parse → check → emit → encode.
+//
+// The critical assertion is on the EMITTED DOCUMENT (not just the byte
+// stream): every emitter node kind must appear ≥1 in doc.Funcs. This pins
+// the SILENT-DROP failure mode — a regression where a node kind vanishes
+// from the emitter without an error — which the byte-level assertions below
+// cannot catch. (The LOUD-failure path, an unhandled kind making Emit
+// return an error, is pinned by emit/coverage_test.go + negative_test.go.)
 func TestEncodeAllKinds(t *testing.T) {
 	src := `package main
+
+import "fmt"
 
 type Point struct {
 	X int
@@ -152,6 +162,17 @@ func main() {
 	c := cap(nums)
 	_ = c
 
+	// call (package-qualified → pkgref)
+	fmt.Sprint(x)
+
+	// index
+	v0 := nums[0]
+	_ = v0
+
+	// slice
+	sl := nums[1:2]
+	_ = sl
+
 	// selector (field access)
 	p := Point{X: 1, Y: 2}
 	px := p.X
@@ -193,6 +214,12 @@ func main() {
 		t.Fatalf("emit: %v", err)
 	}
 
+	// Pin the silent-drop path: every emitter node kind must appear ≥1 in
+	// the emitted document. Walk only doc.Funcs — the Types/Objects tables
+	// use "kind" keys too ("slice", "map", ...) that would mask a dropped
+	// AST node kind.
+	assertAllNodeKindsPresent(t, doc)
+
 	bin, err := Encode(doc)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
@@ -215,4 +242,73 @@ func main() {
 	if rest[n] != tagMap {
 		t.Fatalf("first value tag = 0x%02x, want map tag 0x%02x", rest[n], tagMap)
 	}
+}
+
+// expectedNodeKinds is the full set of node kinds the v2 emitter produces
+// (one per emit function in emit/nodes.go, plus the inline "keyvalue"
+// nodes from emitCompositeLit). The all-kinds program above is written to
+// exercise every one of them. When a new node kind is added to the emitter,
+// add a construct that produces it to the program above and extend this
+// list — a missing entry here is a hole in the silent-drop pin.
+var expectedNodeKinds = []string{
+	// Top-level / structure.
+	"funcdecl", "param", "block",
+	// Statements.
+	"exprstmt", "return", "assign", "vardecl", "if", "for", "range",
+	"incdec", "branch",
+	// Expressions.
+	"unary", "paren", "call", "selector", "pkgref",
+	"compositelit", "keyvalue", "index", "slice",
+	"ident", "basiclit", "binary",
+}
+
+// assertAllNodeKindsPresent fails if any expected emitter node kind is
+// absent from the emitted document. A missing kind means the emitter
+// silently dropped that construct — the pipeline stayed green while the
+// program's meaning changed, which this test exists to forbid.
+func assertAllNodeKindsPresent(t *testing.T, doc *emit.Document) {
+	t.Helper()
+	found := collectNodeKinds(doc.Funcs)
+	sorted := make([]string, 0, len(found))
+	for k := range found {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+	t.Logf("emitted node kinds (%d): %s", len(sorted), strings.Join(sorted, ", "))
+	var missing []string
+	for _, want := range expectedNodeKinds {
+		if !found[want] {
+			missing = append(missing, want)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("silent-drop: emitted document is missing %d node kind(s): %s\npresent kinds: %s",
+			len(missing), strings.Join(missing, ", "), strings.Join(sorted, ", "))
+	}
+}
+
+// collectNodeKinds returns the set of every "kind" string appearing in the
+// node maps of v. Nodes are map[string]any{"kind", "pos", "fields"} (or the
+// inline {"kind", "fields"} keyvalue nodes); position maps carry no "kind"
+// key, so every hit is a node kind.
+func collectNodeKinds(v any) map[string]bool {
+	kinds := map[string]bool{}
+	var walk func(x any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case map[string]any:
+			if k, ok := t["kind"].(string); ok {
+				kinds[k] = true
+			}
+			for _, val := range t {
+				walk(val)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	return kinds
 }
