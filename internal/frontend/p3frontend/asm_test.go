@@ -316,6 +316,35 @@ func TestAsmUncategorizedFails(t *testing.T) {
 	})
 }
 
+// TestAsmInventoryErrorNamesRealRegenScript is the regression test for
+// codebase-review P1-2: the fail-fast error for a .s file with no
+// inventory entry must name the real regen script
+// (tools/stdlib-fork/gen-asm-inventory.py) and must not name the dead
+// pre-migration path phases/phase3/stdlib-fork/... (that tree moved in
+// the 2026-10-14 tools migration; naming it sends the user on a dead
+// end on toolchain upgrade).
+func TestAsmInventoryErrorNamesRealRegenScript(t *testing.T) {
+	fakeRoot := t.TempDir()
+	pkgDir := filepath.Join(fakeRoot, "src", "fakelib")
+	writeFiles(t, pkgDir, map[string]string{
+		"newfeature_amd64.s": "TEXT ·newfeature(SB),$0-0\n\tRET\n",
+	})
+	loader := NewLoader()
+	loader.goroot = fakeRoot
+	_, err := loader.CheckAsmFiles(pkgDir, "fakelib")
+	if err == nil {
+		t.Fatal("uncategorized .s file under scratch GOROOT: build proceeded silently")
+	}
+	msg := err.Error()
+	const realScript = "tools/stdlib-fork/gen-asm-inventory.py"
+	if !strings.Contains(msg, realScript) {
+		t.Errorf("fail-fast error must name the regen script %q:\n%s", realScript, msg)
+	}
+	if strings.Contains(msg, "phases/phase3/stdlib-fork") {
+		t.Errorf("fail-fast error names the dead pre-migration script path:\n%s", msg)
+	}
+}
+
 // TestAsmUppercaseSFailsFast is the regression test for the .S/.sx
 // blind spot (P3-M6 remediation P1-1): go/build treats .s, .S and .sx
 // identically as assembly, so a build-tagged evil_amd64.S must fail

@@ -141,7 +141,7 @@ func (l *Loader) ResolveAsmFile(absPath, importPath string) (AsmResolution, erro
 	if !ok {
 		return fail(AsmUncategorized,
 			fmt.Sprintf("no inventory entry for %q in the go1.27.1 asm inventory -- re-run "+
-				"phases/phase3/stdlib-fork/gen-asm-inventory.py on toolchain upgrade; "+
+				"tools/stdlib-fork/gen-asm-inventory.py on toolchain upgrade; "+
 				"uncategorized assembly fails the build by design", slashRel))
 	}
 	if entry.Category == string(AsmUnsupported) {
