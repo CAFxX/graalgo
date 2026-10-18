@@ -809,11 +809,12 @@ func Marshal(val any) ([]byte, error) {
 
 // Unmarshal keeps the exact gc 1.27.1 signature for type-checking.
 // M7 scope: fail-fast body. Decoding requires storing through the
-// recipient pointer (*p = v), which v1 cannot express (WS D: no
-// *ast.StarExpr assignment) — so unlike Marshal there is no v1-spellable
-// __-helper and no Appendix M desugar; every call site fails fast with
-// the named M7 scope error. Re-test when WS D lands (the DER parsing
-// core — asn1Parse* helpers — is retained in this source for that day).
+// recipient pointer (*p = v), which v1 cannot express (no *ast.StarExpr
+// assignment) — so unlike Marshal there is no v1-spellable __-helper and
+// no Appendix M desugar; every call site fails fast with the named M7
+// scope error. The DER parsing core (asn1Parse* helpers) is retained in
+// this source so Unmarshal can be wired up once pointer store is
+// expressible.
 func Unmarshal(b []byte, val any) (rest []byte, err error) {
 	panic("encoding/asn1: Unmarshal: not in M7 scope (needs pointer store)")
 }
