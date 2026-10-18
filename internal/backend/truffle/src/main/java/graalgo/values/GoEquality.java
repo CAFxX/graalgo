@@ -21,16 +21,32 @@ public final class GoEquality {
 
     public static boolean equal(Object a, Object b) {
         if (a == b) {
-            // Covers reference-identity and the (null, null) case. Note: for
-            // Doubles this would wrongly equate two identical NaN
-            // references, so NaN is checked below even on this path.
-            if (a instanceof Double d && d.isNaN()) {
-                return false;
+            // Reference identity — and the (null, null) case, for which
+            // canHideNaN(null) is false. Identity implies Go equality
+            // except where NaN can hide: a NaN scalar never equals
+            // anything, including itself, and a composite carrier can hide
+            // NaN in a struct field, array element, complex component, or
+            // interface payload, making Go's == false even against itself
+            // (differential probe vs gc, review 2026-10-18). Those fall
+            // through to the IEEE field-wise comparison below.
+            if (canHideNaN(a)) {
+                if (a instanceof Double d) {
+                    return !d.isNaN();
+                }
+                if (a instanceof Float f) {
+                    return !f.isNaN();
+                }
+                if (a instanceof GoComplex32 c) {
+                    return !Float.isNaN(c.re()) && !Float.isNaN(c.im());
+                }
+                if (a instanceof GoComplex64 c) {
+                    return !Double.isNaN(c.re()) && !Double.isNaN(c.im());
+                }
+                // Composite carrier: fall through to the structural
+                // comparison, which applies IEEE semantics throughout.
+            } else {
+                return true;
             }
-            if (a instanceof Float f && f.isNaN()) {
-                return false;
-            }
-            return true;
         }
         if (a == null || b == null) {
             return false;
@@ -48,6 +64,16 @@ public final class GoEquality {
         if (a instanceof Float fa && b instanceof Float fb) {
             float x = fa, y = fb;
             return x == y && !Float.isNaN(x);
+        }
+        if (a instanceof GoComplex32 ca && b instanceof GoComplex32 cb) {
+            // Scalar complex64 (e.g. a struct field; review, 2026-10-18):
+            // IEEE per-component semantics — +0.0 == -0.0, and a NaN
+            // component is never equal (x == y is already false for NaN).
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
+        if (a instanceof GoComplex64 ca && b instanceof GoComplex64 cb) {
+            // Scalar complex128; same IEEE per-component semantics.
+            return ca.re() == cb.re() && ca.im() == cb.im();
         }
         if (a instanceof Boolean ba && b instanceof Boolean bb) {
             return ba.booleanValue() == bb.booleanValue();
@@ -160,21 +186,44 @@ public final class GoEquality {
     }
 
     /**
+     * Whether reference identity does <em>not</em> imply Go {@code ==}
+     * equality: float/complex scalars (a NaN never equals anything,
+     * including itself) and composite carriers that can hide NaN in a
+     * struct field, array element, complex component, or interface
+     * payload (Go's {@code ==} is false for those even against
+     * themselves). Used by {@link #equal}'s identity shortcut.
+     */
+    private static boolean canHideNaN(Object a) {
+        return a instanceof Double || a instanceof Float
+                || a instanceof GoComplex32 || a instanceof GoComplex64
+                || a instanceof GoStruct || a instanceof GoInterface
+                || a instanceof double[] || a instanceof float[]
+                || a instanceof GoComplex32[] || a instanceof GoComplex64[]
+                || a instanceof Object[];
+    }
+
+    /**
      * Hash of a float64 map-key component, consistent with {@link #equal}:
      * IEEE {@code ==} equates {@code +0.0} and {@code -0.0}, so signed
      * zeros are normalized to {@code +0.0} before hashing. NaN needs no
      * normalization — it never equals anything (including itself), so its
      * canonical hash is a mere collision, never a contract break.
+     *
+     * <p>Package-private (not private): {@link GoStruct#hashCode} funnels
+     * float struct fields through the same normalizer.
      */
-    private static int hashDouble(double v) {
+    static int hashDouble(double v) {
         if (v == 0) {
             v = 0.0; // normalize -0.0
         }
         return Double.hashCode(v);
     }
 
-    /** As {@link #hashDouble}, for float32 map-key components. */
-    private static int hashFloat(float v) {
+    /**
+     * As {@link #hashDouble}, for float32 map-key components.
+     * Package-private for {@link GoStruct#hashCode}, as above.
+     */
+    static int hashFloat(float v) {
         if (v == 0) {
             v = 0.0f; // normalize -0.0f
         }
@@ -194,6 +243,23 @@ public final class GoEquality {
         }
         if (key instanceof Float f) {
             return hashFloat(f);
+        }
+        if (key instanceof GoComplex32 c) {
+            // Scalar complex64 (e.g. a struct field; review, 2026-10-18):
+            // consistent with equal above; signed-zero components
+            // normalized via hashFloat, mirroring the GoComplex32[] branch.
+            int h = 1;
+            h = 31 * h + hashFloat(c.re());
+            h = 31 * h + hashFloat(c.im());
+            return h;
+        }
+        if (key instanceof GoComplex64 c) {
+            // Scalar complex128; signed-zero components normalized via
+            // hashDouble, mirroring the GoComplex64[] branch.
+            int h = 1;
+            h = 31 * h + hashDouble(c.re());
+            h = 31 * h + hashDouble(c.im());
+            return h;
         }
         if (key instanceof Boolean b) {
             return Boolean.hashCode(b);

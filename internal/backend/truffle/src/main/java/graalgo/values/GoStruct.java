@@ -1,7 +1,5 @@
 package graalgo.values;
 
-import java.util.Arrays;
-
 /**
  * A Go struct value: descriptor + {@code long[]} + {@code Object[]} (D5).
  *
@@ -163,7 +161,52 @@ public final class GoStruct {
     @Override
     public boolean equals(Object o) {
         return o instanceof GoStruct gs && descriptor == gs.descriptor
-                && Arrays.equals(longs, gs.longs) && structObjectsEqual(objects, gs.objects);
+                && longsEqual(gs.longs) && structObjectsEqual(objects, gs.objects);
+    }
+
+    /**
+     * Field-wise comparison of the {@code longs[]} carrier against another
+     * struct of the same (identical) descriptor. Integer and bool slots
+     * compare bit-exact (their boxing is canonical); float slots compare
+     * with IEEE {@code ==} semantics decoded from the stored bit patterns
+     * — {@code +0.0 == -0.0}, and NaN never equals anything, including a
+     * bit-identical NaN or the struct itself — matching gc struct
+     * {@code ==}. (Before: a single bit-exact {@code Arrays.equals} here
+     * equated bit-identical NaN fields and distinguished signed zeros;
+     * review 2026-10-18.)
+     */
+    private boolean longsEqual(long[] other) {
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long x = longs[f.index()];
+            long y = other[f.index()];
+            if (f.kind().isFloatKind()) {
+                if (!floatBitsEqual(f.kind(), x, y)) {
+                    return false;
+                }
+            } else if (x != y) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * IEEE {@code ==} on the float values encoded by
+     * {@link graalgo.frontend.Boxing#toLongBits} (float32 slots hold
+     * {@code Float.floatToIntBits} zero-extended into the long; float64
+     * slots hold {@code Double.doubleToLongBits}). {@code x == y} is
+     * already false for NaN, so no explicit NaN check is needed.
+     */
+    private static boolean floatBitsEqual(GoKind kind, long x, long y) {
+        if (kind == GoKind.FLOAT32) {
+            return Float.intBitsToFloat((int) x) == Float.intBitsToFloat((int) y);
+        }
+        // FLOAT64 (and any other float kind, per GoEquality's "double for
+        // both float kinds" carrier convention).
+        return Double.longBitsToDouble(x) == Double.longBitsToDouble(y);
     }
 
     private static boolean structObjectsEqual(Object[] a, Object[] b) {
@@ -181,7 +224,29 @@ public final class GoStruct {
     @Override
     public int hashCode() {
         int h = System.identityHashCode(descriptor);
-        h = 31 * h + Arrays.hashCode(longs);
+        // Mirrors Arrays.hashCode(longs) element-wise (31*h + Long.hashCode
+        // per slot, from 1 — so non-float structs hash exactly as before),
+        // except float slots are funneled through GoEquality's signed-zero
+        // normalizer: equal (+0.0/-0.0) structs must hash equal (review
+        // 2026-10-18). NaN needs no normalization — it never equals
+        // anything, so its canonical hash is a mere collision.
+        int lh = 1;
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long bits = longs[f.index()];
+            int c;
+            if (f.kind() == GoKind.FLOAT32) {
+                c = GoEquality.hashFloat(Float.intBitsToFloat((int) bits));
+            } else if (f.kind().isFloatKind()) {
+                c = GoEquality.hashDouble(Double.longBitsToDouble(bits));
+            } else {
+                c = Long.hashCode(bits);
+            }
+            lh = 31 * lh + c;
+        }
+        h = 31 * h + lh;
         for (Object o : objects) {
             h = 31 * h + GoEquality.hash(o);
         }
