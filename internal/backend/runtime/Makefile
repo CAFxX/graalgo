@@ -129,8 +129,16 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
-		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@# Fail-closed: grep exit 1 means clean (no hits); exit 0 means hits
+	@# found; exit >= 2 (e.g. an invalid regex) must FAIL the gate, never
+	@# silently pass it.
+	@hits=$$(grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/ 2>&1); \
+	rc=$$?; \
+	if [ $$rc -eq 0 ]; then \
+		echo "PLACEHOLDER GATE FAILED:"; echo "$$hits"; exit 1; \
+	elif [ $$rc -gt 1 ]; then \
+		echo "PLACEHOLDER GATE ERROR: grep exited $$rc:"; echo "$$hits"; exit 1; \
+	fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
