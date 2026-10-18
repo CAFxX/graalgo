@@ -105,9 +105,9 @@ func main() {
 // bytes members fail with the named M7 scope error.
 // Note: Cut, CutPrefix, CutSuffix, CutLast now work via the general
 // userMRFuncs mechanism and are not in this test.
-// Note: Buffer.Read was retired from this test — its M7 fail-fast stub's
-// "re-test when WS D lands" condition is met, so it is now table-driven
-// via __bytesBufferRead (see TestSyntheticBytesBufferReadDesugar).
+// Note: Buffer.Read was retired from this test — its M7 fail-fast stub
+// was discharged when WS D landed, so it is now table-driven via
+// __bytesBufferRead (see TestSyntheticBytesBufferReadDesugar).
 func TestSyntheticBytesCutFailsFast(t *testing.T) {
 	cases := []struct {
 		name string
