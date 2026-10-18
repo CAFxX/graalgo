@@ -45,6 +45,10 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // R23-P1-3 (2026-10-19): TLS error channel — no host Exception may
+        // escape a graalgo.tls.* trap; failures travel as error-slot keys
+        // / handle-scoped errors read via TlsRuntime.lastError.
+        TESTS.add(graalgo.p3tls.TlsErrorChannelTest.class);
     }
 
     private IfaceTestRunner() {}
