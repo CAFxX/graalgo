@@ -138,9 +138,11 @@ func TestEmitBinaryRuns(t *testing.T) {
 	}
 	argsFile := filepath.Join(tmpDir, "args.txt")
 	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
+	// $1 is the single --wire-input=<file> token; strip the prefix to get
+	// the path.
 	backendScript := "#!/usr/bin/env bash\n" +
 		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
-		"cp \"$2\" " + wireCopy + "\n" + // $2 is the --wire-input path
+		"cp \"${1#--wire-input=}\" " + wireCopy + "\n" +
 		"exit 0\n"
 	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
 	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
@@ -171,10 +173,19 @@ func TestEmitBinaryRuns(t *testing.T) {
 	}
 	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 	if len(args) < 4 {
-		t.Fatalf("backend args = %v, want at least [--wire-input FILE -- argv0 ...]", args)
+		t.Fatalf("backend args = %v, want at least [--wire-input=FILE -- argv0 ...]", args)
 	}
-	if args[0] != "--wire-input" {
-		t.Errorf("args[0] = %q, want --wire-input", args[0])
+	// Backend-parser contract (P3SyncMain.java, arg-parse loop): the only
+	// accepted form is the single token "--wire-input=<file>" with a
+	// non-empty value. A bare "--wire-input" token is rejected with
+	// "unknown flag: --wire-input". Assert the emitted argv satisfies the
+	// real parser's acceptance predicate — positional checks alone let a
+	// two-token regression through (that is exactly how this bug escaped).
+	const wirePrefix = "--wire-input="
+	if !strings.HasPrefix(args[0], wirePrefix) {
+		t.Errorf("args[0] = %q, want single-token --wire-input=<file> (cf. P3SyncMain)", args[0])
+	} else if strings.TrimPrefix(args[0], wirePrefix) == "" {
+		t.Errorf("args[0] = %q, want non-empty --wire-input= value", args[0])
 	}
 	// The backend copied the wire file before the launcher cleaned up.
 	wireData, err := os.ReadFile(wireCopy)
@@ -183,16 +194,38 @@ func TestEmitBinaryRuns(t *testing.T) {
 	} else if string(wireData) != string(wireJSON) {
 		t.Errorf("wire-input content mismatch: got %q, want %q", wireData, wireJSON)
 	}
-	if args[2] != "--" {
-		t.Errorf("args[2] = %q, want --", args[2])
+	if args[1] != "--" {
+		t.Errorf("args[1] = %q, want --", args[1])
 	}
 	// argv[0] for the program should be the artifact's absolute path.
-	if !filepath.IsAbs(args[3]) {
-		t.Errorf("program argv[0] = %q, want absolute path", args[3])
+	if !filepath.IsAbs(args[2]) {
+		t.Errorf("program argv[0] = %q, want absolute path", args[2])
 	}
 	// User args forwarded.
-	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
+	if len(args) < 5 || args[3] != "hello" || args[4] != "world" {
 		t.Errorf("user args not forwarded: %v", args)
+	}
+}
+
+// TestEmitQuotesGraalgoRoot verifies that a GraalgoRoot containing
+// characters special in a Go string literal (quote, backslash, newline)
+// is safely embedded in the generated launcher source. Emit compiles the
+// launcher, so a broken embedding fails the build and surfaces here as an
+// Emit error — this test fails on the pre-fix raw-%s interpolation.
+func TestEmitQuotesGraalgoRoot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary execution test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+	hostile := "/tmp/with\"quote\\and\nnewline"
+	out := filepath.Join(tmpDir, "prog")
+	if err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: hostile,
+		WireJSON:    []byte(`{"frontend":"v1"}`),
+	}); err != nil {
+		t.Fatalf("Emit with hostile GraalgoRoot: %v", err)
 	}
 }
 
