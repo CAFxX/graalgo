@@ -3074,8 +3074,16 @@ public final class NodeFactory {
         Json.Object f = fieldsOf(node, "deref");
         String path = "deref.fields";
         GoExprNode ptr = buildExpr(f.object("x", path), ctx);
-        GoKind elemKind = kindOf(ctx, f.intValue("type", path), path);
-        return new DerefNode(elemKind, ptr);
+        int typeId = f.intValue("type", path);
+        GoKind elemKind = kindOf(ctx, typeId, path);
+        // For struct dereference, pass the descriptor so DerefNode can
+        // synthesize the struct when the referent is a GoInterface
+        // (unsafe reinterpretation pattern).
+        GoStructDescriptor structDesc = null;
+        if (elemKind == GoKind.STRUCT) {
+            structDesc = structDescriptorFor(ctx, typeId, path);
+        }
+        return new DerefNode(elemKind, ptr, structDesc);
     }
 
     /**
