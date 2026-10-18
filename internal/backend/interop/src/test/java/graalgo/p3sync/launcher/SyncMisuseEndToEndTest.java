@@ -227,7 +227,7 @@ public final class SyncMisuseEndToEndTest {
     private static RunResult runForked(Path goFile) throws Exception {
         String javaBin = System.getProperty("java.home") + "/bin/java";
         ProcessBuilder pb = new ProcessBuilder(javaBin, "--enable-native-access=ALL-UNNAMED",
-                "-cp", System.getProperty("java.class.path"),
+                "-Xss32m", "-cp", System.getProperty("java.class.path"),
                 "graalgo.p3sync.launcher.P3SyncMain", "--gmp=1", goFile.toString());
         pb.directory(Path.of(System.getProperty("user.dir")).toFile());
         Process p = pb.start();
