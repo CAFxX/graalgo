@@ -35,7 +35,7 @@ import (
 
 // The sums are struct wrappers (not bare uint32/uint64/[2]uint64):
 // the frontend forbids assignment to *ast.StarExpr and &ident in
-// synthetic bodies (WS D), so all state mutation goes through
+// synthetic bodies, so all state mutation goes through
 // selectors. The M8 crypto digests use the same pattern.
 type (
 	sum32   struct{ v uint32 }
@@ -105,10 +105,8 @@ func (s *sum32a) Sum32() uint32 { return s.v }
 func (s *sum64) Sum64() uint64  { return s.v }
 func (s *sum64a) Sum64() uint64 { return s.v }
 
-// WriteSingle is the single-result form of Write (the v1 frontend cannot
-// emit or call multi-result functions (WS D); the real logic lives here,
+// WriteSingle is the single-result form of Write (the real logic lives here,
 // served via the mrM8 desugar to hash.__hashWrite. Re-test trigger:
-// WS D lands.
 func (s *sum32) WriteSingle(data []byte) int {
 	hash := s.v
 	for _, c := range data {
@@ -121,18 +119,16 @@ func (s *sum32) WriteSingle(data []byte) int {
 
 // Write implements hash.Hash (fail-fast stub; real logic is WriteSingle,
 // served via the mrM8 desugar to hash.__hashWrite). Re-test trigger:
-// WS D lands.
 func (s *sum32) Write(data []byte) (int, error) {
-	panic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: Write: unreachable (call sites desugar to __fnvWrite32")
 }
 
 // P3-M9: package-local multi-result helpers (see hash/adler32). The v1
-// frontend cannot emit or call multi-result functions (WS D), so Write/
+// Write/
 // MarshalBinary/AppendBinary are served through the mrM8 desugar. These
 // helpers take any (not hash.Hash) to avoid an interface conversion that
 // would lose the dynamic type's method set. One helper per method switches
 // on the six sum types.
-// Re-test trigger: WS D lands.
 type writePair struct {
 	n   int
 	err error
@@ -145,7 +141,7 @@ type bytesPair struct {
 
 // P3-M9: concrete-type helpers (the v1 itab dispatcher passes the raw
 // dynamic value; interface{} + type assertion fails at runtime, so each
-// sum type gets its own helper). Re-test trigger: WS D lands.
+// sum type gets its own helper).
 func __fnvWrite32(s *sum32, p []byte) writePair     { return writePair{s.WriteSingle(p), nil} }
 func __fnvWrite32a(s *sum32a, p []byte) writePair   { return writePair{s.WriteSingle(p), nil} }
 func __fnvWrite64(s *sum64, p []byte) writePair     { return writePair{s.WriteSingle(p), nil} }
@@ -168,7 +164,6 @@ func __fnvAppend128(s *sum128, b []byte) bytesPair   { return bytesPair{s.Append
 func __fnvAppend128a(s *sum128a, b []byte) bytesPair { return bytesPair{s.AppendSingle(b), nil} }
 
 // WriteSingle is the single-result form of Write (see sum32.WriteSingle).
-// Re-test trigger: WS D lands.
 func (s *sum32a) WriteSingle(data []byte) int {
 	hash := s.v
 	for _, c := range data {
@@ -180,13 +175,11 @@ func (s *sum32a) WriteSingle(data []byte) int {
 }
 
 // Write implements hash.Hash (fail-fast stub; see sum32.Write).
-// Re-test trigger: WS D lands.
 func (s *sum32a) Write(data []byte) (int, error) {
-	panic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: Write: unreachable (call sites desugar to __fnvWrite32a")
 }
 
 // WriteSingle is the single-result form of Write (see sum32.WriteSingle).
-// Re-test trigger: WS D lands.
 func (s *sum64) WriteSingle(data []byte) int {
 	hash := s.v
 	for _, c := range data {
@@ -198,13 +191,11 @@ func (s *sum64) WriteSingle(data []byte) int {
 }
 
 // Write implements hash.Hash (fail-fast stub; see sum32.Write).
-// Re-test trigger: WS D lands.
 func (s *sum64) Write(data []byte) (int, error) {
-	panic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: Write: unreachable (call sites desugar to __fnvWrite64")
 }
 
 // WriteSingle is the single-result form of Write (see sum32.WriteSingle).
-// Re-test trigger: WS D lands.
 func (s *sum64a) WriteSingle(data []byte) int {
 	hash := s.v
 	for _, c := range data {
@@ -216,16 +207,15 @@ func (s *sum64a) WriteSingle(data []byte) int {
 }
 
 // Write implements hash.Hash (fail-fast stub; see sum32.Write).
-// Re-test trigger: WS D lands.
 func (s *sum64a) Write(data []byte) (int, error) {
-	panic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: Write: unreachable (call sites desugar to __fnvWrite64a")
 }
 
 // mul64 returns the 128-bit product of x and y as [hi, lo]. It is the
 // standard 32-bit-limb decomposition, computing the same value as
 // math/bits.Mul64 (math/bits is not an importable synthetic package).
 // Single-result ([2]uint64) because the v1 frontend cannot emit or call
-// multi-result functions (WS D). Re-test trigger: WS D lands.
+// multi-result functions.
 func mul64(x, y uint64) [2]uint64 {
 	const mask32 = 1<<32 - 1
 	x0 := x & mask32
@@ -243,7 +233,6 @@ func mul64(x, y uint64) [2]uint64 {
 }
 
 // WriteSingle is the single-result form of Write (see sum32.WriteSingle).
-// Re-test trigger: WS D lands.
 func (s *sum128) WriteSingle(data []byte) int {
 	for _, c := range data {
 		// Compute the multiplication
@@ -258,13 +247,11 @@ func (s *sum128) WriteSingle(data []byte) int {
 }
 
 // Write implements hash.Hash (fail-fast stub; see sum32.Write).
-// Re-test trigger: WS D lands.
 func (s *sum128) Write(data []byte) (int, error) {
-	panic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: Write: unreachable (call sites desugar to __fnvWrite128")
 }
 
 // WriteSingle is the single-result form of Write (see sum32.WriteSingle).
-// Re-test trigger: WS D lands.
 func (s *sum128a) WriteSingle(data []byte) int {
 	for _, c := range data {
 		s.lo ^= uint64(c)
@@ -279,9 +266,8 @@ func (s *sum128a) WriteSingle(data []byte) int {
 }
 
 // Write implements hash.Hash (fail-fast stub; see sum32.Write).
-// Re-test trigger: WS D lands.
 func (s *sum128a) Write(data []byte) (int, error) {
-	panic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: Write: unreachable (call sites desugar to __fnvWrite128a")
 }
 
 func (s *sum32) Size() int   { return 4 }
@@ -357,9 +343,8 @@ const (
 )
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (s *sum32) AppendSingle(b []byte) []byte {
 	b = append(b, magic32...)
 	b = beAppendUint32(b, s.v)
@@ -368,29 +353,27 @@ func (s *sum32) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (s *sum32) MarshalSingle() []byte {
 	return s.AppendSingle(make([]byte, 0, marshaledSize32))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (s *sum32) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/fnv: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: AppendBinary: unreachable (call sites desugar to __fnvAppend32")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (s *sum32) MarshalBinary() ([]byte, error) {
-	panic("hash/fnv: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: MarshalBinary: unreachable (call sites desugar to __fnvMarshal32")
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (s *sum32a) AppendSingle(b []byte) []byte {
 	b = append(b, magic32a...)
 	b = beAppendUint32(b, s.v)
@@ -399,29 +382,27 @@ func (s *sum32a) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (s *sum32a) MarshalSingle() []byte {
 	return s.AppendSingle(make([]byte, 0, marshaledSize32))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (s *sum32a) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/fnv: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: AppendBinary: unreachable (call sites desugar to __fnvAppend32a")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (s *sum32a) MarshalBinary() ([]byte, error) {
-	panic("hash/fnv: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: MarshalBinary: unreachable (call sites desugar to __fnvMarshal32a")
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (s *sum64) AppendSingle(b []byte) []byte {
 	b = append(b, magic64...)
 	b = beAppendUint64(b, s.v)
@@ -430,29 +411,27 @@ func (s *sum64) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (s *sum64) MarshalSingle() []byte {
 	return s.AppendSingle(make([]byte, 0, marshaledSize64))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (s *sum64) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/fnv: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: AppendBinary: unreachable (call sites desugar to __fnvAppend64")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (s *sum64) MarshalBinary() ([]byte, error) {
-	panic("hash/fnv: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: MarshalBinary: unreachable (call sites desugar to __fnvMarshal64")
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (s *sum64a) AppendSingle(b []byte) []byte {
 	b = append(b, magic64a...)
 	b = beAppendUint64(b, s.v)
@@ -461,29 +440,27 @@ func (s *sum64a) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (s *sum64a) MarshalSingle() []byte {
 	return s.AppendSingle(make([]byte, 0, marshaledSize64))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (s *sum64a) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/fnv: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: AppendBinary: unreachable (call sites desugar to __fnvAppend64a")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (s *sum64a) MarshalBinary() ([]byte, error) {
-	panic("hash/fnv: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: MarshalBinary: unreachable (call sites desugar to __fnvMarshal64a")
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (s *sum128) AppendSingle(b []byte) []byte {
 	b = append(b, magic128...)
 	b = beAppendUint64(b, s.hi)
@@ -493,29 +470,27 @@ func (s *sum128) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (s *sum128) MarshalSingle() []byte {
 	return s.AppendSingle(make([]byte, 0, marshaledSize128))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (s *sum128) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/fnv: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: AppendBinary: unreachable (call sites desugar to __fnvAppend128")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (s *sum128) MarshalBinary() ([]byte, error) {
-	panic("hash/fnv: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: MarshalBinary: unreachable (call sites desugar to __fnvMarshal128")
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (s *sum128a) AppendSingle(b []byte) []byte {
 	b = append(b, magic128a...)
 	b = beAppendUint64(b, s.hi)
@@ -525,23 +500,22 @@ func (s *sum128a) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (s *sum128a) MarshalSingle() []byte {
 	return s.AppendSingle(make([]byte, 0, marshaledSize128))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (s *sum128a) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/fnv: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: AppendBinary: unreachable (call sites desugar to __fnvAppend128a")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (s *sum128a) MarshalBinary() ([]byte, error) {
-	panic("hash/fnv: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/fnv: MarshalBinary: unreachable (call sites desugar to __fnvMarshal128a")
 }
 
 func (s *sum32) UnmarshalBinary(b []byte) error {
