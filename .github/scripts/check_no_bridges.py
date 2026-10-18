@@ -162,9 +162,14 @@ def check_no_bridges(diff):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
 
-    # 4. New wire node kinds for stdlib
+    # 4. New wire node kinds for stdlib. Scans ALL added .go files: the old
+    #    "export.go"-in-filename scoping was evadable — a stdlib-scoped wire
+    #    node wired anywhere else (e.g. internal/frontend/nodes.go) passed
+    #    the gate silently. The stdlib-prefix filter below keeps the check
+    #    narrow; a new stdlib-scoped wire node anywhere is suspicious until
+    #    an independent reviewer adjudicates it (ADJUDICATED_WIRE_NODES).
     for fname, line in added_lines:
-        if not fname or "export.go" not in fname:
+        if not fname or not fname.endswith(".go"):
             continue
         m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
         if m:
