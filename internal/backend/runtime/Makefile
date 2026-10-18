@@ -166,9 +166,11 @@ check: main $(OUT_TEST)/.built
 	@echo "-- pinning class on JDK 25 (JEP 491 retired synchronized pinning)."
 	@echo "-- Any new native/FFM surface must be allowlisted in the PinAudit"
 	@echo "-- budget or this gate fails."
-	@if grep -rn --include='*.java' -E '^[[:space:]]*(public|private|protected|static|final|synchronized|strictfp|[[:space:]])*native[[:space:]]' src/main/ ../truffle/src/main/; then \
+	@echo "-- native pattern tolerates leading annotations (@Deprecated etc.);"
+	@echo "-- FFM pattern spans line breaks (grep -z treats each file as one line)."
+	@if grep -rn --include='*.java' -E '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*(\([^)]*\))?[[:space:]]+|public|private|protected|static|final|synchronized|strictfp|[[:space:]])*native[[:space:]]' src/main/ ../truffle/src/main/; then \
 		echo "PIN-SURFACE GATE FAILED: native method declaration"; exit 1; fi
-	@if grep -rn --include='*.java' 'java\.lang\.foreign' src/main/ ../truffle/src/main/; then \
+	@if grep -rlz --include='*.java' -E 'java[[:space:]]*\.[[:space:]]*lang[[:space:]]*\.[[:space:]]*foreign' src/main/ ../truffle/src/main/; then \
 		echo "PIN-SURFACE GATE FAILED: FFM usage"; exit 1; fi
 	@echo "pin-surface gate clean"
 	@echo "== pin-audit smoke (P2-M7, GG-0057) =="
