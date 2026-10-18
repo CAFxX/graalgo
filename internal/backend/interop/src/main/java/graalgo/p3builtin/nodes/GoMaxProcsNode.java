@@ -8,6 +8,7 @@ import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoKind;
 
 /**
@@ -19,9 +20,12 @@ import graalgo.values.GoKind;
  * {@code NodeFactory} change.
  *
  * <p>Sets the GOMAXPROCS value and returns the previous one, matching gc
- * semantics. The value is tracked per-process (a static cell); it has no
- * effect on the JVM scheduler — it exists so programs that save/restore
- * GOMAXPROCS (the common {@code defer} pattern) round-trip correctly.
+ * semantics. The value is tracked per-process (a static cell) and, when a
+ * scheduler is installed, propagated to the scheduler's admission cap via
+ * {@link SchedulerCore#setCap} — gc changes the thread limit, not just
+ * the reported number (P1-29). Scheduler-less Phase-1 runs have no cap to
+ * update; the reported value still round-trips (the common
+ * {@code defer} save/restore pattern).
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook.
@@ -34,10 +38,7 @@ public final class GoMaxProcsNode extends GoExprNode {
 
     /**
      * Returns the current GOMAXPROCS value — the same value Go code
-     * observes through {@code runtime.GOMAXPROCS(0)}. Used by
-     * {@code graalgo.p3link.SyncRuntime#procPin} to keep the returned
-     * P-id inside {@code [0, GOMAXPROCS)}, the invariant real
-     * {@code sync.Pool.pinSlow} relies on when sizing its per-P array.
+     * observes through {@code runtime.GOMAXPROCS(0)}.
      */
     public static int current() {
         return CURRENT.get();
@@ -54,7 +55,17 @@ public final class GoMaxProcsNode extends GoExprNode {
     public long executeLong(VirtualFrame frame) {
         int want = (int) n.executeLong(frame);
         if (want > 0) {
-            return CURRENT.getAndSet(want);
+            int prev = CURRENT.getAndSet(want);
+            // P1-29: the admission cap follows the reported value (always
+            // propagated, so the installed scheduler's requestedCap is the
+            // last GOMAXPROCS(n>0) value even if it was swapped since).
+            // No scheduler in Phase-1 runs: then there is no cap to
+            // update (installedOrNull, never throws).
+            SchedulerCore sc = SchedulerCore.installedOrNull();
+            if (sc != null) {
+                sc.setCap(want);
+            }
+            return prev;
         }
         return CURRENT.get();
     }

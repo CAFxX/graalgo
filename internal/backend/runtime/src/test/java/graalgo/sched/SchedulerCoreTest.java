@@ -604,4 +604,186 @@ public final class SchedulerCoreTest {
             SchedulerCore.install(null);
         }
     }
+
+    // ---------- runtime GOMAXPROCS changes (P1-29) ----------
+
+    /**
+     * P1-29: {@code setCap} updates the requested value and the effective
+     * cap ({@code min(requested, carriers)}), clamping to &ge;1 like the
+     * constructor. Growth applies immediately.
+     *
+     * <p>Red-green: fails to compile (no such method) without the fix;
+     * fails the asserts if the cap is not updated.
+     */
+    public void testSetCapUpdatesRequestedAndEffectiveCap() {
+        SchedulerCore sched = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        int carriers = sched.carrierParallelism();
+        assertTrue(carriers >= 1, "sanity: carriers >= 1");
+        assertEquals(1, sched.cap(), "initial cap");
+        assertEquals(1, sched.requestedCap(), "initial requestedCap");
+
+        sched.setCap(carriers);
+        assertEquals(carriers, sched.requestedCap(), "requestedCap follows setCap");
+        assertEquals(carriers, sched.cap(), "effective cap = min(requested, carriers)");
+
+        // Asking for more than the carriers can host: the requested value
+        // is kept, the effective cap stays clamped.
+        sched.setCap(4 * carriers + 7);
+        assertEquals(4 * carriers + 7, sched.requestedCap(), "requestedCap keeps the ask");
+        assertEquals(carriers, sched.cap(), "effective cap clamped to carriers");
+
+        // Clamp to >= 1 (constructor parity).
+        sched.setCap(0);
+        assertEquals(1, sched.requestedCap(), "setCap(0) clamps requestedCap to 1");
+        assertEquals(1, sched.cap(), "setCap(0) clamps cap to 1");
+        sched.setCap(-3);
+        assertEquals(1, sched.requestedCap(), "setCap(-3) clamps requestedCap to 1");
+        assertEquals(1, sched.cap(), "setCap(-3) clamps cap to 1");
+    }
+
+    /**
+     * P1-29: a shrink never trips the drainer's hard assert. White-box:
+     * with in-flight slots above the new target, the cap stays
+     * grandfathered until slots free, then ratchets down;
+     * {@code checkInvariants} passes at every step. The drainer is
+     * intentionally NOT started: single-threaded, deterministic.
+     *
+     * <p>Red-green: without the converge-on-shrink, the final
+     * {@code cap()} would still read the old value; without
+     * grandfathering, {@code checkInvariants} would fire on the
+     * transient overshoot.
+     */
+    public void testSetCapShrinkGrandfathersInflight() {
+        SchedulerCore probe = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        int carriers = probe.carrierParallelism();
+        if (carriers < 2) {
+            return; // single-carrier box: no room to shrink below the minimum
+        }
+        SchedulerCore sched = new SchedulerCore(carriers, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        Drainer d = sched.drainer();
+        assertEquals(carriers, sched.cap(), "precondition: cap=carriers");
+
+        sched.setCap(1);
+        assertEquals(1, sched.requestedCap(), "requestedCap records the shrink");
+        // No in-flight slots: converges immediately.
+        assertEquals(1, sched.cap(), "cap converges at once when nothing is in flight");
+        d.checkInvariants();
+
+        // Now the grandfathering path: force in-flight above the target.
+        sched.setCap(carriers);
+        assertEquals(carriers, sched.cap(), "cap grew back");
+        d.setInflightForTest(carriers);
+        sched.setCap(1);
+        assertEquals(1, sched.requestedCap(), "requestedCap records the shrink");
+        assertEquals(carriers, sched.cap(),
+                "cap grandfathered while inflight > target");
+        d.checkInvariants(); // must not fire on the legitimate overshoot
+
+        d.setInflightForTest(1);
+        d.runUnderLock(() -> sched.convergeCap(d.inflightForTest()));
+        assertEquals(1, sched.cap(), "cap ratchets down once inflight <= target");
+        d.checkInvariants();
+
+        d.setInflightForTest(0);
+        d.runUnderLock(() -> sched.convergeCap(d.inflightForTest()));
+        assertEquals(1, sched.cap(), "cap stays at target");
+        d.checkInvariants();
+    }
+
+    /**
+     * P1-29 behavioral (growth): raising the cap admits more goroutines
+     * concurrently. Four spinners hold their slots via quantum parks; at
+     * cap=1 at most one is ever in flight, after {@code setCap(2)} both
+     * slots fill.
+     *
+     * <p>Red-green: with the cap update neutered (cap stuck at 1),
+     * {@code maxInflightObserved} stays 1 and this fails. Verified by
+     * fault injection on {@code SchedulerCore.setCap}.
+     */
+    public void testSetCapGrowthAdmitsMore() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        if (sched.carrierParallelism() < 2) {
+            return; // single-carrier box: growth past 1 is unobservable
+        }
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicBoolean stop = new AtomicBoolean();
+            AtomicInteger done = new AtomicInteger();
+            for (int i = 0; i < 4; i++) {
+                sched.spawn(() -> {
+                    while (!stop.get()) {
+                        sched.pollCurrentThread(); // quantum park releases the slot
+                    }
+                    done.incrementAndGet();
+                });
+            }
+            Thread.sleep(300);
+            assertEquals(1, sched.maxInflightObserved(),
+                    "cap=1 sanity: spinners never overlapped");
+
+            // The fix: raise the cap at runtime; both slots must fill.
+            sched.setCap(2);
+            assertEquals(2, sched.cap(), "cap grew to 2");
+            Thread.sleep(500);
+            stop.set(true);
+            sched.awaitQuiescence();
+            assertEquals(4, done.get(), "all spinners finished");
+            assertTrue(sched.maxInflightObserved() >= 2,
+                    "cap=2 after setCap: two spinners overlapped, maxInflight="
+                            + sched.maxInflightObserved());
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P1-29 behavioral (shrink): lowering the cap mid-flight never trips
+     * the drainer's hard assert — a violation would {@code halt(1)} the
+     * test JVM, so surviving the shrink IS the grandfathering assert.
+     * New admissions stop once the in-flight pair drains; the cap
+     * converges to the target.
+     *
+     * <p>Red-green: without the converge-on-shrink, the final
+     * {@code cap()} would still read 2.
+     */
+    public void testSetCapShrinkLimitsAdmission() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        if (sched.carrierParallelism() < 2) {
+            return; // single-carrier box: nothing to shrink from
+        }
+        assertEquals(2, sched.cap(), "precondition: cap=2");
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicBoolean stop = new AtomicBoolean();
+            AtomicInteger done = new AtomicInteger();
+            for (int i = 0; i < 4; i++) {
+                sched.spawn(() -> {
+                    while (!stop.get()) {
+                        sched.pollCurrentThread();
+                    }
+                    done.incrementAndGet();
+                });
+            }
+            // Let both slots fill before shrinking.
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (sched.maxInflightObserved() < 2 && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(2, sched.maxInflightObserved(), "precondition: both slots filled");
+
+            // Shrink mid-flight: the drainer must not assert; the
+            // in-flight pair keeps running (grandfathered).
+            sched.setCap(1);
+            assertEquals(1, sched.requestedCap(), "requestedCap records the shrink");
+            Thread.sleep(500);
+            stop.set(true);
+            sched.awaitQuiescence();
+            assertEquals(4, done.get(), "all spinners finished after the shrink");
+            assertEquals(1, sched.cap(), "cap converged down to 1");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
 }

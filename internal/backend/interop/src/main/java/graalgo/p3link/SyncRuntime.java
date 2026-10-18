@@ -67,24 +67,17 @@ import graalgo.values.GoString;
  *       {@code [0, GOMAXPROCS)}. On the JVM there is no preemption to
  *       disable, and a pin section contains no blocking calls, so the
  *       goroutine cannot migrate carriers mid-section; pin/unpin are
- *       therefore pure id assignment / no-op. The id is a per-thread
- *       dense number reduced mod the current GOMAXPROCS, so the
- *       {@code pid < GOMAXPROCS(0)} invariant that
- *       {@code sync.Pool.pinSlow} relies on when sizing its per-P array
- *       always holds. Once more than GOMAXPROCS threads exist in a run,
- *       two threads can hold congruent ids in pin sections
- *       <em>concurrently</em> and share one {@code poolLocal} shard's
- *       {@code private} slot without synchronization — a genuine Go data
- *       race (gc's per-P exclusivity does not hold here). On the JVM the
- *       consequence is bounded: aliased or dropped pooled objects (JVM
- *       reference reads/writes are atomic, so no tearing or memory
- *       unsafety; and {@code sync.Pool}'s contract permits dropping
- *       entries), never a crash — but the sharing is not race-safe, only
- *       rare in practice, because pin sections are a handful of
- *       non-blocking array accesses. The principled fix is an id checkout
- *       pool (GOMAXPROCS ids checked out per pin section, returned at
- *       unpin, with a per-thread stack for nested pins); that is
- *       follow-up work, not done here.</li>
+ *       therefore pure id assignment / no-op. graalgo runs a single-P
+ *       pool model (fix-redmaster-r43): {@code procPin} always returns
+ *       0 and pin sections serialize on PinLock, so every Put and every
+ *       Get meet on the same chain and the {@code pid < GOMAXPROCS(0)}
+ *       invariant that {@code sync.Pool.pinSlow} relies on when sizing
+ *       its per-P array holds trivially. Per-thread or rotating ids
+ *       were both tried and both fail snapshot 46, for opposite reasons
+ *       (see {@link #procPin}); a future true-migration implementation
+ *       can restore sharding. P1-29's cap-modulo wording does not apply
+ *       here: under the single-P model there are no per-thread ids to
+ *       reduce mod the scheduler cap.</li>
  *   <li><b>notifyList</b> ({@code sync.runtime_notifyListAdd} /
  *       {@code Wait} / {@code NotifyOne} / {@code NotifyAll} /
  *       {@code Check}, the ticket lock behind {@code sync.Cond}):

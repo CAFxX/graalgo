@@ -48,6 +48,12 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // P1-29 (2026-10-18): runtime.GOMAXPROCS(n) drives the scheduler
+        // admission cap (GoMaxProcsNode -> SchedulerCore.setCap).
+        // ProcPinCapTest pins the pid-range invariant under the single-P
+        // model (fix-redmaster-r43: procPin always returns 0).
+        TESTS.add(graalgo.p3builtin.nodes.GoMaxProcsNodeTest.class);
+        TESTS.add(graalgo.p3link.ProcPinCapTest.class);
         // fix-redmaster-r39: provenance-preserving byte derivation
         // (UnsafeTable.derive) soundness — a derivation can only ever
         // view its own base referent, never alias another live object.
