@@ -374,7 +374,12 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 	}
 	// P3-M6 (GG-0009): every buildable .s file in a compiled package must
 	// resolve to an inventory category; unsupported/uncategorized files
-	// fail the build here -- never silently ignored.
+	// fail the build here -- never silently ignored. The resolutions are
+	// deliberately discarded: the fail-fast error is the production
+	// product (module-local .s files fail before the inventory is
+	// consulted), while the per-file payloads are the P3-M7+ backend
+	// contract, pinned by the test oracle -- see the production contract
+	// note in asm.go and ADR-0007, remediation note 2.
 	if _, err := l.CheckAsmFiles(dir, importPath); err != nil {
 		return nil, err
 	}
@@ -457,6 +462,9 @@ func (l *Loader) mainRef(dir string) (*PackageRef, error) {
 		return nil, fmt.Errorf("p3frontend: no buildable Go files in %s", dir)
 	}
 	// P3-M6 (GG-0009): same .s fail-fast as localRef -- see above.
+	// (Resolutions deliberately discarded here too: production consumes
+	// only the fail-fast error; see the production contract note in
+	// asm.go and ADR-0007, remediation note 2.)
 	if _, err := l.CheckAsmFiles(dir, l.mainImportPath(dir)); err != nil {
 		return nil, err
 	}
