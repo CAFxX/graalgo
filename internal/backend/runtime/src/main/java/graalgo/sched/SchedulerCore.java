@@ -388,7 +388,14 @@ public final class SchedulerCore {
                 GoroutineState.restore(prev);
                 currentHandle.remove();
                 synchronized (quiescenceLock) {
-                    if (liveGoroutines.decrementAndGet() == 0) {
+                    // P1-30: after a panic shutdown the live count is pinned
+                    // at zero (see initiatePanicShutdown); a goroutine dying
+                    // late — forgiven by the zeroing, or never counted
+                    // because its spawn raced the shutdown — must not drive
+                    // the count negative. awaitQuiescence treats any nonzero
+                    // count as "not quiescent" and would hang again.
+                    if (liveGoroutines.get() > 0
+                            && liveGoroutines.decrementAndGet() == 0) {
                         quiescenceLock.notifyAll();
                     }
                 }
@@ -401,7 +408,13 @@ public final class SchedulerCore {
         // until the drainer admits it, so early start is safe.
         vthread.start();
         synchronized (quiescenceLock) {
-            liveGoroutines.incrementAndGet();
+            // P1-30: a spawn racing the panic shutdown must not resurrect
+            // the zeroed live count (0 -> 1 would re-hang
+            // awaitQuiescence). The vthread still runs to completion; it is
+            // simply not awaited — the process is exiting.
+            if (!panicShutdown) {
+                liveGoroutines.incrementAndGet();
+            }
         }
         drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
         return h;
@@ -410,9 +423,19 @@ public final class SchedulerCore {
     private final AtomicInteger panicCount = new AtomicInteger();
     private final AtomicInteger crashCount = new AtomicInteger();
     private volatile String firstPanicMessage;
+    /**
+     * P1-30: set by the first uncaught panic (see
+     * {@link #initiatePanicShutdown}). Once set, the process is exiting:
+     * the live-goroutine count is pinned at zero — spawns stop counting
+     * (their vthreads still run) and deaths stop decrementing — so
+     * {@link #awaitQuiescence} cannot be re-armed by late activity.
+     * One-way; read and written under {@link #quiescenceLock}.
+     */
+    private volatile boolean panicShutdown;
 
     private void recordPanic(graalgo.runtime.PanicException pe) {
-        if (panicCount.getAndIncrement() == 0) {
+        boolean first = panicCount.getAndIncrement() == 0;
+        if (first) {
             firstPanicMessage = String.valueOf(pe.goValue());
         }
         // P3-M4 (WS C, ADR-0004 D3): full gc-style traceback, sharing the
@@ -440,6 +463,40 @@ public final class SchedulerCore {
         graalgo.sched.GoroutineHandle h = currentHandle.get();
         long gid = h != null ? h.id : 1;
         System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, pe.stackTop(), throwSec));
+        if (first) {
+            // P1-30: gc kills the process immediately on an uncaught
+            // panic (exit 2). Shut down only AFTER the traceback is fully
+            // printed, so the print ordering is unchanged.
+            initiatePanicShutdown();
+        }
+    }
+
+    /**
+     * P1-30: gc kills the process immediately on an uncaught panic (exit
+     * 2). The launchers only learn of the panic after
+     * {@link #awaitQuiescence} returns — but a goroutine parked forever
+     * (the classic case: the consumer blocked on a channel whose producer
+     * just panicked) keeps the live count above zero, so quiescence never
+     * arrives and the process hangs instead of exiting. On the first
+     * uncaught panic, after its traceback is printed, abandon the
+     * remaining goroutines: the live count is zeroed and the quiescence
+     * monitor woken, so {@code awaitQuiescence} (and P3SyncMain's
+     * {@code awaitBackgroundDrain}, whose {@code live <= bg} break is
+     * satisfied by a zero count) return promptly and the launcher exits 2.
+     *
+     * <p>Abandon, not unpark: a channel-parked goroutine re-parks when
+     * woken with nothing to receive, and a goroutine inside a real
+     * blocking syscall cannot be unparked at all — waking changes nothing
+     * except burning drainer cycles. Parked vthreads are left in place:
+     * they are daemon threads (as are the drainer and timer threads) and
+     * die with the process at the launcher's {@code System.exit(2)}.
+     */
+    private void initiatePanicShutdown() {
+        synchronized (quiescenceLock) {
+            panicShutdown = true;
+            liveGoroutines.set(0);
+            quiescenceLock.notifyAll();
+        }
     }
 
     private void recordCrash(String what, Throwable t) {

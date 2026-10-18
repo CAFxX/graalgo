@@ -462,6 +462,81 @@ public final class SchedulerCoreTest {
     }
 
     /**
+     * P1-30: an uncaught panic releases awaitQuiescence even when another
+     * goroutine is parked forever (gc: the process exits 2 immediately
+     * instead of hanging). Red-green: pre-fix this test hangs in
+     * awaitQuiescence until the watchdog join times out.
+     */
+    public void testPanicShutdownReleasesQuiescence() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            // A goroutine parked forever: no waker will ever arrive.
+            sched.spawn(() -> sched.parkCurrent(() -> {
+            }));
+            sched.spawn(() -> {
+                throw new graalgo.runtime.PanicException("boom", null, "string", null);
+            });
+            Thread awaiter = Thread.ofPlatform().daemon(true).unstarted(() -> {
+                try {
+                    sched.awaitQuiescence();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            awaiter.start();
+            awaiter.join(15_000);
+            assertTrue(!awaiter.isAlive(),
+                    "awaitQuiescence returned promptly after the panic");
+            assertTrue(sched.panicked(), "panic recorded");
+            assertTrue(!sched.crashed(), "panic is not an internal crash");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P1-30 (spawn fence): a spawn racing the panic shutdown must not
+     * resurrect the zeroed live count — post-panic spawns are not awaited
+     * (the process is exiting; gc: immediate exit 2). Deterministic under
+     * both interleavings: an increment landing before the zeroing is
+     * forgiven by it; one landing after is suppressed by the
+     * panicShutdown guard.
+     */
+    public void testSpawnRacingPanicShutdownNotAwaited() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new graalgo.runtime.PanicException("boom", null, "string", null);
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+            while (!sched.panicked() && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertTrue(sched.panicked(), "panic recorded");
+            // Would block quiescence forever pre-fix.
+            sched.spawn(() -> sched.parkCurrent(() -> {
+            }));
+            Thread awaiter = Thread.ofPlatform().daemon(true).unstarted(() -> {
+                try {
+                    sched.awaitQuiescence();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            awaiter.start();
+            awaiter.join(15_000);
+            assertTrue(!awaiter.isAlive(),
+                    "awaitQuiescence returned promptly despite post-panic spawn");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Internal errors are loud: a RuntimeException escaping a goroutine
      * body is recorded as a crash (launcher exits 1), never swallowed.
      * verifies: GG-0017 (Goexit/panic/crash discipline).
