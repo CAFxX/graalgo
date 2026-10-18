@@ -3295,7 +3295,7 @@ func (f *decompressor) nextBlock() {
 }
 
 func (f *decompressor) Read(b []byte) (int, error) {
-	panic("flate.decompressor.Read: use __flateDecompressorRead helper (WS D)")
+	panic("flate.decompressor.Read: unreachable (call sites desugar to __flateDecompressorRead)")
 }
 
 func (f *decompressor) Close() error {
