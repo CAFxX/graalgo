@@ -1131,7 +1131,7 @@ func (s *Scanner) Scan() bool {
 			// its __-helper; a custom SplitFunc fails fast (re-test
 			// when WS D lands multi-result calls).
 			if s.split != nil {
-				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope (WS D)")
+				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope")
 			}
 			__sp := __bufioScanLines(s.buf[s.start:s.end], s.err != nil)
 			advance, token, err := __sp.advance, __sp.token, __sp.err
