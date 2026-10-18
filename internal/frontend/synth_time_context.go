@@ -459,7 +459,7 @@ func __parseDuration(s string) durationPair {
 // the exporter desugars 2-target call sites (Appendix M), every other
 // position fails fast. Body never runs.
 func ParseDuration(s string) (Duration, error) {
-	panic("time.ParseDuration: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("time.ParseDuration: unreachable (call sites desugar to __parseDuration)")
 }
 
 // Time is a wall-clock instant as Unix nanoseconds. The zero Time has
@@ -1210,10 +1210,11 @@ type Context interface {
 type emptyCtx struct{}
 
 // Deadline is declared for go/types interface satisfaction only; the
-// exporter desugars every Deadline() call site (Appendix M), so this
-// fail-fast body is unreachable.
+// synthetic Context interface omits Deadline, so no call site type-checks
+// and this fail-fast body is unreachable (the mrDeadline desugar path is
+// retained defense-in-depth for interface restoration).
 func (emptyCtx) Deadline() (deadline time.Time, ok bool) {
-	panic("context: emptyCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context: emptyCtx.Deadline: unreachable (Deadline omitted from the synthetic Context interface; no call site type-checks)")
 }
 func (emptyCtx) Done() <-chan struct{} { return ctxNeverFire }
 func (emptyCtx) Err() error            { return nil }
@@ -1274,7 +1275,7 @@ func newCancelCtx(parent Context) *cancelCtx {
 // Deadline is declared for go/types interface satisfaction only (see
 // emptyCtx.Deadline).
 func (c *cancelCtx) Deadline() (deadline time.Time, ok bool) {
-	panic("context: cancelCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context: cancelCtx.Deadline: unreachable (Deadline omitted from the synthetic Context interface; no call site type-checks)")
 }
 
 func (c *cancelCtx) Done() <-chan struct{} { return c.done }
@@ -1375,11 +1376,11 @@ func __withCancelCause(parent Context) *cancelCtx {
 // type-checking. The exporter desugars 2-target call sites (Appendix M);
 // every other position fails fast. Bodies never run.
 func WithCancel(parent Context) (Context, CancelFunc) {
-	panic("context.WithCancel: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context.WithCancel: unreachable (call sites desugar to __withCancel)")
 }
 
 func WithCancelCause(parent Context) (Context, CancelCauseFunc) {
-	panic("context.WithCancelCause: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context.WithCancelCause: unreachable (call sites desugar to __withCancelCause)")
 }
 
 // Cause returns the cause of c's cancellation: the cause for synthetic
@@ -1451,7 +1452,7 @@ type timerCtx struct {
 // Deadline is declared for go/types interface satisfaction only (see
 // emptyCtx.Deadline).
 func (c *timerCtx) Deadline() (deadline time.Time, ok bool) {
-	panic("context: timerCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context: timerCtx.Deadline: unreachable (Deadline omitted from the synthetic Context interface; no call site type-checks)")
 }
 
 func (c *timerCtx) Done() <-chan struct{} { return c.cancel.Done() }
@@ -1505,11 +1506,11 @@ func __withTimeout(parent Context, timeout time.Duration) *timerCtx {
 // the exporter desugars 2-target call sites (Appendix M), every other
 // position fails fast. Bodies never run.
 func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
-	panic("context.WithDeadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context.WithDeadline: unreachable (call sites desugar to __withDeadline)")
 }
 
 func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
-	panic("context.WithTimeout: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context.WithTimeout: unreachable (call sites desugar to __withTimeout)")
 }
 
 func WithDeadlineCause(parent Context, d time.Time, cause error) (Context, CancelFunc) {
@@ -1562,7 +1563,7 @@ func (c *valueCtx) Deadline() (deadline time.Time, ok bool) {
 	// __deadlineOf handles *valueCtx via its own type-switch), and a
 	// silently-succeeding outlier among fail-fast siblings would mask a
 	// desugar escape (reviewer1 P2-5).
-	panic("context: valueCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context: valueCtx.Deadline: unreachable (Deadline omitted from the synthetic Context interface; no call site type-checks)")
 }
 
 func (c *valueCtx) Done() <-chan struct{} { return c.parent.Done() }
@@ -1642,7 +1643,7 @@ type withoutCancelCtx struct {
 // Deadline is declared for go/types interface satisfaction only (see
 // emptyCtx.Deadline).
 func (c *withoutCancelCtx) Deadline() (deadline time.Time, ok bool) {
-	panic("context: withoutCancelCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("context: withoutCancelCtx.Deadline: unreachable (Deadline omitted from the synthetic Context interface; no call site type-checks)")
 }
 func (c *withoutCancelCtx) Done() <-chan struct{} { return ctxNeverFire }
 func (c *withoutCancelCtx) Err() error             { return nil }
