@@ -598,3 +598,73 @@ func main() {
 		t.Fatalf("want 2 ifacemethod Read nodes (bare statements), got %d", reads)
 	}
 }
+
+// TestD1IfaceMultiResultAssignPosition: an unlisted multi-result
+// interface method in `=` assignment position (not `:=`) desugars via
+// the general classifier (classifyUserIfaceMultiResultCall), exactly
+// like expression position. Regression test for the red-master
+// incident where fmt/scan.go's `r, size, err = s.rs.ReadRune()`
+// (io.RuneReader, 3 results, in no whitelist) fell through
+// classifyMultiResultCall to a plain 3-target/1-rhs assign, which the
+// v1 backend rejects (assign.fields: lhs/rhs length mismatch) —
+// failing all 38 snapshot programs' builds.
+func TestD1IfaceMultiResultAssignPosition(t *testing.T) {
+	const src = `package main
+
+import "io"
+
+func readRune3(r io.RuneReader) (rune, int, error) {
+	var ch rune
+	var size int
+	var err error
+	ch, size, err = r.ReadRune()
+	return ch, size, err
+}
+
+func main() {
+	ch, _, _ := readRune3(nil)
+	println(ch)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	// The v1 backend invariant: every assign has len(lhs)==len(rhs)
+	// or is a comma-ok form. A 3-lhs/1-rhs assign must never be
+	// emitted.
+	for _, n := range findAllKind(doc, "assign") {
+		f := n["fields"].(map[string]any)
+		lhs, _ := f["lhs"].([]any)
+		rhs, _ := f["rhs"].([]any)
+		if len(lhs) == 3 && len(rhs) == 1 {
+			t.Fatalf("emitted 3-target/1-rhs assign (backend would reject): %v", n)
+		}
+	}
+	// The desugared block: __p5mr_N := <ifacemethod ReadRune>, then
+	// three extractions assigned to ch, size, err.
+	blocks := findAllKind(doc, "block")
+	found := false
+	for _, b := range blocks {
+		stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
+		if len(stmts) != 4 {
+			continue
+		}
+		s0, _ := stmts[0].(map[string]any)
+		if s0["kind"] != "vardecl" {
+			continue
+		}
+		vals, _ := s0["fields"].(map[string]any)["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		v0, _ := vals[0].(map[string]any)
+		if v0["kind"] != "ifacemethod" {
+			continue
+		}
+		if v0["fields"].(map[string]any)["method"] != "ReadRune" {
+			continue
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("no desugared block __p5mr_N := r.ReadRune(); ch = ...; size = ...; err = ... found")
+	}
+}
