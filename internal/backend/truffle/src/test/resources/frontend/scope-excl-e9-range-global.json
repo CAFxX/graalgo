@@ -1,0 +1,251 @@
+{
+  "frontend": "v1",
+  "generator": {
+    "tool": "gofrontend",
+    "version": "0.7.0",
+    "goroot": "go1.27.1"
+  },
+  "package": {
+    "name": "main",
+    "files": [
+      "e9_range_global.go"
+    ],
+    "lang": "go1.27"
+  },
+  "types": [
+    {
+      "kind": "basic",
+      "detail": {
+        "class": "int",
+        "name": "int",
+        "untyped": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "slice",
+      "detail": {
+        "elem": 0
+      }
+    }
+  ],
+  "objects": [
+    {
+      "kind": "var",
+      "name": "g",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "func",
+      "name": "main",
+      "type": 1,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "xs",
+      "type": 3,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    }
+  ],
+  "funcs": [
+    {
+      "kind": "funcdecl",
+      "pos": {
+        "file": 0,
+        "line": 5,
+        "col": 1,
+        "off": 25,
+        "len": 63
+      },
+      "fields": {
+        "body": {
+          "kind": "block",
+          "pos": {
+            "file": 0,
+            "line": 5,
+            "col": 13,
+            "off": 37,
+            "len": 51
+          },
+          "fields": {
+            "stmts": [
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 6,
+                  "col": 2,
+                  "off": 40,
+                  "len": 20
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "xs"
+                  ],
+                  "objs": [
+                    2
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "complit",
+                      "pos": {
+                        "file": 0,
+                        "line": 6,
+                        "col": 8,
+                        "off": 46,
+                        "len": 14
+                      },
+                      "fields": {
+                        "keyed": false,
+                        "type": 3,
+                        "values": [
+                          {
+                            "kind": "basiclit",
+                            "pos": {
+                              "file": 0,
+                              "line": 6,
+                              "col": 14,
+                              "off": 52,
+                              "len": 1
+                            },
+                            "fields": {
+                              "const": "1",
+                              "f32bits": 1065353216,
+                              "f64bits": 4607182418800017408,
+                              "type": 0,
+                              "value": "1"
+                            }
+                          },
+                          {
+                            "kind": "basiclit",
+                            "pos": {
+                              "file": 0,
+                              "line": 6,
+                              "col": 17,
+                              "off": 55,
+                              "len": 1
+                            },
+                            "fields": {
+                              "const": "2",
+                              "f32bits": 1073741824,
+                              "f64bits": 4611686018427387904,
+                              "type": 0,
+                              "value": "2"
+                            }
+                          },
+                          {
+                            "kind": "basiclit",
+                            "pos": {
+                              "file": 0,
+                              "line": 6,
+                              "col": 20,
+                              "off": 58,
+                              "len": 1
+                            },
+                            "fields": {
+                              "const": "3",
+                              "f32bits": 1077936128,
+                              "f64bits": 4613937818241073152,
+                              "type": 0,
+                              "value": "3"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "range",
+                "pos": {
+                  "file": 0,
+                  "line": 7,
+                  "col": 2,
+                  "off": 62,
+                  "len": 24
+                },
+                "fields": {
+                  "body": {
+                    "kind": "block",
+                    "pos": {
+                      "file": 0,
+                      "line": 7,
+                      "col": 22,
+                      "off": 82,
+                      "len": 4
+                    },
+                    "fields": {
+                      "stmts": []
+                    }
+                  },
+                  "define": false,
+                  "key": null,
+                  "value": 0,
+                  "x": {
+                    "kind": "ident",
+                    "pos": {
+                      "file": 0,
+                      "line": 7,
+                      "col": 19,
+                      "off": 79,
+                      "len": 2
+                    },
+                    "fields": {
+                      "name": "xs",
+                      "obj": 2,
+                      "type": 3
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "name": "main",
+        "obj": 1,
+        "params": [],
+        "pkgpath": "main",
+        "sig": 2
+      }
+    }
+  ],
+  "globals": [
+    {
+      "obj": 0,
+      "init": null,
+      "pos": {
+        "file": 0,
+        "line": 3,
+        "col": 5,
+        "off": 18,
+        "len": 5
+      }
+    }
+  ]
+}

@@ -1,0 +1,303 @@
+{
+  "frontend": "v1",
+  "generator": {
+    "tool": "gofrontend",
+    "version": "0.7.0",
+    "goroot": "go1.27.1"
+  },
+  "package": {
+    "name": "main",
+    "files": [
+      "control_range_assign_local.go"
+    ],
+    "lang": "go1.27"
+  },
+  "types": [
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "slice",
+      "detail": {
+        "elem": 3
+      }
+    },
+    {
+      "kind": "basic",
+      "detail": {
+        "class": "int",
+        "name": "int",
+        "untyped": false
+      }
+    }
+  ],
+  "objects": [
+    {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "xs",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "k",
+      "type": 3,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    }
+  ],
+  "funcs": [
+    {
+      "kind": "funcdecl",
+      "pos": {
+        "file": 0,
+        "line": 3,
+        "col": 1,
+        "off": 14,
+        "len": 82
+      },
+      "fields": {
+        "body": {
+          "kind": "block",
+          "pos": {
+            "file": 0,
+            "line": 3,
+            "col": 13,
+            "off": 26,
+            "len": 70
+          },
+          "fields": {
+            "stmts": [
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 4,
+                  "col": 2,
+                  "off": 29,
+                  "len": 20
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "xs"
+                  ],
+                  "objs": [
+                    1
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "complit",
+                      "pos": {
+                        "file": 0,
+                        "line": 4,
+                        "col": 8,
+                        "off": 35,
+                        "len": 14
+                      },
+                      "fields": {
+                        "keyed": false,
+                        "type": 2,
+                        "values": [
+                          {
+                            "kind": "basiclit",
+                            "pos": {
+                              "file": 0,
+                              "line": 4,
+                              "col": 14,
+                              "off": 41,
+                              "len": 1
+                            },
+                            "fields": {
+                              "const": "1",
+                              "f32bits": 1065353216,
+                              "f64bits": 4607182418800017408,
+                              "type": 3,
+                              "value": "1"
+                            }
+                          },
+                          {
+                            "kind": "basiclit",
+                            "pos": {
+                              "file": 0,
+                              "line": 4,
+                              "col": 17,
+                              "off": 44,
+                              "len": 1
+                            },
+                            "fields": {
+                              "const": "2",
+                              "f32bits": 1073741824,
+                              "f64bits": 4611686018427387904,
+                              "type": 3,
+                              "value": "2"
+                            }
+                          },
+                          {
+                            "kind": "basiclit",
+                            "pos": {
+                              "file": 0,
+                              "line": 4,
+                              "col": 20,
+                              "off": 47,
+                              "len": 1
+                            },
+                            "fields": {
+                              "const": "3",
+                              "f32bits": 1077936128,
+                              "f64bits": 4613937818241073152,
+                              "type": 3,
+                              "value": "3"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 5,
+                  "col": 6,
+                  "off": 55,
+                  "len": 5
+                },
+                "fields": {
+                  "define": false,
+                  "names": [
+                    "k"
+                  ],
+                  "objs": [
+                    2
+                  ],
+                  "type": 3,
+                  "values": []
+                }
+              },
+              {
+                "kind": "range",
+                "pos": {
+                  "file": 0,
+                  "line": 6,
+                  "col": 2,
+                  "off": 62,
+                  "len": 32
+                },
+                "fields": {
+                  "body": {
+                    "kind": "block",
+                    "pos": {
+                      "file": 0,
+                      "line": 6,
+                      "col": 22,
+                      "off": 82,
+                      "len": 12
+                    },
+                    "fields": {
+                      "stmts": [
+                        {
+                          "kind": "assign",
+                          "pos": {
+                            "file": 0,
+                            "line": 7,
+                            "col": 3,
+                            "off": 86,
+                            "len": 5
+                          },
+                          "fields": {
+                            "lhs": [
+                              {
+                                "kind": "blank",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 7,
+                                  "col": 3,
+                                  "off": 86,
+                                  "len": 1
+                                }
+                              }
+                            ],
+                            "rhs": [
+                              {
+                                "kind": "ident",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 7,
+                                  "col": 7,
+                                  "off": 90,
+                                  "len": 1
+                                },
+                                "fields": {
+                                  "name": "k",
+                                  "obj": 2,
+                                  "type": 3
+                                }
+                              }
+                            ],
+                            "tok": "="
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "define": false,
+                  "key": null,
+                  "value": 2,
+                  "x": {
+                    "kind": "ident",
+                    "pos": {
+                      "file": 0,
+                      "line": 6,
+                      "col": 19,
+                      "off": 79,
+                      "len": 2
+                    },
+                    "fields": {
+                      "name": "xs",
+                      "obj": 1,
+                      "type": 2
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "name": "main",
+        "obj": 0,
+        "params": [],
+        "pkgpath": "main",
+        "sig": 1
+      }
+    }
+  ],
+  "globals": []
+}
