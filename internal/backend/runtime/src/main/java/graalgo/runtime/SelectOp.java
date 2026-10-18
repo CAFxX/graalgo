@@ -122,6 +122,23 @@ public final class SelectOp {
     }
 
     /**
+     * Returns the case index decided by the winning waker after a park
+     * return. A wakeup that arrives with no waker — {@code resultIndex}
+     * still -1 and no poison — violates the exactly-once-unpark invariant:
+     * fail loudly instead of returning -1 as a case index. (RV22-P1-5)
+     */
+    private int resultAfterPark() {
+        if (resultPoison) {
+            Panic.throwPanic(GoStrings.of("send on closed channel"));
+        }
+        if (resultIndex < 0) {
+            throw new IllegalStateException(
+                    "select resumed with no winning case (resultIndex=-1, no poison)");
+        }
+        return resultIndex;
+    }
+
+    /**
      * Executes the select on the current goroutine. Returns the chosen
      * case index; for a recv case the value/ok are stashed for
      * {@link ChanOps#selectRecvValue}/{@link ChanOps#selectRecvOk}.
@@ -244,10 +261,7 @@ public final class SelectOp {
                 // reason-tagged but filtered by duration on resume.
                 sched.parkCurrent(null, ParkReason.SELECT);
                 try {
-                    if (resultPoison) {
-                        Panic.throwPanic(GoStrings.of("send on closed channel"));
-                    }
-                    return resultIndex;
+                    return resultAfterPark();
                 } finally {
                     cleanup(mine);
                 }
@@ -283,10 +297,7 @@ public final class SelectOp {
             JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);
             sched.parkCurrent(null, ParkReason.SELECT);
             try {
-                if (resultPoison) {
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
-                }
-                return resultIndex;
+                return resultAfterPark();
             } finally {
                 cleanup(mine);
             }
