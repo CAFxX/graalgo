@@ -338,8 +338,10 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result (e.g. path/filepath's `var lstat = os.Lstat`).
-	// For package-level vars, records aliases instead of expanding.
-	etaVarLits, varAliases := etaExpandMRFuncValues(files, info, pkg)
+	// Package-level `var x = pkg.F` declarations are left in place: the
+	// PKG-035 value-position mechanism lowers the initializer and links
+	// call sites through the variable (userMRVars).
+	etaExpandMRFuncValues(files, info, pkg)
 	// Stubs served type-checking; keep them for method resolution
 	// (the desugar rewrites all calls, so stubs are never exported).
 	// Mark them via the spec so the exporter can skip them.
@@ -347,7 +349,6 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	return &syntheticPackage{
 		path: importPath, pkg: pkg,
 		files: files, info: info, fset: fset, raws: raws,
-		etaVarLits: etaVarLits, varFuncAliases: varAliases,
 	}, nil
 }
 

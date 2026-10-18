@@ -26,15 +26,6 @@ type syntheticPackage struct {
 	// raws parallels files for multi-file disk packages (WS G); nil for
 	// embedded single-file synthetic sources (raw covers the one file).
 	raws [][]byte
-	// etaVarLits maps package-level Vars (e.g. path/filepath's lstat)
-	// to their eta-expanded FuncLit initializers, for MR-closure-var
-	// linking. Populated by etaExpandMRFuncValues (real-x509 lane).
-	etaVarLits map[*types.Var]*ast.FuncLit
-	// varFuncAliases maps package-level Vars (e.g. path/filepath's
-	// lstat) to the multi-result *types.Func they alias (e.g.
-	// os.Lstat), for direct call-site desugar without eta-expansion.
-	// Populated by etaExpandMRFuncValues (real-x509 lane).
-	varFuncAliases map[*types.Var]*types.Func
 }
 
 // srcForFile returns the source bytes for f: per-file bytes for disk
@@ -876,7 +867,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
+	etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
@@ -997,25 +988,6 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 		e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
 		e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 	}()
-	// General (real-x509 lane): copy eta-expanded Var->FuncLit mappings
-	// and Var->Func aliases for MR-closure-var linking (e.g.
-	// path/filepath's lstat).
-	if len(sp.etaVarLits) > 0 {
-		if e.etaVarLits == nil {
-			e.etaVarLits = make(map[*types.Var]*ast.FuncLit)
-		}
-		for v, lit := range sp.etaVarLits {
-			e.etaVarLits[v] = lit
-		}
-	}
-	if len(sp.varFuncAliases) > 0 {
-		if e.varFuncAliases == nil {
-			e.varFuncAliases = make(map[*types.Var]*types.Func)
-		}
-		for v, fn := range sp.varFuncAliases {
-			e.varFuncAliases[v] = fn
-		}
-	}
 	g := synthGroup{sp: sp}
 	// Two passes: funcs first (so var initializers can call them),
 	// then package vars.
@@ -1281,26 +1253,6 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			var initExpr ast.Expr
 			if len(sv.vs.Values) > 0 {
 				initExpr = sv.vs.Values[i]
-				// General (real-x509 lane): if the initializer is a
-				// synthetic multi-result function in value position
-				// (e.g. var lstat = os.Lstat), skip the initializer
-				// (var stays nil). The function cannot be captured as a
-				// value in v1; call sites through the var use the alias
-				// map (varFuncAliases) to desugar as the original Func.
-				if sel, ok := unparen(initExpr).(*ast.SelectorExpr); ok {
-					if _, isSel := e.info.Selections[sel]; !isSel {
-						if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
-							if obj.Pkg() != nil && e.synthFuncIDs != nil {
-								key := obj.Pkg().Path() + "." + obj.Name()
-								if _, ok := e.synthFuncIDs[key]; ok {
-									// Skip: leave init nil.
-									varInits = append(varInits, ginit{oid: sv.oids[i], init: nil, expr: nil, pos: e.pos(n)})
-									continue
-								}
-							}
-						}
-					}
-				}
 				x, err := e.exportExpr(initExpr)
 				if err != nil {
 					return err
