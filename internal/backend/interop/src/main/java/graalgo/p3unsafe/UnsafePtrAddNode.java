@@ -7,7 +7,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.values.GoKind;
 
 /**
- * {@code unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T))} (fix-redmaster-conformance):
+ * {@code unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T))} (fix-redmaster-exitcode-drift):
  * the {@code "unsafeptradd"} wire node. Element-indexed pointer arithmetic.
  *
  * <p>The frontend only emits this node when the offset is structurally a
