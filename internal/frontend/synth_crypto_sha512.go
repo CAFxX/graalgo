@@ -357,9 +357,9 @@ func (d *digest) MarshalSingle() []byte {
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// encoding.__binaryMarshal). Re-test trigger: WS D lands.
+// encoding.__binaryMarshal).
 func (d *digest) MarshalBinary() ([]byte, error) {
-	panic("crypto/sha512: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha512: MarshalBinary: unreachable (call sites desugar to __binaryMarshal")
 }
 
 func (d *digest) AppendSingle(b []byte) []byte {
@@ -391,9 +391,9 @@ func (d *digest) AppendSingle(b []byte) []byte {
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub;
 // real logic is AppendSingle, served via the mrM8 desugar to
-// encoding.__binaryAppend). Re-test trigger: WS D lands.
+// encoding.__binaryAppend).
 func (d *digest) AppendBinary(b []byte) ([]byte, error) {
-	panic("crypto/sha512: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha512: AppendBinary: unreachable (call sites desugar to __binaryAppend")
 }
 
 func (d *digest) UnmarshalBinary(b []byte) error {
@@ -439,9 +439,8 @@ func (d *digest) CloneSinglePair() hash.ClonePair {
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is
 // CloneSinglePair, served via the mrM8 desugar to hash.__hashClone).
-// Re-test trigger: WS D lands.
 func (d *digest) Clone() (hash.Cloner, error) {
-	panic("crypto/sha512: Clone: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha512: Clone: unreachable (call sites desugar to __hashClone")
 }
 
 // New returns a new digest computing the SHA-512 hash.
@@ -505,9 +504,9 @@ func (d *digest) WriteSingle(p []byte) int {
 // for type-checking with a fail-fast body. Real callers go through
 // the mrM8 desugar to hash.__hashWrite (see
 // m8-staging/crypto/03-mrdesugar.patch), which delegates to the
-// single-result WriteSingle above. Re-test trigger: WS D lands.
+// single-result WriteSingle above.
 func (d *digest) Write(p []byte) (nn int, err error) {
-	panic("crypto/sha512: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha512: Write: unreachable (call sites desugar to __hashWrite")
 }
 
 func (d *digest) Sum(in []byte) []byte {
