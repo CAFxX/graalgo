@@ -1855,6 +1855,19 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// P4 (WS D, general interface MR): user-defined (or
+				// otherwise unlisted) interfaces with multi-result
+				// methods, e.g. io.RuneReader.ReadRune as called in
+				// fmt/scan.go (`r, size, err = s.rs.ReadRune()`).
+				// Synthesizes the interface pair type on first use.
+				// Mirrors the fallback chain in exportIfaceMethodCall
+				// so assignment and expression positions classify
+				// identically; without this, the assignment falls
+				// through to a plain multi-target assign the v1
+				// backend rejects (lhs/rhs length mismatch).
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
