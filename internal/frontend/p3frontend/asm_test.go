@@ -1,12 +1,14 @@
 package p3frontend
 
 import (
+	"errors"
 	"go/build"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -472,4 +474,62 @@ func checkInventoryCoversList(t *testing.T, root string, inv map[string]AsmEntry
 		}
 	}
 	return missing
+}
+
+// TestAsmFailFastSkipsInventory pins the L23 production-path shrink: for a
+// module-local package (outside GOROOT/src -- the only production case) the
+// fail-fast fires BEFORE the embedded inventory is loaded or consulted.
+// With the inventory loader poisoned, the error must still be the
+// outside-GOROOT verdict -- never the inventory error. The negative pin
+// (in-GOROOT path) proves the load only moved, it was not removed: the same
+// poisoned inventory surfaces on the in-GOROOT path.
+// Non-tautological: on the pre-L23 ordering (inventory loaded first) the
+// module-local subtest fails -- it would return the poison error instead of
+// the outside-GOROOT verdict.
+func TestAsmFailFastSkipsInventory(t *testing.T) {
+	old := loadAsmInventory
+	poison := errors.New("poisoned asm inventory")
+	loadAsmInventory = sync.OnceValues(func() (map[string]AsmEntry, error) {
+		return nil, poison
+	})
+	defer func() { loadAsmInventory = old }()
+
+	writeAsm := func(t *testing.T, dir string) {
+		t.Helper()
+		writeFiles(t, dir, map[string]string{
+			"evil_amd64.s": "TEXT ·evil(SB),$0-0\n\tRET\n",
+		})
+	}
+
+	t.Run("module-local", func(t *testing.T) {
+		dir := t.TempDir() // outside GOROOT: the production path
+		writeAsm(t, dir)
+		loader := NewLoader()
+		_, err := loader.CheckAsmFiles(dir, "example.com/mod/evil")
+		if err == nil {
+			t.Fatal("module-local .s: build proceeded silently")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "outside the inventoried GOROOT/src") {
+			t.Errorf("module-local .s: expected outside-GOROOT verdict, got: %v", err)
+		}
+		if strings.Contains(msg, "poisoned") {
+			t.Errorf("module-local .s: fail-fast path consulted the inventory: %v", err)
+		}
+	})
+
+	t.Run("in-goroot", func(t *testing.T) {
+		fakeRoot := t.TempDir()
+		pkgDir := filepath.Join(fakeRoot, "src", "fakelib")
+		writeAsm(t, pkgDir)
+		loader := NewLoader()
+		loader.goroot = fakeRoot
+		_, err := loader.CheckAsmFiles(pkgDir, "fakelib")
+		if err == nil {
+			t.Fatal("in-GOROOT uncategorized .s: build proceeded silently")
+		}
+		if !errors.Is(err, poison) {
+			t.Errorf("in-GOROOT path: expected the inventory-load error, got: %v", err)
+		}
+	})
 }
