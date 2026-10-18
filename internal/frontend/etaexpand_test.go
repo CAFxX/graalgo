@@ -65,9 +65,16 @@ func etaExpandGlobalInitByName(t *testing.T, doc map[string]any, name string) ma
 	return nil
 }
 
-// etaExpandPairTempCallFun returns the fun node of the desugared
+// etaExpandPairTempCallFun returns the fun node of the first desugared
 // __p5mr_N pair-temp call, or nil when no such temp exists.
 func etaExpandPairTempCallFun(doc map[string]any) map[string]any {
+	return etaExpandPairTempCallFunWithName(doc, "")
+}
+
+// etaExpandPairTempCallFunWithName returns the fun node of the desugared
+// __p5mr_N pair-temp call whose fun is an ident with the given name, or
+// nil when no such temp exists. Empty wantName matches any pair temp.
+func etaExpandPairTempCallFunWithName(doc map[string]any, wantName string) map[string]any {
 	for _, n := range findAllKind(doc, "vardecl") {
 		names, _ := n["fields"].(map[string]any)["names"].([]any)
 		if len(names) != 1 {
@@ -86,6 +93,14 @@ func etaExpandPairTempCallFun(doc map[string]any) map[string]any {
 			continue
 		}
 		fun, _ := call["fields"].(map[string]any)["fun"].(map[string]any)
+		if fun == nil || fun["kind"] != "ident" {
+			continue
+		}
+		if wantName != "" {
+			if got, _ := fun["fields"].(map[string]any)["name"].(string); got != wantName {
+				continue
+			}
+		}
 		return fun
 	}
 	return nil
@@ -153,8 +168,13 @@ func main() {
 	if !found {
 		t.Fatal("no global with __lstat initializer found (disk path/filepath lstat)")
 	}
-	// The lstat(filename) call inside Glob desugared to a pair temp.
-	if etaExpandPairTempCallFun(doc) == nil {
-		t.Fatal("no desugared __p5mr_ pair-temp vardecl found")
+	// The lstat(filename) call *inside path/filepath's Glob* (the
+	// in-disk-package call site) desugared to a pair temp whose fun is
+	// the lstat variable ident. Matching any __p5mr_ temp would be weak:
+	// main's own filepath.Glob call also produces one, so this pins the
+	// disk-package desugar specifically.
+	fun := etaExpandPairTempCallFunWithName(doc, "lstat")
+	if fun == nil {
+		t.Fatal("no desugared __p5mr_ pair-temp vardecl with fun ident lstat found (disk path)")
 	}
 }
