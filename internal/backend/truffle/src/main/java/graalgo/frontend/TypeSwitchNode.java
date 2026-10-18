@@ -12,10 +12,10 @@ import java.util.List;
  * <p>
  * Matches the interface's dynamic type descriptor against the clause type
  * lists (identity on the canonical descriptors, so named types never
- * conflate with their underlying types). {@code case nil} matches a nil
- * interface (typed-nil with a nil data pointer also matches its type
- * clause, per Go semantics). Panics are stubbed as internal errors until
- * WS F gives them real semantics.
+ * conflate with their underlying types). {@code case nil} matches only a
+ * nil interface; a typed nil (non-nil interface with nil data) matches the
+ * clause of its dynamic type, per Go semantics. Panics are stubbed as
+ * internal errors until WS F gives them real semantics.
  *
  * <p>Binding ({@code switch x := y.(type)}): the clause that matches binds
  * a fresh interface value with the clause's asserted type descriptor and a
@@ -91,9 +91,15 @@ public final class TypeSwitchNode extends GoStmtNode {
                 continue;
             }
             boolean hit = false;
-            if (c.nilCase && data == null) {
+            // case nil matches only a nil interface: a typed nil has null
+            // data but a non-null descriptor, so it must NOT match here
+            // (GoInterface.isNil() is descriptor == null).
+            if (c.nilCase && (v == null || v.isNil())) {
                 hit = true;
-            } else if (data != null) {
+            } else if (dyn != null) {
+                // A typed nil (data == null, dyn != null) still carries its
+                // dynamic type and matches the clause of that type; a nil
+                // interface (dyn == null) matches no type clause.
                 for (int i = 0; i < c.types.size(); i++) {
                     GoTypeDescriptor t = c.types.get(i);
                     if (t == dyn) {

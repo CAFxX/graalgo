@@ -54,11 +54,27 @@ func main() {
 	default:
 		r5 = 3
 	}
+	// typed nil must NOT match case nil: it matches its dynamic type's clause
+	var tn any = (*int)(nil)
+	r6 := 0
+	switch v := tn.(type) {
+	case nil:
+		r6 = 1
+	case *int:
+		if v == nil {
+			r6 = 2
+		} else {
+			r6 = 3
+		}
+	default:
+		r6 = 4
+	}
 	_ = r1
 	_ = r2
 	_ = r3
 	_ = r4
 	_ = r5
+	_ = r6
 }
 
-// observe: r1 r2 r3 r4 r5
+// observe: r1 r2 r3 r4 r5 r6
