@@ -129,15 +129,21 @@ func compareSemver(a, b string) int {
 // database/sql/driver) resolve through the same general mechanism.
 // Synthetic-overlay paths never resolve from disk, wherever the call
 // comes from: the disk fallback exists for stdlib outside the overlay
-// and third-party modules. GOROOT must never shadow a synthetic package —
-// building e.g. the real GOROOT bytes as a disk package registers its
-// multi-result members in the global disk-MR table, which then shadows
-// the synthetic fail-fast/desugar contracts for every later export in
-// the process (TestSyntheticBytesCutFailsFast isolation). The importer's
-// cases claim synthetic paths first, but direct getDiskPackage callers
-// (multiResultHelperFunc) bypass the importer, so the guard lives here.
+// and third-party modules. "Synthetic overlay" covers both the
+// syntheticSources map and the two dedicated synthetic stubs (runtime,
+// unsafe), which are not syntheticSources keys: the single
+// isDedicatedSyntheticStub predicate guards the pair, never a
+// re-enumerated name list at call sites. GOROOT must never shadow a
+// synthetic package — building e.g. the real GOROOT runtime as a disk
+// package registers its multi-result members in the global disk-MR
+// table, which then shadows the synthetic fail-fast/desugar contracts
+// for every later export in the process (TestSyntheticBytesCutFailsFast
+// isolation). The importer's cases claim synthetic paths first, but
+// direct getDiskPackage callers (multiResultHelperFunc,
+// classifyUserIfaceMultiResultCall) bypass the importer, so the guard
+// lives here.
 func resolveDiskPackageDir(importPath string) (string, error) {
-	if _, ok := syntheticSources[importPath]; ok {
+	if _, ok := syntheticSources[importPath]; ok || isDedicatedSyntheticStub(importPath) {
 		return "", fmt.Errorf("%w: %q (synthetic overlay)", errDiskNotFound, importPath)
 	}
 	diskMu.Lock()
