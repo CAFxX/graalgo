@@ -10,11 +10,33 @@
 # version history:
 #   1 (2026-10-13): initial triage — 39 divergences from the 2026-10-13 differential.
 #       F-1..F-6 are graalgo bugs filed for the frontend/scheduler lanes.
-version: 1
+#   2 (2026-10-18): first re-triage (rv18-exclusion-staleness lane) via
+#       diffharness --recheck-excluded + direct differential runs.
+#       Removed 7 stale entries (all XPASS-verified: differential now agrees
+#       with gc on the file):
+#       - 235.go: SHADOWED — the scanner already excludes it as
+#         exclude:deferred-parity (uses chan/go); the YAML entry was redundant.
+#         F-2 (named result assignment) remains a tracked frontend bug.
+#       - func.go, nilptr4.go, unsafe_string.go: frontend scope gaps overtaken
+#         by the multi-result fix stream (56a3dd68, 47840bf8, 886ffb51).
+#       - gc.go: runtime.GC() is callable and observably identical (the test
+#         has no output); the Phase-2 GC-interop concern does not materialize.
+#       - print.go: GG-0030 reason inapplicable — the test prints no non-nil
+#         pointer addresses (only nils, scalars, strings); outputs agree.
+#       - solitaire.go: F-6 overtaken — the solver finds solutions; output
+#         byte-identical to gc (incl. "391865 moves tried").
+#       divmod.go detail updated: builds since the MR fix stream; does not
+#       complete within the per-program timeout on the ~4M-case interpreter
+#       run (gc finishes in <60s) — still excluded, reason now performance.
+#       Masked by red-master abifuncpc breakage (inconclusive, kept as-is):
+#       alg.go, const3.go, convert5.go, defer.go, inline_callers.go,
+#       stackobj.go, literal2.go.
+#       Re-triage cadence: verify on every conformance run
+#       (srctest scan --verify-exclusions); recheck weekly
+#       (RECHECK_EXCLUDED=1 run_conformance.sh). See
+#       test/differential/README.md "Exclusion-list hygiene".
+version: 2
 exclusions:
-- file: 235.go
-  reason: backend-specific
-  detail: F-2: named result assignment frontend bug (reference to unknown object id)
 - file: alg.go
   reason: backend-specific
   detail: map key of kind ARRAY not supported in Phase 1
@@ -44,10 +66,7 @@ exclusions:
   detail: ifacemethod expression kind not supported
 - file: divmod.go
   reason: backend-specific
-  detail: multi-valued call result not in frontend/v1 scope (WS D)
-- file: func.go
-  reason: backend-specific
-  detail: frontend scope gap
+  detail: builds since the multi-result fix stream (56a3dd68); does not complete within the per-program timeout on the ~4M-case interpreter run (gc <60s) — still excluded, reason now performance
 - file: func6.go
   reason: backend-specific
   detail: frontend scope gap
@@ -72,9 +91,6 @@ exclusions:
 - file: nilptr.go
   reason: backend-specific
   detail: & on *ast.ParenExpr not in frontend/v1 scope (WS D)
-- file: nilptr4.go
-  reason: backend-specific
-  detail: frontend scope gap (nil pointer)
 - file: peano.go
   reason: backend-specific
   detail: frontend type error
@@ -93,9 +109,6 @@ exclusions:
 - file: uintptrescapes3.go
   reason: backend-specific
   detail: frontend scope gap (uintptr)
-- file: unsafe_string.go
-  reason: backend-specific
-  detail: frontend scope gap (unsafe)
 - file: defer.go
   reason: backend-specific
   detail: F-3: variadic interface forwarding bug (fmt.Sprint(v...) gives [9][8] not 98)
@@ -108,18 +121,12 @@ exclusions:
 - file: newexpr.go
   reason: backend-specific
   detail: F-4: new(x) with non-constant x returns zero value
-- file: solitaire.go
-  reason: backend-specific
-  detail: F-6: peg-solitaire solver finds no solution (search divergence)
 - file: zerosize.go
   reason: unspecified-behavior
   detail: pointer equality for zero-size allocations is unspecified
 - file: nilptr2.go
   reason: unspecified-behavior
   detail: prints pointer address (absolute addresses excluded per GG-0030)
-- file: gc.go
-  reason: deferred-parity
-  detail: runtime.GC needs the GC interop layer (Phase 2)
 - file: maymorestack.go
   reason: deferred-parity
   detail: runtime.KeepAlive needs the GC interop layer (Phase 2)
@@ -132,6 +139,3 @@ exclusions:
 - file: stackobj3.go
   reason: deferred-parity
   detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
-- file: print.go
-  reason: unspecified-behavior
-  detail: builtin println of pointers/interfaces prints absolute addresses (excluded per GG-0030)
