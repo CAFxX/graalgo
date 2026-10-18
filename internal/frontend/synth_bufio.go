@@ -1126,10 +1126,10 @@ func (s *Scanner) Scan() bool {
 		// If we've run out of data but have an error, give the split function
 		// a chance to recover any remaining, possibly empty token.
 		if s.end > s.start || s.err != nil {
-			// WS D: v1 cannot call through a 3-result SplitFunc value.
+			// v1 cannot call through a 3-result SplitFunc value.
 			// The default split (ScanLines) is dispatched directly via
-			// its __-helper; a custom SplitFunc fails fast (re-test
-			// when WS D lands multi-result calls).
+			// its __-helper; a custom SplitFunc fails fast until
+			// 3-result function values are callable.
 			if s.split != nil {
 				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope")
 			}
