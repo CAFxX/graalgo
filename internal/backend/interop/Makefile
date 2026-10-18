@@ -120,7 +120,7 @@ check: main $(OUT_TEST)/.built
 	if [ -x "$$GO_BIN" ]; then \
 		cd $(P3FRONTEND) && GOTOOLCHAIN=local "$$GO_BIN" build ./... && GOTOOLCHAIN=local "$$GO_BIN" vet ./...; \
 	else \
-		echo "WARNING: Go toolchain not found ($$GO_BIN); p3frontend gate skipped"; \
+		echo "ERROR: Go toolchain not found ($$GO_BIN); cannot build/vet p3frontend"; exit 1; \
 	fi
 
 clean:
