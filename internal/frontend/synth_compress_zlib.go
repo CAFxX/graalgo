@@ -121,7 +121,7 @@ func NewReaderDict(r io.Reader, dict []byte) (io.ReadCloser, error) {
 }
 
 func (z *reader) Read(p []byte) (int, error) {
-	panic("zlib.reader.Read: use __zlibReaderRead helper (WS D)")
+	panic("zlib.reader.Read: unreachable (call sites desugar to __zlibReaderRead)")
 }
 
 // Calling Close does not close the wrapped [io.Reader] originally passed to [NewReader].
