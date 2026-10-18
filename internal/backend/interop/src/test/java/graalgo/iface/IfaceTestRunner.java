@@ -45,6 +45,9 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // P0-3/P0-4 (2026-10-18): x509 systemRoots + nameConstraints
+        // intrinsics — truststore loading, DER framing, DER-to-wire encoding.
+        TESTS.add(graalgo.p3x509.GoX509IntrinsicsTest.class);
     }
 
     private IfaceTestRunner() {}

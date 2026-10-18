@@ -1,9 +1,12 @@
 package graalgo.p3x509;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
 import java.security.KeyFactory;
+import java.security.KeyStore;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -15,6 +18,11 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
+
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
 
 import graalgo.values.GoInterface;
 import graalgo.values.GoSlice;
@@ -931,6 +939,207 @@ public final class GoX509 {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * DER encodings of the JDK default trust anchors (the system root CAs),
+     * concatenated with 4-byte big-endian length prefixes (the same framing
+     * the Go side's length-prefixed decoders use). Backs
+     * {@code graalgo.x509.systemRoots}. Used by the synthetic crypto/x509
+     * SystemCertPool and by Verify when VerifyOptions.Roots is nil, matching
+     * gc's system-roots default. Returns an empty byte slice when the default
+     * truststore cannot be read.
+     */
+    public static Object systemRoots(Object ignoredArg) {
+        try {
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(
+                    TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((KeyStore) null);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            for (TrustManager tm : tmf.getTrustManagers()) {
+                if (!(tm instanceof X509TrustManager)) {
+                    continue;
+                }
+                for (X509Certificate cert : ((X509TrustManager) tm).getAcceptedIssuers()) {
+                    byte[] der = cert.getEncoded();
+                    out.write((der.length >>> 24) & 0xFF);
+                    out.write((der.length >>> 16) & 0xFF);
+                    out.write((der.length >>> 8) & 0xFF);
+                    out.write(der.length & 0xFF);
+                    out.write(der, 0, der.length);
+                }
+            }
+            return toGoBytes(out.toByteArray());
+        } catch (Exception e) {
+            return toGoBytes(new byte[0]);
+        }
+    }
+
+    /**
+     * Name constraints extension (OID 2.5.29.30) encoded as a semicolon-separated
+     * list of entries. Each entry is {@code P:TYPE:value} (permitted subtree) or
+     * {@code X:TYPE:value} (excluded subtree); TYPE is DNS, IPH (hex address,
+     * a colon, hex mask), EMAIL or URI. A leading {@code CRIT:1} entry marks the
+     * extension critical (gc's PermittedDNSDomainsCritical). Returns the empty
+     * string when the extension is absent, and the literal {@code INVALID} when
+     * it is present but structurally unparseable — the Go side fails certificate
+     * parsing in that case (fail-closed, matching gc's "invalid NameConstraints
+     * extension"). GeneralName types gc ignores (otherName, x400Address,
+     * directoryName, ediPartyName) are skipped, also matching gc. Backs
+     * {@code graalgo.x509.nameConstraints}.
+     */
+    public static Object nameConstraints(Object certArg) {
+        X509Certificate cert = unwrapCert(certArg);
+        try {
+            byte[] ext = cert.getExtensionValue("2.5.29.30");
+            if (ext == null) {
+                return toGoString("");
+            }
+            Set<String> critical = cert.getCriticalExtensionOIDs();
+            boolean isCritical = critical != null && critical.contains("2.5.29.30");
+            String enc = encodeNameConstraints(unwrapOctetString(ext), isCritical);
+            return toGoString(enc == null ? "INVALID" : enc);
+        } catch (Exception e) {
+            return toGoString("INVALID");
+        }
+    }
+
+    /**
+     * Encodes the DER content octets of a NameConstraints extension value into
+     * the {@link #nameConstraints} wire format. Returns null when the DER is
+     * structurally invalid, or when the extension carries no subtrees at all
+     * (gc rejects an empty name constraints extension).
+     */
+    private static String encodeNameConstraints(byte[] der, boolean critical) {
+        // NameConstraints ::= SEQUENCE { [0] permitted, [1] excluded }
+        if (der.length < 2 || der[0] != 0x30) {
+            return null;
+        }
+        int p = skipLength(der, 1);
+        if (p < 0) {
+            return null;
+        }
+        int end = p + derLength(der, 1);
+        if (end > der.length) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (critical) {
+            sb.append("CRIT:1");
+        }
+        boolean sawSubtree = false;
+        while (p < end) {
+            int tag = der[p] & 0xFF;
+            final boolean permitted;
+            if (tag == 0xA0) {
+                permitted = true;
+            } else if (tag == 0xA1) {
+                permitted = false;
+            } else {
+                return null;
+            }
+            int cp = skipLength(der, p + 1);
+            if (cp < 0) {
+                return null;
+            }
+            int cend = cp + derLength(der, p + 1);
+            if (cend > end) {
+                return null;
+            }
+            // GeneralSubtrees ::= SEQUENCE OF GeneralSubtree;
+            // GeneralSubtree ::= SEQUENCE { base GeneralName, ... }.
+            // base is the first element; minimum/maximum are skipped.
+            while (cp < cend) {
+                if (der[cp] != 0x30) {
+                    return null;
+                }
+                int sp = skipLength(der, cp + 1);
+                if (sp < 0) {
+                    return null;
+                }
+                int send = sp + derLength(der, cp + 1);
+                if (send > cend || sp >= send) {
+                    return null;
+                }
+                int gtag = der[sp] & 0xFF;
+                int gp = skipLength(der, sp + 1);
+                if (gp < 0) {
+                    return null;
+                }
+                int glen = derLength(der, sp + 1);
+                if (gp + glen > send) {
+                    return null;
+                }
+                sawSubtree = true;
+                String entry = encodeGeneralName(gtag, der, gp, glen, permitted);
+                if (entry != null) {
+                    if (entry.isEmpty()) {
+                        return null;
+                    }
+                    if (sb.length() > 0) {
+                        sb.append(';');
+                    }
+                    sb.append(entry);
+                }
+                cp = send;
+            }
+            p = cend;
+        }
+        if (!sawSubtree) {
+            return null;
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Encodes one GeneralName into the {@link #nameConstraints} wire format.
+     * Returns null for GeneralName types gc ignores, and the empty string when
+     * the value itself is invalid (fail-closed).
+     */
+    private static String encodeGeneralName(int tag, byte[] b, int off, int len,
+            boolean permitted) {
+        String px = permitted ? "P:" : "X:";
+        switch (tag) {
+        case 0x81: // rfc822Name (IA5String)
+        case 0x82: // dNSName (IA5String)
+        case 0x86: { // uniformResourceIdentifier (IA5String)
+            if (!isAscii(b, off, len)) {
+                return "";
+            }
+            String v = new String(b, off, len, StandardCharsets.US_ASCII);
+            if (v.indexOf(';') >= 0) {
+                return "";
+            }
+            String type = tag == 0x81 ? "EMAIL" : tag == 0x82 ? "DNS" : "URI";
+            return px + type + ":" + v;
+        }
+        case 0x87: { // iPAddress (OCTET STRING, address || mask)
+            if (len != 8 && len != 32) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(px).append("IPH:");
+            for (int i = 0; i < len; i++) {
+                sb.append(Character.forDigit((b[off + i] >> 4) & 0xF, 16));
+                sb.append(Character.forDigit(b[off + i] & 0xF, 16));
+            }
+            sb.insert(px.length() + 4 + len, ':');
+            return sb.toString();
+        }
+        default:
+            // otherName, x400Address, directoryName, ediPartyName:
+            // skipped, like gc.
+            return null;
+        }
+    }
+
+    /** Reports whether b[off:off+len] is pure 7-bit ASCII. */
+    private static boolean isAscii(byte[] b, int off, int len) {
+        for (int i = 0; i < len; i++) {
+            if ((b[off + i] & 0x80) != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
 }

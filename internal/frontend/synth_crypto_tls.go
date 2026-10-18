@@ -816,8 +816,22 @@ func (c *Conn) verifyPeer() error {
 	if err != nil {
 		return err
 	}
+	// P0-2 (2026-10-18): the peer's extra certificates are intermediates —
+	// hand them to x509 as Intermediates so chains longer than leaf→root
+	// verify, exactly like gc's crypto/tls handshake does. Previously they
+	// were dropped, so any chain with an intermediate failed here while gc
+	// succeeded.
+	intermediates := x509.NewCertPool()
+	for _, der := range peerDERs[1:] {
+		inter, err := x509.ParseCertificate(der)
+		if err != nil {
+			continue
+		}
+		intermediates.AddCert(inter)
+	}
 	opts := x509.VerifyOptions{
-		DNSName: c.config.ServerName,
+		DNSName:       c.config.ServerName,
+		Intermediates: intermediates,
 	}
 	if c.config != nil && c.config.RootCAs != nil {
 		opts.Roots = c.config.RootCAs

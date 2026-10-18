@@ -31,6 +31,7 @@ import (
 	"math/big"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -117,6 +118,12 @@ func graalgoX509ParsePrivateKey(der []byte) string
 
 //go:linkname graalgoX509ExtKeyUsage graalgo.x509.extKeyUsage
 func graalgoX509ExtKeyUsage(cert any) string
+
+//go:linkname graalgoX509SystemRoots graalgo.x509.systemRoots
+func graalgoX509SystemRoots(ignored any) []byte
+
+//go:linkname graalgoX509NameConstraints graalgo.x509.nameConstraints
+func graalgoX509NameConstraints(cert any) string
 
 //go:linkname graalgoX509ParsePkcs1 graalgo.x509.parsePkcs1
 func graalgoX509ParsePkcs1(der []byte) string
@@ -302,6 +309,20 @@ type Certificate struct {
 	IPAddresses                 []net.IP
 	URIs                        []string
 
+	// Name constraints (RFC 5280 §4.2.1.10), populated from the
+	// graalgo.x509.nameConstraints intrinsic during parsing. Enforced by
+	// Verify (P0-4, 2026-10-18); previously parsed-but-ignored, so
+	// out-of-scope names were silently accepted.
+	PermittedDNSDomains        []string
+	ExcludedDNSDomains         []string
+	PermittedIPRanges          []*net.IPNet
+	ExcludedIPRanges           []*net.IPNet
+	PermittedEmailAddresses    []string
+	ExcludedEmailAddresses     []string
+	PermittedURIDomains        []string
+	ExcludedURIDomains         []string
+	PermittedDNSDomainsCritical bool
+
 	// javaCert holds the java.security.cert.X509Certificate (unexported).
 	javaCert any
 }
@@ -446,6 +467,12 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.AuthorityKeyId = graalgoX509AuthorityKeyId(javaCert)
 	// Extended key usage OIDs.
 	parseExtKeyUsage(c, graalgoX509ExtKeyUsage(javaCert))
+	// Name constraints (P0-4): fail closed — a structurally invalid
+	// extension fails parsing, matching gc's "invalid NameConstraints
+	// extension". Previously the extension was not read at all.
+	if ncErr := parseNameConstraints(c, graalgoX509NameConstraints(javaCert)); ncErr != nil {
+		return __mrParseCertificatePair{nil, ncErr}
+	}
 	// Subject Alternative Names (DNS/IP/EMAIL/URI) for hostname verification.
 	parseSubjectAltNames(c, graalgoX509SubjectAltNames(javaCert))
 	pubAlg := graalgoX509PublicKeyAlg(javaCert)
@@ -814,7 +841,13 @@ func parseExtKeyUsage(c *Certificate, oids string) {
 		if i == len(oids) || oids[i] == ',' {
 			oid := oids[start:i]
 			start = i + 1
+			// Full gc mapping (crypto/x509 extKeyUsageOIDs). Previously only
+			// 1,2,3,4,8,9 were mapped and anyExtendedKeyUsage fell into
+			// UnknownExtKeyUsage, which broke nested EKU enforcement
+			// (P0-4): ExtKeyUsageAny must satisfy every requested usage.
 			switch oid {
+			case "2.5.29.37.0":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageAny)
 			case "1.3.6.1.5.5.7.3.1":
 				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageServerAuth)
 			case "1.3.6.1.5.5.7.3.2":
@@ -823,10 +856,24 @@ func parseExtKeyUsage(c *Certificate, oids string) {
 				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageCodeSigning)
 			case "1.3.6.1.5.5.7.3.4":
 				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageEmailProtection)
+			case "1.3.6.1.5.5.7.3.5":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageIPSECEndSystem)
+			case "1.3.6.1.5.5.7.3.6":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageIPSECTunnel)
+			case "1.3.6.1.5.5.7.3.7":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageIPSECUser)
 			case "1.3.6.1.5.5.7.3.8":
 				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageTimeStamping)
 			case "1.3.6.1.5.5.7.3.9":
 				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageOCSPSigning)
+			case "1.3.6.1.4.1.311.10.3.3":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageMicrosoftServerGatedCrypto)
+			case "2.16.840.1.113730.4.1":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageNetscapeServerGatedCrypto)
+			case "1.3.6.1.4.1.311.2.1.22":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageMicrosoftCommercialCodeSigning)
+			case "1.3.6.1.4.1.311.61.1.1":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageMicrosoftKernelCodeSigning)
 			default:
 				if parsed := parseOID(oid); parsed != nil {
 					c.UnknownExtKeyUsage = append(c.UnknownExtKeyUsage, parsed)
@@ -1185,7 +1232,67 @@ func (c *Certificate) VerifyHostname(h string) error {
 	return c.verifyHostname(h)
 }
 
-// verify implements chain building and checking.
+// SystemRootsError is returned by Verify when the system root CAs cannot
+// be loaded and no Roots were provided (gc API).
+type SystemRootsError struct {
+	Err error
+}
+
+func (e *SystemRootsError) Error() string {
+	return fmt.Sprintf("x509: failed to load system roots and no roots provided: %v", e.Err)
+}
+
+func (e *SystemRootsError) Unwrap() error { return e.Err }
+
+var (
+	systemRootsOnce sync.Once
+	systemRootsPool *CertPool
+	systemRootsErr  error
+)
+
+// SystemCertPool returns a copy of the system root CAs (gc API). The roots
+// are loaded once from the JDK default truststore via the
+// graalgo.x509.systemRoots intrinsic.
+func SystemCertPool() (*CertPool, error) {
+	systemRootsOnce.Do(func() {
+		systemRootsPool = NewCertPool()
+		for _, der := range decodeLengthPrefixedDERs(graalgoX509SystemRoots(nil)) {
+			parsed := __mrParseCertificate(der)
+			if parsed.v1 != nil {
+				continue
+			}
+			systemRootsPool.AddCert(parsed.v0)
+		}
+		if len(systemRootsPool.certs) == 0 {
+			systemRootsErr = errors.New("x509: no system root CAs available")
+		}
+	})
+	if systemRootsErr != nil {
+		return nil, systemRootsErr
+	}
+	return systemRootsPool.Clone(), nil
+}
+
+// decodeLengthPrefixedDERs decodes uint32-BE length + data items (the
+// framing the graalgo.x509.systemRoots intrinsic uses). The tls package's
+// decodeLengthPrefixed is not visible here (different synthetic package).
+func decodeLengthPrefixedDERs(buf []byte) [][]byte {
+	var out [][]byte
+	pos := 0
+	for pos+4 <= len(buf) {
+		n := int(buf[pos])<<24 | int(buf[pos+1])<<16 | int(buf[pos+2])<<8 | int(buf[pos+3])
+		pos += 4
+		if n < 0 || pos+n > len(buf) {
+			break
+		}
+		out = append(out, buf[pos:pos+n])
+		pos += n
+	}
+	return out
+}
+
+// verify implements chain building and checking with gc
+// ((*Certificate).Verify) semantics.
 func (c *Certificate) verify(opts VerifyOptions) __mrVerifyPair {
 	currentTime := opts.CurrentTime
 	if currentTime.IsZero() {
@@ -1193,71 +1300,47 @@ func (c *Certificate) verify(opts VerifyOptions) __mrVerifyPair {
 	}
 	roots := opts.Roots
 	if roots == nil {
-		roots = NewCertPool()
+		// P0-3 (2026-10-18): gc uses the system roots when Roots is nil.
+		// Previously an empty pool was used, so every default-config
+		// verification failed with UnknownAuthorityError.
+		var err error
+		roots, err = SystemCertPool()
+		if err != nil {
+			return __mrVerifyPair{nil, &SystemRootsError{Err: err}}
+		}
 	}
 	intermediates := opts.Intermediates
 	if intermediates == nil {
 		intermediates = NewCertPool()
 	}
 
-	// Collect candidate parents: intermediates + roots.
-	var candidates []*Certificate
-	for _, cert := range intermediates.certs {
-		candidates = append(candidates, cert)
+	// gc Verify order: leaf validity, then hostname, then chain building.
+	if currentTime.Before(c.NotBefore) || currentTime.After(c.NotAfter) {
+		return __mrVerifyPair{nil, &CertificateInvalidError{Cert: c, Reason: Expired}}
 	}
-	for _, cert := range roots.certs {
-		candidates = append(candidates, cert)
-	}
-
-	var chains [][]*Certificate
-	// Depth-first search for chains from the leaf to a root.
-	var visit func(cert *Certificate, chain []*Certificate)
-	visit = func(cert *Certificate, chain []*Certificate) {
-		// If cert is in Roots, the chain is complete.
-		if roots.containsCert(cert) {
-			newChain := make([]*Certificate, len(chain))
-			copy(newChain, chain)
-			chains = append(chains, newChain)
-			return
-		}
-		if len(chain) > 10 {
-			return
-		}
-		for _, parent := range candidates {
-			if !isParentOf(cert, parent) {
-				continue
-			}
-			if err := cert.CheckSignatureFrom(parent); err != nil {
-				continue
-			}
-			if !parent.IsCA && parent != cert {
-				continue
-			}
-			// Validity of the parent at currentTime.
-			if currentTime.Before(parent.NotBefore) || currentTime.After(parent.NotAfter) {
-				continue
-			}
-			// Avoid cycles.
-			cycle := false
-			for _, link := range chain {
-				if link == parent {
-					cycle = true
-					break
-				}
-			}
-			if cycle {
-				continue
-			}
-			visit(parent, append(chain, parent))
+	if opts.DNSName != "" {
+		if err := c.verifyHostname(opts.DNSName); err != nil {
+			return __mrVerifyPair{nil, err}
 		}
 	}
-	visit(c, []*Certificate{c})
 
-	if len(chains) == 0 {
-		return __mrVerifyPair{nil, &UnknownAuthorityError{Cert: c}}
+	// gc: a leaf that is itself a trust anchor verifies as a single-cert
+	// chain (still subject to key-usage and name constraints).
+	if roots.containsCert(c) {
+		chain := []*Certificate{c}
+		if err := c.verifyChain(chain, opts, currentTime); err != nil {
+			return __mrVerifyPair{nil, err}
+		}
+		return __mrVerifyPair{[][]*Certificate{chain}, nil}
 	}
 
-	// Check each chain for validity, hostname, EKU; return the first valid.
+	chains, err := buildChains(c, []*Certificate{c}, roots, intermediates, currentTime)
+	if err != nil {
+		return __mrVerifyPair{nil, err}
+	}
+
+	// Check each chain for key usages and name constraints; return the
+	// first valid (gc's post-chain DeleteFunc).
 	var lastErr error
 	for _, chain := range chains {
 		if err := c.verifyChain(chain, opts, currentTime); err != nil {
@@ -1272,7 +1355,112 @@ func (c *Certificate) verify(opts VerifyOptions) __mrVerifyPair {
 	return __mrVerifyPair{nil, &UnknownAuthorityError{Cert: c}}
 }
 
-// verifyChain checks validity periods, hostname, and key usages for a chain.
+// alreadyInChain reports whether candidate already appears in chain, mirroring
+// gc's cycle guard (RawSubject + RawSubjectPublicKeyInfo comparison). gc also
+// compares the SAN extension bytes as a tiebreaker; that is omitted here —
+// it only matters for two certs with identical subject AND identical public
+// key but different SANs in one chain, a pathological case.
+func alreadyInChain(candidate *Certificate, chain []*Certificate) bool {
+	for _, cert := range chain {
+		if string(candidate.RawSubject) == string(cert.RawSubject) &&
+			string(candidate.RawSubjectPublicKeyInfo) == string(cert.RawSubjectPublicKeyInfo) {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidParent mirrors gc's (*Certificate).isValid for a candidate parent:
+// the name match is established by isParentOf; this enforces the parent's
+// validity period, CA-ness (intermediate candidates only, like gc) and
+// path-length (like gc, counting intermediates below the candidate in the
+// chain built so far; applies to roots as well).
+func isValidParent(parent *Certificate, isRoot bool, chain []*Certificate, currentTime time.Time) error {
+	if currentTime.Before(parent.NotBefore) || currentTime.After(parent.NotAfter) {
+		return &CertificateInvalidError{Cert: parent, Reason: Expired}
+	}
+	if !isRoot && (!parent.BasicConstraintsValid || !parent.IsCA) {
+		return &CertificateInvalidError{Cert: parent, Reason: NotAuthorizedToSign}
+	}
+	if parent.BasicConstraintsValid && parent.MaxPathLen >= 0 {
+		if numIntermediates := len(chain) - 1; numIntermediates > parent.MaxPathLen {
+			return &CertificateInvalidError{Cert: parent, Reason: TooManyIntermediates}
+		}
+	}
+	return nil
+}
+
+// buildChains builds candidate chains from cert to a trust anchor, mirroring
+// gc's (*Certificate).buildChains (P0-4, 2026-10-18). Roots are considered
+// before intermediates, like gc. Error semantics match gc exactly:
+//   - signature failures feed only the UnknownAuthorityError hint;
+//   - parent-validity failures (CA-ness, path-length, expiry) are recorded
+//     as the returned error and propagate directly when no chain is built;
+//   - with no chains and no recorded error, UnknownAuthorityError (with the
+//     signature-failure hint, if any) is returned.
+//
+// The len(chain) > 10 depth cap is a local DoS guard; legitimate chains are
+// a handful of certs deep.
+func buildChains(cert *Certificate, chain []*Certificate, roots, intermediates *CertPool, currentTime time.Time) (chains [][]*Certificate, err error) {
+	var hintErr error
+	var hintCert *Certificate
+
+	if len(chain) > 10 {
+		return nil, nil
+	}
+	// gc considers roots before intermediates.
+	for _, pc := range []struct {
+		isRoot bool
+		pool   *CertPool
+	}{{true, roots}, {false, intermediates}} {
+		for _, parent := range pc.pool.certs {
+			if !isParentOf(cert, parent) {
+				continue
+			}
+			if parent.PublicKey == nil || alreadyInChain(parent, chain) {
+				continue
+			}
+			if sigErr := cert.CheckSignatureFrom(parent); sigErr != nil {
+				if hintErr == nil {
+					hintErr = sigErr
+					hintCert = parent
+				}
+				continue
+			}
+			if vErr := isValidParent(parent, pc.isRoot, chain, currentTime); vErr != nil {
+				err = vErr
+				if hintErr == nil {
+					hintErr = vErr
+					hintCert = parent
+				}
+				continue
+			}
+			if pc.isRoot {
+				dup := make([]*Certificate, len(chain)+1)
+				copy(dup, chain)
+				dup[len(chain)] = parent
+				chains = append(chains, dup)
+				continue
+			}
+			next := make([]*Certificate, len(chain)+1)
+			copy(next, chain)
+			next[len(chain)] = parent
+			var childChains [][]*Certificate
+			childChains, err = buildChains(parent, next, roots, intermediates, currentTime)
+			chains = append(chains, childChains...)
+		}
+	}
+	if len(chains) > 0 {
+		err = nil
+	}
+	if len(chains) == 0 && err == nil {
+		err = &UnknownAuthorityError{Cert: cert, hintErr: hintErr, hintCert: hintCert}
+	}
+	return chains, err
+}
+
+// verifyChain checks validity periods, hostname, key usages and name
+// constraints for a chain (gc Verify's post-chain checks).
 func (c *Certificate) verifyChain(chain []*Certificate, opts VerifyOptions, currentTime time.Time) error {
 	// Validity of every link.
 	for _, cert := range chain {
@@ -1286,11 +1474,886 @@ func (c *Certificate) verifyChain(chain []*Certificate, opts VerifyOptions, curr
 			return err
 		}
 	}
-	// Extended key usage.
-	if len(opts.KeyUsages) > 0 {
-		for _, ku := range opts.KeyUsages {
-			if !c.hasExtKeyUsage(ku) {
-				return &CertificateInvalidError{Cert: c, Reason: IncompatibleUsage}
+	// Extended key usage, enforced nested down the chain (gc
+	// checkChainForKeyUsage). gc defaults to ServerAuth when the caller
+	// requests nothing — this is what makes TLS leaf verification reject
+	// certs that are not valid for server auth. Previously only the leaf
+	// was checked and ExtKeyUsageAny was not honored.
+	keyUsages := opts.KeyUsages
+	if len(keyUsages) == 0 {
+		keyUsages = []ExtKeyUsage{ExtKeyUsageServerAuth}
+	}
+	if !checkChainForKeyUsage(chain, keyUsages) {
+		return &CertificateInvalidError{Cert: c, Reason: IncompatibleUsage}
+	}
+	// Name constraints (gc checkChainConstraints). Previously not checked
+	// at all: out-of-scope names were silently accepted (fail-open).
+	if err := checkChainConstraints(chain); err != nil {
+		return &CertificateInvalidError{Cert: c, Reason: CANotAuthorizedForThisName}
+	}
+	return nil
+}
+
+// checkChainForKeyUsage enforces extended key usages nested down the chain:
+// every certificate that enumerates EKUs must list each requested usage
+// (ExtKeyUsageAny satisfies all); certificates without any EKU are valid
+// for every usage. Port of gc crypto/x509 checkChainForKeyUsage.
+func checkChainForKeyUsage(chain []*Certificate, keyUsages []ExtKeyUsage) bool {
+	usages := make([]ExtKeyUsage, len(keyUsages))
+	copy(usages, keyUsages)
+
+	if len(chain) == 0 {
+		return false
+	}
+
+	usagesRemaining := len(usages)
+	const invalidUsage = ExtKeyUsage(-1)
+
+NextCert:
+	for i := len(chain) - 1; i >= 0; i-- {
+		cert := chain[i]
+		if len(cert.ExtKeyUsage) == 0 && len(cert.UnknownExtKeyUsage) == 0 {
+			// The certificate doesn't have any extended key usage specified.
+			continue
+		}
+
+		for _, usage := range cert.ExtKeyUsage {
+			if usage == ExtKeyUsageAny {
+				// The certificate is explicitly good for any usage.
+				continue NextCert
+			}
+		}
+
+	NextRequestedUsage:
+		for i, requestedUsage := range usages {
+			if requestedUsage == invalidUsage {
+				continue
+			}
+
+			for _, usage := range cert.ExtKeyUsage {
+				if requestedUsage == usage {
+					continue NextRequestedUsage
+				}
+			}
+
+			usages[i] = invalidUsage
+			usagesRemaining--
+			if usagesRemaining == 0 {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// ============================================================================
+// P0-4 (2026-10-18): name-constraints parsing and enforcement. Ports of gc
+// crypto/x509 (parser.go parseNameConstraintsExtension value validation,
+// verify.go parseRFC2821Mailbox, constraints.go checkChainConstraints and
+// the constraint-matching semantics). The optimized binary-search sets from
+// gc's constraints.go are replaced by linear scans: identical match
+// semantics, simpler code — chain building already dominates the cost.
+// ============================================================================
+
+// splitSemicolon splits s on ';' (no empty parts).
+func splitSemicolon(s string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ';' {
+			if i > start {
+				parts = append(parts, s[start:i])
+			}
+			start = i + 1
+		}
+	}
+	return parts
+}
+
+// containsByte reports whether s contains c.
+func containsByte(s string, c byte) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return true
+		}
+	}
+	return false
+}
+
+// lowerASCII lowercases ASCII A-Z in s.
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// checkIA5 rejects non-7-bit values (gc isIA5String).
+func checkIA5(s string) error {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return errors.New("x509: invalid constraint value: not IA5String")
+		}
+	}
+	return nil
+}
+
+// domainNameValid reports whether s is a usable DNS name or name
+// constraint. Port of gc crypto/x509 parser.go domainNameValid.
+func domainNameValid(s string, constraint bool) bool {
+	if len(s) == 0 {
+		return true
+	}
+
+	// Do not allow trailing period (FQDN format is not allowed in SANs or
+	// constraints).
+	if s[len(s)-1] == '.' {
+		return false
+	}
+
+	lastDot := -1
+	if constraint && s[0] == '.' {
+		s = s[1:]
+	}
+
+	for i := 0; i <= len(s); i++ {
+		if i < len(s) && (s[i] < 33 || s[i] > 126) {
+			// Invalid character.
+			return false
+		}
+		if i == len(s) || s[i] == '.' {
+			labelLen := i
+			if lastDot >= 0 {
+				labelLen -= lastDot + 1
+			}
+			if labelLen == 0 {
+				return false
+			}
+			lastDot = i
+		}
+	}
+
+	return true
+}
+
+// isValidIPMask reports whether mask is a contiguous IP mask (all ones
+// followed by all zeros). Port of gc crypto/x509 parser.go isValidIPMask.
+func isValidIPMask(mask []byte) bool {
+	seenZero := false
+
+	for _, b := range mask {
+		if seenZero {
+			if b != 0 {
+				return false
+			}
+
+			continue
+		}
+
+		switch b {
+		case 0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff:
+		default:
+			return false
+		}
+
+		if b != 0xff {
+			seenZero = true
+		}
+	}
+
+	return true
+}
+
+// hexVal returns the value of a hex digit, or -1.
+func hexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
+}
+
+// parseHexBytes decodes an even-length hex string.
+func parseHexBytes(s string) ([]byte, error) {
+	if len(s)%2 != 0 {
+		return nil, errors.New("x509: invalid hex in name constraint")
+	}
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		hi, lo := hexVal(s[2*i]), hexVal(s[2*i+1])
+		if hi < 0 || lo < 0 {
+			return nil, errors.New("x509: invalid hex in name constraint")
+		}
+		out[i] = byte(hi<<4 | lo)
+	}
+	return out, nil
+}
+
+// parseNameConstraints decodes the "P:TYPE:value;X:TYPE:value;..." encoding
+// produced by the graalgo.x509.nameConstraints intrinsic into the
+// Certificate name-constraint fields. TYPE is DNS, IPH (hexaddr:hexmask),
+// EMAIL or URI; P = permitted, X = excluded. A leading "CRIT:1" entry marks
+// the extension critical (gc PermittedDNSDomainsCritical).
+//
+// Any malformed entry — or the "INVALID" sentinel the intrinsic emits when
+// the extension is present but structurally unparseable — fails parsing
+// (fail-closed), matching gc's "x509: invalid NameConstraints extension".
+// GeneralName types gc ignores never reach this encoding (the intrinsic
+// skips them).
+func parseNameConstraints(c *Certificate, enc string) error {
+	if enc == "" {
+		return nil
+	}
+	if enc == "INVALID" {
+		return errors.New("x509: invalid NameConstraints extension")
+	}
+	invalid := errors.New("x509: invalid NameConstraints extension")
+	for _, entry := range splitSemicolon(enc) {
+		if entry == "CRIT:1" {
+			c.PermittedDNSDomainsCritical = true
+			continue
+		}
+		if len(entry) < 6 || entry[1] != ':' {
+			return invalid
+		}
+		var permitted bool
+		switch entry[0] {
+		case 'P':
+			permitted = true
+		case 'X':
+			permitted = false
+		default:
+			return invalid
+		}
+		rest := entry[2:]
+		colon := -1
+		for i := 0; i < len(rest); i++ {
+			if rest[i] == ':' {
+				colon = i
+				break
+			}
+		}
+		if colon < 0 {
+			return invalid
+		}
+		typ, value := rest[:colon], rest[colon+1:]
+		switch typ {
+		case "DNS":
+			if err := checkIA5(value); err != nil {
+				return err
+			}
+			if !domainNameValid(value, true) {
+				return fmt.Errorf("x509: failed to parse dnsName constraint %q", value)
+			}
+			if permitted {
+				c.PermittedDNSDomains = append(c.PermittedDNSDomains, value)
+			} else {
+				c.ExcludedDNSDomains = append(c.ExcludedDNSDomains, value)
+			}
+		case "IPH":
+			// value is hexaddr:hexmask.
+			sep := -1
+			for i := 0; i < len(value); i++ {
+				if value[i] == ':' {
+					sep = i
+					break
+				}
+			}
+			if sep < 0 {
+				return invalid
+			}
+			addr, err := parseHexBytes(value[:sep])
+			if err != nil {
+				return invalid
+			}
+			mask, err := parseHexBytes(value[sep+1:])
+			if err != nil {
+				return invalid
+			}
+			if (len(addr) != 4 && len(addr) != 16) || len(mask) != len(addr) {
+				return fmt.Errorf("x509: IP constraint contained value of length %d", len(addr)+len(mask))
+			}
+			if !isValidIPMask(mask) {
+				return fmt.Errorf("x509: IP constraint contained invalid mask %x", mask)
+			}
+			ip := net.IP(addr)
+			if len(addr) == 16 && ip.To4() != nil {
+				return errors.New("x509: IP constraint contained IPv4-mapped IPv6 address")
+			}
+			ipnet := &net.IPNet{IP: ip, Mask: net.IPMask(mask)}
+			if permitted {
+				c.PermittedIPRanges = append(c.PermittedIPRanges, ipnet)
+			} else {
+				c.ExcludedIPRanges = append(c.ExcludedIPRanges, ipnet)
+			}
+		case "EMAIL":
+			if err := checkIA5(value); err != nil {
+				return err
+			}
+			if containsByte(value, '@') {
+				if _, ok := parseRFC2821Mailbox(value); !ok {
+					return fmt.Errorf("x509: failed to parse rfc822Name constraint %q", value)
+				}
+			} else if !domainNameValid(value, true) {
+				return fmt.Errorf("x509: failed to parse rfc822Name constraint %q", value)
+			}
+			if permitted {
+				c.PermittedEmailAddresses = append(c.PermittedEmailAddresses, value)
+			} else {
+				c.ExcludedEmailAddresses = append(c.ExcludedEmailAddresses, value)
+			}
+		case "URI":
+			if err := checkIA5(value); err != nil {
+				return err
+			}
+			if parseIP(value) != nil {
+				return fmt.Errorf("x509: failed to parse URI constraint %q: cannot be IP address", value)
+			}
+			if !domainNameValid(value, true) {
+				return fmt.Errorf("x509: failed to parse URI constraint %q", value)
+			}
+			if permitted {
+				c.PermittedURIDomains = append(c.PermittedURIDomains, value)
+			} else {
+				c.ExcludedURIDomains = append(c.ExcludedURIDomains, value)
+			}
+		default:
+			return invalid
+		}
+	}
+	return nil
+}
+
+// hasNameConstraints reports whether c carries any name constraints.
+func (c *Certificate) hasNameConstraints() bool {
+	return len(c.PermittedDNSDomains) > 0 || len(c.ExcludedDNSDomains) > 0 ||
+		len(c.PermittedIPRanges) > 0 || len(c.ExcludedIPRanges) > 0 ||
+		len(c.PermittedEmailAddresses) > 0 || len(c.ExcludedEmailAddresses) > 0 ||
+		len(c.PermittedURIDomains) > 0 || len(c.ExcludedURIDomains) > 0
+}
+
+// hasSANExtension reports whether c carries a subject alternative name
+// extension (gc Certificate.hasSANExtension).
+func (c *Certificate) hasSANExtension() bool {
+	return len(c.DNSNames) > 0 || len(c.EmailAddresses) > 0 ||
+		len(c.IPAddresses) > 0 || len(c.URIs) > 0
+}
+
+// dnsHasSuffix case-insensitively checks if constraint is a label suffix of
+// name, meaning that example.com is not considered a suffix of
+// testexample.com, but is a suffix of test.example.com.
+//
+// Supports the URI "leading period" constraint semantics: a constraint of
+// ".example.com" only matches subdomains of example.com, not example.com
+// itself. Port of gc crypto/x509 dnsHasSuffix.
+func dnsHasSuffix(constraint, name string) bool {
+	lenA := len(constraint)
+	lenB := len(name)
+	if lenA > lenB {
+		return false
+	}
+	i := lenA - 1
+	offset := lenA - lenB
+	for ; i >= 0; i-- {
+		ar, br := constraint[i], name[i-(offset)]
+		if ar == br {
+			continue
+		}
+		if br < ar {
+			ar, br = br, ar
+		}
+		if 'A' <= ar && ar <= 'Z' && br == ar+'a'-'A' {
+			continue
+		}
+		return false
+	}
+
+	if constraint[0] != '.' && lenB > lenA && name[lenB-lenA-1] != '.' {
+		return false
+	}
+
+	return true
+}
+
+// trimFirstLabel drops the first DNS label, keeping the separating dot
+// ("*.example.com" -> ".example.com"; "example.com" -> ".com"). Port of gc
+// crypto/x509 trimFirstLabel.
+func trimFirstLabel(dnsName string) string {
+	firstDotInd := -1
+	for i := 0; i < len(dnsName); i++ {
+		if dnsName[i] == '.' {
+			firstDotInd = i
+			break
+		}
+	}
+	if firstDotInd < 0 {
+		// Constraint is a single label, we cannot trim it.
+		return ""
+	}
+	return dnsName[firstDotInd:]
+}
+
+// rfc2821Mailbox is an email address split into local and domain parts.
+type rfc2821Mailbox struct {
+	local, domain string
+}
+
+// parseRFC2821Mailbox parses an email address per RFC 2821. Port of gc
+// crypto/x509 parseRFC2821Mailbox.
+func parseRFC2821Mailbox(in string) (mailbox rfc2821Mailbox, ok bool) {
+	if len(in) == 0 {
+		return mailbox, false
+	}
+
+	localPartBytes := make([]byte, 0, len(in)/2)
+
+	if in[0] == '"' {
+		// Quoted-string = DQUOTE *qcontent DQUOTE
+		in = in[1:]
+	QuotedString:
+		for {
+			if len(in) == 0 {
+				return mailbox, false
+			}
+			c := in[0]
+			in = in[1:]
+
+			switch {
+			case c == '"':
+				break QuotedString
+
+			case c == '\\':
+				// quoted-pair
+				if len(in) == 0 {
+					return mailbox, false
+				}
+				if in[0] == 11 ||
+					in[0] == 12 ||
+					(1 <= in[0] && in[0] <= 9) ||
+					(14 <= in[0] && in[0] <= 127) {
+					localPartBytes = append(localPartBytes, in[0])
+					in = in[1:]
+				} else {
+					return mailbox, false
+				}
+
+			case c == 11 ||
+				c == 12 ||
+				c == 32 ||
+				c == 33 ||
+				c == 127 ||
+				(1 <= c && c <= 8) ||
+				(14 <= c && c <= 31) ||
+				(35 <= c && c <= 91) ||
+				(93 <= c && c <= 126):
+				// qtext
+				localPartBytes = append(localPartBytes, c)
+
+			default:
+				return mailbox, false
+			}
+		}
+	} else {
+		// Atom ("." Atom)*
+	NextChar:
+		for len(in) > 0 {
+			// atext from RFC 2822, Section 3.2.4
+			c := in[0]
+
+			switch {
+			case c == '\\':
+				in = in[1:]
+				if len(in) == 0 {
+					return mailbox, false
+				}
+				fallthrough
+
+			case ('0' <= c && c <= '9') ||
+				('a' <= c && c <= 'z') ||
+				('A' <= c && c <= 'Z') ||
+				c == '!' || c == '#' || c == '$' || c == '%' ||
+				c == '&' || c == '\'' || c == '*' || c == '+' ||
+				c == '-' || c == '/' || c == '=' || c == '?' ||
+				c == '^' || c == '_' || c == 0x60 || c == '{' ||
+				c == '|' || c == '}' || c == '~' || c == '.':
+				localPartBytes = append(localPartBytes, in[0])
+				in = in[1:]
+
+			default:
+				break NextChar
+			}
+		}
+
+		if len(localPartBytes) == 0 {
+			return mailbox, false
+		}
+
+		// From RFC 3696, Section 3: "period (".") may also appear, but may
+		// not be used to start or end the local part, nor may two or more
+		// consecutive periods appear."
+		if localPartBytes[0] == '.' ||
+			localPartBytes[len(localPartBytes)-1] == '.' ||
+			containsTwoDots(localPartBytes) {
+			return mailbox, false
+		}
+	}
+
+	if len(in) == 0 || in[0] != '@' {
+		return mailbox, false
+	}
+	in = in[1:]
+
+	// The RFC specifies a format for domains, but that's known to be
+	// violated in practice so we accept that anything after an '@' is the
+	// domain part.
+	if !domainNameValid(in, false) {
+		return mailbox, false
+	}
+
+	// Reject domain names containing @.
+	if containsByte(in, '@') {
+		return mailbox, false
+	}
+
+	mailbox.local = string(localPartBytes)
+	mailbox.domain = in
+	return mailbox, true
+}
+
+// containsTwoDots reports whether b contains "..".
+func containsTwoDots(b []byte) bool {
+	for i := 1; i < len(b); i++ {
+		if b[i] == '.' && b[i-1] == '.' {
+			return true
+		}
+	}
+	return false
+}
+
+// parseMailboxes parses SAN email addresses, lowercasing the domain part.
+// Port of gc crypto/x509 parseMailboxes.
+func parseMailboxes(emails []string) ([]rfc2821Mailbox, error) {
+	parsed := make([]rfc2821Mailbox, 0, len(emails))
+	for _, email := range emails {
+		mailbox, ok := parseRFC2821Mailbox(email)
+		if !ok {
+			return nil, fmt.Errorf("x509: cannot parse rfc822Name %q", email)
+		}
+		mailbox.domain = lowerASCII(mailbox.domain)
+		parsed = append(parsed, mailbox)
+	}
+	return parsed, nil
+}
+
+// uriConstraintHost extracts the lowercased host from a URI SAN for name
+// constraint matching. IP-literal hosts are rejected, matching gc's
+// parseURIs ("URI with IP ... cannot be matched against constraints").
+func uriConstraintHost(rawURI string) (string, error) {
+	rest := rawURI
+	scheme := -1
+	for i := 0; i+2 < len(rest); i++ {
+		if rest[i] == ':' && rest[i+1] == '/' && rest[i+2] == '/' {
+			scheme = i
+			break
+		}
+	}
+	if scheme < 0 {
+		return "", fmt.Errorf("x509: URI with empty host (%q) cannot be matched against constraints", rawURI)
+	}
+	rest = rest[scheme+3:]
+	// Strip userinfo.
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '@' {
+			rest = rest[i+1:]
+			break
+		}
+		if rest[i] == '/' || rest[i] == '?' || rest[i] == '#' {
+			break
+		}
+	}
+	// Strip path, query, fragment.
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '/' || rest[i] == '?' || rest[i] == '#' {
+			rest = rest[:i]
+			break
+		}
+	}
+	host := lowerASCII(rest)
+	if len(host) == 0 {
+		return "", fmt.Errorf("x509: URI with empty host (%q) cannot be matched against constraints", rawURI)
+	}
+	if host[0] == '[' {
+		// Bracketed IPv6 literal.
+		return "", fmt.Errorf("x509: URI with IP (%q) cannot be matched against constraints", rawURI)
+	}
+	if containsByte(host, ':') {
+		// host:port — split the port.
+		idx := -1
+		for i := 0; i < len(host); i++ {
+			if host[i] == ':' {
+				idx = i
+			}
+		}
+		host = host[:idx]
+	}
+	if parseIP(host) != nil {
+		return "", fmt.Errorf("x509: URI with IP (%q) cannot be matched against constraints", rawURI)
+	}
+	return host, nil
+}
+
+// dnsConstraintSet is the linear-scan equivalent of gc's dnsConstraints:
+// identical match semantics without the sort/prune/binary-search
+// optimization.
+type dnsConstraintSet struct {
+	// all matches everything (an empty-string constraint).
+	all bool
+	// permitted distinguishes permitted from excluded sets (excluded sets
+	// apply gc's wildcard-SAN parent-domain rule).
+	permitted bool
+	list      []string
+}
+
+func newDNSConstraintSet(l []string, permitted bool) *dnsConstraintSet {
+	if len(l) == 0 {
+		return nil
+	}
+	for _, n := range l {
+		if len(n) == 0 {
+			return &dnsConstraintSet{all: true}
+		}
+	}
+	return &dnsConstraintSet{permitted: permitted, list: l}
+}
+
+// match reports whether name matches any constraint in the set.
+func (s *dnsConstraintSet) match(name string) bool {
+	if s.all {
+		return true
+	}
+	for _, c := range s.list {
+		if dnsHasSuffix(c, name) {
+			return true
+		}
+	}
+	if !s.permitted && len(name) > 0 && name[0] == '*' {
+		// gc dnsConstraints.query wildcard rule: an excluded constraint
+		// also excludes a wildcard SAN when the SAN's parent domain equals
+		// the constraint's parent domain.
+		trimmed := trimFirstLabel(lowerASCII(name))
+		for _, c := range s.list {
+			if tc := trimFirstLabel(lowerASCII(c)); tc != "" && tc == trimmed {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// emailConstraintSet is the linear equivalent of gc's emailConstraints.
+type emailConstraintSet struct {
+	dns *dnsConstraintSet
+	// full holds fully-specified mailbox constraints (domain lowercased).
+	full map[rfc2821Mailbox]struct{}
+}
+
+func newEmailConstraintSet(l []string, permitted bool) *emailConstraintSet {
+	if len(l) == 0 {
+		return nil
+	}
+	ec := &emailConstraintSet{}
+	var domains []string
+	for _, c := range l {
+		if !containsByte(c, '@') {
+			domains = append(domains, c)
+			continue
+		}
+		m, ok := parseRFC2821Mailbox(c)
+		if !ok {
+			// Validated at parse time; cannot happen on an unmutated cert.
+			continue
+		}
+		m.domain = lowerASCII(m.domain)
+		if ec.full == nil {
+			ec.full = make(map[rfc2821Mailbox]struct{})
+		}
+		ec.full[m] = struct{}{}
+	}
+	if len(domains) > 0 {
+		ec.dns = newDNSConstraintSet(domains, permitted)
+	}
+	return ec
+}
+
+func (s *emailConstraintSet) match(m rfc2821Mailbox) bool {
+	if s.full != nil {
+		lm := m
+		lm.domain = lowerASCII(lm.domain)
+		if _, ok := s.full[lm]; ok {
+			return true
+		}
+	}
+	if s.dns == nil {
+		return false
+	}
+	return s.dns.match(m.domain)
+}
+
+// nameConstraintsChecker holds one CA's compiled name constraints.
+type nameConstraintsChecker struct {
+	ipPerm, ipExcl     []*net.IPNet
+	dnsPerm, dnsExcl   *dnsConstraintSet
+	uriPerm, uriExcl   *dnsConstraintSet
+	emailPerm, emailExcl *emailConstraintSet
+}
+
+func newNameConstraintsChecker(c *Certificate) *nameConstraintsChecker {
+	return &nameConstraintsChecker{
+		ipPerm:    c.PermittedIPRanges,
+		ipExcl:    c.ExcludedIPRanges,
+		dnsPerm:   newDNSConstraintSet(c.PermittedDNSDomains, true),
+		dnsExcl:   newDNSConstraintSet(c.ExcludedDNSDomains, false),
+		uriPerm:   newDNSConstraintSet(c.PermittedURIDomains, true),
+		uriExcl:   newDNSConstraintSet(c.ExcludedURIDomains, false),
+		emailPerm: newEmailConstraintSet(c.PermittedEmailAddresses, true),
+		emailExcl: newEmailConstraintSet(c.ExcludedEmailAddresses, false),
+	}
+}
+
+func ipConstraintMatch(list []*net.IPNet, ip net.IP) bool {
+	for _, n := range list {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (n *nameConstraintsChecker) checkIP(ip net.IP) error {
+	if len(n.ipPerm) > 0 && !ipConstraintMatch(n.ipPerm, ip) {
+		return fmt.Errorf("x509: IP address %q is not permitted by any constraint", ip.String())
+	}
+	if ipConstraintMatch(n.ipExcl, ip) {
+		return fmt.Errorf("x509: IP address %q is excluded by constraint", ip.String())
+	}
+	return nil
+}
+
+func (n *nameConstraintsChecker) checkDNS(name string) error {
+	if n.dnsPerm != nil && !n.dnsPerm.match(name) {
+		return fmt.Errorf("x509: DNS name %q is not permitted by any constraint", name)
+	}
+	if n.dnsExcl != nil && n.dnsExcl.match(name) {
+		return fmt.Errorf("x509: DNS name %q is excluded by constraint", name)
+	}
+	return nil
+}
+
+func (n *nameConstraintsChecker) checkURI(domain string) error {
+	if n.uriPerm != nil && !n.uriPerm.match(domain) {
+		return fmt.Errorf("x509: URI %q is not permitted by any constraint", domain)
+	}
+	if n.uriExcl != nil && n.uriExcl.match(domain) {
+		return fmt.Errorf("x509: URI %q is excluded by constraint", domain)
+	}
+	return nil
+}
+
+func (n *nameConstraintsChecker) checkEmail(m rfc2821Mailbox) error {
+	if n.emailPerm != nil && !n.emailPerm.match(m) {
+		return fmt.Errorf("x509: email address %q is not permitted by any constraint", m.local+"@"+m.domain)
+	}
+	if n.emailExcl != nil && n.emailExcl.match(m) {
+		return fmt.Errorf("x509: email address %q is excluded by constraint", m.local+"@"+m.domain)
+	}
+	return nil
+}
+
+// checkCertAgainstConstraints checks one subject certificate's names against
+// one constrained CA (gc chainConstraints.check).
+func (n *nameConstraintsChecker) checkCert(c *Certificate) error {
+	for _, ip := range c.IPAddresses {
+		if err := n.checkIP(ip); err != nil {
+			return err
+		}
+	}
+	for _, d := range c.DNSNames {
+		if !domainNameValid(d, false) {
+			return fmt.Errorf("x509: cannot parse dnsName %q", d)
+		}
+		if err := n.checkDNS(d); err != nil {
+			return err
+		}
+	}
+	for _, u := range c.URIs {
+		domain, err := uriConstraintHost(u)
+		if err != nil {
+			return err
+		}
+		if !domainNameValid(domain, false) {
+			return fmt.Errorf("x509: internal error: URI SAN %q failed to parse", u)
+		}
+		if err := n.checkURI(domain); err != nil {
+			return err
+		}
+	}
+	emails, err := parseMailboxes(c.EmailAddresses)
+	if err != nil {
+		return err
+	}
+	for _, e := range emails {
+		if !domainNameValid(e.domain, false) {
+			return fmt.Errorf("x509: cannot parse rfc822Name %q", e)
+		}
+		if err := n.checkEmail(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkChainConstraints enforces every name-constrained CA's constraints
+// against all SAN-bearing certificates below it in the chain (leaf first).
+// Port of gc crypto/x509 checkChainConstraints.
+func checkChainConstraints(chain []*Certificate) error {
+	type constrainedCA struct {
+		index   int
+		checker *nameConstraintsChecker
+	}
+	var cas []*constrainedCA
+	for i, c := range chain {
+		if !c.hasNameConstraints() {
+			continue
+		}
+		cas = append(cas, &constrainedCA{i, newNameConstraintsChecker(c)})
+	}
+	if len(cas) == 0 {
+		return nil
+	}
+
+	cur := 0
+	for i, c := range chain {
+		if !c.hasSANExtension() {
+			continue
+		}
+		// A constraint applies to certificates below it in the chain.
+		for cur < len(cas) && cas[cur].index <= i {
+			cur++
+		}
+		if cur >= len(cas) {
+			return nil
+		}
+		for _, ca := range cas[cur:] {
+			if err := ca.checker.checkCert(c); err != nil {
+				return err
 			}
 		}
 	}
@@ -1346,24 +2409,21 @@ func (p *CertPool) containsCert(cert *Certificate) bool {
 	return false
 }
 
-// hasExtKeyUsage reports whether the certificate is valid for the given EKU.
-// A certificate with no EKU is valid for all usages (Go semantics).
-func (c *Certificate) hasExtKeyUsage(ku ExtKeyUsage) bool {
-	if len(c.ExtKeyUsage) == 0 && len(c.UnknownExtKeyUsage) == 0 {
-		return true
-	}
-	for _, eku := range c.ExtKeyUsage {
-		if eku == ku {
-			return true
-		}
-	}
-	return false
-}
-
 // CheckSignatureFrom verifies that parent signed c.
 func (c *Certificate) CheckSignatureFrom(parent *Certificate) error {
 	if parent == nil {
 		return errors.New("x509: nil parent certificate")
+	}
+	// RFC 5280, 4.2.1.9 (gc-faithful): the parent must be a CA to sign.
+	if parent.Version == 3 && !parent.BasicConstraintsValid ||
+		parent.BasicConstraintsValid && !parent.IsCA {
+		return ConstraintViolationError{}
+	}
+	if parent.KeyUsage != 0 && parent.KeyUsage&KeyUsageCertSign == 0 {
+		return ConstraintViolationError{}
+	}
+	if parent.PublicKeyAlgorithm == UnknownPublicKeyAlgorithm {
+		return ErrUnsupportedAlgorithm
 	}
 	return verifyCertSignature(c, parent)
 }
@@ -1582,11 +2642,39 @@ func ipEqual(a, b net.IP) bool {
 // UnknownAuthorityError is returned when the chain does not anchor in Roots.
 type UnknownAuthorityError struct {
 	Cert *Certificate
+	// hintErr/hintCert mirror gc's unexported hint fields: the error from
+	// the most promising rejected candidate parent, for diagnostics.
+	hintErr  error
+	hintCert *Certificate
 }
 
 func (e *UnknownAuthorityError) Error() string {
-	return "x509: certificate signed by unknown authority"
+	s := "x509: certificate signed by unknown authority"
+	if e.hintErr != nil && e.hintCert != nil {
+		certName := e.hintCert.Subject.CommonName
+		if len(certName) == 0 {
+			if len(e.hintCert.Subject.Organization) > 0 {
+				certName = e.hintCert.Subject.Organization[0]
+			} else {
+				certName = "serial:" + e.hintCert.SerialNumber.String()
+			}
+		}
+		s += fmt.Sprintf(" (possibly because of %q while trying to verify candidate authority certificate %q)", e.hintErr, certName)
+	}
+	return s
 }
+
+// ConstraintViolationError is returned when a signature cannot be checked
+// because the parent certificate is not authorized to sign (gc API).
+type ConstraintViolationError struct{}
+
+func (ConstraintViolationError) Error() string {
+	return "x509: invalid signature: parent certificate cannot sign this kind of certificate"
+}
+
+// ErrUnsupportedAlgorithm is returned when the signature algorithm is not
+// implemented (gc API).
+var ErrUnsupportedAlgorithm = errors.New("x509: cannot verify signature: algorithm unimplemented")
 
 // InvalidReason describes a CertificateInvalidError.
 type InvalidReason int

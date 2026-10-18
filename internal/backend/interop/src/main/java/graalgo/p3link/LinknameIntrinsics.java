@@ -644,7 +644,7 @@ public final class LinknameIntrinsics {
     }
 
     /**
-     * Registers the 26 {@code graalgo.x509.*} intrinsics implemented by
+     * Registers the 31 {@code graalgo.x509.*} intrinsics implemented by
      * {@link GoX509} (P3-M9 tier-5, x509.md §2). All take a single argument
      * (the X509Certificate as Object, or DER bytes as GoSlice) and return
      * the D5-boxed field value ([]byte as GoSlice, strings as GoString,
@@ -709,6 +709,10 @@ public final class LinknameIntrinsics {
                 args -> GoX509.parsePrivateKey(args[0]), 1);
         Linknames.register("graalgo.x509.extKeyUsage",
                 args -> GoX509.extKeyUsage(args[0]), 1);
+        Linknames.register("graalgo.x509.systemRoots",
+                args -> GoX509.systemRoots(args[0]), 1);
+        Linknames.register("graalgo.x509.nameConstraints",
+                args -> GoX509.nameConstraints(args[0]), 1);
     }
 
     /**
