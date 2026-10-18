@@ -199,7 +199,7 @@
  
  	// Temporary buffer (avoids repeated allocation).
  	buf [4]byte
-@@ -3259,23 +3295,7 @@
+@@ -3259,23 +3295,13 @@
  }
  
  func (f *decompressor) Read(b []byte) (int, error) {
@@ -220,7 +220,13 @@
 -			f.toRead = f.dict.readFlush() // Flush what's left in case of error
 -		}
 -	}
-+	panic("flate.decompressor.Read: use __flateDecompressorRead helper (WS D)")
++	// RV-P1 (2026-10-18): delegating body, not a fail-fast panic. The
++	// desugar table (mrdesugar_m5.go) still rewrites statically-resolved
++	// direct calls and the itab still routes interface dispatch to
++	// __flateDecompressorRead; this body is the honest fallback for any
++	// path that invokes the method itself (e.g. a method value).
++	__mr1 := __flateDecompressorRead(f, b)
++	return __mr1.n, __mr1.err
  }
  
  func (f *decompressor) Close() error {

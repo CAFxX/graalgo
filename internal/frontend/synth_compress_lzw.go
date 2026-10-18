@@ -176,7 +176,13 @@ func (r *Reader) readMSB() (uint16, error) {
 
 // Read implements io.Reader, reading uncompressed bytes from its underlying reader.
 func (r *Reader) Read(b []byte) (int, error) {
-	panic("lzw.Reader.Read: use __lzwReaderRead helper (WS D)")
+	// RV-P1 (2026-10-18): delegating body, not a fail-fast panic. The
+	// desugar table (mrdesugar_m5.go) still rewrites statically-resolved
+	// direct calls and the itab still routes interface dispatch to
+	// __lzwReaderRead; this body is the honest fallback for any path
+	// that invokes the method itself (e.g. a method value).
+	__mr1 := __lzwReaderRead(r, b)
+	return __mr1.n, __mr1.err
 }
 
 // decode decompresses bytes from r and leaves them in d.toRead.

@@ -193,7 +193,13 @@ func (bz2 *reader) setup(needMagic bool) error {
 }
 
 func (bz2 *reader) Read(buf []byte) (n int, err error) {
-	panic("bzip2.reader.Read: use __bzip2ReaderRead helper (WS D)")
+	// RV-P1 (2026-10-18): delegating body, not a fail-fast panic. The
+	// desugar table (mrdesugar_m5.go) still rewrites statically-resolved
+	// direct calls and the itab still routes interface dispatch to
+	// __bzip2ReaderRead; this body is the honest fallback for any path
+	// that invokes the method itself (e.g. a method value).
+	__mr1 := __bzip2ReaderRead(bz2, buf)
+	return __mr1.n, __mr1.err
 }
 
 func (bz2 *reader) readFromBlock(buf []byte) int {

@@ -285,7 +285,13 @@ func (z *Reader) readHeader() (hdr Header, err error) {
 
 // Read implements [io.Reader], reading uncompressed bytes from its underlying reader.
 func (z *Reader) Read(p []byte) (n int, err error) {
-	panic("gzip.Reader.Read: use __gzipReaderRead helper (WS D)")
+	// RV-P1 (2026-10-18): delegating body, not a fail-fast panic. The
+	// desugar table (mrdesugar_m5.go) still rewrites statically-resolved
+	// direct calls and the itab still routes interface dispatch to
+	// __gzipReaderRead; this body is the honest fallback for any path
+	// that invokes the method itself (e.g. a method value).
+	__mr1 := __gzipReaderRead(z, p)
+	return __mr1.n, __mr1.err
 }
 
 // Close closes the [Reader]. It does not close the underlying reader.

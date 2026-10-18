@@ -121,7 +121,13 @@ func NewReaderDict(r io.Reader, dict []byte) (io.ReadCloser, error) {
 }
 
 func (z *reader) Read(p []byte) (int, error) {
-	panic("zlib.reader.Read: use __zlibReaderRead helper (WS D)")
+	// RV-P1 (2026-10-18): delegating body, not a fail-fast panic. The
+	// desugar table (mrdesugar_m5.go) still rewrites statically-resolved
+	// direct calls and the itab still routes interface dispatch to
+	// __zlibReaderRead; this body is the honest fallback for any path
+	// that invokes the method itself (e.g. a method value).
+	__mr1 := __zlibReaderRead(z, p)
+	return __mr1.n, __mr1.err
 }
 
 // Calling Close does not close the wrapped [io.Reader] originally passed to [NewReader].
