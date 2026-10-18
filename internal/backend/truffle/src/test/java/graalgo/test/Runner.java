@@ -40,6 +40,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.ArrayValueSemanticsTest.class);
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.CommaOkLvalueTest.class);
+        TESTS.add(graalgo.frontend.IfaceToChanConvertTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
     }
 
