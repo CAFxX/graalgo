@@ -136,3 +136,40 @@ This is a general WS D gap for disk-imported packages, not uuid-specific.
 `exportSelector` has a hardcoded list of synthetic package paths for qualified const/var access. Disk-built packages (e.g., `github.com/google/uuid`) are not in the list, so they fall through to `exportExpr(x.X)` which fails on the PkgName.
 
 **Fix (general):** after the hardcoded list, check `getDiskPackage(p)`; if it resolves, use `exportSyntheticQualified` (disk packages are in syntheticPackage shape).
+
+## BUG-MODPROBE-008 — backend rejects an assign shape from the disk-package export (assign.fields lhs/rhs mismatch)
+
+**Date:** 2026-10-18
+**Status:** Open, blocking uuid probe
+**Owner:** backend lane (NodeFactory assign handling) / frontend lane (wire shape) — needs diagnosis
+
+**Symptom:**
+Every uuid probe case fails at backend AST build with:
+`graalgo-sync-run: internal error building AST: assign.fields: lhs/rhs length mismatch`
+(launcher exit 1). gofrontend exports the module without error; the wire
+JSON contains an `assign` node whose lhs/rhs lengths mismatch in a way that
+is not comma-ok, and `NodeFactory.buildAssign`
+(`internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java`)
+throws `FrontendException`.
+
+**Reproducer:**
+```bash
+internal/backend/graalgo-sync-run --gmp=1 test/e2e/uuid/case01/main.go
+# full differential: make test-e2e (all 8 uuid cases fail identically)
+```
+
+**Root cause:** unknown — needs diagnosis. Suspect: the disk-package
+multi-result pair desugar (the BUG-MODPROBE-005/006 machinery) emits an
+assignment shape the v1 backend's `buildAssign` does not accept; the
+frontend and backend disagree on the wire contract for this shape.
+
+**Note:** surfaced by the rewritten e2e harness (review lane P1-4,
+2026-10-18) — the first end-to-end run of `test/e2e/run_module.sh` against
+the current backend. Side observation while triaging: piping gofrontend's
+stdout for a large module export truncates nondeterministically (121MB once,
+32KB the next, exit 0 both times); the launcher already works around this
+by redirecting gofrontend to a temp file (P3-M9), so always reproduce via
+the launcher, not a direct pipe.
+
+**Blocks:** uuid probe case01..case08 (the whole probe — every case imports
+`github.com/google/uuid`).

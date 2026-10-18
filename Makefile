@@ -43,6 +43,14 @@
 #   phase2 SchedTestRunner, phase3 IfaceTestRunner, plus the wave1-3
 #   corpus differentials). It takes 30+ minutes and runs in local
 #   verification and nightly runs, not per-push. Invoke it explicitly.
+#   `make test-e2e` — the end-to-end module probes
+#   ([test/e2e/](test/e2e/)): real published Go modules compiled
+#   as-published, differential gc vs graalgo. ~1m40s per case (two JVM
+#   legs); the 8-case uuid probe is ~14 min. Not in `all`, and not in
+#   `test` either yet: every uuid case currently fails on the open backend
+#   gap triaged as [BUG-MODPROBE-008](test/e2e/BUGS.md) — wiring a
+#   known-red gate into CI would be noise, not signal. CI wiring (the
+#   weekly full-suite job) lands when the probe goes green.
 #
 
 
@@ -104,7 +112,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-e2e test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -159,6 +167,26 @@ test-regression: generate build graalgo
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
+
+# End-to-end module probes ([test/e2e/](test/e2e/)): real published Go
+# modules compiled as-published through the product launcher, differential
+# gc vs graalgo (--gmp=1 and --gmp=4 legs), byte-identical stdout and exit
+# codes. Each test/e2e/<module>/ dir is a probe: go.mod pins the module for
+# the gc leg, caseNN/main.go are the probe programs. Triaged failures live
+# in [test/e2e/BUGS.md](test/e2e/BUGS.md) — a FAIL is a graalgo bug or a
+# documented open gap, never a silently-skipped probe.
+# /tmp is a 512M tmpfs shared with other work and routinely full: keep the
+# JVM and driver temp files on the persistent disk (same pattern as the
+# snapshot and regression targets).
+E2E_PROBE_DIRS := $(wildcard test/e2e/*/)
+E2E_TMP := $(CURDIR)/test/e2e/.tmp
+test-e2e: generate build
+	mkdir -p $(E2E_TMP) && \
+	export TMPDIR="$(E2E_TMP)" GOTMPDIR="$(E2E_TMP)"; \
+	for d in $(E2E_PROBE_DIRS); do \
+		[ -f "$$d/go.mod" ] || continue; \
+		test/e2e/run_module.sh "$$d" || exit 1; \
+	done
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the
