@@ -346,8 +346,9 @@ public final class SchedulerCore {
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
      * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * {@code RuntimeException}s, stack overflows, and any other
+     * {@code Error} are recorded loudly (the launcher exits 1). In Go an
+     * internal error is always fatal — the launcher never exits 0 on one.
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
@@ -381,6 +382,15 @@ public final class SchedulerCore {
                     recordCrash("internal error", e);
                 }
             } catch (RuntimeException e) {
+                recordCrash("internal error", e);
+            } catch (Error e) {
+                // Terminal catch: any other Error (e.g. an AssertionError
+                // from a blown internal invariant, OutOfMemoryError) must
+                // be recorded loudly and fail the run. Without this, such
+                // Errors bypass recordPanic/recordCrash while the finally
+                // below still offers the EXIT token, so quiescence
+                // completes and the launcher exits 0 on an internal
+                // failure — a silent lie (Go aborts on internal errors).
                 recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.

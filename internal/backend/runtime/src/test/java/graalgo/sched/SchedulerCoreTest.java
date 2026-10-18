@@ -484,6 +484,31 @@ public final class SchedulerCoreTest {
     }
 
     /**
+     * Terminal-Error discipline: an {@link Error} (e.g. an AssertionError
+     * from a blown internal invariant, or OutOfMemoryError) escaping a
+     * goroutine body is recorded as a crash (launcher exits 1), never a
+     * silent exit 0. verifies: GG-0017 (Goexit/panic/crash discipline).
+     * Red-green: fails without the terminal {@code catch (Error)} in
+     * spawn — the finally still offers the EXIT token, so quiescence
+     * completes while crashed() stays false and the launcher reports
+     * EXIT_OK.
+     */
+    public void testSpawnedErrorRecorded() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new AssertionError("synthetic blown invariant");
+            });
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "terminal Error recorded as crash");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Voluntary yield via the quantum-park mechanism.
      * Reviewer2 P1-2: yieldCurrent() had zero coverage. With cap=1 and
      * quantum disabled, a goroutine that never yields would starve the
