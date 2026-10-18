@@ -6830,10 +6830,13 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
-// isGoschedCall reports whether x is a call to runtime.Gosched (resolved
-// against the synthetic runtime overlay package, not merely named
-// "runtime" — the exportCall interception's package check, mirrored here
-// for the statement-position interceptions below).
+// isGoschedCall reports whether x is a call to runtime.Gosched, resolved
+// structurally against the synthetic runtime overlay package via
+// types.Info — never by identifier spelling (the R2-P2-9 Goexit precedent,
+// mirrored from the exportCall interception). An aliased import
+// (rt "runtime") intercepts identically to the canonical spelling; a
+// shadowed local named runtime does not (sel.X then resolves to something
+// other than a *types.PkgName and the gate fails closed).
 func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 	c, ok := unparen(x).(*ast.CallExpr)
 	if !ok {
@@ -6844,7 +6847,10 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if !ok {
+		return nil, false
+	}
+	if _, isPkg := info.Uses[pkgIdent].(*types.PkgName); !isPkg {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
@@ -8484,188 +8490,197 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
-				switch sel.Sel.Name {
-				case "SetFinalizer", "KeepAlive", "GC":
-					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
-					if len(c.Args) != want {
-						return nil, fmt.Errorf("gofrontend: runtime.%s takes %d arguments", sel.Sel.Name, want)
+		// REVIEW-2026-10-18-14 (review14-runtime-alias): discriminate on the
+		// resolved objects, not the identifier spelling — the R2-P2-9
+		// Goexit precedent above. An aliased import (rt "runtime") must
+		// intercept identically to the canonical spelling, and a shadowed
+		// local named runtime must not (info.Uses[pkgIdent] is then not a
+		// *types.PkgName, so the gate fails closed). No spelling check on
+		// the package identifier remains.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
+			if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); isPkg {
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+					switch sel.Sel.Name {
+					case "SetFinalizer", "KeepAlive", "GC":
+						want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
+						if len(c.Args) != want {
+							return nil, fmt.Errorf("gofrontend: runtime.%s takes %d arguments", sel.Sel.Name, want)
+						}
+						args, err := e.exportCallArgs(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("call", c, map[string]any{
+							"gcinterop": sel.Sel.Name, "args": args,
+						}), nil
 					}
-					args, err := e.exportCallArgs(c)
-					if err != nil {
-						return nil, err
+					// P4 (driver-harden): runtime.NumCPU(). Emitted as an
+					// additive "runtimenumcpu" wire node; the backend returns
+					// the host processor count.
+					if sel.Sel.Name == "NumCPU" {
+						if len(c.Args) != 0 {
+							return nil, fmt.Errorf("gofrontend: runtime.NumCPU takes no arguments")
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimenumcpu", c, map[string]any{"type": typ}), nil
 					}
-					return e.node("call", c, map[string]any{
-						"gcinterop": sel.Sel.Name, "args": args,
-					}), nil
-				}
-				// P4 (driver-harden): runtime.NumCPU(). Emitted as an
-				// additive "runtimenumcpu" wire node; the backend returns
-				// the host processor count.
-				if sel.Sel.Name == "NumCPU" {
-					if len(c.Args) != 0 {
-						return nil, fmt.Errorf("gofrontend: runtime.NumCPU takes no arguments")
+					// P4 (driver-harden): runtime.GOMAXPROCS(n). Emitted as an
+					// additive "runtimegomaxprocs" wire node.
+					if sel.Sel.Name == "GOMAXPROCS" {
+						if len(c.Args) != 1 {
+							return nil, fmt.Errorf("gofrontend: runtime.GOMAXPROCS takes one argument")
+						}
+						arg, err := e.exportExpr(c.Args[0])
+						if err != nil {
+							return nil, err
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimegomaxprocs", c, map[string]any{"x": arg, "type": typ}), nil
 					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
+					// PKG-023: runtime.NumGoroutine(). Emitted as an additive
+					// "runtimenumgoroutine" wire node; the backend returns the
+					// scheduler's live-goroutine count (gc semantics: running,
+					// runnable, and blocked/parked goroutines all count).
+					if sel.Sel.Name == "NumGoroutine" {
+						if len(c.Args) != 0 {
+							return nil, fmt.Errorf("gofrontend: runtime.NumGoroutine takes no arguments")
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimenumgoroutine", c, map[string]any{"type": typ}), nil
 					}
-					return e.node("runtimenumcpu", c, map[string]any{"type": typ}), nil
-				}
-				// P4 (driver-harden): runtime.GOMAXPROCS(n). Emitted as an
-				// additive "runtimegomaxprocs" wire node.
-				if sel.Sel.Name == "GOMAXPROCS" {
-					if len(c.Args) != 1 {
-						return nil, fmt.Errorf("gofrontend: runtime.GOMAXPROCS takes one argument")
+					// PKG-040: runtime.Gosched() — yields the processor,
+					// allowing other goroutines to run (gc
+					// src/runtime/proc.go). Emitted as the additive
+					// "runtimegosched" STATEMENT wire node (Gosched returns
+					// no value, so it is never an expression); the backend
+					// implements it via SchedulerCore.yieldCurrent.
+					// Statement positions (ExprStmt, defer, go) unwrap it —
+					// see exportStmt and exportGoschedDeferGo. The enclosing
+					// guards already resolve the selector to the runtime
+					// overlay package (the PKG-023 NumGoroutine precedent),
+					// so no package-name conditional is added here.
+					if sel.Sel.Name == "Gosched" {
+						if len(c.Args) != 0 {
+							return nil, fmt.Errorf("gofrontend: runtime.Gosched takes no arguments")
+						}
+						return e.node("runtimegosched", c, map[string]any{}), nil
 					}
-					arg, err := e.exportExpr(c.Args[0])
-					if err != nil {
-						return nil, err
+					// MemStats family (unblocks runtime/debug, hence Badger via
+					// testify): runtime.ReadMemStats, GOROOT, Version, Stack.
+					// Emitted as additive wire nodes; the backend implements
+					// them as intrinsics (see graalgo.rtmemstats, registered
+					// in P3KindRegistrations and P3SyncMain).
+					if sel.Sel.Name == "ReadMemStats" {
+						if len(c.Args) != 1 {
+							return nil, fmt.Errorf("gofrontend: runtime.ReadMemStats takes one argument")
+						}
+						arg, err := e.exportExpr(c.Args[0])
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimereadmemstats", c, map[string]any{"m": arg}), nil
 					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
+					if sel.Sel.Name == "GOROOT" {
+						if len(c.Args) != 0 {
+							return nil, fmt.Errorf("gofrontend: runtime.GOROOT takes no arguments")
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimegoroot", c, map[string]any{"type": typ}), nil
 					}
-					return e.node("runtimegomaxprocs", c, map[string]any{"x": arg, "type": typ}), nil
-				}
-				// PKG-023: runtime.NumGoroutine(). Emitted as an additive
-				// "runtimenumgoroutine" wire node; the backend returns the
-				// scheduler's live-goroutine count (gc semantics: running,
-				// runnable, and blocked/parked goroutines all count).
-				if sel.Sel.Name == "NumGoroutine" {
-					if len(c.Args) != 0 {
-						return nil, fmt.Errorf("gofrontend: runtime.NumGoroutine takes no arguments")
+					if sel.Sel.Name == "Version" {
+						if len(c.Args) != 0 {
+							return nil, fmt.Errorf("gofrontend: runtime.Version takes no arguments")
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimeversion", c, map[string]any{"type": typ}), nil
 					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
+					if sel.Sel.Name == "Stack" {
+						if len(c.Args) != 2 {
+							return nil, fmt.Errorf("gofrontend: runtime.Stack takes two arguments")
+						}
+						args, err := e.exportCallArgs(c)
+						if err != nil {
+							return nil, err
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimestack", c, map[string]any{"args": args, "type": typ}), nil
 					}
-					return e.node("runtimenumgoroutine", c, map[string]any{"type": typ}), nil
-				}
-				// PKG-040: runtime.Gosched() — yields the processor,
-				// allowing other goroutines to run (gc
-				// src/runtime/proc.go). Emitted as the additive
-				// "runtimegosched" STATEMENT wire node (Gosched returns
-				// no value, so it is never an expression); the backend
-				// implements it via SchedulerCore.yieldCurrent.
-				// Statement positions (ExprStmt, defer, go) unwrap it —
-				// see exportStmt and exportGoschedDeferGo. The enclosing
-				// guards already resolve the selector to the runtime
-				// overlay package (the PKG-023 NumGoroutine precedent),
-				// so no package-name conditional is added here.
-				if sel.Sel.Name == "Gosched" {
-					if len(c.Args) != 0 {
-						return nil, fmt.Errorf("gofrontend: runtime.Gosched takes no arguments")
+					// Stack-inspection family: runtime.Callers/CallersFrames/
+					// FuncForPC are single-result intrinsics, emitted as
+					// additive wire nodes (graalgo.rtstack). runtime.Caller,
+					// (*Frames).Next and (*Func).FileLine are multi-result:
+					// only the N-target assignment desugar (mrRuntimeStack in
+					// mrdesugar_m5.go) may lower them — any other position
+					// fails fast here with the named scope error.
+					if sel.Sel.Name == "Callers" {
+						if len(c.Args) != 2 {
+							return nil, fmt.Errorf("gofrontend: runtime.Callers takes 2 arguments")
+						}
+						args, err := e.exportCallArgs(c)
+						if err != nil {
+							return nil, err
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimecallers", c, map[string]any{
+							"skip": args[0], "pc": args[1], "type": typ,
+						}), nil
 					}
-					return e.node("runtimegosched", c, map[string]any{}), nil
-				}
-				// MemStats family (unblocks runtime/debug, hence Badger via
-				// testify): runtime.ReadMemStats, GOROOT, Version, Stack.
-				// Emitted as additive wire nodes; the backend implements
-				// them as intrinsics (see graalgo.rtmemstats, registered
-				// in P3KindRegistrations and P3SyncMain).
-				if sel.Sel.Name == "ReadMemStats" {
-					if len(c.Args) != 1 {
-						return nil, fmt.Errorf("gofrontend: runtime.ReadMemStats takes one argument")
+					if sel.Sel.Name == "CallersFrames" {
+						if len(c.Args) != 1 {
+							return nil, fmt.Errorf("gofrontend: runtime.CallersFrames takes 1 argument")
+						}
+						args, err := e.exportCallArgs(c)
+						if err != nil {
+							return nil, err
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimecallersframes", c, map[string]any{
+							"pcs": args[0], "type": typ,
+						}), nil
 					}
-					arg, err := e.exportExpr(c.Args[0])
-					if err != nil {
-						return nil, err
+					if sel.Sel.Name == "FuncForPC" {
+						if len(c.Args) != 1 {
+							return nil, fmt.Errorf("gofrontend: runtime.FuncForPC takes 1 argument")
+						}
+						args, err := e.exportCallArgs(c)
+						if err != nil {
+							return nil, err
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("runtimefuncforpc", c, map[string]any{
+							"pc": args[0], "type": typ,
+						}), nil
 					}
-					return e.node("runtimereadmemstats", c, map[string]any{"m": arg}), nil
-				}
-				if sel.Sel.Name == "GOROOT" {
-					if len(c.Args) != 0 {
-						return nil, fmt.Errorf("gofrontend: runtime.GOROOT takes no arguments")
+					if sel.Sel.Name == "Caller" {
+						return nil, scopeErrorf("runtime.Caller is multi-result: use pc, file, line, ok := runtime.Caller(skip) (4-target assignment) in frontend/v1 scope (WS D)")
 					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					return e.node("runtimegoroot", c, map[string]any{"type": typ}), nil
-				}
-				if sel.Sel.Name == "Version" {
-					if len(c.Args) != 0 {
-						return nil, fmt.Errorf("gofrontend: runtime.Version takes no arguments")
-					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					return e.node("runtimeversion", c, map[string]any{"type": typ}), nil
-				}
-				if sel.Sel.Name == "Stack" {
-					if len(c.Args) != 2 {
-						return nil, fmt.Errorf("gofrontend: runtime.Stack takes two arguments")
-					}
-					args, err := e.exportCallArgs(c)
-					if err != nil {
-						return nil, err
-					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					return e.node("runtimestack", c, map[string]any{"args": args, "type": typ}), nil
-				}
-				// Stack-inspection family: runtime.Callers/CallersFrames/
-				// FuncForPC are single-result intrinsics, emitted as
-				// additive wire nodes (graalgo.rtstack). runtime.Caller,
-				// (*Frames).Next and (*Func).FileLine are multi-result:
-				// only the N-target assignment desugar (mrRuntimeStack in
-				// mrdesugar_m5.go) may lower them — any other position
-				// fails fast here with the named scope error.
-				if sel.Sel.Name == "Callers" {
-					if len(c.Args) != 2 {
-						return nil, fmt.Errorf("gofrontend: runtime.Callers takes 2 arguments")
-					}
-					args, err := e.exportCallArgs(c)
-					if err != nil {
-						return nil, err
-					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					return e.node("runtimecallers", c, map[string]any{
-						"skip": args[0], "pc": args[1], "type": typ,
-					}), nil
-				}
-				if sel.Sel.Name == "CallersFrames" {
-					if len(c.Args) != 1 {
-						return nil, fmt.Errorf("gofrontend: runtime.CallersFrames takes 1 argument")
-					}
-					args, err := e.exportCallArgs(c)
-					if err != nil {
-						return nil, err
-					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					return e.node("runtimecallersframes", c, map[string]any{
-						"pcs": args[0], "type": typ,
-					}), nil
-				}
-				if sel.Sel.Name == "FuncForPC" {
-					if len(c.Args) != 1 {
-						return nil, fmt.Errorf("gofrontend: runtime.FuncForPC takes 1 argument")
-					}
-					args, err := e.exportCallArgs(c)
-					if err != nil {
-						return nil, err
-					}
-					typ, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					return e.node("runtimefuncforpc", c, map[string]any{
-						"pc": args[0], "type": typ,
-					}), nil
-				}
-				if sel.Sel.Name == "Caller" {
-					return nil, scopeErrorf("runtime.Caller is multi-result: use pc, file, line, ok := runtime.Caller(skip) (4-target assignment) in frontend/v1 scope (WS D)")
 				}
 			}
 		}
