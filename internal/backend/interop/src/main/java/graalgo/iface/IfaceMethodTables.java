@@ -103,12 +103,20 @@ public final class IfaceMethodTables {
                     if (f == null) {
                         // Disk-MR stubs are skipped by the frontend (desugar
                         // rewrites all calls to the __-helper); the method
-                        // table entry is vestigial. Skip instead of failing.
+                        // table entry is vestigial. Mark as unsupported
+                        // (null recvPath) instead of skipping, so itab
+                        // builds succeed for interfaces that include the
+                        // method (e.g. reflect.Type). Dispatch fails fast
+                        // with "not supported" only if actually called.
+                        // This is general: any disk-package multi-result
+                        // method missing from the function table.
                         P3Log.warn(IfaceMethodTables.class,
                                 "ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
                                 + "\" refers to unknown function object id " + ref.objId
-                                + " (skipped; likely a disk-MR stub)");
+                                + " (marked unsupported; likely a disk-MR stub)");
+                        funcs.put(m.getKey(), new IfaceMethodTarget(null, null,
+                                ref.pointerReceiver, ref.addrOf, ref.embeddedIfaceId, List.of()));
                         continue;
                     }
                     embMethods = List.of();
