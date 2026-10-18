@@ -76,9 +76,11 @@ for the design.
   round-trip type coverage. `encode/cmd/encode-demo` CLI for manual testing.
 - **Java decoder** (`internal/backend/truffle/.../graalgo/frontend/v2/`):
   `BinaryDecoder.java` decodes binary to `Map<String,Object>`/`List`/`String`/
-  `Long`. `V2DecodeDemo.java` proves end-to-end: Go encodes, Java decodes
-  and prints structure. Tested: 915-byte hello-world binary decodes to
-  frontend=v2, package=main, 1 func, 3 types, 1 object.
+  `Long`. `V2DecodeDemo.java` (test sources:
+  `internal/backend/truffle/src/test/java/graalgo/frontend/v2/`) proves
+  end-to-end: Go encodes, Java decodes and prints structure. Tested:
+  915-byte hello-world binary decodes to frontend=v2, package=main, 1 func,
+  3 types, 1 object.
 - **NodeFactoryV2** (`graalgo/frontend/v2/NodeFactoryV2.java`): Takes binary
   bytes, decodes via `BinaryDecoder`, validates frontend=="v2", and builds
   Truffle nodes. MVP implements: document validation, funcdecl extraction,
@@ -86,8 +88,10 @@ for the design.
   ExprStmtNode). Complex kinds (assign, call, ident, etc.) fail loudly with
   FrontendException — full implementation is next.
 - **End-to-end proven**: `go run ./encode/cmd/encode-demo hello.go hello.bin`
-  → `java graalgo.frontend.v2.V2DecodeDemo hello.bin` prints the decoded
-  structure. The binary interface works; no JSON involved.
+  → `java -cp <truffle>/out/test-classes graalgo.frontend.v2.V2DecodeDemo
+  hello.bin` prints the decoded structure (the demo is a main-class in the
+  truffle module's test sources, not production classes). The binary
+  interface works; no JSON involved.
 - **Next**: Full Truffle node construction in NodeFactoryV2 (assign with
   frame slots, calls, idents, control flow). Then circular compilation:
   graalgo compiles the v2 Go code (which uses go/parser, go/ast, go/types)
