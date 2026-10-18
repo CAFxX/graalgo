@@ -544,3 +544,87 @@ func main() {
 		t.Errorf("exported JSON has %d runtimegosched nodes, want 2 (defer + go)", n)
 	}
 }
+
+// TestRuntimeFuncMethodValueExport: (*Func).Name/Entry in method-value
+// position eta-expand into a real closure around the intrinsic wire node
+// (F-1 remediation, 2026-10-18). Previously the name-keyed panicMsg marker
+// in resolveMethodCall reached methodValueNode with a nil decl and crashed
+// the exporter; the marker, its producer, and its runtime-panic consumer
+// are now deleted.
+func TestRuntimeFuncMethodValueExport(t *testing.T) {
+	src := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	_ = n
+	fn := runtime.FuncForPC(pcs[0])
+	if fn == nil {
+		return
+	}
+	nameOf := fn.Name
+	entryOf := fn.Entry
+	name, entry := nameOf(), entryOf()
+	_, _ = name, entry
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with (*runtime.Func).Name/Entry method values: %v", err)
+	}
+	for _, want := range []string{
+		`"kind": "funclit"`,
+		`"kind": "runtimefuncname"`,
+		`"kind": "runtimefuncentry"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("exported JSON missing %s", want)
+		}
+	}
+	if strings.Contains(out, "not implemented") {
+		t.Errorf("exported JSON still contains the retired panicMsg stub text")
+	}
+}
+
+// TestRuntimeStackMethodValueMultiResultFails: method values on the
+// multi-result stack-inspection members ((*Frames).Next, (*Func).FileLine)
+// fail fast with a named scope error — never a crash, never a silent
+// wrong value.
+func TestRuntimeStackMethodValueMultiResultFails(t *testing.T) {
+	cases := []struct {
+		name string
+		recv string
+		meth string
+	}{
+		{"FramesNext", "frames", "Next"},
+		{"FuncFileLine", "fn", "FileLine"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	_ = n
+	frames := runtime.CallersFrames(pcs[:n])
+	fn := runtime.FuncForPC(pcs[0])
+	_, _ = frames, fn
+	mv := ` + tc.recv + `.` + tc.meth + `
+	_ = mv
+}
+`
+			_, err := ExportFile(writeSyncProg(t, src))
+			if err == nil {
+				t.Fatalf("method value %s.%s: expected scope error, got success", tc.recv, tc.meth)
+			}
+			if !strings.Contains(err.Error(), "method value") || !strings.Contains(err.Error(), "not supported") {
+				t.Errorf("method value %s.%s: error %q is not the named scope error", tc.recv, tc.meth, err.Error())
+			}
+		})
+	}
+}

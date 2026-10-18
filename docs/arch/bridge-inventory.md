@@ -82,17 +82,23 @@ deliverable until the design lands.
     `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
     switches (~line 402) and the linkname package allowlist;
   - [export.go](../../internal/frontend/export.go): `"syncop"` and
-    `"runtimecaller"` custom wire nodes for stdlib functions, and the
-    `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    `"runtimecaller"` custom wire nodes for stdlib functions. (The
+    `time.Now` eta-expansion hardcoded by package+symbol name formerly
+    in [mr_disk.go](../../internal/frontend/mr_disk.go) was removed
+    2026-10-18, review-name-keyed lane: the general export-time
+    mechanism `exportTimeIntrinsicValue`
+    ([synth_machinery.go](../../internal/frontend/synth_machinery.go))
+    now lowers time intrinsics in value position structurally, gated on
+    the resolved `*types.Func` object — no spelling-keyed rewrite.)
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
 - **Root-cause fix:** retire with the synthetic packages (Phase 2 shrinks
   the tables; Phase 3 deletes the machinery). The general mechanism is the
-  disk importer + on-demand method indexing; the `time.Now` case needs a
-  general eta-expansion for any selector-expr function value ("needs
-  design" for the mechanism — the inventory entry is the deliverable now).
+  disk importer + on-demand method indexing; the `time.Now` hardcoded
+  eta-expansion was retired 2026-10-18 via the general
+  `exportTimeIntrinsicValue` wrapper-closure mechanism (any time
+  intrinsic in value position, gated on the resolved object).
   In flight: `real-reflect2` already drops stale synthetic-reflect entries;
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
