@@ -170,6 +170,19 @@ Decision per primitive (all rows are P2-M4 implementation work unless noted):
   entries are never collected (strong permanent roots) — `SetFinalizer` on
   such an object silently never runs. P2-M4 records the decision in
   `DIVERGENCES.md` (weak handle entries vs documented never-run).
+- *Misuse failure modes (gc-exact):* gc `throw()`s — fatal, unrecoverable,
+  `fatal error: <msg>` on stderr, exit 2 (verified against go1.27.1
+  `src/runtime/mfinal.go`) — on a nil object
+  (`runtime.SetFinalizer: first argument is nil`), a non-pointer first
+  argument (`... first argument is <T>, not pointer`), a non-function
+  second argument (`... second argument is <T>, not a function`), a
+  typed-nil pointer (`... pointer not in allocated block`), and double-set
+  (`... finalizer already set`). `GcInterop` raises these as Java signals
+  with gc's message text; `SetFinalizerCallNode` translates them to the
+  fatal path (the same signal/binding split as sync misuse). A recoverable
+  Go panic here would diverge (gc dies); the pre-fix code surfaced misuse
+  as `graalgo-run: execution failed` / exit 1 (fixed 2026-10-18 per the
+  independent review).
 
 **Finalizer-ordering note:** Go does not order finalizers of unrelated
 objects; JVM `Cleaner` actions have the same non-guarantee — no observable

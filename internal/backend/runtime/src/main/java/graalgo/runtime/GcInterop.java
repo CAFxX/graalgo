@@ -1,6 +1,10 @@
 package graalgo.runtime;
 
 import graalgo.values.GoFunc;
+import graalgo.values.GoInterface;
+import graalgo.values.GoPointer;
+import graalgo.values.GoString;
+import graalgo.values.GoTypeDescriptor;
 
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -129,17 +133,35 @@ public final class GcInterop {
     /**
      * {@code runtime.SetFinalizer(obj, finalizer)}.
      *
+     * <p>Misuse failure modes are gc's (verified against go1.27.1
+     * {@code src/runtime/mfinal.go}): gc {@code throw()}s — fatal,
+     * unrecoverable, {@code fatal error: <msg>} on stderr, exit 2 — on
+     * every bad argument and on double-set. This method raises misuse as
+     * a Java signal ({@link IllegalArgumentException} for bad arguments,
+     * {@link IllegalStateException} for double-set) carrying gc's exact
+     * message text; the guest boundary ({@code SetFinalizerCallNode})
+     * translates the signal to the fatal path — the same signal/binding
+     * split as sync misuse (ADR-0002 D4).
+     *
      * @param obj must be a Go pointer ({@code *T}); nil clears.
      * @param finalizer a {@link GoFunc} taking the pointer, or null to remove.
      */
     public static void setFinalizer(Object obj, Object finalizer) {
         if (obj == null) {
+            // gc: throw("runtime.SetFinalizer: first argument is nil")
             throw new IllegalArgumentException(
-                    "runtime.SetFinalizer: nil object");
+                    "runtime.SetFinalizer: first argument is nil");
         }
-        if (!(obj instanceof graalgo.values.GoPointer)) {
+        if (!(obj instanceof GoPointer ptr)) {
+            // gc: throw("runtime.SetFinalizer: first argument is " + T + ", not pointer")
             throw new IllegalArgumentException(
-                    "runtime.SetFinalizer: first argument must be a pointer");
+                    "runtime.SetFinalizer: first argument is " + goTypeNameOf(obj) + ", not pointer");
+        }
+        if (ptr.isNil()) {
+            // gc: throw("runtime.SetFinalizer: pointer not in allocated block")
+            // (typed-nil pointer: findObject finds no heap span).
+            throw new IllegalArgumentException(
+                    "runtime.SetFinalizer: pointer not in allocated block");
         }
         final GoFunc fn;
         if (finalizer == null) {
@@ -147,8 +169,10 @@ public final class GcInterop {
         } else if (finalizer instanceof GoFunc g) {
             fn = g;
         } else {
+            // gc: throw("runtime.SetFinalizer: second argument is " + T + ", not a function")
             throw new IllegalArgumentException(
-                    "runtime.SetFinalizer: finalizer must be a function");
+                    "runtime.SetFinalizer: second argument is " + goTypeNameOf(finalizer)
+                            + ", not a function");
         }
         synchronized (FINALIZER_LOCK) {
             FinalizerAction old = BY_OBJ.remove(obj);
@@ -178,6 +202,39 @@ public final class GcInterop {
             // above and the Cleaner may fire prematurely.
             java.lang.ref.Reference.reachabilityFence(obj);
         }
+    }
+
+    /**
+     * Best-effort Go-syntax type name for a guest value, for gc's
+     * {@code "first argument is <T>, not pointer"} /
+     * {@code "second argument is <T>, not a function"} messages (gc prints
+     * the full dynamic type from the runtime type descriptor).
+     *
+     * <p>A {@link GoInterface}-boxed value carries its descriptor (exact);
+     * unboxed JVM primitives are approximated by kind. Documented
+     * approximation: unboxed values carry no descriptor, so e.g. a raw
+     * long renders as {@code int} regardless of the original int kind.
+     */
+    private static String goTypeNameOf(Object v) {
+        if (v instanceof GoInterface gi && !gi.isNil()) {
+            Object d = gi.descriptor();
+            if (d instanceof GoTypeDescriptor td) {
+                return td.name();
+            }
+        }
+        if (v instanceof GoString || v instanceof String) {
+            return "string";
+        }
+        if (v instanceof Long || v instanceof Integer || v instanceof Short || v instanceof Byte) {
+            return "int";
+        }
+        if (v instanceof Double || v instanceof Float) {
+            return "float64";
+        }
+        if (v instanceof Boolean) {
+            return "bool";
+        }
+        return v.getClass().getSimpleName();
     }
 
     // ------------------------------------------------------------------

@@ -74,32 +74,48 @@ public final class GcInteropTest {
         GcInterop.keepAlive(null); // gc allows nil
     }
 
-    /** setFinalizer: argument validation matches gc's panics. */
+    /** setFinalizer: misuse signals carry gc's exact messages (ADR-0002 D4). */
     public void testSetFinalizerValidation() {
-        boolean threw = false;
-        try {
-            GcInterop.setFinalizer(null, null);
-        } catch (IllegalArgumentException e) {
-            threw = true;
-        }
-        assertTrue(threw, "SetFinalizer(nil, nil) must throw");
+        // gc throw()s "runtime.SetFinalizer: first argument is nil"
+        // (fatal, unrecoverable — SetFinalizerCallNode maps the signal).
+        assertMisuseSignal(
+                () -> GcInterop.setFinalizer(null, null),
+                "runtime.SetFinalizer: first argument is nil",
+                "SetFinalizer(nil, nil)");
 
-        threw = false;
-        try {
-            GcInterop.setFinalizer("not-a-pointer", null);
-        } catch (IllegalArgumentException e) {
-            threw = true;
-        }
-        assertTrue(threw, "SetFinalizer(non-pointer, nil) must throw");
+        // gc: "runtime.SetFinalizer: first argument is <T>, not pointer"
+        assertMisuseSignal(
+                () -> GcInterop.setFinalizer("not-a-pointer", null),
+                "runtime.SetFinalizer: first argument is string, not pointer",
+                "SetFinalizer(non-pointer, nil)");
 
-        threw = false;
+        // Typed-nil pointer: gc throw()s "pointer not in allocated block".
+        assertMisuseSignal(
+                () -> GcInterop.setFinalizer(new GoPointer((Object) null), null),
+                "runtime.SetFinalizer: pointer not in allocated block",
+                "SetFinalizer(typed-nil ptr, nil)");
+
+        // gc: "runtime.SetFinalizer: second argument is <T>, not a function"
+        GoPointer p = new GoPointer(new Object());
+        assertMisuseSignal(
+                () -> GcInterop.setFinalizer(p, "not-a-func"),
+                "runtime.SetFinalizer: second argument is string, not a function",
+                "SetFinalizer(ptr, non-func)");
+    }
+
+    /** A SetFinalizer misuse signal: IllegalArgumentException + exact message. */
+    private interface Misuse {
+        void trigger();
+    }
+
+    private static void assertMisuseSignal(Misuse m, String gcMessage, String what) {
         try {
-            GoPointer p = new GoPointer(new Object());
-            GcInterop.setFinalizer(p, "not-a-func");
+            m.trigger();
         } catch (IllegalArgumentException e) {
-            threw = true;
+            assertEquals(gcMessage, e.getMessage(), what + " signal message");
+            return;
         }
-        assertTrue(threw, "SetFinalizer(ptr, non-func) must throw");
+        throw new AssertionError(what + " must signal, expected message: " + gcMessage);
     }
 
     /** setFinalizer(ptr, nil) on an object with no finalizer is a silent no-op. */

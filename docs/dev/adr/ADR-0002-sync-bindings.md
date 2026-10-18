@@ -145,25 +145,34 @@ correct zero) and stays allowed.
 factory-level zero manufacturing; the scope errors name M2 so the trigger
 is greppable.
 
-## D4. Misuse → Go panic with gc's message (known divergence, scoped)
+## D4. Misuse → gc's failure mode with gc's message
 
-`GoMutex.unlock()`/`GoRWMutex.rUnlock()` throw `IllegalStateException`
-with gc's message text; `GoWaitGroup.add` throws on negative counters.
-The binding translates these to Go panics via `Panic.throwPanic`:
+`GoMutex.unlock()` / `GoRWMutex.unlock()` / `GoRWMutex.rUnlock()` throw
+`IllegalStateException` with gc's message text; `GoWaitGroup.add` throws
+on negative counters. The binding (`SyncOpNode`) translates each signal
+to gc's failure mode — panic and fatal are *not* interchangeable
+(2026-10-18 correction of the earlier "scoped divergence" stance, per the
+independent review):
 
 - `sync: negative WaitGroup counter` — gc 1.27.1 panics (recoverable);
-  full parity: `panic: sync: negative WaitGroup counter`, exit 2.
-- `sync: unlock of unlocked mutex`, `sync: RUnlock of unlocked RWMutex` —
-  gc 1.27.1 **fatal-errors** (`fatal error: ...`, unrecoverable, exit 2;
-  verified against `~/tools/go-1.27.1`). The binding panics with gc's
-  message text (`panic: sync: ...`, exit 2) per the P3-M2 brief
-  ("unlock-of-unlocked panics with gc's message"). **Scoped divergence:**
-  ours is recoverable, gc's is not; the `panic:`/`fatal error:` wrapper
-  line differs. A true fatal-error path needs scheduler machinery Phase 2
-  does not have (and may not be modified).
+  full parity via `Panic.throwPanic`: `panic: sync: negative WaitGroup
+  counter`, exit 2 if uncaught, recoverable via `recover()`.
+- `sync: unlock of unlocked mutex`, `sync: Unlock of unlocked RWMutex`,
+  `sync: RUnlock of unlocked RWMutex` — gc 1.27.1 **fatal-errors**
+  (`fatal()` in `internal/sync/mutex.go` / `sync/rwmutex.go`:
+  unrecoverable, exit 2; verified against `~/tools/go-1.27.1` source and
+  runtime probes). The binding routes these through
+  `SyncRuntime.syncFatal` (gc's `runtime.fatal` via `sync.fatal`):
+  `fatal error: <msg>` on stderr, exit 2, unrecoverable — a guest
+  `recover()` must NOT succeed where gc dies.
 
-**Re-test trigger:** when the scheduler gains a fatal-error path, re-run
-the unlock-misuse corpus expecting gc's `fatal error:` line.
+Documented residual gap: gc prints a goroutine stack dump after the
+`fatal error:` line; the binding prints only the line (same as the
+existing `sync.throw` / `sync.fatal` intrinsics) — first line and exit
+code match.
+
+**Re-test trigger:** new Go release changing sync-misuse failure modes;
+re-run the unlock-misuse corpus expecting gc's `fatal error:` line.
 
 Inherited limitation (phase-2 primitive, out of M2 scope): `GoWaitGroup`
 does not detect "Add called concurrently with Wait" (gc panics); the

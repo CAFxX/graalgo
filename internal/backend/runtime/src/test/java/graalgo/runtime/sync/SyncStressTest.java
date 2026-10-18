@@ -106,16 +106,65 @@ public final class SyncStressTest {
         }
     }
 
-    /** Unlock of an unlocked mutex panics (gc parity). */
-    public void testMutexUnlockOfUnlockedPanics() {
-        GoMutex mu = new GoMutex();
-        boolean panicked = false;
+    /**
+     * Asserts a primitive misuse raises the documented signal: an
+     * {@code IllegalStateException} carrying gc's exact message text.
+     * The signal is translated to the guest-visible failure mode by the
+     * binding (ADR-0002 D4) — Go panic for WaitGroup misuse, fatal error
+     * for mutex/RWMutex unlock misuse — pinned end to end by
+     * {@code SyncMisuseEndToEndTest}.
+     */
+    private interface Misuse {
+        void trigger();
+    }
+
+    private static void assertMisuseSignal(Misuse m, String gcMessage) {
         try {
-            mu.unlock();
+            m.trigger();
         } catch (IllegalStateException e) {
-            panicked = true;
+            assertTrue(gcMessage.equals(e.getMessage()),
+                    "misuse signal message must be gc's: expected=[" + gcMessage
+                            + "] actual=[" + e.getMessage() + "]");
+            return;
         }
-        assertTrue(panicked, "unlock of unlocked mutex must panic");
+        throw new AssertionError("misuse must signal, expected message: " + gcMessage);
+    }
+
+    /**
+     * Unlock of an unlocked mutex signals with gc's message text (the
+     * binding translates the signal to gc's fatal error — unrecoverable,
+     * exit 2; ADR-0002 D4).
+     */
+    public void testMutexUnlockOfUnlockedSignals() {
+        newScheduler(1);
+        try {
+            GoMutex mu = new GoMutex();
+            assertMisuseSignal(mu::unlock, "sync: unlock of unlocked mutex");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /** Unlock of an unlocked RWMutex signals with gc's message text. */
+    public void testRWMutexUnlockOfUnlockedSignals() {
+        newScheduler(1);
+        try {
+            GoRWMutex mu = new GoRWMutex();
+            assertMisuseSignal(mu::unlock, "sync: Unlock of unlocked RWMutex");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /** RUnlock of an unlocked RWMutex signals with gc's message text. */
+    public void testRWMutexRUnlockOfUnlockedSignals() {
+        newScheduler(1);
+        try {
+            GoRWMutex mu = new GoRWMutex();
+            assertMisuseSignal(mu::rUnlock, "sync: RUnlock of unlocked RWMutex");
+        } finally {
+            SchedulerCore.install(null);
+        }
     }
 
     /**
@@ -205,16 +254,20 @@ public final class SyncStressTest {
         }
     }
 
-    /** WaitGroup negative counter panics. */
-    public void testWaitGroupNegativePanics() {
-        GoWaitGroup wg = new GoWaitGroup();
-        boolean panicked = false;
+    /**
+     * WaitGroup negative counter signals with gc's message text (the
+     * binding translates the signal to a recoverable Go panic — gc
+     * panics here; ADR-0002 D4).
+     */
+    public void testWaitGroupNegativeSignals() {
+        newScheduler(1);
         try {
-            wg.add(-1);
-        } catch (IllegalStateException e) {
-            panicked = true;
+            GoWaitGroup wg = new GoWaitGroup();
+            assertMisuseSignal(() -> wg.add(-1), "sync: negative WaitGroup counter");
+            assertMisuseSignal(wg::done, "sync: negative WaitGroup counter");
+        } finally {
+            SchedulerCore.install(null);
         }
-        assertTrue(panicked, "negative WaitGroup counter must panic");
     }
 
     /** Zero-counter await returns immediately (no park). */
