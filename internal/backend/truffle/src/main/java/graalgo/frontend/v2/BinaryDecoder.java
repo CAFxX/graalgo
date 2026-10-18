@@ -37,6 +37,15 @@ import java.util.Map;
  *               patterns, surfaced as signed longs.
  * </pre>
  *
+ * <p>There is deliberately no float tag. The emitter transports float
+ * constants as their source spelling (strings, e.g. "3.14"), never as
+ * floating-point values: this side parses the spelling per kind in
+ * {@link NodeFactoryV2} (float32 vs float64, hex floats, etc. — information
+ * a bare IEEE-754 payload would destroy). A floating-point value on the wire
+ * is always an encoder bug; the Go encoder fails loudly on it instead of
+ * emitting it under TAG_STRING, which would decode here as a
+ * {@code java.lang.String} — a silent type change (L24).
+ *
  * <p>The magic + version header lets the decoder reject version skew,
  * truncation, or garbage input loudly instead of misdecoding it.
  *

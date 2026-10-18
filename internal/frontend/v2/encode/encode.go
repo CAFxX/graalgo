@@ -28,6 +28,16 @@
 //	list    := varint count, values...
 //	map     := varint count, (string key, value)...
 //
+// There is deliberately NO float tag. The emitter transports float
+// constants as their source spelling (Go strings, e.g. "3.14"), never as
+// Go float64 values: the Java side parses the spelling per kind in
+// NodeFactoryV2.buildBasicLit (float32 vs float64, hex floats, etc. —
+// information a bare IEEE-754 payload would destroy). A Go float64 (or
+// float32) value reaching the encoder is therefore always a bug, and the
+// encoder fails loudly on it (see encodeValue) instead of emitting it
+// under TAG_STRING, which the Java decoder would read as a java.lang.String
+// — a silent type change (L24).
+//
 // The magic + version header lets the Java decoder reject version skew,
 // truncation, or garbage input loudly instead of misdecoding it (R5-P2-5).
 //
@@ -125,14 +135,6 @@ func encodeValue(buf *bytes.Buffer, v any) error {
 	case uint64:
 		buf.WriteByte(tagInt)
 		writeVarint(buf, zigzagUnsigned(x))
-	case float64:
-		// Floats are encoded as strings to preserve exact representation.
-		// The Java side parses them back. (v2 currently uses ints for
-		// constants; this is for future completeness.)
-		buf.WriteByte(tagString)
-		s := fmt.Sprintf("%v", x)
-		writeVarint(buf, uint64(len(s)))
-		buf.WriteString(s)
 	case string:
 		buf.WriteByte(tagString)
 		writeVarint(buf, uint64(len(x)))

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -188,6 +189,115 @@ func TestEncodeGoldenDoc(t *testing.T) {
 	}
 }
 
+// TestEncodeFloatRejected pins the L24 fix: there is deliberately no
+// float tag on the wire. A Go float value reaching the encoder is always
+// a bug; the encoder must fail loudly instead of emitting it under
+// TAG_STRING, which the Java decoder would read as a java.lang.String —
+// a silent type change. This test fails against the pre-L24 code, which
+// returned nil here.
+func TestEncodeFloatRejected(t *testing.T) {
+	for _, v := range []any{float64(3.14), float32(1.5), float64(math.Inf(1)), float64(math.NaN())} {
+		var buf bytes.Buffer
+		err := encodeValue(&buf, v)
+		if err == nil {
+			t.Fatalf("encodeValue(%T %v): want error, got nil", v, v)
+		}
+		if !strings.Contains(err.Error(), "unsupported type") {
+			t.Fatalf("encodeValue(%T): error %q does not say unsupported type", v, err)
+		}
+		if buf.Len() != 0 {
+			t.Fatalf("encodeValue(%T): wrote %d bytes before failing", v, buf.Len())
+		}
+	}
+}
+
+// TestEncodeFloatLiteralSpelling is the positive half of the L24 story:
+// float constants travel as their source spelling (Go strings), never as
+// float64 values, because the Java side parses the spelling per kind in
+// NodeFactoryV2.buildBasicLit. Spellings that distinguish kinds
+// (float32 vs float64, hex floats) must survive the wire byte-exact and
+// must arrive as strings.
+func TestEncodeFloatLiteralSpelling(t *testing.T) {
+	src := `package main
+
+func main() {
+	_ = 3.14
+	_ = float32(1.5)
+	_ = 0x1p-2
+}
+`
+	dir := t.TempDir()
+	fn := filepath.Join(dir, "floats.go")
+	if err := os.WriteFile(fn, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pres, err := parser.ParseFiles([]string{fn})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cres, err := checker.Check(pres.Fset, pres.Pkg, &checker.Config{GoVersion: "go1.27"})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	doc, err := emit.Emit(cres, pres.Pkg, pres.Files)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	bin, err := Encode(doc)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	rest := bin[len(formatMagic):]
+	if ver, n := binary.Uvarint(rest); n <= 0 || ver != formatVersion {
+		t.Fatalf("bad version header: %x", rest[:min(4, len(rest))])
+	} else {
+		rest = rest[n:]
+	}
+	decoded, trailing := decodeTestValue(t, rest)
+	if len(trailing) != 0 {
+		t.Fatalf("%d trailing bytes after decode", len(trailing))
+	}
+	// Walk the decoded document; every basiclit "value" must be the
+	// source spelling as a Go string.
+	var spellings []string
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if x["kind"] == "basiclit" {
+				fields, ok := x["fields"].(map[string]any)
+				if !ok {
+					t.Fatalf("basiclit node has no fields map: %#v", x)
+				}
+				s, ok := fields["value"].(string)
+				if !ok {
+					t.Fatalf("basiclit value is %T, want string (spelling): %#v", fields["value"], fields["value"])
+				}
+				spellings = append(spellings, s)
+			}
+			for _, e := range x {
+				walk(e)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	walk(decoded)
+	want := []string{"0x1p-2", "1.5", "3.14"}
+	sort.Strings(spellings)
+	sort.Strings(want)
+	if len(spellings) != len(want) {
+		t.Fatalf("basiclit spellings:\n got %#v\nwant %#v", spellings, want)
+	}
+	for i := range want {
+		if spellings[i] != want[i] {
+			t.Fatalf("basiclit spellings:\n got %#v\nwant %#v", spellings, want)
+		}
+	}
+}
+
 // intPattern returns the 64-bit pattern of any Go integer width, for
 // comparing decoded wire values.
 func intPattern(v any) uint64 {
@@ -286,7 +396,7 @@ func decodeTestValue(t *testing.T, data []byte) (any, []byte) {
 	case tagInt:
 		n := readVarint()
 		// Invert zigzag: (n >>> 1) ^ -(n & 1).
-		return (n >> 1) ^ uint64(-(int64(n&1))), rest
+		return (n >> 1) ^ uint64(-(int64(n & 1))), rest
 	case tagString:
 		ln := readVarint()
 		if uint64(len(rest)) < ln {
