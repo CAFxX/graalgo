@@ -84,12 +84,12 @@ public final class GoNetpollTest {
         return out.get();
     }
 
-    /** Wire-format AF_INET 127.0.0.1:port. */
+    /** Wire-format AF_INET 127.0.0.1:port (D5: []byte is byte[]-backed). */
     private static GoSlice v4(int port) {
-        int[] a = new int[7];
+        byte[] a = new byte[7];
         a[0] = 2;
-        a[1] = (port >>> 8) & 0xFF;
-        a[2] = port & 0xFF;
+        a[1] = (byte) ((port >>> 8) & 0xFF);
+        a[2] = (byte) (port & 0xFF);
         a[3] = 127;
         a[4] = 0;
         a[5] = 0;
@@ -99,22 +99,18 @@ public final class GoNetpollTest {
 
     private static GoSlice bytes(String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int[] a = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            a[i] = b[i] & 0xFF;
-        }
-        return new GoSlice(a, 0, a.length, a.length);
+        return new GoSlice(b, 0, b.length, b.length);
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static String str(GoSlice gs, int n) {
-        int[] a = (int[]) gs.array();
+        byte[] a = (byte[]) gs.array();
         byte[] b = new byte[n];
         for (int i = 0; i < n; i++) {
-            b[i] = (byte) a[gs.offset() + i];
+            b[i] = a[gs.offset() + i];
         }
         return new String(b, java.nio.charset.StandardCharsets.UTF_8);
     }
@@ -123,7 +119,7 @@ public final class GoNetpollTest {
         GoSlice b = buf(23);
         long r = GoNet.getsockname(cookie, b);
         assertTrue(r > 0, "getsockname ok: " + r);
-        int[] a = (int[]) b.array();
+        byte[] a = (byte[]) b.array();
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
@@ -231,7 +227,7 @@ public final class GoNetpollTest {
             // Peer addresses agree (fd-domain unification: cookies resolve).
             GoSlice pb = buf(23);
             assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
-            int[] a = (int[]) pb.array();
+            byte[] a = (byte[]) pb.array();
             assertEq(2, a[0], "peer family");
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
@@ -689,7 +685,18 @@ public final class GoNetpollTest {
         }
     }
 
-    public void testConcurrentWaitFailsFast() throws Exception {
+    /**
+     * gc parity (review14-netpoll P1-1): concurrent same-mode waits on one
+     * pollDesc serialize — the second waiter queues behind the first
+     * (gc's internal/poll fdMutex holds an exclusive read lock across
+     * FD.Read; verified on go1.27.1: two blocking reads on one conn both
+     * block, no "double wait" throw). Replaces the old fail-fast
+     * expectation: no raw IllegalStateException may escape. Proves
+     * queueing: with the first waiter parked, the second wait neither
+     * throws nor returns for 300ms (the old code threw immediately),
+     * then both waits complete cleanly once the first is released.
+     */
+    public void testConcurrentWaitSerializes() throws Exception {
         SchedulerCore prev = setup();
         try {
             SchedulerCore sched = SchedulerCore.current();
@@ -697,29 +704,98 @@ public final class GoNetpollTest {
             long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
             long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
             long sctx = GoNetpoll.pollOpen(ss);
-            sched.spawn(() -> GoNetpoll.pollWait(sctx, (long) 'r')); // parks
-            Thread.sleep(100);
+            AtomicLong r1 = new AtomicLong(-1);
+            AtomicLong r2 = new AtomicLong(-1);
             AtomicReference<Throwable> err = new AtomicReference<>();
+            CountDownLatch g2In = new CountDownLatch(1);
             sched.spawn(() -> {
                 try {
-                    GoNetpoll.pollWait(sctx, (long) 'r');
+                    r1.set(GoNetpoll.pollWait(sctx, (long) 'r'));
                 } catch (Throwable t) {
-                    err.set(t);
+                    err.compareAndSet(null, t);
                 }
             });
-            Thread.sleep(100);
-            assertTrue(err.get() instanceof IllegalStateException,
-                    "second waiter fails fast: " + err.get());
-            // The first waiter is still parked; unblock to release it.
+            Thread.sleep(100); // let the first waiter park
+            sched.spawn(() -> {
+                g2In.countDown();
+                try {
+                    r2.set(GoNetpoll.pollWait(sctx, (long) 'r'));
+                } catch (Throwable t) {
+                    err.compareAndSet(null, t);
+                }
+            });
+            assertTrue(g2In.await(5, TimeUnit.SECONDS), "second waiter entered");
+            // The old behavior threw IllegalStateException immediately;
+            // the new behavior queues: after 300ms neither wait returned.
+            Thread.sleep(300);
+            assertEq(-1, r1.get(), "first waiter still parked");
+            assertEq(-1, r2.get(), "second waiter queued behind the first");
+            assertTrue(err.get() == null, "no exception escaped: " + err.get());
+            // Release via unblock (deterministic: no data is in flight, so
+            // no level-triggered readiness can resolve the second wait
+            // before the unblock does). Both waiters must observe CLOSING;
+            // the second only after the first's wait fully released the
+            // per-mode lock (it cannot complete first: it cannot even
+            // enter pollWaitLocked until the first waiter's wait returns).
             GoNetpoll.pollUnblock(sctx);
-            sched.awaitQuiescence();
+            sched.awaitQuiescence(); // also proves no deadlock on the wait lock
+            assertTrue(err.get() == null, "no exception escaped: " + err.get());
+            assertEq(1, r1.get(), "first waiter got CLOSING");
+            assertEq(1, r2.get(), "second waiter got CLOSING after queueing");
             GoNetpoll.pollClose(sctx);
-            assertEq(0, GoOs.close(ss), "close");
-            assertEq(0, GoOs.close(cli[0]), "close client");
+            assertEq(0, GoOs.close(ss), "close server conn");
+            closeSock(cli[0], cli[1]);
             closeSock(srv[0], srv[1]);
         } finally {
             teardown(prev);
         }
+    }
+
+    /**
+     * review14-netpoll P1-2: a failed listen() must not leak the
+     * ServerSocketChannel (gc closes the socket on listen failure).
+     * Falsifying probe: N binds against an already-listening port — each
+     * leaked exactly one fd pre-fix; the process fd count must not grow
+     * post-fix.
+     */
+    public void testFailedListenLeaksNoFd() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            long[] srv = listenLoopback();
+            int port = (int) srv[2];
+            int base = fdCount();
+            assertTrue(base > 0, "fd count readable");
+            int n = 30;
+            for (int i = 0; i < n; i++) {
+                long s = GoNet.socket(2, 1, 0);
+                assertTrue(s >= 16, "socket cookie: " + s);
+                long ctx = openPollFirst(s);
+                // SOCK_STREAM binds lazily: GoNet.bind only records the
+                // address; the OS bind happens in listen() and fails with
+                // EADDRINUSE against the live listener above (this socket
+                // has no SO_REUSEADDR).
+                assertEq(0, GoNet.bind(s, v4(port)), "bind (lazy)");
+                long r = GoNet.listen(s, 128);
+                assertEq(-GoNet.EADDRINUSE, r, "listen fails EADDRINUSE");
+                // Tear down the cookie-owned resources (idle
+                // SocketChannel + pollDesc). A leaked ServerSocketChannel
+                // is NOT reachable from here — that is what we measure.
+                GoNetpoll.pollUnblock(ctx);
+                GoNetpoll.pollClose(ctx);
+                assertEq(0, GoOs.close(s), "close");
+            }
+            int delta = fdCount() - base;
+            assertTrue(delta <= 2, "no fd leak on failed listen, delta=" + delta);
+            closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /** Number of open fds of this process (Linux /proc). */
+    private static int fdCount() {
+        String[] fds = new java.io.File("/proc/self/fd").list();
+        return fds == null ? -1 : fds.length;
     }
 
     /**
@@ -756,7 +832,7 @@ public final class GoNetpollTest {
                 GoSlice rb = buf(64);
                 GoSlice ab = buf(23);
                 long r = GoNet.recvfrom(a, rb, ab);
-                int[] aa = (int[]) ab.array();
+                byte[] aa = (byte[]) ab.array();
                 peer.set("fam=" + aa[0]);
                 got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
                 return null;

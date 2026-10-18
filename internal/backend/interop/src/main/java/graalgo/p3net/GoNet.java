@@ -230,6 +230,21 @@ public final class GoNet {
     }
 
     /**
+     * Best-effort close, null-safe. Used on setup-failure paths so a
+     * half-constructed channel cannot leak its fd (review14-netpoll
+     * P1-2/P2-3).
+     */
+    private static void closeQuietly(java.nio.channels.Channel ch) {
+        if (ch != null) {
+            try {
+                ch.close();
+            } catch (IOException ignored) {
+                // Best effort: the caller already has an error to report.
+            }
+        }
+    }
+
+    /**
      * Socket-aware errno mapper: socket-specific exception types first,
      * then {@link GoOs#errno} for the rest. The only exception→errno
      * translation on the socket path (mirrors GoOs R1 discipline).
@@ -485,9 +500,19 @@ public final class GoNet {
             }
             try {
                 ServerSocketChannel ssc = ServerSocketChannel.open(protoFamily(st.domain));
-                ssc.configureBlocking(false);
-                applySockOpts(ssc, st);
-                ssc.bind(st.boundAddr, backlog <= 0 ? 128 : backlog);
+                try {
+                    ssc.configureBlocking(false);
+                    applySockOpts(ssc, st);
+                    ssc.bind(st.boundAddr, backlog <= 0 ? 128 : backlog);
+                } catch (IOException | RuntimeException e) {
+                    // P1-2 (review14-netpoll): a failed listen must not
+                    // leak the ServerSocketChannel (gc closes the socket on
+                    // listen failure); every failure leaked one fd toward
+                    // EMFILE. The channel is not owned by the cookie yet,
+                    // so close it here; the errno mapping below is unchanged.
+                    closeQuietly(ssc);
+                    throw e;
+                }
                 // Swap the handle's channel (closes the idle SocketChannel).
                 GoOs.replaceSocketChannel(cookie, ssc, false, false);
                 // The fork ran runtime_pollOpen BEFORE listen (FD.Init
@@ -519,8 +544,9 @@ public final class GoNet {
         if (!(ch instanceof ServerSocketChannel ssc)) {
             return -GoOs.EINVAL;
         }
+        SocketChannel sc = null;
         try {
-            SocketChannel sc = ssc.accept();
+            sc = ssc.accept();
             if (sc == null) {
                 return -EAGAIN; // nonblocking, none pending (gc parity)
             }
@@ -531,6 +557,10 @@ public final class GoNet {
             STATES.put(nc, nst);
             return nc;
         } catch (IOException e) {
+            // P2-3 (review14-netpoll): the accepted socket is not owned by
+            // any cookie yet; close it so a setup failure before
+            // registration cannot leak the fd (gc parity).
+            closeQuietly(sc);
             return -sockErrno(e);
         }
     }

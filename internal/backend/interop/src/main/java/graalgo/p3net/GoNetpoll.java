@@ -19,6 +19,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 import graalgo.jfr.ParkReason;
 import graalgo.p3os.GoOs;
@@ -157,6 +158,25 @@ public final class GoNetpoll {
         volatile SelectionKey key;
         final AtomicReference<Waiter> reader = new AtomicReference<>();
         final AtomicReference<Waiter> writer = new AtomicReference<>();
+        /**
+         * Serializes same-mode waits (review14-netpoll P1-1, gc parity).
+         * gc's internal/poll fdMutex takes an exclusive read lock across
+         * the whole FD.Read (syscall + WaitRead), so two goroutines doing
+         * a blocking read on one fd queue behind each other, and
+         * netpollblock's "double wait" throw is unreachable through the
+         * net API (verified empirically on go1.27.1: two blocking reads
+         * on one conn both block, no throw). The fork has no fdMutex
+         * (synth_net.go netFD.read takes no lock), so pollWaitRaw takes
+         * the per-mode lock around the whole wait instead: the second
+         * waiter blocks here — parked on its vthread outside the
+         * scheduler — until the first waiter's wait completes, and never
+         * sees the slot-CAS IllegalStateException. Fair (FIFO), matching
+         * fdMutex's semaphore wake order. A leaf lock — no waker,
+         * deadline, unblock or close path takes it — so holding it across
+         * the scheduler park cannot deadlock.
+         */
+        final ReentrantLock readWaitLock = new ReentrantLock(true);
+        final ReentrantLock writeWaitLock = new ReentrantLock(true);
         volatile boolean closing;
         volatile boolean closed;
         /** Absolute nanotime deadlines; 0 = none, < 0 = expired. */
@@ -610,6 +630,25 @@ public final class GoNetpoll {
     private static int pollWaitRaw(long ctx, int mode, boolean ignoreTimeout) {
         PollDesc pd = requireDesc(ctx);
         checkMode(mode);
+        // P1-1 (review14-netpoll): serialize same-mode waits. Without this
+        // the slot CAS below threw a raw IllegalStateException that escaped
+        // Linknames.dispatch as an internal error; gc instead serializes
+        // concurrent same-mode waits behind internal/poll.fdMutex's
+        // exclusive read lock, so the second waiter queues here until the
+        // first waiter's wait completes. The lock is a leaf (wakeWith,
+        // deadlines, unblock and close never take it), so holding it across
+        // sched.parkCurrent cannot deadlock.
+        ReentrantLock waitLock = mode == MODE_READ ? pd.readWaitLock : pd.writeWaitLock;
+        waitLock.lock();
+        try {
+            return pollWaitLocked(pd, mode, ignoreTimeout);
+        } finally {
+            waitLock.unlock();
+        }
+    }
+
+    /** pollWaitRaw with the per-mode wait lock held (P1-1). */
+    private static int pollWaitLocked(PollDesc pd, int mode, boolean ignoreTimeout) {
         // P0-2: the fork runs runtime_pollOpen in FD.Init, BEFORE
         // connect()/listen(). The connecting/listener snapshot taken in
         // pollOpen is stale by the first wait — re-read live state here
@@ -627,6 +666,10 @@ public final class GoNetpoll {
         SchedulerCore sched = SchedulerCore.current();
         Waiter w = new Waiter(sched.currentGoroutine());
         if (!slot(pd, mode).compareAndSet(null, w)) {
+            // Internal invariant, unreachable: same-mode waits are
+            // serialized by the per-mode wait lock in pollWaitRaw, so the
+            // slot is always free here (only same-thread re-entry could
+            // trip it). Fail loud rather than silently double-parking.
             throw new IllegalStateException("runtime: concurrent poll wait on one polldesc");
         }
         setInterest(pd, mode, true);
