@@ -732,6 +732,30 @@ public final class Intrinsics {
             SourceSection throwSiteOverride) {
         StringBuilder sb = new StringBuilder();
         sb.append("goroutine ").append(goroutineId).append(" [running]:\n");
+        renderGoFrames(sb, top, throwSiteOverride);
+        return sb.toString();
+    }
+
+    /**
+     * Renders Go stack frames with no goroutine header, for stacks that
+     * belong to no goroutine — the finalizer thread (see
+     * {@code SchedulerCore.recordFinalizerPanic}). Attributing the frames
+     * to a fabricated goroutine id would mislead.
+     *
+     * @param top the innermost frame (null renders an empty stack)
+     * @param throwSiteOverride source section for the innermost frame
+     *        (the panic throw site), or null to use the frame's own
+     */
+    public static String renderGoStack(GoStackFrame top,
+            SourceSection throwSiteOverride) {
+        StringBuilder sb = new StringBuilder();
+        renderGoFrames(sb, top, throwSiteOverride);
+        return sb.toString();
+    }
+
+    /** Appends the frame list (innermost first) to {@code sb}. */
+    private static void renderGoFrames(StringBuilder sb, GoStackFrame top,
+            SourceSection throwSiteOverride) {
         GoStackFrame f = top;
         boolean first = true;
         while (f != null && !f.isEmpty()) {
@@ -752,6 +776,5 @@ public final class Intrinsics {
             }
             f = f.parent();
         }
-        return sb.toString();
     }
 }

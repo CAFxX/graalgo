@@ -40,10 +40,12 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  *       like gc's finalizer goroutine). <b>Accepted divergence:</b> the
  *       finalizer is invoked with a {@code nil} argument — a Cleaner action
  *       is denied the referent and the original object cannot be recovered
- *       on a pure JVM. Finalizers that dereference their argument diverge
- *       from gc (loudly, not silently). The finalizer runs on the Cleaner's
- *       JVM thread, not a goroutine: touching scheduler state from a
- *       finalizer body fail-fasts.
+ *       on a pure JVM. Finalizers that dereference their argument panic on
+ *       the nil argument (DIV-M4-1); the panic is fatal — the process dies
+ *       with exit 2, like gc (go1.27.1 {@code src/runtime/mfinal.go}: no
+ *       recover on the finalizer goroutine). The finalizer runs on the
+ *       Cleaner's JVM thread, not a goroutine: touching scheduler state
+ *       from a finalizer body fail-fasts.
  *   <li>{@code runtime.KeepAlive} — {@link java.lang.ref.Reference#reachabilityFence}.
  *   <li>{@code runtime.GC()} — {@code System.gc()} + poll of GC MXBean
  *       collection counts until they advance, bounded 30 s timeout. If the
@@ -118,10 +120,27 @@ public final class GcInterop {
             try {
                 GoCalls.invoke(fn, new Object[] { null });
             } catch (Throwable t) {
-                // gc: a panicking finalizer crashes the program. We cannot
-                // crash the host from here; be loud instead.
-                System.err.println("graalgo: finalizer panicked: " + t);
-                t.printStackTrace(System.err);
+                // gc (go1.27.1 src/runtime/mfinal.go): finalizers run on
+                // the system goroutine with no recover — a panicking
+                // finalizer is unrecoverable and the process dies (exit 2).
+                // Route through the scheduler's fatal path so the launcher
+                // exits non-zero instead of printing and continuing: the
+                // old print-and-continue diverged observably from gc (the
+                // program kept running after a fatal finalizer panic).
+                graalgo.sched.SchedulerCore sc =
+                        graalgo.sched.SchedulerCore.installedOrNull();
+                if (sc != null) {
+                    sc.recordFinalizerPanic(t);
+                } else {
+                    // No scheduler installed (phase-1 runs, bare unit
+                    // tests): no launcher will observe a recorded panic,
+                    // so crash the process directly. halt (not exit)
+                    // skips shutdown hooks — the process dies without
+                    // running further cleanup, like gc.
+                    System.err.println("panic: finalizer panicked: " + t);
+                    t.printStackTrace(System.err);
+                    Runtime.getRuntime().halt(2);
+                }
             }
         }
     }

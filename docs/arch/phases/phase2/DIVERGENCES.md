@@ -38,9 +38,15 @@ which the finalizer may resurrect by storing it. graalgo invokes `f(nil)`.
 A `PhantomReference` action is denied the referent by construction, and the
 original Go object cannot be recovered on a pure JVM heap.
 
-Consequence: finalizers that dereference their argument diverge loudly
-(nil-pointer panic inside the finalizer, reported on stderr by the finalizer
-thread) rather than silently. Finalizers that only perform cleanup keyed by
+Consequence: finalizers that dereference their argument panic with a
+nil-pointer panic inside the finalizer — and the panic is fatal, like gc
+(go1.27.1 `src/runtime/mfinal.go`: no recover on the finalizer goroutine):
+the process dies with exit 2 instead of continuing (the pre-2026-10-18
+print-and-continue behavior is gone; corpus
+[gc06_finalizer_panic.go](../../../../test/corpus/phase2/gc/gc06_finalizer_panic.go)
+and
+[gc08_finalizer_explicit_panic.go](../../../../test/corpus/phase2/gc/gc08_finalizer_explicit_panic.go)
+assert the fatality). Finalizers that only perform cleanup keyed by
 captured state (close a handle, decrement a counter, signal via a global)
 behave identically.
 

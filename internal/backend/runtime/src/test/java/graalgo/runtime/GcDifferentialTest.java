@@ -37,7 +37,8 @@ public final class GcDifferentialTest {
     /** Programs with graalgo-specific (non-gc-differential) assertions. */
     private static final List<String> NON_DIFFERENTIAL = List.of(
             "gc06_finalizer_panic",
-            "gc07_finalizer_gated");
+            "gc07_finalizer_gated",
+            "gc08_finalizer_explicit_panic");
 
     /** Stdout + stderr + exit code from a subprocess run. */
     private static final class ProcessResult {
@@ -165,17 +166,45 @@ public final class GcDifferentialTest {
     }
 
     /**
-     * gc06: a finalizer that dereferences its nil argument must be LOUD.
-     * (DIV-M4-1: not silent.) stdout must be "survived"; stderr must contain
-     * the "graalgo: finalizer panicked:" diagnostic. No .expected file —
-     * gc would fatal-crash here, so this is graalgo-specific behavior.
+     * gc06: a finalizer that dereferences its nil argument panics with a
+     * nil-pointer dereference — and the panic is FATAL (gc parity:
+     * go1.27.1 src/runtime/mfinal.go has no recover on the finalizer
+     * goroutine). The program must die with exit 2, print nothing further
+     * on stdout (no "survived"), and report the Go panic loudly on stderr.
+     * No .expected file — gc would pass the real object (no panic here),
+     * so the panic itself is graalgo-specific (DIV-M4-1); the fatality is
+     * gc parity.
      */
-    public void testGc06FinalizerPanicIsLoud() throws Exception {
+    public void testGc06FinalizerPanicIsFatal() throws Exception {
         ProcessResult r = runGoFull("gc06_finalizer_panic");
-        assertEquals("survived\n", r.stdout, "gc06 stdout");
-        if (!r.stderr.contains("graalgo: finalizer panicked:")) {
+        assertEquals(2, r.exitCode,
+                "gc06: a panicking finalizer must kill the program with exit 2, stderr:\n"
+                        + r.stderr);
+        assertEquals("", r.stdout,
+                "gc06: nothing may be printed after a fatal finalizer panic");
+        if (!r.stderr.contains(
+                "panic: runtime error: invalid memory address or nil pointer dereference")) {
             throw new AssertionError(
-                    "gc06: expected loud finalizer-panic diagnostic on stderr, got:\n" + r.stderr);
+                    "gc06: expected the Go panic on stderr, got:\n" + r.stderr);
+        }
+    }
+
+    /**
+     * gc08: an explicit {@code panic("boom")} inside the finalizer is
+     * fatal too — the general case, not just the nil-deref path. Exit 2,
+     * no "survived" on stdout, "panic: boom" on stderr (the gc oracle for
+     * this shape prints exactly that plus the finalizer's stack).
+     */
+    public void testGc08FinalizerExplicitPanicIsFatal() throws Exception {
+        ProcessResult r = runGoFull("gc08_finalizer_explicit_panic");
+        assertEquals(2, r.exitCode,
+                "gc08: a panicking finalizer must kill the program with exit 2, stderr:\n"
+                        + r.stderr);
+        assertEquals("", r.stdout,
+                "gc08: nothing may be printed after a fatal finalizer panic");
+        if (!r.stderr.contains("panic: boom")) {
+            throw new AssertionError(
+                    "gc08: expected \"panic: boom\" on stderr, got:\n" + r.stderr);
         }
     }
 

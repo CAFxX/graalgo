@@ -105,6 +105,13 @@ public final class P3TimeRuntime {
                 live = sched.runnableCount();
                 bg = backgroundLive.get();
             }
+            // A fatal finalizer panic cuts the program short: stop draining
+            // and let the launcher observe the recorded panic/crash and
+            // exit, instead of spinning here until the (now irrelevant)
+            // background translators drain.
+            if (sched.quiescenceAborted()) {
+                break;
+            }
             // bg <= live always: deregister runs before the goroutine's
             // live-count decrement, and register+spawn are atomic above —
             // so live <= bg means every live goroutine is background.

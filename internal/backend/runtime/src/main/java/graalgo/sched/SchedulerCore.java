@@ -68,6 +68,18 @@ public final class SchedulerCore {
     }
 
     /**
+     * The installed scheduler, or null when none is installed.
+     *
+     * <p>The finalizer thread (see {@code GcInterop}) uses this to route a
+     * panicking finalizer through the fatal path without fail-fasting on
+     * scheduler-less runs (phase-1 launcher, bare unit tests), where it
+     * crashes the process directly instead.
+     */
+    public static SchedulerCore installedOrNull() {
+        return installed;
+    }
+
+    /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
@@ -97,6 +109,15 @@ public final class SchedulerCore {
      * before the await call cannot cause an early return.
      */
     private final Object quiescenceLock = new Object();
+    /**
+     * Set when a fatal error originating outside any goroutine must cut the
+     * program short: a panicking finalizer (gc: immediately fatal — see
+     * {@link #recordFinalizerPanic}) releases the quiescence waiter so the
+     * launcher observes the recorded panic/crash and exits instead of
+     * running to natural quiescence. Written under {@link #quiescenceLock}
+     * (paired with the {@code notifyAll}); read volatile.
+     */
+    private volatile boolean quiescenceAborted;
 
     /**
      * @param gomaxprocs requested GOMAXPROCS (clamped to &ge;1)
@@ -421,6 +442,21 @@ public final class SchedulerCore {
         // printed (no trace; error values rendered via toString, diverging
         // from gc and from the phase-1 launcher). The goroutine id is the
         // scheduler handle id (main is 1, like gc).
+        printPanicHeader(pe);
+        graalgo.sched.GoroutineHandle h = currentHandle.get();
+        long gid = h != null ? h.id : 1;
+        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(
+                gid, pe.stackTop(), throwSectionOf(pe)));
+    }
+
+    /**
+     * Prints the gc-style panic header for an uncaught Go panic: the
+     * {@code panic: <value>} line, the SIGSEGV marker for segfault-class
+     * errors, and the blank line separating the header from the trace.
+     * Shared by the goroutine panic path ({@link #recordPanic}) and the
+     * finalizer panic path ({@link #recordFinalizerPanic}).
+     */
+    private static void printPanicHeader(graalgo.runtime.PanicException pe) {
         Object v = pe.goValue();
         if (v == null && graalgo.runtime.Panic.isPanicNilOldBehavior()) {
             // P2-M5: with GODEBUG=panicnil=1, an uncaught panic(nil) prints
@@ -433,16 +469,70 @@ public final class SchedulerCore {
             System.err.println("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0xADDR]");
         }
         System.err.println();
-        com.oracle.truffle.api.source.SourceSection throwSec = null;
+    }
+
+    /** The throw-site source section for trace attribution, or null. */
+    private static com.oracle.truffle.api.source.SourceSection throwSectionOf(
+            graalgo.runtime.PanicException pe) {
         if (pe.throwSite() != null && pe.throwSite().getSourceSection() != null) {
-            throwSec = pe.throwSite().getSourceSection();
+            return pe.throwSite().getSourceSection();
         }
-        graalgo.sched.GoroutineHandle h = currentHandle.get();
-        long gid = h != null ? h.id : 1;
-        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, pe.stackTop(), throwSec));
+        return null;
+    }
+
+    /**
+     * A finalizer invoked on the Cleaner thread panicked.
+     *
+     * <p>gc semantics (go1.27.1 {@code src/runtime/mfinal.go}: finalizers
+     * run on the system goroutine with no recover — an uncaught panic
+     * there is unrecoverable): the process dies. A Go-level panic counts
+     * toward {@link #panicked()} (the launcher exits 2, like any uncaught
+     * Go panic); a non-Go throwable (a host error inside the finalizer)
+     * counts toward {@link #crashed()}, like the scheduler's own crash
+     * path — but attributed to the finalizer thread, not a goroutine.
+     *
+     * <p>The finalizer runs on the Cleaner thread, not a goroutine
+     * vthread, so this also releases the quiescence waiter: after
+     * recording, the launcher thread wakes, observes the recorded
+     * panic/crash, and exits the process promptly instead of running to
+     * natural quiescence. Print-and-continue here would diverge
+     * observably from gc (the program would keep running after a fatal
+     * finalizer panic).
+     */
+    public void recordFinalizerPanic(Throwable t) {
+        if (t instanceof graalgo.runtime.PanicException pe) {
+            if (panicCount.getAndIncrement() == 0) {
+                firstPanicMessage = String.valueOf(pe.goValue());
+            }
+            printPanicHeader(pe);
+            // The finalizer runs on the Cleaner thread, not a goroutine:
+            // there is no goroutine id to attribute the frames to, so the
+            // trace renders without the "goroutine N" header (a fabricated
+            // id would mislead). The frame list is empty today — the
+            // finalizer thread installs no GoroutineState, so no Go frames
+            // are tracked there (DIV-M4-2).
+            System.err.print(graalgo.runtime.Intrinsics.renderGoStack(
+                    pe.stackTop(), throwSectionOf(pe)));
+        } else {
+            recordCrashIn("finalizer thread", "error", t);
+        }
+        synchronized (quiescenceLock) {
+            quiescenceAborted = true;
+            quiescenceLock.notifyAll();
+        }
     }
 
     private void recordCrash(String what, Throwable t) {
+        recordCrashIn("goroutine", what, t);
+    }
+
+    /**
+     * Crash reporting shared by the goroutine crash path and the
+     * finalizer-thread crash path. {@code where} names the execution
+     * context truthfully ("goroutine" vs "finalizer thread"); existing
+     * goroutine messages are byte-identical to before.
+     */
+    private void recordCrashIn(String where, String what, Throwable t) {
         crashCount.incrementAndGet();
         // M10 (self-attack D3): a class-loading failure while fds are
         // exhausted is resource exhaustion, not a logic bug. The JVM loads
@@ -451,11 +541,11 @@ public final class SchedulerCore {
         // error" would send operators hunting a phantom graalgo bug —
         // name the resource instead.
         if (isClassLoadingFailure(t) && fdExhausted()) {
-            System.err.println("graalgo-run: fatal fd exhaustion in goroutine: " + t
+            System.err.println("graalgo-run: fatal fd exhaustion in " + where + ": " + t
                     + " (too many open files)");
             return;
         }
-        System.err.println("graalgo-run: fatal " + what + " in goroutine: " + t);
+        System.err.println("graalgo-run: fatal " + what + " in " + where + ": " + t);
     }
 
     private static boolean isClassLoadingFailure(Throwable t) {
@@ -552,6 +642,16 @@ public final class SchedulerCore {
     }
 
     /**
+     * True once {@link #recordFinalizerPanic} has cut the program short.
+     * Wait loops that would otherwise run to natural quiescence (e.g. the
+     * timer-translator drain in the interop launcher) check this to exit
+     * promptly on a fatal finalizer panic.
+     */
+    public boolean quiescenceAborted() {
+        return quiescenceAborted;
+    }
+
+    /**
      * Blocks until every spawned goroutine has finished.
      *
      * <p><strong>No-concurrent-spawn contract:</strong> {@code spawn()}
@@ -562,10 +662,15 @@ public final class SchedulerCore {
      * thread is safe: the monitor re-checks the live count at await
      * time, so a transient zero mid-loop cannot cause an early return —
      * reviewer2 P0.)
+     *
+     * <p><strong>Fatal-abort contract:</strong> returns early when
+     * {@link #recordFinalizerPanic} records a fatal finalizer panic. The
+     * caller must then check {@link #panicked()}/{@link #crashed()} —
+     * both launchers do, and exit non-zero.
      */
     public void awaitQuiescence() throws InterruptedException {
         synchronized (quiescenceLock) {
-            while (liveGoroutines.get() != 0) {
+            while (liveGoroutines.get() != 0 && !quiescenceAborted) {
                 quiescenceLock.wait();
             }
         }
