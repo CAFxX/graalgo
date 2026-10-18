@@ -23,6 +23,13 @@ func (e *Emitter) node(kind string, n ast.Node, fields map[string]any) map[strin
 }
 
 func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
+	// Methods are not yet implemented. A receiver type can only be
+	// declared by a top-level type declaration, which the emitter loudly
+	// rejects (see sortedTopVarSpecs); emitting the method as a
+	// receiver-less funcdecl would silently miscompile, so fail loudly.
+	if fd.Recv != nil {
+		return nil, fmt.Errorf("emit: unsupported method declaration %s", fd.Name.Name)
+	}
 	obj := e.info.Info.Defs[fd.Name]
 	if obj == nil {
 		return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
@@ -200,6 +207,44 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		"names":  names,
 		"objs":   objs,
 		"define": false,
+		"type":   typ,
+		"values": values,
+	}), nil
+}
+
+// emitGlobalVar emits one top-level var ValueSpec as a "globalvar" node.
+// The shape mirrors the "vardecl" node from emitDeclStmt, minus "define":
+// a package-level var is always a definition. The initializer expressions
+// are emitted — dropping them silently lost the initializer (the bug this
+// fixes).
+func (e *Emitter) emitGlobalVar(vs *ast.ValueSpec) (map[string]any, error) {
+	names := []string{}
+	objs := []any{}
+	var typ any
+	if vs.Type != nil {
+		if tv, ok := e.info.Info.Types[vs.Type]; ok && tv.Type != nil {
+			typ = e.typeID(tv.Type)
+		}
+	}
+	for _, name := range vs.Names {
+		names = append(names, name.Name)
+		if obj := e.info.Info.Defs[name]; obj != nil {
+			objs = append(objs, e.declareObject(obj))
+		} else {
+			objs = append(objs, -1)
+		}
+	}
+	values := []any{}
+	for _, v := range vs.Values {
+		vn, err := e.emitExpr(v)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, vn)
+	}
+	return e.node("globalvar", vs, map[string]any{
+		"names":  names,
+		"objs":   objs,
 		"type":   typ,
 		"values": values,
 	}), nil
@@ -399,10 +444,13 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 }
 
 func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
-	// Distinguish generic instantiation (id[int]) from index (s[0]).
-	// If X is a function (has a signature type), this is generics.
-	if tv, ok := e.info.Info.Types[ix.X]; ok && tv.Type != nil {
-		if _, isSig := tv.Type.(*types.Signature); isSig {
+	// Distinguish generic instantiation from indexing. go/types records
+	// every instantiation in Info.Instances, keyed by the instantiated
+	// identifier: the id in id[int], the Box in Box[int](...), or the Sel
+	// in pkg.F[int]. Instantiations are not supported yet and fail loudly
+	// instead of being mis-emitted as index expressions.
+	if id := instantiationIdent(ix); id != nil {
+		if _, ok := e.info.Info.Instances[id]; ok {
 			return nil, fmt.Errorf("emit: unsupported expr *ast.IndexExpr (generic instantiation)")
 		}
 	}
@@ -419,6 +467,21 @@ func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
 		"index": index,
 		"type":  e.exprType(ix),
 	}), nil
+}
+
+// instantiationIdent returns the identifier go/types uses as the
+// Instances key for an index expression: the operand itself when it is an
+// identifier (id[int], Box[int]), or the selector name (pkg.F[int]).
+// Returns nil for any other operand shape, which cannot be an
+// instantiation.
+func instantiationIdent(ix *ast.IndexExpr) *ast.Ident {
+	switch x := ix.X.(type) {
+	case *ast.Ident:
+		return x
+	case *ast.SelectorExpr:
+		return x.Sel
+	}
+	return nil
 }
 
 func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
@@ -559,18 +622,24 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 }
 
 func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
-	// Method call or field access — go/types Selection tells us.
+	// Method call or field access — go/types Selection tells us which, the
+	// embedding index path, and whether pointer indirection applied. All
+	// three are load-bearing for a backend: discarding the selection
+	// silently miscompiles embedded-field access, method values, and
+	// pointer-receiver adjustments.
 	if sel, ok := e.info.Info.Selections[s]; ok {
-		// Method or field selection.
 		x, err := e.emitExpr(s.X)
 		if err != nil {
 			return nil, err
 		}
-		_ = sel
 		return e.node("selector", s, map[string]any{
-			"x":    x,
-			"sel":  s.Sel.Name,
-			"type": e.exprType(s),
+			"x":        x,
+			"sel":      s.Sel.Name,
+			"selkind":  selectionKind(sel.Kind()),
+			"index":    sel.Index(),
+			"indirect": sel.Indirect(),
+			"obj":      e.declareObject(sel.Obj()),
+			"type":     e.exprType(s),
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
@@ -596,6 +665,19 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 		}
 	}
 	return nil, fmt.Errorf("emit: unresolved selector %v", s)
+}
+
+// selectionKind renders a go/types Selection kind for the IR.
+func selectionKind(k types.SelectionKind) string {
+	switch k {
+	case types.FieldVal:
+		return "field"
+	case types.MethodVal:
+		return "method"
+	case types.MethodExpr:
+		return "methodexpr"
+	}
+	return "unknown"
 }
 
 // exprType returns the type-table id for an expression's type.

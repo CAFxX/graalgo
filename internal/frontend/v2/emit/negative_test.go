@@ -10,6 +10,7 @@
 package emit
 
 import (
+	"go/ast"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,12 +166,50 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
-		name: "IndexListExpr_generics",
+		name: "IndexExpr_genericfunc",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
+	},
+	{
+		name: "IndexListExpr",
+		src: `package main
+func pair[A any, B any](a A, b B) (A, B) { return a, b }
+func main() { x, y := pair[int, string](1, "s"); println(x, y) }
+`,
+		want: "unsupported expr",
+	},
+	{
+		name: "GenDecl_const",
+		src: `package main
+const Answer = 42
+func main() { println(Answer) }
+`,
+		want: "unsupported",
+	},
+	{
+		name: "GenDecl_type",
+		src: `package main
+type T int
+func main() { v := T(3); println(v) }
+`,
+		want: "unsupported",
+	},
+	{
+		// A method declaration fails loudly. (Currently the top-level
+		// type declaration it requires fails first; if type declarations
+		// are ever implemented, this probe exercises the method path in
+		// emitFuncDecl. Either way the program must not be silently
+		// accepted.)
+		name: "FuncDecl_method",
+		src: `package main
+type T struct{ n int }
+func (t T) Get() int { return t.n }
+func main() {}
+`,
+		want: "unsupported",
 	},
 }
 
@@ -203,5 +242,72 @@ func TestNegativeCasesFailLoudly(t *testing.T) {
 				t.Fatalf("%s: error %q looks like a crash, not a clean rejection", tc.name, err.Error())
 			}
 		})
+	}
+}
+
+// TestEmitIndexRejectsGenericTypeInstantiation proves emitIndex detects a
+// generic *type* instantiation via Info.Instances and rejects it loudly
+// instead of mis-emitting it as an index expression.
+//
+// A direct unit test is used because end-to-end the program already fails
+// earlier: the top-level generic type declaration is loudly rejected by
+// sortedTopVarSpecs. This test pins the emitIndex path itself, so the
+// detection keeps working if top-level type declarations are implemented
+// later. It is demonstrably capable of failing: with the Instances check
+// removed, emitIndex would proceed to emit x/index subexpressions and the
+// assertion below would fail.
+func TestEmitIndexRejectsGenericTypeInstantiation(t *testing.T) {
+	src := `package main
+type Box[T any] struct{ v T }
+func conv(x int) Box[int] { return Box[int](Box[int]{v: x}) }
+func main() { println(conv(1).v) }
+`
+	dir := t.TempDir()
+	fn := filepath.Join(dir, "gen.go")
+	if err := os.WriteFile(fn, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pres, err := parser.ParseFiles([]string{fn})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cres, err := checker.Check(pres.Fset, pres.Pkg, &checker.Config{GoVersion: "go1.27"})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+
+	// Find the Box[int] conversion's Fun: CallExpr -> IndexExpr.
+	var ix *ast.IndexExpr
+	for _, f := range pres.Pkg.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				if idx, ok := c.Fun.(*ast.IndexExpr); ok {
+					ix = idx
+					return false
+				}
+			}
+			return true
+		})
+	}
+	if ix == nil {
+		t.Fatal("test setup: no IndexExpr conversion found in probe program")
+	}
+
+	// The checker must have recorded the instantiation (this is the
+	// mechanism the fix relies on).
+	id := instantiationIdent(ix)
+	if id == nil {
+		t.Fatal("test setup: instantiationIdent returned nil for Box[int]")
+	}
+	if _, ok := cres.Info.Instances[id]; !ok {
+		t.Fatal("test setup: checker did not record the Box[int] instantiation in Info.Instances")
+	}
+
+	e := &Emitter{info: cres}
+	if _, err := e.emitIndex(ix); err == nil {
+		t.Fatal("emitIndex accepted a generic type instantiation (silent miscompile)")
+	} else if !strings.Contains(err.Error(), "generic instantiation") {
+		t.Fatalf("emitIndex error %q does not name generic instantiation", err.Error())
 	}
 }

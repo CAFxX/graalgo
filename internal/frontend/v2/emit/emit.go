@@ -81,12 +81,36 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		e.declareObject(obj)
 	}
 
+	// Package-level var declarations are emitted as globals. Top-level
+	// const and type declarations are not supported yet: they fail loudly
+	// here instead of being silently dropped (the fail-loud contract).
+	varSpecs, err := sortedTopVarSpecs(pkg)
+	if err != nil {
+		return nil, err
+	}
+	for _, vs := range varSpecs {
+		for _, name := range vs.Names {
+			if obj := e.info.Info.Defs[name]; obj != nil {
+				e.declareObject(obj)
+			}
+		}
+	}
+
 	for _, fd := range decls {
 		fn, err := e.emitFuncDecl(fd)
 		if err != nil {
 			return nil, err
 		}
 		funcs = append(funcs, fn)
+	}
+
+	globals := []any{}
+	for _, vs := range varSpecs {
+		g, err := e.emitGlobalVar(vs)
+		if err != nil {
+			return nil, err
+		}
+		globals = append(globals, g)
 	}
 
 	baseNames := make([]string, len(e.files))
@@ -108,7 +132,7 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Types:   e.types,
 		Objects: e.objects,
 		Funcs:   funcs,
-		Globals: []any{},
+		Globals: globals,
 	}, nil
 }
 
@@ -144,6 +168,62 @@ func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
 		decls = append(decls, fds...)
 	}
 	return decls
+}
+
+// sortedTopVarSpecs returns every top-level var ValueSpec in the package in
+// deterministic order: files sorted by name, then declarations sorted by
+// source position. Top-level const and type declarations are not yet
+// supported: they fail loudly here instead of being silently dropped, per
+// the emitter's fail-loud contract. Import declarations are the checker's
+// job and are skipped, never emitted.
+func sortedTopVarSpecs(pkg *ast.Package) ([]*ast.ValueSpec, error) {
+	names := make([]string, 0, len(pkg.Files))
+	for name := range pkg.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var specs []*ast.ValueSpec
+	for _, name := range names {
+		file := pkg.Files[name]
+		type ordered struct {
+			pos token.Pos
+			vs  *ast.ValueSpec
+		}
+		var ord []ordered
+		for _, d := range file.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			switch gd.Tok {
+			case token.VAR:
+				for _, s := range gd.Specs {
+					vs, ok := s.(*ast.ValueSpec)
+					if !ok {
+						return nil, fmt.Errorf("emit: unsupported var spec %T", s)
+					}
+					ord = append(ord, ordered{pos: vs.Pos(), vs: vs})
+				}
+			case token.IMPORT:
+				// Not emitted; resolution is the checker's job.
+			case token.CONST:
+				return nil, fmt.Errorf("emit: unsupported top-level const declaration")
+			case token.TYPE:
+				return nil, fmt.Errorf("emit: unsupported top-level type declaration")
+			default:
+				return nil, fmt.Errorf("emit: unsupported top-level declaration %v", gd.Tok)
+			}
+		}
+		// Positions from one *ast.File share the same FileSet base, so
+		// token.Pos comparison is a total source-position order within the
+		// file (same contract as sortedFuncDecls).
+		sort.SliceStable(ord, func(i, j int) bool { return ord[i].pos < ord[j].pos })
+		for _, o := range ord {
+			specs = append(specs, o.vs)
+		}
+	}
+	return specs, nil
 }
 
 func fileBase(p string) string {
@@ -219,6 +299,21 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any 
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
+			"name": o.Name(),
+			"type": typ,
+		}
+	case *types.Const:
+		// Constants carry their value: describing them as "var" with no
+		// value silently lost the value (e.g. math.Pi, true, iota uses).
+		return map[string]any{
+			"kind":  "const",
+			"name":  o.Name(),
+			"type":  typ,
+			"value": o.Val().ExactString(),
+		}
+	case *types.Nil:
+		return map[string]any{
+			"kind": "nil",
 			"name": o.Name(),
 			"type": typ,
 		}
@@ -326,6 +421,34 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"methods":    []any{},
 			},
 		}
+	case *types.Alias:
+		// In go1.27 the predeclared any is an alias (byte/rune are basics
+		// with name overrides, handled by basicClass). Without this case
+		// aliases fell into default and were mis-emitted as
+		// {"kind":"basic","class":"unknown"}.
+		return map[string]any{
+			"kind": "alias",
+			"detail": map[string]any{
+				"name": aliasName(tt),
+				"rhs":  e.typeID(tt.Rhs()),
+			},
+		}
+	case *types.Tuple:
+		// The result type of a call expression (e.g. the empty tuple for
+		// println(...)). Without this case it fell into default and was
+		// mis-emitted as {"kind":"basic","class":"unknown"}.
+		vars := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			v := tt.At(i)
+			vars = append(vars, map[string]any{
+				"name": v.Name(),
+				"type": e.typeID(v.Type()),
+			})
+		}
+		return map[string]any{
+			"kind":   "tuple",
+			"detail": map[string]any{"vars": vars},
+		}
 	case *types.Struct:
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
@@ -360,22 +483,27 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 }
 
 func basicClass(b *types.Basic) string {
-	switch b.Info() & types.IsNumeric {
-	case types.IsBoolean:
+	// The go/types basic flags compose: unsigned integers carry
+	// IsInteger|IsUnsigned, so single-flag equality tests miss them (uint
+	// through uintptr, and byte, previously fell through to "unknown").
+	// Test flags in specificity order instead.
+	info := b.Info()
+	switch {
+	case info&types.IsBoolean != 0:
 		return "bool"
-	case types.IsInteger:
-		return "int"
-	case types.IsUnsigned:
+	case info&types.IsUnsigned != 0:
 		return "uint"
-	case types.IsFloat:
+	case info&types.IsInteger != 0:
+		return "int"
+	case info&types.IsFloat != 0:
 		return "float"
-	case types.IsComplex:
+	case info&types.IsComplex != 0:
 		return "complex"
 	}
-	if b.Info()&types.IsString != 0 {
+	if info&types.IsString != 0 {
 		return "string"
 	}
-	if b.Info()&types.IsUntyped != 0 {
+	if info&types.IsUntyped != 0 {
 		return "untyped"
 	}
 	return "unknown"
@@ -389,4 +517,16 @@ func namedName(n *types.Named) string {
 		return obj.Name()
 	}
 	return n.String()
+}
+
+// aliasName renders an alias's declared name with its package path,
+// mirroring namedName.
+func aliasName(a *types.Alias) string {
+	if obj := a.Obj(); obj != nil {
+		if pkg := obj.Pkg(); pkg != nil && pkg.Path() != "" {
+			return pkg.Path() + "." + obj.Name()
+		}
+		return obj.Name()
+	}
+	return a.String()
 }
