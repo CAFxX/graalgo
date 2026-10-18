@@ -6042,7 +6042,20 @@ public final class NodeFactory {
         }
         int fieldTid = f.intValue("type", path);
         GoKind fieldKind = kindOf(ctx, fieldTid, path);
-        return new SelectorNode(obj, selpath, fieldKind);
+        // For struct field selection, get the receiver struct descriptor so
+        // SelectorNode can synthesize the struct when the runtime value is
+        // a GoInterface (unsafe reinterpretation pattern).
+        GoStructDescriptor structDesc = null;
+        if (f.opt("recvType") instanceof Json.Num num) {
+            int recvTid = (int) num.asLong(path + ".recvType");
+            if (recvTid != 0) {
+                GoKind recvKind = kindOf(ctx, recvTid, path);
+                if (recvKind == GoKind.STRUCT) {
+                    structDesc = structDescriptorFor(ctx, recvTid, path);
+                }
+            }
+        }
+        return new SelectorNode(obj, selpath, fieldKind, structDesc);
     }
 
     private GoExprNode buildTypeAssert(Json.Object node, BuildCtx ctx) {

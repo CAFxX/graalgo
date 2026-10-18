@@ -22,11 +22,24 @@ import graalgo.values.GoStruct;
 public final class SelectorNode extends GoExprNode {
     @Child private GoExprNode obj;
     private final int[] selpath;
+    /**
+     * Struct descriptor for the receiver type, used to synthesize the struct
+     * when the runtime value is a GoInterface (unsafe reinterpretation
+     * pattern, e.g. (*abi.EmptyInterface)(unsafe.Pointer(&i))). Null if
+     * not a struct selection or descriptor unavailable.
+     */
+    private final graalgo.values.GoStructDescriptor structDesc;
 
     public SelectorNode(GoExprNode obj, int[] selpath, GoKind fieldKind) {
+        this(obj, selpath, fieldKind, null);
+    }
+
+    public SelectorNode(GoExprNode obj, int[] selpath, GoKind fieldKind,
+            graalgo.values.GoStructDescriptor structDesc) {
         super(fieldKind);
         this.obj = obj;
         this.selpath = selpath;
+        this.structDesc = structDesc;
     }
 
     public GoExprNode obj() {
@@ -57,8 +70,29 @@ public final class SelectorNode extends GoExprNode {
      * panics while walking the path are attributed to {@code site}.
      */
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site) {
+        return readFieldPath(o, selpath, derefResult, site, null);
+    }
+
+    /**
+     * Descriptor-carrying overload: when the runtime value is a GoInterface
+     * (unsafe reinterpretation pattern), synthesize the struct using the
+     * descriptor instead of unwrapping to data.
+     */
+    public static Object readFieldPath(Object o, int[] selpath, boolean derefResult,
+            Node site, graalgo.values.GoStructDescriptor structDesc) {
         for (int idx : selpath) {
-            o = deref(o, site);
+            // Unwrap GoPointer only (not GoInterface yet). If we have a
+            // GoInterface and a struct descriptor, synthesize the struct
+            // (unsafe reinterpretation pattern). Otherwise, do the full
+            // deref (which unwraps GoInterface to data for the PKG-074 case).
+            o = derefPointerOnly(o, site);
+            if (o instanceof graalgo.values.GoInterface gi && structDesc != null) {
+                // Unsafe reinterpretation pattern (*S)(unsafe.Pointer(&iface)).
+                // Synthesize the struct from the interface's (descriptor, data).
+                o = DerefNode.synthesizeStructFromInterface(structDesc, gi);
+            } else {
+                o = deref(o, site);
+            }
             GoStruct s = (GoStruct) o;
             if (s.descriptor().field(idx).inLongs()) {
                 o = Long.valueOf(s.getLong(idx));
@@ -93,10 +127,28 @@ public final class SelectorNode extends GoExprNode {
         return o;
     }
 
+    /**
+     * Unwraps GoPointer only (not GoInterface). Used by readFieldPath when
+     * a struct descriptor is available: the GoInterface is synthesized
+     * instead of unwrapped.
+     */
+    static Object derefPointerOnly(Object o, Node site) {
+        if (o == null) {
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+        }
+        if (o instanceof GoPointer p) {
+            if (p.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+            }
+            return p.referent();
+        }
+        return o;
+    }
+
     private Object read(VirtualFrame frame) {
         // P3-M4 remediation (P1-2): site-carrying path — a nil pointer in
         // the selection chain panics at this selector's line.
-        Object o = readFieldPath(obj.executeObject(frame), selpath, false, this);
+        Object o = readFieldPath(obj.executeObject(frame), selpath, false, this, structDesc);
         if (o instanceof Long l) {
             // Longs-carried field: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());

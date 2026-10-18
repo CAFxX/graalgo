@@ -11755,8 +11755,25 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	for i, v := range idx {
 		path[i] = v
 	}
+	// For struct field selection, pass the receiver struct type ID so the
+	// backend can synthesize the struct when the runtime value is a
+	// GoInterface (unsafe reinterpretation pattern, e.g.
+	// (*abi.EmptyInterface)(unsafe.Pointer(&i))). The recv type may be a
+	// pointer; dereference to get the struct type.
+	recvTypeID := 0
+	if recv := sel.Recv(); recv != nil {
+		if ptr, ok := recv.(*types.Pointer); ok {
+			recv = ptr.Elem()
+		}
+		if _, ok := recv.Underlying().(*types.Struct); ok {
+			if tid, err := e.typeID(recv); err == nil {
+				recvTypeID = tid
+			}
+		}
+	}
 	return e.node("selector", x, map[string]any{
 		"x": xe, "field": x.Sel.Name, "selpath": path, "type": t,
+		"recvType": recvTypeID,
 	}), nil
 }
 
