@@ -232,6 +232,49 @@ public final class NodeFactoryV2 {
     }
 
     /**
+     * Overload of {@link #goKindForTypeId(List, Object, String)} taking a raw
+     * type-table index.
+     */
+    private static GoKind goKindForTypeId(List<Object> types, int typeId, String where) {
+        if (typeId < 0 || typeId >= types.size()) {
+            throw new FrontendException(where + ": bad type id " + typeId);
+        }
+        return goKindForTypeId(types, Long.valueOf(typeId), where);
+    }
+
+    /**
+     * Resolves the element type-table id of a pointer type entry — the
+     * referent of {@code new(T)}'s {@code *T} result type. Throws
+     * {@link FrontendException} (never silently defaults) when the entry is
+     * missing or is not a pointer.
+     */
+    @SuppressWarnings("unchecked")
+    private static int elemTypeIdOfPointer(List<Object> types, Object typeIdObj, String where) {
+        if (!(typeIdObj instanceof Long)) {
+            throw new FrontendException(where + ": new requires a result type id");
+        }
+        int typeId = ((Long) typeIdObj).intValue();
+        if (typeId < 0 || typeId >= types.size()) {
+            throw new FrontendException(where + ": bad type id " + typeId);
+        }
+        Object t = types.get(typeId);
+        if (!(t instanceof Map)) {
+            throw new FrontendException(where + ": type " + typeId + " must be a map");
+        }
+        Map<String, Object> typeMap = (Map<String, Object>) t;
+        if (!"pointer".equals(typeMap.get("kind"))) {
+            throw new FrontendException(where + ": new result type " + typeId
+                    + " is not a pointer (kind=" + typeMap.get("kind") + ")");
+        }
+        Object detail = typeMap.get("detail");
+        Object elem = detail instanceof Map ? ((Map<String, Object>) detail).get("elem") : null;
+        if (!(elem instanceof Long)) {
+            throw new FrontendException(where + ": pointer type " + typeId + " has no elem type id");
+        }
+        return ((Long) elem).intValue();
+    }
+
+    /**
      * Gets the GoKind for an object id via the objects table.
      */
     @SuppressWarnings("unchecked")
@@ -1045,7 +1088,11 @@ public final class NodeFactoryV2 {
     @SuppressWarnings("unchecked")
     private GoExprNode buildBuiltinCall(String builtin, Map<String, Object> fields,
             String where, V2Scope scope) {
-        List<Object> argsList = getList(fields, "args", where);
+        // new(T) takes a type, not a value: its single arg is a type expression
+        // (e.g. the ident "int"), which cannot be built as a value expression.
+        // The "new" case below resolves T from the call's result type id
+        // instead, so the type arg is never built.
+        List<Object> argsList = "new".equals(builtin) ? List.of() : getList(fields, "args", where);
         List<GoExprNode> args = new ArrayList<>();
         for (int i = 0; i < argsList.size(); i++) {
             Object a = argsList.get(i);
@@ -1093,8 +1140,13 @@ public final class NodeFactoryV2 {
                 return new MakeNode(GoKind.INTERFACE, lenArg, capArg, null);
             }
             case "new": {
-                // new(T) returns *T.
-                return new NewNode(GoKind.POINTER, null);
+                // new(T) returns *T. The call's result type id names the
+                // pointer type; its elem is T. The elem kind drives
+                // zero-value allocation in NewNode (previously POINTER was
+                // passed as the elem kind, i.e. the referent type was lost).
+                int elemTypeId = elemTypeIdOfPointer(scope.types, fields.get("type"), where);
+                GoKind elemKind = goKindForTypeId(scope.types, elemTypeId, where);
+                return new NewNode(elemKind, null);
             }
             case "panic": {
                 if (args.size() != 1) {
