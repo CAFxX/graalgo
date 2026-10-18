@@ -35,9 +35,13 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
    package admits it). The corpus must be capable of failing — a program
    that passes under any implementation is not a test.
 4. **Panic programs** get a `<base>.panic` file (same base name as the
-   program, `.panic` suffix) containing the expected first stderr line,
-   e.g. `panic: strings: ...`. The runner byte-compares graalgo's first
-   (WARNING-filtered) stderr line against it.
+   program, `.panic` suffix) containing gc's expected first stderr line,
+   e.g. `panic: strings: ...`. The runner compares graalgo's first
+   (WARNING-filtered) stderr line against the LIVE gc leg's first line —
+   never the anchor alone — and the `.panic` file additionally pins gc's
+   own message, so a toolchain message change fails loudly instead of
+   silently pinning stale text. Non-panic programs get their full
+   filtered stderr compared against the live gc leg.
 5. Real-Go synthetic sources only: programs may import only packages the
    wave-1 importer supports; anything else is a scope error by design.
 6. **Scope-limited programs** get a `<nn>_<name>.scopelimited` file (same

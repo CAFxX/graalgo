@@ -43,15 +43,21 @@ time after M7 remediation completes.
    package admits it). The corpus must be capable of failing — a program
    that passes under any implementation is not a test.
 4. **Panic programs** get a `<base>.panic` file (same base name as the
-   program, `.panic` suffix) containing the expected first stderr line,
-   e.g. `panic: reflect: ...`. The runner byte-compares graalgo's first
-   (WARNING-filtered) stderr line against it.
+   program, `.panic` suffix) containing gc's expected first stderr line,
+   e.g. `panic: reflect: ...`. The runner compares graalgo's first
+   (WARNING-filtered) stderr line against the LIVE gc leg's first line —
+   never the anchor alone — and the `.panic` file additionally pins gc's
+   own message, so a toolchain message change fails loudly instead of
+   silently pinning stale text. Non-panic programs get their full
+   filtered stderr compared against the live gc leg.
 4b. **Intentionally-divergent programs** get an empty
    `<base>.divergent` file. These are programs where graalgo
    INTENTIONALLY fail-fasts and gc does not (e.g. `unsafe.Add` traps
    under graalgo per D5/GG-0015, computes under gc). The runner skips
    the exit-code comparison for them, but stdout must still match and
-   the `.panic` pin still applies. A `.divergent` marker WITHOUT a
+   the `.panic` pin still applies — compared against graalgo's
+   intentional fail-fast line, since gc produces no panic to compare
+   against here. A `.divergent` marker WITHOUT a
    `.panic` file is a harness FAIL — divergence must always be a
    pinned fail-fast, never silent. The program source must document
    the divergence and its design justification.
