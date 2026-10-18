@@ -232,6 +232,90 @@ public final class NodeFactoryV2 {
     }
 
     /**
+     * P1-23/24 (v2): resolves the static array length for {@code len(p)} /
+     * {@code cap(p)} where {@code p} is a pointer to an array, from the v2
+     * type table. Returns -1 when the argument is not a pointer; otherwise
+     * walks pointer → elem → (named-resolved) array and returns its
+     * {@code "len"}. Fails fast when the wire type id is missing or the
+     * element is not an array — the Go type checker rejects those
+     * programs, so reaching here with one means a broken emitter, never a
+     * case for a runtime guess.
+     */
+    @SuppressWarnings("unchecked")
+    private static int v2PtrArrayLen(V2Scope scope, List<Object> argsList, GoExprNode arg,
+            String builtin, String where) {
+        if (arg.kind() != GoKind.POINTER) {
+            return -1;
+        }
+        if (argsList.isEmpty() || !(argsList.get(0) instanceof Map)) {
+            throw new FrontendException(where + ": " + builtin + " of pointer without a wire arg (WS G)");
+        }
+        // The arg is a wire node map {kind, fields, pos}; the type id lives
+        // on the fields map, like every other "type" read in this factory.
+        Map<String, Object> argFields =
+                getMap((Map<String, Object>) argsList.get(0), "fields", where + ".args[0]");
+        Object typeIdObj = argFields.get("type");
+        if (!(typeIdObj instanceof Number)) {
+            throw new FrontendException(where + ": " + builtin + " of pointer without a type id (WS G)");
+        }
+        int typeId = ((Number) typeIdObj).intValue();
+        if (typeId < 0 || typeId >= scope.types.size()) {
+            throw new FrontendException(where + ": " + builtin + " of pointer with bad type id "
+                    + typeId + " (WS G)");
+        }
+        Map<String, Object> entry = v2Underlying(scope.types, typeId, builtin, where);
+        if (!"pointer".equals(entry.get("kind"))) {
+            throw new FrontendException(where + ": " + builtin + " of POINTER-kind node whose type is "
+                    + entry.get("kind") + " (WS G)");
+        }
+        Map<String, Object> detail = (Map<String, Object>) entry.get("detail");
+        if (detail == null || !(detail.get("elem") instanceof Number)) {
+            throw new FrontendException(where + ": " + builtin + " of pointer without elem (WS G)");
+        }
+        int elemId = ((Number) detail.get("elem")).intValue();
+        Map<String, Object> elemEntry = v2Underlying(scope.types, elemId, builtin, where);
+        if (!"array".equals(elemEntry.get("kind"))) {
+            throw new FrontendException(where + ": " + builtin
+                    + " of pointer to non-array (rejected by the Go type checker) (WS G)");
+        }
+        Map<String, Object> arrayDetail = (Map<String, Object>) elemEntry.get("detail");
+        if (arrayDetail == null || !(arrayDetail.get("len") instanceof Number)) {
+            throw new FrontendException(where + ": " + builtin + " of pointer to array without len (WS G)");
+        }
+        return ((Number) arrayDetail.get("len")).intValue();
+    }
+
+    /**
+     * Resolves a v2 type-table id through named types to its underlying
+     * entry (mirrors the named handling in {@link #goKindForTypeId}).
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> v2Underlying(List<Object> types, int typeId,
+            String builtin, String where) {
+        for (int steps = 0; ; steps++) {
+            if (steps > 100) {
+                throw new FrontendException(where + ": " + builtin
+                        + " of pointer with a cyclic type chain (WS G)");
+            }
+            if (typeId < 0 || typeId >= types.size() || !(types.get(typeId) instanceof Map)) {
+                throw new FrontendException(where + ": " + builtin + " of pointer with bad type id "
+                        + typeId + " (WS G)");
+            }
+            Map<String, Object> entry = (Map<String, Object>) types.get(typeId);
+            if (!"named".equals(entry.get("kind"))) {
+                return entry;
+            }
+            Object detail = entry.get("detail");
+            if (!(detail instanceof Map)
+                    || !(((Map<String, Object>) detail).get("underlying") instanceof Number)) {
+                throw new FrontendException(where + ": " + builtin
+                        + " of pointer with an unresolvable named type (WS G)");
+            }
+            typeId = ((Number) ((Map<String, Object>) detail).get("underlying")).intValue();
+        }
+    }
+
+    /**
      * Gets the GoKind for an object id via the objects table.
      */
     @SuppressWarnings("unchecked")
@@ -1060,13 +1144,15 @@ public final class NodeFactoryV2 {
                 if (args.size() != 1) {
                     throw new FrontendException(where + ": len requires 1 arg");
                 }
-                return new LenNode(args.get(0));
+                return new LenNode(args.get(0),
+                        v2PtrArrayLen(scope, argsList, args.get(0), "len", where));
             }
             case "cap": {
                 if (args.size() != 1) {
                     throw new FrontendException(where + ": cap requires 1 arg");
                 }
-                return new CapNode(args.get(0));
+                return new CapNode(args.get(0),
+                        v2PtrArrayLen(scope, argsList, args.get(0), "cap", where));
             }
             case "append": {
                 if (args.isEmpty()) {

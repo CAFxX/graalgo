@@ -947,6 +947,42 @@ public final class NodeFactory {
     }
 
     /**
+     * P1-23/24: resolves the static array length for {@code len(p)} /
+     * {@code cap(p)} where {@code p} is a pointer to an array. Returns -1
+     * when the argument is not a pointer; otherwise walks pointer → elem →
+     * (named/alias-resolved) array and returns its {@code "len"}. Fails
+     * fast when the type id is missing or the element is not an array —
+     * the Go type checker rejects those programs, so reaching here with
+     * one means a broken exporter, never a case for a runtime guess.
+     */
+    private static int ptrArrayLenForLenCap(BuildCtx ctx, GoExprNode arg, String builtin,
+            String path) {
+        if (arg.kind() != GoKind.POINTER) {
+            return -1;
+        }
+        int argTid = arg.typeId();
+        if (argTid < 0) {
+            throw new FrontendException(path + ": " + builtin
+                    + " of pointer without a type id (WS G)");
+        }
+        Json.Object ptrEntry = underlyingEntry(ctx, argTid, path);
+        if (!"pointer".equals(ptrEntry.string("kind", path))) {
+            throw new FrontendException(path + ": " + builtin + " of POINTER-kind node whose type is "
+                    + ptrEntry.string("kind", path) + " (WS G)");
+        }
+        Json.Object ptrDetail = ptrEntry.object("detail", path);
+        if (!ptrDetail.has("elem")) {
+            throw new FrontendException(path + ": " + builtin + " of pointer without elem (WS G)");
+        }
+        int[] info = arrayInfo(ctx, ptrDetail.intValue("elem", path), path);
+        if (info[0] < 0) {
+            throw new FrontendException(path + ": " + builtin
+                    + " of pointer to non-array (rejected by the Go type checker) (WS G)");
+        }
+        return info[0];
+    }
+
+    /**
      * ABI size in bytes of an array type (P3 bug-042): {@code len * elemSize},
      * recursing for nested arrays. Used by append's growslice math — arrays
      * are NOT zero-size types, so growslice must not take its zero-size fast
@@ -3651,11 +3687,11 @@ public final class NodeFactory {
             case "println" -> new PrintNode(true, args);
             case "len" -> {
                 requireArgs(path, builtin, args, 1);
-                yield new LenNode(args[0]);
+                yield new LenNode(args[0], ptrArrayLenForLenCap(ctx, args[0], "len", path));
             }
             case "cap" -> {
                 requireArgs(path, builtin, args, 1);
-                yield new CapNode(args[0]);
+                yield new CapNode(args[0], ptrArrayLenForLenCap(ctx, args[0], "cap", path));
             }
             case "make" -> buildMakeBuiltin(args, f, ctx, path);
             case "new" -> buildNewBuiltin(args, f, ctx, path);
