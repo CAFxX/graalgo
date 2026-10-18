@@ -604,4 +604,79 @@ public final class SchedulerCoreTest {
             SchedulerCore.install(null);
         }
     }
+
+    // ---------- finalizer panic (review14 P1: fatal, not print-and-continue) ----------
+
+    /**
+     * A panicking finalizer is fatal (gc parity — go1.27.1
+     * {@code src/runtime/mfinal.go}: no recover on the finalizer
+     * goroutine): {@link SchedulerCore#recordFinalizerPanic} counts a Go
+     * panic toward {@link SchedulerCore#panicked()} and releases the
+     * quiescence waiter, so a launcher blocked in
+     * {@link SchedulerCore#awaitQuiescence} wakes promptly and exits
+     * non-zero instead of running to natural quiescence.
+     *
+     * <p>Red-green: fails if the panic is not recorded (panicked() false)
+     * or if awaitQuiescence does not return (the waiter is still alive
+     * after the join timeout) — i.e. fails on the old print-and-continue
+     * behavior, which recorded nothing and released nothing.
+     */
+    public void testFinalizerPanicAbortsQuiescence() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            // A goroutine parked forever: quiescence is unreachable
+            // without the fatal abort.
+            GoroutineHandle h = sched.spawn(() -> sched.parkCurrent(null));
+            AtomicReference<Throwable> waiterError = new AtomicReference<>();
+            Thread waiter = Thread.ofVirtual().start(() -> {
+                try {
+                    sched.awaitQuiescence();
+                } catch (Throwable t) {
+                    waiterError.set(t);
+                }
+            });
+            // Simulate the Cleaner thread: a Go panic inside a finalizer.
+            // (The PanicException carries an empty Go stack here — the
+            // finalizer thread installs no GoroutineState; the value is
+            // what this test exercises.)
+            Thread cleaner = Thread.ofPlatform().start(() ->
+                    sched.recordFinalizerPanic(
+                            new graalgo.runtime.PanicException("boom", null, null, null)));
+            cleaner.join(10_000);
+            waiter.join(10_000);
+            assertTrue(waiterError.get() == null,
+                    "awaitQuiescence must not throw, got: " + waiterError.get());
+            assertTrue(!waiter.isAlive(),
+                    "awaitQuiescence must return promptly on a fatal finalizer panic");
+            assertTrue(sched.panicked(),
+                    "a Go finalizer panic must count toward panicked()");
+            assertTrue(sched.quiescenceAborted(), "abort flag must be set");
+            // Cleanup: release the parked goroutine so the scheduler drains.
+            sched.unpark(h);
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * A non-Go throwable escaping a finalizer (a host error, not a Go
+     * panic) takes the crash path: {@link SchedulerCore#crashed()}, not
+     * {@link SchedulerCore#panicked()} — and still aborts quiescence.
+     */
+    public void testFinalizerHostErrorCountsAsCrash() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.recordFinalizerPanic(new RuntimeException("host boom"));
+            assertTrue(sched.crashed(),
+                    "a host error in a finalizer must count toward crashed()");
+            assertTrue(!sched.panicked(), "a host error is not a Go panic");
+            assertTrue(sched.quiescenceAborted(), "abort flag must be set");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
 }

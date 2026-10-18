@@ -139,7 +139,7 @@ public final class GcInterop {
                     // running further cleanup, like gc.
                     System.err.println("panic: finalizer panicked: " + t);
                     t.printStackTrace(System.err);
-                    Runtime.getRuntime().halt(2);
+                    java.lang.Runtime.getRuntime().halt(2);
                 }
             }
         }

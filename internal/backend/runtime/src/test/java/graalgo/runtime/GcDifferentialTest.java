@@ -58,6 +58,12 @@ public final class GcDifferentialTest {
         }
     }
 
+    private static void assertEquals(int expected, int actual, String msg) {
+        if (expected != actual) {
+            throw new AssertionError(msg + "\nexpected: " + expected + "\nactual: " + actual);
+        }
+    }
+
     private String expected(String name) throws Exception {
         return Files.readString(CORPUS.resolve(name + ".expected"), StandardCharsets.UTF_8);
     }
