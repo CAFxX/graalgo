@@ -1089,8 +1089,21 @@ public final class NodeFactoryV2 {
                     int hint = 0;
                     return new MakeNode(hint);
                 }
-                // Slice form: need elem kind. Default to interface.
-                return new MakeNode(GoKind.INTERFACE, lenArg, capArg, null);
+                if (k == GoKind.SLICE) {
+                    // Slice form: need elem kind. Default to interface.
+                    return new MakeNode(GoKind.INTERFACE, lenArg, capArg, null);
+                }
+                if (k == GoKind.CHAN) {
+                    // L18: channels are Phase-2 scope (GG-0020) — the
+                    // runtime's ChanOps is a frozen stub with no channel
+                    // representation. Fail loudly like v1's buildMakeBuiltin
+                    // instead of silently building a slice node.
+                    throw new FrontendException(where
+                            + ": make of chan is not supported in frontend/v2 scope"
+                            + " (Phase 2: channels)");
+                }
+                throw new FrontendException(where + ": make of " + k
+                        + " is not supported in frontend/v2 scope");
             }
             case "new": {
                 // new(T) returns *T.
