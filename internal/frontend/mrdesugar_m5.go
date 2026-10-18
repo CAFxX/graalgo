@@ -1121,6 +1121,9 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	{"os", "Wait", "Process", "__processWait", "", "processWaitPair", []string{"ps", "err"}},
 	{"os", "SyscallConn", "File", "__fileSyscallConn", "", "syscallConnPair", []string{"rc", "err"}},
 	{"os", "OpenRoot", "", "__openRoot", "", "openRootPair", []string{"root", "err"}},
+	{"os", "OpenInRoot", "", "__openInRoot", "", "openInRootPair", []string{"f", "err"}},
+	{"os", "OpenRoot", "Root", "__rootOpenRoot", "", "rootOpenRootPair", []string{"root", "err"}},
+	{"os", "Readlink", "Root", "__rootReadlink", "", "rootReadlinkPair", []string{"s", "err"}},
 	{"os", "Executable", "", "__executable", "", "executablePair", []string{"s", "err"}},
 	// io/fs: DirEntry.Info (interface method) desugared through the os
 	// helper __dirEntryInfo (helperPkg override — the concrete dirEntry

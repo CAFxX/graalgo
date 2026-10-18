@@ -59,6 +59,15 @@ func main() {
 		pin("OpenRoot", "os.OpenRoot: not in M8 scope", func() {
 			os.OpenRoot("/tmp")
 		})
+	case "OpenInRoot":
+		pin("OpenInRoot", "os.OpenInRoot: not in M8 scope", func() {
+			dir, err := os.MkdirTemp("", "os13-")
+			if err != nil {
+				panic(err)
+			}
+			defer os.RemoveAll(dir)
+			os.OpenInRoot(dir, "x")
+		})
 	case "Executable":
 		pin("Executable", "os.Executable: not in M8 scope", func() {
 			os.Executable()

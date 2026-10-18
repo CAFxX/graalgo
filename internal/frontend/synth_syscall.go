@@ -2246,22 +2246,38 @@ type ProcAttr struct {
 	Sys   *SysProcAttr
 }
 
+// SysProcIDMap is gc's container/host ID mapping for user namespaces
+// (used by SysProcAttr.UidMappings/GidMappings).
+type SysProcIDMap struct {
+	ContainerID int // Container ID.
+	HostID      int // Host ID.
+	Size        int // Size.
+}
+
 // SysProcAttr holds attributes for Linux process creation.
-// (Subset of gc's exec_linux.go SysProcAttr: the fields are vocabulary;
-// StartProcess itself is fail-fast in M8.)
+// (Exact gc 1.27.1 exec_linux.go field set and order: the fields are
+// vocabulary; StartProcess itself is fail-fast in M8.)
 type SysProcAttr struct {
-	Chroot     string
-	Credential *Credential
-	Ptrace     bool
-	Setsid     bool
-	Setpgid    bool
-	Setctty    bool
-	Noctty     bool
-	Ctty       int
-	Foreground bool
-	Pgid       int
-	Pdeathsig  Signal
-	Cloneflags uintptr
+	Chroot     string      // Chroot.
+	Credential *Credential // Credential.
+	Ptrace     bool        // Enable tracing.
+	Setsid     bool        // Create session.
+	Setpgid    bool        // Set process group ID to Pgid, or, if Pgid == 0, to new pid.
+	Setctty    bool        // Set controlling terminal to fd Ctty (only meaningful if Setsid is true).
+	Noctty     bool        // Detach fd 0 from controlling terminal.
+	Ctty       int         // Controlling TTY fd.
+	Foreground bool        // Place process group in foreground.
+	Pgid       int         // Child's process group ID.
+	Pdeathsig  Signal      // Signal the child gets when the creating thread dies.
+	Cloneflags uintptr     // Flags for clone calls.
+	Unshareflags uintptr        // Flags for unshare calls.
+	UidMappings  []SysProcIDMap // User ID mappings for user namespaces.
+	GidMappings  []SysProcIDMap // Group ID mappings for user namespaces.
+	GidMappingsEnableSetgroups bool // Enable setgroups syscall for user namespaces.
+	AmbientCaps  []uintptr // Ambient capabilities.
+	UseCgroupFD  bool      // Whether to make use of the CgroupFD field.
+	CgroupFD     int       // File descriptor of a cgroup to put the new process into.
+	PidFD        *int      // If not nil, stores the pidfd of the child on success.
 }
 
 // Sockaddr is gc's socket-address interface. The real method set needs

@@ -51,8 +51,11 @@
 // the Appendix-M table (staged mrdesugar_m5.go patch, one coordinated
 // patch). Inside THIS source, multi-result calls are only ever made to
 // __-helpers (single-result), never to the public multi-result names —
-// the desugar only fires for table entries, so an internal
-// multi-result call would fail export loudly.
+// with two exceptions, the D4 pair: __fileReadFrom calls io.ReadAll and
+// __fileWriteTo calls io.WriteString. Both ARE Appendix-M table entries
+// (the re-test trigger landed), so those calls desugar exactly like
+// guest call sites do. Any other internal multi-result call would fail
+// export loudly.
 //
 // Error identity (R1): a single GoOs.errno(Throwable) mapper (Java,
 // unit-tested per failure mode in GoOsErrnoTest) feeds Linux errno
@@ -2004,13 +2007,84 @@ func Environ() []string {
 }
 
 // Expand replaces ${var} or $var in the string based on the mapping function.
+// Real gc 1.27.1 (pure string code): the multi-result getShellName it
+// needs is implemented as __getShellName below — v1 cannot emit
+// multi-result funcdecls, so Expand calls the single-result helper
+// directly (same pattern as __fileReadFrom/__fileWriteTo).
 func Expand(s string, mapping func(string) string) string {
-	panic("os.Expand: not in M8 scope (needs multi-result getShellName; re-test: WS D)")
+	var buf []byte
+	// ${} is all ASCII, so bytes are fine for this operation.
+	i := 0
+	for j := 0; j < len(s); j++ {
+		if s[j] == '$' && j+1 < len(s) {
+			if buf == nil {
+				buf = make([]byte, 0, 2*len(s))
+			}
+			buf = append(buf, s[i:j]...)
+			gn := __getShellName(s[j+1:])
+			if gn.name == "" && gn.w > 0 {
+				// Encountered invalid syntax; eat the
+				// characters.
+			} else if gn.name == "" {
+				// Valid syntax, but $ was not followed by a
+				// name. Leave the dollar character untouched.
+				buf = append(buf, s[j])
+			} else {
+				buf = append(buf, mapping(gn.name)...)
+			}
+			j += gn.w
+			i = j + 1
+		}
+	}
+	if buf == nil {
+		return s
+	}
+	return string(buf) + s[i:]
 }
 
-// getShellName returns the name of the shell variable for s.
+// getShellNamePair is the Appendix-M carrier for getShellName.
+type getShellNamePair struct {
+	name string
+	w    int
+}
+
+// getShellName returns the name that begins the string and the number of
+// bytes consumed to extract it. Exact gc 1.27.1 signature; the real
+// implementation is __getShellName (v1 cannot emit multi-result
+// funcdecls — same pattern as ReadFrom/__fileReadFrom). Unreachable:
+// nothing calls this stub internally.
 func getShellName(s string) (string, int) {
-	panic("os.getShellName: not in M8 scope (multi-result; re-test: WS D)")
+	panic("os.getShellName: unreachable (real implementation is __getShellName)")
+}
+
+// __getShellName is the real getShellName (gc 1.27.1): returns the name
+// that begins the string and the number of bytes consumed to extract
+// it. If the name is enclosed in {}, it's part of a ${} expansion and
+// two more bytes are needed than the length of the name.
+func __getShellName(s string) getShellNamePair {
+	switch {
+	case s[0] == '{':
+		if len(s) > 2 && isShellSpecialVar(s[1]) && s[2] == '}' {
+			return getShellNamePair{s[1:2], 3}
+		}
+		// Scan to closing brace
+		for i := 1; i < len(s); i++ {
+			if s[i] == '}' {
+				if i == 1 {
+					return getShellNamePair{"", 2} // Bad syntax; eat "${}"
+				}
+				return getShellNamePair{s[1:i], i + 1}
+			}
+		}
+		return getShellNamePair{"", 1} // Bad syntax; eat "${"
+	case isShellSpecialVar(s[0]):
+		return getShellNamePair{s[0:1], 1}
+	}
+	// Scan alphanumerics.
+	var i int
+	for i = 0; i < len(s) && isAlphaNum(s[i]); i++ {
+	}
+	return getShellNamePair{s[:i], i}
 }
 
 func isShellSpecialVar(c uint8) bool {
@@ -2325,11 +2399,22 @@ func (f *File) ReadFrom(r io.Reader) (n int64, err error) {
 }
 
 func __fileReadFrom(f *File, r io.Reader) readFromPair {
-	// P0-2: the D4 streaming implementation called io.ReadAll (multi-result,
-	// not in the mrM8 desugar tables), which breaks export of every program
-	// importing os. Fail fast with a named trap until the desugar covers it.
-	// Re-test trigger: WS D lands (mrM8 desugar for io.ReadAll).
-	panic("os: __fileReadFrom: multi-result io.ReadAll needs the mrM8 desugar (re-test: WS D)")
+	// D4 (re-test trigger landed: the mrM8 desugar tables cover io.ReadAll
+	// and io.WriteString, so the multi-result calls below desugar exactly
+	// like guest call sites do): read the whole source, then write it
+	// through the concrete file helper. Byte/error behavior matches the
+	// generic copy loop — partial data is still written and counted when
+	// the read fails; only the memory profile differs.
+	b, rerr := io.ReadAll(r)
+	var n int64
+	if len(b) > 0 {
+		wp := __fileWrite(f, b)
+		n = int64(wp.n)
+		if wp.err != nil {
+			return readFromPair{n, wp.err}
+		}
+	}
+	return readFromPair{n, rerr}
 }
 
 // WriteTo implements io.WriterTo.
@@ -2338,11 +2423,21 @@ func (f *File) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 func __fileWriteTo(f *File, w io.Writer) writeToPair {
-	// P0-2: the D4 implementation called io.WriteString (multi-result,
-	// not in the mrM8 desugar tables), which breaks export of every program
-	// importing os. Fail fast with a named trap until the desugar covers it.
-	// Re-test trigger: WS D lands (mrM8 desugar for io.WriteString).
-	panic("os: __fileWriteTo: multi-result io.WriteString needs the mrM8 desugar (re-test: WS D)")
+	// D4 (same trigger as __fileReadFrom): read the whole file through
+	// the concrete helper, then write it out with io.WriteString.
+	// Byte/error behavior matches the generic copy loop — partial data
+	// is still written and counted when the read fails; only the memory
+	// profile differs.
+	rp := __fileReadAll(f)
+	var n int64
+	if len(rp.b) > 0 {
+		n2, werr := io.WriteString(w, string(rp.b))
+		n = int64(n2)
+		if werr != nil {
+			return writeToPair{n, werr}
+		}
+	}
+	return writeToPair{n, rp.err}
 }
 
 // __fileReadAll reads the whole file through the concrete helper.
@@ -2390,6 +2485,22 @@ func __fileSyscallConn(f *File) syscallConnPair {
 	panic("os.File.SyscallConn: not in M8 scope (needs syscall.RawConn + a real fd; re-test: fd-domain unification, Phase 4/Panama)")
 }
 
+// OpenInRoot opens the named file in the directory as if it were a Root.
+func OpenInRoot(dir, name string) (*File, error) {
+	panic("os.OpenInRoot: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+
+// __openInRoot is the single-result Appendix-M helper for the
+// multi-result fail-fast OpenInRoot (same pattern as __openRoot above).
+type openInRootPair struct {
+	f   *File
+	err error
+}
+
+func __openInRoot(dir, name string) openInRootPair {
+	panic("os.OpenInRoot: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+
 // Root represents a directory that acts as the root of a file tree.
 // M8: fail-fast (§6.6 — confining opens need openat2(2); a Go-level
 // lexical emulation has TOCTOU holes).
@@ -2424,20 +2535,74 @@ func (r *Root) Create(name string) (*File, error) {
 func (r *Root) OpenFile(name string, flag int, perm FileMode) (*File, error) {
 	panic("os.Root.OpenFile: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
+func (r *Root) OpenRoot(name string) (*Root, error) {
+	panic("os.Root.OpenRoot: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+
+// __rootOpenRoot is the single-result Appendix-M helper for the
+// multi-result fail-fast (*Root).OpenRoot (same pattern as __openRoot
+// above).
+type rootOpenRootPair struct {
+	root *Root
+	err  error
+}
+
+func __rootOpenRoot(r *Root, name string) rootOpenRootPair {
+	panic("os.Root.OpenRoot: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Chmod(name string, mode FileMode) error {
+	panic("os.Root.Chmod: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Mkdir(name string, perm FileMode) error {
+	panic("os.Root.Mkdir: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) MkdirAll(name string, perm FileMode) error {
+	panic("os.Root.MkdirAll: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Chown(name string, uid, gid int) error {
+	panic("os.Root.Chown: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Lchown(name string, uid, gid int) error {
+	panic("os.Root.Lchown: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Chtimes(name string, atime time.Time, mtime time.Time) error {
+	panic("os.Root.Chtimes: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Remove(name string) error {
+	panic("os.Root.Remove: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) RemoveAll(name string) error {
+	panic("os.Root.RemoveAll: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
 func (r *Root) Stat(name string) (FileInfo, error) {
 	panic("os.Root.Stat: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
 func (r *Root) Lstat(name string) (FileInfo, error) {
 	panic("os.Root.Lstat: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
-func (r *Root) Mkdir(name string, perm FileMode) error {
-	panic("os.Root.Mkdir: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+func (r *Root) Readlink(name string) (string, error) {
+	panic("os.Root.Readlink: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
-func (r *Root) Remove(name string) error {
-	panic("os.Root.Remove: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+
+// __rootReadlink is the single-result Appendix-M helper for the
+// multi-result fail-fast (*Root).Readlink (same pattern as __openRoot
+// above).
+type rootReadlinkPair struct {
+	s   string
+	err error
+}
+
+func __rootReadlink(r *Root, name string) rootReadlinkPair {
+	panic("os.Root.Readlink: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
 func (r *Root) Rename(oldname, newname string) error {
 	panic("os.Root.Rename: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Link(oldname, newname string) error {
+	panic("os.Root.Link: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+func (r *Root) Symlink(oldname, newname string) error {
+	panic("os.Root.Symlink: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
 func (r *Root) ReadFile(name string) ([]byte, error) {
 	panic("os.Root.ReadFile: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
@@ -2445,8 +2610,8 @@ func (r *Root) ReadFile(name string) ([]byte, error) {
 func (r *Root) WriteFile(name string, data []byte, perm FileMode) error {
 	panic("os.Root.WriteFile: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
-func (r *Root) ReadDir(name string) ([]DirEntry, error) {
-	panic("os.Root.ReadDir: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+func (r *Root) FS() fs.FS {
+	panic("os.Root.FS: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
 
 // Executable returns the path name for the executable that started the
@@ -2628,14 +2793,15 @@ var (
 	Kill      Signal = killSignal{}
 )
 
-// ProcAttr holds the attributes for StartProcess. M8: Sys is any —
-// syscall.SysProcAttr is not in the M8 syscall vocabulary (re-test when
-// it lands); nothing in M8 can spawn processes anyway.
+// ProcAttr holds the attributes for StartProcess. M8: Sys is
+// *syscall.SysProcAttr — the type landed in the synthetic syscall
+// package with gc's exact field set; StartProcess itself stays fail-fast
+// (§6.1 — nothing in M8 can spawn processes).
 type ProcAttr struct {
 	Dir   string
 	Env   []string
 	Files []*File
-	Sys   any
+	Sys   *syscall.SysProcAttr
 }
 
 // Process is a process created by StartProcess. M8: the whole family

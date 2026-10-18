@@ -87,7 +87,7 @@ run_case() { # <name> <go-file> <expected-exit> [extra graalgo args...]
 }
 
 echo "== os corpus: plain programs =="
-for n in 00 01 02 03 04 05 06 07 08 09 10 12; do
+for n in 00 01 02 03 04 05 06 07 08 09 10 12 15 16 17; do
     f=$(ls "$OSDIR/${n}_"*.go)
     run_case "$n" "$(basename "$f")" 0
 done
@@ -97,7 +97,7 @@ run_case "11_exit3" "11_exit3.go" 3
 
 echo "== os corpus: fail-fast pins =="
 "$GO" build -o "$TMPDIR/13.gcbin" "$OSDIR/13_failfast.go" || { echo "FAIL: gc build of 13_failfast.go"; exit 1; }
-for c in StartProcess Chown Lchown SyscallConn OpenRoot Executable CopyFS DirFS PipeDeadline; do
+for c in StartProcess Chown Lchown SyscallConn OpenRoot OpenInRoot Executable CopyFS DirFS PipeDeadline; do
     name="13_$c"
     gc_out="$TMPDIR/$name.gc.out"; gr_out="$TMPDIR/$name.gr.out"; gr_err="$TMPDIR/$name.gr.err"
     (cd "$TMPDIR" && "$TMPDIR/13.gcbin" "$c" >"$gc_out" 2>&1); gc_exit=$?
