@@ -585,9 +585,8 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				if target != nil {
 					oid = e.declareObject(target)
 				}
-				_ = pkgname
 				return e.node("pkgref", s, map[string]any{
-					"pkg":  id.Name,
+					"pkg":  pkgname.Imported().Path(),
 					"name": s.Sel.Name,
 					"obj":  oid,
 					"type": e.exprType(s),
