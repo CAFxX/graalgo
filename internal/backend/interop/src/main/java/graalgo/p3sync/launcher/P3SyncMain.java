@@ -452,6 +452,12 @@ public final class P3SyncMain {
             // Public extension hook — no Phase-1/Phase-2 change.
             factory.registerExprKind("abitypeof",
                     (node, ctx) -> graalgo.p3abi.AbiTypeOfNode.build(node, factory, ctx));
+            // fix-redmaster-unpackeface (RC-4a): the "reflectunpack" wire node
+            // for the reflect.unpackEface intrinsic (direct GoInterface to
+            // reflect.Value construction, bypassing unsafe reinterpretation).
+            // Public extension hook — no Phase-1/Phase-2 change.
+            factory.registerExprKind("reflectunpack",
+                    (node, ctx) -> graalgo.p3reflect.ReflectUnpackEfaceNode.build(node, factory, ctx));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).

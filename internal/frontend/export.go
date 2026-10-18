@@ -5998,6 +5998,15 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if fi.obj != nil && isAbiTypeOfFunc(fi.obj) {
 		return e.exportAbiTypeOfDecl(fi)
 	}
+	// fix-redmaster-unpackeface (RC-4a): reflect.unpackEface has a body,
+	// but the body uses unsafe interface reinterpretation
+	// (*(*abi.EmptyInterface)(unsafe.Pointer(&i))) which cannot work on
+	// graalgo. Replace the body with the "reflectunpack" intrinsic, so
+	// function values and indirect calls work. Direct call sites are
+	// intercepted (see exportReflectUnpackEfaceIntrinsic).
+	if fi.obj != nil && isReflectUnpackEfaceFunc(fi.obj) {
+		return e.exportReflectUnpackEfaceDecl(fi)
+	}
 	// fix-redmaster-buildok (r5): reflect.toRType has a body, but the body
 	// reinterprets *abi.Type as *rtype via unsafe.Pointer. Replace with
 	// reflectop{op:tortype} which builds a proper rtype struct.
@@ -8989,6 +8998,18 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}), nil
 	}
 	if fn, ok := e.info.Uses[funIdent].(*types.Func); ok {
+		// RC-3 (fix-redmaster-atomicptr): direct (non-qualified) calls to
+		// sync/atomic.LoadPointer — these occur inside the stdlib
+		// sync/atomic package itself (e.g. (*Pointer[T]).Load calls
+		// LoadPointer(&x.v) directly, not atomic.LoadPointer). The
+		// selector-form interception above doesn't apply; lower it to
+		// a deref read just like the qualified form. This is general:
+		// it applies to any direct reference to this function, not
+		// just sync/atomic internals. (StorePointer is statement-only
+		// and handled by exportAtomicStorePointerStmt.)
+		if fn.Pkg() != nil && fn.Pkg().Path() == "sync/atomic" && fn.Name() == "LoadPointer" {
+			return e.exportAtomicLoadPointer(c)
+		}
 		// M6 (WS H): call to a named top-level function (or a
 		// monomorphized generic instantiation). The call target resolves
 		// by object id; the factory builds a direct func-value call.
@@ -9257,22 +9278,38 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
 // of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
-	sel, ok := unwrapSelector(c.Fun)
-	if !ok {
+	// RC-3 (fix-redmaster-atomicptr): handle both the qualified form
+	// (atomic.StorePointer) and the direct form (StorePointer, as used
+	// inside the sync/atomic package itself). Discriminate on the
+	// resolved object, not the spelling.
+	var obj *types.Func
+	if sel, ok := unwrapSelector(c.Fun); ok {
+		pkgIdent, ok2 := sel.X.(*ast.Ident)
+		if !ok2 {
+			return nil, false, nil
+		}
+		// R2-P1-1: discriminate on the resolved object, not the identifier
+		// spelling — a renamed import (atom "sync/atomic") is still the
+		// package; a shadowed local named "atomic" is not.
+		if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); !isPkg {
+			return nil, false, nil
+		}
+		var ok3 bool
+		obj, ok3 = e.info.Uses[sel.Sel].(*types.Func)
+		if !ok3 {
+			return nil, false, nil
+		}
+	} else if ident, ok := c.Fun.(*ast.Ident); ok {
+		// Direct call (e.g. inside sync/atomic itself).
+		var ok2 bool
+		obj, ok2 = e.info.Uses[ident].(*types.Func)
+		if !ok2 {
+			return nil, false, nil
+		}
+	} else {
 		return nil, false, nil
 	}
-	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return nil, false, nil
-	}
-	// R2-P1-1: discriminate on the resolved object, not the identifier
-	// spelling — a renamed import (atom "sync/atomic") is still the
-	// package; a shadowed local named "atomic" is not.
-	if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); !isPkg {
-		return nil, false, nil
-	}
-	obj, ok := e.info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
+	if obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || obj.Name() != "StorePointer" {
 		return nil, false, nil
 	}
 	if len(c.Args) != 2 {
@@ -9361,6 +9398,15 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// body (see exportAbiTypeOfDecl).
 	if isAbiTypeOfFunc(fn) {
 		return e.exportAbiTypeOfIntrinsic(c)
+	}
+	// fix-redmaster-unpackeface (RC-4a): reflect.unpackEface uses unsafe
+	// interface reinterpretation (*(*abi.EmptyInterface)(unsafe.Pointer(&i)))
+	// which cannot work on graalgo. Lower to the "reflectunpack" wire node
+	// (direct GoInterface to reflect.Value construction). Intercepted before
+	// the funcByObj lookup; the declaration emits a synthesized intrinsic
+	// body (see exportReflectUnpackEfaceDecl).
+	if isReflectUnpackEfaceFunc(fn) {
+		return e.exportReflectUnpackEfaceIntrinsic(c)
 	}
 	// fix-redmaster-buildok (r5): reflect.toRType reinterprets *abi.Type as
 	// *rtype via unsafe.Pointer; the backend needs an actual rtype struct.
@@ -9512,7 +9558,17 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 	// error). The isAddressable re-check fails in generic contexts due
 	// to info mismatch; trust the type checker.
 	// Wrap in addrof node.
-	tid, err := e.typeID(declRecv)
+	// RC-3 (fix-redmaster-atomicptr): declRecv is the method's DECLARED
+	// receiver type, which for a generic method is the unsubstituted
+	// template (e.g. *Pointer[T]). The wire type ID must name the
+	// substituted instantiation (e.g. *Pointer[myStruct]), not the
+	// template — otherwise the backend builds the addrof against the
+	// wrong type. Apply the method's substitution before typeID.
+	savedSubst := e.subst
+	e.subst = subst
+	substRecv := e.substType(declRecv)
+	e.subst = savedSubst
+	tid, err := e.typeID(substRecv)
 	if err != nil {
 		return false
 	}
@@ -9520,7 +9576,7 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 		"x":    *recv,
 		"type": tid,
 	})
-	*recvType = declRecv
+	*recvType = substRecv
 	return true
 }
 
@@ -9541,7 +9597,15 @@ func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *t
 		return false
 	}
 	// Wrap in deref node.
-	tid, err := e.typeID(declRecv)
+	// RC-3 (fix-redmaster-atomicptr): declRecv is the method's DECLARED
+	// receiver type, which for a generic method is the unsubstituted
+	// template. The wire type ID must name the substituted instantiation,
+	// not the template — apply the method's substitution before typeID.
+	savedSubst := e.subst
+	e.subst = subst
+	substRecv := e.substType(declRecv)
+	e.subst = savedSubst
+	tid, err := e.typeID(substRecv)
 	if err != nil {
 		return false
 	}
@@ -9549,7 +9613,7 @@ func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *t
 		"x":    *recv,
 		"type": tid,
 	})
-	*recvType = declRecv
+	*recvType = substRecv
 	return true
 }
 
@@ -10536,6 +10600,22 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 					})
 					continue
 				}
+				// Mark as unsupported (not skipped): the itab build
+				// succeeds, and dispatch fails fast with "not supported"
+				// only if actually called. This is general: any method
+				// whose funcdecl is unavailable (e.g. disk-package
+				// multi-result stubs). Skipping caused "missing method"
+				// itab build failures (e.g. reflect.Type.FieldByName).
+				msig2, ok2 := mobj.Type().(*types.Signature)
+				if !ok2 {
+					return nil, false, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
+						mobj.Name(), mobj.Type())
+				}
+				entries = append(entries, methodEntry{
+					name: mobj.Name(), obj: -1, recv: "value",
+					index: nil, implkey: implKeyOf(mobj, msig2),
+					unsupported: true, embeddedIface: -1,
+				})
 				continue
 			}
 			fi = hfi
