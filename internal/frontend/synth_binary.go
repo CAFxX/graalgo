@@ -295,7 +295,7 @@ func __binaryUvarint(buf []byte) binaryUvarintPair {
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func Uvarint(buf []byte) (uint64, int) {
-	panic("encoding/binary: Uvarint: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/binary: Uvarint: unreachable (call sites desugar to __binaryUvarint)")
 }
 
 // AppendVarint appends the varint-encoded form of x to buf.
@@ -337,7 +337,7 @@ func __binaryVarint(buf []byte) binaryVarintPair {
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func Varint(buf []byte) (int64, int) {
-	panic("encoding/binary: Varint: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/binary: Varint: unreachable (call sites desugar to __binaryVarint)")
 }
 
 // Append keeps the exact gc 1.27.1 signature for type-checking. A real
