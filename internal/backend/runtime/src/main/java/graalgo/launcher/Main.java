@@ -5,6 +5,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
+import graalgo.frontend.ProgramInstaller;
 import graalgo.frontend.WireKindRegistrar;
 import graalgo.values.GoKind;
 import java.io.IOException;
@@ -174,6 +175,18 @@ public final class Main {
                 registrar.registerAll(factory);
             }
             program = factory.buildProgram(json);
+            // Install per-program registries (interface method tables, unsafe
+            // handle table, reflect-type table, linkname bindings) via the
+            // discovered ProgramInstaller providers — mirroring P3SyncMain's
+            // post-build block. Without this, interface dispatch on types
+            // from real stdlib packages (e.g. reflectlite.rtype via fmt)
+            // fails with "no method table installed for dynamic type".
+            // ServiceLoader breaks the compile-time runtime->interop
+            // dependency, same as WireKindRegistrar above.
+            for (ProgramInstaller installer
+                    : ServiceLoader.load(ProgramInstaller.class)) {
+                installer.installProgram(factory.document(), program);
+            }
         } catch (FrontendException e) {
             // M9 acceptance: scope errors (program uses constructs outside
             // frontend/v1 scope) are the program's fault → EXIT_BUILD_FAILURE.
