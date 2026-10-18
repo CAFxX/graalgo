@@ -1200,9 +1200,9 @@ func (s *SHA3) WriteSingle(p []byte) int {
 // Write(p []byte) (n int, err error) implements hash.Hash. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHA3) Write(p []byte) (n int, err error) {
-	panic("crypto/sha3: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: Write: unreachable (call sites desugar to __hashWrite")
 }
 
 // Sum appends the current hash to b and returns the resulting slice.
@@ -1243,9 +1243,9 @@ func (s *SHA3) MarshalSingle() []byte {
 // MarshalBinary() ([]byte, error) implements encoding.BinaryMarshaler. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHA3) MarshalBinary() ([]byte, error) {
-	panic("crypto/sha3: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: MarshalBinary: unreachable (call sites desugar to __binaryMarshal")
 }
 
 // AppendBinary implements [encoding.BinaryAppender].
@@ -1257,9 +1257,9 @@ func (s *SHA3) AppendSingle(p []byte) []byte {
 // AppendBinary(p []byte) ([]byte, error) implements encoding.BinaryAppender. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHA3) AppendBinary(p []byte) ([]byte, error) {
-	panic("crypto/sha3: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: AppendBinary: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // UnmarshalBinary implements [encoding.BinaryUnmarshaler].
@@ -1285,9 +1285,9 @@ func (d *SHA3) CloneSinglePair() hash.ClonePair {
 // Clone() (hash.Cloner, error) implements hash.Cloner. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (d *SHA3) Clone() (hash.Cloner, error) {
-	panic("crypto/sha3: Clone: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: Clone: unreachable (call sites desugar to __hashClone")
 }
 
 // SHAKE is an instance of a SHAKE extendable output function.
@@ -1348,9 +1348,9 @@ func (s *SHAKE) WriteSingle(p []byte) int {
 // Write(p []byte) (n int, err error) implements hash.Hash. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHAKE) Write(p []byte) (n int, err error) {
-	panic("crypto/sha3: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: Write: unreachable (call sites desugar to __hashWrite")
 }
 
 // Read squeezes more output from the XOF.
@@ -1364,9 +1364,9 @@ func (s *SHAKE) ReadSingle(p []byte) int {
 // Read(p []byte) (n int, err error) implements hash.XOF. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHAKE) Read(p []byte) (n int, err error) {
-	panic("crypto/sha3: Read: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: Read: unreachable (call sites desugar to __hashRead")
 }
 
 // Reset resets the XOF to its initial state.
@@ -1390,9 +1390,9 @@ func (s *SHAKE) MarshalSingle() []byte {
 // MarshalBinary() ([]byte, error) implements encoding.BinaryMarshaler. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHAKE) MarshalBinary() ([]byte, error) {
-	panic("crypto/sha3: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: MarshalBinary: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // AppendBinary implements [encoding.BinaryAppender].
@@ -1404,9 +1404,9 @@ func (s *SHAKE) AppendSingle(p []byte) []byte {
 // AppendBinary(p []byte) ([]byte, error) implements encoding.BinaryAppender. The v1 frontend cannot emit or call multi-result
 // functions (WS D): this keeps the exact gc signature for type-checking with
 // a fail-fast body. Real callers go through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 func (s *SHAKE) AppendBinary(p []byte) ([]byte, error) {
-	panic("crypto/sha3: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/sha3: AppendBinary: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // UnmarshalBinary implements [encoding.BinaryUnmarshaler].
