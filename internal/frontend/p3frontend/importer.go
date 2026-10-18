@@ -201,14 +201,9 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "encoding/pem":
 		// P3-M7 (wave 1): synthetic encoding/pem (m7-wenc-core).
-		// Imports synthetic encoding/base64: ensure the base64 mirror is
-		// built and cached first (the context->time precedent).
-		base64Pkg, ok := imp.pkgs["encoding/base64"]
-		if !ok {
-			base64Pkg = syntheticBase64Package()
-			imp.pkgs["encoding/base64"] = base64Pkg
-		}
-		_ = base64Pkg
+		// Self-contained: no synthetic dependencies (the mirror declares
+		// only Block/Decode/EncodeToMemory; it takes no package parameter,
+		// so there is nothing to pre-cache).
 		pkg := syntheticPemPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil

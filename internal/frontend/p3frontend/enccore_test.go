@@ -343,7 +343,8 @@ func TestEncCoreImportResolvesSynthetic(t *testing.T) {
 }
 
 // TestEncCoreImporterReturnsMirror verifies the Importer serves each of
-// the 8 mirrors (and that encoding/pem's base64 dependency resolves).
+// the 8 mirrors. encoding/pem is self-contained (syntheticPemPackage takes
+// no parameter), so importing it must NOT pre-cache encoding/base64.
 func TestEncCoreImporterReturnsMirror(t *testing.T) {
 	l := NewLoader()
 	imp := NewImporter(l, "/tmp", token.NewFileSet())
@@ -356,8 +357,14 @@ func TestEncCoreImporterReturnsMirror(t *testing.T) {
 			t.Fatalf("Import(%q).Path() = %q", ec.path, pkg.Path())
 		}
 	}
-	// The base64 dependency of pem must be cached (imported, not rebuilt).
-	if _, ok := imp.pkgs["encoding/base64"]; !ok {
-		t.Fatalf("importing encoding/pem did not cache encoding/base64")
+	// The pem mirror is self-contained: importing it alone must not populate
+	// the base64 cache entry (a later explicit Import("encoding/base64")
+	// builds it on demand).
+	imp2 := NewImporter(l, "/tmp", token.NewFileSet())
+	if _, err := imp2.Import("encoding/pem"); err != nil {
+		t.Fatalf("Import(%q) failed: %v", "encoding/pem", err)
+	}
+	if _, ok := imp2.pkgs["encoding/base64"]; ok {
+		t.Fatalf("importing encoding/pem pre-cached encoding/base64, but the pem mirror has no base64 dependency")
 	}
 }
