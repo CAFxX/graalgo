@@ -98,11 +98,26 @@ not add new ones.
 
 ## 4. Migration plan
 
-1. **Bootstrap** (this track): skeleton with all three stages, emitting
-   valid v1 JSON for a hello-world program. Differential test against v1
-   output.
+1. **Bootstrap** (this track; done 2026-10-15/16, see
+   [PROGRESS.md](../../internal/frontend/v2/PROGRESS.md)): skeleton with
+   all three stages, emitting an in-memory `*Document` for a hello-world
+   program and transferring it to the Java backend through the binary
+   interface. Differential test against v1 *behavior* — not v1 JSON bytes.
+   **Superseded original milestone**: the bootstrap step originally read
+   "emitting valid v1 JSON for a hello-world program". That is superseded:
+   per his 2026-10-15 order v2 skips the `frontend/v1` JSON wire format
+   entirely (see "No JSON" above). The emitter's JSON output was removed on
+   2026-10-15 ("JSON removal correction" in
+   [PROGRESS.md](../../internal/frontend/v2/PROGRESS.md)); `Emit` returns
+   the in-memory `*Document` directly. The 2026-10-16 lane then built the
+   binary interface — [encode/](../../internal/frontend/v2/encode/) on the
+   Go side,
+   [`BinaryDecoder.java`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
+   on the Java side (see §5).
 2. **Parity**: extend node coverage until v2 passes the differential corpus
-   (`test/corpus/`) with zero drift vs v1.
+   ([test/corpus/](../../test/corpus/)) with zero drift vs gc (the reference
+   toolchain). v2 emits no JSON, so there is no v1-JSON output to compare
+   against — the comparison is behavioral.
 3. **Cutover**: when parity is reached, v2 becomes the default frontend.
    v1 is deleted (not kept as a fallback).
 4. **Cleanup**: the 142 `synth_*.go` files, the import overlay, and the
@@ -110,15 +125,38 @@ not add new ones.
 
 ## 5. Layout
 
-```
-internal/frontend/v2/
-  go.mod          — separate module (graalgo-frontend-v2)
-  parser/         — stage 1: go/parser wrapper
-  checker/        — stage 2: go/types wrapper, real importer
-  emit/           — stage 3: typed AST → backend nodes (direct construction, no JSON serialization)
-  driver/         — main: CLI (mirrors v1 flags for drop-in replacement)
-  testdata/       — corpus inputs for differential testing vs v1
-```
+Go side (separate Go module `graalgo-frontend-v2`,
+[go.mod](../../internal/frontend/v2/go.mod)):
+
+- [parser/](../../internal/frontend/v2/parser/) — stage 1: `go/parser` wrapper
+- [checker/](../../internal/frontend/v2/checker/) — stage 2: `go/types`
+  wrapper, real importer
+- [emit/](../../internal/frontend/v2/emit/) — stage 3: typed AST →
+  in-memory `*Document` (no JSON)
+- [encode/](../../internal/frontend/v2/encode/) — Go→Java binary interface:
+  `Encode(*Document)` → `[]byte`
+  ([encode.go](../../internal/frontend/v2/encode/encode.go);
+  [cmd/encode-demo](../../internal/frontend/v2/encode/cmd/encode-demo)
+  CLI for manual testing)
+- [driver/](../../internal/frontend/v2/driver/) — CLI (mirrors v1 flags for
+  drop-in replacement)
+- [PROGRESS.md](../../internal/frontend/v2/PROGRESS.md) — progress tracker
+  and master merge log for this track
+- [merge-master.sh](../../internal/frontend/v2/merge-master.sh) — hourly
+  master-merge helper for the long-lived track
+
+Java side (same binary interface):
+
+- [`BinaryDecoder.java`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
+  — decodes the binary format to maps/lists/strings/longs
+- [`NodeFactoryV2.java`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
+  — builds Truffle nodes from the decoded document
+- [`V2DecodeDemo.java`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/V2DecodeDemo.java)
+  — decode-and-print demo: Go encodes, Java decodes and prints the structure
+
+There is no `testdata/` under `internal/frontend/v2/`; differential tests
+compare v2 output against gc behavior on
+[test/corpus/](../../test/corpus/), not against v1 JSON.
 
 v2 is a separate Go module so it can be built and tested independently of
 v1. It lives under `internal/frontend/` (not a new top-level dir) because
