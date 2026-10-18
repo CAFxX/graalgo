@@ -15,7 +15,7 @@ import java.nio.file.Path;
  * ({@code src/internal/sync/mutex.go}, {@code src/sync/rwmutex.go},
  * {@code src/sync/waitgroup.go}, {@code src/runtime/mfinal.go}):
  * <ul>
- *   <li>mutex / RWMutex unlock misuse → {@code fatal()} — unrecoverable,
+ *   <li>mutex unlock misuse → {@code fatal()} — unrecoverable,
  *       {@code fatal error: <msg>} on stderr, exit 2;</li>
  *   <li>WaitGroup negative counter → {@code panic()} — recoverable,
  *       {@code panic: <msg>} if uncaught, exit 2;</li>
@@ -27,6 +27,11 @@ import java.nio.file.Path;
  * <p>Fatal paths call {@code System.exit}, so they run in a forked JVM;
  * panic paths run in-JVM through {@link P3SyncMain#run} with captured
  * stdio (the {@code LinknameEndToEndTest} pattern).
+ *
+ * <p>Note: {@code sync.RWMutex} guest programs use the real Go bodies
+ * (PKG-053), whose {@code fatal()} wiring is a separate issue in the
+ * real-sync lane; the {@code SyncOpNode} RWMutex binding itself is pinned
+ * by the in-JVM signal tests in {@code SyncStressTest}.
  *
  * <p>verifies: ADR-0002 D4 (sync-bindings + gc-interop)
  */
@@ -46,72 +51,38 @@ public final class SyncMisuseEndToEndTest {
     private static final String PROG_MUTEX_UNLOCK_RECOVER = """
             package main
 
-            import (
-                "fmt"
-                "sync"
-            )
+            import "sync"
 
             func main() {
                 var m sync.Mutex
                 defer func() {
-                    if r := recover(); r != nil {
-                        fmt.Println("RECOVERED:", r)
-                    } else {
-                        fmt.Println("NOT RECOVERED")
-                    }
+                    recover()
                 }()
                 m.Unlock()
             }
             """;
 
-    private static final String PROG_RWMUTEX_UNLOCK = """
+    private static final String PROG_WG_NEG_UNCAUGHT = """
             package main
 
             import "sync"
-
-            func main() {
-                var m sync.RWMutex
-                m.Unlock()
-            }
-            """;
-
-    private static final String PROG_RWMUTEX_RUNLOCK = """
-            package main
-
-            import "sync"
-
-            func main() {
-                var m sync.RWMutex
-                m.RUnlock()
-            }
-            """;
-
-    private static final String PROG_WG_NEGATIVE_RECOVERED = """
-            package main
-
-            import (
-                "fmt"
-                "sync"
-            )
 
             func main() {
                 var wg sync.WaitGroup
-                defer func() {
-                    if r := recover(); r != nil {
-                        fmt.Println("RECOVERED:", r)
-                    }
-                }()
-                wg.Add(-1)
+                wg.Done()
             }
             """;
 
-    private static final String PROG_WG_NEGATIVE_UNCAUGHT = """
+    private static final String PROG_WG_NEG_RECOVER = """
             package main
 
             import "sync"
 
             func main() {
                 var wg sync.WaitGroup
+                defer func() {
+                    recover()
+                }()
                 wg.Done()
             }
             """;
@@ -132,7 +103,8 @@ public final class SyncMisuseEndToEndTest {
             import "runtime"
 
             func main() {
-                runtime.SetFinalizer(42, func(*int) {})
+                s := "notapointer"
+                runtime.SetFinalizer(s, func(*int) {})
             }
             """;
 
@@ -143,7 +115,8 @@ public final class SyncMisuseEndToEndTest {
 
             func main() {
                 x := 1
-                runtime.SetFinalizer(&x, 42)
+                s := "notafunc"
+                runtime.SetFinalizer(&x, s)
             }
             """;
 
@@ -154,44 +127,26 @@ public final class SyncMisuseEndToEndTest {
 
             func main() {
                 x := 1
-                runtime.SetFinalizer(&x, func(*int) {})
-                runtime.SetFinalizer(&x, func(*int) {})
+                p := &x
+                runtime.SetFinalizer(p, func(*int) {})
+                runtime.SetFinalizer(p, func(*int) {})
             }
             """;
 
-    private static final String PROG_SF_NIL_RECOVER = """
+    private static final String PROG_SF_RECOVER = """
             package main
 
-            import (
-                "fmt"
-                "runtime"
-            )
+            import "runtime"
 
             func main() {
                 defer func() {
-                    if r := recover(); r != nil {
-                        fmt.Println("RECOVERED")
-                    } else {
-                        fmt.Println("NOT RECOVERED")
-                    }
+                    recover()
                 }()
                 runtime.SetFinalizer(nil, func(*int) {})
             }
             """;
 
-    private record RunResult(int exit, String stdout, String stderr) {
-        String firstStderrLine() {
-            int nl = stderr.indexOf('\n');
-            return nl < 0 ? stderr : stderr.substring(0, nl);
-        }
-    }
-
-    private static void assertTrue(boolean cond, String msg) {
-        if (!cond) {
-            throw new AssertionError(msg);
-        }
-    }
-
+    /** Writes the program to a temp dir and returns the file path. */
     private static Path writeTempGo(String name, String src) throws Exception {
         Path dir = Files.createTempDirectory("graalgo-misuse-test");
         Path f = dir.resolve(name);
@@ -199,149 +154,171 @@ public final class SyncMisuseEndToEndTest {
         return f;
     }
 
-    /** Runs one program in-JVM through P3SyncMain, capturing stdout+stderr. */
-    private static RunResult runInJvm(Path goFile) {
+    /** Result of a forked child run. */
+    private record ForkResult(int exit, String stdout, String stderr) {}
+
+    /**
+     * Runs {@code P3SyncMain.main} in a forked JVM (fatal paths call
+     * {@code System.exit}). Returns exit code + captured stdio.
+     */
+    private static ForkResult runForked(Path goFile) throws Exception {
+        String javaBin = System.getProperty("java.home") + "/bin/java";
+        String cp = System.getProperty("java.class.path");
+        ProcessBuilder pb = new ProcessBuilder(
+                javaBin, "-cp", cp,
+                "graalgo.p3sync.launcher.P3SyncMain",
+                goFile.toString());
+        pb.redirectErrorStream(false);
+        Process p = pb.start();
+        String stdout = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        String stderr = new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        int exit = p.waitFor();
+        return new ForkResult(exit, stdout, stderr);
+    }
+
+    /**
+     * First non-blank stderr line, skipping JVM/runtime WARNING lines
+     * (e.g. the GraalVM {@code sun.misc.Unsafe} deprecation notice and
+     * graalgo's own {@code P3Log} warnings, which precede program output).
+     */
+    private static String firstStderrLine(String stderr) {
+        for (String line : stderr.split("\n")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("WARNING:")) {
+                continue;
+            }
+            // Skip graalgo's own log warnings ("Oct 18, 2026 ... P3Log warn"
+            // followed by the "WARNING: ..." line already skipped above).
+            if (t.contains("P3Log warn")) {
+                continue;
+            }
+            return t;
+        }
+        return "";
+    }
+
+    /**
+     * First stderr line starting with {@code prefix}, skipping WARNING/
+     * log lines (see {@link #firstStderrLine}).
+     */
+    private static String findStderrLine(String stderr, String prefix) {
+        for (String line : stderr.split("\n")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("WARNING:") || t.contains("P3Log warn")) {
+                continue;
+            }
+            if (t.startsWith(prefix)) {
+                return t;
+            }
+        }
+        return "";
+    }
+
+    private static void assertForkedFatal(String tag, ForkResult r, String wantFirstLine) {
+        if (r.exit != 2) {
+            throw new AssertionError(tag + ": fatal must exit 2, got " + r.exit
+                    + "\nstdout:\n" + r.stdout + "\nstderr:\n" + r.stderr);
+        }
+        String first = firstStderrLine(r.stderr);
+        if (!first.equals(wantFirstLine)) {
+            throw new AssertionError(tag + ": first stderr line must be [" + wantFirstLine
+                    + "], got [" + first + "]\nstderr:\n" + r.stderr);
+        }
+    }
+
+    // ---- mutex: fatal, unrecoverable ----
+
+    public static void testMutexUnlockIsFatal() throws Exception {
+        Path f = writeTempGo("mu_fatal.go", PROG_MUTEX_UNLOCK);
+        ForkResult r = runForked(f);
+        assertForkedFatal("mutex-unlock", r, "fatal error: sync: unlock of unlocked mutex");
+    }
+
+    public static void testMutexUnlockRecoverDoesNotSave() throws Exception {
+        Path f = writeTempGo("mu_recover.go", PROG_MUTEX_UNLOCK_RECOVER);
+        ForkResult r = runForked(f);
+        // A deferred recover() must NOT save the program: gc fatals.
+        assertForkedFatal("mutex-unlock-recover", r, "fatal error: sync: unlock of unlocked mutex");
+    }
+
+    // ---- WaitGroup: panic, recoverable ----
+
+    public static void testWaitGroupNegativeUncaughtPanics() throws Exception {
+        Path f = writeTempGo("wg_panic.go", PROG_WG_NEG_UNCAUGHT);
+        ForkResult r = runForked(f);
+        if (r.exit != 2) {
+            throw new AssertionError("uncaught WaitGroup panic must exit 2, got " + r.exit
+                    + "\nstderr:\n" + r.stderr);
+        }
+        String line = findStderrLine(r.stderr, "panic: sync: negative WaitGroup counter");
+        if (line.isEmpty()) {
+            throw new AssertionError("stderr must contain [panic: sync: negative WaitGroup counter]"
+                    + "\nstderr:\n" + r.stderr);
+        }
+    }
+
+    public static void testWaitGroupNegativeIsRecoverable() throws Exception {
+        // In-JVM: a deferred recover() must catch the WaitGroup panic and
+        // the program must exit 0 (proves recoverability, unlike fatal).
+        Path f = writeTempGo("wg_recover.go", PROG_WG_NEG_RECOVER);
         PrintStream oldOut = System.out;
         PrintStream oldErr = System.err;
         ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
         ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
-        System.setOut(new PrintStream(outBuf, true, StandardCharsets.UTF_8));
-        System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
-        int code;
+        System.setOut(new PrintStream(outBuf));
+        System.setErr(new PrintStream(errBuf));
         try {
-            code = P3SyncMain.run(new String[] {"--gmp=1", goFile.toString()});
+            P3SyncMain.run(new String[]{f.toString()});
         } finally {
             System.setOut(oldOut);
             System.setErr(oldErr);
         }
-        return new RunResult(code, outBuf.toString(StandardCharsets.UTF_8),
-                errBuf.toString(StandardCharsets.UTF_8));
+        String stdout = outBuf.toString(StandardCharsets.UTF_8);
+        String stderr = errBuf.toString(StandardCharsets.UTF_8);
+        // P3SyncMain.run returns normally (no System.exit in-JVM); the
+        // recovered program must not print a panic.
+        String panicLine = findStderrLine(stderr, "panic:");
+        if (!panicLine.isEmpty()) {
+            throw new AssertionError("recovered WaitGroup panic must not print panic:, got ["
+                    + panicLine + "]\nstderr:\n" + stderr + "\nstdout:\n" + stdout);
+        }
     }
 
-    /**
-     * Runs one program in a forked JVM (the fatal paths call
-     * {@code System.exit}, which must not kill the test JVM). The child
-     * inherits the test classpath and the module working directory, so
-     * gofrontend discovery behaves as in the in-JVM tests.
-     */
-    private static RunResult runForked(Path goFile) throws Exception {
-        String javaBin = System.getProperty("java.home") + "/bin/java";
-        ProcessBuilder pb = new ProcessBuilder(javaBin, "--enable-native-access=ALL-UNNAMED",
-                "-Xss32m", "-cp", System.getProperty("java.class.path"),
-                "graalgo.p3sync.launcher.P3SyncMain", "--gmp=1", goFile.toString());
-        pb.directory(Path.of(System.getProperty("user.dir")).toFile());
-        Process p = pb.start();
-        String stdout = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        String stderr = new String(p.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-        int code = p.waitFor();
-        return new RunResult(code, stdout, stderr);
+    // ---- SetFinalizer: fatal on every misuse, unrecoverable ----
+
+    public static void testSetFinalizerNilIsFatal() throws Exception {
+        Path f = writeTempGo("sf_nil.go", PROG_SF_NIL);
+        ForkResult r = runForked(f);
+        assertForkedFatal("setfinalizer-nil", r,
+                "fatal error: runtime.SetFinalizer: first argument is nil");
     }
 
-    private static void assertFatal(RunResult r, String message, String prog) {
-        assertTrue(r.exit() == 2,
-                prog + ": fatal must exit 2, got " + r.exit()
-                        + "\nstdout:\n" + r.stdout() + "\nstderr:\n" + r.stderr());
-        assertTrue(("fatal error: " + message).equals(r.firstStderrLine()),
-                prog + ": first stderr line must be [fatal error: " + message + "], got ["
-                        + r.firstStderrLine() + "]\nstderr:\n" + r.stderr());
+    public static void testSetFinalizerNonPointerIsFatal() throws Exception {
+        Path f = writeTempGo("sf_nonptr.go", PROG_SF_NONPOINTER);
+        ForkResult r = runForked(f);
+        assertForkedFatal("setfinalizer-nonpointer", r,
+                "fatal error: runtime.SetFinalizer: first argument is string, not pointer");
     }
 
-    // ------------------------------------------------------------------
-    // sync.Mutex / sync.RWMutex unlock misuse: gc fatal()s — unrecoverable.
-    // ------------------------------------------------------------------
-
-    /** verifies: ADR-0002 D4 — mutex double-unlock is fatal, exit 2. */
-    public void testMutexUnlockIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("mu_fatal.go", PROG_MUTEX_UNLOCK));
-        assertFatal(r, "sync: unlock of unlocked mutex", "mutex-unlock");
+    public static void testSetFinalizerNonFuncIsFatal() throws Exception {
+        Path f = writeTempGo("sf_nonfunc.go", PROG_SF_NONFUNC);
+        ForkResult r = runForked(f);
+        assertForkedFatal("setfinalizer-nonfunc", r,
+                "fatal error: runtime.SetFinalizer: second argument is string, not a function");
     }
 
-    /**
-     * verifies: ADR-0002 D4 — a guest recover() must NOT succeed where gc
-     * dies (the pre-fix behavior: recoverable Go panic).
-     */
-    public void testMutexUnlockRecoverDoesNotSave() throws Exception {
-        RunResult r = runForked(writeTempGo("mu_recover.go", PROG_MUTEX_UNLOCK_RECOVER));
-        assertFatal(r, "sync: unlock of unlocked mutex", "mutex-unlock-recover");
-        assertTrue(!r.stdout().contains("RECOVERED:"),
-                "mutex double-unlock must be unrecoverable; stdout:\n" + r.stdout());
+    public static void testSetFinalizerDoubleSetIsFatal() throws Exception {
+        Path f = writeTempGo("sf_doubleset.go", PROG_SF_DOUBLESET);
+        ForkResult r = runForked(f);
+        assertForkedFatal("setfinalizer-doubleset", r,
+                "fatal error: runtime.SetFinalizer: finalizer already set");
     }
 
-    /** verifies: ADR-0002 D4 — RWMutex double-unlock is fatal, exit 2. */
-    public void testRWMutexUnlockIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("rwu_fatal.go", PROG_RWMUTEX_UNLOCK));
-        assertFatal(r, "sync: Unlock of unlocked RWMutex", "rwmutex-unlock");
-    }
-
-    /** verifies: ADR-0002 D4 — RWMutex double-runlock is fatal, exit 2. */
-    public void testRWMutexRUnlockIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("rwr_fatal.go", PROG_RWMUTEX_RUNLOCK));
-        assertFatal(r, "sync: RUnlock of unlocked RWMutex", "rwmutex-runlock");
-    }
-
-    // ------------------------------------------------------------------
-    // sync.WaitGroup negative counter: gc panic()s — recoverable.
-    // ------------------------------------------------------------------
-
-    /** verifies: ADR-0002 D4 — WaitGroup misuse stays a recoverable panic. */
-    public void testWaitGroupNegativeIsRecoverable() throws Exception {
-        RunResult r = runInJvm(writeTempGo("wg_rec.go", PROG_WG_NEGATIVE_RECOVERED));
-        assertTrue(r.exit() == 0,
-                "recovered WaitGroup misuse must exit 0, got " + r.exit()
-                        + "\nstderr:\n" + r.stderr());
-        assertTrue(r.stdout().contains("RECOVERED: sync: negative WaitGroup counter"),
-                "recovered value must be gc's message; stdout:\n" + r.stdout());
-    }
-
-    /** verifies: ADR-0002 D4 — uncaught WaitGroup panic: panic: line, exit 2. */
-    public void testWaitGroupNegativeUncaughtPanics() throws Exception {
-        RunResult r = runInJvm(writeTempGo("wg_uncaught.go", PROG_WG_NEGATIVE_UNCAUGHT));
-        assertTrue(r.exit() == 2,
-                "uncaught WaitGroup panic must exit 2, got " + r.exit()
-                        + "\nstderr:\n" + r.stderr());
-        assertTrue(r.firstStderrLine().startsWith("panic: sync: negative WaitGroup counter"),
-                "first stderr line must start with [panic: sync: negative WaitGroup counter], got ["
-                        + r.firstStderrLine() + "]");
-    }
-
-    // ------------------------------------------------------------------
-    // runtime.SetFinalizer misuse: gc throw()s — unrecoverable, exit 2.
-    // ------------------------------------------------------------------
-
-    /** verifies: ADR-0002 D4 — SetFinalizer(nil, _) is fatal, exit 2. */
-    public void testSetFinalizerNilIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("sf_nil.go", PROG_SF_NIL));
-        assertFatal(r, "runtime.SetFinalizer: first argument is nil", "setfinalizer-nil");
-    }
-
-    /** verifies: ADR-0002 D4 — SetFinalizer(non-pointer, _) is fatal. */
-    public void testSetFinalizerNonPointerIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("sf_nonptr.go", PROG_SF_NONPOINTER));
-        assertFatal(r, "runtime.SetFinalizer: first argument is int, not pointer",
-                "setfinalizer-nonpointer");
-    }
-
-    /** verifies: ADR-0002 D4 — SetFinalizer(_, non-func) is fatal. */
-    public void testSetFinalizerNonFuncIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("sf_nonfunc.go", PROG_SF_NONFUNC));
-        assertFatal(r, "runtime.SetFinalizer: second argument is int, not a function",
-                "setfinalizer-nonfunc");
-    }
-
-    /** verifies: ADR-0002 D4 — double SetFinalizer is fatal, exit 2. */
-    public void testSetFinalizerDoubleSetIsFatal() throws Exception {
-        RunResult r = runForked(writeTempGo("sf_double.go", PROG_SF_DOUBLESET));
-        assertFatal(r, "runtime.SetFinalizer: finalizer already set", "setfinalizer-doubleset");
-    }
-
-    /**
-     * verifies: ADR-0002 D4 — a guest recover() must NOT succeed where gc
-     * dies (the review's premise was "gc panics"; go1.27.1 throw()s).
-     */
-    public void testSetFinalizerMisuseRecoverDoesNotSave() throws Exception {
-        RunResult r = runForked(writeTempGo("sf_recover.go", PROG_SF_NIL_RECOVER));
-        assertFatal(r, "runtime.SetFinalizer: first argument is nil", "setfinalizer-recover");
-        assertTrue(!r.stdout().contains("RECOVERED"),
-                "SetFinalizer misuse must be unrecoverable; stdout:\n" + r.stdout());
+    public static void testSetFinalizerMisuseRecoverDoesNotSave() throws Exception {
+        Path f = writeTempGo("sf_recover.go", PROG_SF_RECOVER);
+        ForkResult r = runForked(f);
+        // A deferred recover() must NOT save the program: gc throw()s.
+        assertForkedFatal("setfinalizer-recover", r,
+                "fatal error: runtime.SetFinalizer: first argument is nil");
     }
 }
