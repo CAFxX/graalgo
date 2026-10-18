@@ -360,22 +360,28 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 }
 
 func basicClass(b *types.Basic) string {
-	switch b.Info() & types.IsNumeric {
-	case types.IsBoolean:
+	// L01: switch on the full Info bits, testing each family explicitly.
+	// (The old code switched on Info & types.IsNumeric, and since
+	// IsNumeric = IsInteger|IsFloat|IsComplex, the IsBoolean and IsUnsigned
+	// cases were dead: bool emitted "unknown" and uint* emitted "int",
+	// both rejected by the backend's GoKind.fromBasic.)
+	// NOTE: test IsUnsigned before IsInteger — unsigned ints carry both
+	// bits (IsUnsigned|IsInteger).
+	info := b.Info()
+	switch {
+	case info&types.IsBoolean != 0:
 		return "bool"
-	case types.IsInteger:
-		return "int"
-	case types.IsUnsigned:
+	case info&types.IsUnsigned != 0:
 		return "uint"
-	case types.IsFloat:
+	case info&types.IsInteger != 0:
+		return "int"
+	case info&types.IsFloat != 0:
 		return "float"
-	case types.IsComplex:
+	case info&types.IsComplex != 0:
 		return "complex"
-	}
-	if b.Info()&types.IsString != 0 {
+	case info&types.IsString != 0:
 		return "string"
-	}
-	if b.Info()&types.IsUntyped != 0 {
+	case info&types.IsUntyped != 0:
 		return "untyped"
 	}
 	return "unknown"

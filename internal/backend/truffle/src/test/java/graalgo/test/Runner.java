@@ -41,6 +41,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.CommaOkLvalueTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
+        TESTS.add(graalgo.frontend.v2.BasicClassRoundtripTest.class);
     }
 
     public static void main(String[] args) {
