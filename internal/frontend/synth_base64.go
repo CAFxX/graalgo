@@ -566,21 +566,21 @@ func __base64AppendDecode(enc *Encoding, dst, src []byte) base64DecodeStringPair
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func (enc *Encoding) Decode(dst, src []byte) (n int, err error) {
-	panic("encoding/base64: Decode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: Decode: unreachable (call sites desugar to __base64Decode)")
 }
 
 // DecodeString keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func (enc *Encoding) DecodeString(s string) ([]byte, error) {
-	panic("encoding/base64: DecodeString: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: DecodeString: unreachable (call sites desugar to __base64DecodeString)")
 }
 
 // AppendDecode keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func (enc *Encoding) AppendDecode(dst, src []byte) ([]byte, error) {
-	panic("encoding/base64: AppendDecode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: AppendDecode: unreachable (call sites desugar to __base64AppendDecode)")
 }
 
 // DecodedLen returns the maximum length in bytes of the decoded data
@@ -622,7 +622,7 @@ type base64EncoderWritePair struct {
 // Write writes p to the encoder. (Appendix M: 2-target call sites desugar
 // to __encoderWrite; every other position fails fast. Body never runs.)
 func (e *encoder) Write(p []byte) (n int, err error) {
-	panic("encoding/base64: encoder.Write: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: encoder.Write: unreachable (call sites desugar to __encoderWrite)")
 }
 
 func __encoderWrite(e *encoder, p []byte) base64EncoderWritePair {
@@ -705,7 +705,7 @@ type base64NewlineFilteringReaderReadPair struct {
 // desugar to __newlineFilteringReaderRead; every other position fails
 // fast. Body never runs.)
 func (r *newlineFilteringReader) Read(p []byte) (n int, err error) {
-	panic("encoding/base64: newlineFilteringReader.Read: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: newlineFilteringReader.Read: unreachable (call sites desugar to __newlineFilteringReaderRead)")
 }
 
 func __newlineFilteringReaderRead(r *newlineFilteringReader, p []byte) base64NewlineFilteringReaderReadPair {
@@ -755,7 +755,7 @@ type base64DecoderReadPair struct {
 // Read reads from the decoder. (Appendix M: 2-target call sites desugar
 // to __decoderRead; every other position fails fast. Body never runs.)
 func (d *decoder) Read(p []byte) (n int, err error) {
-	panic("encoding/base64: decoder.Read: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: decoder.Read: unreachable (call sites desugar to __decoderRead)")
 }
 
 func __decoderRead(d *decoder, p []byte) base64DecoderReadPair {
