@@ -73,30 +73,31 @@ public final class GcInterop {
     private static final java.lang.ref.Cleaner CLEANER = java.lang.ref.Cleaner.create();
     /**
      * Obj -> registration, for {@code SetFinalizer(obj, nil)} removal.
-     * STRONG keys: the registration keeps the GoPointer alive until the
-     * program either cancels (SetFinalizer(x, nil)) or calls runtime.GC().
-     * This is necessary because the interpreter frame's reference may not
-     * be a timely GC root (JIT liveness can collect the GoPointer between
-     * the register and cancel calls, before the Go program nils x).
      *
      * <p>Weak keys so the registry never keeps a finalizable object alive
-     * (that would defeat the phantom). The weak key is safe because
-     * {@link #PINNED} keeps the GoPointer strongly reachable until the
-     * program calls {@link #gc()} or cancels. GoPointer uses identity
-     * equality, so weak-key semantics are identity semantics here. Guarded
-     * by {@link #FINALIZER_LOCK}.
+     * (that would defeat the phantom): the {@link java.lang.ref.Cleaner}
+     * phantom is the only registration state, and a phantom does not keep
+     * its referent reachable. A finalizable object therefore becomes
+     * collectable as soon as the Go program drops it — no explicit
+     * {@code runtime.GC()} is needed and none is consulted here (R-P0-3;
+     * DIV-M4-10 retired). GoPointer uses identity equality, so weak-key
+     * semantics are identity semantics here. Guarded by
+     * {@link #FINALIZER_LOCK}.
+     *
+     * <p>Liveness note (re-examined for R-P0-3): no strong pin is kept
+     * across the register/cancel window. Interpreter frame slots are heap
+     * objects and hence real, exact GC roots while the Go variable is
+     * alive; under Graal compilation the host JIT's use-based liveness
+     * applies — which is exactly gc's model too (a variable dead after its
+     * last use does not keep the object alive in gc either). The cancel
+     * call {@code SetFinalizer(x, nil)} itself uses {@code x}, so the
+     * window is covered; past the last use, Go's contract
+     * ({@code runtime.KeepAlive}, implemented by {@link #keepAlive})
+     * applies, same as under gc.
      */
     private static final Object FINALIZER_LOCK = new Object();
     private static final Map<Object, FinalizerAction> BY_OBJ =
             new WeakHashMap<>();
-    /**
-     * Strong references to registered GoPointers, released on {@link #gc()}.
-     * Keeps the referent alive across the register/cancel window. The
-     * explicit GC call is the program's signal that setup is complete; after
-     * release, lifetimes are natural (tied to Go variables). Guarded by
-     * {@link #FINALIZER_LOCK}.
-     */
-    private static final java.util.Set<Object> PINNED = new java.util.HashSet<>();
 
     /**
      * A cancellable finalizer action. The Cleaner API has no "unregister"
@@ -162,7 +163,6 @@ public final class GcInterop {
                             "runtime.SetFinalizer: finalizer already set");
                 }
                 old.cancelled = true; // cancel; the Cleaner action will no-op
-                PINNED.remove(obj);
             }
             if (fn == null) {
                 return;
@@ -172,7 +172,6 @@ public final class GcInterop {
             FinalizerAction action = new FinalizerAction(fn, System.identityHashCode(obj));
             CLEANER.register(obj, action);
             BY_OBJ.put(obj, action);
-            PINNED.add(obj);
             // Fence: keep obj alive until the registration is complete.
             // Without this, the JIT may consider obj dead after its last use
             // above and the Cleaner may fire prematurely.
@@ -226,13 +225,8 @@ public final class GcInterop {
      */
     public static void gc() {
         FORCED_GC_COUNT.incrementAndGet();
-        // Release pinned GoPointers: the explicit GC is the program's signal
-        // that setup is complete. After this, lifetimes are natural (tied to
-        // Go variables), and the Cleaner can collect them. BY_OBJ (weak) is
-        // retained for cancellation lookups. (See PINNED javadoc.)
-        synchronized (FINALIZER_LOCK) {
-            PINNED.clear();
-        }
+        // Finalizer registrations are deliberately untouched here: gc's
+        // runtime.GC() never releases them (R-P0-3; DIV-M4-10 retired).
         long before = totalCollections();
         System.gc();
         if (before < 0) {

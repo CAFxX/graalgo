@@ -136,7 +136,41 @@ type metadata for attribution (Phase 4+).
 
 ### DIV-M4-9: `debug.FreeOSMemory` unsupported (no JVM analog)
 
-### DIV-M4-10: finalizers run only after an explicit `runtime.GC()` (registration pins the object)
+### DIV-M4-10: finalizers run only after an explicit `runtime.GC()` (registration pins the object) — FIXED
+
+**Status: FIXED 2026-10-18** (was an accepted Phase-2 divergence; re-test
+trigger discharged by R-P0-3, review lane `review-finalizer`).
+
+Fix: the `PINNED` strong set is gone from
+[`GcInterop`](../../../../internal/backend/runtime/src/main/java/graalgo/runtime/GcInterop.java).
+Registration is now only the `Cleaner` phantom plus the weak `BY_OBJ` map
+(plus a `reachabilityFence` across registration). A phantom keeps no
+strong reference, so a finalizable object becomes collectable as soon as
+the Go program drops it — no explicit `runtime.GC()` needed — and
+`runtime.GC()` no longer touches finalizer state, matching gc (whose
+`runtime.GC()` never releases registrations). The old register/cancel
+liveness rationale was re-examined and rejected: interpreter frame slots
+are real GC roots, and past the last use Go's own contract
+(`runtime.KeepAlive`) applies, same as under gc.
+
+Evidence: rewritten corpus
+[`gc07_finalizer_ungated.go`](../../../../test/corpus/phase2/gc/gc07_finalizer_ungated.go)
+(now differential — finalizer runs under allocation pressure with no
+explicit `runtime.GC()`, matching the gc-recorded `.expected`) plus
+`GcInteropTest.testFinalizerRunsWithoutExplicitGc` /
+`testFinalizerNotFiredEarlyByGc`.
+
+**Note (2026-10-18):** while re-recording, found that gc1.27.1 never runs
+finalizers for tiny-allocated objects (< 16 bytes, noscan) — verified
+empirically; non-tiny objects finalize promptly. The JVM has no tiny
+allocator, so graalgo finalizes such objects where gc does not (graalgo
+is more faithful to the documented "unreachable ⇒ finalizable"
+contract here). The gc07 struct carries a pointer field to stay out of
+the tiny allocator on the gc side. gc01's `.expected` predates this
+finding (tiny `T`, gc-recorded as "finalized"); re-recording it is a
+deliberate baseline decision, out of scope for this fix.
+
+(The remainder of this entry is the pre-fix record.)
 
 `GcInterop.setFinalizer` keeps every registered object in a static strong
 set (`PINNED`) until the Go program calls `runtime.GC()` (or cancels via

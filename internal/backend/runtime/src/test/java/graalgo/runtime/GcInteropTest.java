@@ -2,7 +2,12 @@ package graalgo.runtime;
 
 import java.lang.ref.WeakReference;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.nodes.RootNode;
+
+import graalgo.values.GoFunc;
 import graalgo.values.GoPointer;
 
 /**
@@ -118,5 +123,85 @@ public final class GcInteropTest {
         GcInterop.gc();
         long ms = (System.nanoTime() - start) / 1_000_000L;
         assertTrue(ms < 60_000L, "gc() must return within the documented bound, took " + ms + "ms");
+    }
+
+    /**
+     * Minimal {@link RootCallTarget} test double: records invocation in a
+     * flag. The finalizer machinery only needs a callable GoFunc; the body
+     * is irrelevant to what these tests prove (registration reachability),
+     * and the end-to-end corpus test (gc07) covers a real compiled
+     * finalizer through the exporter.
+     */
+    private static final class FlagCallTarget implements RootCallTarget {
+        final AtomicBoolean ran = new AtomicBoolean();
+        @Override
+        public Object call(Object... arguments) {
+            ran.set(true);
+            return null;
+        }
+        @Override
+        public RootNode getRootNode() {
+            throw new UnsupportedOperationException("test double has no RootNode");
+        }
+    }
+
+    /**
+     * Spins {@code System.gc()} + allocation pressure until the finalizer
+     * flag is set or the attempt budget is exhausted. Deliberately never
+     * calls {@link GcInterop#gc()} — that is the point of
+     * {@link #testFinalizerRunsWithoutExplicitGc}.
+     */
+    private static void awaitFinalizer(AtomicBoolean ran) throws Exception {
+        for (int i = 0; i < 300 && !ran.get(); i++) {
+            System.gc();
+            @SuppressWarnings("unused")
+            byte[] pressure = new byte[1 << 20];
+            if (!ran.get()) {
+                Thread.sleep(20);
+            }
+        }
+    }
+
+    /**
+     * R-P0-3: registering a finalizer must not pin its object. With no
+     * {@code runtime.GC()} call at all, the object must still become
+     * collectable and the finalizer must run. (Pre-fix this failed:
+     * PINNED held every finalizable object strongly until an explicit
+     * gc(), leaking them forever.)
+     */
+    public void testFinalizerRunsWithoutExplicitGc() throws Exception {
+        FlagCallTarget target = new FlagCallTarget();
+        GoPointer p = new GoPointer(new Object());
+        GcInterop.setFinalizer(p, new GoFunc(target, null));
+        p = null; // the only strong ref; the Cleaner phantom + weak BY_OBJ remain
+        // Deliberately no GcInterop.gc() anywhere in this test.
+        awaitFinalizer(target.ran);
+        assertTrue(target.ran.get(),
+                "finalizer must run without any runtime.GC() call (object must be collectable)");
+    }
+
+    /**
+     * R-P0-3: {@code runtime.GC()} must not release finalizer registrations
+     * (gc semantics). A still-reachable object must not be finalized across
+     * a gc() call, and the registration must survive gc() so the finalizer
+     * still fires once the object is actually dropped.
+     */
+    public void testFinalizerNotFiredEarlyByGc() throws Exception {
+        FlagCallTarget target = new FlagCallTarget();
+        GoPointer p = new GoPointer(new Object());
+        GcInterop.setFinalizer(p, new GoFunc(target, null));
+        // p stays strongly reachable: gc() must not finalize it early.
+        // (Deterministic: the Cleaner only enqueues phantoms of unreachable
+        // referents, so no wait can make this fire while p is reachable.)
+        GcInterop.gc();
+        System.gc();
+        Thread.sleep(500);
+        assertTrue(!target.ran.get(),
+                "finalizer must not run for a still-reachable object, even across runtime.GC()");
+        // Drop p: the retained registration must still fire.
+        p = null;
+        awaitFinalizer(target.ran);
+        assertTrue(target.ran.get(),
+                "finalizer registration must survive runtime.GC() and fire once the object is dropped");
     }
 }

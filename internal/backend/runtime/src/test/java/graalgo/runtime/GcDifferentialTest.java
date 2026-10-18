@@ -33,11 +33,11 @@ public final class GcDifferentialTest {
             "gc02_finalizer_remove",
             "gc03_keepalive",
             "gc04_gc_hint",
-            "gc05_finalizer_replace");
+            "gc05_finalizer_replace",
+            "gc07_finalizer_ungated");
     /** Programs with graalgo-specific (non-gc-differential) assertions. */
     private static final List<String> NON_DIFFERENTIAL = List.of(
-            "gc06_finalizer_panic",
-            "gc07_finalizer_gated");
+            "gc06_finalizer_panic");
 
     /** Stdout + stderr + exit code from a subprocess run. */
     private static final class ProcessResult {
@@ -180,16 +180,15 @@ public final class GcDifferentialTest {
     }
 
     /**
-     * gc07: finalizers are gated on an explicit runtime.GC() (DIV-M4-10).
-     * Allocation pressure without the explicit call must NOT run the
-     * finalizer (PINNED is a strong root — deterministic); after
-     * runtime.GC() releases the pin, the finalizer must run. No .expected
-     * file — gc finalizes without the explicit call, so this is
-     * graalgo-specific behavior.
+     * gc07: finalizers are NOT gated on an explicit runtime.GC() (R-P0-3;
+     * DIV-M4-10 retired). Allocation pressure alone must finalize the
+     * dropped object, matching the gc-recorded .expected. (The struct
+     * carries a pointer field: gc1.27.1 never finalizes tiny-allocated
+     * objects, so a tiny struct would be vacuous on the gc side.)
      */
-    public void testGc07FinalizerGatedOnExplicitGc() throws Exception {
-        ProcessResult r = runGoFull("gc07_finalizer_gated");
-        assertEquals("gated\nreleased\n", r.stdout, "gc07 stdout");
+    public void testGc07FinalizerUngated() throws Exception {
+        assertEquals(expected("gc07_finalizer_ungated"), runGo("gc07_finalizer_ungated"),
+                "gc07_finalizer_ungated");
     }
 
     /**
