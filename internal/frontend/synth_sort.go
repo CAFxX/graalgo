@@ -246,10 +246,10 @@ func Search(n int, f func(int) bool) int {
 // Find calls cmp(i) only for i in the range [0, n).
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. The algorithm is
-// 15 lines of binary search, but v1 cannot emit or call multi-result
-// functions (WS D) — the declaration is skipped at export (the P3-M5
-// ParseDuration precedent) and every call site fails fast. Re-test when
-// WS D lands.
+// 15 lines of binary search, but there is no Appendix-M table entry for
+// it yet — the declaration is skipped at export (the P3-M5 ParseDuration
+// precedent) and every call site fails fast; covering it needs a
+// __-helper + desugar entry.
 func Find(n int, cmp func(int) int) (i int, found bool) {
 	panic("sort.Find: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
