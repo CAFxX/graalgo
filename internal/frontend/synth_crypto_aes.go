@@ -100,9 +100,9 @@ const BlockSize = 16
 // AES-128, AES-192, or AES-256.
 //
 // P3-M8: fail-fast stub (exact gc signature for type-checking). Real callers
-// go through the mrM8 desugar to __aesNewCipher. Re-test trigger: WS D lands.
+// go through the mrM8 desugar to __aesNewCipher.
 func NewCipher(key []byte) (cipher.Block, error) {
-	panic("crypto/aes: NewCipher: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("crypto/aes: NewCipher: unreachable (call sites desugar to __aesNewCipher")
 }
 
 // Copyright 2009 The Go Authors. All rights reserved.
@@ -803,7 +803,7 @@ type newCipherPair struct {
 }
 
 // __aesNewCipher serves aes.NewCipher through the mrM8 desugar (see
-// m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// m8-staging/crypto/03-mrdesugar.patch).
 // P3-M8b: newAesBlock/newOutlined are inlined here — a __-helper cannot
 // call a multi-result function (WS D), and routing through the desugar
 // would recurse into __aesNewCipher itself. The key-size check above
