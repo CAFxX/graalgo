@@ -566,10 +566,20 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		_ = sel
+		// The name alone does not identify the selected entity:
+		// same-name methods on different types (or a method and a field
+		// with the same name reached through promotion) are distinct
+		// types.Objects. Emit the selected object's id so the backend
+		// resolves the exact method/field instead of name-matching it
+		// against the struct type.
+		var oid any
+		if sel.Obj() != nil {
+			oid = e.declareObject(sel.Obj())
+		}
 		return e.node("selector", s, map[string]any{
 			"x":    x,
 			"sel":  s.Sel.Name,
+			"obj":  oid,
 			"type": e.exprType(s),
 		}), nil
 	}

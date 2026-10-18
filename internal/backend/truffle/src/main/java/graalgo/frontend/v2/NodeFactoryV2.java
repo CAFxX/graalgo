@@ -847,7 +847,31 @@ public final class NodeFactoryV2 {
                 GoExprNode x = buildExpr(xMap, where + ".x", scope);
                 String sel = getString(fields, "sel", where);
                 GoKind k = goKindForTypeId(scope.types, fields.get("type"), where);
-                // Look up the field index in the struct type of x.
+                // The emitter attaches the selected object's id: use it to
+                // tell a method selection apart from a field selection.
+                // Name-only resolution cannot distinguish same-name methods
+                // on different types, and it mis-resolves a method name as
+                // a struct field.
+                Object selObjIdObj = fields.get("obj");
+                if (selObjIdObj instanceof Long) {
+                    int selObjId = ((Long) selObjIdObj).intValue();
+                    if (selObjId >= 0 && selObjId < scope.objects.size()) {
+                        Object selObj = scope.objects.get(selObjId);
+                        if (selObj instanceof Map) {
+                            Object objKind = ((Map<String, Object>) selObj).get("kind");
+                            if ("func".equals(objKind)) {
+                                // Method selection. v2 does not emit
+                                // receivers and has no method dispatch:
+                                // fail loudly instead of name-matching the
+                                // method against the struct's fields.
+                                throw new FrontendException(where
+                                    + ": method selection \"" + sel
+                                    + "\" not yet supported in v2 (no receiver emission)");
+                            }
+                        }
+                    }
+                }
+                // Field selection: look up the field index in the struct type of x.
                 int fieldIndex = findFieldIndex(scope.types, xMap, sel, where);
                 return new SelectorNode(x, new int[]{fieldIndex}, k);
             }
