@@ -59,6 +59,11 @@ This package implements `go vet`-style static analyzers that run as part of
 
 ## Notes on behavior differences
 
+- `printf`: for the scanf family (`Scanf`, `Fscanf`, `Sscanf`) operands are
+  dereferenced one pointer level before verb checking (scan targets are
+  pointers by contract); `%s`/`%q` additionally accept named `[]byte`-kind
+  types (via the underlying slice-of-`uint8`) and `fmt.Stringer`
+  implementations.
 - `loopclosure`: Go 1.22+ gives each iteration its own loop variables,
   so the classic bug is fixed. We flag only explicit `=` assignments
   to outer variables captured by closures.

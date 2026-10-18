@@ -3,6 +3,7 @@ package vet
 import (
 	"go/ast"
 	"go/constant"
+	"go/token"
 	"go/types"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ func runPrintf(pass *Pass) []Diagnostic {
 			if !ok {
 				return true
 			}
-			formatIdx, ok := printfFormatIndex(pass, call)
+			formatIdx, ok, scan := printfFormatIndex(pass, call)
 			if !ok || formatIdx >= len(call.Args) {
 				return true
 			}
@@ -36,51 +37,58 @@ func runPrintf(pass *Pass) []Diagnostic {
 			}
 			format := constant.StringVal(tv.Value)
 			args := call.Args[formatIdx+1:]
-			out = append(out, checkPrintfFormat(pass, call, format, args)...)
+			out = append(out, checkPrintfFormat(pass, call, format, args, scan)...)
 			return true
 		})
 	}
 	return out
 }
 
-// printfFormatIndex reports whether call is a printf-like call and the
-// index of its format-string argument.
-func printfFormatIndex(pass *Pass, call *ast.CallExpr) (int, bool) {
+// printfFormatIndex reports whether call is a printf-like call, the index
+// of its format-string argument, and whether it is a scanf-like call
+// (whose operands are pointers by contract).
+func printfFormatIndex(pass *Pass, call *ast.CallExpr) (int, bool, bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
-		return 0, false
+		return 0, false, false
 	}
 	name := sel.Sel.Name
 	// Resolve via type info first.
 	if obj := pass.Info.Uses[sel.Sel]; obj != nil {
 		if fn, ok := obj.(*types.Func); ok && fn.Pkg() != nil {
-			switch fn.Pkg().Path() + "." + fn.Name() {
-			case "fmt.Printf", "fmt.Sprintf", "fmt.Errorf", "fmt.Scanf",
+			switch full := fn.Pkg().Path() + "." + fn.Name(); full {
+			case "fmt.Printf", "fmt.Sprintf", "fmt.Errorf",
 				"log.Printf", "log.Fatalf", "log.Panicf":
-				return 0, true
-			case "fmt.Fprintf", "fmt.Fscanf":
-				return 1, true
-			case "fmt.Sscanf":
-				return 1, true
+				return 0, true, false
+			case "fmt.Scanf":
+				return 0, true, true
+			case "fmt.Fprintf":
+				return 1, true, false
+			case "fmt.Fscanf", "fmt.Sscanf":
+				return 1, true, true
 			}
 			// testing.T.Errorf / Fatalf are methods.
 			if (name == "Errorf" || name == "Fatalf") && isTestingT(fn) {
-				return 0, true
+				return 0, true, false
 			}
-			return 0, false
+			return 0, false, false
 		}
 	}
 	// Syntactic fallback on package-qualified names.
 	if id, ok := sel.X.(*ast.Ident); ok {
-		switch id.Name + "." + name {
-		case "fmt.Printf", "fmt.Sprintf", "fmt.Errorf", "fmt.Scanf",
+		switch qname := id.Name + "." + name; qname {
+		case "fmt.Printf", "fmt.Sprintf", "fmt.Errorf",
 			"log.Printf", "log.Fatalf", "log.Panicf":
-			return 0, true
-		case "fmt.Fprintf", "fmt.Fscanf", "fmt.Sscanf":
-			return 1, true
+			return 0, true, false
+		case "fmt.Scanf":
+			return 0, true, true
+		case "fmt.Fprintf":
+			return 1, true, false
+		case "fmt.Fscanf", "fmt.Sscanf":
+			return 1, true, true
 		}
 	}
-	return 0, false
+	return 0, false, false
 }
 
 func isTestingT(fn *types.Func) bool {
@@ -101,7 +109,8 @@ type printfVerb struct {
 }
 
 // checkPrintfFormat validates args against the format string verbs.
-func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast.Expr) []Diagnostic {
+// scan is true for scanf-family calls, whose operands are pointers by contract.
+func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast.Expr, scan bool) []Diagnostic {
 	var out []Diagnostic
 	pos := pass.position(call)
 	verbs := parsePrintfVerbs(format)
@@ -122,7 +131,7 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 				"missing argument for " + v.text})
 			continue
 		}
-		if msg := checkVerbArg(pass, v, args[argIdx]); msg != "" {
+		if msg := checkVerbArg(pass, v, args[argIdx], scan); msg != "" {
 			out = append(out, Diagnostic{pass.position(args[argIdx]),
 				v.text + ": " + msg})
 		}
@@ -193,12 +202,19 @@ func parsePrintfVerbs(format string) []printfVerb {
 }
 
 // checkVerbArg validates one argument against a verb; "" means OK.
-func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
+// For scanf-family calls (scan=true) the operand is dereferenced one
+// pointer level before checking, since scan targets are pointers by contract.
+func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr, scan bool) string {
 	tv, ok := pass.Info.Types[arg]
 	if !ok || tv.Type == nil {
 		return ""
 	}
 	t := tv.Type
+	if scan {
+		if p, ok := t.Underlying().(*types.Pointer); ok {
+			t = p.Elem()
+		}
+	}
 	basic, isBasic := t.Underlying().(*types.Basic)
 
 	switch v.verb {
@@ -219,7 +235,10 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		if isBasic && basic.Kind() == types.String {
 			break
 		}
-		if t.String() == "[]byte" || t.String() == "[]uint8" {
+		if isByteSlice(t) {
+			break
+		}
+		if implementsStringer(t) {
 			break
 		}
 		return "expects string or []byte"
@@ -237,6 +256,37 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		// Anything goes.
 	}
 	return ""
+}
+
+// isByteSlice reports whether t's underlying type is a slice of uint8.
+// This covers named types such as `type B []byte`, whose String() form
+// is not "[]byte".
+func isByteSlice(t types.Type) bool {
+	s, ok := t.Underlying().(*types.Slice)
+	if !ok {
+		return false
+	}
+	b, ok := s.Elem().Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Uint8
+}
+
+// stringerIface is the fmt.Stringer interface (String() string), built
+// structurally so the check never depends on resolving the fmt package.
+var stringerIface = func() *types.Interface {
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.String])),
+		false)
+	iface := types.NewInterfaceType(
+		[]*types.Func{types.NewFunc(token.NoPos, nil, "String", sig)}, nil)
+	iface.Complete()
+	return iface
+}()
+
+// implementsStringer reports whether t's method set includes
+// String() string, i.e. t implements fmt.Stringer.
+func implementsStringer(t types.Type) bool {
+	return types.Implements(t, stringerIface)
 }
 
 func isIntKind(k types.BasicKind) bool {
