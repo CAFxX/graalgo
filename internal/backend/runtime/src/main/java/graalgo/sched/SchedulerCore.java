@@ -68,6 +68,20 @@ public final class SchedulerCore {
     }
 
     /**
+     * The installed scheduler, or {@code null} when none is installed.
+     *
+     * <p>Tolerant variant of {@link #current()} for interop
+     * blocking-syscall paths (P1-25): {@code GoOs} brackets file/pipe/
+     * stdio I/O with {@code ioEnter}/{@code ioExit} only when a
+     * scheduler is installed. Scheduler-less Phase-1 runs and unit
+     * tests (which legitimately have no scheduler) skip the handshake
+     * instead of fail-fasting.
+     */
+    public static SchedulerCore currentOrNull() {
+        return installed;
+    }
+
+    /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
@@ -297,6 +311,18 @@ public final class SchedulerCore {
      */
     public GoroutineHandle currentGoroutine() {
         return requireHandle();
+    }
+
+    /**
+     * Whether the calling thread is a scheduler goroutine (has a handle
+     * installed). Tolerant probe for interop blocking-syscall paths
+     * (P1-25): {@code ioEnter}/{@code ioExit} bracketing applies only on
+     * goroutine vthreads, never on launcher or test threads (which must
+     * not touch slot accounting — see the M10 self-attack test in
+     * {@code IoSlotsTest}).
+     */
+    public boolean hasCurrentGoroutine() {
+        return currentHandle.get() != null;
     }
 
     /**

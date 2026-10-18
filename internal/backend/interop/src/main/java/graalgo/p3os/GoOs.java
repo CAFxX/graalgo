@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
+import graalgo.sched.SchedulerCore;
 
 /**
  * Host-side implementation of the {@code graalgo.os.*} linkname
@@ -526,6 +527,40 @@ public final class GoOs {
     }
 
     // ------------------------------------------------------------------
+    // Blocking-I/O bracketing (P1-25): every channel op that can block
+    // (read/write/readAt/writeAt on regular files, pipes, stdio) runs
+    // bracketed by SchedulerCore.ioEnter/ioExit, releasing the
+    // goroutine's in-flight slot for the duration of the syscall
+    // (GG-SCHED-0004 — without the bracket, a goroutine blocked in
+    // file/pipe/stdin I/O holds its slot and starves peers at
+    // --gmp=1). Socket channels are non-blocking by construction
+    // (GoNet sets configureBlocking(false) before registration; the
+    // netpoller parks instead of blocking), so they skip the bracket.
+    // No scheduler installed, or called from a non-goroutine thread
+    // (unit tests, launcher threads): the bracket is a no-op.
+    // ------------------------------------------------------------------
+
+    /**
+     * Begins the blocking-I/O bracket; returns the scheduler to pass to
+     * {@link #ioBracketEnd}, or {@code null} when no bracketing applies.
+     */
+    private static SchedulerCore ioBracketBegin() {
+        SchedulerCore sc = SchedulerCore.currentOrNull();
+        if (sc == null || !sc.hasCurrentGoroutine()) {
+            return null;
+        }
+        sc.ioEnter();
+        return sc;
+    }
+
+    /** Ends the bracket begun by {@link #ioBracketBegin}; no-op on null. */
+    private static void ioBracketEnd(SchedulerCore sc) {
+        if (sc != null) {
+            sc.ioExit();
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Socket-handle interop (P3-M9, RISK-M9-2): the p3net package owns
     // socket semantics; the cookies live in this unified table.
     // ------------------------------------------------------------------
@@ -689,6 +724,9 @@ public final class GoOs {
         if (!(ch.ch instanceof ReadableByteChannel)) {
             return -EBADF;
         }
+        // P1-25: bracket the blocking read (regular files, pipes, stdio).
+        // Sockets skip: non-blocking by construction (netpoller-driven).
+        SchedulerCore io = ch.kind == KIND_SOCKET ? null : ioBracketBegin();
         try {
             int n = ((ReadableByteChannel) ch.ch).read(bb);
             if (n < 0) {
@@ -698,6 +736,8 @@ public final class GoOs {
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
+        } finally {
+            ioBracketEnd(io);
         }
     }
 
@@ -715,6 +755,9 @@ public final class GoOs {
             return -EBADF;
         }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
+        // P1-25: bracket the blocking write (regular files, pipes, stdio);
+        // sockets skip (non-blocking by construction, netpoller-driven).
+        SchedulerCore io = ch.kind == KIND_SOCKET ? null : ioBracketBegin();
         try {
             int n = wch.write(bb);
             return (long) n + 1;
@@ -732,6 +775,8 @@ public final class GoOs {
                 return -EPIPE;
             }
             return -errno(e);
+        } finally {
+            ioBracketEnd(io);
         }
     }
 
@@ -771,6 +816,9 @@ public final class GoOs {
             return -EBADF;
         }
         ByteBuffer bb = goBuf(bArg);
+        // P1-25: bracket the blocking pread (regular files only reach
+        // here — FileChannel; pipes/stdio/sockets are rejected above).
+        SchedulerCore io = ioBracketBegin();
         try {
             int n = fc.read(bb, num(posArg));
             if (n < 0) {
@@ -782,6 +830,8 @@ public final class GoOs {
             return -errno(e);
         } catch (IllegalArgumentException e) {
             return -EINVAL;
+        } finally {
+            ioBracketEnd(io);
         }
     }
 
@@ -796,6 +846,9 @@ public final class GoOs {
         }
         ByteBuffer bb = goBuf(bArg);
         long pos = num(posArg);
+        // P1-25: bracket the blocking pwrite (regular files only —
+        // FileChannel; pipes/stdio/sockets are rejected above).
+        SchedulerCore io = ioBracketBegin();
         try {
             int n = fc.write(bb, pos);
             return (long) n + 1;
@@ -807,6 +860,8 @@ public final class GoOs {
             return -errno(e);
         } catch (IllegalArgumentException e) {
             return -EINVAL;
+        } finally {
+            ioBracketEnd(io);
         }
     }
 
