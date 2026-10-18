@@ -172,6 +172,41 @@ func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
+	{
+		name: "TopLevelVar",
+		src: `package main
+var count = 42
+func main() {}
+`,
+		want: "unsupported top-level var",
+	},
+	{
+		name: "TopLevelVarReferenced",
+		src: `package main
+var count = 42
+func main() { println(count) }
+`,
+		want: "unsupported top-level var",
+	},
+	{
+		name: "TopLevelVarBlock",
+		src: `package main
+var (
+	a = 1
+	b = 2
+)
+func main() {}
+`,
+		want: "unsupported top-level var",
+	},
+	{
+		name: "TopLevelVarNoInit",
+		src: `package main
+var count int
+func main() {}
+`,
+		want: "unsupported top-level var",
+	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {

@@ -115,7 +115,7 @@ var loudlyRejected = map[string]bool{
 	"TypeAssertExpr": true,
 	// Declarations not yet implemented.
 	"BadDecl":   true,
-	"GenDecl":   true, // top-level; const/type/var handled selectively
+	"GenDecl":   true, // top-level var rejected loudly (L10); import/const/type carry no runtime content here
 	"TypeSpec":  true,
 	"ValueSpec": true,
 	// Clauses (only appear inside switch/select).

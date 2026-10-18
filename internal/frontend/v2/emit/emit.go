@@ -14,6 +14,7 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strings"
 
 	"graalgo-frontend-v2/checker"
 )
@@ -61,8 +62,17 @@ func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, erro
 func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// Emit order: types and objects are populated lazily as nodes are
 	// emitted (ids registered before description, so recursion works).
-	// We do two passes: first declare all top-level funcs and globals
-	// (assigning object ids), then emit bodies.
+	// We do two passes: first declare all top-level funcs (assigning
+	// object ids), then emit bodies.
+	//
+	// v2 has no globals support yet: a top-level `var` declaration —
+	// including its initializer — cannot be represented in the document,
+	// so it is rejected loudly here instead of being dropped silently
+	// (L10). Import, const, and type declarations are unaffected: imports
+	// carry no runtime content in this IR (pkgref resolution uses type
+	// info; see structuralNodes in coverage_test.go), type declarations
+	// are erased by the structural type table, and top-level consts are
+	// tracked separately from vars.
 	//
 	// Deterministic emission order (V2-12): pkg.Files is a Go map, so
 	// ranging over it directly would make function order and type/object
@@ -70,6 +80,11 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// declarations sorted by source position, so the same package always
 	// produces the same document — a prerequisite for reproducible builds
 	// and snapshot testing.
+	if vds := topLevelVars(pkg); len(vds) > 0 {
+		return nil, fmt.Errorf("emit: unsupported top-level var declaration %q (v2 has no globals support yet)",
+			varDeclNames(vds[0]))
+	}
+
 	decls := sortedFuncDecls(pkg)
 
 	var funcs []any
@@ -108,24 +123,80 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Types:   e.types,
 		Objects: e.objects,
 		Funcs:   funcs,
+		// Globals stays empty: top-level vars are rejected loudly above
+		// until v2 implements globals. It must never be silently empty
+		// for a package that declares them.
 		Globals: []any{},
 	}, nil
 }
 
-// sortedFuncDecls returns every top-level function declaration in the
-// package in deterministic order: files sorted by name, then declarations
-// sorted by source position. Non-function declarations are skipped, as in
-// the original emission loop. Sorting is structural — by filename and
-// token position — never keyed on any package, symbol, or test name.
-func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
+// sortedFileNames returns the package's file names in deterministic
+// (lexicographic) order. pkg.Files is a Go map; ranging over it directly
+// would make declaration order and type/object ids vary run to run.
+// Sorting is structural — by filename — never keyed on any package,
+// symbol, or test name.
+func sortedFileNames(pkg *ast.Package) []string {
 	names := make([]string, 0, len(pkg.Files))
 	for name := range pkg.Files {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	return names
+}
 
+// topLevelVars returns every top-level `var` declaration in the package in
+// deterministic order: files sorted by name, then declarations sorted by
+// source position. v2 cannot represent package-level variables (there is
+// no globals support in the document or the backend), so emitDocument
+// rejects the package loudly when this is non-empty instead of silently
+// dropping the declarations and their initializers.
+func topLevelVars(pkg *ast.Package) []*ast.GenDecl {
+	var decls []*ast.GenDecl
+	for _, name := range sortedFileNames(pkg) {
+		file := pkg.Files[name]
+		var gds []*ast.GenDecl
+		for _, d := range file.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			gds = append(gds, gd)
+		}
+		// Positions from one *ast.File share the same FileSet base, so
+		// token.Pos comparison is a total source-position order within the
+		// file. go/parser already produces Decls in source order; this sort
+		// states the contract explicitly instead of relying on that
+		// implementation detail.
+		sort.SliceStable(gds, func(i, j int) bool { return gds[i].Pos() < gds[j].Pos() })
+		decls = append(decls, gds...)
+	}
+	return decls
+}
+
+// varDeclNames renders the declared names of a top-level var GenDecl for
+// error messages: "x" for `var x = 1`, "a, b" for `var ( a = 1; b = 2 )`.
+func varDeclNames(gd *ast.GenDecl) string {
+	var names []string
+	for _, spec := range gd.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		for _, id := range vs.Names {
+			names = append(names, id.Name)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// sortedFuncDecls returns every top-level function declaration in the
+// package in deterministic order: files sorted by name, then declarations
+// sorted by source position. Non-function, non-var declarations are
+// skipped; top-level vars are rejected loudly by topLevelVars before this
+// runs, so reaching here with a var declaration would be a bug.
+func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
 	var decls []*ast.FuncDecl
-	for _, name := range names {
+	for _, name := range sortedFileNames(pkg) {
 		file := pkg.Files[name]
 		var fds []*ast.FuncDecl
 		for _, d := range file.Decls {
