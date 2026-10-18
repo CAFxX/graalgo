@@ -235,11 +235,26 @@ public final class ValuesTest {
         assertEq(-123L, GoConvert.floatToInt64(-123.999), "-123.999->int64");
         assertEq(0L, GoConvert.floatToInt64(0.9), "0.9->int64");
         assertEq(0L, GoConvert.floatToInt64(-0.9), "-0.9->int64");
-        // uint64: 0x8000000000000000 on out-of-range.
+        // uint64: 0x8000000000000000 only on NaN, < -2^63, or >= 2^64.
+        // gc truncates toward zero and reinterprets the bits for negatives
+        // in [-2^63, -1.0] (independently measured against go1.27.1/amd64;
+        // the old "-1.5 -> MIN_VALUE" expectation below was the bug).
         assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(1e300), "1e300->uint64");
-        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(-1.5), "-1.5->uint64");
         assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Double.NaN), "NaN->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Double.POSITIVE_INFINITY), "+Inf->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(Double.NEGATIVE_INFINITY), "-Inf->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(-9.3e18), "-9.3e18->uint64 (< -2^63)");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(-9223372036854775808.0), "-2^63 exactly->uint64");
+        assertEq(Long.MIN_VALUE, GoConvert.floatToUint64(18446744073709551616.0), "2^64->uint64");
+        // Negative in-range values wrap: bit patterns gc-measured above.
+        assertEq(0xFFFFFFFFFFFFFFFFL, GoConvert.floatToUint64(-1.0), "-1.0->uint64");
+        assertEq(0xFFFFFFFFFFFFFFFFL, GoConvert.floatToUint64(-1.5), "-1.5->uint64");
+        assertEq(0xFFFFFFFF80000000L, GoConvert.floatToUint64(-2147483648.0), "-2^31->uint64");
+        assertEq(0xC029845F31340000L, GoConvert.floatToUint64(-4.6e18), "-4.6e18->uint64");
+        assertEq(0L, GoConvert.floatToUint64(-0.9), "-0.9->uint64");
+        assertEq(0L, GoConvert.floatToUint64(-0.0), "-0.0->uint64");
         assertEq(Long.parseUnsignedLong("9300000000000000000"), GoConvert.floatToUint64(9.3e18), "9.3e18->uint64");
+        assertEq(0xFFFFFFFFFFFFF800L, GoConvert.floatToUint64(18446744073709549568.0), "2^64-2048->uint64");
         assertEq(0L, GoConvert.floatToUint64(0.9), "0.9->uint64");
         // int32: 0x80000000 on out-of-range.
         assertEq(Integer.MIN_VALUE, GoConvert.floatToInt32(1e300), "1e300->int32");

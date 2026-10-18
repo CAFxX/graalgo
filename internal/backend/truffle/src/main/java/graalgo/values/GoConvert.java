@@ -14,8 +14,10 @@ import java.math.BigInteger;
  * <ul>
  *   <li>float→int64/int: NaN, ±Inf, or out of [-2^63, 2^63) →
  *       {@code 0x8000000000000000}; else truncation toward zero.</li>
- *   <li>float→uint64/uint/uintptr: NaN, negative, or ≥ 2^64 →
- *       {@code 0x8000000000000000}; else truncation toward zero.</li>
+ *   <li>float→uint64/uint/uintptr: NaN, &lt; -2^63, or ≥ 2^64 →
+ *       {@code 0x8000000000000000}; else truncation toward zero, with the
+ *       bits reinterpreted as unsigned — negatives in [-2^63, -1.0]
+ *       wrap (e.g. {@code -1.0 → 0xFFFFFFFFFFFFFFFF}).</li>
  *   <li>float→int32: NaN, ±Inf, or out of [-2^31, 2^31) → {@code 0x80000000};
  *       else truncation toward zero.</li>
  *   <li>float→uint32: via the int64 conversion, then low 32 bits.</li>
@@ -50,7 +52,12 @@ public final class GoConvert {
 
     /** float64 → uint64/uint/uintptr, gc/amd64 mirror. */
     public static long floatToUint64(double d) {
-        if (Double.isNaN(d) || d <= -1.0 || d >= TWO_POW_64) {
+        // gc truncates toward zero and reinterprets the bits for negatives
+        // in [-2^63, -1.0] (measured against go1.27.1/amd64); only NaN,
+        // < -2^63, or >= 2^64 yield 0x8000000000000000. (long) d already
+        // truncates toward zero, so negatives in range land on the correct
+        // two's-complement bit pattern without special-casing.
+        if (Double.isNaN(d) || d < -TWO_POW_63 || d >= TWO_POW_64) {
             return Long.MIN_VALUE; // bit pattern 0x8000000000000000
         }
         if (d < TWO_POW_63) {
