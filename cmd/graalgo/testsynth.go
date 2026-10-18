@@ -1045,7 +1045,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunTests", "graalgoTestEntry", "graalgoTestEntries", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunTests", "graalgoTestEntry", "graalgoTestEntries", "parallelConflict", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -1154,7 +1154,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunTests", "graalgoTestEntry", "graalgoTestEntries", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunTests", "graalgoTestEntry", "graalgoTestEntries", "parallelConflict", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
