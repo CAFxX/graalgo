@@ -28,6 +28,17 @@ import jdk.jfr.consumer.RecordingFile;
  * in {@code make check}), so the expected set is currently empty: any pin
  * on a {@code goroutine-*} thread is UNEXPECTED and fails the audit.
  *
+ * <p>Fail-closed scope: {@code readPins} classifies
+ * {@code jdk.VirtualThreadPinned} events on <em>every</em> virtual thread,
+ * not just {@code goroutine-*} ones. A pin on a timer, drainer,
+ * {@code gofrontend-drain}, or JVM-internal thread is likewise UNEXPECTED
+ * by default — a pin consumes carrier capacity wherever it happens, and
+ * the audit must not silently ignore pinning outside the goroutine pool.
+ * The {@code --allow} list ({@code <thread-prefix>|<frame-substring>} per
+ * line) is the mechanism to budget known-good pins on any thread.
+ * (GG-0057 red-green proof: {@code PinAuditTest} records a genuine pin on
+ * a non-{@code goroutine-*} thread and asserts it is detected.)
+ *
  * <p>Usage:
  * <pre>
  *   PinAudit --corpus &lt;dir&gt;... [--gmp N] [--tests] [--allow &lt;file&gt;] [--out &lt;report.md&gt;]
