@@ -354,4 +354,289 @@ public void testInvalidTypeWireEntryFailsLoud() {
         }
         assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
     }
+
+    // ------------------------------------------------------------------
+    // P1-A (fix-redmaster-r5-p1): materialize() must build proper derived
+    // descriptors for ALL kinds, not just Pointer and Interface.
+    // ------------------------------------------------------------------
+
+    /** Finds a field by name in a GoStruct's descriptor (-1 if absent). */
+    private static int findStructField(graalgo.values.GoStruct s, String name) {
+        graalgo.values.GoStructDescriptor desc = s.descriptor();
+        for (int i = 0; i < desc.fields().size(); i++) {
+            if (name.equals(desc.field(i).name())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** Reads a long field by name from a materialized GoStruct. */
+    private static long getLongField(graalgo.values.GoStruct s, String name) {
+        int idx = findStructField(s, name);
+        assertTrue(idx >= 0, "materialized struct missing field " + name);
+        return s.getLong(idx);
+    }
+
+    /** Reads an object field by name from a materialized GoStruct. */
+    private static Object getObjectField(graalgo.values.GoStruct s, String name) {
+        int idx = findStructField(s, name);
+        assertTrue(idx >= 0, "materialized struct missing field " + name);
+        return s.getObject(idx);
+    }
+
+    /**
+     * Builds a wire document with composite types and minimal internal/abi
+     * type definitions for materialize() testing.
+     */
+    private static String materializeTestDoc() {
+        return """
+                {"types": [
+                  {"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": false}},
+                  {"kind": "pointer", "detail": {"elem": 0}},
+                  {"kind": "chan", "detail": {"elem": 0, "dir": "both"}},
+                  {"kind": "map", "detail": {"key": 0, "elem": 0}},
+                  {"kind": "slice", "detail": {"elem": 0}},
+                  {"kind": "array", "detail": {"elem": 0, "len": 5}},
+                  {"kind": "signature", "detail": {
+                     "params": [{"name": "a", "type": 0}, {"name": "b", "type": 0}],
+                     "results": [{"name": "c", "type": 0}],
+                     "variadic": false}},
+                  {"kind": "struct", "detail": {
+                     "fields": [{"name": "X", "type": 0, "tag": "", "offset": 0}]}},
+                  {"kind": "interface", "detail": {"methods": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.Type", "pkgpath": "internal/abi",
+                     "underlying": 10, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": [
+                     {"name": "Size_", "type": 0, "tag": "", "offset": 0},
+                     {"name": "PtrBytes", "type": 0, "tag": "", "offset": 8},
+                     {"name": "Hash", "type": 0, "tag": "", "offset": 16},
+                     {"name": "TFlag", "type": 0, "tag": "", "offset": 20},
+                     {"name": "Align_", "type": 0, "tag": "", "offset": 21},
+                     {"name": "FieldAlign_", "type": 0, "tag": "", "offset": 22},
+                     {"name": "Kind_", "type": 0, "tag": "", "offset": 23},
+                     {"name": "Equal", "type": 1, "tag": "", "offset": 24},
+                     {"name": "GCData", "type": 1, "tag": "", "offset": 32},
+                     {"name": "Str", "type": 0, "tag": "", "offset": 40},
+                     {"name": "PtrToThis", "type": 0, "tag": "", "offset": 48}
+                  ]}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.PtrType", "pkgpath": "internal/abi",
+                     "underlying": 13, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.ChanType", "pkgpath": "internal/abi",
+                     "underlying": 15, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.MapType", "pkgpath": "internal/abi",
+                     "underlying": 17, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.SliceType", "pkgpath": "internal/abi",
+                     "underlying": 19, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.ArrayType", "pkgpath": "internal/abi",
+                     "underlying": 21, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.FuncType", "pkgpath": "internal/abi",
+                     "underlying": 23, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.StructType", "pkgpath": "internal/abi",
+                     "underlying": 25, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "internal/abi.InterfaceType", "pkgpath": "internal/abi",
+                     "underlying": 27, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": []}}
+                ]}
+                """;
+    }
+
+    /** Finds the token for the first TypeInfo of the given kind. */
+    private static long tokForKind(ReflectTypes.Table t, GoKind kind) {
+        ReflectTypes.TypeInfo ti = findByKind(t, kind);
+        assertTrue(ti != null, "no TypeInfo for kind " + kind);
+        return ti.tok;
+    }
+
+    /**
+     * P1-A positive: materialize() on a CHAN type builds a ChanType
+     * descriptor with Elem and Dir populated.
+     */
+    public void testMaterializeChan() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.CHAN);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        // Elem must be the materialized int type (not null).
+        Object elem = getObjectField(s, "Elem");
+        assertTrue(elem instanceof graalgo.values.GoStruct,
+                "ChanType.Elem should be a materialized GoStruct, got " +
+                (elem == null ? "null" : elem.getClass().getSimpleName()));
+
+        // Dir must be BothDir (3) for a bidirectional chan.
+        long dir = getLongField(s, "Dir");
+        assertTrue(dir == 3, "ChanType.Dir should be 3 (BothDir), got " + dir);
+
+        // Kind_ must be Chan (18).
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 18, "Kind_ should be 18 (Chan), got " + kind);
+    }
+
+    /**
+     * P1-A positive: materialize() on a MAP type builds a MapType
+     * descriptor with Key and Elem populated.
+     */
+    public void testMaterializeMap() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.MAP);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        Object key = getObjectField(s, "Key");
+        assertTrue(key instanceof graalgo.values.GoStruct,
+                "MapType.Key should be a materialized GoStruct");
+
+        Object elem = getObjectField(s, "Elem");
+        assertTrue(elem instanceof graalgo.values.GoStruct,
+                "MapType.Elem should be a materialized GoStruct");
+
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 21, "Kind_ should be 21 (Map), got " + kind);
+    }
+
+    /**
+     * P1-A positive: materialize() on a SLICE type builds a SliceType
+     * descriptor with Elem populated.
+     */
+    public void testMaterializeSlice() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.SLICE);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        Object elem = getObjectField(s, "Elem");
+        assertTrue(elem instanceof graalgo.values.GoStruct,
+                "SliceType.Elem should be a materialized GoStruct");
+
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 23, "Kind_ should be 23 (Slice), got " + kind);
+    }
+
+    /**
+     * P1-A positive: materialize() on an ARRAY type builds an ArrayType
+     * descriptor with Elem and Len populated.
+     */
+    public void testMaterializeArray() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.ARRAY);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        Object elem = getObjectField(s, "Elem");
+        assertTrue(elem instanceof graalgo.values.GoStruct,
+                "ArrayType.Elem should be a materialized GoStruct");
+
+        long len = getLongField(s, "Len");
+        assertTrue(len == 5, "ArrayType.Len should be 5, got " + len);
+
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 17, "Kind_ should be 17 (Array), got " + kind);
+    }
+
+    /**
+     * P1-A positive: materialize() on a FUNC type builds a FuncType
+     * descriptor with InCount and OutCount populated.
+     */
+    public void testMaterializeFunc() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.FUNC);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        long inCount = getLongField(s, "InCount");
+        assertTrue(inCount == 2, "FuncType.InCount should be 2, got " + inCount);
+
+        long outCount = getLongField(s, "OutCount");
+        assertTrue(outCount == 1, "FuncType.OutCount should be 1, got " + outCount);
+
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 19, "Kind_ should be 19 (Func), got " + kind);
+    }
+
+    /**
+     * P1-A positive: materialize() on a STRUCT type builds a StructType
+     * descriptor (not base Type-only).
+     */
+    public void testMaterializeStruct() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.STRUCT);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        // The descriptor must be the derived StructType, not base Type.
+        // (StructType has no extra fields in our spec, but the descriptor
+        // name distinguishes it.)
+        String descName = s.descriptor().typeName();
+        assertTrue(descName.contains("StructType"),
+                "descriptor should be StructType, got " + descName);
+
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 25, "Kind_ should be 25 (Struct), got " + kind);
+    }
+
+    /**
+     * P1-A positive: materialize() on a POINTER type builds a PtrType
+     * descriptor with Elem populated (regression: this worked before).
+     */
+    public void testMaterializePointer() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long tok = tokForKind(table, GoKind.POINTER);
+        graalgo.values.GoStruct s = ReflectTypes.materialize(tok);
+
+        Object elem = getObjectField(s, "Elem");
+        assertTrue(elem instanceof graalgo.values.GoStruct,
+                "PtrType.Elem should be a materialized GoStruct");
+
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 22, "Kind_ should be 22 (Pointer), got " + kind);
+    }
+
+    /**
+     * P1-A negative: materialize() on a BASIC type (int) builds a base
+     * Type descriptor, NOT a derived one. Derived fields must be absent.
+     */
+    public void testMaterializeBasicHasNoDerivedFields() {
+        ReflectTypes.install(parseDoc(materializeTestDoc()), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        // Find the int basic type (tok 1, since tok 0 is invalid).
+        ReflectTypes.TypeInfo intTi = null;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && ti.kind == GoKind.INT64 && ti.basicName.equals("int")) {
+                intTi = ti;
+                break;
+            }
+        }
+        assertTrue(intTi != null, "no int TypeInfo found");
+        graalgo.values.GoStruct s = ReflectTypes.materialize(intTi.tok);
+
+        // Basic types get the base Type descriptor: no Elem, Key, Len, etc.
+        assertTrue(findStructField(s, "Elem") < 0,
+                "base Type should not have Elem field");
+        assertTrue(findStructField(s, "Key") < 0,
+                "base Type should not have Key field");
+        assertTrue(findStructField(s, "Len") < 0,
+                "base Type should not have Len field");
+
+        // But Kind_ must be correct (Int = 2 in abi.Kind).
+        long kind = getLongField(s, "Kind_");
+        assertTrue(kind == 6, "Kind_ should be 6 (Int64), got " + kind);
+    }
 }
