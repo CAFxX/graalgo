@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -964,5 +965,152 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestDiscoverTestsExcludesTestMainAndHelpers is the regression test for
+// RV22-P0-2: discoverTests used to accept any Test-prefixed function with
+// exactly one parameter, so func TestMain(m *testing.M) — and helpers like
+// func TestHelper(x int) — were inlined as tests; the generated main then
+// called TestMain(tt) with tt of type *graalgoT, a Go type error, making
+// the whole `graalgo test` run fail on any package with a TestMain. The
+// gate is now structural: exactly one parameter of type *testing.T, with
+// TestMain excluded as the framework entry point it is.
+func TestDiscoverTestsExcludesTestMainAndHelpers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tm\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tm\n")
+	writeFile(t, root, "p_test.go", `package tm
+
+import "testing"
+
+func TestMain(m *testing.M) {}
+
+func TestHelper(x int) { _ = x }
+
+func TestTwoParams(t *testing.T, x int) { _, _ = t, x }
+
+func TestTwoNames(a, b *testing.T) { _, _ = a, b }
+
+func TestNotPointer(t testing.T) { _ = t }
+
+func TestAnon(*testing.T) {}
+
+func TestReal(t *testing.T) {}
+`)
+	tests, err := discoverTests(filepath.Join(root, "p_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"TestAnon", "TestReal"}
+	if len(tests) != len(want) {
+		t.Fatalf("discoverTests = %v, want %v", tests, want)
+	}
+	for i := range want {
+		if tests[i] != want[i] {
+			t.Fatalf("discoverTests = %v, want %v", tests, want)
+		}
+	}
+}
+
+// goToolchain returns the reference Go toolchain for compile checks: the
+// repo's pinned toolchain when present, otherwise whatever `go` resolves
+// to on PATH.
+func goToolchain(t *testing.T) string {
+	t.Helper()
+	if home, err := os.UserHomeDir(); err == nil {
+		p := filepath.Join(home, "tools", "go", "bin", "go")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "go"
+}
+
+// TestTestMainDriverCompilesAndRuns is the end-to-end half of the RV22-P0-2
+// regression test: a package with a TestMain must synthesize a driver that
+// (a) does not inline TestMain at all — it is neither invoked with *graalgoT
+// (the type error) nor run in place of the tests — and (b) compiles with the
+// reference toolchain and runs its tests. Before the fix this fixture
+// produced a driver failing to compile on TestMain(tt).
+//
+// Chosen semantics, made explicit: TestMain is skipped, not invoked per gc
+// (gc would run TestMain(m) calling m.Run()). Emulating m.Run would need a
+// *testing.M shim — a separate feature; skipping keeps the driver
+// compilable and the tests runnable, which is what this fix guarantees.
+func TestTestMainDriverCompilesAndRuns(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmdriver\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tmdriver\n\nfunc Add(a, b int) int { return a + b }\n")
+	writeFile(t, root, "p_test.go", `package tmdriver
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestAdd(t *testing.T) {
+	if Add(2, 3) != 5 {
+		t.Fatal("bad")
+	}
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestAdd" {
+		t.Fatalf("discoverTests = %v, want [TestAdd]", tests)
+	}
+	// Verbose, so the driver's run prints --- PASS lines to assert on.
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")}, true)
+	if err != nil {
+		t.Fatalf("synthesizeTestDriver: %v", err)
+	}
+	defer os.Remove(driver)
+	src, err := os.ReadFile(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The generated driver must parse...
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
+	}
+	// ...must not inline TestMain (the pre-fix driver called it with
+	// *graalgoT)...
+	if strings.Contains(string(src), "func TestMain(") {
+		t.Errorf("driver inlined TestMain:\n%s", src)
+	}
+	// ...and must run the real test.
+	if !strings.Contains(string(src), "TestAdd(tt)") {
+		t.Errorf("driver lost the test's main entry:\n%s", src)
+	}
+	// ...and must compile with the reference toolchain — the pre-fix
+	// driver failed here with a type error on TestMain(tt).
+	bin := filepath.Join(t.TempDir(), "driver")
+	build := exec.Command(goToolchain(t), "build", "-o", bin, driver)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("driver does not compile: %v\n%s\n%s", err, out, src)
+	}
+	// ...and the compiled driver must run the tests to PASS.
+	run := exec.Command(bin)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("driver run failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--- PASS: TestAdd") {
+		t.Errorf("driver did not report the test passing:\n%s", out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Errorf("driver did not report PASS:\n%s", out)
 	}
 }

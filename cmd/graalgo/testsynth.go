@@ -16,7 +16,15 @@ import (
 	"strings"
 )
 
-// discoverTests returns the names of TestXxx functions in a _test.go file.
+// discoverTests returns the names of TestXxx functions in a _test.go file:
+// functions whose signature is exactly func(*testing.T). TestMain is not a
+// test — the go tool never runs it as one — and is excluded by name; every
+// other Test-prefixed function is admitted only by its parameter type, not
+// its name. This matters because synthesizeTestDriver inlines the selected
+// functions and rewriteParam rewrites *testing.T to *graalgoT: admitting
+// func TestMain(m *testing.M) (or helpers like func TestHelper(x int))
+// would emit a driver whose main calls TestMain(tt) with tt of type
+// *graalgoT — a Go type error, failing the whole `graalgo test` run.
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
@@ -33,13 +41,44 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
-		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		if name == "TestMain" {
+			// Entry point of the testing framework, never a test
+			// itself; the go tool runs it instead of the tests.
+			continue
+		}
+		if !isGoTestFunc(fn) {
 			continue
 		}
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// isGoTestFunc reports whether fn has the go tool's test signature:
+// exactly one parameter, of type *testing.T (syntactic selector form).
+// The gate is on the parameter's type, not the function's name: it is
+// what keeps func TestMain(m *testing.M) and helpers like
+// func TestHelper(x int) out of the driver. rewriteParam only rewrites
+// *testing.T to *graalgoT, so admitting any other signature would
+// synthesize an uncompilable driver.
+func isGoTestFunc(fn *ast.FuncDecl) bool {
+	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		return false
+	}
+	field := fn.Type.Params.List[0]
+	if len(field.Names) > 1 {
+		return false // func TestX(a, b *testing.T): two parameters, not one
+	}
+	star, ok := field.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "testing" && sel.Sel.Name == "T"
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
