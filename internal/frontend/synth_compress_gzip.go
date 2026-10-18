@@ -285,7 +285,7 @@ func (z *Reader) readHeader() (hdr Header, err error) {
 
 // Read implements [io.Reader], reading uncompressed bytes from its underlying reader.
 func (z *Reader) Read(p []byte) (n int, err error) {
-	panic("gzip.Reader.Read: use __gzipReaderRead helper (WS D)")
+	panic("gzip.Reader.Read: unreachable (call sites desugar to __gzipReaderRead)")
 }
 
 // Close closes the [Reader]. It does not close the underlying reader.
