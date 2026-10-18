@@ -176,6 +176,76 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+## Same-FQN shadow classes (build mechanism — inventoried, not bridges)
+
+### B-8. The 8 same-FQN shadow classes (truffle module compiles, runtime module shadows at load)
+
+- **What:** 8 classes compiled in the truffle module at the same
+  fully-qualified names as runtime-module classes. Truffle copies:
+  [Netpoll.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Netpoll.java),
+  [ChanOps.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java),
+  [Scheduler.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Scheduler.java),
+  [GcInterop.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java),
+  [Panic.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Panic.java),
+  [GoroutineState.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GoroutineState.java),
+  [Timers.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Timers.java),
+  [Safepoint.java](../../internal/backend/truffle/src/main/java/graalgo/safepoint/Safepoint.java).
+  Each is shadowed at load by its runtime-module counterpart
+  ([Netpoll.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Netpoll.java),
+  [ChanOps.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/ChanOps.java),
+  [Scheduler.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Scheduler.java),
+  [GcInterop.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/GcInterop.java),
+  [Panic.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Panic.java),
+  [GoroutineState.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/GoroutineState.java),
+  [Timers.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Timers.java),
+  [Safepoint.java](../../internal/backend/runtime/src/main/java/graalgo/safepoint/Safepoint.java)),
+  because the runtime module's classes precede the truffle module's on the
+  launcher classpaths — the P2-D8 same-FQN overlay mechanism
+  ([docs/REPO_STRUCTURE.md](../REPO_STRUCTURE.md)). The truffle copies exist
+  so the joint compile round (truffle sources compile against the runtime
+  module's) resolves these names at compile time.
+- **Why:** the runtime and truffle modules form a compile cycle; the truffle
+  module needs the runtime surface on its compile classpath, and the phase-1
+  stubs/frozen contracts must compile before phase-2 semantics exist.
+  Shadowing at load (not a compile-time merge) keeps the phase-1 classpath
+  contract frozen while phase 2 provides the real bodies.
+- **Status per class:**
+  - `Netpoll`, `ChanOps`, `Scheduler`, `GcInterop` — **frozen stubs**:
+    every method throws `UnsupportedOperationException` with a Phase-2
+    message. The signatures are the frozen phase-2 contract (GG-0020;
+    `GcInterop` additionally P2-M4/ADR-0002 D4); bodies are INTERNAL per
+    freeze §3.5. Frozen permanently by design.
+  - `Safepoint` (`graalgo.safepoint.poll()`) — phase-1 **no-op**; the
+    runtime-module overlay gives it real semantics (scheduler quantum
+    check). The AST inserts `poll()` calls at function entries and loop
+    back-edges in phase 1, so the no-op keeps phase-1 correct while phase 2
+    gives it meaning. Frozen permanently by design.
+  - `Panic` — **full fork in both modules.** The truffle copy carries the
+    panicnil *wrapping* (`panic(nil)` → `*PanicNilError`, the gg ≥1.21
+    behavior, GG-0045 stance) but no knob; the GODEBUG=panicnil *knob*
+    (`setPanicNilOldBehavior`) lives **only in the runtime-module overlay**,
+    which is otherwise identical to the phase-1 original. Drift guard:
+    `PanicOverlayDriftTest` reflectively asserts signature parity, so a
+    phase-1 change fails the suite instead of desyncing the overlay.
+  - `GoroutineState` — **full fork in both modules.** The truffle copy uses
+    a single static holder (phase 1: one main goroutine); the `ThreadLocal`
+    vthread-scoped holder lookup lives **only in the runtime-module
+    overlay** — the instance API is byte-identical, only the lookup
+    changes, exactly as the phase-1 javadoc prescribed (SPEC §3.5:432–433).
+    Drift guard: `FreezeSignatureTest`.
+  - `Timers` — **full fork in both modules.** The truffle copy: real
+    `nanotime` (backed by `System.nanoTime`), stubbed sleep/timer-heap
+    (throws); the runtime-module overlay implements sleep/timer arms on the
+    scheduler timer heap (`SchedulerCore.parkCurrent`, `ParkReason.TIMER`).
+    Signatures byte-identical per freeze §3.5.
+- **Root-cause fix / retirement:** none — this is a permanent build
+  mechanism, not a bridge awaiting a root-cause fix. The five stubs and the
+  Safepoint no-op are frozen permanently by design (they are the phase-1
+  contract); the three forks retire only if the phase boundary that created
+  them (phase-1 compile contract vs phase-2 runtime) is removed.
+- **Phase:** N/A. The entry exists so the gate grandfathers the mechanism
+  and the per-file delta attribution stays honest.
+
 ## Adjudicated non-bridges
 
 Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))

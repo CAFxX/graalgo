@@ -93,9 +93,15 @@ Related: [Makefile](../Makefile) (root build entry point),
       — the same-FQN overlay mechanism). Five are frozen stubs (`Netpoll`,
       `ChanOps`, `Scheduler`, `GcInterop` throw
       `UnsupportedOperationException`; `Safepoint` is a no-op); three are
-      full forked implementations with documented deltas (`Panic`: the
-      panicnil knob; `GoroutineState`: `ThreadLocal` vthread-scoped holder
-      lookup; `Timers`: real `nanotime`, stubbed sleep/timer-heap). The
+      full forked implementations whose phase-2 deltas live in the
+      runtime-module overlays — the truffle files are the phase-1 baseline
+      (`Panic`: panicnil wrapping with no GODEBUG knob; `GoroutineState`:
+      static single-goroutine holder; `Timers`: real `nanotime`, stubbed
+      sleep/timer-heap), and the runtime module carries the delta
+      (`Panic`: the GODEBUG=panicnil knob; `GoroutineState`: `ThreadLocal`
+      vthread-scoped holder lookup; `Timers`: real sleep/timer-heap on the
+      scheduler timer heap). The per-file delta attribution is inventoried
+      in [bridge-inventory.md](arch/bridge-inventory.md) (B-8).
       Truffle jars live in [lib/](../internal/backend/truffle/lib/); the
       launchers [graalgo-run](../internal/backend/graalgo-run) and
       [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
