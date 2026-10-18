@@ -216,6 +216,12 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         // kind".)
         factory.registerExprKind("abifuncpc",
                 (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
+        // fix-redmaster-buildok (r5): the "abitypeof" wire node for the
+        // internal/abi.TypeOf intrinsic (materialized *abi.Type).
+        // (Previously registered only in P3SyncMain's inline table; the
+        // graalgo-run launcher discovers kinds via this shared provider.)
+        factory.registerExprKind("abitypeof",
+                (node, ctx) -> graalgo.p3abi.AbiTypeOfNode.build(node, factory, ctx));
         // P2-M1 (WS A): the go statement.
         factory.registerStmtKind("gostmt",
                 (node, ctx) -> GoStatementNode.build(node, ctx, factory));
