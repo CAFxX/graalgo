@@ -196,6 +196,88 @@ func TestEmitBinaryRuns(t *testing.T) {
 	}
 }
 
+// TestEmitDefaultOutputNameLandsInCallerCwd is the regression test for
+// the default-`graalgo build` artifact loss: when -o is unset,
+// DefaultOutputName returns a bare relative name, and Emit used to run
+// `go build -o <name> .` with cmd.Dir set to a temp dir, so the binary
+// landed in the temp dir (deleted by defer os.RemoveAll) and was never
+// delivered to the caller's working directory.
+func TestEmitDefaultOutputNameLandsInCallerCwd(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "defaultproj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(proj); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	// Exactly the path cmdBuild takes when -o is unset.
+	name, err := DefaultOutputName("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "defaultproj" {
+		t.Fatalf("DefaultOutputName(\"\", nil) = %q, want %q", name, "defaultproj")
+	}
+
+	wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
+	if err := Emit(Artifact{
+		OutputPath:  name,
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    wireJSON,
+	}); err != nil {
+		t.Fatalf("Emit with default (bare) output name: %v", err)
+	}
+
+	// The artifact must exist in the caller's working directory now.
+	data, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("artifact %q not delivered to caller CWD: %v", name, err)
+	}
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary (first bytes: %q)", data[:min(32, len(data))])
+	}
+}
+
+// TestEmitExplicitRelativeOutputPath covers the explicit-but-relative
+// -o case: a relative output path must resolve against the caller's
+// working directory, not the temp build dir Emit compiles in.
+func TestEmitExplicitRelativeOutputPath(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	const name = "explicitrel"
+	wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
+	if err := Emit(Artifact{
+		OutputPath:  name,
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    wireJSON,
+	}); err != nil {
+		t.Fatalf("Emit with explicit relative output path: %v", err)
+	}
+
+	fi, err := os.Stat(name)
+	if err != nil {
+		t.Fatalf("artifact %q not delivered to caller CWD: %v", name, err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact %s is not executable (mode %v)", name, fi.Mode())
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

@@ -51,6 +51,17 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("no graalgo root")
 	}
 
+	// Resolve a relative output path against the caller's working
+	// directory before the temp build dir takes over. `go build` below
+	// runs with cmd.Dir set to the temp dir, so a relative -o (including
+	// the bare name DefaultOutputName returns when -o is unset) would
+	// otherwise land the binary in the temp dir — which is deleted right
+	// after — and the artifact would never be delivered.
+	outputPath, err := filepath.Abs(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve output path: %v", err)
+	}
+
 	// Compress the JSON. Frontend output can be large (100MB+ for big
 	// programs); JSON compresses well with gzip.
 	var compressed bytes.Buffer
@@ -91,7 +102,7 @@ func Emit(a Artifact) error {
 
 	// Compile the launcher to a real binary.
 	goBin := findGoBinary()
-	cmd := exec.Command(goBin, "build", "-o", a.OutputPath, ".")
+	cmd := exec.Command(goBin, "build", "-o", outputPath, ".")
 	cmd.Dir = tmpDir
 	// Don't inherit GOFLAGS that might break the build; keep it hermetic.
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
@@ -102,8 +113,8 @@ func Emit(a Artifact) error {
 	}
 
 	// go build sets the executable bit, but ensure it (umask-safe).
-	if err := os.Chmod(a.OutputPath, 0o755); err != nil {
-		return fmt.Errorf("cannot chmod %s: %v", a.OutputPath, err)
+	if err := os.Chmod(outputPath, 0o755); err != nil {
+		return fmt.Errorf("cannot chmod %s: %v", outputPath, err)
 	}
 	return nil
 }
