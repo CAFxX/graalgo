@@ -11,10 +11,11 @@ import (
 // TestSyntheticContextM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005
 // Appendix M) synthetic package shape: the single-result desugar helpers
 // (__withCancel/__withCancelCause/__withDeadline/__withTimeout/
-// __deadlineOf/__parseDuration, cancelFunc/cancelCauseFunc methods) are
-// exported as real funcdecls; the 6 multi-result operations keep exact gc
-// signatures but are NOT exported (their call sites desugar or fail
-// fast); the retired ctxChanClose intrinsic is gone.
+// __withDeadlineCause/__withTimeoutCause/__deadlineOf/__parseDuration,
+// __parseTime, cancelFunc/cancelCauseFunc methods) are exported as real
+// funcdecls; the 8 multi-result operations keep exact gc signatures but
+// are NOT exported (their call sites desugar or fail fast); the retired
+// ctxChanClose intrinsic is gone.
 func TestSyntheticContextM5(t *testing.T) {
 	src := `package main
 
@@ -77,7 +78,9 @@ func main() {
 	walk(raw)
 	for _, want := range []string{
 		"__withCancel", "__withCancelCause", "__withDeadline", "__withTimeout",
-		"__deadlineOf", "__parseDuration", "cancelFunc", "cancelCauseFunc",
+		"__withDeadlineCause", "__withTimeoutCause",
+		"__deadlineOf", "__parseDuration", "__parseTime",
+		"cancelFunc", "cancelCauseFunc",
 	} {
 		if !names[want] {
 			t.Errorf("synthetic helper %q not exported as funcdecl", want)
@@ -85,7 +88,8 @@ func main() {
 	}
 	for _, banned := range []string{
 		"WithCancel", "WithCancelCause", "WithDeadline", "WithTimeout",
-		"ParseDuration", "ctxChanClose",
+		"WithDeadlineCause", "WithTimeoutCause",
+		"ParseDuration", "Parse", "ctxChanClose",
 	} {
 		if names[banned] {
 			t.Errorf("multi-result/intrinsic %q must not be exported as funcdecl", banned)
@@ -94,7 +98,7 @@ func main() {
 }
 
 // TestMultiResultFailFastKept verifies: GG-0017 — outside the 2-target
-// desugar position, the 5 reachable multi-result operations still fail
+// desugar position, the 8 reachable multi-result operations still fail
 // fast with the named M5 scope error. (Single-target
 // `d := time.ParseDuration(s)` is a go/types type error before the
 // exporter runs; only type-valid non-2-target positions are tested here:
@@ -117,6 +121,24 @@ func main() { use(context.WithCancel(context.Background())) }
 import "time"
 func main() { time.ParseDuration("1s") }
 `,
+		// The Cause variants are M5-kind (mrWithDeadline), so they keep
+		// the pinned statement-position fail-fast like their plain
+		// siblings — unlike time.Parse, which is M7 and desugars in
+		// statement position (see TestParseStatementDesugarsM7).
+		"withdeadlinecause-statement": `package main
+import (
+	"context"
+	"time"
+)
+func main() { context.WithDeadlineCause(context.Background(), time.Now(), context.Canceled) }
+`,
+		"withtimeoutcause-statement": `package main
+import (
+	"context"
+	"time"
+)
+func main() { context.WithTimeoutCause(context.Background(), time.Second, context.Canceled) }
+`,
 	}
 	for name, src := range progs {
 		dir := t.TempDir()
@@ -132,6 +154,31 @@ func main() { time.ParseDuration("1s") }
 		if !strings.Contains(err.Error(), "not in M5 scope") {
 			t.Errorf("%s: error %q does not name the M5 scope", name, err)
 		}
+	}
+}
+
+// TestParseStatementDesugarsM7 verifies: time.Parse (M7 table entry,
+// review-p1-time lane) as a bare statement desugars to the __parseTime
+// helper call with the pair dropped — the P3-M8 statement-position rule
+// for mrM7 plans (export.go ExprStmt case). This is deliberate: M7 ops
+// have real helpers, so discarding results is honest, unlike the M5
+// kinds which keep the pinned fail-fast (TestMultiResultFailFastKept).
+func TestParseStatementDesugarsM7(t *testing.T) {
+	src := `package main
+import "time"
+func main() { time.Parse(time.RFC3339, "2021-03-14T15:09:26Z") }
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "parsestmt.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("statement-position time.Parse should desugar, got error: %v", err)
+	}
+	if !strings.Contains(out, "__parseTime") {
+		t.Errorf("statement-position time.Parse did not desugar to __parseTime")
 	}
 }
 
@@ -169,11 +216,12 @@ func main() {
 }
 
 // TestMultiResultDesugarM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005
-// Appendix M) call-site desugar: the 5 reachable multi-result operations
+// Appendix M) call-site desugar: the 7 reachable multi-result operations
 // (WithCancel, WithCancelCause, WithDeadline, WithTimeout,
-// ParseDuration) in 2-target position lower to single-result helper
-// calls + extraction (no fail-fast), for both := and = forms.
-// (`ctx.Deadline()` is the 6th Appendix M operation but is not callable
+// WithDeadlineCause, WithTimeoutCause, ParseDuration) in 2-target
+// position lower to single-result helper calls + extraction (no
+// fail-fast), for both := and = forms, plus time.Parse via the M7 table.
+// (`ctx.Deadline()` is the 8th Appendix M operation but is not callable
 // in M5 — the synthetic Context interface omits it post-afc0dfb, so no
 // user call site can type-check; see TestDeadlineNotCallableM5.)
 func TestMultiResultDesugarM5(t *testing.T) {
@@ -197,7 +245,15 @@ func main() {
 	_, _ = ctx2, cancel2
 	ctx3, cancel3 := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
 	_, _ = ctx3, cancel3
-	_, _, _ = ctx, ctxcc, ctx3
+	ctx4, cancel4 := context.WithDeadlineCause(context.Background(), time.Now().Add(time.Second), context.Canceled)
+	cancel4()
+	var ctx5 context.Context
+	var cancel5 context.CancelFunc
+	ctx5, cancel5 = context.WithTimeoutCause(context.Background(), time.Second, context.Canceled)
+	_, _ = ctx5, cancel5
+	tm, terr := time.Parse(time.RFC3339, "2021-03-14T15:09:26Z")
+	_, _ = tm, terr
+	_, _, _, _ = ctx, ctxcc, ctx3, ctx4
 }
 `
 	dir := t.TempDir()
@@ -284,7 +340,8 @@ func main() {
 		}
 	}
 	walk(mainBody)
-	for _, want := range []string{"__withCancel", "__withCancelCause", "__withTimeout", "__withDeadline", "__parseDuration"} {
+	for _, want := range []string{"__withCancel", "__withCancelCause", "__withTimeout", "__withDeadline",
+		"__withDeadlineCause", "__withTimeoutCause", "__parseDuration", "__parseTime"} {
 		if !calledIdents[want] {
 			t.Errorf("desugar helper %q not called", want)
 		}
@@ -298,19 +355,20 @@ func main() {
 	if converts != 0 {
 		t.Errorf("want 0 convert nodes (no Context boxing post-amendment), got %d", converts)
 	}
-	// Four cancelFunc-family methodrefs (WithCancel, WithCancelCause,
-	// WithTimeout, WithDeadline).
-	if methodrefs < 4 {
-		t.Errorf("want >=4 methodref nodes (cancelFunc/cancelCauseFunc), got %d", methodrefs)
+	// Six cancelFunc-family methodrefs (WithCancel, WithCancelCause,
+	// WithTimeout, WithDeadline, WithDeadlineCause, WithTimeoutCause).
+	if methodrefs < 6 {
+		t.Errorf("want >=6 methodref nodes (cancelFunc/cancelCauseFunc), got %d", methodrefs)
 	}
-	// Pair field selectors: d+err (ParseDuration) = 2. (Deadline's
-	// d+ok pair is not desugared — not callable in M5.)
-	if selectors < 2 {
-		t.Errorf("want >=2 pair-field selectors, got %d", selectors)
+	// Pair field selectors: d+err (ParseDuration) + t+err (Parse) = 4.
+	// (Deadline's d+ok pair is not desugared — not callable in M5.)
+	if selectors < 4 {
+		t.Errorf("want >=4 pair-field selectors, got %d", selectors)
 	}
-	// The 5 multi-result declarations are never called directly: every
+	// The 8 multi-result declarations are never called directly: every
 	// 2-target call site desugared to a helper.
-	for _, banned := range []string{"WithCancel", "WithCancelCause", "WithDeadline", "WithTimeout", "ParseDuration"} {
+	for _, banned := range []string{"WithCancel", "WithCancelCause", "WithDeadline", "WithTimeout",
+		"WithDeadlineCause", "WithTimeoutCause", "ParseDuration", "Parse"} {
 		if calledIdents[banned] {
 			t.Errorf("direct call to %q survived desugaring", banned)
 		}

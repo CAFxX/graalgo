@@ -122,7 +122,7 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 
 	// Package-level functions.
 	for _, name := range []string{"Now", "Sleep", "After", "Tick", "NewTimer",
-		"NewTicker", "AfterFunc", "Since", "Until", "ParseDuration"} {
+		"NewTicker", "AfterFunc", "Since", "Until", "ParseDuration", "Parse"} {
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {
 			t.Fatalf("time.%s missing", name)
@@ -299,7 +299,8 @@ func TestContextSyntheticSignatures(t *testing.T) {
 
 	// Package-level functions.
 	for _, name := range []string{"Background", "TODO", "WithCancel",
-		"WithCancelCause", "WithDeadline", "WithTimeout", "WithValue",
+		"WithCancelCause", "WithDeadline", "WithTimeout",
+		"WithDeadlineCause", "WithTimeoutCause", "WithValue",
 		"Cause", "AfterFunc", "WithoutCancel"} {
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {

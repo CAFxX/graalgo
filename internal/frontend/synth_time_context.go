@@ -24,10 +24,11 @@
 //   - context is real Go on the Appendix M channel-mutex design (no Java
 //     intrinsics at all): cancelCtx with done/cancelCh/muChan/children,
 //     timerCtx via time.AfterFunc, valueCtx, and the __withCancel/
-//     __withDeadline/__withTimeout/__deadlineOf single-result desugar
-//     targets behind the 6 Appendix M multi-result operations (5 reachable
-//     in M5 — Context.Deadline() is not callable post-afc0dfb; which keep
-//     exact gc signatures with fail-fast bodies for type-checking).
+//     __withCancelCause/__withDeadline/__withTimeout/__withDeadlineCause/
+//     __withTimeoutCause/__deadlineOf single-result desugar targets behind
+//     the 8 Appendix M multi-result operations (7 reachable in M5 —
+//     Context.Deadline() is not callable post-afc0dfb; which keep exact gc
+//     signatures with fail-fast bodies for type-checking).
 //
 // Out-of-scope members are declared with exact gc signatures and panic
 // bodies reporting "not in M5 scope" — fail fast, never silently.
@@ -41,7 +42,9 @@ package main
 // D1). Exact gc 1.27.1 signatures for the in-scope API; pure-Go value
 // types (Duration, Time, Month, Weekday) with real methods; intrinsics
 // (Now/Sleep/After/Tick/NewTimer/NewTicker/AfterFunc, Timer/ Ticker.Stop/
-// Reset) with panic bodies for the exporter to intercept.
+// Reset) with panic bodies for the exporter to intercept; time.Parse keeps
+// its exact gc signature with a fail-fast body while the real parser is
+// __parseTime (M7 desugar table entry).
 const syntheticTimeSource = `package time
 
 // Duration is an int64 nanosecond count, as in the real package.
@@ -555,41 +558,15 @@ func (t Time) Truncate(d Duration) Time {
 // implementation; synthetic Time is UTC-only).
 func (t Time) Format(layout string) string {
 	// Split unixnano into days + time-of-day (UTC).
-	sec := t.unixnano / 1e9
-	nsec := t.unixnano % 1e9
-	if nsec < 0 {
-		nsec += 1e9
-		sec--
-	}
-	days := sec / 86400
-	secsOfDay := sec % 86400
-	if secsOfDay < 0 {
-		secsOfDay += 86400
-		days--
-	}
+	p := __timeDayParts(t)
+	days := p.days
+	secsOfDay := p.secsOfDay
+	nsec := p.nsec
 	// Hinnant civil-from-days: days since 1970-01-01 -> y/m/d.
-	z := days + 719468
-	var era int64
-	if z >= 0 {
-		era = z / 146097
-	} else {
-		era = (z - 146096) / 146097
-	}
-	doe := z - era*146097
-	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
-	y := yoe + era*400
-	doy := doe - (365*yoe + yoe/4 - yoe/100)
-	mp := (5*doy + 2) / 153
-	d := doy - (153*mp+2)/5 + 1
-	var m int64
-	if mp < 10 {
-		m = mp + 3
-	} else {
-		m = mp - 9
-	}
-	if m <= 2 {
-		y++
-	}
+	civ := __timeCivilFromDays(days)
+	y := civ.y
+	m := civ.m
+	d := civ.d
 	hour := secsOfDay / 3600
 	min := (secsOfDay % 3600) / 60
 	sec2 := secsOfDay % 60
@@ -874,36 +851,199 @@ func itoa4(y int64) []byte {
 func hasPrefix(s, p string) bool {
 	return len(s) >= len(p) && s[:len(p)] == p
 }
-func (t Time) GoString() string { panic("time.Time.GoString: not in M5 scope") }
+
+// dayParts is the single-result carrier for the unixnano decomposition
+// (multi-result calls need WS D; see durationPair).
+type dayParts struct {
+	days      int64 // days since 1970-01-01 (floored)
+	secsOfDay int64 // [0, 86399]
+	nsec      int64 // [0, 999999999]
+}
+
+// __timeDayParts splits t.unixnano into days + time-of-day (UTC),
+// mirroring Format's split. The zero instant is special-cased: its
+// unixnano wraps (see zeroInstantNano), so the raw split would not land
+// on (1,1,1); by definition (IsZero) it denotes January 1, year 1,
+// 00:00:00 UTC, i.e. -719162 days since 1970-01-01.
+func __timeDayParts(t Time) dayParts {
+	if t.IsZero() {
+		return dayParts{days: -719162}
+	}
+	sec := t.unixnano / 1e9
+	nsec := t.unixnano % 1e9
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	days := sec / 86400
+	secsOfDay := sec % 86400
+	if secsOfDay < 0 {
+		secsOfDay += 86400
+		days--
+	}
+	return dayParts{days: days, secsOfDay: secsOfDay, nsec: nsec}
+}
+
+// civilDate is the single-result carrier for the civil-date
+// decomposition (multi-result calls need WS D).
+type civilDate struct {
+	y, m, d int64
+}
+
+// __timeCivilFromDays converts days since 1970-01-01 to the proleptic
+// Gregorian (year, month, day) via Howard Hinnant's civil_from_days —
+// the inverse of the days_from_civil in Date.
+func __timeCivilFromDays(days int64) civilDate {
+	z := days + 719468
+	var era int64
+	if z >= 0 {
+		era = z / 146097
+	} else {
+		era = (z - 146096) / 146097
+	}
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	y := yoe + era*400
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d := doy - (153*mp+2)/5 + 1
+	var m int64
+	if mp < 10 {
+		m = mp + 3
+	} else {
+		m = mp - 9
+		y++
+	}
+	return civilDate{y: y, m: m, d: d}
+}
+
+// __timeDaysFromCivil converts a proleptic Gregorian (year, 1-based
+// month, day) to days since 1970-01-01 (Howard Hinnant's
+// days_from_civil). The day may lie outside the month — the formula
+// absorbs the offset, which is how Date normalizes out-of-range days.
+func __timeDaysFromCivil(y, mo, d int64) int64 {
+	yy := y
+	if mo <= 2 {
+		yy--
+	}
+	era := yy / 400
+	if yy < 0 && yy%400 != 0 {
+		era--
+	}
+	yoe := yy - era*400
+	mp := mo - 3
+	if mp < 0 {
+		mp += 12
+	}
+	doy := (153*mp+2)/5 + d - 1
+	doe := yoe*365 + yoe/4 - yoe/100 + doy
+	return era*146097 + doe - 719468
+}
+
+func (t Time) GoString() string {
+	p := __timeDayParts(t)
+	c := __timeCivilFromDays(p.days)
+	hh := p.secsOfDay / 3600
+	mm := (p.secsOfDay % 3600) / 60
+	ss := p.secsOfDay % 60
+	// gc renders time.Date(y, time.Month, d, hh, mm, ss, nsec, time.UTC);
+	// the synthetic model is UTC-only, so the location is always UTC.
+	return "time.Date(" + timeIntString(c.y) + ", time." + monthName(c.m) + ", " +
+		timeIntString(c.d) + ", " + timeIntString(hh) + ", " + timeIntString(mm) + ", " +
+		timeIntString(ss) + ", " + timeIntString(p.nsec) + ", time.UTC)"
+}
 func (t Time) AddDate(years int, months int, days int) Time {
-	panic("time.Time.AddDate: not in M5 scope")
+	p := __timeDayParts(t)
+	c := __timeCivilFromDays(p.days)
+	hh := int(p.secsOfDay / 3600)
+	mm := int((p.secsOfDay % 3600) / 60)
+	ss := int(p.secsOfDay % 60)
+	// gc: Date(y+years, m+months, d+days, hh, mm, ss, nsec, t.Location());
+	// t.Location() is UTC in the synthetic model.
+	return Date(int(c.y)+years, Month(c.m)+Month(months), int(c.d)+days,
+		hh, mm, ss, int(p.nsec), UTC)
 }
+
+// Date returns the civil date (UTC). Multi-result: served via the WS D
+// pair-transform like any real multi-result synthetic member.
 func (t Time) Date() (year int, month Month, day int) {
-	panic("time.Time.Date: not in M5 scope")
+	p := __timeDayParts(t)
+	c := __timeCivilFromDays(p.days)
+	return int(c.y), Month(c.m), int(c.d)
 }
-func (t Time) Year() int          { panic("time.Time.Year: not in M5 scope") }
-func (t Time) Month() Month       { panic("time.Time.Month: not in M5 scope") }
-func (t Time) Day() int           { panic("time.Time.Day: not in M5 scope") }
-func (t Time) Weekday() Weekday   { panic("time.Time.Weekday: not in M5 scope") }
-func (t Time) Clock() (int, int, int) {
-	panic("time.Time.Clock: not in M5 scope")
+func (t Time) Year() int    { return int(__timeCivilFromDays(__timeDayParts(t).days).y) }
+func (t Time) Month() Month { return Month(__timeCivilFromDays(__timeDayParts(t).days).m) }
+func (t Time) Day() int     { return int(__timeCivilFromDays(__timeDayParts(t).days).d) }
+func (t Time) Weekday() Weekday {
+	w := (__timeDayParts(t).days + 4) % 7
+	if w < 0 {
+		w += 7
+	}
+	return Weekday(w)
 }
-func (t Time) Hour() int        { panic("time.Time.Hour: not in M5 scope") }
-func (t Time) Minute() int      { panic("time.Time.Minute: not in M5 scope") }
-func (t Time) Second() int      { panic("time.Time.Second: not in M5 scope") }
-func (t Time) Nanosecond() int  { panic("time.Time.Nanosecond: not in M5 scope") }
-func (t Time) YearDay() int     { panic("time.Time.YearDay: not in M5 scope") }
-func (t Time) UTC() Time        { return t }
-func (t Time) Local() Time      { return t }
+
+// Clock returns the time-of-day (UTC). Multi-result: WS D pair-transform.
+func (t Time) Clock() (hour, min, sec int) {
+	s := __timeDayParts(t).secsOfDay
+	return int(s / 3600), int((s % 3600) / 60), int(s % 60)
+}
+func (t Time) Hour() int       { return int(__timeDayParts(t).secsOfDay / 3600) }
+func (t Time) Minute() int     { return int((__timeDayParts(t).secsOfDay % 3600) / 60) }
+func (t Time) Second() int     { return int(__timeDayParts(t).secsOfDay % 60) }
+func (t Time) Nanosecond() int { return int(__timeDayParts(t).nsec) }
+func (t Time) YearDay() int {
+	p := __timeDayParts(t)
+	c := __timeCivilFromDays(p.days)
+	return int(p.days-__timeDaysFromCivil(c.y, 1, 1)) + 1
+}
+func (t Time) UTC() Time   { return t }
+func (t Time) Local() Time { return t }
 func (t Time) In(loc *Location) Time {
-	panic("time.Time.In: not in M5 scope")
+	if loc == nil {
+		panic("time: missing Location in call to Time.In")
+	}
+	if loc.name != "" && loc.name != "UTC" {
+		panic("time.Time.In: non-UTC locations not in scope (needs zoneinfo design)")
+	}
+	return t
 }
-func (t Time) Location() *Location { panic("time.Time.Location: not in M5 scope") }
-func (t Time) Zone() (string, int) {
-	panic("time.Time.Zone: not in M5 scope")
+
+// Location reports UTC: the synthetic model is UTC-only (ADR-0005:
+// Local is accepted as UTC), so every Time is in UTC.
+func (t Time) Location() *Location { return UTC }
+
+// Zone reports the UTC zone. Multi-result: WS D pair-transform.
+func (t Time) Zone() (name string, offset int) {
+	return "UTC", 0
 }
-func (t Time) UnixMilli() int64 { return t.unixnano / 1e6 }
-func (t Time) UnixMicro() int64 { return t.unixnano / 1e3 }
+
+// UnixMilli/UnixMicro: gc computes sec*1e3 + nsec/1e6 (floored seconds),
+// not truncated nanos — the two differ for negative instants. The zero
+// instant is special-cased like Unix().
+func (t Time) UnixMilli() int64 {
+	if t.IsZero() {
+		return -62135596800 * 1e3
+	}
+	sec := t.unixnano / 1e9
+	nsec := t.unixnano % 1e9
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	return sec*1e3 + nsec/1e6
+}
+func (t Time) UnixMicro() int64 {
+	if t.IsZero() {
+		return -62135596800 * 1e6
+	}
+	sec := t.unixnano / 1e9
+	nsec := t.unixnano % 1e9
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	return sec*1e6 + nsec/1e3
+}
 
 // Location exists so *Location-typed signatures type-check. Local is
 // accepted as UTC (ADR-0005: documented divergence until P3-M7).
@@ -921,8 +1061,1011 @@ func (l *Location) String() string {
 	return l.name
 }
 
+// ParseError describes a problem parsing a time string: exact gc 1.27.1
+// API (fields + Error), so programs type-asserting *time.ParseError keep
+// working.
+type ParseError struct {
+	Layout     string
+	Value      string
+	LayoutElem string
+	ValueElem  string
+	Message    string
+}
+
+func (e *ParseError) Error() string {
+	if e.Message == "" {
+		return "parsing time " + __parseTimeQuote(e.Value) + " as " +
+			__parseTimeQuote(e.Layout) + ": cannot parse " +
+			__parseTimeQuote(e.ValueElem) + " as " +
+			__parseTimeQuote(e.LayoutElem)
+	}
+	return "parsing time " + __parseTimeQuote(e.Value) + e.Message
+}
+
+// Layout-element codes for the Parse tokenizer (clean-room numbering;
+// the tokenization mirrors gc's nextStdChunk).
+const (
+	__ptimeStdNone                  = iota
+	__ptimeStdLongMonth             // "January"
+	__ptimeStdMonth                 // "Jan"
+	__ptimeStdNumMonth              // "1"
+	__ptimeStdZeroMonth             // "01"
+	__ptimeStdLongWeekDay           // "Monday"
+	__ptimeStdWeekDay               // "Mon"
+	__ptimeStdDay                   // "2"
+	__ptimeStdUnderDay              // "_2"
+	__ptimeStdZeroDay               // "02"
+	__ptimeStdUnderYearDay          // "__2"
+	__ptimeStdZeroYearDay           // "002"
+	__ptimeStdHour                  // "15"
+	__ptimeStdHour12                // "3"
+	__ptimeStdZeroHour12            // "03"
+	__ptimeStdMinute                // "4"
+	__ptimeStdZeroMinute            // "04"
+	__ptimeStdSecond                // "5"
+	__ptimeStdZeroSecond            // "05"
+	__ptimeStdLongYear              // "2006"
+	__ptimeStdYear                  // "06"
+	__ptimeStdPM                    // "PM"
+	__ptimeStdpm                    // "pm"
+	__ptimeStdTZ                    // "MST"
+	__ptimeStdISO8601TZ             // "Z0700"
+	__ptimeStdISO8601SecondsTZ      // "Z070000"
+	__ptimeStdISO8601ShortTZ        // "Z07"
+	__ptimeStdISO8601ColonTZ        // "Z07:00"
+	__ptimeStdISO8601ColonSecondsTZ // "Z07:00:00"
+	__ptimeStdNumTZ                 // "-0700"
+	__ptimeStdNumSecondsTZ          // "-070000"
+	__ptimeStdNumShortTZ            // "-07"
+	__ptimeStdNumColonTZ            // "-07:00"
+	__ptimeStdNumColonSecondsTZ     // "-07:00:00"
+	__ptimeStdFracSecond0           // ".0", ".00", ... (exact digit count)
+	__ptimeStdFracSecond9           // ".9", ".99", ... (optional)
+)
+
+// __ptimeStd0x maps "01".."06" to their element codes.
+var __ptimeStd0x = [...]int{
+	__ptimeStdZeroMonth, __ptimeStdZeroDay, __ptimeStdZeroHour12,
+	__ptimeStdZeroMinute, __ptimeStdZeroSecond, __ptimeStdYear,
+}
+
+// __ptimeChunk is one tokenized layout element.
+type __ptimeChunk struct {
+	prefix     string
+	code       int
+	fracDigits int  // fractional-second digit count (frac codes only)
+	fracComma  bool // separator was ',' (frac codes only)
+	suffix     string
+}
+
+func __ptimeIsDigit(s string, i int) bool {
+	if len(s) <= i {
+		return false
+	}
+	c := s[i]
+	return '0' <= c && c <= '9'
+}
+
+func __ptimeStartsLower(str string) bool {
+	if len(str) == 0 {
+		return false
+	}
+	c := str[0]
+	return 'a' <= c && c <= 'z'
+}
+
+// __ptimeNextChunk finds the first layout element in layout and returns
+// the text before it, the element, and the text after it (mirrors gc's
+// nextStdChunk, including the startsWithLowerCase guards and the
+// longest-match order).
+func __ptimeNextChunk(layout string) __ptimeChunk {
+	for i := 0; i < len(layout); i++ {
+		switch c := layout[i]; c {
+		case 'J': // January, Jan
+			if len(layout) >= i+3 && layout[i:i+3] == "Jan" {
+				if len(layout) >= i+7 && layout[i:i+7] == "January" {
+					return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdLongMonth, suffix: layout[i+7:]}
+				}
+				if !__ptimeStartsLower(layout[i+3:]) {
+					return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdMonth, suffix: layout[i+3:]}
+				}
+			}
+		case 'M': // Monday, Mon, MST
+			if len(layout) >= i+3 {
+				if layout[i:i+3] == "Mon" {
+					if len(layout) >= i+6 && layout[i:i+6] == "Monday" {
+						return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdLongWeekDay, suffix: layout[i+6:]}
+					}
+					if !__ptimeStartsLower(layout[i+3:]) {
+						return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdWeekDay, suffix: layout[i+3:]}
+					}
+				}
+				if layout[i:i+3] == "MST" {
+					return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdTZ, suffix: layout[i+3:]}
+				}
+			}
+		case '0': // 01, 02, 03, 04, 05, 06, 002
+			if len(layout) >= i+2 && '1' <= layout[i+1] && layout[i+1] <= '6' {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStd0x[layout[i+1]-'1'], suffix: layout[i+2:]}
+			}
+			if len(layout) >= i+3 && layout[i+1] == '0' && layout[i+2] == '2' {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdZeroYearDay, suffix: layout[i+3:]}
+			}
+		case '1': // 15, 1
+			if len(layout) >= i+2 && layout[i+1] == '5' {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdHour, suffix: layout[i+2:]}
+			}
+			return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdNumMonth, suffix: layout[i+1:]}
+		case '2': // 2006, 2
+			if len(layout) >= i+4 && layout[i:i+4] == "2006" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdLongYear, suffix: layout[i+4:]}
+			}
+			return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdDay, suffix: layout[i+1:]}
+		case '_': // _2, _2006, __2
+			if len(layout) >= i+2 && layout[i+1] == '2' {
+				// _2006 is really a literal _, followed by stdLongYear.
+				if len(layout) >= i+5 && layout[i+1:i+5] == "2006" {
+					return __ptimeChunk{prefix: layout[0 : i+1], code: __ptimeStdLongYear, suffix: layout[i+5:]}
+				}
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdUnderDay, suffix: layout[i+2:]}
+			}
+			if len(layout) >= i+3 && layout[i+1] == '_' && layout[i+2] == '2' {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdUnderYearDay, suffix: layout[i+3:]}
+			}
+		case '3':
+			return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdHour12, suffix: layout[i+1:]}
+		case '4':
+			return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdMinute, suffix: layout[i+1:]}
+		case '5':
+			return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdSecond, suffix: layout[i+1:]}
+		case 'P': // PM
+			if len(layout) >= i+2 && layout[i+1] == 'M' {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdPM, suffix: layout[i+2:]}
+			}
+		case 'p': // pm
+			if len(layout) >= i+2 && layout[i+1] == 'm' {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdpm, suffix: layout[i+2:]}
+			}
+		case '-': // -070000, -07:00:00, -0700, -07:00, -07
+			if len(layout) >= i+7 && layout[i:i+7] == "-070000" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdNumSecondsTZ, suffix: layout[i+7:]}
+			}
+			if len(layout) >= i+9 && layout[i:i+9] == "-07:00:00" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdNumColonSecondsTZ, suffix: layout[i+9:]}
+			}
+			if len(layout) >= i+5 && layout[i:i+5] == "-0700" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdNumTZ, suffix: layout[i+5:]}
+			}
+			if len(layout) >= i+6 && layout[i:i+6] == "-07:00" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdNumColonTZ, suffix: layout[i+6:]}
+			}
+			if len(layout) >= i+3 && layout[i:i+3] == "-07" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdNumShortTZ, suffix: layout[i+3:]}
+			}
+		case 'Z': // Z070000, Z07:00:00, Z0700, Z07:00, Z07
+			if len(layout) >= i+7 && layout[i:i+7] == "Z070000" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdISO8601SecondsTZ, suffix: layout[i+7:]}
+			}
+			if len(layout) >= i+9 && layout[i:i+9] == "Z07:00:00" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdISO8601ColonSecondsTZ, suffix: layout[i+9:]}
+			}
+			if len(layout) >= i+5 && layout[i:i+5] == "Z0700" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdISO8601TZ, suffix: layout[i+5:]}
+			}
+			if len(layout) >= i+6 && layout[i:i+6] == "Z07:00" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdISO8601ColonTZ, suffix: layout[i+6:]}
+			}
+			if len(layout) >= i+3 && layout[i:i+3] == "Z07" {
+				return __ptimeChunk{prefix: layout[0:i], code: __ptimeStdISO8601ShortTZ, suffix: layout[i+3:]}
+			}
+		case '.', ',': // ,000 / .000 / ,999 / .999 — fractional seconds
+			if i+1 < len(layout) && (layout[i+1] == '0' || layout[i+1] == '9') {
+				ch := layout[i+1]
+				j := i + 1
+				for j < len(layout) && layout[j] == ch {
+					j++
+				}
+				// The digit run must end here — only a fractional
+				// second is all digits.
+				if !__ptimeIsDigit(layout, j) {
+					code := __ptimeStdFracSecond0
+					if ch == '9' {
+						code = __ptimeStdFracSecond9
+					}
+					return __ptimeChunk{prefix: layout[0:i], code: code,
+						fracDigits: j - (i + 1), fracComma: c == ',', suffix: layout[j:]}
+				}
+			}
+		}
+	}
+	return __ptimeChunk{prefix: layout, code: __ptimeStdNone, suffix: ""}
+}
+
+var __ptimeShortMonths = []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
+var __ptimeLongMonths = []string{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
+var __ptimeShortDays = []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+var __ptimeLongDays = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+
+// __ptimeMatch is gc's case-insensitive ASCII match for month/weekday names.
+func __ptimeMatch(s1, s2 string) bool {
+	for i := 0; i < len(s1); i++ {
+		c1 := s1[i]
+		c2 := s2[i]
+		if c1 != c2 {
+			// Switch to lower-case; 'a'-'A' is known to be a single bit.
+			c1 |= 'a' - 'A'
+			c2 |= 'a' - 'A'
+			if c1 != c2 || c1 < 'a' || c1 > 'z' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func __ptimeLookup(tab []string, val string) (int, string, bool) {
+	for i, v := range tab {
+		if len(val) >= len(v) && __ptimeMatch(val[:len(v)], v) {
+			return i, val[len(v):], true
+		}
+	}
+	return -1, val, false
+}
+
+// __ptimeGetnum parses s[0:1] or s[0:2] (fixed forces s[0:2]) as a
+// decimal integer (mirrors gc's getnum).
+func __ptimeGetnum(s string, fixed bool) (int, string, bool) {
+	if !__ptimeIsDigit(s, 0) {
+		return 0, s, false
+	}
+	if !__ptimeIsDigit(s, 1) {
+		if fixed {
+			return 0, s, false
+		}
+		return int(s[0] - '0'), s[1:], true
+	}
+	return int(s[0]-'0')*10 + int(s[1]-'0'), s[2:], true
+}
+
+// __ptimeGetnum3 parses s[0:1], s[0:2], or s[0:3] (fixed forces s[0:3])
+// as a decimal integer (mirrors gc's getnum3).
+func __ptimeGetnum3(s string, fixed bool) (int, string, bool) {
+	var n, i int
+	for i < 3 && __ptimeIsDigit(s, i) {
+		n = n*10 + int(s[i]-'0')
+		i++
+	}
+	if i == 0 || (fixed && i != 3) {
+		return 0, s, false
+	}
+	return n, s[i:], true
+}
+
+func __ptimeCutspace(s string) string {
+	for len(s) > 0 && s[0] == ' ' {
+		s = s[1:]
+	}
+	return s
+}
+
+// __ptimeSkip removes the given literal prefix from value, treating runs
+// of space characters as equivalent (mirrors gc's skip).
+func __ptimeSkip(value, prefix string) (string, bool) {
+	for len(prefix) > 0 {
+		if prefix[0] == ' ' {
+			if len(value) > 0 && value[0] != ' ' {
+				return value, false
+			}
+			prefix = __ptimeCutspace(prefix)
+			value = __ptimeCutspace(value)
+			continue
+		}
+		if len(value) == 0 || value[0] != prefix[0] {
+			return value, false
+		}
+		prefix = prefix[1:]
+		value = value[1:]
+	}
+	return value, true
+}
+
+// __ptimeAtoi parses an all-digit string (callers pass fixed-width digit
+// slices, so no sign handling is needed).
+func __ptimeAtoi(s string) (int, bool) {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
+}
+
+func __ptimeCommaOrPeriod(b byte) bool {
+	return b == '.' || b == ','
+}
+
+// __ptimeParseNanoseconds parses a fractional second: value[0] is '.'
+// or ',', followed by nbytes digits (mirrors gc's parseNanoseconds).
+// The rangeErr result is "fractional second" when the value is negative,
+// which cannot happen for digit input.
+func __ptimeParseNanoseconds(value string, nbytes int) (ns int, rangeErr string, ok bool) {
+	if len(value) == 0 || !__ptimeCommaOrPeriod(value[0]) {
+		return 0, "", false
+	}
+	v := value
+	nb := nbytes
+	if nb > 10 {
+		v = value[:10]
+		nb = 10
+	}
+	ns, ok = __ptimeAtoi(v[1:nb])
+	if !ok {
+		return 0, "", false
+	}
+	if ns < 0 {
+		return 0, "fractional second", false
+	}
+	// Scale to nanoseconds.
+	for i := 0; i < 10-nb; i++ {
+		ns *= 10
+	}
+	return ns, "", true
+}
+
+// __ptimeNumOffset is the single-result carrier for numeric zone-offset
+// parsing (multi-result calls need WS D).
+type __ptimeNumOffset struct {
+	offset   int // seconds east of UTC
+	rest     string
+	rangeErr string
+	ok       bool
+}
+
+// __ptimeParseNumOffset parses a numeric zone offset per the layout
+// element code (mirrors the numeric branch of gc's parse).
+func __ptimeParseNumOffset(value string, code int) __ptimeNumOffset {
+	var r __ptimeNumOffset
+	var sign, hour, min, secs string
+	switch code {
+	case __ptimeStdISO8601ColonTZ, __ptimeStdNumColonTZ:
+		if len(value) < 6 || value[3] != ':' {
+			return r
+		}
+		sign, hour, min, secs, value = value[0:1], value[1:3], value[4:6], "00", value[6:]
+	case __ptimeStdNumShortTZ, __ptimeStdISO8601ShortTZ:
+		if len(value) < 3 {
+			return r
+		}
+		sign, hour, min, secs, value = value[0:1], value[1:3], "00", "00", value[3:]
+	case __ptimeStdISO8601ColonSecondsTZ, __ptimeStdNumColonSecondsTZ:
+		if len(value) < 9 || value[3] != ':' || value[6] != ':' {
+			return r
+		}
+		sign, hour, min, secs, value = value[0:1], value[1:3], value[4:6], value[7:9], value[9:]
+	case __ptimeStdISO8601SecondsTZ, __ptimeStdNumSecondsTZ:
+		if len(value) < 7 {
+			return r
+		}
+		sign, hour, min, secs, value = value[0:1], value[1:3], value[3:5], value[5:7], value[7:]
+	default: // __ptimeStdNumTZ, __ptimeStdISO8601TZ
+		if len(value) < 5 {
+			return r
+		}
+		sign, hour, min, secs, value = value[0:1], value[1:3], value[3:5], "00", value[5:]
+	}
+	// The range tests use > rather than >=, as some people do write
+	// offsets of 24 hours or 60 minutes or 60 seconds. They apply even
+	// when a field fails to parse (gc checks them unconditionally), and
+	// take precedence over the syntax error.
+	hr, okHr := __ptimeAtoi(hour)
+	mm, okMm := __ptimeAtoi(min)
+	ss, okSs := __ptimeAtoi(secs)
+	if hr > 24 {
+		r.rangeErr = "time zone offset hour"
+	}
+	if mm > 60 {
+		r.rangeErr = "time zone offset minute"
+	}
+	if ss > 60 {
+		r.rangeErr = "time zone offset second"
+	}
+	if !okHr || !okMm || !okSs {
+		return r
+	}
+	off := (hr*60+mm)*60 + ss // offset is in seconds
+	switch sign[0] {
+	case '+':
+	case '-':
+		off = -off
+	default:
+		return r
+	}
+	r.offset = off
+	r.rest = value
+	r.ok = true
+	return r
+}
+
+// __ptimeParseTimeZone parses a zone abbreviation (mirrors gc's
+// parseTimeZone): 3-5 upper-case letters (5 or 4 must end in T, with the
+// WITA exception), the ChST/MeST mixed-case specials, GMT with an
+// optional signed offset, or a bare signed offset.
+func __ptimeParseTimeZone(value string) (int, bool) {
+	if len(value) < 3 {
+		return 0, false
+	}
+	// Special case 1: ChST and MeST are the only zones with a lower-case letter.
+	if len(value) >= 4 && (value[:4] == "ChST" || value[:4] == "MeST") {
+		return 4, true
+	}
+	// Special case 2: GMT may have an hour offset; treat it specially.
+	if value[:3] == "GMT" {
+		return __ptimeParseGMT(value), true
+	}
+	// Special case 3: some zones are not named, but have +/-00 format.
+	if value[0] == '+' || value[0] == '-' {
+		n := __ptimeParseSignedOffset(value)
+		return n, n > 0
+	}
+	// How many upper-case letters are there? Need at least three, at most five.
+	nUpper := 0
+	for nUpper < 6 && nUpper < len(value) {
+		if c := value[nUpper]; c < 'A' || 'Z' < c {
+			break
+		}
+		nUpper++
+	}
+	switch nUpper {
+	case 0, 1, 2, 6:
+		return 0, false
+	case 5: // Must end in T to match.
+		if value[4] == 'T' {
+			return 5, true
+		}
+	case 4:
+		// Must end in T, except one special case.
+		if value[3] == 'T' || value[:4] == "WITA" {
+			return 4, true
+		}
+	case 3:
+		return 3, true
+	}
+	return 0, false
+}
+
+// __ptimeParseGMT parses a GMT zone with optional hour offset.
+func __ptimeParseGMT(value string) int {
+	v := value[3:]
+	if len(v) == 0 {
+		return 3
+	}
+	return 3 + __ptimeParseSignedOffset(v)
+}
+
+// __ptimeParseSignedOffset parses a signed offset like "+03" or "-04"
+// (mirrors gc's parseSignedOffset).
+func __ptimeParseSignedOffset(value string) int {
+	if len(value) == 0 || (value[0] != '-' && value[0] != '+') {
+		return 0
+	}
+	i := 1
+	x := 0
+	ndig := 0
+	for i < len(value) && '0' <= value[i] && value[i] <= '9' {
+		if ndig < 18 {
+			x = x*10 + int(value[i]-'0')
+		}
+		ndig++
+		i++
+	}
+	// Fail if nothing consumed by the digits, or the value exceeds the
+	// -23..+23 range (any 19+-digit number does).
+	if ndig == 0 || ndig > 18 || x > 23 {
+		return 0
+	}
+	return i
+}
+
+// __ptimeRuneLen returns the UTF-8 encoding length of the rune at s[i],
+// or 1 if s[i] does not start a valid encoding (mirroring Go's range,
+// which yields (RuneError, 1) for invalid bytes).
+func __ptimeRuneLen(s string, i int) int {
+	c := s[i]
+	if c < 0x80 {
+		return 1
+	}
+	var width int
+	var lo, hi byte
+	switch {
+	case c >= 0xC2 && c <= 0xDF:
+		width = 2
+		lo, hi = 0x80, 0xBF
+	case c >= 0xE0 && c <= 0xEF:
+		width = 3
+		lo, hi = 0x80, 0xBF
+		if c == 0xE0 {
+			lo = 0xA0 // reject overlongs
+		}
+		if c == 0xED {
+			hi = 0x9F // reject surrogates
+		}
+	case c >= 0xF0 && c <= 0xF4:
+		width = 4
+		lo, hi = 0x80, 0xBF
+		if c == 0xF0 {
+			lo = 0x90 // reject overlongs
+		}
+		if c == 0xF4 {
+			hi = 0x8F // reject > U+10FFFF
+		}
+	default:
+		return 1
+	}
+	if i+width > len(s) {
+		return 1
+	}
+	for j := 1; j < width; j++ {
+		b := s[i+j]
+		l, h := byte(0x80), byte(0xBF)
+		if j == 1 {
+			l, h = lo, hi
+		}
+		if b < l || b > h {
+			return 1
+		}
+	}
+	return width
+}
+
+// __parseTimeQuote mirrors gc's time.quote: printable ASCII passes
+// through ('"' and '\\' backslash-escaped); anything else is \x-escaped
+// per byte of its UTF-8 encoding.
+func __parseTimeQuote(s string) string {
+	const lowerhex = "0123456789abcdef"
+	buf := make([]byte, 1, len(s)+2) // slice will be at least len(s) + quotes
+	buf[0] = '"'
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c >= 0x80 || c < ' ' {
+			w := __ptimeRuneLen(s, i)
+			for j := 0; j < w; j++ {
+				buf = append(buf, '\\', 'x')
+				buf = append(buf, lowerhex[s[i+j]>>4], lowerhex[s[i+j]&0xF])
+			}
+			i += w
+			continue
+		}
+		if c == '"' || c == '\\' {
+			buf = append(buf, '\\')
+		}
+		buf = append(buf, c)
+		i++
+	}
+	buf = append(buf, '"')
+	return string(buf)
+}
+
+// __ptimeIsLeap reports whether year is a leap year (proleptic Gregorian).
+func __ptimeIsLeap(year int) bool {
+	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
+}
+
+// __ptimeDaysBeforeTable[m-1] counts the days in a non-leap year before
+// month m begins (m = 13 holds the year length).
+var __ptimeDaysBeforeTable = [...]int{0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365}
+
+func __ptimeDaysBefore(m int) int {
+	return __ptimeDaysBeforeTable[m-1]
+}
+
+func __ptimeDaysIn(month, year int) int {
+	if month == 2 && __ptimeIsLeap(year) {
+		return 29
+	}
+	return __ptimeDaysBefore(month+1) - __ptimeDaysBefore(month)
+}
+
+// timePair is the Appendix M single-result carrier for Parse.
+type timePair struct {
+	t   Time
+	err error
+}
+
+// __parseTime is the real time.Parse implementation behind the M7
+// desugar table entry: exact gc 1.27.1 parse semantics, clean-room
+// implementation. Zone handling is instant-exact: the synthetic model is
+// UTC-only (ADR-0005), so a parsed zone offset is applied to the instant
+// (as gc does internally) and zone abbreviations collapse to their UTC
+// wall time — the instant always matches gc; only the rendered zone
+// label differs (UTC), consistent with the existing Format behavior.
+func __parseTime(layout, value string) timePair {
+	fail := func(layoutElem, valueElem, message string, alayout, avalue string) timePair {
+		return timePair{err: &ParseError{Layout: alayout, Value: avalue,
+			LayoutElem: layoutElem, ValueElem: valueElem, Message: message}}
+	}
+	alayout, avalue := layout, value
+	rangeErr := "" // set if a value is out of range
+	amSet := false // do we need to subtract 12 from the hour for midnight?
+	pmSet := false // do we need to add 12 to the hour?
+
+	// Time being constructed.
+	year := 0
+	month := -1
+	day := -1
+	yday := -1
+	hour := 0
+	min := 0
+	sec := 0
+	nsec := 0
+	var z *Location
+	zoneOffset := -1
+	zoneName := ""
+
+	ok := true
+	// Each iteration processes one layout element.
+	for {
+		chunk := __ptimeNextChunk(layout)
+		stdstr := layout[len(chunk.prefix) : len(layout)-len(chunk.suffix)]
+		value, ok = __ptimeSkip(value, chunk.prefix)
+		if !ok {
+			return fail(chunk.prefix, value, "", alayout, avalue)
+		}
+		if chunk.code == __ptimeStdNone {
+			if len(value) != 0 {
+				return fail("", value, ": extra text: "+__parseTimeQuote(value), alayout, avalue)
+			}
+			break
+		}
+		layout = chunk.suffix
+		hold := value
+		switch chunk.code {
+		case __ptimeStdYear:
+			if len(value) < 2 {
+				ok = false
+				break
+			}
+			var y int
+			y, ok = __ptimeAtoi(value[0:2])
+			value = value[2:]
+			if !ok {
+				break
+			}
+			if y >= 69 { // Unix time starts Dec 31 1969 in some time zones
+				y += 1900
+			} else {
+				y += 2000
+			}
+			year = y
+		case __ptimeStdLongYear:
+			if len(value) < 4 || !__ptimeIsDigit(value, 0) {
+				ok = false
+				break
+			}
+			var y int
+			y, ok = __ptimeAtoi(value[0:4])
+			value = value[4:]
+			if !ok {
+				break
+			}
+			year = y
+		case __ptimeStdMonth:
+			var m int
+			var rest string
+			m, rest, ok = __ptimeLookup(__ptimeShortMonths, value)
+			if !ok {
+				break
+			}
+			month = m + 1
+			value = rest
+		case __ptimeStdLongMonth:
+			var m int
+			var rest string
+			m, rest, ok = __ptimeLookup(__ptimeLongMonths, value)
+			if !ok {
+				break
+			}
+			month = m + 1
+			value = rest
+		case __ptimeStdNumMonth, __ptimeStdZeroMonth:
+			var m int
+			var rest string
+			m, rest, ok = __ptimeGetnum(value, chunk.code == __ptimeStdZeroMonth)
+			if !ok {
+				break
+			}
+			month = m
+			value = rest
+			if month <= 0 || 12 < month {
+				rangeErr = "month"
+			}
+		case __ptimeStdWeekDay:
+			// Weekday is checked for syntax but otherwise ignored.
+			var rest string
+			_, rest, ok = __ptimeLookup(__ptimeShortDays, value)
+			value = rest
+		case __ptimeStdLongWeekDay:
+			var rest string
+			_, rest, ok = __ptimeLookup(__ptimeLongDays, value)
+			value = rest
+		case __ptimeStdDay, __ptimeStdUnderDay, __ptimeStdZeroDay:
+			if chunk.code == __ptimeStdUnderDay && len(value) > 0 && value[0] == ' ' {
+				value = value[1:]
+			}
+			var d int
+			var rest string
+			d, rest, ok = __ptimeGetnum(value, chunk.code == __ptimeStdZeroDay)
+			if !ok {
+				break
+			}
+			day = d
+			value = rest
+			// Note that we allow any one- or two-digit day here.
+			// The month, day, year combination is validated after parsing.
+		case __ptimeStdUnderYearDay, __ptimeStdZeroYearDay:
+			for i := 0; i < 2; i++ {
+				if chunk.code == __ptimeStdUnderYearDay && len(value) > 0 && value[0] == ' ' {
+					value = value[1:]
+				}
+			}
+			var yd int
+			var rest string
+			yd, rest, ok = __ptimeGetnum3(value, chunk.code == __ptimeStdZeroYearDay)
+			if !ok {
+				break
+			}
+			yday = yd
+			value = rest
+			// Note that we allow any one-, two-, or three-digit year-day here.
+			// The year-day, year combination is validated after parsing.
+		case __ptimeStdHour:
+			var h int
+			var rest string
+			h, rest, ok = __ptimeGetnum(value, false)
+			if !ok {
+				break
+			}
+			hour = h
+			value = rest
+			if hour < 0 || 24 <= hour {
+				rangeErr = "hour"
+			}
+		case __ptimeStdHour12, __ptimeStdZeroHour12:
+			var h int
+			var rest string
+			h, rest, ok = __ptimeGetnum(value, chunk.code == __ptimeStdZeroHour12)
+			if !ok {
+				break
+			}
+			hour = h
+			value = rest
+			if hour < 0 || 12 < hour {
+				rangeErr = "hour"
+			}
+		case __ptimeStdMinute, __ptimeStdZeroMinute:
+			var m int
+			var rest string
+			m, rest, ok = __ptimeGetnum(value, chunk.code == __ptimeStdZeroMinute)
+			if !ok {
+				break
+			}
+			min = m
+			value = rest
+			if min < 0 || 60 <= min {
+				rangeErr = "minute"
+			}
+		case __ptimeStdSecond, __ptimeStdZeroSecond:
+			var s int
+			var rest string
+			s, rest, ok = __ptimeGetnum(value, chunk.code == __ptimeStdZeroSecond)
+			if !ok {
+				break
+			}
+			sec = s
+			value = rest
+			if sec < 0 || 60 <= sec {
+				rangeErr = "second"
+				break
+			}
+			// Special case: do we have a fractional second but no
+			// fractional second in the format?
+			if len(value) >= 2 && __ptimeCommaOrPeriod(value[0]) && __ptimeIsDigit(value, 1) {
+				peek := __ptimeNextChunk(layout)
+				if peek.code == __ptimeStdFracSecond0 || peek.code == __ptimeStdFracSecond9 {
+					// Fractional second in the layout; proceed normally.
+					break
+				}
+				// No fractional second in the layout but we have one in the input.
+				n := 2
+				for n < len(value) && __ptimeIsDigit(value, n) {
+					n++
+				}
+				nsec, rangeErr, ok = __ptimeParseNanoseconds(value, n)
+				value = value[n:]
+			}
+		case __ptimeStdPM:
+			if len(value) < 2 {
+				ok = false
+				break
+			}
+			p := value[0:2]
+			value = value[2:]
+			switch p {
+			case "PM":
+				pmSet = true
+			case "AM":
+				amSet = true
+			default:
+				ok = false
+			}
+		case __ptimeStdpm:
+			if len(value) < 2 {
+				ok = false
+				break
+			}
+			p := value[0:2]
+			value = value[2:]
+			switch p {
+			case "pm":
+				pmSet = true
+			case "am":
+				amSet = true
+			default:
+				ok = false
+			}
+		case __ptimeStdISO8601TZ, __ptimeStdISO8601SecondsTZ, __ptimeStdISO8601ShortTZ,
+			__ptimeStdISO8601ColonTZ, __ptimeStdISO8601ColonSecondsTZ:
+			if len(value) >= 1 && value[0] == 'Z' {
+				value = value[1:]
+				z = UTC
+				break
+			}
+			r := __ptimeParseNumOffset(value, chunk.code)
+			if r.rangeErr != "" {
+				rangeErr = r.rangeErr
+			}
+			if !r.ok {
+				ok = false
+				break
+			}
+			zoneOffset = r.offset
+			value = r.rest
+		case __ptimeStdNumTZ, __ptimeStdNumSecondsTZ, __ptimeStdNumShortTZ,
+			__ptimeStdNumColonTZ, __ptimeStdNumColonSecondsTZ:
+			r := __ptimeParseNumOffset(value, chunk.code)
+			if r.rangeErr != "" {
+				rangeErr = r.rangeErr
+			}
+			if !r.ok {
+				ok = false
+				break
+			}
+			zoneOffset = r.offset
+			value = r.rest
+		case __ptimeStdTZ:
+			// Does it look like a time zone?
+			if len(value) >= 3 && value[0:3] == "UTC" {
+				z = UTC
+				value = value[3:]
+				break
+			}
+			n, ok2 := __ptimeParseTimeZone(value)
+			if !ok2 {
+				ok = false
+				break
+			}
+			zoneName, value = value[:n], value[n:]
+		case __ptimeStdFracSecond0:
+			// stdFracSecond0 requires the exact number of digits as
+			// specified in the layout.
+			ndigit := 1 + chunk.fracDigits
+			if len(value) < ndigit {
+				ok = false
+				break
+			}
+			nsec, rangeErr, ok = __ptimeParseNanoseconds(value, ndigit)
+			value = value[ndigit:]
+		case __ptimeStdFracSecond9:
+			if len(value) < 2 || !__ptimeCommaOrPeriod(value[0]) || value[1] < '0' || '9' < value[1] {
+				// Fractional second omitted.
+				break
+			}
+			// Take any number of digits, even more than asked for,
+			// because it is what the stdSecond case would do.
+			i := 0
+			for i+1 < len(value) && '0' <= value[i+1] && value[i+1] <= '9' {
+				i++
+			}
+			nsec, rangeErr, ok = __ptimeParseNanoseconds(value, 1+i)
+			value = value[1+i:]
+		}
+		if rangeErr != "" {
+			return fail(stdstr, value, ": "+rangeErr+" out of range", alayout, avalue)
+		}
+		if !ok {
+			return fail(stdstr, hold, "", alayout, avalue)
+		}
+	}
+	if pmSet && hour < 12 {
+		hour += 12
+	} else if amSet && hour == 12 {
+		hour = 0
+	}
+
+	// Convert yday to day, month.
+	if yday >= 0 {
+		var d int
+		var m int
+		if __ptimeIsLeap(year) {
+			if yday == 31+29 {
+				m = 2
+				d = 29
+			} else if yday > 31+29 {
+				yday--
+			}
+		}
+		if yday < 1 || yday > 365 {
+			return fail("", value, ": day-of-year out of range", alayout, avalue)
+		}
+		if m == 0 {
+			m = (yday-1)/31 + 1
+			if __ptimeDaysBefore(m+1) < yday {
+				m++
+			}
+			d = yday - __ptimeDaysBefore(m)
+		}
+		// If month, day already seen, yday's m, d must match.
+		// Otherwise, set them from m, d.
+		if month >= 0 && month != m {
+			return fail("", value, ": day-of-year does not match month", alayout, avalue)
+		}
+		month = m
+		if day >= 0 && day != d {
+			return fail("", value, ": day-of-year does not match day", alayout, avalue)
+		}
+		day = d
+	} else {
+		if month < 0 {
+			month = 1
+		}
+		if day < 0 {
+			day = 1
+		}
+	}
+
+	// Validate the day of the month.
+	if day < 1 || day > __ptimeDaysIn(month, year) {
+		return fail("", value, ": day out of range", alayout, avalue)
+	}
+
+	if z != nil {
+		return timePair{t: Date(year, Month(month), day, hour, min, sec, nsec, UTC)}
+	}
+
+	if zoneOffset != -1 {
+		t := Date(year, Month(month), day, hour, min, sec, nsec, UTC)
+		return timePair{t: t.Add(-Duration(zoneOffset) * Second)}
+	}
+
+	if zoneName != "" {
+		// gc records a fabricated zone with the abbreviation (zero
+		// offset, or the GMT hour offset) — the instant is the UTC wall
+		// time either way, which is what the UTC-only model keeps.
+		return timePair{t: Date(year, Month(month), day, hour, min, sec, nsec, UTC)}
+	}
+
+	// Otherwise, fall back to UTC (gc's defaultLocation for Parse).
+	return timePair{t: Date(year, Month(month), day, hour, min, sec, nsec, UTC)}
+}
+
+// Parse keeps the exact gc 1.27.1 signature for type-checking. The real
+// implementation is __parseTime: 2-target call sites desugar via the M7
+// table (m7MultiResultFuncs); every other position fails fast. The body
+// never runs.
 func Parse(layout, value string) (Time, error) {
-	panic("time.Parse: not in M5 scope")
+	panic("time.Parse: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time {
@@ -947,23 +2090,7 @@ func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) T
 	m0 = timeFloorMod(m0, 12)
 	// days_from_civil (Howard Hinnant's algorithm), proleptic Gregorian;
 	// day64 may lie outside the month — the formula absorbs the offset.
-	yy := y64
-	mo := m0 + 1 // 1-based, in [1,12]
-	if mo <= 2 {
-		yy--
-	}
-	era := yy / 400
-	if yy < 0 && yy%400 != 0 {
-		era--
-	}
-	yoe := yy - era*400
-	mp := mo - 3
-	if mp < 0 {
-		mp += 12
-	}
-	doy := (153*mp+2)/5 + day64 - 1
-	doe := yoe*365 + yoe/4 - yoe/100 + doy
-	days := era*146097 + doe - 719468 // days since 1970-01-01
+	days := __timeDaysFromCivil(y64, m0+1, day64) // days since 1970-01-01
 	unixSec := days*86400 + hour64*3600 + min64*60 + sec64
 	return Time{unixnano: unixSec*1e9 + nsec64, isSet: true}
 }
@@ -1124,12 +2251,12 @@ type Ticker struct {
 
 // Clock/timer intrinsics: exact gc 1.27.1 signatures; the bodies never
 // run (the exporter intercepts every call into the §D3 wire nodes).
-func Now() Time                          { panic("time: intrinsic Now") }
-func Sleep(d Duration)                   { panic("time: intrinsic Sleep") }
-func After(d Duration) <-chan Time       { panic("time: intrinsic After") }
-func Tick(d Duration) <-chan Time        { panic("time: intrinsic Tick") }
-func NewTimer(d Duration) *Timer         { panic("time: intrinsic NewTimer") }
-func NewTicker(d Duration) *Ticker       { panic("time: intrinsic NewTicker") }
+func Now() Time                    { panic("time: intrinsic Now") }
+func Sleep(d Duration)             { panic("time: intrinsic Sleep") }
+func After(d Duration) <-chan Time { panic("time: intrinsic After") }
+func Tick(d Duration) <-chan Time  { panic("time: intrinsic Tick") }
+func NewTimer(d Duration) *Timer   { panic("time: intrinsic NewTimer") }
+func NewTicker(d Duration) *Ticker { panic("time: intrinsic NewTicker") }
 func AfterFunc(d Duration, f func()) *Timer {
 	panic("time: intrinsic AfterFunc")
 }
@@ -1446,6 +2573,10 @@ type timerCtx struct {
 	cancel   *cancelCtx
 	timer    *time.Timer
 	deadline time.Time
+	// cause is the construction cause for WithDeadlineCause/
+	// WithTimeoutCause (nil for the plain variants): the manual cancel
+	// and the deadline-fire cancel both report it (gc parity).
+	cause error
 }
 
 // Deadline is declared for go/types interface satisfaction only (see
@@ -1471,16 +2602,38 @@ func (c *timerCtx) cancelFunc() CancelFunc {
 	return func() { c.cancelTimer(Canceled, Canceled) }
 }
 
-// __withDeadline/__withTimeout are the Appendix M desugar targets.
+// cancelCauseFunc is the Appendix M desugar target for the
+// WithDeadlineCause/WithTimeoutCause cancel function (stops the timer
+// too; the manual-cancel cause is the construction cause).
+func (c *timerCtx) cancelCauseFunc() CancelFunc {
+	return func() { c.cancelTimer(Canceled, c.cause) }
+}
+
+// __withDeadline/__withTimeout/__withDeadlineCause/__withTimeoutCause are
+// the Appendix M desugar targets.
 func __withDeadline(parent Context, d time.Time) *timerCtx {
+	return __withDeadlineCause(parent, d, nil)
+}
+
+// __withDeadlineCause implements WithDeadlineCause (and, via
+// __withDeadline, the plain WithDeadline): the construction cause is
+// remembered on the timerCtx and used for both the manual cancel and
+// the deadline-fire cancel (gc parity: gc's timer fires with the
+// construction cause). A nil cause keeps the historical
+// (DeadlineExceeded, DeadlineExceeded) behavior of the plain variants.
+func __withDeadlineCause(parent Context, d time.Time, cause error) *timerCtx {
 	if parent == nil {
 		panic("cannot create context from nil parent")
 	}
-	c := &timerCtx{cancel: newCancelCtx(parent), deadline: d}
+	c := &timerCtx{cancel: newCancelCtx(parent), deadline: d, cause: cause}
 	ctxPropagateCancel(parent, c.cancel)
+	fireCause := cause
+	if fireCause == nil {
+		fireCause = DeadlineExceeded
+	}
 	until := time.Until(d)
 	if until <= 0 {
-		c.cancelTimer(DeadlineExceeded, DeadlineExceeded)
+		c.cancelTimer(DeadlineExceeded, fireCause)
 	} else if c.cancel.Err() == nil {
 		// The parent was not already canceled (gc checks c.err under the
 		// lock before arming; Err() observes the same state via the
@@ -1491,10 +2644,14 @@ func __withDeadline(parent Context, d time.Time) *timerCtx {
 		// goroutine). Residual race (parent cancels after the check but
 		// before AfterFunc arms) still no-op fires — benign, as before.
 		c.timer = time.AfterFunc(until, func() {
-			c.cancelTimer(DeadlineExceeded, DeadlineExceeded)
+			c.cancelTimer(DeadlineExceeded, fireCause)
 		})
 	}
 	return c
+}
+
+func __withTimeoutCause(parent Context, timeout time.Duration, cause error) *timerCtx {
+	return __withDeadlineCause(parent, time.Now().Add(timeout), cause)
 }
 
 func __withTimeout(parent Context, timeout time.Duration) *timerCtx {
@@ -1513,11 +2670,11 @@ func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
 }
 
 func WithDeadlineCause(parent Context, d time.Time, cause error) (Context, CancelFunc) {
-	panic("context.WithDeadlineCause: not in M5 scope")
+	panic("context.WithDeadlineCause: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 func WithTimeoutCause(parent Context, timeout time.Duration, cause error) (Context, CancelFunc) {
-	panic("context.WithTimeoutCause: not in M5 scope")
+	panic("context.WithTimeoutCause: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 // deadlinePair is the Appendix M single-result carrier for Deadline().

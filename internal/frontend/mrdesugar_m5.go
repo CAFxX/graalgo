@@ -11,9 +11,10 @@ import (
 // P3-M5 (WS E, ADR-0005 Appendix M): multi-result call-site desugar.
 //
 // v1 cannot emit or call multi-result functions (WS D; the P3-M3 F4
-// fail-fast precedent). Five operations desugar at call sites —
+// fail-fast precedent). Seven operations desugar at call sites —
 // context.WithCancel, context.WithCancelCause, context.WithDeadline,
-// context.WithTimeout, time.ParseDuration — keeping exact gc 1.27.1
+// context.WithTimeout, context.WithDeadlineCause,
+// context.WithTimeoutCause, time.ParseDuration — keeping exact gc 1.27.1
 // signatures (so type-checking works) with fail-fast bodies. When one
 // of them is the RHS of a 2-target assignment (`:=` or `=`), the
 // exporter desugars to the synthetic single-result helpers plus field
@@ -65,7 +66,7 @@ import (
 // (user code can never name them — go/types rejects unexported
 // cross-package references — so there is no collision).
 
-// mrKind classifies the Appendix M operations: the 5 reachable ones
+// mrKind classifies the Appendix M operations: the 7 reachable ones
 // plus mrDeadline, retained defense-in-depth for WS D (see the package
 // header — currently unreachable from user code).
 type mrKind int
@@ -187,6 +188,8 @@ var m5StaticMREntries = []m5StaticMREntry{
 	{"context", "WithCancelCause", "", false},
 	{"context", "WithDeadline", "", false},
 	{"context", "WithTimeout", "", false},
+	{"context", "WithDeadlineCause", "", false},
+	{"context", "WithTimeoutCause", "", false},
 	{"runtime", "Caller", "", false},
 	{"time", "ParseDuration", "", false},
 	// context.Deadline method (mrDeadline) — retained for WS D; the
@@ -276,6 +279,12 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// and helper are generic; the desugar instantiates both with the
 	// call's type argument (instantiatePairType + helperCallTargs).
 	{"errors", "AsType", "", "__asTypePub", "asTypePair", []string{"v", "ok"}, false},
+	// time: Parse (P3-M5 scope discharge, review-p1-time lane). The real
+	// parser is the synthetic __parseTime (instant-exact vs gc; the
+	// UTC-only model collapses parsed zones to their UTC instant). The
+	// 2-target call sites desugar to the helper + field extraction;
+	// every other position fails fast via isMultiResultSynthetic.
+	{"time", "Parse", "", "__parseTime", "timePair", []string{"t", "err"}, false},
 	// bytes: methods on *Reader (P3-M9 WS D: v1 cannot emit 2-result methods).
 	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}, false},
 	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result
@@ -1698,16 +1707,26 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 						tmpType:    types.NewPointer(nt),
 						methodRecv: nt, methodName: method,
 					}
-				case "WithDeadline", "WithTimeout":
+				case "WithDeadline", "WithTimeout", "WithDeadlineCause", "WithTimeoutCause":
 					nt := named(ctxPkg, "timerCtx")
 					if nt == nil {
 						return nil
+					}
+					// The Cause variants extract their cancel function via
+					// cancelCauseFunc (manual cancel reports the
+					// construction cause, gc parity); the plain variants
+					// use cancelFunc. The helper name derives uniformly:
+					// "__with" + Name[4:] ("WithDeadlineCause" ->
+					// "__withDeadlineCause", etc.).
+					cancelMethod := "cancelFunc"
+					if strings.HasSuffix(fn.Name(), "Cause") {
+						cancelMethod = "cancelCauseFunc"
 					}
 					return &mrPlan{
 						kind: mrWithDeadline, helperPkg: "context",
 						helperName: "__with" + fn.Name()[4:],
 						tmpType:    types.NewPointer(nt),
-						methodRecv: nt, methodName: "cancelFunc",
+						methodRecv: nt, methodName: cancelMethod,
 					}
 				}
 			case "runtime":

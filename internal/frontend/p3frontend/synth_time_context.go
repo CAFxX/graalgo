@@ -292,6 +292,8 @@ func syntheticTimePackage() *types.Package {
 		[]*types.Var{newParam("", duration)})
 	insertFunc("ParseDuration", []*types.Var{newParam("s", stringT)},
 		[]*types.Var{newParam("", duration), newParam("", errorT)})
+	insertFunc("Parse", []*types.Var{newParam("layout", stringT), newParam("value", stringT)},
+		[]*types.Var{newParam("", timeType), newParam("", errorT)})
 
 	pkg.MarkComplete()
 	return pkg
@@ -369,6 +371,12 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 	insertFunc("WithTimeout",
 		[]*types.Var{newParam("parent", ctxNamed), newParam("timeout", durationType)},
 		[]*types.Var{newParam("", ctxNamed), newParam("", cancelFunc)})
+	insertFunc("WithDeadlineCause",
+		[]*types.Var{newParam("parent", ctxNamed), newParam("d", timeType), newParam("cause", errorT)},
+		[]*types.Var{newParam("", ctxNamed), newParam("", cancelCauseFunc)})
+	insertFunc("WithTimeoutCause",
+		[]*types.Var{newParam("parent", ctxNamed), newParam("timeout", durationType), newParam("cause", errorT)},
+		[]*types.Var{newParam("", ctxNamed), newParam("", cancelCauseFunc)})
 	insertFunc("WithValue",
 		[]*types.Var{
 			newParam("parent", ctxNamed),
