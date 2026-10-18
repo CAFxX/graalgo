@@ -104,9 +104,12 @@ func cmdRun(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo run: no non-test Go files in %s\n", target)
 		return 1
 	}
-	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
-		return code
+	// The backend compiles all package files together as one unit. A
+	// build failure here is the driver's own failure: like `go run` it
+	// exits 1 with the build log on stderr and no "exit status" wrapper,
+	// so normalize any non-zero backend code to 1.
+	if graalgoRun(root, append([]string{"--check"}, pkgFiles...)) != 0 {
+		return 1
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)

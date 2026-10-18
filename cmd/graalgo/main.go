@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -213,24 +215,147 @@ func graalgoRun(root string, args []string) int {
 	return 0
 }
 
-// graalgoRunProgram invokes the backend for `graalgo run` and emulates
-// `go run`'s exit contract: when the program exits non-zero, `go run`
-// prints "exit status N" to stderr and exits 1 (rather than propagating
-// the raw code). This keeps `graalgo run` byte-identical to `go run` on
-// stderr and exit code for programs that exit non-zero.
+// exitKind is the backend's self-reported outcome category, delivered
+// out-of-band via --exit-report. The backend's exit codes 1 and 2 are
+// ambiguous at this level (input/build failure vs the program's own
+// os.Exit(1)/panic), and any 0-255 code is a legitimate program exit, so
+// no exit-code range can be reserved for backend failures. Only the
+// backend knows which side of the ambiguity a run fell on.
+type exitKind int
+
+const (
+	// exitUnknown: no (or unreadable) report — the backend died before
+	// reporting (crash, signal). Treated as a backend failure: exit 1
+	// with no "exit status" wrapper, the safe default.
+	exitUnknown exitKind = iota
+	// exitProgram: the Go program ran and exited (any code, including
+	// panic, which surfaces as 2 like gc).
+	exitProgram
+	// exitBackendFailure: the backend failed on its own (usage/input
+	// error, build failure, internal error); its diagnostics are already
+	// on stderr.
+	exitBackendFailure
+)
+
+// runOutcome is the fully-observed result of one backend invocation.
+type runOutcome struct {
+	waitCode int      // process exit code; -1 if killed by a signal or never started
+	signaled bool     // the backend died from a signal
+	sigText  string   // e.g. "signal: terminated" (only when signaled)
+	kind     exitKind // the backend's --exit-report verdict
+	startErr error    // non-nil when the backend process never started
+}
+
+// runBackend invokes the backend launcher like graalgoRun, but captures the
+// full outcome. When reportPath != "", it is passed as --exit-report= (as a
+// launcher flag, ahead of any "--" program-argv separator) and the verdict
+// file is parsed after the process exits.
+func runBackend(root string, args []string, reportPath string) runOutcome {
+	var o runOutcome
+	fullArgs := args
+	if reportPath != "" {
+		fullArgs = append([]string{"--exit-report=" + reportPath}, args...)
+	}
+	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
+	cmd := exec.Command(runner, fullArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			o.waitCode = ee.ExitCode()
+			// Go reports -1 when the process was killed by a signal.
+			if o.waitCode == -1 {
+				o.signaled = true
+				o.sigText = ee.Error() // "signal: terminated"
+			}
+		} else {
+			o.startErr = err
+			o.waitCode = -1
+		}
+	}
+	if reportPath != "" {
+		o.kind = parseExitReport(reportPath)
+	}
+	return o
+}
+
+// parseExitReport reads the backend's --exit-report verdict file, one line
+// of the form "program-exit <code>" or "backend-failure <code>". Anything
+// missing or malformed yields exitUnknown.
+func parseExitReport(path string) exitKind {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return exitUnknown
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) != 2 {
+		return exitUnknown
+	}
+	if _, err := strconv.Atoi(fields[1]); err != nil {
+		return exitUnknown
+	}
+	switch fields[0] {
+	case "program-exit":
+		return exitProgram
+	case "backend-failure":
+		return exitBackendFailure
+	default:
+		return exitUnknown
+	}
+}
+
+// decideRunExit maps a finished backend invocation to `graalgo run`'s
+// stderr trailer and exit code, mirroring `go run` byte-for-byte:
 //
-// Known wart: the backend's own failure codes (1 = input error, 2 =
-// build failure) share the exit-code space with program exits, so a
-// backend failure also gets the "exit status N" treatment; `go run`
-// prints no such line for its own build failures. Disambiguating needs
-// a backend exit-code convention change.
+//   - program exit 0 → silent, exit 0
+//   - program exit n≠0 (including panic, which is 2 like gc) →
+//     "exit status n" on stderr, exit 1
+//   - backend killed by a signal → "signal: <name>" on stderr, exit 1
+//     (exactly what `go run` prints for its child)
+//   - the backend's own failure, or an unreported outcome (crash before
+//     the verdict was written) → the backend's diagnostics are already on
+//     stderr; exit 1 with no wrapper line
+func decideRunExit(o runOutcome) (stderrTrailer string, exitCode int) {
+	if o.startErr != nil {
+		return fmt.Sprintf("graalgo: %v\n", o.startErr), 1
+	}
+	switch {
+	case o.signaled:
+		return o.sigText + "\n", 1
+	case o.waitCode == 0:
+		return "", 0
+	case o.kind == exitProgram:
+		return fmt.Sprintf("exit status %d\n", o.waitCode), 1
+	default:
+		return "", 1
+	}
+}
+
+// graalgoRunProgram invokes the backend for `graalgo run` and applies
+// `go run`'s exit contract (see decideRunExit). The backend reports whether
+// the Go program actually ran via --exit-report, so a backend build failure
+// (exit 2) is never mistaken for a program exit the way the old
+// exit-code-only check did.
 func graalgoRunProgram(root string, args []string) int {
-	code := graalgoRun(root, args)
-	if code != 0 {
-		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
+	// Like `go run`: interrupt/quit go to the backend, whose signal
+	// death is then reported as "signal: <name>" with exit 1.
+	catchDriverSignals()
+
+	report, err := os.CreateTemp("", "graalgo-exit-report-*.txt")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo run: cannot create exit-report file: %v\n", err)
 		return 1
 	}
-	return 0
+	reportPath := report.Name()
+	report.Close()
+	defer os.Remove(reportPath)
+
+	trailer, code := decideRunExit(runBackend(root, args, reportPath))
+	if trailer != "" {
+		fmt.Fprint(os.Stderr, trailer)
+	}
+	return code
 }
 
 // resolveFiles turns package/file arguments into a list of .go files.
