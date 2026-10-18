@@ -176,6 +176,17 @@ public final class GoNet {
         STATES.clear();
     }
 
+    /**
+     * Drops the per-socket control state for a closed socket cookie.
+     * Called by {@code GoOs.close} for {@code KIND_SOCKET}, alongside
+     * {@code GoNetpoll.evictForClose} — without it the map grows without
+     * bound on long-running accept loops (P1-31). Idempotent: accepted
+     * sockets and plain sockets both funnel through {@code GoOs.close}.
+     */
+    public static void evictSocket(long sockCookie) {
+        STATES.remove(sockCookie);
+    }
+
     // ------------------------------------------------------------------
     // D5 adaptation + buffer helpers (mirroring GoOs's private ones;
     // cross-package, so duplicated here rather than exposed).
