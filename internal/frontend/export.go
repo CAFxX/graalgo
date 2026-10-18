@@ -8414,10 +8414,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// need &x (WS D). Fail fast with the named scope error, never a
 		// confusing "undefined".
 		//
-		// P3-driver-harden (jsonlib lane): atomic.LoadPointer lowers to
-		// a plain deref read (scoped divergence: atomicity without gc's
-		// ordering guarantee); atomic.StorePointer is statement-only and
-		// handled in exportStmt.
+		// P3-driver-harden (jsonlib lane): atomic.StorePointer is
+		// statement-only and handled in exportStmt. (L08,
+		// review-20261018: atomic.LoadPointer used to lower to a plain
+		// deref read here; it now rides the atomicWordOps table below
+		// like the other word ops.)
 		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
 			// Only intercept package-qualified calls (atomic.Foo,
 			// rtatomic.Bar). A selector on a non-package identifier is a
@@ -8427,20 +8428,18 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// to the normal method-call path.
 			if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); isPkg {
 				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
-					if sel.Sel.Name == "LoadPointer" {
-						return e.exportAtomicLoadPointer(c)
-					}
 					// fix-linkname (Caddy/godebug lane): package-level atomic
-					// word/bool ops (LoadUint64, StoreInt32, …). The address
-					// operand evaluates to a GoPointer; the "atomicaddr"
-					// wire node wraps it in a delegating AtomicLong /
-					// AtomicInteger cell, and the existing "syncop" atomic
-					// machinery (AtomicOpNode) performs the op — the same
-					// node that serves the typed wrappers. RMW ops
-					// (Add/Swap/CompareAndSwap) serialize on a shared lock
-					// (documented in GoPointerCell64); Load/Store are plain
-					// volatile-cell accesses, the exportAtomicLoadPointer
-					// precedent.
+					// word/bool ops (LoadUint64, StoreInt32, …) and
+					// LoadPointer. The address operand evaluates to a
+					// GoPointer; the "atomicaddr" wire node wraps it in a
+					// delegating AtomicLong / AtomicInteger cell, and the
+					// existing "syncop" atomic machinery (AtomicOpNode)
+					// performs the op — the same node that serves the typed
+					// wrappers. LoadPointer rides the uintptr entry: an
+					// unsafe.Pointer is the 64-bit D5 handle, so the int64
+					// cell is exactly the pointer cell (L08,
+					// review-20261018). Every op serializes on the cell's
+					// shared lock (documented in GoPointerCell64).
 					if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
 						return n, err
 					}
@@ -9113,25 +9112,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	return e.node("call", c, fields), nil
 }
 
-// exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to *addr: a
-// plain deref read of the unsafe.Pointer. Scoped divergence from gc (see
-// the exportCall interception): atomicity without the ordering guarantee.
-func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
-	if len(c.Args) != 1 {
-		return nil, fmt.Errorf("gofrontend: atomic.LoadPointer takes 1 argument")
-	}
-	px, err := e.exportExpr(c.Args[0])
-	if err != nil {
-		return nil, err
-	}
-	tid, err := e.typeID(types.Typ[types.UnsafePointer])
-	if err != nil {
-		return nil, err
-	}
-	return e.node("deref", c, map[string]any{"x": px, "type": tid}), nil
-}
-
-// atomicWordOp describes one package-level sync/atomic word/bool
+// atomicWordOp describes one package-level sync/atomic word/bool/pointer
 // operation (fix-linkname): the syncop op name, the atomic synctyp
 // (shared with the typed wrappers so AtomicOpNode serves both), the
 // atomicaddr cell kind, and the value-argument count after the address.
@@ -9174,6 +9155,13 @@ var atomicWordOps = map[string]atomicWordOp{
 	"AddUintptr":            {"Add", "atomic.Uintptr", "int64", 1},
 	"SwapUintptr":           {"Swap", "atomic.Uintptr", "int64", 1},
 	"CompareAndSwapUintptr": {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	// L08 (review-20261018): LoadPointer rides the uintptr entry. An
+	// unsafe.Pointer is the 64-bit D5 handle (UnsafeHandles), so the
+	// int64 atomicaddr cell is exactly the pointer cell, and
+	// AtomicOpNode's atomic.Uintptr.Load performs the load. The Java
+	// side retypes the result node to UNSAFE_POINTER from the wire
+	// "type" field (see AtomicOpNode.build).
+	"LoadPointer": {"Load", "atomic.Uintptr", "int64", 0},
 	// PKG-053: And/Or word ops (gc's exact function names, verified
 	// against ~/tools/go/src/sync/atomic/doc.go). The real
 	// (*Int32).And etc. bodies call these package-level funcs, so the
@@ -9234,7 +9222,9 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 
 // exportAtomicStorePointerStmt lowers a bare-statement
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
-// of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
+// of the unsafe.Pointer (scoped divergence: atomicity without gc's ordering
+// guarantee). L08 follow-up: route through atomicaddr+syncop like
+// LoadPointer so the pair shares the cell lock.
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {

@@ -298,6 +298,23 @@ public final class AtomicOpNode extends GoExprNode {
         if (resultKind == null) {
             resultKind = GoKind.INTERFACE; // void Store
         }
+        // L08 (review-20261018): atomic.LoadPointer lowers through the
+        // uintptr machinery — an unsafe.Pointer IS the 64-bit D5 handle,
+        // so atomic.Uintptr.Load performs exactly the pointer load — but
+        // its declared result type is unsafe.Pointer. The node kind must
+        // be UNSAFE_POINTER: downstream consumers (maybeConvert on
+        // assignment, unsafetooptr, comparisons) key off the kind, and
+        // UINT64 -> UNSAFE_POINTER has no legal conversion (the D5 trap
+        // forbids fabricating a handle from an integer). The value
+        // representation is identical (a long handle), so the executeLong
+        // path serves it unchanged.
+        Json.Value typeVal = f.opt("type");
+        if (typeVal instanceof Json.Num typeNum && resultKind == GoKind.UINT64) {
+            int typeId = (int) typeNum.asLong(path + ".type");
+            if (NodeFactory.kindOf(ctx, typeId, path) == GoKind.UNSAFE_POINTER) {
+                resultKind = GoKind.UNSAFE_POINTER;
+            }
+        }
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
         Json.Array arr = f.array("args", path);
         if (arr.size() != wantArgs) {
