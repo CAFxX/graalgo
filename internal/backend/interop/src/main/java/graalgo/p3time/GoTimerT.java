@@ -75,6 +75,15 @@ public class GoTimerT {
     private final GoFunc afterFunc;
     private final GoStructDescriptor timeDesc;
     private final SchedulerCore sched;
+    /**
+     * P1-27: the (wall, monotonic) clock base pair for converting the
+     * heap's monotonic fire nanotime to wall time (see
+     * {@link #fireNanosToWallNanos}). Captured in the constructor — the
+     * GoTimer is already armed then, so every future fire postdates
+     * {@code monoBaseNanos}.
+     */
+    private final long wallBaseMillis;
+    private final long monoBaseNanos;
 
     // ---- translator lifecycle (all under lock) ----
     private final Object lock = new Object();
@@ -113,6 +122,11 @@ public class GoTimerT {
         this.afterFunc = afterFunc;
         this.timeDesc = timeDesc;
         this.sched = SchedulerCore.current();
+        // P1-27: capture the clock base pair before the translator can
+        // deliver (mono first, then wall; either order leaves only ~100ns
+        // of residual skew, negligible against the ms base granularity).
+        this.monoBaseNanos = System.nanoTime();
+        this.wallBaseMillis = System.currentTimeMillis();
         this.internal = tc;
         this.user = new TimeChan();
         ensureTranslator();
@@ -202,6 +216,44 @@ public class GoTimerT {
         }
     }
 
+    /**
+     * P1-27: converts a monotonic fire nanotime ({@code System.nanoTime}
+     * basis, as delivered by the Phase-2 heap on the timer channel) to
+     * wall-clock nanoseconds via the creation-time base pair:
+     * {@code wall = wallBase + (fire - monoBase)}.
+     *
+     * <p>Invariant: {@code fireNanos >= monoBaseNanos}. The heap samples
+     * {@code System.nanoTime()} at fire time
+     * ({@code TimerHeap.fireChanLocked}), strictly after this object's
+     * construction captured {@code monoBaseNanos}; {@code nanoTime} is
+     * monotonic, so the delta is never negative and no clamp is needed.
+     * {@code reset()} re-arms with a fresh heap deadline, likewise
+     * postdating the base pair.
+     */
+    static long fireNanosToWallNanos(long wallBaseMillis, long monoBaseNanos, long fireNanos) {
+        return wallBaseMillis * 1_000_000L + (fireNanos - monoBaseNanos);
+    }
+
+    /**
+     * Test probe (P1-27): delivers a synthetic fire nanotime on the
+     * heap channel, bypassing the heap. Must be called on a scheduler
+     * goroutine. Lets tests verify the translator honors the fire value
+     * deterministically, without timing.
+     */
+    void injectFireNanosForTest(long fireNanos) {
+        internal.send(fireNanos);
+    }
+
+    /** Test probe (P1-27): the wall half of the clock base pair. */
+    long wallBaseMillisForTest() {
+        return wallBaseMillis;
+    }
+
+    /** Test probe (P1-27): the monotonic half of the clock base pair. */
+    long monoBaseNanosForTest() {
+        return monoBaseNanos;
+    }
+
     private void closeDoneLocked() {
         if (doneClosed.compareAndSet(false, true)) {
             done.close();
@@ -285,8 +337,14 @@ public class GoTimerT {
                     Panic.throwPanic(new GoString(
                             "send on closed channel".getBytes(StandardCharsets.UTF_8)));
                 }
+                // P1-27: stamp the *heap's fire nanotime* (monotonic), converted
+                // to wall time via the creation-time base pair — never the
+                // wall clock at delivery time. fireVal is a boxed Long per
+                // the check above.
                 GoStruct tv = new GoStruct(timeDesc,
-                        new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
+                        new long[]{fireNanosToWallNanos(
+                                wallBaseMillis, monoBaseNanos, (Long) fireVal), 1},
+                        new Object[0]);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the
