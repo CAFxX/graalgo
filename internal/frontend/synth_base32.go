@@ -226,8 +226,8 @@ func (enc *Encoding) EncodedLen(n int) int {
 // ---------------------------------------------------------------------------
 // Streaming encoder/decoder (P3-M8 — exact gc 1.27.1 shapes, now nameable
 // since io landed). The constructors are real; Read/Write/Close stay
-// fail-fast — they need r.Read/w.Write (2-result interface calls, WS D).
-// Re-test when WS D lands.
+// fail-fast — they have no Appendix-M table entry yet (their bodies need
+// r.Read/w.Write desugared through a __-helper).
 // ---------------------------------------------------------------------------
 
 type encoder struct {
