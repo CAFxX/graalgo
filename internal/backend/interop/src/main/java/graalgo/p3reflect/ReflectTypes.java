@@ -275,7 +275,7 @@ public final class ReflectTypes {
     }
 
     private static boolean isComparableType(TypeInfo t, java.util.Set<TypeInfo> visiting) {
-        if (t == null) {
+        if (t == null || t.kind == null) {
             return true;
         }
         switch (t.kind) {
