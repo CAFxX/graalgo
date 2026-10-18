@@ -11,6 +11,8 @@ package main
 //   (d) TestValidateRejectsVersionStaleChange — change requires version bump
 //   (+) TestValidateRejectsStaleEntry      — package must exist in the tree
 //   (+) TestValidateRejectsDuplicate      — no duplicate file entries
+//   (+) TestParseRejectsEmptyFileEntry     — empty file: is a parse error, not a silent drop
+//   (+) TestValidateRejectsEmptyFileEntry  — validate exits 1 on an empty file: entry
 //   (+) TestValidateFivePercentClause      — 5%-of-test-binaries binding cap
 //   (+) TestValidateAcceptsValidList       — happy path stays green
 //   (P1-2) TestResolveStdlibTreePrefersVendored — vendored tree is USED when present
@@ -193,6 +195,38 @@ func TestValidateRejectsDuplicate(t *testing.T) {
 		t.Fatal("expected rejection of duplicate entry, got accept")
 	}
 	mustContain(t, stderr, "duplicate file entry", "duplicate rejection")
+}
+
+// (P1-V) an empty - file: value is a parse error with the line number,
+// not a silently dropped entry. Before the fix, flushExcl dropped the
+// entry and validate's "empty file:" check could never fire. Fixture
+// layout via testList: lines 1-8 are header+vocabulary+exclusions:, so
+// the empty "- file:" sits on line 9.
+func TestParseRejectsEmptyFileEntry(t *testing.T) {
+	dir := t.TempDir()
+	list := testList(t, dir, "list.yaml", "1",
+		"- file:\n  reason: CGO\n  detail: evidence\n")
+	_, err := ParseExclusionFile(list)
+	if err == nil {
+		t.Fatal("expected parse error for empty file: value, got accept (entry would be silently dropped)")
+	}
+	mustContain(t, err.Error(), "empty file:", "empty-file parse rejection")
+	mustContain(t, err.Error(), "line 9", "line number in parse error")
+}
+
+// (P1-V) validate exits 1 on a list with an empty file: entry: the
+// rejection surfaces as a parse error, which runValidate propagates.
+func TestValidateRejectsEmptyFileEntry(t *testing.T) {
+	dir := t.TempDir()
+	src := fixtureSrc(t, "runtime/cgo")
+	list := testList(t, dir, "list.yaml", "1",
+		"- file:\n  reason: CGO\n  detail: evidence\n")
+	base := testList(t, dir, "base.yaml", "0", "")
+	_, _, err := runValidateOK(t, list, src, base, 1000, 25)
+	if err == nil {
+		t.Fatal("expected rejection of entry with empty file:, got accept")
+	}
+	mustContain(t, err.Error(), "empty file:", "empty-file validate rejection")
 }
 
 // The 5% clause binds when it is tighter than --max: with 100 test

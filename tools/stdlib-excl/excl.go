@@ -46,6 +46,10 @@ type ExclusionFile struct {
 // section is invisible to the GG-0033 readers: "reason_codes:" does not
 // carry the "reason:" prefix, "- code:" does not carry the "- file:"
 // prefix, so existing readers skip the section unchanged.
+//
+// An empty "- file:" value is a parse error (reported with the physical
+// line number): such an entry would otherwise be silently dropped by
+// flushExcl, and an entry with no file is a typo, not an exclusion.
 func ParseExclusionFile(path string) (*ExclusionFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -70,7 +74,7 @@ func ParseExclusionFile(path string) (*ExclusionFile, error) {
 		curCode = ReasonCode{}
 		inCode = false
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		t := strings.TrimSpace(line)
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
@@ -90,7 +94,11 @@ func ParseExclusionFile(path string) (*ExclusionFile, error) {
 			curCode.Description = strings.TrimSpace(strings.TrimPrefix(t, "description:"))
 		case strings.HasPrefix(t, "- file:"):
 			flushExcl()
-			curExcl.File = strings.TrimSpace(strings.TrimPrefix(t, "- file:"))
+			val := strings.TrimSpace(strings.TrimPrefix(t, "- file:"))
+			if val == "" {
+				return nil, fmt.Errorf("exclusions file %s: line %d: empty file: value (an entry with no file is a typo, not an exclusion)", path, i+1)
+			}
+			curExcl.File = val
 			inExcl = true
 		case strings.HasPrefix(t, "reason:") && inExcl:
 			curExcl.Reason = strings.TrimSpace(strings.TrimPrefix(t, "reason:"))

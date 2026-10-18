@@ -21,7 +21,8 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 
 1. the file has no `version:` line, or no `reason_codes:` vocabulary;
 2. an entry lacks `reason:` (mandatory), `detail:` (v1 no-parking rule: every
-   entry carries evidence), or `file:`;
+   entry carries evidence), or has an empty `file:` value (a parse error —
+   rejected with the line number rather than silently dropped);
 3. an entry's reason is not in the file's `reason_codes:` vocabulary;
 4. a `file:` value is duplicated;
 5. the entry count exceeds the review cap: `--max` (default 25) **or** 5% of

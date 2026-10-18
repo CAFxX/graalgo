@@ -69,15 +69,13 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		add("no reason_codes: vocabulary defined; every reason: would be unknown")
 	}
 
-	// 2. Per-entry checks: file present, reason mandatory + known, no dupes.
+	// 2. Per-entry checks: reason mandatory + known, no dupes. Every entry
+	// here has a non-empty file: ParseExclusionFile rejects empty file:
+	// values at parse time, because an entry that was silently dropped
+	// could never be rejected here.
 	seen := map[string]bool{}
-	for i, e := range ef.Exclusions {
-		where := fmt.Sprintf("entry %d", i+1)
-		if e.File == "" {
-			add("%s: empty file:", where)
-			continue
-		}
-		where = fmt.Sprintf("entry %q", e.File)
+	for _, e := range ef.Exclusions {
+		where := fmt.Sprintf("entry %q", e.File)
 		if seen[e.File] {
 			add("%s: duplicate file entry", where)
 		}
