@@ -29,8 +29,8 @@
 // P3-M8: NewEncoder/NewDecoder and the encoder/decoder types are declared
 // with exact gc signatures (io landed, so the signatures are nameable).
 // The constructors are real; the streaming Read/Write/Close methods fail
-// fast with the named M8/WS-D error (re-test when WS D lands multi-result
-// calls). The p3frontend drift test pins the declared surface.
+// fast with the named M8 scope error (they have no Appendix-M table entry
+// yet). The p3frontend drift test pins the declared surface.
 package main
 
 // syntheticBase32Source is the P3-M7 synthetic `encoding/base32`
