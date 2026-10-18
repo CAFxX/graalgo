@@ -2146,10 +2146,12 @@ func isAliasIntrinsicFunc(fn *types.Func) bool {
 // isMultiResultSynthetic reports whether fn is a multi-result function or
 // method declared by a synthetic time/context/errors/sort package
 // (Context.Deadline, time.ParseDuration, Time.Date/Clock/Zone,
-// sort.Find, ...). v1 cannot emit or call multi-result functions (WS D;
-// the P3-M3 F4 fail-fast precedent): the declarations exist with exact gc
+// sort.Find, ...). Multi-result declarations are not emitted (the P3-M3
+// F4 fail-fast precedent): the declarations exist with exact gc
 // signatures for type-checking, but every call site fails fast with a
-// named scope error. Re-test when WS D lands multi-result calls.
+// named scope error — unless the function is covered by userMRFuncs
+// (pair-transformed) or an Appendix-M table entry, which the
+// isMultiResultSyntheticFailFast wrapper below exempts.
 //
 // isMultiResultSyntheticFailFast is the exporter-aware wrapper: it returns
 // false for functions in userMRFuncs (pair-transformed, Gate-1 #2), even
