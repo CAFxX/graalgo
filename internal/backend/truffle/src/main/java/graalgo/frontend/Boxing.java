@@ -107,15 +107,12 @@ public final class Boxing {
         // q:=p; q.Store(5)` must be visible through p). Mirrors the
         // GoStruct branch directly above.
         if (kind == GoKind.STRUCT) {
-            // fix-linkname: the GoAtomicInt64/32 wrappers extend
-            // AtomicLong/Integer, so they must be matched first —
-            // cloning them as raw AtomicLong/Integer would drop the
-            // LongCell/IntCell interface the atomic ops require.
-            if (value instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
-                return new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
-            }
-            if (value instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
-                return new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
+            // RV18-P1-16: structural copy dispatch — Copyable cells clone
+            // through the interface (keeping the wrapper type and its
+            // LongCell/IntCell interface). Raw JDK atomics cannot
+            // implement the interface; they keep the explicit fallback.
+            if (value instanceof graalgo.runtime.sync.Copyable c) {
+                return c.freshCopy();
             }
             if (value instanceof java.util.concurrent.atomic.AtomicLong al) {
                 return new java.util.concurrent.atomic.AtomicLong(al.get());
@@ -335,36 +332,20 @@ public final class Boxing {
         if (template != null && template.getClass().isArray()) {
             return GoStruct.deepCopyArray(template);
         }
-        // P3-M9 (driver-harden, go-cmp lane): sync primitives are opaque
-        // Java objects; the template must not be shared — each use gets a
-        // fresh instance (a shared Mutex would serialize unrelated code).
-        if (template instanceof graalgo.runtime.sync.GoMutex) {
-            return new graalgo.runtime.sync.GoMutex();
-        }
-        if (template instanceof graalgo.runtime.sync.GoRWMutex) {
-            return new graalgo.runtime.sync.GoRWMutex();
-        }
-        if (template instanceof graalgo.runtime.sync.GoWaitGroup) {
-            return new graalgo.runtime.sync.GoWaitGroup();
-        }
-        if (template instanceof graalgo.runtime.sync.GoOnce) {
-            return new graalgo.runtime.sync.GoOnce();
-        }
-        if (template instanceof graalgo.runtime.sync.GoPool) {
-            return new graalgo.runtime.sync.GoPool();
+        // RV18-P1-16: structural copy dispatch — sync/atomic cell types are
+        // opaque Java objects; the template must not be shared, so each
+        // use gets a fresh instance from its own freshCopy() (a shared
+        // Mutex would serialize unrelated code). A new cell type only has
+        // to implement Copyable; no chain to extend here.
+        if (template instanceof graalgo.runtime.sync.Copyable c) {
+            return c.freshCopy();
         }
         // fix-linkname: sync.Map copies get a fresh empty map (sharing
         // would let Store through one copy be observed through another).
+        // GoSyncMap is deliberately NOT Copyable: a value copy must not
+        // silently drop map contents.
         if (template instanceof graalgo.runtime.sync.GoSyncMap) {
             return new graalgo.runtime.sync.GoSyncMap();
-        }
-        // fix-linkname: atomic wrapper cells (struct fields) — fresh
-        // instances, preserving the LongCell/IntCell interface.
-        if (template instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
-            return new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
-        }
-        if (template instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
-            return new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
         }
         if (template instanceof java.util.concurrent.atomic.AtomicReference<?>) {
             return new java.util.concurrent.atomic.AtomicReference<>();

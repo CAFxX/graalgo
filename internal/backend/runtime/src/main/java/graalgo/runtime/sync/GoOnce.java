@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code IllegalStateException} on a non-scheduler thread. The fast path
  * ({@code state == DONE}) is safe from any thread.
  */
-public final class GoOnce {
+public final class GoOnce implements Copyable {
     private static final int IDLE = 0;
     private static final int RUNNING = 1;
     private static final int DONE = 2;
@@ -76,5 +76,15 @@ public final class GoOnce {
     /** For tests. */
     public boolean isDone() {
         return state.get() == DONE;
+    }
+
+    /**
+     * Go value-copy semantics (RV18-P1-16): a copied Once is a fresh,
+     * not-done one — a Do through one copy is never observed through
+     * another, like gc's value copy.
+     */
+    @Override
+    public GoOnce freshCopy() {
+        return new GoOnce();
     }
 }

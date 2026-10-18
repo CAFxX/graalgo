@@ -192,13 +192,13 @@ public final class GoFuncRootNode extends RootNode {
             // pre-existing gap out of M4 scope; atomic cells clone
             // because their entire state is the integer.)
             if (paramKinds[i] == graalgo.values.GoKind.STRUCT) {
-                // fix-linkname: match the GoAtomic wrappers before the
-                // raw AtomicLong/Integer (they extend them) so the clone
-                // keeps the LongCell/IntCell interface.
-                if (arg instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
-                    arg = new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
-                } else if (arg instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
-                    arg = new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
+                // RV18-P1-16: structural copy dispatch. Copyable cells
+                // (the GoAtomic wrappers and any future cell type) clone
+                // through the interface, keeping their wrapper type and
+                // its LongCell/IntCell interface. Raw JDK atomics cannot
+                // implement the interface; they keep the explicit fallback.
+                if (arg instanceof graalgo.runtime.sync.Copyable c) {
+                    arg = c.freshCopy();
                 } else if (arg instanceof java.util.concurrent.atomic.AtomicLong al) {
                     arg = new java.util.concurrent.atomic.AtomicLong(al.get());
                 } else if (arg instanceof java.util.concurrent.atomic.AtomicInteger ai) {

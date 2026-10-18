@@ -22,7 +22,7 @@ import java.util.Deque;
  *
  * <p>verifies: GG-SCHED-0004 (scheduler-aware blocking).
  */
-public final class GoMutex {
+public final class GoMutex implements Copyable {
     private boolean locked;
     private final Deque<GoroutineHandle> waiters = new ArrayDeque<>();
 
@@ -66,5 +66,15 @@ public final class GoMutex {
     /** For tests: whether the lock is currently held. */
     public synchronized boolean isLocked() {
         return locked;
+    }
+
+    /**
+     * Go value-copy semantics (RV18-P1-16): a copied mutex is a fresh,
+     * unlocked mutex — operations through one copy are never observed
+     * through another, like gc's value copy.
+     */
+    @Override
+    public GoMutex freshCopy() {
+        return new GoMutex();
     }
 }

@@ -108,6 +108,12 @@ public final class GoStruct {
             Object v = objects[f.index()];
             if (v instanceof GoStruct gs) {
                 v = gs.deepCopy();
+            } else if (v instanceof graalgo.runtime.sync.Copyable c) {
+                // RV18-P1-16: structural copy dispatch — sync/atomic cells
+                // are Go values, so a by-value struct copy gets fresh cells
+                // (atomic cells carry the integer over), never shared
+                // instances. A new cell type only implements Copyable.
+                v = c.freshCopy();
             } else if (v != null && v.getClass().isArray()) {
                 v = deepCopyArray(v);
             }
@@ -135,20 +141,11 @@ public final class GoStruct {
                 Object e = src[i];
                 if (e instanceof GoStruct gs) {
                     e = gs.deepCopy();
-                } else if (e instanceof graalgo.runtime.sync.GoMutex) {
-                    // P3-M9 (driver-harden, go-cmp lane): copied sync
-                    // primitives get fresh instances per slot — sharing
-                    // would let operations through one copy be observed
-                    // through another, which gc's value copy does not do.
-                    e = new graalgo.runtime.sync.GoMutex();
-                } else if (e instanceof graalgo.runtime.sync.GoRWMutex) {
-                    e = new graalgo.runtime.sync.GoRWMutex();
-                } else if (e instanceof graalgo.runtime.sync.GoWaitGroup) {
-                    e = new graalgo.runtime.sync.GoWaitGroup();
-                } else if (e instanceof graalgo.runtime.sync.GoOnce) {
-                    e = new graalgo.runtime.sync.GoOnce();
-                } else if (e instanceof graalgo.runtime.sync.GoPool) {
-                    e = new graalgo.runtime.sync.GoPool();
+                } else if (e instanceof graalgo.runtime.sync.Copyable c) {
+                    // RV18-P1-16: structural copy dispatch — every cell
+                    // type copies through its own freshCopy(); no
+                    // name-keyed instanceof chain to extend per type.
+                    e = c.freshCopy();
                 } else if (e != null && e.getClass().isArray()) {
                     e = deepCopyArray(e);
                 }

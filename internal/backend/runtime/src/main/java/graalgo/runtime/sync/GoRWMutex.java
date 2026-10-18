@@ -18,7 +18,7 @@ import java.util.Deque;
  * all readers release; recursive read-locking while a writer waits
  * deadlocks (as in gc — not special-cased).
  */
-public final class GoRWMutex {
+public final class GoRWMutex implements Copyable {
     private int readers;
     private boolean writer;
     private int waitingWriters;
@@ -105,5 +105,15 @@ public final class GoRWMutex {
         for (GoroutineHandle h : toWake) {
             sched.unpark(h);
         }
+    }
+
+    /**
+     * Go value-copy semantics (RV18-P1-16): a copied RWMutex is a fresh,
+     * unlocked one — operations through one copy are never observed
+     * through another, like gc's value copy.
+     */
+    @Override
+    public GoRWMutex freshCopy() {
+        return new GoRWMutex();
     }
 }

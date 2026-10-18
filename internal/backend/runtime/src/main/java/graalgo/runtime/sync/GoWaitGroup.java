@@ -15,7 +15,7 @@ import java.util.Deque;
  * Wait racing to zero) panics like gc — here simplified to
  * IllegalStateException on negative counter.
  */
-public final class GoWaitGroup {
+public final class GoWaitGroup implements Copyable {
     private int counter;
     private final Deque<GoroutineHandle> waiters = new ArrayDeque<>();
 
@@ -57,5 +57,15 @@ public final class GoWaitGroup {
     /** For tests. */
     public synchronized int count() {
         return counter;
+    }
+
+    /**
+     * Go value-copy semantics (RV18-P1-16): a copied WaitGroup is a fresh,
+     * zero one — operations through one copy are never observed through
+     * another, like gc's value copy.
+     */
+    @Override
+    public GoWaitGroup freshCopy() {
+        return new GoWaitGroup();
     }
 }

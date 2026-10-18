@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>No scheduler interaction: pool operations never block.
  */
-public final class GoPool {
+public final class GoPool implements Copyable {
 
     /** Bound for a thread-local shared queue; beyond it, half spills to
      * the global queue under the pool lock. */
@@ -208,5 +208,15 @@ public final class GoPool {
             }
             return null;
         }
+    }
+
+    /**
+     * Go value-copy semantics (RV18-P1-16): a copied Pool is a fresh,
+     * empty one — Gets/Puts through one copy are never observed through
+     * another, like gc's value copy.
+     */
+    @Override
+    public GoPool freshCopy() {
+        return new GoPool();
     }
 }
