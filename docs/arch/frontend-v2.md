@@ -18,11 +18,11 @@ through Phase 1–3 and accumulated structural debt:
 
 | Problem | v1 reality | v2 rule |
 |---|---|---|
-| Synthetic stdlib | 142 `synth_*.go` files reimplementing stdlib | Real packages from disk only |
+| Synthetic stdlib | 140 `synth_*.go` files reimplementing stdlib | Real packages from disk only |
 | Import overlay | Synthetic packages shadow real imports | Direct GOROOT/disk resolution |
 | Desugaring workarounds | stdlib calls rewritten (e.g. `fmt.Fprint` → `w.Write`) | Emit what the source says |
 | Special cases | Package-name-keyed logic in exporter | No name-keyed branches, ever |
-| Monolith | `export.go` is 12,108 lines | Split into parser / checker / emitter stages |
+| Monolith | `export.go` is 11,676 lines | Split into parser / checker / emitter stages |
 
 v1 keeps working while v2 is built (parallel track). v2 replaces v1 when it
 reaches differential parity on the corpus.
@@ -120,7 +120,7 @@ not add new ones.
    against — the comparison is behavioral.
 3. **Cutover**: when parity is reached, v2 becomes the default frontend.
    v1 is deleted (not kept as a fallback).
-4. **Cleanup**: the 142 `synth_*.go` files, the import overlay, and the
+4. **Cleanup**: the 140 `synth_*.go` files, the import overlay, and the
    desugaring workarounds are deleted with v1.
 
 ## 5. Layout
@@ -175,4 +175,10 @@ it *is* the frontend — just the next generation.
 
 - [frontend-v1.md](frontend-v1.md) — the IR wire format (unchanged).
 - [REPO_STRUCTURE.md](../REPO_STRUCTURE.md) — where things live.
-- Bridge-removal tracker: `hidden_files/bridge-removal/` (goal workspace).
+- Bridge inventory: [bridge-inventory.md](bridge-inventory.md) is the
+  canonical list of every grandfathered bridge, its root-cause fix, and
+  the phased removal order (per repo [AGENTS.md](../../AGENTS.md) §4). The
+  per-run bridge-removal tracker (`hidden_files/bridge-removal/` in the
+  goal workspace) is working evidence for the v2 track only — it must not
+  become a second source of truth; where they differ,
+  `bridge-inventory.md` wins.
