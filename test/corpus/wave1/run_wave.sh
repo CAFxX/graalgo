@@ -1,14 +1,19 @@
 #!/bin/bash
-# Differential runner for the P3-M7 wave-1 corpus (see README.md): each
-# program runs under stock gc 1.27.1 (built binary, run directly — `go run`
-# masks the exit code) and under graalgo-p3sync-run. Compares stdout bytes,
-# exit codes, and — for panic programs — the first stderr line.
+# Differential runner for the wave-1 corpus (see README.md): each program
+# runs under stock gc 1.27.1 (built binary, run directly — `go run` masks
+# the exit code) and under internal/backend/graalgo-sync-run (P3SyncMain).
+# Compares stdout bytes, exit codes, and stderr against the live gc leg:
+# for panic programs (non-zero gc exit) graalgo's first filtered stderr
+# line must match gc's live first line; for all other programs the full
+# filtered stderr must match. A <base>.panic anchor, when present,
+# additionally pins gc's own panic message, so a toolchain message change
+# fails loudly instead of silently pinning stale text.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs (marked with an
-# empty <base>.timing file) print fixed strings only (never measured
-# durations) and run with gmp=1 only; all other programs run with gmp=1
-# and gmp=4 (the timectx convention).
+# internal/frontend/p3frontend/DESIGN.md §7). Timing-sensitive programs
+# (marked with an empty <base>.timing file) print fixed strings only
+# (never measured durations) and run with gmp=1 only; all other programs
+# run with gmp=1 and gmp=4 (the timectx convention).
 #
 # Scope-limited programs (marked with a <base>.scopelimited file naming
 # the reason and a retest: trigger) can never pass the frontend for honest
@@ -21,30 +26,50 @@
 # use M7-extension constructors (csv.NewReaderString, gob.NewBufferEncoder,
 # ...) absent from real std, so the gc leg cannot build them against GOROOT
 # (a GOPATH cannot shadow the standard library). For these, the gc leg
-# builds the program against the extracted phase-1 synthetic sources
-# (extract_synth_ref.py) — the same sources the P3-M7 review §11 validated
-# as gc-faithful — with imports rewritten to a temp GOPATH.
+# builds the program against the extracted synthetic sources
+# (extract_synth_ref.py, reading internal/frontend/synth_*.go — the same
+# sources validated as gc-faithful) with imports rewritten to a temp GOPATH.
 #
 # Usage: run_wave.sh [pkg|all] — run one package subdir, or every wave-1
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
 # only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m7-int run_wave.sh strings
+# The repo root defaults to the repository containing this script (resolved
+# via its own path — never hardcoded) but can be overridden:
+#   GR=/path/to/graalgo run_wave.sh strings
 set -uo pipefail
-cd "$(dirname "$0")"
+# Resolve the script's own directory to an absolute path BEFORE cd'ing: a
+# relative $0 would otherwise make the GR resolution below resolve against
+# the new cwd instead of the invocation cwd (breaking e.g. the _smoke
+# run_differential.sh wrapper when invoked via a relative path).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-GR="${GR:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: test/corpus/wave1/run_wave.sh -> corpus -> test -> repo.
+# The caller may export GR (tools/run_stdlib_gate.sh does); otherwise
+# resolve it from this script's location.
+GR="${GR:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+BE="$GR/internal/backend"
+
+# Toolchains. The gc reference leg uses GO_BIN_DIR (the stdlib-gate CI job
+# exports it); the graalgo leg runs through the product launcher
+# (internal/backend/graalgo-sync-run), which reads GRAALVM_HOME — honor
+# JAVA_BIN if the caller set that instead.
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+export GOTOOLCHAIN=local
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    export GRAALVM_HOME
+fi
 
-# Tmp discipline (corpus/wave1/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
-export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
-mkdir -p "$TMPDIR"
+# Tmp discipline (corpus/wave1/README.md): never write to /tmp (512M shared
+# tmpfs on this VM). The repo's old hidden_files/ scratch convention was
+# retired with the phases/ tree — scratch goes to the workspace disk.
+# Honor a TMPDIR the caller already set (tools/run_stdlib_gate.sh exports
+# its own per-run scratch dir).
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-wave1}"
+export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-wave1}"
+mkdir -p "$TMPDIR" "$GOCACHE"
 
 case "${1-all}" in
     all)
@@ -60,15 +85,19 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
+[ -x "$BE/graalgo-sync-run" ] || { echo "missing launcher: $BE/graalgo-sync-run"; exit 2; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# The product launcher owns the load-bearing classpath order
+# (interop -> runtime -> truffle) and points -Djava.io.tmpdir at $TMPDIR;
+# never reconstruct the classpath here. --gmp=N sets scheduler parallelism.
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -78,15 +107,15 @@ pass=0; fail=0; scopelimited=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
 # build_gc <go file> <gcbin>: stock-gc reference leg. Programs marked
-# <base>.synthetic build against the extracted phase-1 synthetic sources;
-# all others build against real std.
+# <base>.synthetic build against the extracted synthetic sources; all
+# others build against real std.
 build_gc() {
     local go="$1" gcbin="$2" base="${1%.go}"
     if [ -f "$base.synthetic" ]; then
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
@@ -136,14 +165,32 @@ run_one() { # $1 = go file, $2 = gmp
     if [ "$gc_exit" != "$gr_exit" ]; then
         ok=0; echo "FAIL $base (gmp=$gmp): exit gc=$gc_exit graalgo=$gr_exit"
     fi
-    if [ -f "$base.panic" ]; then
-        local gr_first
+    # Stderr is compared against the LIVE gc leg — never a hand-written
+    # anchor alone. Panic programs (non-zero gc exit): graalgo's first
+    # filtered stderr line must equal gc's live first line, so a toolchain
+    # message change moves both legs together instead of silently pinning
+    # stale anchor text. All other programs: the full filtered stderr must
+    # match, so stderr divergences in "passing" programs stay visible.
+    if [ "$gc_exit" != 0 ]; then
+        local gc_first gr_first
+        gc_first="$(filter_stderr < "$TMP/gc.err" | head -1)"
         gr_first="$(filter_stderr < "$TMP/gr.err" | head -1)"
-        local want
-        want="$(cat "$base.panic")"
-        if [ "$gr_first" != "$want" ]; then
-            ok=0; echo "FAIL $base (gmp=$gmp): stderr first line: got [$gr_first] want [$want]"
+        if [ "$gr_first" != "$gc_first" ]; then
+            ok=0; echo "FAIL $base (gmp=$gmp): stderr first line differs from live gc: got [$gr_first] gc [$gc_first]"
         fi
+        # A .panic anchor additionally pins gc's own message: a toolchain
+        # message change fails loudly here instead of leaving stale text.
+        if [ -f "$base.panic" ]; then
+            local want
+            want="$(cat "$base.panic")"
+            if [ "$gc_first" != "$want" ]; then
+                ok=0; echo "FAIL $base (gmp=$gmp): gc stderr first line drifted from .panic anchor: gc [$gc_first] anchor [$want] (toolchain message changed?)"
+            fi
+        fi
+    elif [ -f "$base.panic" ]; then
+        ok=0; echo "FAIL $base (gmp=$gmp): .panic anchor present but gc exits 0 (stale anchor?)"
+    elif ! cmp -s <(filter_stderr < "$TMP/gc.err") <(filter_stderr < "$TMP/gr.err"); then
+        ok=0; echo "FAIL $base (gmp=$gmp): stderr differs from live gc"
     fi
     if [ "$ok" = 1 ]; then
         pass=$((pass+1)); # echo "ok $base (gmp=$gmp)"
