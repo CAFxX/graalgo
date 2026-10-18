@@ -162,6 +162,30 @@ def check_no_bridges(diff):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
 
+    # 3b. Stub messages carried in struct fields. The methodCall panicMsg
+    # mechanism (internal/frontend/export.go) carries its stub message in a
+    # struct field and never routes it through a panic call — check #3 is
+    # blind to it, so a newly added panicMsg stub would pass the gate
+    # silently. Fail loud on any added line assigning a *Msg/*Message field
+    # whose value carries a stub keyword; a human adjudicates whether an
+    # added message is a legitimate invariant.
+    stub_kw = r"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd)"
+    stub_msg_res = [
+        # panicMsg specifically: the struct-literal field form and the plain
+        # assignment form.
+        (rf'panicMsg\s*[:=]\s*"[^"]*{stub_kw}', "PANICMSG STUB"),
+        # General shape: any other field named *Msg/*Message whose value
+        # carries a stub keyword.
+        (rf'[A-Za-z_]\w*(?:Msg|Message)\s*:\s*"[^"]*{stub_kw}', "STUB MESSAGE FIELD"),
+    ]
+    for fname, line in added_lines:
+        if not fname or not fname.endswith(".go"):
+            continue
+        for pat, label in stub_msg_res:
+            if re.search(pat, line, re.I):
+                errors.append(f"{label} in {fname}: {line.strip()[:80]}")
+                break
+
     # 4. New wire node kinds for stdlib
     for fname, line in added_lines:
         if not fname or "export.go" not in fname:
