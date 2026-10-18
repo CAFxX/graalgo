@@ -72,7 +72,7 @@
     },
     {
       "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
+      "reason": "M10 F-1 (scheduler lost partial sums 32/34 vs 36 via Range*Node shared iteration state) FIXED in ecb7f97c, pinned by RangeConcurrentRegressionTest. Still excluded: program fails to BUILD - unlisted interface multi-result call in N-target assignment (synthetic __ss_ReadRune: r,size,err = rs.ReadRune()) -> backend 'assign.fields: lhs/rhs length mismatch'. Root cause = RV-P0-02, fixed by fix-p0-tar-stubs lane (dcd491cf+a3187e8e on branch wt/graalgo-independent-codebase-review/fix-p0-tar-stubs; independent review CLEAN; integration blocked on red-CI gate). Retest trigger: remove this exclusion after that branch integrates - 14_goroutines_sum must then build and print 36 deterministically."
     },
     {
       "program": "17_generics",
