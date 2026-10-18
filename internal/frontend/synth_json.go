@@ -1197,7 +1197,7 @@ func __rawMessageMarshalJSON(m RawMessage) rawMessageMarshalJSONPair {
 // m needs store-through-pointer (*m = ...), which frontend/v1 cannot
 // emit (WS D). Re-test when WS D lands.
 func (m *RawMessage) UnmarshalJSON(data []byte) error {
-	panic("json.RawMessage.UnmarshalJSON: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
+	panic("json.RawMessage.UnmarshalJSON: not in M7 scope (needs store-through-pointer)")
 }
 
 // Compact is omitted in wave 1 (needs *bytes.Buffer, inexpressible);
@@ -1953,7 +1953,7 @@ func (p *jsonParser) parseLiteralRest(full, rest string) jsonValuePair {
 // Unmarshal has no reachable use in M7 scope. Re-test when WS D lands
 // (store-through-pointer + pointer dereference).
 func Unmarshal(data []byte, v any) error {
-	panic("json.Unmarshal: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
+	panic("json.Unmarshal: not in M7 scope (needs store-through-pointer)")
 }
 
 // Marshal returns the JSON encoding of v. v must be nil, bool, string,
@@ -2130,7 +2130,7 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		// implementing Marshaler needs a 2-result MarshalJSON method,
 		// which v1 cannot emit (WS D). RawMessage is handled in its
 		// own case above.
-		panic("json.Marshaler: not in M7 scope (needs 2-result methods; re-test when WS D lands)")
+		panic("json.Marshaler: not in M7 scope (needs 2-result methods)")
 	case complex64:
 		return &UnsupportedTypeError{Type: nil} // reflect.TypeOf not callable cross-package; see above
 	case complex128:
@@ -2412,7 +2412,7 @@ func (dec *Decoder) UseNumber() {
 // 2-result Read method), so Decode has no reachable use in M7 scope.
 // Re-test when WS D lands.
 func (dec *Decoder) Decode(v any) error {
-	panic("json.Decoder.Decode: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
+	panic("json.Decoder.Decode: not in M7 scope (needs store-through-pointer)")
 }
 
 // Token returns the next JSON token in the input stream.
@@ -2575,7 +2575,7 @@ func (dec *Decoder) InputOffset() int64 {
 // reads through the 2-result Read method plus a consumption cursor —
 // which v1 cannot emit (WS D). Re-test when WS D lands.
 func (dec *Decoder) Buffered() jsonReader {
-	panic("json.Decoder.Buffered: not in M7 scope (needs streaming decode; re-test when WS D lands)")
+	panic("json.Decoder.Buffered: not in M7 scope (needs streaming decode)")
 }
 
 // jsonReadAllPair is the single-result form of jsonReadAll (WS D:
@@ -2592,7 +2592,7 @@ type jsonReadAllPair struct {
 // (WS D); moreover no jsonReader implementation is constructible from
 // v1 user code. Re-test when WS D lands.
 func jsonReadAll(r jsonReader) jsonReadAllPair {
-	panic("json.jsonReadAll: not in M7 scope (needs 2-result interface methods; re-test when WS D lands)")
+	panic("json.jsonReadAll: not in M7 scope (needs 2-result interface methods)")
 }
 
 // Encoder writes JSON values to an output stream.
@@ -2630,7 +2630,7 @@ func (enc *Encoder) SetIndent(prefix, indent string) {
 // is constructible from v1 user code (NewEncoder needs a user-defined
 // 2-result Write method). Re-test when WS D lands.
 func (enc *Encoder) Encode(v any) error {
-	panic("json.Encoder.Encode: not in M7 scope (needs 2-result interface methods; re-test when WS D lands)")
+	panic("json.Encoder.Encode: not in M7 scope (needs 2-result interface methods)")
 }
 
 // Valid reports whether data is a valid JSON encoding.
@@ -2653,18 +2653,18 @@ func Valid(data []byte) bool {
 // (WS D), so Indent has no reachable use in M7 scope. Re-test when WS D
 // lands.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
-	panic("json.Indent: not in M7 scope (needs address-of variable; re-test when WS D lands)")
+	panic("json.Indent: not in M7 scope (needs address-of variable)")
 }
 
 // P3-driver-harden (jsonlib lane): Compact and HTMLEscape (gc 1.27.1
 // exact signatures). Third-party json implementations forward to them;
 // fail-fast bodies like Indent above.
 func Compact(dst *bytes.Buffer, src []byte) error {
-	panic("json.Compact: not in M7 scope (re-test when WS D lands)")
+	panic("json.Compact: not in M7 scope")
 }
 
 func HTMLEscape(dst *bytes.Buffer, src []byte) {
-	panic("json.HTMLEscape: not in M7 scope (re-test when WS D lands)")
+	panic("json.HTMLEscape: not in M7 scope")
 }
 
 // HTMLEscape is omitted in wave 1 (needs *bytes.Buffer, inexpressible);
