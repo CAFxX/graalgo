@@ -212,6 +212,20 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         // P3-M8 (wave 2, reflect): the "reflectop" wire node.
         factory.registerExprKind("reflectop",
                 (node, ctx) -> graalgo.p3reflect.ReflectOpNode.build(node, ctx, factory));
+        // real-reflect (Phase 1): the "abifuncpc" wire node for the
+        // internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsics
+        // (opaque stable func ids).
+        factory.registerExprKind("abifuncpc",
+                (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
+        // fix-redmaster-buildok (r5): the "abitypeof" wire node for the
+        // internal/abi.TypeOf intrinsic (materialized *abi.Type).
+        factory.registerExprKind("abitypeof",
+                (node, ctx) -> graalgo.p3abi.AbiTypeOfNode.build(node, factory, ctx));
+        // fix-redmaster-unpackeface (RC-4a): the "reflectunpack" wire node
+        // for the reflect.unpackEface intrinsic (direct GoInterface to
+        // reflect.Value construction, bypassing unsafe reinterpretation).
+        factory.registerExprKind("reflectunpack",
+                (node, ctx) -> graalgo.p3reflect.ReflectUnpackEfaceNode.build(node, factory, ctx));
         // P2-M1 (WS A): the go statement.
         factory.registerStmtKind("gostmt",
                 (node, ctx) -> GoStatementNode.build(node, ctx, factory));
