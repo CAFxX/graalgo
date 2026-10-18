@@ -410,6 +410,15 @@ func runHostPort(pass *Pass) []Diagnostic {
 			if !pass.isPkgFunc(call, "net", "Dial") && !pass.isPkgFunc(call, "net", "DialTimeout") {
 				return true
 			}
+			// Unix-domain sockets have no port: net.Dial("unix", "/tmp/sock")
+			// is correct, and the net.JoinHostPort advice would be wrong
+			// for it. Skip all address checks for unix networks.
+			if tv, ok := pass.Info.Types[call.Args[0]]; ok && tv.Value != nil {
+				switch constantString(tv.Value) {
+				case "unix", "unixpacket":
+					return true
+				}
+			}
 			addr := call.Args[1]
 			// Check for string concatenation: "host" + ":" + port
 			if be, ok := addr.(*ast.BinaryExpr); ok && be.Op == token.ADD {

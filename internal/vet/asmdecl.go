@@ -135,11 +135,18 @@ func runAsmDecl(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 
 	// Gather declarations. knownFunc[name][arch] is the func description.
+	// skippedAsm names decls with no measurable assembly layout (generics):
+	// the declaration exists, so a matching TEXT is not "missing".
 	knownFunc := make(map[string]map[string]*asmFunc)
+	skippedAsm := make(map[string]bool)
 	for _, f := range pass.Files {
 		for _, decl := range f.Decls {
 			if decl, ok := decl.(*ast.FuncDecl); ok && decl.Body == nil {
-				knownFunc[decl.Name.Name] = asmParseDecl(pass, decl)
+				m, skipped := asmParseDecl(pass, decl)
+				knownFunc[decl.Name.Name] = m
+				if skipped {
+					skippedAsm[decl.Name.Name] = true
+				}
 			}
 		}
 	}
@@ -273,7 +280,7 @@ Files:
 				}
 				argSize, _ = strconv.Atoi(m[5])
 				noframe = strings.Contains(flag, "NOFRAME")
-				if fn == nil && !strings.Contains(fnName, "<>") && !noframe {
+				if fn == nil && !skippedAsm[fnName] && !strings.Contains(fnName, "<>") && !noframe {
 					badf("function %s missing Go declaration", fnName)
 				}
 				wroteSP = false
@@ -410,8 +417,54 @@ func asmKindForType(t types.Type, size int) asmKind {
 		return asmArray
 	case *types.Slice:
 		return asmSlice
+	case *types.Union:
+		// A union constraint has no single assembly representation;
+		// treat it as an opaque blob of its declared size rather than
+		// crashing the tool. (A *types.TypeParam never reaches here:
+		// Underlying normalizes it to its constraint interface, handled
+		// above.)
+		return asmKind(size)
 	}
 	panic("unreachable")
+}
+
+// asmHasLayout reports whether t has a concrete, measurable assembly layout.
+// Type parameters and union constraints from generic code have neither a
+// defined size (go/types panics measuring them) nor a single assembly
+// representation, so assembly validation skips anything whose value layout
+// contains them.
+func asmHasLayout(t types.Type) bool {
+	return asmHasLayoutSeen(t, make(map[types.Type]bool))
+}
+
+func asmHasLayoutSeen(t types.Type, seen map[types.Type]bool) bool {
+	if seen[t] {
+		return true
+	}
+	seen[t] = true
+	switch t := t.(type) {
+	case *types.TypeParam, *types.Union:
+		return false
+	case *types.Pointer, *types.Slice, *types.Map, *types.Chan,
+		*types.Signature, *types.Interface:
+		// Reference-like or fixed-size: measuring never touches the
+		// element type.
+		return true
+	case *types.Array:
+		return asmHasLayoutSeen(t.Elem(), seen)
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if !asmHasLayoutSeen(t.Field(i).Type(), seen) {
+				return false
+			}
+		}
+		return true
+	case *types.Named:
+		return asmHasLayoutSeen(t.Underlying(), seen)
+	default:
+		// Basic and any other core types are always measurable.
+		return true
+	}
 }
 
 // component is an assembly-addressable component of a composite type,
@@ -426,6 +479,12 @@ type component struct {
 }
 
 func componentsOfType(arch *asmArch, t types.Type) []component {
+	// Generic code can surface *types.TypeParam and *types.Union, which
+	// have neither a defined size nor a single assembly representation
+	// (go/types panics measuring them). Skip them instead of crashing.
+	if !asmHasLayout(t) {
+		return nil
+	}
 	return appendComponentsRecursive(arch, t, nil, "", 0)
 }
 
@@ -487,23 +546,53 @@ func appendComponentsRecursive(arch *asmArch, t types.Type, cc []component, suff
 	return cc
 }
 
+// asmFieldType resolves the type of a parameter/result field, or nil if
+// type information is unavailable.
+func asmFieldType(pass *Pass, fld *ast.Field) types.Type {
+	t := pass.Info.Types[fld.Type].Type
+	if t == nil {
+		if ell, ok := fld.Type.(*ast.Ellipsis); ok {
+			t = types.NewSlice(pass.Info.Types[ell.Elt].Type)
+		}
+	}
+	return t
+}
+
 // asmParseDecl parses a function decl for expected assembly variables.
-func asmParseDecl(pass *Pass, decl *ast.FuncDecl) map[string]*asmFunc {
+// It reports whether the decl was skipped: a generic function (type
+// parameters or union constraints in its signature) has no single assembly
+// layout, so there is nothing to validate.
+func asmParseDecl(pass *Pass, decl *ast.FuncDecl) (map[string]*asmFunc, bool) {
 	var arch *asmArch
 	var fn *asmFunc
 	var offset int
+
+	// A generic function (type parameters or union constraints in its
+	// signature) has no single assembly layout: sizes are instantiation-
+	// specific, so the declared offsets are meaningless — and go/types
+	// panics measuring type parameters. Skip validation for it rather
+	// than crashing the tool.
+	var fieldLists [][]*ast.Field
+	if decl.Type.Params != nil {
+		fieldLists = append(fieldLists, decl.Type.Params.List)
+	}
+	if decl.Type.Results != nil {
+		fieldLists = append(fieldLists, decl.Type.Results.List)
+	}
+	for _, list := range fieldLists {
+		for _, fld := range list {
+			if t := asmFieldType(pass, fld); t != nil && !asmHasLayout(t) {
+				return make(map[string]*asmFunc), true
+			}
+		}
+	}
 
 	// addParams adds asmVars for each of the parameters in list.
 	// isret indicates whether the list holds results rather than params.
 	addParams := func(list []*ast.Field, isret bool) {
 		argnum := 0
 		for _, fld := range list {
-			t := pass.Info.Types[fld.Type].Type
-			if t == nil {
-				if ell, ok := fld.Type.(*ast.Ellipsis); ok {
-					t = types.NewSlice(pass.Info.Types[ell.Elt].Type)
-				}
-			}
+			t := asmFieldType(pass, fld)
 			if t == nil {
 				continue
 			}
@@ -566,7 +655,7 @@ func asmParseDecl(pass *Pass, decl *ast.FuncDecl) map[string]*asmFunc {
 		fn.size = offset
 		m[arch.name] = fn
 	}
-	return m
+	return m, false
 }
 
 // asmCheckVar checks a single variable reference against its declaration.

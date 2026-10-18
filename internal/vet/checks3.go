@@ -316,6 +316,11 @@ func runAppends(pass *Pass) []Diagnostic {
 						return true
 					}
 				}
+				// append() with no args is a type error, but a static
+				// analyzer must never crash on malformed input.
+				if len(call.Args) == 0 {
+					return true
+				}
 				tv, ok := pass.Info.Types[call]
 				if ok && tv.Type != nil {
 					out = append(out, Diagnostic{
@@ -367,8 +372,16 @@ func runSlog(pass *Pass) []Diagnostic {
 			if strings.HasSuffix(sel.Sel.Name, "Context") {
 				start = 2 // skip ctx, msg
 			}
+			if sel.Sel.Name == "Log" {
+				start = 3 // skip ctx, level, msg
+			}
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
+			}
+			// A malformed call (e.g. slog.Info() with no args) must not
+			// crash the analyzer.
+			if len(args) < start {
+				return true
 			}
 			rest := args[start:]
 			if len(rest)%2 != 0 {

@@ -20,14 +20,24 @@ func init() {
 
 // directive checks that //go: directives are known and well-formed.
 func runDirective(pass *Pass) []Diagnostic {
-	// Known //go: directives.
+	// Known //go: directives. Audited against the pragmas actually used in
+	// the Go toolchain source (go1.27.1): systemstack, the nowritebarrier
+	// family, registerparams, nocheckptr, uintptrkeepalive, the wasm and
+	// notinheap pragmas, linknamestd, cgo_ldflag, and go:fix all appear in
+	// real (non-test) sources, most of them in the runtime that graalgo
+	// compiles.
 	known := map[string]bool{
 		"generate": true, "build": true,
 		"noescape": true, "noinline": true, "norace": true, "nosplit": true,
 		"linkname": true, "embed": true,
 		"debug": true, "aligncheck": true,
-		"uintptrescapes": true,
-		"dyld":           true, "cgo_import_dynamic": true, "cgo_import_static": true,
+		"uintptrescapes": true, "systemstack": true,
+		"notinfile":      true,
+		"nowritebarrier": true, "nowritebarrierrec": true, "yeswritebarrierrec": true,
+		"registerparams": true, "nocheckptr": true, "uintptrkeepalive": true,
+		"wasmimport": true, "wasmexport": true, "notinheap": true,
+		"linknamestd": true, "cgo_ldflag": true, "fix": true,
+		"dyld": true, "cgo_import_dynamic": true, "cgo_import_static": true,
 		"cgo_export_dynamic": true, "cgo_export_static": true,
 		"cgo_unsafe_args": true, "cgo_dynamic_linker": true,
 	}

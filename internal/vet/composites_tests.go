@@ -88,6 +88,9 @@ func runTests(pass *Pass) []Diagnostic {
 			if len(name) < 4 || name[:4] != "Test" {
 				continue
 			}
+			if name == "TestMain" {
+				continue // TestMain is checked separately below.
+			}
 			// TestXxx must take *testing.T.
 			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
 				out = append(out, Diagnostic{
@@ -105,7 +108,7 @@ func runTests(pass *Pass) []Diagnostic {
 				})
 			}
 		}
-		// Check TestMain signature.
+		// Check TestMain signature: func TestMain(m *testing.M).
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Name.Name != "TestMain" {
@@ -115,6 +118,18 @@ func runTests(pass *Pass) []Diagnostic {
 				out = append(out, Diagnostic{
 					pass.position(fn),
 					"TestMain must take one *testing.M parameter",
+				})
+				continue
+			}
+			param := fn.Type.Params.List[0]
+			tv, ok := pass.Info.Types[param.Type]
+			if !ok || tv.Type == nil {
+				continue // best-effort type info: don't guess
+			}
+			if tv.Type.String() != "*testing.M" {
+				out = append(out, Diagnostic{
+					pass.position(fn),
+					"TestMain must take *testing.M",
 				})
 			}
 		}
