@@ -10,7 +10,7 @@
  package main
  
  // syntheticBufioSource is the P3-M9 synthetic `bufio` package.
-@@ -38,46 +39,55 @@
+@@ -38,16 +39,25 @@
  	__bufioMaxRune   = '\U0010FFFF'
  )
  
@@ -25,7 +25,9 @@
 +}
 +
 +func __bufioDecodeRune(p []byte) __bufioDecodeRunePair {
- 	// Simplified from unicode/utf8.DecodeRune (algorithmic, no tables).
+ 	// Port of unicode/utf8.DecodeRune (algorithmic, no tables): rejects
+ 	// overlong encodings, surrogates (U+D800-U+DFFF), and code points
+ 	// above U+10FFFF, exactly as gc does.
  	if len(p) == 0 {
 -		return __bufioRuneError, 0
 +		return __bufioDecodeRunePair{r: __bufioRuneError, size: 0}
@@ -35,52 +37,63 @@
 -		return rune(c), 1
 +		return __bufioDecodeRunePair{r: rune(c), size: 1}
  	}
- 	// Multi-byte sequences (simplified; full validation as in utf8).
- 	if c < 0xC2 {
+ 	// Second-byte accept range for the lead byte (mirrors gc's
+ 	// acceptRanges: E0 rejects overlongs, ED rejects surrogates,
+@@ -58,7 +68,7 @@
+ 	case c < 0xC2:
+ 		// Stray continuation bytes (0x80-0xBF) and overlong
+ 		// leads (0xC0-0xC1) are invalid.
+-		return __bufioRuneError, 1
++		return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
+ 	case c < 0xE0:
+ 		n = 2
+ 	case c < 0xF0:
+@@ -78,34 +88,34 @@
+ 			hi = 0x8F
+ 		}
+ 	default:
 -		return __bufioRuneError, 1
 +		return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
  	}
- 	if c < 0xE0 {
- 		if len(p) < 2 || p[1] < 0x80 || p[1] >= 0xC0 {
--			return __bufioRuneError, 1
-+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
- 		}
--		return rune(c&0x1F)<<6 | rune(p[1]&0x3F), 2
-+		return __bufioDecodeRunePair{r: rune(c&0x1F)<<6 | rune(p[1]&0x3F), size: 2}
+ 	if len(p) < n {
+-		return __bufioRuneError, 1
++		return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
  	}
- 	if c < 0xF0 {
- 		if len(p) < 3 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 {
--			return __bufioRuneError, 1
-+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
- 		}
- 		r := rune(c&0x0F)<<12 | rune(p[1]&0x3F)<<6 | rune(p[2]&0x3F)
- 		if r < 0x800 {
--			return __bufioRuneError, 1
-+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
- 		}
--		return r, 3
-+		return __bufioDecodeRunePair{r: r, size: 3}
+ 	b1 := p[1]
+ 	if b1 < lo || b1 > hi {
+-		return __bufioRuneError, 1
++		return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
  	}
- 	if c < 0xF5 {
- 		if len(p) < 4 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 || p[3] < 0x80 || p[3] >= 0xC0 {
+ 	switch n {
+ 	case 2:
+-		return rune(c&0x1F)<<6 | rune(b1&0x3F), 2
++		return __bufioDecodeRunePair{r: rune(c&0x1F)<<6 | rune(b1&0x3F), size: 2}
+ 	case 3:
+ 		b2 := p[2]
+ 		if b2 < 0x80 || b2 > 0xBF {
 -			return __bufioRuneError, 1
 +			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
  		}
- 		r := rune(c&0x07)<<18 | rune(p[1]&0x3F)<<12 | rune(p[2]&0x3F)<<6 | rune(p[3]&0x3F)
- 		if r < 0x10000 || r > __bufioMaxRune {
+-		return rune(c&0x0F)<<12 | rune(b1&0x3F)<<6 | rune(b2&0x3F), 3
++		return __bufioDecodeRunePair{r: rune(c&0x0F)<<12 | rune(b1&0x3F)<<6 | rune(b2&0x3F), size: 3}
+ 	default:
+ 		b2 := p[2]
+ 		if b2 < 0x80 || b2 > 0xBF {
 -			return __bufioRuneError, 1
 +			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
  		}
--		return r, 4
-+		return __bufioDecodeRunePair{r: r, size: 4}
+ 		b3 := p[3]
+ 		if b3 < 0x80 || b3 > 0xBF {
+-			return __bufioRuneError, 1
++			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
+ 		}
+-		return rune(c&0x07)<<18 | rune(b1&0x3F)<<12 | rune(b2&0x3F)<<6 | rune(b3&0x3F), 4
++		return __bufioDecodeRunePair{r: rune(c&0x07)<<18 | rune(b1&0x3F)<<12 | rune(b2&0x3F)<<6 | rune(b3&0x3F), size: 4}
  	}
--	return __bufioRuneError, 1
-+	return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
  }
  
- func __bufioEncodeRune(p []byte, r rune) int {
-@@ -128,20 +138,7 @@
- 	return len(p) >= n
+@@ -186,20 +196,7 @@
+ 	return false
  }
  
 -func __bufioRuneCountInString(s string) int {
@@ -101,7 +114,7 @@
  
  // Copyright 2009 The Go Authors. All rights reserved.
  // Use of this source code is governed by a BSD-style
-@@ -191,7 +188,12 @@
+@@ -249,7 +246,12 @@
  		return b
  	}
  	r := new(Reader)
@@ -115,7 +128,7 @@
  	return r
  }
  
-@@ -222,12 +224,15 @@
+@@ -280,12 +282,15 @@
  }
  
  func (b *Reader) reset(buf []byte, r io.Reader) {
@@ -137,7 +150,7 @@
  }
  
  var errNegativeRead = errors.New("bufio: reader returned negative count from Read")
-@@ -365,7 +370,10 @@
+@@ -423,7 +428,10 @@
  		if len(p) >= len(b.buf) {
  			// Large read, empty buffer.
  			// Read directly into p to avoid copy.
@@ -149,7 +162,7 @@
  			if n < 0 {
  				panic(errNegativeRead)
  			}
-@@ -379,7 +387,10 @@
+@@ -437,7 +445,10 @@
  		// Do not use b.fill, which will loop.
  		b.r = 0
  		b.w = 0
@@ -161,7 +174,7 @@
  		if n < 0 {
  			panic(errNegativeRead)
  		}
-@@ -440,20 +451,7 @@
+@@ -498,20 +509,7 @@
  // ReadRune reads a single UTF-8 encoded Unicode character and returns the
  // rune and its size in bytes. If the encoded rune is invalid, it consumes one byte
  // and returns unicode.ReplacementChar (U+FFFD) with a size of 1.
@@ -183,7 +196,7 @@
  
  // UnreadRune unreads the last rune. If the most recent method called on
  // the [Reader] was not a [Reader.ReadRune], [Reader.UnreadRune] returns an error. (In this
-@@ -635,14 +633,15 @@
+@@ -693,14 +691,15 @@
  func (b *Reader) ReadString(delim byte) (string, error) {
  	full, frag, n, err := b.collectFragments(delim)
  	// Allocate new buffer to hold the full pieces and the fragment.
@@ -204,7 +217,7 @@
  }
  
  // WriteTo implements io.WriterTo.
-@@ -816,7 +815,10 @@
+@@ -874,7 +873,10 @@
  		if b.Buffered() == 0 {
  			// Large write, empty buffer.
  			// Write directly from p to avoid copy.
@@ -216,7 +229,7 @@
  		} else {
  			n = copy(b.buf[b.n:], p)
  			b.n += n
-@@ -896,7 +898,10 @@
+@@ -954,7 +956,10 @@
  			// Large write, empty buffer, and the underlying writer supports
  			// WriteString: forward the write to the underlying StringWriter.
  			// This avoids an extra copy.
@@ -228,7 +241,7 @@
  		} else {
  			n = copy(b.buf[b.n:], s)
  			b.n += n
-@@ -1062,7 +1067,8 @@
+@@ -1120,7 +1125,8 @@
  func NewScanner(r io.Reader) *Scanner {
  	return &Scanner{
  		r:            r,
@@ -238,7 +251,7 @@
  		maxTokenSize: MaxScanTokenSize,
  	}
  }
-@@ -1120,7 +1126,15 @@
+@@ -1178,7 +1184,15 @@
  		// If we've run out of data but have an error, give the split function
  		// a chance to recover any remaining, possibly empty token.
  		if s.end > s.start || s.err != nil {
@@ -255,7 +268,7 @@
  			if err != nil {
  				if err == ErrFinalToken {
  					s.token = token
-@@ -1178,7 +1192,10 @@
+@@ -1236,7 +1250,10 @@
  			if newSize == 0 {
  				newSize = startBufSize
  			}
@@ -267,7 +280,7 @@
  			newBuf := make([]byte, newSize)
  			copy(newBuf, s.buf[s.start:s.end])
  			s.buf = newBuf
-@@ -1293,7 +1310,8 @@
+@@ -1351,7 +1368,8 @@
  	}
  
  	// Fast path 2: Correct UTF-8 decode without error.
@@ -277,7 +290,7 @@
  	if width > 1 {
  		// It's a valid encoding. Width cannot be one for a correctly encoded
  		// non-ASCII rune.
-@@ -1378,7 +1396,8 @@
+@@ -1436,7 +1454,8 @@
  	start := 0
  	for width := 0; start < len(data); start += width {
  		var r rune
@@ -287,7 +300,7 @@
  		if !isSpace(r) {
  			break
  		}
-@@ -1386,7 +1405,8 @@
+@@ -1444,7 +1463,8 @@
  	// Scan until space, marking end of word.
  	for width, i := 0, start; i < len(data); i += width {
  		var r rune
@@ -297,7 +310,7 @@
  		if isSpace(r) {
  			return i + width, data[start:i], nil
  		}
-@@ -1420,7 +1440,10 @@
+@@ -1478,7 +1498,10 @@
  		if len(p) >= len(b.buf) {
  			// Large read, empty buffer.
  			// Read directly into p to avoid copy.
@@ -309,7 +322,7 @@
  			if n < 0 {
  				panic(errNegativeRead)
  			}
-@@ -1434,7 +1457,10 @@
+@@ -1492,7 +1515,10 @@
  		// Do not use b.fill, which will loop.
  		b.r = 0
  		b.w = 0
@@ -321,7 +334,7 @@
  		if n < 0 {
  			panic(errNegativeRead)
  		}
-@@ -1622,14 +1648,15 @@
+@@ -1680,14 +1706,15 @@
  	__cf := __bufioReadercollectFragments(b, delim)
  	full, frag, n, err := __cf.fullBuffers, __cf.finalFragment, __cf.totalLen, __cf.err
  	// Allocate new buffer to hold the full pieces and the fragment.
@@ -342,7 +355,7 @@
  }
  
  type __bufioWriterWritePair struct {
-@@ -1644,7 +1671,10 @@
+@@ -1702,7 +1729,10 @@
  		if b.Buffered() == 0 {
  			// Large write, empty buffer.
  			// Write directly from p to avoid copy.
@@ -354,7 +367,7 @@
  		} else {
  			n = copy(b.buf[b.n:], p)
  			b.n += n
-@@ -1682,7 +1712,10 @@
+@@ -1740,7 +1770,10 @@
  			// Large write, empty buffer, and the underlying writer supports
  			// WriteString: forward the write to the underlying StringWriter.
  			// This avoids an extra copy.
@@ -366,7 +379,7 @@
  		} else {
  			n = copy(b.buf[b.n:], s)
  			b.n += n
-@@ -1735,3 +1768,28 @@
+@@ -1793,3 +1826,28 @@
  	return __bufioReadercollectFragmentsPair{fullBuffers: fullBuffers, finalFragment: frag, totalLen: totalLen, err: err}
  }
  

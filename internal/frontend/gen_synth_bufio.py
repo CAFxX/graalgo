@@ -83,7 +83,9 @@ const (
 )
 
 func __bufioDecodeRune(p []byte) (r rune, size int) {
-	// Simplified from unicode/utf8.DecodeRune (algorithmic, no tables).
+	// Port of unicode/utf8.DecodeRune (algorithmic, no tables): rejects
+	// overlong encodings, surrogates (U+D800-U+DFFF), and code points
+	// above U+10FFFF, exactly as gc does.
 	if len(p) == 0 {
 		return __bufioRuneError, 0
 	}
@@ -91,37 +93,64 @@ func __bufioDecodeRune(p []byte) (r rune, size int) {
 	if c < __bufioRuneSelf {
 		return rune(c), 1
 	}
-	// Multi-byte sequences (simplified; full validation as in utf8).
-	if c < 0xC2 {
+	// Second-byte accept range for the lead byte (mirrors gc's
+	// acceptRanges: E0 rejects overlongs, ED rejects surrogates,
+	// F0 rejects overlongs, F4 rejects > MaxRune).
+	lo, hi := byte(0x80), byte(0xBF)
+	var n int
+	switch {
+	case c < 0xC2:
+		// Stray continuation bytes (0x80-0xBF) and overlong
+		// leads (0xC0-0xC1) are invalid.
+		return __bufioRuneError, 1
+	case c < 0xE0:
+		n = 2
+	case c < 0xF0:
+		n = 3
+		switch c {
+		case 0xE0:
+			lo = 0xA0
+		case 0xED:
+			hi = 0x9F
+		}
+	case c < 0xF5:
+		n = 4
+		switch c {
+		case 0xF0:
+			lo = 0x90
+		case 0xF4:
+			hi = 0x8F
+		}
+	default:
 		return __bufioRuneError, 1
 	}
-	if c < 0xE0 {
-		if len(p) < 2 || p[1] < 0x80 || p[1] >= 0xC0 {
-			return __bufioRuneError, 1
-		}
-		return rune(c&0x1F)<<6 | rune(p[1]&0x3F), 2
+	if len(p) < n {
+		return __bufioRuneError, 1
 	}
-	if c < 0xF0 {
-		if len(p) < 3 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 {
-			return __bufioRuneError, 1
-		}
-		r := rune(c&0x0F)<<12 | rune(p[1]&0x3F)<<6 | rune(p[2]&0x3F)
-		if r < 0x800 {
-			return __bufioRuneError, 1
-		}
-		return r, 3
+	b1 := p[1]
+	if b1 < lo || b1 > hi {
+		return __bufioRuneError, 1
 	}
-	if c < 0xF5 {
-		if len(p) < 4 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 || p[3] < 0x80 || p[3] >= 0xC0 {
+	switch n {
+	case 2:
+		return rune(c&0x1F)<<6 | rune(b1&0x3F), 2
+	case 3:
+		b2 := p[2]
+		if b2 < 0x80 || b2 > 0xBF {
 			return __bufioRuneError, 1
 		}
-		r := rune(c&0x07)<<18 | rune(p[1]&0x3F)<<12 | rune(p[2]&0x3F)<<6 | rune(p[3]&0x3F)
-		if r < 0x10000 || r > __bufioMaxRune {
+		return rune(c&0x0F)<<12 | rune(b1&0x3F)<<6 | rune(b2&0x3F), 3
+	default:
+		b2 := p[2]
+		if b2 < 0x80 || b2 > 0xBF {
 			return __bufioRuneError, 1
 		}
-		return r, 4
+		b3 := p[3]
+		if b3 < 0x80 || b3 > 0xBF {
+			return __bufioRuneError, 1
+		}
+		return rune(c&0x07)<<18 | rune(b1&0x3F)<<12 | rune(b2&0x3F)<<6 | rune(b3&0x3F), 4
 	}
-	return __bufioRuneError, 1
 }
 
 func __bufioEncodeRune(p []byte, r rune) int {
@@ -152,7 +181,9 @@ func __bufioEncodeRune(p []byte, r rune) int {
 }
 
 func __bufioFullRune(p []byte) bool {
-	// Simplified from unicode/utf8.FullRune.
+	// Port of unicode/utf8.FullRune (algorithmic, no tables).
+	// An invalid encoding counts as full: it decodes as a width-1
+	// error rune.
 	if len(p) == 0 {
 		return false
 	}
@@ -160,16 +191,43 @@ func __bufioFullRune(p []byte) bool {
 	if c < __bufioRuneSelf {
 		return true
 	}
+	lo, hi := byte(0x80), byte(0xBF)
 	var n int
 	switch {
+	case c < 0xC2:
+		return true // invalid lead: width-1 error rune
 	case c < 0xE0:
 		n = 2
 	case c < 0xF0:
 		n = 3
-	default:
+		switch c {
+		case 0xE0:
+			lo = 0xA0
+		case 0xED:
+			hi = 0x9F
+		}
+	case c < 0xF5:
 		n = 4
+		switch c {
+		case 0xF0:
+			lo = 0x90
+		case 0xF4:
+			hi = 0x8F
+		}
+	default:
+		return true // invalid lead: width-1 error rune
 	}
-	return len(p) >= n
+	if len(p) >= n {
+		return true
+	}
+	// Short or invalid so far; invalid counts as full.
+	if len(p) > 1 && (p[1] < lo || p[1] > hi) {
+		return true
+	}
+	if len(p) > 2 && (p[2] < 0x80 || p[2] > 0xBF) {
+		return true
+	}
+	return false
 }
 
 func __bufioRuneCountInString(s string) int {
