@@ -14,9 +14,19 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
-// discoverTests returns the names of TestXxx functions in a _test.go file.
+// discoverTests returns the names of TestXxx functions in a _test.go file,
+// following go test's naming rule: the name is "Test" alone, or "Test"
+// followed by a non-lowercase letter, and the function takes exactly one
+// parameter.
+//
+// TestMain is never a test: it is the test binary's entry point. go test
+// runs it as main with a *testing.M; the synthesized driver has no
+// testing.M shim, so TestMain is excluded here and reported separately
+// by detectTestMain (runPackage warns).
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
@@ -30,7 +40,7 @@ func discoverTests(path string) ([]string, error) {
 			continue
 		}
 		name := fn.Name.Name
-		if !strings.HasPrefix(name, "Test") {
+		if !isTestName(name) {
 			continue
 		}
 		// Must take *testing.T (or be a simple TestXxx with one param).
@@ -40,6 +50,45 @@ func discoverTests(path string) ([]string, error) {
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// isTestName reports whether name is a go test function name: "Test"
+// alone, or "Test" followed by a non-lowercase letter (mirroring cmd/go's
+// isTest — "Test" is ok, "Testfoo" is not). TestMain is the test binary's
+// entry point, not a test, and is excluded.
+func isTestName(name string) bool {
+	if name == "TestMain" {
+		return false
+	}
+	if name == "Test" {
+		return true
+	}
+	if !strings.HasPrefix(name, "Test") {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(name[len("Test"):])
+	return !unicode.IsLower(r)
+}
+
+// detectTestMain reports whether path declares a TestMain function, the
+// test binary's entry point. The synthesized driver cannot honor TestMain
+// (no testing.M shim), so runPackage warns and runs the tests without it.
+func detectTestMain(path string) (bool, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return false, fmt.Errorf("parse: %w", err)
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil {
+			continue
+		}
+		if fn.Name.Name == "TestMain" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -55,6 +104,27 @@ const testShimTemplate = `
 // --- graalgo test shim (generated) ---
 const graalgoVerbose = GRAALGO_VERBOSE_PLACEHOLDER
 
+// graalgoPrintln writes a driver line to stdout. The builtin println
+// writes to stderr in graalgo (PrintNode/BuiltinPrint — gc parity for the
+// builtin), but go test writes its === RUN / --- PASS / --- FAIL lines to
+// stdout, which scripts parse — so the driver must not use the builtin.
+func graalgoPrintln(s string) {
+	os.Stdout.WriteString(s + "\n")
+}
+
+// graalgoFatalPanic and graalgoSkipPanic are the sentinel panic values for
+// t.Fatalf/t.Skipf. gc implements Fatalf via runtime.Goexit, which no
+// guest recover() can intercept; the synthesized driver cannot emulate
+// Goexit, so Fatalf/Skipf panic with these unexported sentinel types. The
+// per-test boundary recognizes them by TYPE — a guest panic can no longer
+// be misclassified by matching the old "graalgo test fatal/skip" message
+// prefixes (kept as a fallback for string panics). A guest defer/recover
+// that swallows one is a documented divergence from go test: in gc the
+// test function stops at Fatalf; here it continues. See
+// cmd/graalgo/README.md.
+type graalgoFatalPanic struct{ name string }
+type graalgoSkipPanic struct{ name string }
+
 type graalgoT struct {
 	name       string
 	depth      int
@@ -68,7 +138,7 @@ type graalgoT struct {
 // otherwise (flushed after the --- FAIL line, matching go test).
 func (t *graalgoT) logLine(s string) {
 	if graalgoVerbose {
-		println(s)
+		graalgoPrintln(s)
 	} else {
 		t.output = append(t.output, s)
 	}
@@ -95,13 +165,13 @@ func (t *graalgoT) graalgoError(fileline string, args ...interface{}) {
 func (t *graalgoT) graalgoFatalf(fileline, format string, args ...interface{}) {
 	t.failed = true
 	t.logLine("    " + fileline + ": " + sprintf(format, args...))
-	panic("graalgo test fatal: " + t.name)
+	panic(graalgoFatalPanic{t.name})
 }
 
 func (t *graalgoT) graalgoFatal(fileline string, args ...interface{}) {
 	t.failed = true
 	t.logLine("    " + fileline + ": " + joinArgs(args...))
-	panic("graalgo test fatal: " + t.name)
+	panic(graalgoFatalPanic{t.name})
 }
 
 func (t *graalgoT) graalgoLogf(fileline, format string, args ...interface{}) {
@@ -115,18 +185,18 @@ func (t *graalgoT) graalgoLog(fileline string, args ...interface{}) {
 func (t *graalgoT) graalgoSkip(fileline string, args ...interface{}) {
 	t.skipped = true
 	t.logLine("    " + fileline + ": " + joinArgs(args...))
-	panic("graalgo test skip: " + t.name)
+	panic(graalgoSkipPanic{t.name})
 }
 
 func (t *graalgoT) graalgoSkipf(fileline, format string, args ...interface{}) {
 	t.skipped = true
 	t.logLine("    " + fileline + ": " + sprintf(format, args...))
-	panic("graalgo test skip: " + t.name)
+	panic(graalgoSkipPanic{t.name})
 }
 
 func (t *graalgoT) graalgoSkipNow(fileline string) {
 	t.skipped = true
-	panic("graalgo test skip: " + t.name)
+	panic(graalgoSkipPanic{t.name})
 }
 
 func (t *graalgoT) Fail() {
@@ -151,7 +221,7 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
 	// === RUN lines are never indented, matching go test.
 	if graalgoVerbose {
-		println("=== RUN   " + sub.name)
+		graalgoPrintln("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
 	f(sub)
@@ -817,7 +887,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoPrintln",
+		"graalgoFatalPanic", "graalgoSkipPanic",
+		"joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -1391,20 +1463,34 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t{\n")
 			body.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", t))
 			if verbose {
-				body.WriteString(fmt.Sprintf("\t\tprintln(\"=== RUN   %s\")\n", t))
+				body.WriteString(fmt.Sprintf("\t\tgraalgoPrintln(\"=== RUN   %s\")\n", t))
 			}
 			body.WriteString("\t\tt0 := time.Now()\n")
 			body.WriteString("\t\tfunc() {\n")
 			body.WriteString("\t\t\tdefer func() {\n")
 			body.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
-			body.WriteString("\t\t\t\t\ts := toString(r)\n")
-			body.WriteString("\t\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
+			// The sentinel panic types are recognized by TYPE, not by
+			// message prefix: a guest panic can no longer be
+			// misclassified as fatal/skip. The string-prefix fallback
+			// keeps the old string panic values working (they are no
+			// longer generated, but may appear in hand-written
+			// drivers) — the boundary is strictly stronger than
+			// before, not weaker.
+			body.WriteString("\t\t\t\t\tswitch r.(type) {\n")
+			body.WriteString("\t\t\t\t\tcase graalgoSkipPanic:\n")
 			body.WriteString("\t\t\t\t\t\ttt.skipped = true\n")
-			body.WriteString("\t\t\t\t\t} else if len(s) >= 18 && s[:18] == \"graalgo test fatal\" {\n")
+			body.WriteString("\t\t\t\t\tcase graalgoFatalPanic:\n")
 			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t} else {\n")
-			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + s)\n")
+			body.WriteString("\t\t\t\t\tdefault:\n")
+			body.WriteString("\t\t\t\t\t\ts := toString(r)\n")
+			body.WriteString("\t\t\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
+			body.WriteString("\t\t\t\t\t\t\ttt.skipped = true\n")
+			body.WriteString("\t\t\t\t\t\t} else if len(s) >= 18 && s[:18] == \"graalgo test fatal\" {\n")
+			body.WriteString("\t\t\t\t\t\t\ttt.failed = true\n")
+			body.WriteString("\t\t\t\t\t\t} else {\n")
+			body.WriteString("\t\t\t\t\t\t\ttt.failed = true\n")
+			body.WriteString("\t\t\t\t\t\t\ttt.logLine(\"panic: \" + s)\n")
+			body.WriteString("\t\t\t\t\t\t}\n")
 			body.WriteString("\t\t\t\t\t}\n")
 			body.WriteString("\t\t\t\t}\n")
 			body.WriteString("\t\t\t}()\n")
@@ -1413,24 +1499,24 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			if verbose {
 				body.WriteString("\t\tif tt.skipped {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\tgraalgoPrintln(\"--- SKIP: %s \" + dur)\n", t))
 				body.WriteString("\t\t} else if tt.failed {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\tgraalgoPrintln(\"--- FAIL: %s \" + dur)\n", t))
 				body.WriteString("\t\t\tfailed++\n")
 				body.WriteString("\t\t} else {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\tgraalgoPrintln(\"--- PASS: %s \" + dur)\n", t))
 				body.WriteString("\t\t}\n")
 				body.WriteString("\t\tfor _, l := range tt.subresults {\n")
-				body.WriteString("\t\t\tprintln(l)\n")
+				body.WriteString("\t\t\tgraalgoPrintln(l)\n")
 				body.WriteString("\t\t}\n")
 			} else {
 				body.WriteString("\t\tif tt.failed {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\tgraalgoPrintln(\"--- FAIL: %s \" + dur)\n", t))
 				body.WriteString("\t\t\tfor _, l := range tt.output {\n")
-				body.WriteString("\t\t\t\tprintln(l)\n")
+				body.WriteString("\t\t\t\tgraalgoPrintln(l)\n")
 				body.WriteString("\t\t\t}\n")
 				body.WriteString("\t\t\tfor _, l := range tt.subresults {\n")
-				body.WriteString("\t\t\t\tprintln(l)\n")
+				body.WriteString("\t\t\t\tgraalgoPrintln(l)\n")
 				body.WriteString("\t\t\t}\n")
 				body.WriteString("\t\t\tfailed++\n")
 				body.WriteString("\t\t}\n")
@@ -1439,11 +1525,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 	body.WriteString("\tif failed > 0 {\n")
-	body.WriteString("\t\tprintln(\"FAIL\")\n")
+	body.WriteString("\t\tgraalgoPrintln(\"FAIL\")\n")
 	body.WriteString("\t\tos.Exit(1)\n")
 	body.WriteString("\t}\n")
 	if verbose {
-		body.WriteString("\tprintln(\"PASS\")\n")
+		body.WriteString("\tgraalgoPrintln(\"PASS\")\n")
 	}
 	body.WriteString("}\n")
 

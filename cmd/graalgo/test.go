@@ -214,6 +214,17 @@ func (r *testRunner) runPackage(dir string) bool {
 			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
 			return false
 		}
+		// TestMain is the test binary's entry point, not a test: the
+		// synthesized driver has no testing.M shim, so it cannot be
+		// honored. Warn loudly instead of silently dropping it.
+		hasMain, err := detectTestMain(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		if hasMain {
+			fmt.Fprintf(os.Stderr, "graalgo test: warning: %s: TestMain is not supported; running tests without it\n", tf)
+		}
 		var selected []string
 		for _, t := range tests {
 			if r.runRe == nil || r.runRe.MatchString(t) {

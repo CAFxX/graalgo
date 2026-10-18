@@ -282,7 +282,7 @@ func cmdVet(root string, args []string) int {
 	if len(ds) > 0 {
 		return 1
 	}
-	fmt.Println("vet: no issues found")
+	// Silent success, like `go vet`: no output, exit 0.
 	return 0
 }
 

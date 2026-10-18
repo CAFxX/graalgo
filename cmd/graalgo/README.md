@@ -51,6 +51,23 @@ export GRAALGO_HOME=/path/to/graalgo
 - **vet**: Run frontend static checks.
 - **fmt**: Format source files with `gofmt`.
 
+## Known divergences from `go test`
+
+- **TestMain is not supported.** `TestMain(m *testing.M)` is the test
+  binary's entry point; the synthesized driver has no `testing.M` shim,
+  so it is excluded from test discovery and `graalgo test` runs the
+  package's tests without it (with a stderr warning naming the file).
+  A `TestMain` that sets up fixtures, calls `m.Run()` conditionally, or
+  exits non-zero will not have those effects.
+- **`t.Fatalf`/`t.Skipf` vs guest `recover()`.** gc implements `Fatalf`
+  via `runtime.Goexit`, which no guest `recover()` can intercept. The
+  driver emulates fatal/skip with unexported sentinel panic values
+  (`graalgoFatalPanic`/`graalgoSkipPanic`) recognized by type at the
+  per-test boundary; a guest `defer`/`recover()` that swallows one lets
+  the test function continue past the `Fatalf` call, where gc would stop
+  it. The test is still marked failed/skipped and buffered output is
+  flushed, but post-`Fatalf` execution is a known divergence.
+
 ## Architecture
 
 The driver is a thin Go program ([cmd/graalgo/](./)) that:
