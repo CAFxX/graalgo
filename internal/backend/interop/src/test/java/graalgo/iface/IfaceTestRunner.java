@@ -28,6 +28,10 @@ public final class IfaceTestRunner {
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
+        // L29 (P1-26, 2026-10-18): the background drain must loop until no
+        // translator remains registered (late registrations must not escape
+        // the shutdown pass).
+        TESTS.add(graalgo.p3time.BackgroundDrainTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);

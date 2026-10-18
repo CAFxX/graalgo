@@ -25,9 +25,13 @@ import graalgo.sched.SchedulerCore;
  * pending {@code AfterFunc} must not run after main returns.
  *
  * <p>Registration and the translator spawn are atomic under
- * {@link #bgLock}: the drain loop's {@code live <= background} check
- * must never observe "registered but not yet spawned" (that would shut
- * down a timer whose Go owner is still alive and about to use it).
+ * {@link #bgLock}: {@code SchedulerCore.spawn} increments the
+ * scheduler's live-goroutine count synchronously in the spawning thread
+ * before returning, so the increment lands before {@link #bgLock} is
+ * released. The drain loop reads both counters under {@link #bgLock},
+ * so the {@code live <= background} check can never observe "registered
+ * but not yet live-counted" (that would shut down a timer whose Go
+ * owner is still alive and about to use it).
  *
  * <p>verifies: GG-0017 (time slice)
  */
@@ -94,6 +98,18 @@ public final class P3TimeRuntime {
      * background timer translator, then shuts them down. The caller then
      * runs the normal {@link SchedulerCore#awaitQuiescence}.
      *
+     * <p>Two phases. First, wait until every live goroutine is a
+     * background translator (the {@code live <= bg} check). Then shut
+     * down the translators and re-verify in a loop: a translator
+     * registered between the check and a shutdown pass — e.g. a ticker
+     * created by an AfterFunc goroutine spawned in that window, or any
+     * timer racing program end — is caught by a later pass instead of
+     * being stranded. {@link #shutdownBackground} is idempotent, so
+     * repeat passes are harmless; translators exit promptly once
+     * disarmed, so the loop converges (only an unbounded registration
+     * storm could spin it, and that storm hung the old single-pass code
+     * in {@code awaitQuiescence} too — no regression).
+     *
      * <p>With no timer translators registered this reduces to waiting for
      * ordinary quiescence (1ms poll granularity at exit).
      */
@@ -113,6 +129,14 @@ public final class P3TimeRuntime {
             }
             Thread.sleep(1);
         }
-        shutdownBackground();
+        for (;;) {
+            shutdownBackground();
+            synchronized (bgLock) {
+                if (backgroundLive.get() == 0) {
+                    return;
+                }
+            }
+            Thread.sleep(1);
+        }
     }
 }
