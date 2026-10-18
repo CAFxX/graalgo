@@ -57,10 +57,18 @@ type TFile struct {
 }
 
 // Exclusion is one entry of the versioned exclusion list (GG-0033).
+// Revalidated is the last-revalidated date (YYYY-MM-DD): the day the
+// excluded file was last re-probed and the exclusion confirmed still
+// valid — or the exclusion removed because the file now passes.
+// CheckExclusionFreshness fails the gate on missing or stale dates
+// (exclusion amnesty, P1-Q); Issue optionally names the filed bug so the
+// bug's remediation lane re-probes on closure.
 type Exclusion struct {
-	File   string
-	Reason string
-	Detail string
+	File        string
+	Reason      string
+	Detail      string
+	Revalidated string
+	Issue       string
 }
 
 var directiveRe = regexp.MustCompile(`^//\s*(run|rundir|compile|compiledir|errorcheck|build)\b`)
@@ -214,6 +222,10 @@ func LoadExclusions(path string) (version string, excl map[string]Exclusion, err
 			cur.Reason = strings.TrimSpace(strings.TrimPrefix(t, "reason:"))
 		} else if strings.HasPrefix(t, "detail:") && inEntry {
 			cur.Detail = strings.TrimSpace(strings.TrimPrefix(t, "detail:"))
+		} else if strings.HasPrefix(t, "last-revalidated:") && inEntry {
+			cur.Revalidated = strings.TrimSpace(strings.TrimPrefix(t, "last-revalidated:"))
+		} else if strings.HasPrefix(t, "issue:") && inEntry {
+			cur.Issue = strings.TrimSpace(strings.TrimPrefix(t, "issue:"))
 		}
 	}
 	flush()
@@ -221,6 +233,43 @@ func LoadExclusions(path string) (version string, excl map[string]Exclusion, err
 		return "", nil, fmt.Errorf("exclusions file %s has no version: line", path)
 	}
 	return version, excl, nil
+}
+
+// CheckExclusionFreshness enforces the exclusion-amnesty contract (P1-Q):
+// every entry must carry a last-revalidated date no older than
+// harness.MaxExclusionAgeDays. It returns one problem string per stale
+// entry (empty = fresh). Re-probe stale entries with
+// `diffharness typeparam run -amnesty` / `diffharness srctest run
+// -amnesty`: drop the exclusion when the file now passes, otherwise renew
+// the date.
+func CheckExclusionFreshness(excl map[string]Exclusion) []string {
+	names := make([]string, 0, len(excl))
+	for f := range excl {
+		names = append(names, f)
+	}
+	sort.Strings(names)
+	var problems []string
+	for _, f := range names {
+		if err := harness.CheckRevalidatedDate(excl[f].Revalidated, harness.MaxExclusionAgeDays); err != nil {
+			problems = append(problems, f+": "+err.Error())
+		}
+	}
+	return problems
+}
+
+// FilterExcluded keeps only the files named in excl. In amnesty mode the
+// caller scans with a nil exclusion map (natural classes, no YAML
+// override) and filters here, so the runner re-probes exactly the
+// excluded files; files whose natural class is still exclude:<reason>
+// (structural: multi-file .dir, cgo) are skipped by Run as usual.
+func FilterExcluded(files []TFile, excl map[string]Exclusion) []TFile {
+	var out []TFile
+	for _, f := range files {
+		if _, ok := excl[f.Name]; ok {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // WriteScanJSON writes {"scan": {"files": [...], "total": N}}.

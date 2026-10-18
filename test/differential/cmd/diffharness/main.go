@@ -69,15 +69,15 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|srctest> [flags]
 
-  run      -config PATH -corpus DIR -out PATH [-timeout SEC]
+  run      -config PATH -corpus DIR -out PATH [-timeout SEC] [-amnesty]
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
-  typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
+  typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-amnesty]
   snapshot record -config PATH -corpus DIR -backend NAME -out FILE [-toolchain V] [-graalgo-commit SHA] [-runs N] [-jobs N]
   snapshot check  -config PATH -corpus DIR -backend NAME -snapshot FILE [-jobs N]
   srctest scan -dir DIR -exclusions FILE -out PATH
-  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
+  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC] [-amnesty]
 `)
 }
 
@@ -134,17 +134,25 @@ type runReport struct {
 	Skipped     []harness.Exclusion  `json:"skipped"`
 	Comparisons []harness.Comparison `json:"comparisons"`
 	Summary     map[string]int       `json:"summary"`
+	Amnesty     bool                 `json:"amnesty,omitempty"`
 }
 
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	rf := baseFlags(fs)
+	amnesty := fs.Bool("amnesty", false,
+		"exclusion amnesty (P1-Q): re-probe the config's excluded programs through the normal "+
+			"oracle instead of running the corpus; a program that now compares SAME has a stale "+
+			"exclusion (remove it). Probe, not a gate: exits 0 once the report is written.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	cfg, err := loadCfg(rf)
 	if err != nil {
 		return err
+	}
+	if *amnesty {
+		return cmdRunAmnesty(rf, cfg)
 	}
 	progs, skipped, err := loadCorpus(rf, cfg)
 	if err != nil {
@@ -196,6 +204,80 @@ func cmdRun(args []string) error {
 	if diverged > 0 {
 		return fmt.Errorf("%d divergences", diverged)
 	}
+	return nil
+}
+
+// cmdRunAmnesty re-probes the corpus programs on the config's exclusion
+// list (exclusion amnesty, P1-Q). Each excluded program runs through the
+// normal oracle; a program that now compares SAME has a stale exclusion —
+// remove it from the list (and re-record the snapshot if the exclusion
+// list is part of a snapshot baseline). A program that still diverges
+// keeps its exclusion; renew its lastRevalidated date. This is a probe,
+// not a gate: it exits 0 once the report is written. Flaky exclusions
+// (e.g. scheduler races) need repeated clean probes before removal — one
+// lucky run proves nothing.
+func cmdRunAmnesty(rf *runFlags, cfg *harness.Config) error {
+	all, err := harness.DiscoverCorpus(rf.corpus)
+	if err != nil {
+		return err
+	}
+	excluded := map[string]bool{}
+	for _, e := range cfg.Exclusions {
+		excluded[e.Program] = true
+	}
+	var targets []harness.Program
+	for _, p := range all {
+		if excluded[p.Name] {
+			targets = append(targets, p)
+		}
+	}
+	backendNames := make([]string, len(cfg.Backends))
+	for i, b := range cfg.Backends {
+		backendNames[i] = b.Name
+	}
+	rep := runReport{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Config:      rf.config,
+		Backends:    backendNames,
+		Summary:     map[string]int{},
+		Amnesty:     true,
+	}
+	if len(targets) == 0 {
+		fmt.Println("amnesty: no excluded programs to re-probe")
+		return writeJSON(rf.out, rep)
+	}
+	workRoot, err := os.MkdirTemp("", "diffharness-amnesty-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(workRoot)
+
+	stale := 0
+	for _, p := range targets {
+		outs := runOne(cfg, p, workRoot)
+		for i := 1; i < len(outs); i++ {
+			c := harness.Compare(outs[0], outs[i])
+			rep.Comparisons = append(rep.Comparisons, c)
+			if c.Same {
+				fmt.Printf("AMNESTY-STALE    %-28s now passes — remove the exclusion\n", p.Name)
+				stale++
+			} else {
+				fmt.Printf("AMNESTY-EXCLUDED %-28s still diverges", p.Name)
+				for _, r := range c.Reasons {
+					fmt.Printf("\n           - %s", r)
+				}
+				fmt.Println()
+			}
+		}
+	}
+	rep.Summary["total"] = len(rep.Comparisons)
+	rep.Summary["stale"] = stale
+	rep.Summary["still-excluded"] = len(rep.Comparisons) - stale
+	if err := writeJSON(rf.out, rep); err != nil {
+		return err
+	}
+	fmt.Printf("amnesty: %d re-probed, %d stale (remove from the list), report %s\n",
+		len(rep.Comparisons), stale, rf.out)
 	return nil
 }
 
@@ -457,6 +539,10 @@ func cmdTypeparamRun(args []string) error {
 	refName := fs.String("ref", "gc-a", "reference backend name")
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
+	amnesty := fs.Bool("amnesty", false,
+		"exclusion amnesty (P1-Q): re-probe the YAML-excluded files with their natural class "+
+			"instead of running the included set; files that now pass have stale exclusions (remove them). "+
+			"Probe, not a gate: exits 0 once the report is written.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -483,6 +569,21 @@ func cmdTypeparamRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *amnesty {
+		// Natural classes (no YAML override), then keep only the excluded
+		// files: re-probe exactly what the list excludes. Files whose
+		// natural class is still exclude:<reason> (structural: multi-file
+		// .dir, cgo) are skipped by Run as usual.
+		natural, err := typeparam.Scan(*dir, nil)
+		if err != nil {
+			return err
+		}
+		files = typeparam.FilterExcluded(natural, excl)
+		if len(files) == 0 {
+			fmt.Println("amnesty: no excluded files to re-probe")
+			return nil
+		}
+	}
 	comps, err := typeparam.Run(cfg, files, *refName, *altName, *jobs)
 	if err != nil {
 		return err
@@ -508,6 +609,18 @@ func cmdTypeparamRun(args []string) error {
 	}
 	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
 		return err
+	}
+	if *amnesty {
+		var stale []string
+		for _, c := range comps {
+			if c.Same {
+				stale = append(stale, c.Program)
+			}
+		}
+		fmt.Printf("amnesty: %d re-probed, %d stale exclusions (now pass — remove from the list): %v\n",
+			len(comps), len(stale), stale)
+		fmt.Printf("amnesty: report %s\n", *out)
+		return nil
 	}
 	fmt.Printf("typeparam run: %d comparisons, %d diverged, %d excluded, report %s\n",
 		len(comps), div, skipped, *out)
@@ -574,6 +687,10 @@ func cmdSrctestRun(args []string) error {
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
 	timeout := fs.Int("timeout", 0, "per-program timeout seconds (0 = config default)")
+	amnesty := fs.Bool("amnesty", false,
+		"exclusion amnesty (P1-Q): re-probe the YAML-excluded files with their natural class "+
+			"instead of running the included set; files that now pass have stale exclusions (remove them). "+
+			"Probe, not a gate: exits 0 once the report is written.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -602,6 +719,19 @@ func cmdSrctestRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *amnesty {
+		// Natural classes (no YAML override), then keep only the excluded
+		// files: re-probe exactly what the list excludes.
+		natural, err := srctest.Scan(*dir, nil)
+		if err != nil {
+			return err
+		}
+		files = typeparam.FilterExcluded(natural, excl)
+		if len(files) == 0 {
+			fmt.Println("amnesty: no excluded files to re-probe")
+			return nil
+		}
+	}
 	comps, err := typeparam.Run(cfg, files, *refName, *altName, *jobs)
 	if err != nil {
 		return err
@@ -627,6 +757,18 @@ func cmdSrctestRun(args []string) error {
 	}
 	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
 		return err
+	}
+	if *amnesty {
+		var stale []string
+		for _, c := range comps {
+			if c.Same {
+				stale = append(stale, c.Program)
+			}
+		}
+		fmt.Printf("amnesty: %d re-probed, %d stale exclusions (now pass — remove from the list): %v\n",
+			len(comps), len(stale), stale)
+		fmt.Printf("amnesty: report %s\n", *out)
+		return nil
 	}
 	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",
 		len(comps), div, skipped, *out)

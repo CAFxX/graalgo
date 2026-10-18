@@ -3,22 +3,33 @@
 # (test/differential/internal/typeparam/typeparam.go) and Java
 # readExclusions (TypeparamDifferentialTest.java). Both must produce the
 # same file set from this input. Edge cases: fields out of order, missing
-# detail, comments, blank lines, quoted values.
+# detail, comments, blank lines, quoted values, last-revalidated and issue
+# fields (exclusion amnesty, P1-Q).
 version: 99
 exclusions:
 # canonical order
 - file: a.go
   reason: deferred-parity
   detail: "canonical order"
+  last-revalidated: 2026-10-04
+  issue: F-1
 # detail before reason
 - file: b.go
   detail: "out of order"
+  last-revalidated: 2026-10-05
   reason: backend-specific
 # missing detail entirely
 - file: c.go
   reason: deferred-parity
+  last-revalidated: 2026-10-04
 # reason before file is NOT valid yaml for this format; skipped
 
 - file: d.go
   reason: unspecified-behavior
   detail: ""
+  last-revalidated: 2026-10-04
+# missing last-revalidated: the parser still accepts the entry (date
+# defaults to ""); the freshness gate rejects it.
+- file: e.go
+  reason: backend-specific
+  detail: "no date"

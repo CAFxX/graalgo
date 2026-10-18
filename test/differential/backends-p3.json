@@ -1,4 +1,5 @@
 {
+  "_doc": "Exclusion amnesty (P1-Q): every exclusion carries lastRevalidated (YYYY-MM-DD); the harness freshness test fails on missing/stale (>90d) dates. Re-probe with `diffharness run -amnesty`; remove the exclusion when the program now passes, else renew the date. See test/differential/README.md.",
   "backends": [
     {
       "build": [
@@ -68,47 +69,58 @@
   "exclusions": [
     {
       "program": "10_closures",
-      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
+      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
+      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
+      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
+      "reason": "backend-specific: errors.As needs reflect (not in scope)",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "19_sort",
-      "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
+      "reason": "backend-specific: sort.Slice needs reflect (not in scope)",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "27_panic_trace",
-      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
+      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
+      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
+      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
+      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "40_method_values",
-      "reason": "backend-specific: method values not in scope"
+      "reason": "backend-specific: method values not in scope",
+      "lastRevalidated": "2026-10-13"
     },
     {
       "program": "42_json",
-      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope",
+      "lastRevalidated": "2026-10-13"
     }
   ],
   "timeoutSec": 30

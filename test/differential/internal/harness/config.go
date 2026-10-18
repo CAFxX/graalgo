@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Backend describes one execution backend as command templates. Tokens in
@@ -64,13 +65,55 @@ func (b *Backend) FilterStderr(s string) string {
 	return strings.Join(kept, "\n")
 }
 
+// Exclusion amnesty (P1-Q): an exclusion is a loan against the
+// differential gate, not a permanent deletion. Every exclusion carries a
+// last-revalidated date; the freshness tests fail when any entry is
+// missing that date or older than MaxExclusionAgeDays, so a fixed bug
+// cannot hide behind its exclusion forever. Re-probe with
+// `diffharness run -amnesty` (corpus), `diffharness typeparam run
+// -amnesty`, or `diffharness srctest run -amnesty`: an excluded program
+// that now passes has its exclusion removed; the rest get their date
+// renewed. Entries recording a filed graalgo bug additionally carry the
+// bug id in Issue so the bug's remediation lane can re-probe on closure.
+const MaxExclusionAgeDays = 90
+
 // Exclusion removes a corpus program from runs with a recorded reason, per
 // FEASIBILITY.md §7(2): the exclusion list may only grow through review,
 // never silently. Reason codes: nondeterministic-output, backend-specific,
 // flaky, other:<free text>.
 type Exclusion struct {
-	Program string `json:"program"`
-	Reason  string `json:"reason"`
+	Program         string `json:"program"`
+	Reason          string `json:"reason"`
+	LastRevalidated string `json:"lastRevalidated"`
+	Issue           string `json:"issue,omitempty"`
+}
+
+var revalidatedDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// CheckRevalidatedDate validates one last-revalidated date: present,
+// strict YYYY-MM-DD, not in the future, and no older than maxAgeDays.
+// A non-nil error describes the violation for the freshness gate.
+func CheckRevalidatedDate(dateStr string, maxAgeDays int) error {
+	s := strings.TrimSpace(dateStr)
+	if s == "" {
+		return fmt.Errorf("missing last-revalidated date (re-probe via -amnesty and set it)")
+	}
+	if !revalidatedDateRe.MatchString(s) {
+		return fmt.Errorf("malformed last-revalidated %q (want YYYY-MM-DD)", dateStr)
+	}
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		return fmt.Errorf("malformed last-revalidated %q", dateStr)
+	}
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	if d.After(today) {
+		return fmt.Errorf("last-revalidated %q is in the future", s)
+	}
+	if age := int(today.Sub(d).Hours() / 24); age > maxAgeDays {
+		return fmt.Errorf("last-revalidated %q is stale (%d days > %d): re-probe via -amnesty and renew",
+			s, age, maxAgeDays)
+	}
+	return nil
 }
 
 // Config is the on-disk harness configuration.

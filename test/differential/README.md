@@ -11,19 +11,19 @@ gc-vs-gc with injected mutations (graalgo doesn't exist yet).
 ./run.sh            # full CI: build, vet, unit tests, green run, mutation validation
 ```
 
-`run.sh` exits non-zero on any failure and leaves machine-readable reports
-in `./test-results/`. It needs only a Go toolchain: set `DH_GO` to the
+[run.sh](run.sh) exits non-zero on any failure and leaves machine-readable reports
+in [test-results/](test-results/). It needs only a Go toolchain: set `DH_GO` to the
 toolchain root, or rely on `~/tools/go`, or on `go` in `PATH`.
 
 ## Layout
 
-- `cmd/diffharness/` — the harness CLI (`run`, `mutate`, `validate`)
-- `internal/harness/` — config, backend runner, normalizer, comparator, corpus
-- `internal/mutate/` — AST mutation generator (oracle validation)
-- `corpus/` — 45 small Go programs covering the language surface
-- `backends.json` — backend declarations (the seam)
-- `mutations.txt` — mutation-validation manifest (`CLASS TARGET` lines)
-- `testdata/` — fixtures for harness unit tests
+- [cmd/diffharness/](cmd/diffharness/) — the harness CLI (`run`, `mutate`, `validate`)
+- [internal/harness/](internal/harness/) — config, backend runner, normalizer, comparator, corpus
+- [internal/mutate/](internal/mutate/) — AST mutation generator (oracle validation)
+- [corpus/](corpus/) — 45 small Go programs covering the language surface
+- [backends.json](backends.json) — backend declarations (the seam)
+- [mutations.txt](mutations.txt) — mutation-validation manifest (`CLASS TARGET` lines)
+- [testdata/](testdata/) — fixtures for harness unit tests
 
 ## The backend seam (zero-harness-change plug-in)
 
@@ -53,9 +53,10 @@ backends[0] (the reference); `run` compares every backend against the first.
 | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
 | `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | Phase-1 launcher; `GRAALGO_RUN=${PHASE1_DIR}/graalgo-run` |
 
-`PHASE1_DIR` is exported by `run.sh` (defaults to `<repo>/phases/phase1`);
-export it yourself for manual `diffharness` invocations. `gc-a` stays the
-reference: `validate` still compares gc-b against gc-a only.
+`PHASE1_DIR` is exported by [run.sh](run.sh) (defaults to
+[internal/backend/](../../internal/backend/)); export it yourself for
+manual `diffharness` invocations. `gc-a` stays the reference: `validate`
+still compares gc-b against gc-a only.
 
 M2 status (2026-10-04): the frontend path is real — graalgo's `--check`
 accepts straight-line programs (exit 0) and rejects bad ones (exit 2 with
@@ -101,13 +102,48 @@ Tamed, never silent (FEASIBILITY.md §7):
    key-sorted, goroutine results are combined order-independently
    (sums, WaitGroups), no wall-clock or address values escape
    unnormalized, no `time.Now`/`rand` without fixed seeds.
-3. Documented exclusions live in `backends.json` → `exclusions` with a
-   **reason code** (per §7 the list may only grow through review):
-   `nondeterministic-output`, `backend-specific`, `flaky`, `other:<text>`.
-   Currently empty — every corpus program passes unmutated gc-vs-gc.
+3. Documented exclusions live in [backends-p3.json](backends-p3.json) →
+   `exclusions` with a **reason code** (per §7 the list may only grow
+   through review): `nondeterministic-output`, `backend-specific`,
+   `flaky`, `other:<text>` — plus a `lastRevalidated` date per the
+   exclusion-amnesty contract below.
 4. The `validate` rerun control (same program twice under the reference
    backend) mechanically guards against flakiness: any divergence there
    fails validation (kill trigger K3).
+
+## Exclusion amnesty (P1-Q)
+
+An exclusion is a loan against a differential gate, not a permanent
+deletion. Three versioned exclusion lists exist:
+
+| list | excluded from | re-probe command |
+|---|---|---|
+| [backends-p3.json](backends-p3.json) (`exclusions`) | `diffharness run` corpus differential | `diffharness run -amnesty -config backends-p3.json -corpus corpus -out amnesty.json` |
+| [typeparam-exclusions.yaml](typeparam-exclusions.yaml) | `diffharness typeparam run` (M6 acceptance) | `diffharness typeparam run -amnesty -dir $GOROOT/test/typeparam -exclusions typeparam-exclusions.yaml -out amnesty.json` |
+| [srctest-exclusions.yaml](srctest-exclusions.yaml) | `diffharness srctest run` (conformance) | `diffharness srctest run -amnesty -dir $GOROOT/test -exclusions srctest-exclusions.yaml -out amnesty.json` |
+
+Every entry carries a `last-revalidated` date (`lastRevalidated` in the
+JSON): the day the excluded program was last re-probed and the exclusion
+confirmed still valid — or the exclusion removed because the program now
+passes. Freshness is CI-enforced and fail-closed:
+
+- `TestExclusionFreshness` ([internal/harness](internal/harness/)) gates
+  [backends-p3.json](backends-p3.json);
+- `TestExclusionListsFresh` ([internal/typeparam](internal/typeparam/)) gates
+  both YAML lists — both run in `go test ./internal/...`
+  ([run.sh](run.sh) step 3, CI);
+- `TypeparamDifferentialTest.testExclusionListCoversAllFiles` gates
+  [typeparam-exclusions.yaml](typeparam-exclusions.yaml) in the M6
+  acceptance test.
+
+A missing, malformed, future, or older-than-90-days date fails the gate.
+Re-probing is mechanical: run the `-amnesty` probe for the list, remove
+every exclusion whose program now compares SAME, renew the date on the
+rest, and commit with the probe evidence in the message. Entries whose
+detail records a filed graalgo bug carry an `issue:` id — the bug's
+remediation lane re-probes on closure instead of waiting for the 90-day
+backstop. Flaky exclusions need repeated clean probes before removal: one
+lucky run proves nothing.
 
 ## Oracle validation (red-green)
 
@@ -117,13 +153,13 @@ Tamed, never silent (FEASIBILITY.md §7):
    (false-positive record).
 2. **Rerun control** — each program twice under gc-a: expects zero
    divergences (flakiness check).
-3. **Mutation validation** — for each `mutations.txt` entry, the AST
+3. **Mutation validation** — for each [mutations.txt](mutations.txt) entry, the AST
    mutator applies one semantics-changing, still-compiling edit
    (operator swaps, off-by-one, dropped defer, negated condition, changed
    constant, swapped returns, wrong channel op, shrunk slice bound) and the
    harness must report DIVERGE. A MISSED entry fails validation (K1).
 
-Unit tests in `internal/...` are red-green too: every normalization rule
+Unit tests in [internal/](internal/) are red-green too: every normalization rule
 and every comparator branch has a must-change and a must-not-change case.
 
 ## Limitations (smoke layer, by design)

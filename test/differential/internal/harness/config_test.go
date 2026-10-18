@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -107,5 +108,57 @@ func TestApplyExclusions(t *testing.T) {
 	}
 	if len(skipped) != 1 || skipped[0].Reason == "" {
 		t.Fatalf("skipped = %+v", skipped)
+	}
+}
+
+// TestCheckRevalidatedDate pins the amnesty date validation (P1-Q): the
+// freshness gate must reject missing, malformed, future, and stale dates,
+// and accept a fresh one. Every case is a must-fail or must-pass probe —
+// a date this gate accepts but shouldn't (or vice versa) is a gate bug.
+func TestCheckRevalidatedDate(t *testing.T) {
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	fresh := today.AddDate(0, 0, -1).Format("2006-01-02")
+	stale := today.AddDate(0, 0, -(MaxExclusionAgeDays + 1)).Format("2006-01-02")
+	future := today.AddDate(0, 0, 1).Format("2006-01-02")
+	cases := []struct {
+		date    string
+		wantErr bool
+	}{
+		{fresh, false},
+		{today.Format("2006-01-02"), false}, // today is fresh
+		{"", true},                          // missing
+		{"   ", true},                       // blank
+		{"2026-13-01", true},                // bad month
+		{"2026-10-32", true},                // bad day
+		{"10/18/2026", true},                // wrong shape
+		{"2026-10-18T00:00:00Z", true},      // wrong shape
+		{future, true},                      // future
+		{stale, true},                       // stale
+		{"2000-01-01", true},                // ancient
+	}
+	for _, c := range cases {
+		err := CheckRevalidatedDate(c.date, MaxExclusionAgeDays)
+		if (err != nil) != c.wantErr {
+			t.Errorf("CheckRevalidatedDate(%q) err=%v, wantErr=%v", c.date, err, c.wantErr)
+		}
+	}
+}
+
+// TestExclusionFreshness is the CI gate for the exclusion amnesty (P1-Q):
+// every backends-p3.json exclusion must carry a fresh lastRevalidated
+// date, so a fixed bug cannot hide behind its exclusion forever. Runs in
+// `go test ./internal/...` (run.sh step 3, CI).
+func TestExclusionFreshness(t *testing.T) {
+	cfg, err := LoadConfig("../../backends-p3.json")
+	if err != nil {
+		t.Fatalf("load backends-p3.json: %v", err)
+	}
+	if len(cfg.Exclusions) == 0 {
+		t.Fatal("no exclusions in backends-p3.json; gate vacuous")
+	}
+	for _, e := range cfg.Exclusions {
+		if err := CheckRevalidatedDate(e.LastRevalidated, MaxExclusionAgeDays); err != nil {
+			t.Errorf("exclusion %q: %v", e.Program, err)
+		}
 	}
 }

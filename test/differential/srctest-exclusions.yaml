@@ -7,131 +7,194 @@
 # per PLAN §5: graalgo bug / upstream change / backend-specific+reason-code /
 # nondeterminism-normalization).
 #
+# Exclusion amnesty (P1-Q): an exclusion is a loan against the conformance
+# gate, not a permanent deletion. Every entry carries:
+#   last-revalidated: YYYY-MM-DD — the day the excluded file was last
+#     re-probed (via `diffharness srctest run -amnesty`) and the exclusion
+#     confirmed still valid — or the exclusion removed because the file now
+#     passes. The freshness gate (typeparam.CheckExclusionFreshness, run in
+#     `go test ./internal/...`) fails on missing/malformed/future dates and
+#     on dates older than harness.MaxExclusionAgeDays (90 days): a fixed bug
+#     must not hide behind its exclusion.
+#   issue: <id> — optional; when the detail records a filed graalgo bug
+#     (F-1..F-6), names it so the bug's remediation lane re-probes this file
+#     on closure instead of waiting for the 90-day backstop.
+# Flaky exclusions need repeated clean probes before removal — one lucky run
+# proves nothing.
+#
 # version history:
 #   1 (2026-10-13): initial triage — 39 divergences from the 2026-10-13 differential.
 #       F-1..F-6 are graalgo bugs filed for the frontend/scheduler lanes.
-version: 1
+#   2 (2026-10-18): exclusion amnesty — last-revalidated dates + issue links (P1-Q).
+version: 2
 exclusions:
 - file: 235.go
   reason: backend-specific
   detail: F-2: named result assignment frontend bug (reference to unknown object id)
+  last-revalidated: 2026-10-13
+  issue: F-2
 - file: alg.go
   reason: backend-specific
   detail: map key of kind ARRAY not supported in Phase 1
+  last-revalidated: 2026-10-13
 - file: bigmap.go
   reason: backend-specific
   detail: map key of kind ARRAY not supported in Phase 1
+  last-revalidated: 2026-10-13
 - file: closure2.go
   reason: backend-specific
   detail: range variable *ast.IndexExpr not in frontend/v1 scope (WS D)
+  last-revalidated: 2026-10-13
 - file: complit2.go
   reason: backend-specific
   detail: frontend scope gap (composite literal)
+  last-revalidated: 2026-10-13
 - file: const3.go
   reason: backend-specific
   detail: const type info propagation gap
+  last-revalidated: 2026-10-13
 - file: convert4.go
   reason: backend-specific
   detail: frontend type error (conversion scope gap)
+  last-revalidated: 2026-10-13
 - file: convert5.go
   reason: backend-specific
   detail: frontend type error (conversion scope gap)
+  last-revalidated: 2026-10-13
 - file: ddd.go
   reason: backend-specific
   detail: method call on non-named receiver (WS H)
+  last-revalidated: 2026-10-13
 - file: devirt.go
   reason: backend-specific
   detail: ifacemethod expression kind not supported
+  last-revalidated: 2026-10-13
 - file: divmod.go
   reason: backend-specific
   detail: multi-valued call result not in frontend/v1 scope (WS D)
+  last-revalidated: 2026-10-13
 - file: func.go
   reason: backend-specific
   detail: frontend scope gap
+  last-revalidated: 2026-10-13
 - file: func6.go
   reason: backend-specific
   detail: frontend scope gap
+  last-revalidated: 2026-10-13
 - file: inline_caller.go
   reason: backend-specific
   detail: frontend type error (inlining scope)
+  last-revalidated: 2026-10-13
 - file: inline_callers.go
   reason: backend-specific
   detail: frontend type error (inlining scope)
+  last-revalidated: 2026-10-13
 - file: method.go
   reason: backend-specific
   detail: method call on non-named receiver struct{main.T} (WS H)
+  last-revalidated: 2026-10-13
 - file: method3.go
   reason: backend-specific
   detail: identifier T denotes *types.TypeName (method scope)
+  last-revalidated: 2026-10-13
 - file: method5.go
   reason: backend-specific
   detail: interface method with 2 results not supported
+  last-revalidated: 2026-10-13
 - file: method7.go
   reason: backend-specific
   detail: method expression via interface not supported
+  last-revalidated: 2026-10-13
 - file: nilptr.go
   reason: backend-specific
   detail: & on *ast.ParenExpr not in frontend/v1 scope (WS D)
+  last-revalidated: 2026-10-13
 - file: nilptr4.go
   reason: backend-specific
   detail: frontend scope gap (nil pointer)
+  last-revalidated: 2026-10-13
 - file: peano.go
   reason: backend-specific
   detail: frontend type error
+  last-revalidated: 2026-10-13
 - file: range4.go
   reason: backend-specific
   detail: range variable *ast.StarExpr not in frontend/v1 scope
+  last-revalidated: 2026-10-13
 - file: recover1.go
   reason: backend-specific
   detail: frontend type error (recover scope)
+  last-revalidated: 2026-10-13
 - file: rename.go
   reason: backend-specific
   detail: frontend type error
+  last-revalidated: 2026-10-13
 - file: slicecap.go
   reason: backend-specific
   detail: frontend scope gap
+  last-revalidated: 2026-10-13
 - file: uintptrescapes3.go
   reason: backend-specific
   detail: frontend scope gap (uintptr)
+  last-revalidated: 2026-10-13
 - file: unsafe_string.go
   reason: backend-specific
   detail: frontend scope gap (unsafe)
+  last-revalidated: 2026-10-13
 - file: defer.go
   reason: backend-specific
   detail: F-3: variadic interface forwarding bug (fmt.Sprint(v...) gives [9][8] not 98)
+  last-revalidated: 2026-10-13
+  issue: F-3
 - file: defernil.go
   reason: backend-specific
   detail: F-3: variadic interface forwarding bug (same root cause)
+  last-revalidated: 2026-10-13
+  issue: F-3
 - file: literal2.go
   reason: backend-specific
   detail: F-5: complex number comparison bug ((0+1.8e308i) != itself)
+  last-revalidated: 2026-10-13
+  issue: F-5
 - file: newexpr.go
   reason: backend-specific
   detail: F-4: new(x) with non-constant x returns zero value
+  last-revalidated: 2026-10-13
+  issue: F-4
 - file: solitaire.go
   reason: backend-specific
   detail: F-6: peg-solitaire solver finds no solution (search divergence)
+  last-revalidated: 2026-10-13
+  issue: F-6
 - file: zerosize.go
   reason: unspecified-behavior
   detail: pointer equality for zero-size allocations is unspecified
+  last-revalidated: 2026-10-13
 - file: nilptr2.go
   reason: unspecified-behavior
   detail: prints pointer address (absolute addresses excluded per GG-0030)
+  last-revalidated: 2026-10-13
 - file: gc.go
   reason: deferred-parity
   detail: runtime.GC needs the GC interop layer (Phase 2)
+  last-revalidated: 2026-10-13
 - file: maymorestack.go
   reason: deferred-parity
   detail: runtime.KeepAlive needs the GC interop layer (Phase 2)
+  last-revalidated: 2026-10-13
 - file: stackobj.go
   reason: deferred-parity
   detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+  last-revalidated: 2026-10-13
 - file: stackobj2.go
   reason: deferred-parity
   detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+  last-revalidated: 2026-10-13
 - file: stackobj3.go
   reason: deferred-parity
   detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+  last-revalidated: 2026-10-13
 - file: print.go
   reason: unspecified-behavior
   detail: builtin println of pointers/interfaces prints absolute addresses (excluded per GG-0030)
+  last-revalidated: 2026-10-13

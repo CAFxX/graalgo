@@ -7,6 +7,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -28,7 +32,9 @@ import java.util.concurrent.TimeUnit;
  *       files is either included by the adapter or carried on the
  *       versioned, reason-coded exclusion list
  *       ({@code test/differential/typeparam-exclusions.yaml}); no stale
- *       entries, no unknown reason codes.
+ *       entries, no unknown reason codes, and every entry re-probed
+ *       within {@link #MAX_EXCLUSION_AGE_DAYS} days (exclusion amnesty,
+ *       P1-Q).
  *   <li>{@code testZeroUnexplainedDivergences} — the included files run
  *       differential gc-a vs graalgo (build parity for {@code // compile},
  *       build-failure parity for {@code // errorcheck}, full run parity
@@ -68,7 +74,18 @@ public final class TypeparamDifferentialTest {
     private static final int MAX_EXCLUSIONS = 224;
 
     /** Expected version of the exclusion list (bumped on material changes). */
-    private static final String EXPECTED_EXCLUSIONS_VERSION = "4";
+    private static final String EXPECTED_EXCLUSIONS_VERSION = "5";
+
+    /**
+     * Exclusion amnesty (P1-Q): no exclusion may go longer than this
+     * without being re-probed. Every entry of typeparam-exclusions.yaml
+     * carries a last-revalidated date; the gate below fails on missing,
+     * malformed, future, or stale dates, so a fixed bug cannot hide behind
+     * its exclusion forever. Re-probe with
+     * {@code diffharness typeparam run -amnesty}: drop the exclusion when
+     * the file now passes, otherwise renew the date.
+     */
+    private static final int MAX_EXCLUSION_AGE_DAYS = 90;
 
     private static Path repoDir() {
         return resolveRepoDir(
@@ -180,32 +197,48 @@ public final class TypeparamDifferentialTest {
      * Minimal YAML reader for the flat exclusion-list format (no deps).
      * Mirrors the Go {@code LoadExclusions} parser's semantics (P2-8):
      * field order is insignificant, {@code detail:} is optional (defaults
-     * to ""), entries flush at the next {@code - file:} or EOF. The two
-     * readers are conformance-tested against the same fixture (see
+     * to ""), entries flush at the next {@code - file:} or EOF. Returns
+     * per file {@code {reason, detail, lastRevalidated, issue}} (missing
+     * fields default to ""). The two readers are conformance-tested
+     * against the same fixture (see
      * {@code test/differential/testdata/exclusions-edge.yaml}).
      */
     static Map<String, String[]> readExclusions(Path yaml) throws IOException {
         Map<String, String[]> out = new HashMap<>();
-        String file = null, reason = null, detail = null;
+        String file = null, reason = null, detail = null, revalidated = null, issue = null;
         for (String line : Files.readAllLines(yaml, StandardCharsets.UTF_8)) {
             String t = line.trim();
             if (t.startsWith("- file:")) {
                 if (file != null) {
-                    out.put(file, new String[]{reason, detail == null ? "" : detail});
+                    out.put(file, entry(reason, detail, revalidated, issue));
                 }
                 file = t.substring("- file:".length()).trim();
                 reason = null;
                 detail = null;
+                revalidated = null;
+                issue = null;
             } else if (t.startsWith("reason:") && file != null) {
                 reason = t.substring("reason:".length()).trim();
             } else if (t.startsWith("detail:") && file != null) {
                 detail = t.substring("detail:".length()).trim();
+            } else if (t.startsWith("last-revalidated:") && file != null) {
+                revalidated = t.substring("last-revalidated:".length()).trim();
+            } else if (t.startsWith("issue:") && file != null) {
+                issue = t.substring("issue:".length()).trim();
             }
         }
         if (file != null) {
-            out.put(file, new String[]{reason, detail == null ? "" : detail});
+            out.put(file, entry(reason, detail, revalidated, issue));
         }
         return out;
+    }
+
+    private static String[] entry(String reason, String detail, String revalidated, String issue) {
+        return new String[]{
+                reason,
+                detail == null ? "" : detail,
+                revalidated == null ? "" : revalidated,
+                issue == null ? "" : issue};
     }
 
     /** Reads the {@code version:} line of the exclusion list (GG-0033). */
@@ -217,6 +250,38 @@ public final class TypeparamDifferentialTest {
             }
         }
         return "";
+    }
+
+    /**
+     * P1-Q (exclusion amnesty): validates one {@code last-revalidated}
+     * date, appending a problem string per violation (missing, malformed,
+     * future, or older than {@link #MAX_EXCLUSION_AGE_DAYS}).
+     */
+    static void checkRevalidated(String name, String revalidated, List<String> problems) {
+        String s = revalidated == null ? "" : revalidated.trim();
+        if (s.isEmpty()) {
+            problems.add(name
+                    + ": missing last-revalidated date (re-probe via `diffharness typeparam run -amnesty` and set it)");
+            return;
+        }
+        if (!s.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            problems.add(name + ": malformed last-revalidated \"" + s + "\" (want YYYY-MM-DD)");
+            return;
+        }
+        final LocalDate d;
+        try {
+            d = LocalDate.parse(s);
+        } catch (DateTimeParseException e) {
+            problems.add(name + ": malformed last-revalidated \"" + s + "\" (not a calendar date)");
+            return;
+        }
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        if (d.isAfter(today)) {
+            problems.add(name + ": last-revalidated \"" + s + "\" is in the future");
+        } else if (ChronoUnit.DAYS.between(d, today) > MAX_EXCLUSION_AGE_DAYS) {
+            problems.add(name + ": last-revalidated \"" + s + "\" is stale (> " + MAX_EXCLUSION_AGE_DAYS
+                    + "d): re-probe via `diffharness typeparam run -amnesty` and renew");
+        }
     }
 
     /** Strips one pair of surrounding double quotes, if present. */
@@ -277,6 +342,11 @@ public final class TypeparamDifferentialTest {
                 if (unquote(entry[1]).trim().isEmpty()) {
                     problems.add(name + ": empty exclusion detail (GG-0033: every exclusion must say why)");
                 }
+                // P1-Q (exclusion amnesty): every exclusion carries a
+                // last-revalidated date; the gate fails on missing,
+                // malformed, future, or stale dates, so a fixed bug cannot
+                // hide behind its exclusion forever.
+                checkRevalidated(name, entry[2], problems);
                 byReason.merge(entry[0] + ":" + entry[1], 1, Integer::sum);
             }
         }
@@ -448,17 +518,19 @@ public final class TypeparamDifferentialTest {
     // readExclusions must agree with Go LoadExclusions on the shared
     // fixture test/differential/testdata/exclusions-edge.yaml. Neither
     // parser unquotes detail values; both accept any field order and a
-    // missing detail (defaults to "").
+    // missing detail (defaults to ""). Both parse last-revalidated and
+    // issue (missing fields default to "").
 
     public void testReadExclusionsEdgeCases() throws IOException {
-        Path fixture = repoRoot().resolve("tools").resolve("diffharness")
+        Path fixture = repoRoot().resolve("test").resolve("differential")
                 .resolve("testdata").resolve("exclusions-edge.yaml");
         Map<String, String[]> got = readExclusions(fixture);
         Map<String, String[]> want = Map.of(
-                "a.go", new String[]{"deferred-parity", "\"canonical order\""},
-                "b.go", new String[]{"backend-specific", "\"out of order\""},
-                "c.go", new String[]{"deferred-parity", ""},
-                "d.go", new String[]{"unspecified-behavior", "\"\""});
+                "a.go", new String[]{"deferred-parity", "\"canonical order\"", "2026-10-04", "F-1"},
+                "b.go", new String[]{"backend-specific", "\"out of order\"", "2026-10-05", ""},
+                "c.go", new String[]{"deferred-parity", "", "2026-10-04", ""},
+                "d.go", new String[]{"unspecified-behavior", "\"\"", "2026-10-04", ""},
+                "e.go", new String[]{"backend-specific", "\"no date\"", "", ""});
         if (!got.keySet().equals(want.keySet())) {
             throw new AssertionError("parsed files " + got.keySet()
                     + ", want " + want.keySet());
@@ -466,13 +538,36 @@ public final class TypeparamDifferentialTest {
         for (Map.Entry<String, String[]> e : want.entrySet()) {
             String[] g = got.get(e.getKey());
             String[] w = e.getValue();
-            if (!g[0].equals(w[0]) || !g[1].equals(w[1])) {
-                throw new AssertionError(e.getKey() + " parsed as ["
-                        + g[0] + ", " + g[1] + "], want [" + w[0] + ", " + w[1] + "]");
+            if (g.length != w.length) {
+                throw new AssertionError(e.getKey() + " parsed " + g.length
+                        + " fields, want " + w.length);
+            }
+            for (int i = 0; i < w.length; i++) {
+                if (!w[i].equals(g[i])) {
+                    throw new AssertionError(e.getKey() + " field " + i + " parsed as \""
+                            + g[i] + "\", want \"" + w[i] + "\"");
+                }
             }
         }
         if (!"99".equals(readExclusionsVersion(fixture))) {
             throw new AssertionError("fixture version not parsed");
+        }
+        // checkRevalidated must accept a fresh date and reject missing /
+        // malformed / future / stale ones (P1-Q freshness gate).
+        List<String> problems = new ArrayList<>();
+        checkRevalidated("ok.go", LocalDate.now(ZoneOffset.UTC).toString(), problems);
+        checkRevalidated("missing.go", "", problems);
+        checkRevalidated("blank.go", "   ", problems);
+        checkRevalidated("badshape.go", "10/18/2026", problems);
+        checkRevalidated("baddate.go", "2026-13-01", problems);
+        checkRevalidated("future.go",
+                LocalDate.now(ZoneOffset.UTC).plusDays(1).toString(), problems);
+        checkRevalidated("stale.go",
+                LocalDate.now(ZoneOffset.UTC).minusDays(MAX_EXCLUSION_AGE_DAYS + 1).toString(),
+                problems);
+        checkRevalidated("ancient.go", "2000-01-01", problems);
+        if (problems.size() != 7) {
+            throw new AssertionError("checkRevalidated problems = " + problems);
         }
     }
 
