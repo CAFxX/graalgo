@@ -241,12 +241,12 @@ type encoder struct {
 
 // Write implements io.Writer. M8 scope: fail-fast (see above).
 func (e *encoder) Write(p []byte) (n int, err error) {
-	panic("base32.encoder.Write: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("base32.encoder.Write: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // Close implements io.Closer. M8 scope: fail-fast (see above).
 func (e *encoder) Close() error {
-	panic("base32.encoder.Close: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("base32.encoder.Close: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // NewEncoder returns a new base32 stream encoder. Data written to
@@ -268,7 +268,7 @@ type decoder struct {
 
 // Read implements io.Reader. M8 scope: fail-fast (see above).
 func (d *decoder) Read(p []byte) (n int, err error) {
-	panic("base32.decoder.Read: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("base32.decoder.Read: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // NewDecoder returns a new base32 stream decoder.
@@ -466,21 +466,21 @@ func __base32AppendDecode(enc *Encoding, dst, src []byte) base32DecodeStringPair
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func (enc *Encoding) Decode(dst, src []byte) (n int, err error) {
-	panic("encoding/base32: Decode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base32: Decode: unreachable (call sites desugar to __base32Decode)")
 }
 
 // DecodeString keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func (enc *Encoding) DecodeString(s string) ([]byte, error) {
-	panic("encoding/base32: DecodeString: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base32: DecodeString: unreachable (call sites desugar to __base32DecodeString)")
 }
 
 // AppendDecode keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func (enc *Encoding) AppendDecode(dst, src []byte) ([]byte, error) {
-	panic("encoding/base32: AppendDecode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base32: AppendDecode: unreachable (call sites desugar to __base32AppendDecode)")
 }
 
 // DecodedLen returns the maximum length in bytes of the decoded data
