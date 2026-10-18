@@ -1,9 +1,15 @@
 package graalgo.p3reflect;
 
 import graalgo.values.GoFunc;
+import graalgo.values.GoKind;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 import graalgo.runtime.GoCalls;
+import graalgo.runtime.Panic;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * Callable wrappers and trampolines for the reflect package (P3-M8, wave 2).
@@ -84,18 +90,19 @@ public final class ReflectCalls {
     /**
      * The MakeFunc trampoline: D5 args → []Value → callback → D5 result.
      * The callback is a synthetic {@code func([]Value) []Value} Value.
+     *
+     * <p>The callback's argument slice holds exactly one {@code Value} per
+     * formal parameter (gc's makeFuncImpl contract). For a variadic target
+     * the trailing D5 args pack into the final {@code []T} parameter — the
+     * mirror image of the CallSlice spread in {@code unboxArgs}. Arity
+     * violations raise a Go panic (gc's messages), never a raw Java
+     * exception.
      */
     private static Object invokeMakeFunc(MakeFuncVal mfv, Object[] d5Args) {
         ReflectTypes.Table table = ReflectTypes.table();
         ReflectTypes.TypeInfo funcType = table.info(mfv.funcTok);
         // Build the []Value argument.
-        GoStruct[] values = new GoStruct[d5Args.length];
-        for (int i = 0; i < d5Args.length; i++) {
-            long argTok = funcType.ins.get(i).tok;
-            long handle = ReflectRefs.intern(d5Args[i]);
-            values[i] = ReflectValues.pack(ReflectTypes.valueDescriptor(),
-                    argTok, handle, 0);
-        }
+        GoStruct[] values = packMakeFuncArgs(funcType, d5Args);
         Object valuesSlice = new graalgo.values.GoSlice(
                 values, 0, values.length, values.length);
         // Invoke the callback: __reflect_call on the callback Value.
@@ -116,5 +123,85 @@ public final class ReflectCalls {
 
     private static long unpackHandle(GoStruct v) {
         return ReflectValues.parts(v).ptr();
+    }
+
+    /**
+     * Builds the MakeFunc callback's {@code []Value}: one Value per formal
+     * parameter. A variadic target packs the trailing D5 args into the
+     * final {@code []T} slice parameter; a non-variadic target requires an
+     * exact arity match.
+     */
+    private static GoStruct[] packMakeFuncArgs(
+            ReflectTypes.TypeInfo funcType, Object[] d5Args) {
+        GoStructDescriptor desc = ReflectTypes.valueDescriptor();
+        int numIn = funcType.ins.size();
+        if (funcType.variadic) {
+            return packVariadicArgs(funcType, numIn, d5Args, desc);
+        }
+        if (d5Args.length < numIn) {
+            goPanic("reflect: Call with too few input arguments");
+        }
+        if (d5Args.length > numIn) {
+            goPanic("reflect: Call with too many input arguments");
+        }
+        GoStruct[] values = new GoStruct[numIn];
+        for (int i = 0; i < numIn; i++) {
+            values[i] = packValue(desc, funcType.ins.get(i).tok, d5Args[i]);
+        }
+        return values;
+    }
+
+    /**
+     * Variadic packing for the MakeFunc trampoline: the fixed parameters
+     * map 1:1; the trailing D5 args pack into a fresh {@code []T} slice
+     * Value for the final formal parameter (gc packs the same way in
+     * makeFuncImpl.call).
+     */
+    private static GoStruct[] packVariadicArgs(ReflectTypes.TypeInfo funcType,
+            int numIn, Object[] d5Args, GoStructDescriptor desc) {
+        ReflectTypes.TypeInfo tail =
+                numIn == 0 ? null : funcType.ins.get(numIn - 1);
+        if (tail == null || tail.kind != GoKind.SLICE) {
+            // Malformed variadic type (gc's FuncOf rejects these at
+            // construction). Still a Go panic — never a Java exception.
+            goPanic("reflect: MakeFunc of malformed variadic type");
+        }
+        int numFixed = numIn - 1;
+        if (d5Args.length < numFixed) {
+            goPanic("reflect: Call with too few input arguments");
+        }
+        GoStruct[] values = new GoStruct[numIn];
+        for (int i = 0; i < numFixed; i++) {
+            values[i] = packValue(desc, funcType.ins.get(i).tok, d5Args[i]);
+        }
+        // Pack the trailing args into the variadic []T parameter, using
+        // the canonical D5 backing store for the element kind.
+        GoKind elemKind = tail.elem.kind;
+        int m = d5Args.length - numFixed;
+        Object backing = ReflectValues.newArray(elemKind, m);
+        for (int i = 0; i < m; i++) {
+            ReflectValues.arraySet(backing, elemKind, i, d5Args[numFixed + i]);
+        }
+        values[numFixed] = packValue(desc, tail.tok,
+                new GoSlice(backing, 0, m, m));
+        return values;
+    }
+
+    /** Packs one D5 argument as a {@code reflect.Value} of the given type. */
+    private static GoStruct packValue(
+            GoStructDescriptor desc, long argTok, Object d5) {
+        long handle = ReflectRefs.intern(d5);
+        return ReflectValues.pack(desc, argTok, handle, 0);
+    }
+
+    /**
+     * Raises a Go panic carrying a D5 GoString (the p3sync misuse-panic
+     * convention: PanicRendering renders a raw Java String as
+     * "(?) 0xADDR", so the message must be a D5 GoString).
+     */
+    private static void goPanic(String message) {
+        Panic.throwPanic(
+                new GoString(message.getBytes(StandardCharsets.UTF_8)),
+                null, null, null);
     }
 }

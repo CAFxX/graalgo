@@ -68,6 +68,9 @@ Coverage map:
 | 48  | range_over_func_edge | range-over-func exits: return/goto/labels,       |
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
+| 49  | reflect_makefunc_    | variadic reflect.MakeFunc: callback arg packing  |
+|     | variadic             | for 0/1/N variadic args, CallSlice round-trip,   |
+|     |                      | too-few-args panic                               |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,
