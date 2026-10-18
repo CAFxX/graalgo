@@ -25,15 +25,15 @@
 //   - Multi-result members (Cut/CutLast/CutPrefix/CutSuffix, Buffer.Peek/
 //     Read/ReadByte/ReadBytes/ReadRune/ReadString/Write/WriteString/
 //     WriteRune, Reader.Read/ReadAt/ReadByte/ReadRune/Seek) keep exact gc
-//     signatures with fail-fast bodies: v1 cannot emit or call
-//     multi-result functions (WS D); the exporter skips them and every
-//     call site fails with the named M7 scope error. Re-test when WS D
-//     lands.
+//     signatures with fail-fast bodies: the multi-result members are
+//     served via __-helpers + the Appendix-M desugar table (WS D landed;
+//     see the per-member notes). Uncovered call sites fail with the
+//     named scope error.
 //   - Buffer.ReadFrom/Buffer.WriteTo/Reader.WriteTo need io.Reader/
 //     io.Writer. P3-M8 brings io: the signatures now use io.Reader/
 //     io.Writer exactly, but the bodies stay fail-fast — the loops need
-//     r.Read/w.Write (2-result interface calls, WS D). Re-test when WS D
-//     lands (then: real bodies, no signature change needed).
+//     r.Read/w.Write (2-result interface calls). These need real
+//     __-helpers + table entries (no signature change needed).
 //   - 8 members are omitted outright — their types are unnameable
 //     without out-of-scope imports: Lines/SplitSeq/SplitAfterSeq/
 //     FieldsSeq/FieldsFuncSeq (need iter.Seq) and ToUpperSpecial/
@@ -81,7 +81,7 @@ const (
 )
 
 // decodePair is the single-result carrier for UTF-8 decoding: synthetic
-// sources cannot declare or call multi-result helpers (WS D), so gc's
+// sources cannot declare or call multi-result helpers, so gc's
 // (rune, int) pairs become this struct (the Appendix M carrier pattern).
 type decodePair struct {
 	r    rune
@@ -8555,7 +8555,7 @@ func bytesStringHasRune(chars string, want rune) bool {
 			r, size = rune(c), 1
 		} else {
 			var buf [bytesUTFMax]byte
-			// WS D: copy(dst, string) is not supported in frontend/v1, so
+			// copy(dst, string) is not supported in frontend/v1, so
 			// the copy is a manual loop (same precedent as strings.Clone).
 			n := 0
 			for j := i; j < len(chars) && n < bytesUTFMax; j++ {
@@ -8587,7 +8587,7 @@ const maxInt = int(^uint(0) >> 1)
 
 // ---------------------------------------------------------------------------
 // Pure functions (real implementations; clean-room ports of gc 1.27.1).
-// Multi-result members are fail-fast stubs (WS D); see the header.
+// Multi-result members are fail-fast stubs; see the header.
 // ---------------------------------------------------------------------------
 
 // Equal reports whether a and b
@@ -9453,7 +9453,7 @@ type asciiSet [256]bool
 
 // asciiSetResult is the single-result carrier for makeASCIISet (gc's
 // makeASCIISet returns (asciiSet, bool); the synthetic source cannot call
-// multi-result helpers — WS D).
+// multi-result helpers).
 type asciiSetResult struct {
 	set asciiSet
 	ok  bool
@@ -9930,9 +9930,9 @@ func (b *Buffer) String() string {
 // Peek returns the next n bytes without advancing the buffer.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) Peek(n int) ([]byte, error) {
-	panic("bytes.Buffer.Peek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.Peek: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // empty reports whether the unread portion of the buffer is empty.
@@ -9977,7 +9977,7 @@ func (b *Buffer) Reset() {
 // internal buffer only needs to be resliced.
 // It returns the index where bytes should be written, or -1 when reslicing
 // cannot satisfy n (gc returns (int, bool); the synthetic source cannot use
-// multi-result helpers — WS D — so -1 is the failure sentinel).
+// multi-result helpers so -1 is the failure sentinel).
 func (b *Buffer) tryGrowByReslice(n int) int {
 	if l := len(b.buf); n <= cap(b.buf)-l {
 		b.buf = b.buf[:l+n]
@@ -10039,7 +10039,7 @@ func (b *Buffer) Grow(n int) {
 // needed. The return value n is the length of p; err is always nil. If the
 // buffer becomes too large, Write will panic with ErrTooLarge.
 //
-// P3-M9 (WS D): exact gc 1.27.1 signature with fail-fast body for
+// P3-M9 : exact gc 1.27.1 signature with fail-fast body for
 // type-checking; real implementation in __bytesBufferWrite helper
 // (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
 type __bytesWritePair struct {
@@ -10057,7 +10057,7 @@ func __bytesBufferWrite(b *Buffer, p []byte) __bytesWritePair {
 }
 
 func (b *Buffer) Write(p []byte) (n int, err error) {
-	panic("bytes.Buffer.Write: use __bytesBufferWrite helper (WS D)")
+	panic("bytes.Buffer.Write: unreachable (call sites desugar to __bytesBufferWrite")
 }
 
 // WriteString appends the contents of s to the buffer, growing the buffer as
@@ -10065,12 +10065,12 @@ func (b *Buffer) Write(p []byte) (n int, err error) {
 // buffer becomes too large, WriteString will panic with ErrTooLarge.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) WriteString(s string) (n int, err error) {
-	panic("bytes.Buffer.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.WriteString: unreachable (call sites desugar to __bytesBufferWriteString")
 }
 
-// P3-M10: WS D discharge of the fail-fast above via the m7 desugar
+// P3-M10: discharge of the fail-fast above via the m7 desugar
 // table. Semantics match gc exactly: appends s (growing as needed,
 // ErrTooLarge panic preserved via grow), returns len(s), nil.
 func __bytesBufferWriteString(b *Buffer, s string) __bytesWriteStringPair {
@@ -10099,10 +10099,9 @@ const MinRead = 512
 // buffer becomes too large, ReadFrom will panic with ErrTooLarge.
 //
 // M8 scope: exact gc signature (io.Reader now nameable); the body stays
-// fail-fast — the loop needs r.Read, a 2-result interface call (WS D).
-// Re-test when WS D lands.
+// fail-fast — the loop needs r.Read, a 2-result interface call.
 func (b *Buffer) ReadFrom(r io.Reader) (n int64, err error) {
-	panic("bytes.Buffer.ReadFrom: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("bytes.Buffer.ReadFrom: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // growSlice grows b by n, preserving the original content of b.
@@ -10138,10 +10137,9 @@ func growSlice(b []byte, n int) []byte {
 // encountered during the write is also returned.
 //
 // M8 scope: exact gc signature (io.Writer now nameable); the body stays
-// fail-fast — the loop needs w.Write, a 2-result interface call (WS D).
-// Re-test when WS D lands.
+// fail-fast — the loop needs w.Write, a 2-result interface call.
 func (b *Buffer) WriteTo(w io.Writer) (n int64, err error) {
-	panic("bytes.Buffer.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("bytes.Buffer.WriteTo: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // WriteByte appends the byte c to the buffer, growing the buffer as needed.
@@ -10164,9 +10162,9 @@ func (b *Buffer) WriteByte(c byte) error {
 // as needed; if it becomes too large, WriteRune will panic with ErrTooLarge.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) WriteRune(r rune) (n int, err error) {
-	panic("bytes.Buffer.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.WriteRune: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // Read reads the next len(p) bytes from the buffer or until the buffer
@@ -10174,7 +10172,7 @@ func (b *Buffer) WriteRune(r rune) (n int, err error) {
 // buffer has no data to return, err is EOF (unless len(p) is zero);
 // otherwise it is nil.
 //
-// P3-M9 (WS D): exact gc 1.27.1 signature with fail-fast body for
+// P3-M9 : exact gc 1.27.1 signature with fail-fast body for
 // type-checking; real implementation in __bytesBufferRead helper
 // (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
 // Shares __bytesReadPair with __bytesReaderRead: same {n int, err error}
@@ -10198,7 +10196,7 @@ func __bytesBufferRead(b *Buffer, p []byte) __bytesReadPair {
 }
 
 func (b *Buffer) Read(p []byte) (n int, err error) {
-	panic("bytes.Buffer.Read: use __bytesBufferRead helper (WS D)")
+	panic("bytes.Buffer.Read: unreachable (call sites desugar to __bytesBufferRead")
 }
 
 // Next returns a slice containing the next n bytes from the buffer,
@@ -10222,9 +10220,9 @@ func (b *Buffer) Next(n int) []byte {
 // ReadByte reads and returns the next byte from the buffer.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) ReadByte() (byte, error) {
-	panic("bytes.Buffer.ReadByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadByte: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // ReadRune reads and returns the next UTF-8-encoded
@@ -10234,9 +10232,9 @@ func (b *Buffer) ReadByte() (byte, error) {
 // consumes one byte and returns U+FFFD, 1.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) ReadRune() (r rune, size int, err error) {
-	panic("bytes.Buffer.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadRune: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // UnreadRune unreads the last rune returned by ReadRune.
@@ -10280,9 +10278,9 @@ func (b *Buffer) UnreadByte() error {
 // delim.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
-	panic("bytes.Buffer.ReadBytes: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadBytes: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // readSlice is like ReadBytes but returns a reference to internal buffer data.
@@ -10290,7 +10288,7 @@ func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
 // M7 scope: unexported helper kept for source fidelity; unreachable (its
 // callers are multi-result stubs).
 func (b *Buffer) readSlice(delim byte) ([]byte, error) {
-	panic("bytes.Buffer.readSlice: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.readSlice: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // ReadString reads until the first occurrence of delim in the input,
@@ -10301,9 +10299,9 @@ func (b *Buffer) readSlice(delim byte) ([]byte, error) {
 // in delim.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (b *Buffer) ReadString(delim byte) (line string, err error) {
-	panic("bytes.Buffer.ReadString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadString: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // NewBuffer creates and initializes a new Buffer using buf as its
@@ -10350,7 +10348,7 @@ func (r *Reader) Size() int64 { return int64(len(r.s)) }
 
 // Read implements the io.Reader interface.
 //
-// P3-M9 (WS D): exact gc 1.27.1 signature with fail-fast body for
+// P3-M9 : exact gc 1.27.1 signature with fail-fast body for
 // type-checking; real implementation in __bytesReaderRead helper
 // (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
 type __bytesReadPair struct {
@@ -10369,23 +10367,23 @@ func __bytesReaderRead(r *Reader, b []byte) __bytesReadPair {
 }
 
 func (r *Reader) Read(b []byte) (n int, err error) {
-	panic("bytes.Reader.Read: use __bytesReaderRead helper (WS D)")
+	panic("bytes.Reader.Read: unreachable (call sites desugar to __bytesReaderRead")
 }
 
 // ReadAt implements the io.ReaderAt interface.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (r *Reader) ReadAt(b []byte, off int64) (n int, err error) {
-	panic("bytes.Reader.ReadAt: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadAt: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // ReadByte implements the io.ByteReader interface.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (r *Reader) ReadByte() (byte, error) {
-	panic("bytes.Reader.ReadByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadByte: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // UnreadByte complements Reader.ReadByte in implementing the io.ByteScanner interface.
@@ -10401,9 +10399,9 @@ func (r *Reader) UnreadByte() error {
 // ReadRune implements the io.RuneReader interface.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 func (r *Reader) ReadRune() (ch rune, size int, err error) {
-	panic("bytes.Reader.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadRune: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // UnreadRune complements Reader.ReadRune in implementing the io.RuneScanner interface.
@@ -10422,25 +10420,24 @@ func (r *Reader) UnreadRune() error {
 // Seek implements the io.Seeker interface.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// calls are served via the desugar).
 //
 // Note: the whence argument takes the same values as io.SeekStart (0),
 // io.SeekCurrent (1) and io.SeekEnd (2); io itself is P3-M8.
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-	panic("bytes.Reader.Seek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.Seek: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // WriteTo implements the io.WriterTo interface.
 //
 // M8 scope: exact gc signature (io.Writer now nameable); the body stays
-// fail-fast — the loop needs w.Write, a 2-result interface call (WS D).
-// Re-test when WS D lands.
+// fail-fast — the loop needs w.Write, a 2-result interface call.
 func (r *Reader) WriteTo(w io.Writer) (n int64, err error) {
-	panic("bytes.Reader.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("bytes.Reader.WriteTo: no Appendix-M table entry yet (fail-fast; needs __-helper + desugar coverage)")
 }
 
 // Reset resets the Reader to be reading from b.
-// (gc assigns *r = Reader{b, 0, -1}; v1 has no StarExpr assignment — WS D —
+// (gc assigns *r = Reader{b, 0, -1}; v1 has no StarExpr assignment
 // so the fields are assigned individually: same observable state.)
 func (r *Reader) Reset(b []byte) {
 	r.s = b
