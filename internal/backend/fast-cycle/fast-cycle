@@ -21,6 +21,7 @@ JAVA="$GRAALVM_HOME/bin/java"
 JAVAC="$GRAALVM_HOME/bin/javac"
 PORT=47321
 PORT_FILE="$HOME/.fastcycle.port"
+PID_FILE="$HERE/fastcycle.pid"
 
 TRUFFLE="$BACKEND/truffle"
 RUNTIME="$BACKEND/runtime"
@@ -31,14 +32,29 @@ RUNTIME_CLASSES="$RUNTIME/out/classes"
 TRUFFLE_CLASSES="$TRUFFLE/out/classes"
 INTEROP_CLASSES="$INTEROP/out/classes"
 
-# Full runtime classpath (matches graalgo-run overlay order)
-FULL_CP="$RUNTIME_CLASSES:$TRUFFLE_CLASSES:$INTEROP_CLASSES:$LIB_CP"
+# Full runtime classpath (matches graalgo-run overlay order: runtime first so
+# the runtime module's same-FQN replacements shadow the truffle module's
+# frozen stubs; interop before truffle for the sync wire nodes). The interop
+# Makefile's RUN_CP is interop-first instead because it launches P3SyncMain
+# (the graalgo-sync-run order), not the main launcher this daemon runs.
+FULL_CP="$RUNTIME_CLASSES:$INTEROP_CLASSES:$TRUFFLE_CLASSES:$LIB_CP"
 
 # The 8 frozen stubs (compile in truffle module, not the joint round)
 STUBS="graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java graalgo/runtime/Timers.java graalgo/safepoint/Safepoint.java"
 
 daemon_pid() {
-    pgrep -f "FastCycleDaemon" || true
+    # PID recorded at daemon start. (pgrep -f would also match unrelated
+    # processes whose command line merely contains the daemon name.)
+    [ -f "$PID_FILE" ] && cat "$PID_FILE" || true
+}
+
+stop_daemon() {
+    local pid
+    pid=$(daemon_pid)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
 }
 
 ensure_daemon() {
@@ -58,6 +74,7 @@ ensure_daemon() {
     setsid env GRAALGO_GOFRONTEND="$GRAALGO_GOFRONTEND" "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
         -cp "$HERE:$FULL_CP" FastCycleDaemon \
         >"$HERE/daemon.log" 2>&1 < /dev/null &
+    echo $! > "$PID_FILE"
     disown
     # Wait for readiness
     for i in $(seq 1 30); do
@@ -274,11 +291,11 @@ do_test() {
         fi
         # Test classpath: test classes first, then main.
         # RUNTEST invokes methods directly (no System.exit).
-        # Pass the phase1 dir property (matches the Makefile's P1_DIR_PROP).
-        # $BACKEND is internal/backend, so phases is ../../phases.
-        local p1dir="$BACKEND/../../phases/phase1"
-        # For truffle tests, the property is graalgo.phase1.dir
-        local props="graalgo.phase1.dir=$p1dir"
+        # Pass the repo-root property (matches the truffle Makefile's P1_DIR_PROP).
+        # $BACKEND is internal/backend, so the repo root is two levels up.
+        local repodir="$BACKEND/../.."
+        # Tests read graalgo.repo.dir (default ".").
+        local props="graalgo.repo.dir=$repodir"
         if [ -n "$method" ]; then
             send "RUNTEST $testout:$FULL_CP $testclass $method -- $props"
         else
@@ -324,7 +341,7 @@ case "${1:-}" in
     run)    do_run "${2:?usage: fast-cycle run <GoFile>}" ;;
     test)   do_test "${2:?usage: fast-cycle test <TestClass>}" ;;
     watch)  do_watch "${2:?usage: fast-cycle watch <GoFile>}" ;;
-    stop)   send "STOP" || true; pkill -f FastCycleDaemon || true; echo "Stopped." ;;
+    stop)   send "STOP" || true; stop_daemon; echo "Stopped." ;;
     status) ensure_daemon && echo "Daemon running." ;;
     *) echo "usage: fast-cycle {build|run|test|watch|stop|status}"; exit 1 ;;
 esac

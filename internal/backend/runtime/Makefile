@@ -65,12 +65,8 @@ RUN_CP := $(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
-# BRIDGE (frontend lane): subprocess tests (GcDifferentialTest, GoDebugTest)
-# resolve gofrontend via ToolPaths' walk-up, which no longer reaches
-# phases/phase1/frontend from the new class locations. Export the current
-# build location until the frontend lane moves it to internal/frontend/
-# (the walk-up then finds it unaided; a stale env var is skipped via the
-# isExecutable check).
+# gofrontend location for subprocess tests (ToolPaths' walk-up skips a
+# stale env var via the isExecutable check).
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
@@ -97,10 +93,6 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
 test: main $(OUT_TEST)/.built
-	# BRIDGE (test lane): the differential tests resolve corpus/… paths
-	# relative to the module working directory (as in the phase-2 tree).
-	# The ./corpus symlink points at phases/phase2/corpus until the test
-	# code-move lane relocates it to test/corpus/; repoint/remove then.
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \

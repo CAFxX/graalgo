@@ -2057,12 +2057,12 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 //
 // Design: the field holds a function value. For the call to work, the
 // stored value must be pair-returning. This holds because:
-// - Synthetic packages declare pair-returning field types explicitly
-//   (e.g., nistCurve.generate)
-// - Disk/user packages: the field is assigned a function that has been
-//   pair-transformed (via userMRFuncs or the disk MR table), so the
-//   value is pair-returning even though the declared field type is
-//   multi-result.
+//   - Synthetic packages declare pair-returning field types explicitly
+//     (e.g., nistCurve.generate)
+//   - Disk/user packages: the field is assigned a function that has been
+//     pair-transformed (via userMRFuncs or the disk MR table), so the
+//     value is pair-returning even though the declared field type is
+//     multi-result.
 //
 // The desugar emits a regular "call" node (not "funcfieldcall") with the
 // pair type — the backend already handles selector-fun calls via
@@ -4119,8 +4119,8 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 			}
 			return true
 		})
-		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
-		// (Simplified: just remove; call-site rewriting via alias map.)
+		// Remove the marked ValueSpecs; call-site rewriting of the removed
+		// aliases goes through the returned alias map.
 		for _, vs := range toRemove {
 			// Find and remove from parent GenDecl.
 			for _, decl := range f.Decls {
@@ -4133,26 +4133,6 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 					}
 				}
 			}
-		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
 		}
 	}
 	return varLits, aliases

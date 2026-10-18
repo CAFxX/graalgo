@@ -20,10 +20,11 @@ deliverable until the design lands.
 ## Phased removal order
 
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+  packages via root-cause fixes: `crypto/x509` (worktree `real-x509`),
+  `net`/`net/http` (worktree `real-nethttp`). `fmt` retired 2026-10-16
+  (worktrees `real-fmt2`, `real-fmt-rebase`); `reflect` retired
+  (worktree `real-reflect2`). Retires B-1, B-5, and the reflect/time/math
+  name-keyed predicates in B-3.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -70,21 +71,24 @@ deliverable until the design lands.
 ### B-3. Frontend package-name-keyed special-case machinery
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
-  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
-    entries), `isMultiResultSynthetic` (~line 2113) /
-    `multiResultSyntheticError` (~line 2207) ~60-path chains,
-    `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
-    `isAliasIntrinsicFunc` (~line 2088), `isAbiFuncPCIntrinsicFunc`
-    (~line 1701);
+  - `synth_machinery.go`: `syntheticSources` import overlay (~line 70, 132
+    entries — 130 active; `reflect` and `internal/reflectlite` retired, kept
+    as commented lines), `isMultiResultSynthetic` (~line 2205) /
+    `multiResultSyntheticError` (~line 2299) long path chains (~100/~40
+    paths), `isTimeIntrinsicFunc` (~line 2123),
+    `isMathIntrinsicFunc` (~line 2128), `isAliasIntrinsicFunc` (~line 2142),
+    `isAbiFuncPCIntrinsicFunc` (~line 1654);
   - [synth_reflect.go](../../internal/frontend/synth_reflect.go):
-    `isReflectIntrinsicFunc` (~line 2898);
+    `isReflectIntrinsicFunc` (~line 2908);
   - [diskimport.go](../../internal/frontend/diskimport.go):
-    `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
-    switches (~line 402) and the linkname package allowlist;
-  - [export.go](../../internal/frontend/export.go): `"syncop"` and
-    `"runtimecaller"` custom wire nodes for stdlib functions, and the
-    `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    `resolvePkgTree` (~line 403) — now a general mechanism (syntheticSources
+    lookup → `isDedicatedSyntheticStub` → disk importer); the name-keyed
+    package switches are gone;
+  - [export.go](../../internal/frontend/export.go): the `overlayImporter`
+    type, the `linknameAlias` linkname machinery (~line 2960), `"syncop"`
+    and `"runtimecaller"` custom wire nodes for stdlib functions (~line
+    9230), and the `time.Now` eta-expansion hardcoded by package+symbol name
+    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 214–228).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -109,9 +113,9 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 132 `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
+- **What:** 132 files in [internal/frontend/](../../internal/frontend/)
   (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
@@ -125,11 +129,10 @@ deliverable until the design lands.
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
-  `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
-  general disk mechanism"), `real-nethttp` (`net`/`net/http`),
-  `real-reflect2` (`reflect`).
-- **Phase:** 1 (the four in-flight packages) → 2 (remainder).
+  decision. In flight: `real-x509` (`crypto/x509`, "remove synthetic
+  crypto/x509, route via general disk mechanism"), `real-nethttp`
+  (`net`/`net/http`).
+- **Phase:** 1 (the two in-flight packages) → 2 (remainder).
 
 ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
 

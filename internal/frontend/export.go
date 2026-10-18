@@ -584,8 +584,9 @@ func syntheticRuntimePackage() *types.Package {
 type overlayImporter struct{}
 
 // dedicatedSyntheticStubs maps the two import paths with dedicated
-// synthetic constructors (not in syntheticSources) to their builders.
-// sync and sync/atomic now resolve from disk (real packages).
+// synthetic constructors (not in syntheticSources) to their builders:
+// "runtime" and "unsafe". (sync and sync/atomic were removed from this
+// map — they now resolve from disk as real packages.)
 var dedicatedSyntheticStubs = map[string]func() *types.Package{
 	"runtime": syntheticRuntimePackage,
 	"unsafe":  syntheticUnsafePackage,
@@ -792,7 +793,7 @@ func internalImportVisible(importPath, importingDir string) bool {
 // checkImportAllowed and needsOverlayImporter. General mechanism
 // (hunt-special-cases): instead of a per-package allow-list, admit:
 //  1. The packages with dedicated synthetic constructors (not in
-//     syntheticSources): runtime, fmt, unsafe.
+//     syntheticSources): runtime, unsafe.
 //  2. Any package with a synthetic source (syntheticSources map) —
 //     including future additions, no allow-list update needed — except
 //     internal packages, which follow Go's internal-visibility rule.
@@ -920,16 +921,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// via the synthetic overlay package (four primitives).
 	// 503608ea: RETIRED — sync and sync/atomic now resolve from disk
 	// (real packages); the synthetic overlay no longer serves them.
-	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
-	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
-	// P3-M7 (wave 1): "errors", "sort", "bytes", "math", "strings",
-	// "encoding/xml" likewise.
-	// P3-M7 (wave 1): the 8 encoding/* primitive packages likewise.
-	// (m7-wenc-core: "strings" was missing from this list — the allow-list
-	// above admitted it but type-checking still used failImporter. Fixed
-	// here; re-test trigger: a program importing "strings" must export.)
-	// P3-M8 (wave 2): "io", "syscall", "os", "io/fs", "reflect", "hash",
-	// "iter", and the crypto/* packages likewise.
+	// (Later waves extended the overlay instead of retiring it; the
+	// per-wave additions are documented at syntheticSources in
+	// synth_machinery.go.)
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if needsOverlayImporter(strings.Trim(imp.Path.Value, "\"`"), idir) {

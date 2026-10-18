@@ -35,10 +35,11 @@ The short version:
 - [cmd/graalgo/](cmd/graalgo/) — the binary: `build`, `run`, `test`, `vet`,
   `fmt`.
 - [internal/](internal/) — the implementation: `frontend/` (Go source → IR),
-  `ir/`, `backend/` (`truffle/`, `runtime/`, `interop/`), `driver/` (build
-  orchestration).
-- [stdlib/](stdlib/) — stdlib support: `synthetic/` (documented
-  workarounds), `patches/` (minimal diffs vs upstream Go).
+  `backend/` (`truffle/`, `runtime/`, `interop/`), `driver/` (build
+  orchestration), `vet/` (static analyzers for `graalgo vet`).
+- [stdlib/](stdlib/) — stdlib support: `patches/` (minimal diffs vs upstream
+  Go); the synthetic package sources live in [internal/frontend/](internal/frontend/)
+  (`synth_*.go`, documented workarounds being retired per the bridge inventory).
 - [test/](test/) — `corpus/`, `differential/` (run vs `gc`, byte-compare),
   `e2e/` (real published modules), `snapshots/` (behavior baselines).
 - [docs/](docs/) — `arch/`, `dev/`, `spec/`, and the map itself.

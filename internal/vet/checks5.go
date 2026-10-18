@@ -102,10 +102,22 @@ func runBuildTag(pass *Pass) []Diagnostic {
 				}
 			}
 		}
-		// Check placement: //go:build should be before package clause.
-		// (The parser already enforces this; we check // +build after package.)
+		// Check placement: // +build lines must appear before the package
+		// clause (//go:build placement is already enforced by the parser).
 		if f.Package != token.NoPos {
-			_ = f.Package
+			pkgOff := pass.Fset.Position(f.Package).Offset
+			for _, cg := range f.Comments {
+				for _, c := range cg.List {
+					text := strings.TrimSpace(c.Text)
+					if strings.HasPrefix(text, "// +build") &&
+						pass.Fset.Position(c.Pos()).Offset > pkgOff {
+						out = append(out, Diagnostic{
+							pass.position(c),
+							"misplaced // +build line: must appear before the package clause",
+						})
+					}
+				}
+			}
 		}
 	}
 	return out

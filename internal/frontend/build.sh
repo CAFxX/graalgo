@@ -36,8 +36,10 @@ case "${1:-build}" in
   vet)   exec go vet $OV . ;;
   test)  exec go test $OV . ;;
   check)
-    echo "== gofmt (excluding vendored tree) ==" >&2
-    if gofmt -l main.go export.go export_test.go | grep .; then
+    echo "== gofmt (frontend module: vendored ./go, generated synth_*.go, and the p3frontend/v2 submodules excluded) ==" >&2
+    if find . -name '*.go' -not -path './go/*' -not -path './p3frontend/*' \
+        -not -path './v2/*' -not -name 'synth_*.go' -print0 \
+        | xargs -0 -r gofmt -l | grep .; then
       echo "gofmt: dirty files above" >&2; exit 1
     fi
     echo "== go vet ==" >&2

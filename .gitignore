@@ -1,6 +1,7 @@
 # build outputs
 out/
 *.class
+*.err
 # regenerable caches, downloads, binaries
 **/dl/
 **/gocache*/
@@ -21,3 +22,7 @@ test/differential/diffharness
 tools/fuzz/work/
 .gocache/
 .tmp/
+
+# fast-cycle daemon runtime files (pid + log, rewritten on every start)
+internal/backend/fast-cycle/daemon.log
+internal/backend/fast-cycle/fastcycle.pid

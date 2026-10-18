@@ -112,7 +112,7 @@ var syntheticSources = map[string]string{
 	// "internal/reflectlite": syntheticReflectliteSource, // RETIRED - real
 	// internal/reflectlite from GOROOT via disk importer (needed by real
 	// reflect and real errors)
-	"iter":                 syntheticIterSource,
+	"iter": syntheticIterSource,
 	// M7 helpers for reflect (disk-imported): the M7 desugaring table
 	// still needs the __-helpers and pair types (e.g. __reflect_taglookup,
 	// reflectTagPair). They live in the retired synth_reflect.go source,
@@ -333,7 +333,7 @@ var syntheticSources = map[string]string{
 	"mime/quotedprintable": syntheticMimeQuotedprintableSource,
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
 	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go,
-// net/http and net/http/httptest are REAL (P4 bridge-removal): the
+	// net/http and net/http/httptest are REAL (P4 bridge-removal): the
 	// synthetic sources are retired. Real net/http compiles from GOROOT
 	// via the general disk overlay.
 }
@@ -1119,7 +1119,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 								}
 							}
 						}
-					// General (real-x509 lane): fail-fast stubs ARE registered
+						// General (real-x509 lane): fail-fast stubs ARE registered
 						// (so call sites link to the stub, which panics at
 						// runtime if invoked — the honest fail-fast
 						// behavior); skipPairTransform below prevents the
@@ -1269,7 +1269,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 		}
 	}
-		varInits := []ginit{}
+	varInits := []ginit{}
 	for _, sv := range sspecs {
 		// WS G: the initializer's own file (multi-file disk packages).
 		e.src = sp.srcForFile(sv.file)
@@ -2188,6 +2188,7 @@ func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
 	}
 	return isMultiResultSynthetic(fn)
 }
+
 // isGenericFunc reports whether fn is a generic function template (has
 // type parameters). Generic templates are never pair-transformed
 // themselves (registerUserMRFunc skips isTemplate); their instantiations
@@ -2339,7 +2340,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 			name = nt.Obj().Name() + "." + name
 		}
 	}
-	return scopeErrorf("%s.%s is not in %s scope (multi-result calls need WS D; re-test when it lands)",
+	return scopeErrorf("%s.%s is not in %s scope (multi-result desugaring landed with WS D; this package's multi-result members are still a scope carve-out)",
 		fn.Pkg().Path(), name, milestone)
 }
 

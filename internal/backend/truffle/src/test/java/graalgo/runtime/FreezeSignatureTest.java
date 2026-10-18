@@ -12,8 +12,8 @@ import java.util.List;
  * Verifies the GG-0020 freeze v2 signatures via reflection
  * (verifies: GG-0020).
  *
- * <p>Each frozen signature from {@code docs/freeze-stub.md} and
- * {@code INTERFACE_FREEZE.md} is checked for existence with the exact
+ * <p>Each frozen signature from {@code docs/spec/freeze-stub.md} and
+ * {@code docs/spec/INTERFACE_FREEZE.md} is checked for existence with the exact
  * parameter types <em>and</em> return type, plus the public/static shape.
  * This test fails if a frozen signature is renamed, retyped (params or
  * return), or removed without a cross-workstream review.

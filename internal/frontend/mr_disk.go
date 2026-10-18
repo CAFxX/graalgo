@@ -3,10 +3,9 @@ package main
 // WS G (P3-M9, module-probe lane): multi-result transformation for disk
 // packages.
 //
-// The v1 frontend cannot emit multi-result functions (WS D). Synthetic
-// packages handle this via hand-written __-helpers + the Appendix-M
-// desugar table. For disk (third-party) packages we generate the same
-// shape mechanically:
+// Synthetic packages handle multi-result via hand-written __-helpers +
+// the Appendix-M desugar table. For disk (third-party) packages we
+// generate the same shape mechanically:
 //
 //   - For each multi-result FuncDecl F (func or method), generate:
 //     type __F_pair struct { f1 T1; f2 T2 }   // f1..fN for N results
@@ -14,8 +13,11 @@ package main
 //     func F(args...) (T1, T2) { panic("unreachable") }  // stub for type-check
 //   - Register {pkg, F} -> __F in the dynamic desugar table; call sites
 //     are rewritten during export by the Appendix-M machinery.
-//   - After type-checking, the stubs are removed from the AST so the
-//     exporter never sees them (it cannot emit multi-result bodies).
+//   - The stubs are KEPT in the AST (keep-and-skip): exportFuncDecl skips
+//     any FuncDecl with a diskMRSpecs entry ("Stub: skip export (desugar
+//     handles all calls)"), so the exporter never emits the panic bodies.
+//     The stub's *ast.FuncDecl is retained in the spec so dependency
+//     analysis can map the stub's *types.Func to the helper's real body.
 //
 // This is general: any disk package with multi-result functions works,
 // not just the module that exposed the gap.
@@ -37,7 +39,7 @@ type diskMRSpec struct {
 	helper     string // "__parse"
 	pairType   string // "__parsePair"
 	pairFields []string
-	stub       *ast.FuncDecl // removed after type-check
+	stub       *ast.FuncDecl // kept in the AST; skipped by the exporter
 }
 
 var (
@@ -1971,24 +1973,6 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 	default:
 		// return a, b, ... -> return Pair{a, b, ...}
 		return []ast.Stmt{mkPair(rs.Results)}
-	}
-}
-
-// removeDiskMRStubs removes stub FuncDecls from files after type-checking.
-func removeDiskMRStubs(files []*ast.File, specs []diskMRSpec) {
-	stubSet := map[*ast.FuncDecl]bool{}
-	for _, s := range specs {
-		stubSet[s.stub] = true
-	}
-	for _, f := range files {
-		var out []ast.Decl
-		for _, decl := range f.Decls {
-			if fd, ok := decl.(*ast.FuncDecl); ok && stubSet[fd] {
-				continue
-			}
-			out = append(out, decl)
-		}
-		f.Decls = out
 	}
 }
 

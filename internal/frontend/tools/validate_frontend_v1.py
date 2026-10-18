@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Schema validator for the graalgo frontend/v1 JSON wire format.
 
-Enforces the contract documented in ../../../phases/phase1/docs/frontend-v1.md:
+Enforces the contract documented in ../../../docs/arch/frontend-v1.md:
   - top-level document shape and "frontend": "v1" version pin
   - type-table entries: known kinds, required detail fields, in-range refs
   - object-table entries
@@ -298,6 +298,7 @@ def check_node(ctx, path, node, expr):
         check_node(ctx, f"{fp}.body", f.get("body"), False)
     elif kind == "branch":
         need("op")
+        need("label")  # present per the wire doc ("label": str or null)
         if f.get("op") not in ("break", "continue", "goto", "fallthrough"):
             ctx.err(fp, f"unknown branch op {f.get('op')!r}")
     elif kind == "labeled":
