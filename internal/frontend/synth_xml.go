@@ -62,12 +62,13 @@ const syntheticXmlSource = `package xml
 //   - Writer: any program-defined type with WriteBytes(p []byte); under gc
 //     it additionally implements Write (io.Writer).
 //
-// v1 cannot emit or call multi-result methods (WS D), so the interfaces
-// use single-result methods only. P3-M8 re-test (WS D, not io — io has
-// landed): switch NewDecoder, NewEncoder, EscapeText and Escape to
-// io.Reader/io.Writer and retire Reader/Writer/ReadResult (call sites
-// keep working: every io.Reader with a Next method... — see redgreen.md;
-// the corpus dual-mode reader/writer documents the migration).
+// v1 cannot emit or call multi-result methods, so the interfaces
+// use single-result methods only. P3-M8 re-test (2-result interface
+// dispatch — io has landed): switch NewDecoder, NewEncoder, EscapeText
+// and Escape to io.Reader/io.Writer and retire Reader/Writer/ReadResult
+// (call sites keep working: every io.Reader with a Next method... — see
+// redgreen.md; the corpus dual-mode reader/writer documents the
+// migration).
 // =====================================================================
 
 // ReadResult is the single-result carrier for Reader.Next: one input
