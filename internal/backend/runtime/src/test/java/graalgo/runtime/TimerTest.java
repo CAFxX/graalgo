@@ -482,6 +482,52 @@ public final class TimerTest {
         });
     }
 
+    // P1-4: drainLocked must terminate on a closed channel. Pre-fix, the
+    // loop `while (ch.tryRecv(sched) != null)` never exits once the channel
+    // is closed (tryRecv returns (zeroValue, false) — non-null — forever),
+    // wedging the timer thread while holding the heap lock, so all timers
+    // stop firing. Closing a timer channel is forbidden by Go's type
+    // system (t.C is <-chan); the runtime must terminate anyway rather
+    // than wedge on the external invariant.
+    // Red-green: on the pre-fix code the stop() below never returns; the
+    // join timeout turns that into a test failure instead of hanging the
+    // runner (the worker is a daemon, so the JVM can still exit).
+    public void testStopOnClosedChannelTerminates() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer t = GoTimer.newTimer(20_000_000L);
+            Thread.sleep(150); // fired; stale value buffered
+            GoChan ch = (GoChan) t.channel();
+            ChanOps.close(t.channel());
+            AtomicReference<Boolean> stopped = new AtomicReference<>();
+            AtomicReference<Throwable> err = new AtomicReference<>();
+            Thread w = new Thread(() -> {
+                try {
+                    stopped.set(t.stop());
+                } catch (Throwable th) {
+                    err.set(th);
+                }
+            });
+            w.setDaemon(true);
+            w.start();
+            w.join(10_000);
+            assertFalse(w.isAlive(),
+                    "stop() wedged: drainLocked looped forever on the closed channel");
+            assertNull(err.get(), "stop() threw: " + err.get());
+            // The stale pre-close value was drained (not left behind):
+            // stop reports active, gc timerchandrain parity.
+            assertEquals(Boolean.TRUE, stopped.get(),
+                    "stop on fired-undrained closed channel");
+            // Channel is closed and fully drained: tryRecv yields
+            // (zero, ok=false), never a stale value.
+            GoChan.RecvResult rr;
+            synchronized (ch) {
+                rr = ch.tryRecv(sched);
+            }
+            assertTrue(rr != null && !rr.ok(),
+                    "closed+drained channel must report ok=false");
+        });
+    }
+
     private static void assertThrowsUoe(Runnable r) {
         try {
             r.run();

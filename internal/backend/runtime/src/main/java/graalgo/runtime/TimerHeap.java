@@ -272,8 +272,11 @@ public final class TimerHeap {
             boolean drained = false;
             // tryRecv is non-blocking and monitor-held; a null return
             // means the buffer is empty (no send waiters exist — only
-            // the timer thread sends, via non-blocking trySend).
-            while (ch.tryRecv(sched) != null) {
+            // the timer thread sends, via non-blocking trySend). A non-ok
+            // result means the channel is closed and drained: break, so a
+            // closed channel cannot wedge the timer thread here (P1-4).
+            GoChan.RecvResult rr;
+            while ((rr = ch.tryRecv(sched)) != null && rr.ok()) {
                 drained = true;
             }
             return drained;
