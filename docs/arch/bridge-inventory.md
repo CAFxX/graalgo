@@ -28,7 +28,9 @@ deliverable until the design lands.
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
   shrinks the B-3 predicate chains, the `mrdesugar` pair tables, and
-  `syntheticSources`.
+  `syntheticSources`. Also in this phase: delete the 5 dead P2-D8 stub
+  files (B-8; plan in [p2-d8-same-fqn-overlay.md](p2-d8-same-fqn-overlay.md)
+  §3) — `STUBS`/`STUB_REL`/stub-shadow gate shrink to the 3 real pairs.
 - **Phase 3 — machinery deletion.** When the last synthetic package retires,
   delete the machinery wholesale: `syntheticSources` + the import overlay,
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
@@ -175,6 +177,48 @@ deliverable until the design lands.
   through the backend so `runtime.Callers` walks the actual guest stack;
   then delete the synthetic intrinsics.
 - **Phase:** 4.
+
+### B-8. P2-D8 same-FQN classpath overlay (8 shadowed classes; 5 dead stubs)
+
+- **What:** eight classes exist twice under identical fully-qualified
+  names — once in
+  [internal/backend/truffle/src/main/java](../../internal/backend/truffle/src/main/java)
+  and once in
+  [internal/backend/runtime/src/main/java](../../internal/backend/runtime/src/main/java)
+  — and the loaded copy is decided by classpath order
+  (`runtime/out/classes` first in
+  [graalgo-run](../../internal/backend/graalgo-run),
+  [graalgo-sync-run](../../internal/backend/graalgo-sync-run), and every
+  module `RUN_CP`/`TEST_CP`):
+  `graalgo.runtime.{ChanOps,GcInterop,Netpoll,Scheduler,Timers}` (truffle
+  side: pure `UnsupportedOperationException` GG-0020 freeze stubs, dead in
+  every documented config), plus `graalgo.runtime.{Panic,GoroutineState}`
+  and `graalgo.safepoint.Safepoint` (truffle side: the real Phase-1
+  originals; runtime side: the Phase-2 replacements). This is an import
+  overlay — the inventory's own bridge definition — but it predates the
+  no-new-bridges gate, which only inspects added lines, so the gate could
+  never see it (RV22-P1-1).
+- **Why:** one `javac` round cannot hold two classes with the same FQN:
+  the runtime module compiles the joint round (its sources + the truffle
+  module's non-stub sources) while the truffle module compiles only the 8
+  stubs against the built runtime classes (COMPILE CYCLE note in the
+  [truffle Makefile](../../internal/backend/truffle/Makefile),
+  `STUB_REL` + the `STUB-SHADOW GATE` in the
+  [runtime Makefile](../../internal/backend/runtime/Makefile)).
+- **Root-cause fix:** the overlay *mechanism* (classpath shadowing) is the
+  documented way Phase 2 replaces Phase-1 behavior for the 3 real pairs —
+  that part is permanent and drift-guarded. What retires: (1) the 5 dead
+  stub files, deleted once the runtime module is mandatory in every config
+  (it already is) — concrete plan in
+  [p2-d8-same-fqn-overlay.md](p2-d8-same-fqn-overlay.md) §3; (2) the
+  desync hazard for all 8 pairs, closed by the generalized
+  `OverlayDriftTest` (all 8 pairs, additive exemptions documented in the
+  test); (3) the silent-wrong-order hazard, closed by the shared
+  `graalgo.sched.launcher.OverlayGuard.assertPhase2Overlay()` fail-fast
+  wired into every overlay-requiring entry point (`SchedMain`,
+  `P3SyncMain`, `SchedTestRunner`, `TortureBattery`, `IfaceTestRunner`).
+- **Phase:** 2 (stub deletion); the 3 real pairs stay as the documented,
+  drift-guarded mechanism.
 
 ## Adjudicated non-bridges
 

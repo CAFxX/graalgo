@@ -580,24 +580,13 @@ public final class P3SyncMain {
     }
 
     /**
-     * Fail-fast that the Phase-2 overlay is active (P2-D8, same as
-     * SchedMain): the {@code graalgo.runtime.Scheduler} on the classpath
-     * must be the Phase-2 replacement, i.e. phase2/out/classes precedes
-     * phase1/out/classes. Never silent.
+     * Fail-fast that the Phase-2 overlay is active (P2-D8, bridge B-8,
+     * same as SchedMain): delegated to the shared
+     * {@link graalgo.sched.launcher.OverlayGuard#assertPhase2Overlay()}
+     * so every overlay-requiring entry point runs the same check.
      */
     private static void assertSchedulerOverlay() {
-        try {
-            if (!graalgo.runtime.Scheduler.isPhase2()) {
-                throw new IllegalStateException(
-                        "graalgo.runtime.Scheduler.isPhase2() returned false");
-            }
-        } catch (NoSuchMethodError e) {
-            throw new IllegalStateException(
-                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
-                    + "overlay; phase2/out/classes must precede phase1/out/classes "
-                    + "on the classpath",
-                    e);
-        }
+        graalgo.sched.launcher.OverlayGuard.assertPhase2Overlay();
     }
 
     private static int usageError(String msg) {

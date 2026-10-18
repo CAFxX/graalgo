@@ -81,7 +81,7 @@ Numbers are JVM-heap sourced. Verified differential vs gc by
 Restores pre-Go-1.21 `panic(nil)` semantics: `recover()` returns nil
 instead of `*runtime.PanicNilError`. Implemented via the Phase-2
 `graalgo.runtime.Panic` same-FQN overlay (P2-D8 shadowing); drift-guarded
-by `PanicOverlayDriftTest`. Verified byte-identical vs
+by `OverlayDriftTest`. Verified byte-identical vs
 `GODEBUG=panicnil=1 go run`.
 
 ## Registry

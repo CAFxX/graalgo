@@ -16,7 +16,7 @@ import graalgo.values.GoInterface;
  * {@code recover()} after {@code panic(nil)} returns nil. With the flag
  * off (default), behavior is exactly the Phase-1 gc ≥1.21 behavior.
  *
- * <p>Drift guard: {@code PanicOverlayDriftTest} reflectively asserts that
+ * <p>Drift guard: {@code OverlayDriftTest} reflectively asserts that
  * every public method of the Phase-1 original exists here with an
  * identical signature, so a future Phase-1 change to this class fails
  * the suite instead of silently desyncing the overlay.

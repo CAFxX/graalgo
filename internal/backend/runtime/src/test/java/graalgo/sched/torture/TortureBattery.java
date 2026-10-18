@@ -4,6 +4,7 @@ import graalgo.runtime.GoChan;
 import graalgo.runtime.ChanOps;
 import graalgo.safepoint.Safepoint;
 import graalgo.sched.SchedulerCore;
+import graalgo.sched.launcher.OverlayGuard;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -549,6 +550,9 @@ public final class TortureBattery {
     // main dispatch
 
     public static void main(String[] args) throws Exception {
+        // P2-D8 overlay tripwire (bridge B-8): every leg drives the
+        // scheduler, so the Phase-2 same-FQN replacements must win.
+        OverlayGuard.assertPhase2Overlay();
         if (args.length < 1) {
             System.err.println("usage: TortureBattery <F1|F3|F4|F5|F5b|F6> [args...]");
             System.exit(2);

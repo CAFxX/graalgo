@@ -4,6 +4,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
+import graalgo.sched.launcher.OverlayGuard;
 
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}
@@ -50,6 +51,9 @@ public final class IfaceTestRunner {
     private IfaceTestRunner() {}
 
     public static void main(String[] args) {
+        // P2-D8 overlay tripwire (bridge B-8): the battery drives the
+        // scheduler, so the Phase-2 same-FQN replacements must win.
+        OverlayGuard.assertPhase2Overlay();
         int run = 0;
         int failed = 0;
         List<String> failures = new ArrayList<>();

@@ -4,6 +4,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
+import graalgo.sched.launcher.OverlayGuard;
 
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}):
@@ -51,7 +52,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.FreezeGapTest.class);
         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
         TESTS.add(graalgo.runtime.StructSizeNestedTest.class);
-        TESTS.add(graalgo.runtime.PanicOverlayDriftTest.class);
+        TESTS.add(graalgo.runtime.OverlayDriftTest.class);
         TESTS.add(graalgo.runtime.GcInteropTest.class);
         TESTS.add(graalgo.runtime.GcDifferentialTest.class);
         TESTS.add(graalgo.runtime.GcTortureTest.class);
@@ -65,6 +66,9 @@ public final class SchedTestRunner {
     }
 
     public static void main(String[] args) {
+        // P2-D8 overlay tripwire (bridge B-8): these tests run goroutine
+        // code, so the Phase-2 same-FQN replacements must win the classpath.
+        OverlayGuard.assertPhase2Overlay();
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {
