@@ -568,3 +568,102 @@ func (p Pair[A, B]) Split() (A, B) {
 }
 `)
 }
+
+// TestDiskMRHoistTwoVarBlocksUniqueNames is a regression test for the
+// var-hoist temp naming collision (L07): the __mr_hoist_N counter was
+// scoped per var GenDecl, so two var blocks each needing a hoist both
+// emitted var __mr_hoist_0, failing type-checking with a redeclaration
+// error on valid input. The counter is package-scoped now.
+// (Failed pre-fix.)
+func TestDiskMRHoistTwoVarBlocksUniqueNames(t *testing.T) {
+	f, specs, errs := transformDiskMR(t, `package p
+
+func Parse(b []byte) (int, error) { return 1, nil }
+
+func Must(v int, err error) int { return v }
+
+var (
+	A = Must(Parse([]byte{1}))
+)
+
+var (
+	B = Must(Parse([]byte{2}))
+)
+`)
+	if len(specs) != 1 {
+		t.Fatalf("specs = %+v, want [Parse]", specs)
+	}
+	if len(errs) != 0 {
+		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
+	}
+	// Structural: exactly two distinct __mr_hoist_N package-level vars.
+	names := map[string]int{}
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			continue
+		}
+		for _, s := range gd.Specs {
+			vs, ok := s.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, n := range vs.Names {
+				if strings.HasPrefix(n.Name, "__mr_hoist_") {
+					names[n.Name]++
+				}
+			}
+		}
+	}
+	if len(names) != 2 {
+		t.Fatalf("want 2 distinct __mr_hoist_ vars, got %v", names)
+	}
+	for name, count := range names {
+		if count != 1 {
+			t.Fatalf("duplicate hoist name %s declared %d times", name, count)
+		}
+	}
+}
+
+// TestDiskMRHoistRespectsExistingHoistNames pins the collision guard:
+// a pre-existing package-level __mr_hoist_0 must push the generated
+// counter past it, so the hoist emits __mr_hoist_1, not a redeclaration.
+// (Failed pre-fix.)
+func TestDiskMRHoistRespectsExistingHoistNames(t *testing.T) {
+	f, _, errs := transformDiskMR(t, `package p
+
+func Parse(b []byte) (int, error) { return 1, nil }
+
+func Must(v int, err error) int { return v }
+
+var __mr_hoist_0 = 0
+
+var (
+	A = Must(Parse([]byte{1}))
+)
+`)
+	if len(errs) != 0 {
+		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
+	}
+	found := false
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			continue
+		}
+		for _, s := range gd.Specs {
+			vs, ok := s.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for _, n := range vs.Names {
+				if n.Name == "__mr_hoist_1" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("hoist did not emit __mr_hoist_1 past the pre-existing __mr_hoist_0")
+	}
+}

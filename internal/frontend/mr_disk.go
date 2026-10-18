@@ -265,6 +265,17 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	//   var __mr_tmp = __Parse(args)
 	//   var X = Must(__mr_tmp.f1, __mr_tmp.f2)
 	// This avoids needing export-time desugar for nested calls.
+	// Package-scoped hoist counter: the generated temps are
+	// package-level vars, so the counter must not reset per var block
+	// (two var blocks would both emit __mr_hoist_0 and redeclare it).
+	// Seed past any pre-existing __mr_hoist_N top-level names the
+	// collision guard collected.
+	hoistCounter := 0
+	for name := range existing {
+		if n, ok := hoistTempIndex(name); ok && n >= hoistCounter {
+			hoistCounter = n + 1
+		}
+	}
 	for _, f := range files {
 		var newDecls []ast.Decl
 		for _, decl := range f.Decls {
@@ -306,7 +317,8 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				// Hoist: var __mr_tmp_N = __Inner(args), preserving the
 				// package qualifier and explicit type arguments
 				// (GAP-GENERIC-MR: F[T](args) -> __F[T](args)).
-				tmpName := fmt.Sprintf("__mr_hoist_%d", len(hoisted))
+				tmpName := fmt.Sprintf("__mr_hoist_%d", hoistCounter)
+				hoistCounter++
 				helperCall := &ast.CallExpr{
 					Fun:  mrHelperFunForCall(inner.Fun, innerName),
 					Args: inner.Args,
@@ -367,6 +379,25 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		}
 	}
 	return specs
+}
+
+// hoistTempIndex parses the numeric suffix of a var-hoist temp name of
+// the form "__mr_hoist_N", returning the index. ok is false for any other
+// name. Used to seed the package-scoped hoist counter past pre-existing
+// __mr_hoist_N top-level names so generated temps never collide with them.
+func hoistTempIndex(name string) (n int, ok bool) {
+	rest, found := strings.CutPrefix(name, "__mr_hoist_")
+	if !found || rest == "" {
+		return 0, false
+	}
+	for i := 0; i < len(rest); i++ {
+		d := rest[i] - '0'
+		if d > 9 {
+			return 0, false
+		}
+		n = n*10 + int(d)
+	}
+	return n, true
 }
 
 // mrHelperFunForCall builds the __-helper call target for an original
