@@ -296,6 +296,11 @@ public final class ReflectOpNode extends GoExprNode {
             case "tStructOf" -> ReflectTypes.structOf(toStringArray(asSlice(argv[0])),
                     toTokArray(asSlice(argv[1])), toStringArray(asSlice(argv[2])),
                     toStringArray(asSlice(argv[3])), toBoolArray(asSlice(argv[4])));
+            // fix-redmaster-buildok (r5): reflect.toRType(t *abi.Type) *rtype.
+            // Wraps the *abi.Type's GoStruct in a proper reflect.rtype struct
+            // ({ t abi.Type }), so promoted field accesses work. The arg is
+            // a GoPointer to the abi.Type GoStruct (or null).
+            case "tortype" -> toRType(argv[0]);
             default -> dispatchValue(op, argv);
         };
     }
@@ -1772,5 +1777,33 @@ public final class ReflectOpNode extends GoExprNode {
         Object arr = new int[vals.length];
         System.arraycopy(vals, 0, (int[]) arr, 0, vals.length);
         return new GoSlice(arr, 0, vals.length, vals.length);
+    }
+
+    /**
+     * {@code reflect.toRType}: wraps a {@code *abi.Type} (GoPointer to the
+     * materialized abi.Type GoStruct) in a proper {@code reflect.rtype}
+     * struct ({@code t abi.Type}). Returns a GoPointer to the rtype struct
+     * (the {@code *rtype} value), or null for a nil input.
+     *
+     * <p>fix-redmaster-buildok (r5): the real {@code reflect.toRType} body
+     * ({@code (*rtype)(unsafe.Pointer(t))}) reinterprets the pointer, but
+     * the backend's GoStruct model needs an actual rtype struct for promoted
+     * field accesses (e.g. {@code t.Kind_} with selpath [0,6]) to work.
+     */
+    private static Object toRType(Object abiTypePtr) {
+        if (abiTypePtr == null) {
+            return null;
+        }
+        Object abiType = abiTypePtr instanceof graalgo.values.GoPointer gp
+                ? gp.referent()
+                : abiTypePtr;
+        if (!(abiType instanceof GoStruct gs)) {
+            throw new IllegalStateException(
+                    "reflect: toRType expected *abi.Type GoStruct, got "
+                            + (abiType == null ? "null" : abiType.getClass().getSimpleName()));
+        }
+        GoStruct rtype = new GoStruct(ReflectTypes.rtypeStructDescriptor(),
+                new long[0], new Object[]{gs});
+        return new graalgo.values.GoPointer(rtype);
     }
 }
