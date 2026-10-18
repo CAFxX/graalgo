@@ -127,10 +127,38 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
+#
+# Stub-message sub-gate (P1-C fix, 2026-10-18): the old
+# `throw new UnsupportedOperationException\("stub` disjunct was vacuous — no
+# stub message in the tree begins with `"stub`, and stub messages may start
+# on the line after the throw, so a same-line throw+message match could
+# never fire (verified: 0 of 53 UOE sites matched). The sub-gate anchors on
+# the throw site and matches the stub-message vocabulary the tree actually
+# uses (case-insensitive): phase tags ("Phase 2:", "Phase 2/3:"),
+# requirement tags (GG-####, P#-M#), and not-implemented / not-supported /
+# unimplemented / stub / todo wording; the throw line plus its successor
+# are scanned. New stubs using this vocabulary anywhere outside the
+# exclusions fail the gate.
+#
+# Grandfathered exclusion (explicit, with reason):
+# - Intrinsics.java itab line: the loud "no provider installed" failure is a
+#   deliberate phase-1-only guard (throws when the P3-M3 itab provider is
+#   absent), not a placeholder. Excluded by message text so a future stub
+#   added elsewhere in the file still fails the gate.
+STUB_MSG_EXCLUDE := -e 'itab lookup needs the P3-M3 itab machinery'
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@echo "== stub-message grep gate =="
+	@if grep -rn --include='*.java' -E 'throw new UnsupportedOperationException\(' src/ \
+	    | cut -d: -f1,2 \
+	    | while IFS=: read -r f l; do \
+	        sed -n "$$l,$$((l+1))p" "$$f" \
+	          | grep -qiE '"[^"]*(phase [0-9]|GG-[0-9]{4}|P[0-9]-M[0-9]|not implemented|not supported|unimplemented|\<stub\>|\<todo\>)' \
+	          && { printf '%s:%s: ' "$$f" "$$l"; sed -n "$$l,$$((l+1))p" "$$f" | tr '\n' ' '; echo; }; \
+	      done | grep -v $(STUB_MSG_EXCLUDE); then \
+		echo "STUB-MESSAGE GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \

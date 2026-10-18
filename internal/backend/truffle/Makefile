@@ -136,10 +136,46 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 
 # placeholder grep gate (done-gate 5): fails on TODO/FIXME/stub markers in src,
 # plus the gofrontend check (gofmt/vet/tests/vendoring diff gate).
+#
+# Stub-message sub-gate (P1-C fix, 2026-10-18): the old
+# `throw new UnsupportedOperationException\("stub` disjunct was vacuous — no
+# stub message in the tree begins with `"stub` (frozen stubs say e.g.
+# "Phase 2: channels need the scheduler (GG-0020)"), and the frozen stubs
+# wrap the message onto the next line, so a same-line throw+message match
+# could never fire (verified: 0 of 53 UOE sites matched).
+#
+# The sub-gate anchors on the throw site and matches the stub-message
+# vocabulary the tree actually uses (case-insensitive): phase tags
+# ("Phase 2:", "Phase 2/3:"), requirement tags (GG-####, P#-M#), and
+# not-implemented / not-supported / unimplemented / stub / todo wording.
+# The message may start on the line after the throw (the frozen-stub style),
+# so the throw line plus its successor are scanned. New stubs using this
+# vocabulary anywhere outside the exclusions fail the gate.
+#
+# Grandfathered exclusions (explicit, with reason):
+# - The 8 frozen phase-1 stubs of the GG-0020 interface freeze (see STUB_REL
+#   in internal/backend/runtime/Makefile; adjudicated against
+#   docs/arch/bridge-inventory.md — the inventory omits them, P1-L covers
+#   that; documented in docs/REPO_STRUCTURE.md). Only ChanOps, GcInterop,
+#   Netpoll, Scheduler, Timers throw UOE today; all 8 paths are excluded so
+#   the freeze set stays complete.
+STUB_MSG_EXCLUDE := -e 'graalgo/runtime/ChanOps.java' -e 'graalgo/runtime/GcInterop.java' \
+	-e 'graalgo/runtime/GoroutineState.java' -e 'graalgo/runtime/Netpoll.java' \
+	-e 'graalgo/runtime/Panic.java' -e 'graalgo/runtime/Scheduler.java' \
+	-e 'graalgo/runtime/Timers.java' -e 'graalgo/safepoint/Safepoint.java'
 check:
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@echo "== stub-message grep gate =="
+	@if grep -rn --include='*.java' -E 'throw new UnsupportedOperationException\(' src/ \
+	    | cut -d: -f1,2 \
+	    | while IFS=: read -r f l; do \
+	        sed -n "$$l,$$((l+1))p" "$$f" \
+	          | grep -qiE '"[^"]*(phase [0-9]|GG-[0-9]{4}|P[0-9]-M[0-9]|not implemented|not supported|unimplemented|\<stub\>|\<todo\>)' \
+	          && { printf '%s:%s: ' "$$f" "$$l"; sed -n "$$l,$$((l+1))p" "$$f" | tr '\n' ' '; echo; }; \
+	      done | grep -v $(STUB_MSG_EXCLUDE); then \
+		echo "STUB-MESSAGE GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only) =="
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \

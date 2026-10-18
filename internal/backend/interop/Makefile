@@ -91,10 +91,35 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # MUST print "fatal error: <s>" to stderr before exit(2) — that is the gc
 # contract, not a debug leftover. Any other System.out/err.println still
 # fails the gate.
+#
+# Stub-message sub-gate (P1-C fix, 2026-10-18): the old
+# `throw new UnsupportedOperationException\("stub` disjunct was vacuous — no
+# stub message in the tree begins with `"stub`, and stub messages may start
+# on the line after the throw, so a same-line throw+message match could
+# never fire (verified: 0 of 53 UOE sites matched). The sub-gate anchors on
+# the throw site and matches the stub-message vocabulary the tree actually
+# uses (case-insensitive): phase tags ("Phase 2:", "Phase 2/3:"),
+# requirement tags (GG-####, P#-M#), and not-implemented / not-supported /
+# unimplemented / stub / todo wording; the throw line plus its successor
+# are scanned.
+#
+# No grandfathered exclusions in this module (zero UOE throw sites today) —
+# the dummy pattern keeps the pipeline shape uniform with the truffle and
+# runtime modules; any future stub here fails the gate.
+STUB_MSG_EXCLUDE := -e 'no-grandfathered-stub-sites-in-this-module'
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@echo "== stub-message grep gate =="
+	@if grep -rn --include='*.java' -E 'throw new UnsupportedOperationException\(' src/ \
+	    | cut -d: -f1,2 \
+	    | while IFS=: read -r f l; do \
+	        sed -n "$$l,$$((l+1))p" "$$f" \
+	          | grep -qiE '"[^"]*(phase [0-9]|GG-[0-9]{4}|P[0-9]-M[0-9]|not implemented|not supported|unimplemented|\<stub\>|\<todo\>)' \
+	          && { printf '%s:%s: ' "$$f" "$$l"; sed -n "$$l,$$((l+1))p" "$$f" | tr '\n' ' '; echo; }; \
+	      done | grep -v $(STUB_MSG_EXCLUDE); then \
+		echo "STUB-MESSAGE GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v -F 'System.err.println("fatal error: '; then \
