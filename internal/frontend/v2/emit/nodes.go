@@ -23,10 +23,9 @@ func (e *Emitter) node(kind string, n ast.Node, fields map[string]any) map[strin
 }
 
 func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
-	// Methods are not yet implemented. A receiver type can only be
-	// declared by a top-level type declaration, which the emitter loudly
-	// rejects (see sortedTopVarSpecs); emitting the method as a
-	// receiver-less funcdecl would silently miscompile, so fail loudly.
+	// Methods are not yet implemented. Emitting a method as a receiver-less
+	// funcdecl would silently miscompile (the receiver is load-bearing), so
+	// fail loudly.
 	if fd.Recv != nil {
 		return nil, fmt.Errorf("emit: unsupported method declaration %s", fd.Name.Name)
 	}
@@ -636,7 +635,7 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 			"x":        x,
 			"sel":      s.Sel.Name,
 			"selkind":  selectionKind(sel.Kind()),
-			"index":    sel.Index(),
+			"index":    intSlice(sel.Index()),
 			"indirect": sel.Indirect(),
 			"obj":      e.declareObject(sel.Obj()),
 			"type":     e.exprType(s),
@@ -665,6 +664,17 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 		}
 	}
 	return nil, fmt.Errorf("emit: unresolved selector %v", s)
+}
+
+// intSlice converts a []int to []any. The in-memory IR may only contain
+// values the encoder supports (nil, bool, int, string, []any,
+// map[string]any); a raw []int would fail encoding with "unsupported type".
+func intSlice(xs []int) []any {
+	out := make([]any, len(xs))
+	for i, x := range xs {
+		out[i] = x
+	}
+	return out
 }
 
 // selectionKind renders a go/types Selection kind for the IR.

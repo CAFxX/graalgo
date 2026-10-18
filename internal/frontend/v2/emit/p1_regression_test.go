@@ -148,6 +148,36 @@ func main() {
 	}
 }
 
+// TestTopLevelConstSkippedHarmlessly: a top-level const declaration is
+// inert — skipping the declaration site loses nothing because the value is
+// carried on every use (see describeObject). This pins the contract that
+// the skip in sortedTopVarSpecs is not a silent miscompile.
+func TestTopLevelConstSkippedHarmlessly(t *testing.T) {
+	src := `package main
+
+const Answer = 42
+
+func main() { println(Answer) }
+`
+	doc := mustEmit(t, src)
+	var saw bool
+	for _, ov := range doc.Objects {
+		om, ok := ov.(map[string]any)
+		if !ok {
+			continue
+		}
+		if om["kind"] == "const" && om["name"] == "Answer" {
+			saw = true
+			if om["value"] != "42" {
+				t.Fatalf("const Answer value = %v, want 42", om["value"])
+			}
+		}
+	}
+	if !saw {
+		t.Fatal("no const object for top-level Answer in the object table")
+	}
+}
+
 // TestAliasTypesEmitted: *types.Alias must get its own kind instead of
 // {"kind":"basic","class":"unknown"} (review issue 4). In go1.27 the
 // predeclared `any` is an alias; unsigned basics (uint..uintptr, byte) also
@@ -226,7 +256,7 @@ func main() {
 	for _, f := range sels {
 		sel, _ := f["sel"].(string)
 		kind, _ := f["selkind"].(string)
-		index, _ := f["index"].([]int)
+		index, _ := f["index"].([]any)
 		indirect, _ := f["indirect"].(bool)
 		if f["obj"] == nil {
 			t.Fatalf("selector %q has no obj", sel)

@@ -183,27 +183,9 @@ func main() { x, y := pair[int, string](1, "s"); println(x, y) }
 		want: "unsupported expr",
 	},
 	{
-		name: "GenDecl_const",
-		src: `package main
-const Answer = 42
-func main() { println(Answer) }
-`,
-		want: "unsupported",
-	},
-	{
-		name: "GenDecl_type",
-		src: `package main
-type T int
-func main() { v := T(3); println(v) }
-`,
-		want: "unsupported",
-	},
-	{
-		// A method declaration fails loudly. (Currently the top-level
-		// type declaration it requires fails first; if type declarations
-		// are ever implemented, this probe exercises the method path in
-		// emitFuncDecl. Either way the program must not be silently
-		// accepted.)
+		// A method declaration fails loudly: the receiver is load-bearing,
+		// so emitting it as a receiver-less funcdecl would silently
+		// miscompile.
 		name: "FuncDecl_method",
 		src: `package main
 type T struct{ n int }

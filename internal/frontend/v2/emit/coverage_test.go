@@ -45,7 +45,9 @@ import (
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
 	"FuncDecl": true, // emitFuncDecl; method declarations fail loudly
-	"GenDecl":  true, // VAR only → globals; CONST/TYPE fail loudly; IMPORT skipped
+	"GenDecl":  true, // VAR → globals; CONST/TYPE skipped as inert (no runtime
+	// semantics: const values are carried on use, named types are
+	// described via go/types wherever referenced); IMPORT skipped
 
 	// Statements.
 	"AssignStmt": true,
@@ -99,6 +101,7 @@ var structuralNodes = map[string]string{
 	"File":         "top-level container; iterated in emitDocument",
 	"Package":      "top-level container; iterated in emitDocument",
 	"ImportSpec":   "import resolution is checker's job; not emitted",
+	"TypeSpec":     "type declaration; carries no runtime semantics — the named type is described via go/types wherever referenced; the declaration itself is not emitted (like ImportSpec)",
 	"Directive":    "compiler directives (//go:...); preserved via go/parser, not emitted as IR",
 }
 
@@ -133,8 +136,7 @@ var loudlyRejected = map[string]bool{
 	"StarExpr":       true,
 	"TypeAssertExpr": true,
 	// Declarations not yet implemented.
-	"BadDecl":  true,
-	"TypeSpec": true, // top-level type declaration
+	"BadDecl": true,
 	// Clauses (only appear inside switch/select).
 	"CaseClause": true,
 	"CommClause": true,
@@ -148,15 +150,12 @@ var unprobeableRejected = map[string]string{
 	"BadDecl":    "parser rejects before emit",
 	"CaseClause": "covered by SwitchStmt/TypeSwitchStmt rejection",
 	"CommClause": "covered by SelectStmt rejection",
-	"TypeSpec":   "only appears inside GenDecl; covered by the GenDecl_type probe",
 }
 
 // loudlyRejectedSubcases are (node, subcase) pairs where the node is
 // classified handled but a subcase must still fail loudly. Each must have a
 // negative probe named exactly "Node_subcase" in negative_test.go.
 var loudlyRejectedSubcases = []string{
-	"GenDecl_const",   // top-level const declaration
-	"GenDecl_type",    // top-level type declaration
 	"FuncDecl_method", // method declaration
 }
 

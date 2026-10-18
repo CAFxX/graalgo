@@ -81,9 +81,10 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		e.declareObject(obj)
 	}
 
-	// Package-level var declarations are emitted as globals. Top-level
-	// const and type declarations are not supported yet: they fail loudly
-	// here instead of being silently dropped (the fail-loud contract).
+	// Package-level var declarations are emitted as globals (their
+	// initializers are runtime effects). Top-level const/type declarations
+	// are inert and skipped by sortedTopVarSpecs — never silently dropped
+	// in a way that loses observable behavior.
 	varSpecs, err := sortedTopVarSpecs(pkg)
 	if err != nil {
 		return nil, err
@@ -172,9 +173,13 @@ func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
 
 // sortedTopVarSpecs returns every top-level var ValueSpec in the package in
 // deterministic order: files sorted by name, then declarations sorted by
-// source position. Top-level const and type declarations are not yet
-// supported: they fail loudly here instead of being silently dropped, per
-// the emitter's fail-loud contract. Import declarations are the checker's
+// source position. Top-level const and type declarations are not emitted,
+// but they are also not rejected: they are semantically inert — a const's
+// value is carried on every use (see describeObject) and a named type is
+// fully described via go/types wherever it is referenced (see typeID) — so
+// skipping the declaration site loses no observable behavior. (A var
+// declaration is different: its initializer is a runtime effect, which is
+// why vars are emitted as globals.) Import declarations are the checker's
 // job and are skipped, never emitted.
 func sortedTopVarSpecs(pkg *ast.Package) ([]*ast.ValueSpec, error) {
 	names := make([]string, 0, len(pkg.Files))
@@ -207,10 +212,9 @@ func sortedTopVarSpecs(pkg *ast.Package) ([]*ast.ValueSpec, error) {
 				}
 			case token.IMPORT:
 				// Not emitted; resolution is the checker's job.
-			case token.CONST:
-				return nil, fmt.Errorf("emit: unsupported top-level const declaration")
-			case token.TYPE:
-				return nil, fmt.Errorf("emit: unsupported top-level type declaration")
+			case token.CONST, token.TYPE:
+				// Semantically inert declarations (see sortedTopVarSpecs):
+				// skipped, never emitted, never rejected.
 			default:
 				return nil, fmt.Errorf("emit: unsupported top-level declaration %v", gd.Tok)
 			}
