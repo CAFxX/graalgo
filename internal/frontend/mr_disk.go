@@ -67,9 +67,11 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 		}
 	}
-	if len(mrNames) == 0 {
-		return nil
-	}
+	// RV18: no early return on len(mrNames) == 0. The interface pair-type
+	// loop below (BUG-MODPROBE-005) is independent of mrNames: a package
+	// with only interfaces (no multi-result funcs) still needs its
+	// interface pair types and specs. The func loop and hoists below
+	// naturally no-op when mrNames is empty.
 	// Collision guard: collect every existing top-level name BEFORE the
 	// transform runs. A FuncDecl whose generated helper (__F) or pair
 	// type (__FPair) name already exists is skipped — those packages
@@ -140,6 +142,11 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	// concrete type's pair-returning __-helper (via
 	// multiResultHelperFunc's disk fallback); field extraction is by
 	// name (f1..fN), which is uniform across all disk pair types.
+	//
+	// RV18: the enumeration covers the interface's full method set —
+	// direct members plus methods promoted from embedded interfaces,
+	// transitively (see enumIfaceMRMethods) — and the pair type carries
+	// the interface's type parameters (see TypeParams below).
 	for _, f := range files {
 		for _, decl := range f.Decls {
 			gd, ok := decl.(*ast.GenDecl)
@@ -151,62 +158,62 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				if !ok {
 					continue
 				}
-				it, ok := ts.Type.(*ast.InterfaceType)
-				if !ok || it.Methods == nil {
-					continue
-				}
 				ifaceName := ts.Name.Name
-				for _, m := range it.Methods.List {
-					ft, ok := m.Type.(*ast.FuncType)
-					if !ok {
+				for _, mm := range enumIfaceMRMethods(files, ts) {
+					pairType := fmt.Sprintf("__%s_%sPair", ifaceName, mm.name)
+					// Collision guard: never redeclare an existing
+					// top-level name (mirrors transformTargetCollides
+					// for the func path).
+					if existing[pairType] {
 						continue
 					}
-					if numResultsFL(ft.Results) <= 1 {
-						continue
+					existing[pairType] = true
+					pairFields := make([]string, len(mm.rtypes))
+					for i := range mm.rtypes {
+						pairFields[i] = fmt.Sprintf("f%d", i+1)
 					}
-					rtypes := resultTypesFL(ft.Results)
-					for _, mname := range m.Names {
-						pairType := fmt.Sprintf("__%s_%sPair", ifaceName, mname.Name)
-						pairFields := make([]string, len(rtypes))
-						for i := range rtypes {
-							pairFields[i] = fmt.Sprintf("f%d", i+1)
-						}
-						pairDecl := &ast.GenDecl{
-							Tok: token.TYPE,
-							Specs: []ast.Spec{
-								&ast.TypeSpec{
-									Name: ast.NewIdent(pairType),
-									Type: &ast.StructType{
-										Fields: &ast.FieldList{
-											List: func() []*ast.Field {
-												var fl []*ast.Field
-												for i, rt := range rtypes {
-													fl = append(fl, &ast.Field{
-														Names: []*ast.Ident{ast.NewIdent(pairFields[i])},
-														Type:  rt,
-													})
-												}
-												return fl
-											}(),
-										},
+					pairDecl := &ast.GenDecl{
+						Tok: token.TYPE,
+						Specs: []ast.Spec{
+							&ast.TypeSpec{
+								Name: ast.NewIdent(pairType),
+								// RV18 P1 (GAP-GENERIC-MR): the pair
+								// struct is generic exactly when the
+								// interface is — propagate the type
+								// parameter list so fields referencing
+								// T type-check. transformMRFunc does
+								// the same for funcs/methods.
+								TypeParams: ts.TypeParams,
+								Type: &ast.StructType{
+									Fields: &ast.FieldList{
+										List: func() []*ast.Field {
+											var fl []*ast.Field
+											for i, rt := range mm.rtypes {
+												fl = append(fl, &ast.Field{
+													Names: []*ast.Ident{ast.NewIdent(pairFields[i])},
+													Type:  rt,
+												})
+											}
+											return fl
+										}(),
 									},
 								},
 							},
-						}
-						f.Decls = append(f.Decls, pairDecl)
-						specs = append(specs, diskMRSpec{
-							pkgPath:  pkgPath,
-							name:     mname.Name,
-							recvType: ifaceName,
-							// No helper: interface methods have no body.
-							// The itab dispatches to each concrete
-							// type's __-helper at runtime.
-							helper:     "",
-							pairType:   pairType,
-							pairFields: pairFields,
-							stub:       nil,
-						})
+						},
 					}
+					f.Decls = append(f.Decls, pairDecl)
+					specs = append(specs, diskMRSpec{
+						pkgPath:  pkgPath,
+						name:     mm.name,
+						recvType: ifaceName,
+						// No helper: interface methods have no body.
+						// The itab dispatches to each concrete
+						// type's __-helper at runtime.
+						helper:     "",
+						pairType:   pairType,
+						pairFields: pairFields,
+						stub:       nil,
+					})
 				}
 			}
 		}
@@ -367,6 +374,286 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		}
 	}
 	return specs
+}
+
+// ifaceMRMethod is one multi-result method of an interface's method set:
+// a direct member or a method promoted from an embedded interface.
+// rtypes are the result type expressions in the ENCLOSING interface's
+// scope (type arguments of an embedded instantiation substituted — see
+// enumIfaceMRMethods).
+type ifaceMRMethod struct {
+	name   string
+	rtypes []ast.Expr
+}
+
+// enumIfaceMRMethods returns the multi-result methods of the interface
+// declared by ts: its direct FuncType members plus methods promoted from
+// embedded interfaces, transitively (RV18 P1-2). A directly-declared
+// method shadows a promoted one of the same name; each name is emitted
+// once (diamonds are legal Go).
+//
+// Embedded elements are resolved syntactically against the package's own
+// type declarations: Ident for a plain embedding, IndexExpr/IndexListExpr
+// for an instantiated generic embedding (e.g. Inner[T]). A SelectorExpr
+// (a cross-package embedding such as io.Reader) cannot be resolved from
+// this package's files — the transform runs before type-checking — so it
+// is skipped: the embedded interface's own package transform registers
+// its specs, and the call-site lookup keys on the declaring interface.
+// An embedded type alias is likewise left to the aliased declaration.
+//
+// For a promoted method, the result types are rewritten into the
+// enclosing interface's scope: the embedded instantiation's type
+// arguments are substituted for the embedded interface's type parameters
+// (walkEmbeddedIfaceMR), so the generated pair type — which carries the
+// enclosing interface's TypeParams — type-checks.
+func enumIfaceMRMethods(files []*ast.File, ts *ast.TypeSpec) []ifaceMRMethod {
+	it, ok := ts.Type.(*ast.InterfaceType)
+	if !ok || it.Methods == nil {
+		return nil
+	}
+	var out []ifaceMRMethod
+	seen := map[string]bool{}
+	// Direct members first: they shadow promoted methods of the same name.
+	for _, m := range it.Methods.List {
+		if len(m.Names) == 0 {
+			continue
+		}
+		ft, ok := m.Type.(*ast.FuncType)
+		if !ok || numResultsFL(ft.Results) <= 1 {
+			continue
+		}
+		for _, mname := range m.Names {
+			if seen[mname.Name] {
+				continue
+			}
+			seen[mname.Name] = true
+			out = append(out, ifaceMRMethod{name: mname.Name, rtypes: resultTypesFL(ft.Results)})
+		}
+	}
+	visited := map[string]bool{ts.Name.Name: true}
+	for _, m := range it.Methods.List {
+		if len(m.Names) != 0 {
+			continue
+		}
+		walkEmbeddedIfaceMR(files, m.Type, nil, seen, visited, &out)
+	}
+	return out
+}
+
+// walkEmbeddedIfaceMR resolves one embedded interface element and appends
+// its transitively-promoted multi-result methods to out. subst maps the
+// CURRENT interface's type-parameter names to type expressions in the
+// ultimate enclosing interface's scope (nil = identity); it is extended
+// with the embedded interface's own parameters before recursing, so
+// result types arrive fully substituted. visited guards against embedding
+// cycles (invalid Go, but the transform runs before type-checking).
+func walkEmbeddedIfaceMR(files []*ast.File, elem ast.Expr, subst map[string]ast.Expr, seen map[string]bool, visited map[string]bool, out *[]ifaceMRMethod) {
+	base, targs := embeddedIfaceRef(elem)
+	if base == "" {
+		return
+	}
+	ts := findTypeSpec(files, base)
+	if ts == nil {
+		return
+	}
+	it, ok := ts.Type.(*ast.InterfaceType)
+	if !ok || it.Methods == nil {
+		return
+	}
+	if visited[base] {
+		return
+	}
+	visited[base] = true
+	// Extend the substitution with this interface's parameters. The type
+	// arguments are written in the current interface's scope, so they are
+	// substituted with the incoming map first (composition).
+	inner := subst
+	if params := tparamNamesOfFL(ts.TypeParams); len(params) > 0 {
+		if len(targs) != len(params) {
+			// Malformed embedding (invalid Go — the package will not
+			// type-check regardless); skip rather than mis-generate.
+			return
+		}
+		inner = make(map[string]ast.Expr, len(subst)+len(params))
+		for k, v := range subst {
+			inner[k] = v
+		}
+		for i, p := range params {
+			inner[p] = substTypeExpr(targs[i], subst)
+		}
+	}
+	emit := func(ft *ast.FuncType, mname string) {
+		if seen[mname] {
+			return
+		}
+		seen[mname] = true
+		rtypes := resultTypesFL(ft.Results)
+		if len(inner) > 0 {
+			sub := make([]ast.Expr, len(rtypes))
+			for i, rt := range rtypes {
+				sub[i] = substTypeExpr(rt, inner)
+			}
+			rtypes = sub
+		}
+		*out = append(*out, ifaceMRMethod{name: mname, rtypes: rtypes})
+	}
+	for _, m := range it.Methods.List {
+		if len(m.Names) == 0 {
+			continue
+		}
+		ft, ok := m.Type.(*ast.FuncType)
+		if !ok || numResultsFL(ft.Results) <= 1 {
+			continue
+		}
+		for _, mname := range m.Names {
+			emit(ft, mname.Name)
+		}
+	}
+	for _, m := range it.Methods.List {
+		if len(m.Names) != 0 {
+			continue
+		}
+		walkEmbeddedIfaceMR(files, m.Type, inner, seen, visited, out)
+	}
+}
+
+// embeddedIfaceRef unwraps an embedded interface element to its base type
+// name and type arguments: Ident -> (name, nil);
+// IndexExpr/IndexListExpr -> (base name, args). It returns "" for anything
+// else — notably SelectorExpr (a cross-package embedding such as
+// io.Reader), which cannot be resolved from this package's files.
+func embeddedIfaceRef(elem ast.Expr) (string, []ast.Expr) {
+	switch t := elem.(type) {
+	case *ast.Ident:
+		return t.Name, nil
+	case *ast.IndexExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			return id.Name, []ast.Expr{t.Index}
+		}
+	case *ast.IndexListExpr:
+		if id, ok := t.X.(*ast.Ident); ok {
+			return id.Name, t.Indices
+		}
+	}
+	return "", nil
+}
+
+// findTypeSpec returns the *ast.TypeSpec declaring the named type in the
+// package's files, or nil.
+func findTypeSpec(files []*ast.File, name string) *ast.TypeSpec {
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || ts.Name.Name != name {
+					continue
+				}
+				return ts
+			}
+		}
+	}
+	return nil
+}
+
+// substTypeExpr rewrites a type expression, replacing references to type
+// parameters per subst (nil/empty = identity). Used to express a promoted
+// interface method's result types in the enclosing interface's scope.
+func substTypeExpr(e ast.Expr, subst map[string]ast.Expr) ast.Expr {
+	if len(subst) == 0 || e == nil {
+		return e
+	}
+	switch t := e.(type) {
+	case *ast.Ident:
+		if rep, ok := subst[t.Name]; ok {
+			return rep
+		}
+		return t
+	case *ast.ParenExpr:
+		return &ast.ParenExpr{Lparen: t.Lparen, X: substTypeExpr(t.X, subst)}
+	case *ast.StarExpr:
+		return &ast.StarExpr{Star: t.Star, X: substTypeExpr(t.X, subst)}
+	case *ast.ArrayType:
+		at := &ast.ArrayType{Lbrack: t.Lbrack, Elt: substTypeExpr(t.Elt, subst)}
+		if t.Len != nil {
+			at.Len = substTypeExpr(t.Len, subst)
+		}
+		return at
+	case *ast.Ellipsis:
+		return &ast.Ellipsis{Ellipsis: t.Ellipsis, Elt: substTypeExpr(t.Elt, subst)}
+	case *ast.MapType:
+		return &ast.MapType{Map: t.Map, Key: substTypeExpr(t.Key, subst), Value: substTypeExpr(t.Value, subst)}
+	case *ast.ChanType:
+		return &ast.ChanType{Begin: t.Begin, Arrow: t.Arrow, Dir: t.Dir, Value: substTypeExpr(t.Value, subst)}
+	case *ast.FuncType:
+		return substFuncType(t, subst)
+	case *ast.StructType:
+		return &ast.StructType{Struct: t.Struct, Fields: substFieldList(t.Fields, subst)}
+	case *ast.InterfaceType:
+		return &ast.InterfaceType{Interface: t.Interface, Methods: substFieldList(t.Methods, subst), Incomplete: t.Incomplete}
+	case *ast.IndexExpr:
+		return &ast.IndexExpr{Lbrack: t.Lbrack, X: substTypeExpr(t.X, subst), Index: substTypeExpr(t.Index, subst)}
+	case *ast.IndexListExpr:
+		indices := make([]ast.Expr, len(t.Indices))
+		for i, ix := range t.Indices {
+			indices[i] = substTypeExpr(ix, subst)
+		}
+		return &ast.IndexListExpr{Lbrack: t.Lbrack, X: substTypeExpr(t.X, subst), Indices: indices}
+	case *ast.SelectorExpr:
+		// Sel is a selected name, never a type parameter; X may be a
+		// package qualifier (never substituted — no subst key can be a
+		// package name) or an arbitrary expression.
+		return &ast.SelectorExpr{X: substTypeExpr(t.X, subst), Sel: t.Sel}
+	default:
+		return e
+	}
+}
+
+// substFuncType substitutes through a func type, with the func type's own
+// type parameters shadowing the outer substitution lexically.
+func substFuncType(ft *ast.FuncType, subst map[string]ast.Expr) *ast.FuncType {
+	sub := subst
+	if ft.TypeParams != nil {
+		if shadowed := tparamNamesOfFL(ft.TypeParams); len(shadowed) > 0 {
+			sub = make(map[string]ast.Expr, len(subst))
+			for k, v := range subst {
+				sub[k] = v
+			}
+			for _, n := range shadowed {
+				delete(sub, n)
+			}
+		}
+	}
+	out := &ast.FuncType{TypeParams: ft.TypeParams}
+	if ft.Params != nil {
+		out.Params = substFieldList(ft.Params, sub)
+	}
+	if ft.Results != nil {
+		out.Results = substFieldList(ft.Results, sub)
+	}
+	return out
+}
+
+// substFieldList copies a field list with type expressions substituted.
+// Field names are never substituted.
+func substFieldList(fl *ast.FieldList, subst map[string]ast.Expr) *ast.FieldList {
+	if fl == nil {
+		return nil
+	}
+	out := &ast.FieldList{Opening: fl.Opening, Closing: fl.Closing}
+	for _, f := range fl.List {
+		out.List = append(out.List, &ast.Field{
+			Doc:     f.Doc,
+			Names:   f.Names,
+			Type:    substTypeExpr(f.Type, subst),
+			Tag:     f.Tag,
+			Comment: f.Comment,
+		})
+	}
+	return out
 }
 
 // mrHelperFunForCall builds the __-helper call target for an original
@@ -2174,7 +2461,21 @@ func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) 
 	if !ok || nt.Obj() == nil {
 		return nil
 	}
-	spec := lookupDiskMR(pkgPath, f.Name(), nt.Obj().Name())
+	// RV18 P1-2: prefer the interface the call is made through
+	// (selection.Recv()) — for a method promoted from an embedded
+	// interface this is the outer interface, whose spec carries the
+	// result types specialized to the embedding (e.g. Inner[int]
+	// embedded in Outer yields a concrete __Outer_MPair, while the
+	// declaring interface's template would leak type parameters). For
+	// directly-declared methods the two coincide. Fall back to the
+	// declaring interface (the previous behavior).
+	var spec *diskMRSpec
+	if rnt, ok := selection.Recv().(*types.Named); ok && rnt.Obj() != nil {
+		spec = lookupDiskMR(pkgPath, f.Name(), rnt.Obj().Name())
+	}
+	if spec == nil {
+		spec = lookupDiskMR(pkgPath, f.Name(), nt.Obj().Name())
+	}
 	if spec == nil {
 		return nil
 	}
@@ -2189,6 +2490,10 @@ func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) 
 	if pt == nil {
 		return nil
 	}
+	// RV18 P1-1: instantiate a generic pair template with the call-site
+	// type arguments (mirrors classifyDiskMultiResultCall); without this
+	// the template's type parameters leak into the export.
+	pt = instantiatePairType(pt, targsFromRecv(selection.Recv()))
 	return &mrPlan{
 		kind: mrIfaceMethod, helperPkg: pkgPath,
 		tmpType: pt, pairFields: spec.pairFields,
