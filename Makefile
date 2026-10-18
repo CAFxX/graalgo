@@ -29,8 +29,9 @@
 #               behavior must fail loudly at the commit that caused it.
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
-#     check     placeholder / debug-leftover / netpoller / exclusion-list
-#               grep gates + the gofrontend gofmt/vet/tests gate
+#     check     no-bridges gate + placeholder / debug-leftover /
+#               netpoller / exclusion-list grep gates + the gofrontend
+#               gofmt/vet/tests gate
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -104,7 +105,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check check-no-bridges test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -131,7 +132,20 @@ build:
 graalgo:
 	$(GO) build -o graalgo ./cmd/graalgo/
 
-check:
+# No-bridges gate (his 2026-10-15 order): fails if the diff introduces new
+# bridges — new synth_*.go files, package-name conditionals, panic stubs,
+# stdlib wire node kinds, synthetic registrations. CI runs it before
+# `make all` ([.github/workflows/ci.yml](.github/workflows/ci.yml)); it is
+# also the first step of `check` below, so `make all` is green locally only
+# when this gate is green too — a lane can no longer be locally green and
+# red in CI on no-bridges. The script inspects ADDED lines in the diff
+# (origin/master...HEAD on branches, working tree / staged, HEAD~1...HEAD on
+# direct master pushes) and NEVER passes vacuously: no determinable diff is
+# a loud failure, not a skip.
+check-no-bridges:
+	python3 .github/scripts/check_no_bridges.py
+
+check: check-no-bridges
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check

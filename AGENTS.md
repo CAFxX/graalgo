@@ -13,8 +13,12 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   in-JVM tests (`test-ci`). Then CI runs `git diff --exit-code`: if `make
   all` regenerates any tracked file differently from what's committed, the
   build fails. **Push only after `make all` is green locally.**
-- `make check` — placeholder / debug-leftover / netpoller / exclusion-list
-  grep gates + gofrontend gofmt/vet/tests.
+- `make check` — no-bridges gate
+  ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py):
+  fails if the diff adds bridges — synthetic stdlib, package-name
+  conditionals, panic stubs, stdlib wire nodes, synthetic registrations),
+  placeholder / debug-leftover / netpoller / exclusion-list grep gates +
+  gofrontend gofmt/vet/tests.
 - `make test` — the full differential suite (30+ minutes). Not per-push;
   for local verification and nightly runs. Invoke explicitly.
 - `make snapshot-check` — re-runs the differential corpus under graalgo and
