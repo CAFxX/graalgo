@@ -145,7 +145,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `branch` | `op` ∈ {`break`,`continue`,`goto`,`fallthrough`}, `label`: str or null |
 | `labeled` | `label`: str, `stmt`: stmt node |
 | `defer` | `call`: expr node — a deferred call (M5, WS F) |
-| `funclit` | `params`: [param nodes], `results`: [param nodes], `body`: block node — a function literal (M5, WS F) |
+| `funclit` | `params`: [param nodes], `results`: [param nodes], `body`: block node, `type`: type id or null (present on synthesized funclits, absent on plain source-level literals) — a function literal (M5, WS F) |
 | `blank` | (no fields) — the blank identifier `_` in assignment lhs |
 | `complit` | `type`: type id, `keyed`: bool, `keys`: [expr nodes] (absent unless keyed map/array/slice), `fieldkeys`: [str] (absent unless keyed struct), `values`: [expr nodes] |
 | `index` | `x`, `index`: expr nodes, `type`: type id (element type; map elem type for comma-ok), `commaOk`: bool |
@@ -169,6 +169,20 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `timeafter` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.After(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `addrof` | `x`: expr node, `type`: type id — `&x`; or `array`, `index`: expr nodes, `type`: type id — `&a[i]` (avoids materializing the element address through a full `index` node) |
+| `deref` | `x`: expr node, `type`: type id — `*p`; also the assignment-lhs shape for `*p = v` (the factory builds a read-modify-write from the same node) |
+| `syncop` | `op` ∈ {`Load`,`Store`,`Add`,`Swap`,`CompareAndSwap`,`And`,`Or`,`LoadOrStore`,`LoadAndDelete`}, `synctyp` ∈ {`atomic.Int32`,`atomic.Int64`,`atomic.Uint32`,`atomic.Uint64`,`atomic.Uintptr`,`Map`}, `recv`: expr node, `args`: [expr nodes], `type`: type id or null — `sync/atomic` word ops (via an `atomicaddr` recv) and `sync.Map` multi-result desugars (`type` is null when the desugar's pair temp carries the result) |
+| `atomicaddr` | `addr`: expr node, `cell` ∈ {`int32`,`int64`} — wraps a `syncop` address operand in a delegating `AtomicLong`/`AtomicInteger` cell |
+| `gostmt` | `call`: expr node — a `go` statement; `call` is a funclit invocation whose fun value and arguments are evaluated in the spawning goroutine |
+| `unsafefromptr` | `x`: expr node, `type`: type id — `*T`→`unsafe.Pointer` (and `unsafe.Pointer(nil)`), interned over the per-run handle table (P3-M8) |
+| `unsafefromuint` | `x`: expr node, `type`: type id — `uintptr`→`unsafe.Pointer`: the D5 trap (handles admit no byte arithmetic); arguments are still attached and evaluated first (P3-M8) |
+| `unsafetooptr` | `x`: expr node, `type`: type id — `unsafe.Pointer`→`*T`, resolved through the handle table (P3-M8) |
+| `unsafestring` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.String(ptr, len)`; copies the bytes into a fresh `GoString` (DIV-US-1: never shares the caller's array) (P3-M8) |
+| `unsafeslice` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.Slice(ptr, len)` over the per-run handle table (P3-M8) |
+| `runtimecaller` | `skip`: expr node, `type`: type id — `runtime.Caller(skip)` multi-result desugar; the 4-tuple is split across the assignment targets (graalgo.rtstack) |
+| `runtimefuncforpc` | `pc`: expr node, `type`: type id — `runtime.FuncForPC(pc)` (PC interning in `graalgo.runtime.StackTrace`) |
+| `runtimefuncname` | `f`: expr node, `type`: type id — `(*runtime.Func).Name` (graalgo.rtstack) |
+| `abifuncpc` | `kind` ∈ {`FuncPCABI0`,`FuncPCABIInternal`}, `arg`: expr node, `type`: type id — `internal/abi` `FuncPC*` compile intrinsics; returns an opaque stable func id (the FuncIds registry) |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).

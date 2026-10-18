@@ -293,6 +293,7 @@
         },
         "name": "main",
         "params": [],
+        "pkgpath": "main",
         "sig": 0
       }
     }

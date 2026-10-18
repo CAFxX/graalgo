@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Schema validator for the graalgo frontend/v1 JSON wire format.
 
-Enforces the contract documented in ../../../phases/phase1/docs/frontend-v1.md:
+Enforces the contract documented in ../../../docs/arch/frontend-v1.md:
   - top-level document shape and "frontend": "v1" version pin
   - type-table entries: known kinds, required detail fields, in-range refs
   - object-table entries
+  - globals array (§5a): object ids (blank -1 allowed), init exprs, positions
   - AST nodes: known kinds, required fields per kind, positions present,
     every type/obj reference resolves
 
@@ -149,6 +150,34 @@ def check_objects(ctx):
             ctx.check_type_id(f"{p}.type", o.get("type"))
 
 
+def check_globals(ctx):
+    """Validate the §5a globals array when present.
+
+    globals[i] = {"obj", "init", "pos"}: obj is the object id, -1 for a
+    side-effect-only blank initializer (var _ = ...); init is the
+    initializer expression or null (zero value); pos is a valid position.
+    """
+    g = ctx.doc.get("globals")
+    if g is None:
+        return
+    if not isinstance(g, list):
+        ctx.err("globals", "must be an array")
+        return
+    for i, e in enumerate(g):
+        p = f"globals[{i}]"
+        if not isinstance(e, dict):
+            ctx.err(p, "must be an object")
+            continue
+        oid = e.get("obj")
+        if not isinstance(oid, int) or isinstance(oid, bool):
+            ctx.err(f"{p}.obj", f"obj must be an int, got {oid!r}")
+        elif oid != -1:
+            ctx.check_obj_id(f"{p}.obj", oid)
+        if e.get("init") is not None:
+            check_node(ctx, f"{p}.init", e["init"], True)
+        check_pos(ctx, f"{p}.pos", e.get("pos"))
+
+
 def check_node(ctx, path, node, expr):
     """expr=True when the node must carry a type reference (expression)."""
     if not isinstance(node, dict):
@@ -200,13 +229,31 @@ def check_node(ctx, path, node, expr):
             need(k)
 
     if kind == "funcdecl":
-        # handled structurally by caller; still validate common shape
-        for k in ("name", "sig", "params", "body"):
+        # handled structurally by caller; still validate common shape.
+        # Three spec'd shapes (docs/arch/frontend-v1.md §6): normal
+        # (body), //go:linkname-bound (linkname, no body), and bodyless
+        # unimplemented (unimplemented: true, no body). pkgpath is
+        # required on all three: cross-package //go:linkname resolution
+        # binds every compiled function under pkgpath.name.
+        for k in ("name", "sig", "params"):
             need(k)
+        need("pkgpath")
+        if "pkgpath" in f and not isinstance(f.get("pkgpath"), str):
+            ctx.err(fp, "pkgpath must be a string")
         ctx.check_type_id(f"{fp}.sig", f.get("sig"))
         for j, prm in enumerate(f.get("params", [])):
             check_node(ctx, f"{fp}.params[{j}]", prm, False)
-        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        if "linkname" in f:
+            if not isinstance(f.get("linkname"), str):
+                ctx.err(fp, "linkname must be a string")
+            if "body" in f:
+                ctx.err(fp, "linkname-bound funcdecl must not carry body")
+        elif f.get("unimplemented"):
+            if "body" in f:
+                ctx.err(fp, "unimplemented funcdecl must not carry body")
+        else:
+            need("body")
+            check_node(ctx, f"{fp}.body", f.get("body"), False)
     elif kind == "param":
         for k in ("name", "obj", "type"):
             need(k)
@@ -303,11 +350,57 @@ def check_node(ctx, path, node, expr):
     elif kind == "labeled":
         need("label")
         check_node(ctx, f"{fp}.stmt", f.get("stmt"), False)
+    elif kind == "defer":
+        # a deferred call: the call node's fun/args are evaluated at
+        # defer time (Go semantics), the call itself at function exit.
+        expr_node("call")
+    elif kind == "funclit":
+        node_list("params")
+        node_list("results")
+        need("body")
+        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        # type is the literal's signature id; present on synthesized
+        # funclits (export.go/synth_machinery.go), absent on plain
+        # source-level literals.
+        type_ref("type", nullable=True)
     elif kind == "ident":
         need("name")
-        if "obj" in f and f["obj"] is not None:
-            ctx.check_obj_id(f"{fp}.obj", f["obj"])
+        if "builtin" in f:
+            # builtin form (spec §6): name + builtin, and NO type or obj —
+            # builtins have no go/types signature (Typ[Invalid], never
+            # serialized) and no declared object.
+            if not isinstance(f.get("builtin"), str):
+                ctx.err(fp, "builtin must be a string")
+            for k in ("type", "obj"):
+                if k in f:
+                    ctx.err(fp, f"builtin ident must not carry {k!r}")
+        else:
+            if "obj" in f and f["obj"] is not None:
+                ctx.check_obj_id(f"{fp}.obj", f["obj"])
+            type_ref("type")
+    elif kind == "methodref":
+        # method-call target: obj = method funcdecl/instantiation object,
+        # recv evaluated first and passed as the callee's params[0].
+        ctx.check_obj_id(f"{fp}.obj", f.get("obj"))
+        expr_node("recv")
         type_ref("type")
+    elif kind == "methodvalue":
+        # method value x.M: obj = method funcdecl/instantiation object,
+        # recv evaluated once at creation and bound into the GoFunc.
+        ctx.check_obj_id(f"{fp}.obj", f.get("obj"))
+        expr_node("recv")
+        type_ref("type")
+    elif kind == "ifacemethod":
+        # interface method call w.M(args): dynamic dispatch through the
+        # itab; the receiver is NOT included in args.
+        expr_node("recv")
+        need("method")
+        if "method" in f and not isinstance(f.get("method"), str):
+            ctx.err(fp, "method must be a string")
+        type_ref("iface")
+        node_list("args")
+        type_ref("sig")
+        type_ref("type", nullable=True)
     elif kind == "basiclit":
         need("value")
         type_ref("type")
@@ -331,9 +424,21 @@ def check_node(ctx, path, node, expr):
         expr_node("fun")
         node_list("args")
         type_ref("type", nullable=True)
+    elif kind == "fmtcall":
+        # call to a D4 fmt stub via the Phase-1 import overlay: only the
+        # seven D4 symbols resolve; anything else is a scope error upstream.
+        need("func")
+        if f.get("func") not in ("Print", "Printf", "Println", "Sprint",
+                                 "Sprintf", "Sprintln", "Errorf"):
+            ctx.err(fp, f"unknown fmtcall func {f.get('func')!r}")
+        node_list("args")
+        type_ref("type", nullable=True)
     elif kind == "convert":
         expr_node("x")
         type_ref("to")
+        # from: the source type id (spec §6, M7) — needed for
+        # string<->slice lowering to pick the element kind.
+        type_ref("from")
         type_ref("type")
     elif kind == "complit":
         type_ref("type")
@@ -367,6 +472,10 @@ def check_node(ctx, path, node, expr):
         type_ref("type")
         if not isinstance(f.get("commaOk"), bool):
             ctx.err(fp, "commaOk must be bool")
+    elif kind == "nil":
+        # the untyped nil: type is the context type (e.g. the switch
+        # tag's type for `case nil:`).
+        type_ref("type")
     elif kind == "makechan":
         # P3-M5 (WS E, ADR-0005 App C): make(chan T[, n]).
         type_ref("elem")
@@ -417,6 +526,94 @@ def check_node(ctx, path, node, expr):
             ctx.err(fp, f"selectcase: unknown kind {ck!r}")
         if f.get("body") is not None:
             check_node(ctx, f"{fp}.body", f["body"], False)
+    elif kind == "addrof":
+        # &x. Two shapes: the general {x, type}, and {array, index, type}
+        # for &a[i] (avoids materializing the element address through a
+        # full index node).
+        if "x" in f:
+            expr_node("x")
+        else:
+            expr_node("array")
+            expr_node("index")
+        type_ref("type")
+    elif kind == "deref":
+        # *p (also the assignment-lhs shape for *p = v: the factory
+        # builds a read-modify-write from the same node).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "syncop":
+        # sync/atomic word ops and sync.Map multi-result desugars
+        # (export.go exportAtomicWordOp, mrdesugar_m5.go desugarSyncMap).
+        # op/synctyp draw from the exporter's closed tables; type is null
+        # when the desugar's pair temp carries the result instead.
+        if f.get("op") not in ("Load", "Store", "Add", "Swap",
+                               "CompareAndSwap", "And", "Or",
+                               "LoadOrStore", "LoadAndDelete"):
+            ctx.err(fp, f"unknown syncop op {f.get('op')!r}")
+        if f.get("synctyp") not in ("atomic.Int32", "atomic.Int64",
+                                    "atomic.Uint32", "atomic.Uint64",
+                                    "atomic.Uintptr", "Map"):
+            ctx.err(fp, f"unknown syncop synctyp {f.get('synctyp')!r}")
+        expr_node("recv")
+        node_list("args")
+        type_ref("type", nullable=True)
+    elif kind == "atomicaddr":
+        # wraps a syncop address operand in a delegating AtomicLong /
+        # AtomicInteger cell; cell names the Java cell kind
+        # (export.go atomicWordOps).
+        expr_node("addr")
+        if f.get("cell") not in ("int32", "int64"):
+            ctx.err(fp, f"unknown atomicaddr cell {f.get('cell')!r}")
+    elif kind == "gostmt":
+        # a `go` statement: call is a funclit invocation; the fun value
+        # and arguments are evaluated in the spawning goroutine.
+        expr_node("call")
+    elif kind == "unsafefromptr":
+        # *T -> unsafe.Pointer (and unsafe.Pointer(nil)): intern over
+        # the per-run handle table.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafefromuint":
+        # uintptr -> unsafe.Pointer: the D5 trap (handles admit no byte
+        # arithmetic); args are still attached and evaluated first.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafetooptr":
+        # unsafe.Pointer -> *T: resolve through the handle table.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafestring":
+        # unsafe.String(ptr, len): copies the bytes into a fresh GoString
+        # (DIV-US-1: never shares the caller's array).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafeslice":
+        # unsafe.Slice(ptr, len) over the per-run handle table.
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "runtimecaller":
+        # runtime.Caller(skip) multi-result desugar: skip is evaluated,
+        # the 4-tuple is split across the assignment targets.
+        expr_node("skip")
+        type_ref("type")
+    elif kind == "runtimefuncforpc":
+        # runtime.FuncForPC(pc): PC interning in graalgo.runtime.StackTrace.
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimefuncname":
+        # (*runtime.Func).Name: the single-result stack-inspection
+        # intrinsic (graalgo.rtstack).
+        expr_node("f")
+        type_ref("type")
+    elif kind == "abifuncpc":
+        # internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsics:
+        # returns an opaque stable func id (the FuncIds registry).
+        if f.get("kind") not in ("FuncPCABI0", "FuncPCABIInternal"):
+            ctx.err(fp, f"unknown abifuncpc kind {f.get('kind')!r}")
+        expr_node("arg")
+        type_ref("type")
     elif kind == "timenew":
         # P3-M5 (WS E, ADR-0005 App W): time.NewTimer/NewTicker.
         if f.get("kind") not in ("timer", "ticker"):
@@ -485,6 +682,7 @@ def validate(doc):
             ctx.err("package.files", "must be a non-empty array")
     check_types(ctx)
     check_objects(ctx)
+    check_globals(ctx)
     funcs = doc.get("funcs")
     if not isinstance(funcs, list) or not funcs:
         ctx.err("funcs", "must be a non-empty array")
@@ -508,7 +706,7 @@ def selftest():
             "kind": "funcdecl",
             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
             "fields": {
-                "name": "main", "sig": 0, "params": [],
+                "name": "main", "sig": 0, "params": [], "pkgpath": "main",
                 "body": {"kind": "block",
                          "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
                          "fields": {"stmts": []}},
@@ -572,6 +770,125 @@ def selftest():
                               "fields": {"value": "1", "type": 0}},
                         "to": 99}}),
         "dangling type id")
+
+    def nd(kind, fields):
+        return {"kind": kind,
+                "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                "fields": fields}
+
+    def lit():
+        return nd("basiclit", {"value": "1", "type": 0})
+
+    def new_kinds_positive(d):
+        stmts = d["funcs"][0]["fields"]["body"]["fields"]["stmts"]
+        stmts += [
+            nd("exprstmt", {"x": nd("funclit", {"params": [], "results": [],
+                                               "body": nd("block", {"stmts": []}),
+                                               "type": 0})}),
+            nd("defer", {"call": nd("call", {
+                "fun": nd("ident", {"name": "f", "obj": 0, "type": 0}),
+                "args": [], "type": None})}),
+            nd("gostmt", {"call": nd("call", {
+                "fun": nd("ident", {"name": "f", "obj": 0, "type": 0}),
+                "args": [], "type": None})}),
+            nd("exprstmt", {"x": nd("nil", {"type": 0})}),
+            nd("exprstmt", {"x": nd("methodref", {"obj": 0, "recv": lit(),
+                                                  "type": 0})}),
+            nd("exprstmt", {"x": nd("methodvalue", {"obj": 0, "recv": lit(),
+                                                    "type": 0})}),
+            nd("exprstmt", {"x": nd("ifacemethod", {"recv": lit(),
+                                                    "method": "M", "iface": 0,
+                                                    "args": [], "sig": 0,
+                                                    "type": None})}),
+            nd("exprstmt", {"x": nd("fmtcall", {"func": "Println", "args": [],
+                                                "type": None})}),
+            nd("exprstmt", {"x": nd("addrof", {"x": lit(), "type": 0})}),
+            nd("exprstmt", {"x": nd("addrof", {"array": lit(), "index": lit(),
+                                               "type": 0})}),
+            nd("exprstmt", {"x": nd("deref", {"x": lit(), "type": 0})}),
+            nd("exprstmt", {"x": nd("syncop", {"op": "Load",
+                                               "synctyp": "atomic.Int64",
+                                               "recv": lit(), "args": [],
+                                               "type": None})}),
+            nd("exprstmt", {"x": nd("atomicaddr", {"addr": lit(),
+                                                   "cell": "int64"})}),
+            nd("exprstmt", {"x": nd("unsafefromptr", {"x": lit(),
+                                                      "type": 0})}),
+            nd("exprstmt", {"x": nd("unsafefromuint", {"x": lit(),
+                                                       "type": 0})}),
+            nd("exprstmt", {"x": nd("unsafetooptr", {"x": lit(),
+                                                     "type": 0})}),
+            nd("exprstmt", {"x": nd("unsafestring", {"ptr": lit(),
+                                                     "len": lit(),
+                                                     "type": 0})}),
+            nd("exprstmt", {"x": nd("unsafeslice", {"ptr": lit(),
+                                                    "len": lit(),
+                                                    "type": 0})}),
+            nd("exprstmt", {"x": nd("runtimecaller", {"skip": lit(),
+                                                      "type": 0})}),
+            nd("exprstmt", {"x": nd("runtimefuncforpc", {"pc": lit(),
+                                                         "type": 0})}),
+            nd("exprstmt", {"x": nd("runtimefuncname", {"f": lit(),
+                                                        "type": 0})}),
+            nd("exprstmt", {"x": nd("abifuncpc", {"kind": "FuncPCABI0",
+                                                  "arg": lit(), "type": 0})}),
+            nd("exprstmt", {"x": nd("ident", {"name": "len",
+                                              "builtin": "len"})}),
+            nd("exprstmt", {"x": nd("convert", {"x": lit(), "to": 0,
+                                                "from": 0, "type": 0})}),
+        ]
+        pos = {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}
+        d["globals"] = [
+            {"obj": -1, "init": None, "pos": pos},
+            {"obj": 0, "init": lit(), "pos": pos},
+        ]
+
+    bad("new-kinds-positive", new_kinds_positive, None)
+    bad("ident-builtin-with-type",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("exprstmt", {"x": nd("ident", {"name": "len", "builtin": "len",
+                                             "type": 0})})),
+        "must not carry")
+    bad("ident-builtin-with-obj",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("exprstmt", {"x": nd("ident", {"name": "len", "builtin": "len",
+                                             "obj": 0})})),
+        "must not carry")
+    bad("convert-missing-from",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("exprstmt", {"x": nd("convert", {"x": lit(), "to": 0,
+                                                "type": 0})})),
+        "missing field 'from'")
+    bad("funcdecl-missing-pkgpath",
+        lambda d: d["funcs"][0]["fields"].pop("pkgpath"),
+        "missing field 'pkgpath'")
+    bad("funcdecl-linkname-with-body",
+        lambda d: d["funcs"][0]["fields"].update(linkname="some.Sym"),
+        "must not carry body")
+    bad("funcdecl-unimplemented-with-body",
+        lambda d: d["funcs"][0]["fields"].update(unimplemented=True),
+        "must not carry body")
+    bad("globals-dangling-obj",
+        lambda d: d.update(globals=[{
+            "obj": 42, "init": None,
+            "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        "dangling object id")
+    bad("globals-bad-init",
+        lambda d: d.update(globals=[{
+            "obj": 0, "init": 42,
+            "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        "node must be an object")
+    bad("syncop-bad-op",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("exprstmt", {"x": nd("syncop", {"op": "Frobnicate",
+                                               "synctyp": "atomic.Int64",
+                                               "recv": lit(), "args": [],
+                                               "type": None})})),
+        "unknown syncop op")
+    bad("addrof-no-operand",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("exprstmt", {"x": nd("addrof", {"type": 0})})),
+        "missing field 'array'")
 
     failures = 0
     for name, doc, want in cases:
