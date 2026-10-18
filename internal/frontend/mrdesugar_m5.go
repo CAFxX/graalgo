@@ -2848,7 +2848,17 @@ func (e *exporter) synthesizeIfacePairType(sig *types.Signature, nameHint string
 func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName string, ok bool) {
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
-			return mf.pkgPath, mf.helper, true
+			// fix-redmaster-conformance: the helper may live in the
+			// m7HelperPkgOverride package (e.g. reflect's helpers are in
+			// synthetic reflect_m7 since reflect retired to the disk
+			// importer). Consult the override so method-table entries
+			// resolve to the actual helper (33dfb8df fixed the same gap
+			// in the classifiers; methodTableEntries was missed).
+			hp := mf.pkgPath
+			if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
+				hp = override
+			}
+			return hp, mf.helper, true
 		}
 	}
 	for _, mf := range ioMultiResultFuncs {
@@ -3792,6 +3802,16 @@ func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, p
 	args, preStmts, err := e.multiResultHelperArgs(c, plan)
 	if err != nil {
 		return nil, err
+	}
+	// P3: pack variadic args for the helper call. The helper (__Println)
+	// is variadic; the original call's args (e.g. "hello") must be packed
+	// into a []any slice, just like a direct variadic call. The
+	// multiResultHelperArgs does not pack, so we do it here.
+	if sig, ok := helperFn.Type().(*types.Signature); ok && sig.Variadic() && !c.Ellipsis.IsValid() {
+		args, err = e.packVariadicArgs(c, sig, args)
+		if err != nil {
+			return nil, err
+		}
 	}
 	call, err := e.synthHelperCallNode(c, helperFn, plan.tmpType, args)
 	if err != nil {

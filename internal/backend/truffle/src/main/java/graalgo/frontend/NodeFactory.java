@@ -3334,7 +3334,7 @@ public final class NodeFactory {
         }
         if ("funclit".equals(funKind)) {
             GoExprNode lit = buildFuncLit(fun, ctx);
-            args = adaptArgsForInterfaceParams(args, funclitParamTypeIds(fun, path), ctx, path);
+            args = adaptArgsForInterfaceParams(args, funclitParamTypeIds(fun, path), false, ctx, path);
             return new FuncValueCallNode(lit, args, callResultKind(node, ctx, path),
                     false, ctx.funcObjId);
         }
@@ -3358,7 +3358,9 @@ public final class NodeFactory {
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
-            allArgs = adaptArgsForInterfaceParams(allArgs, paramTypes, ctx, path);
+            boolean isVariadic = !(sig instanceof Json.Null || sig == null)
+                    && isVariadicSignature(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            allArgs = adaptArgsForInterfaceParams(allArgs, paramTypes, isVariadic, ctx, path);
             return new FuncValueCallNode(new FuncConstNode(funcTable, oid), allArgs,
                     callResultKind(node, ctx, path), true, ctx.funcObjId);
         }
@@ -3379,7 +3381,9 @@ public final class NodeFactory {
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
-            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            boolean isVariadic = !(sig instanceof Json.Null || sig == null)
+                    && isVariadicSignature(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, isVariadic, ctx, path);
             return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
                     false, ctx.funcObjId);
         }
@@ -3397,7 +3401,9 @@ public final class NodeFactory {
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
-            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            boolean isVariadic = !(sig instanceof Json.Null || sig == null)
+                    && isVariadicSignature(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, isVariadic, ctx, path);
             return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
                     false, ctx.funcObjId);
         }
@@ -3416,7 +3422,9 @@ public final class NodeFactory {
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
-            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            boolean isVariadic = !(sig instanceof Json.Null || sig == null)
+                    && isVariadicSignature(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, isVariadic, ctx, path);
             return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
                     false, ctx.funcObjId);
         }
@@ -3436,7 +3444,9 @@ public final class NodeFactory {
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
-            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            boolean isVariadic = !(sig instanceof Json.Null || sig == null)
+                    && isVariadicSignature(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, isVariadic, ctx, path);
             return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
                     false, ctx.funcObjId);
         }
@@ -3461,11 +3471,17 @@ public final class NodeFactory {
      *                     unknown (no adaptation)
      */
     private GoExprNode[] adaptArgsForInterfaceParams(GoExprNode[] args,
-            List<Integer> paramTypeIds, BuildCtx ctx, String path) {
+            List<Integer> paramTypeIds, boolean isVariadic, BuildCtx ctx, String path) {
         if (paramTypeIds == null) {
             return args;
         }
-        for (int i = 0; i < args.length && i < paramTypeIds.size(); i++) {
+        // For variadic calls, the last arg is the spread slice (already a
+        // slice, not needing interface boxing); adapt only the fixed args.
+        int n = args.length;
+        if (isVariadic && n > 0) {
+            n = n - 1;
+        }
+        for (int i = 0; i < n && i < paramTypeIds.size(); i++) {
             if (args[i].kind() == GoKind.INTERFACE) {
                 continue; // already an interface value
             }
@@ -3483,16 +3499,16 @@ public final class NodeFactory {
         return args;
     }
 
-    /** Parameter type ids from a wire signature entry; null when not a (non-variadic) signature. */
+    /** Parameter type ids from a wire signature entry; null when not a signature.
+     * For variadic signatures, returns the param ids including the final
+     * slice type; callers must skip adapting the last arg (the spread slice).
+     */
     private static List<Integer> signatureParamTypeIds(BuildCtx ctx, int sigId, String path) {
         Json.Object entry = ctx.types.entry(sigId, path);
         if (!"signature".equals(entry.string("kind", path))) {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {
@@ -3503,6 +3519,16 @@ public final class NodeFactory {
             out.add(po.intValue("type", path));
         }
         return out;
+    }
+
+    /** True if the wire signature entry is variadic. */
+    private static boolean isVariadicSignature(BuildCtx ctx, int sigId, String path) {
+        Json.Object entry = ctx.types.entry(sigId, path);
+        if (!"signature".equals(entry.string("kind", path))) {
+            return false;
+        }
+        Json.Object detail = entry.object("detail", path);
+        return detail.has("variadic") && detail.bool("variadic", path);
     }
 
     /** Parameter type ids from a wire funclit node; null when unreadable. */

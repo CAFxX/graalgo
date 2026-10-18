@@ -308,8 +308,9 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				// (GAP-GENERIC-MR: F[T](args) -> __F[T](args)).
 				tmpName := fmt.Sprintf("__mr_hoist_%d", len(hoisted))
 				helperCall := &ast.CallExpr{
-					Fun:  mrHelperFunForCall(inner.Fun, innerName),
-					Args: inner.Args,
+					Fun:      mrHelperFunForCall(inner.Fun, innerName),
+					Args:     inner.Args,
+					Ellipsis: inner.Ellipsis,
 				}
 				hoisted = append(hoisted, &ast.GenDecl{
 					Tok: token.VAR,
@@ -546,8 +547,9 @@ func hoistNestedMRExpr(e ast.Expr, specByName map[string]*diskMRSpec, counter *i
 					tmpName := fmt.Sprintf("__mr_arg_%d", *counter)
 					*counter++
 					helperCall := &ast.CallExpr{
-						Fun:  ast.NewIdent(spec.helper),
-						Args: inner.Args,
+						Fun:      ast.NewIdent(spec.helper),
+						Args:     inner.Args,
+						Ellipsis: inner.Ellipsis,
 					}
 					*pre = append(*pre, &ast.AssignStmt{
 						Lhs: []ast.Expr{ast.NewIdent(tmpName)},
@@ -1931,8 +1933,9 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 				}
 				tmp := ast.NewIdent("__mr_tmp")
 				helperCall := &ast.CallExpr{
-					Fun:  helperFun,
-					Args: call.Args,
+					Fun:      helperFun,
+					Args:     call.Args,
+					Ellipsis: call.Ellipsis,
 				}
 				assign := &ast.AssignStmt{
 					Lhs: []ast.Expr{tmp},
