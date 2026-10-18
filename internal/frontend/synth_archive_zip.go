@@ -117,7 +117,7 @@ func __zipOpenReader(name string) __zipOpenReaderPair {
 }
 
 func OpenReader(name string) (*ReadCloser, error) {
-	panic("archive/zip.OpenReader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.OpenReader: unreachable (call sites desugar to __zipOpenReader")
 }
 
 
@@ -151,7 +151,7 @@ func __zipNewReader(r io.ReaderAt, size int64) __zipNewReaderPair {
 }
 
 func NewReader(r io.ReaderAt, size int64) (*Reader, error) {
-	panic("archive/zip.NewReader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.NewReader: unreachable (call sites desugar to __zipNewReader")
 }
 
 
@@ -270,7 +270,7 @@ __mrtmp5 := __zipFilefindBodyOffset(f); bodyOffset, err := __mrtmp5.f0, __mrtmp5
 }
 
 func (f *File) DataOffset() (offset int64, err error) {
-	panic("archive/zip.DataOffset: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.DataOffset: unreachable (call sites desugar to __zipFileDataOffset")
 }
 
 
@@ -325,7 +325,7 @@ __mrtmp6 := __zipFilefindBodyOffset(f); bodyOffset, err := __mrtmp6.f0, __mrtmp6
 }
 
 func (f *File) Open() (io.ReadCloser, error) {
-	panic("archive/zip.Open: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Open: unreachable (call sites desugar to __zipFileOpen")
 }
 
 
@@ -348,7 +348,7 @@ __mrtmp7 := __zipFilefindBodyOffset(f); bodyOffset, err := __mrtmp7.f0, __mrtmp7
 }
 
 func (f *File) OpenRaw() (io.Reader, error) {
-	panic("archive/zip.OpenRaw: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.OpenRaw: unreachable (call sites desugar to __zipFileOpenRaw")
 }
 
 
@@ -368,7 +368,7 @@ func __zipdirReaderRead(r *dirReader, __p0 []byte) __zipdirReaderReadPair {
 }
 
 func (r *dirReader) Read([]byte) (int, error) {
-	panic("archive/zip.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Read: unreachable (call sites desugar to __zipdirReaderRead")
 }
 
 
@@ -399,7 +399,7 @@ func __zipchecksumReaderStat(r *checksumReader) __zipchecksumReaderStatPair {
 }
 
 func (r *checksumReader) Stat() (fs.FileInfo, error) {
-	panic("archive/zip.Stat: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Stat: unreachable (call sites desugar to __zipchecksumReaderStat")
 }
 
 
@@ -453,7 +453,7 @@ func __zipchecksumReaderRead(r *checksumReader, b []byte) __zipchecksumReaderRea
 }
 
 func (r *checksumReader) Read(b []byte) (n int, err error) {
-	panic("archive/zip.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Read: unreachable (call sites desugar to __zipchecksumReaderRead")
 }
 
 
@@ -486,7 +486,7 @@ func __zipFilefindBodyOffset(f *File) __zipFilefindBodyOffsetPair {
 }
 
 func (f *File) findBodyOffset() (int64, error) {
-	panic("archive/zip.findBodyOffset: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.findBodyOffset: unreachable (call sites desugar to __zipFilefindBodyOffset")
 }
 
 
@@ -774,7 +774,7 @@ __mrtmp1 := __zipfindDirectory64End(r, directoryEndOffset); p, err := __mrtmp1.f
 }
 
 func readDirectoryEnd(r io.ReaderAt, size int64) (dir *directoryEnd, baseOffset int64, err error) {
-	panic("archive/zip.readDirectoryEnd: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.readDirectoryEnd: unreachable (call sites desugar to __zipreadDirectoryEnd")
 }
 
 
@@ -812,7 +812,7 @@ func __zipfindDirectory64End(r io.ReaderAt, directoryEndOffset int64) __zipfindD
 }
 
 func findDirectory64End(r io.ReaderAt, directoryEndOffset int64) (int64, error) {
-	panic("archive/zip.findDirectory64End: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.findDirectory64End: unreachable (call sites desugar to __zipfindDirectory64End")
 }
 
 
@@ -936,7 +936,7 @@ func __zipfileListEntrystat(f *fileListEntry) __zipfileListEntrystatPair {
 }
 
 func (f *fileListEntry) stat() (fileInfoDirEntry, error) {
-	panic("archive/zip.stat: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.stat: unreachable (call sites desugar to __zipfileListEntrystat")
 }
 
 
@@ -971,7 +971,7 @@ func __zipfileListEntryInfo(f *fileListEntry) __zipfileListEntryInfoPair {
  return __zipfileListEntryInfoPair{f0: f, f1: nil}}
 
 func (f *fileListEntry) Info() (fs.FileInfo, error) {
-	panic("archive/zip.Info: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Info: unreachable (call sites desugar to __zipfileListEntryInfo")
 }
 
 
@@ -1120,7 +1120,7 @@ func __zipReaderOpen(r *Reader, name string) __zipReaderOpenPair {
 }
 
 func (r *Reader) Open(name string) (fs.File, error) {
-	panic("archive/zip.Open: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Open: unreachable (call sites desugar to __zipReaderOpen")
 }
 
 
@@ -1143,7 +1143,7 @@ func __zipsplit(name string) __zipsplitPair {
 }
 
 func split(name string) (dir, elem string, isDir bool) {
-	panic("archive/zip.split: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.split: unreachable (call sites desugar to __zipsplit")
 }
 
 
@@ -1214,7 +1214,7 @@ func __zipopenDirStat(d *openDir) __zipopenDirStatPair {
  __mrtmp1 := __zipfileListEntrystat(d.e); return __zipopenDirStatPair{__mrtmp1.f0, __mrtmp1.f1}}
 
 func (d *openDir) Stat() (fs.FileInfo, error) {
-	panic("archive/zip.Stat: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Stat: unreachable (call sites desugar to __zipopenDirStat")
 }
 
 
@@ -1230,7 +1230,7 @@ func __zipopenDirRead(d *openDir, __p0 []byte) __zipopenDirReadPair {
 }
 
 func (d *openDir) Read([]byte) (int, error) {
-	panic("archive/zip.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Read: unreachable (call sites desugar to __zipopenDirRead")
 }
 
 
@@ -1271,7 +1271,7 @@ func __zipopenDirReadDir(d *openDir, count int) __zipopenDirReadDirPair {
 }
 
 func (d *openDir) ReadDir(count int) ([]fs.DirEntry, error) {
-	panic("archive/zip.ReadDir: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.ReadDir: unreachable (call sites desugar to __zipopenDirReadDir")
 }
 
 
@@ -1527,7 +1527,7 @@ func __zipWriterCreate(w *Writer, name string) __zipWriterCreatePair {
 }
 
 func (w *Writer) Create(name string) (io.Writer, error) {
-	panic("archive/zip.Create: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Create: unreachable (call sites desugar to __zipWriterCreate")
 }
 
 
@@ -1563,7 +1563,7 @@ func __zipdetectUTF8(s string) __zipdetectUTF8Pair {
 }
 
 func detectUTF8(s string) (valid, require bool) {
-	panic("archive/zip.detectUTF8: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.detectUTF8: unreachable (call sites desugar to __zipdetectUTF8")
 }
 
 
@@ -1714,7 +1714,7 @@ __mrtmp3 := __ziptimeToMsDosTime(fh.Modified); fh.ModifiedDate, fh.ModifiedTime 
 }
 
 func (w *Writer) CreateHeader(fh *FileHeader) (io.Writer, error) {
-	panic("archive/zip.CreateHeader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.CreateHeader: unreachable (call sites desugar to __zipWriterCreateHeader")
 }
 
 
@@ -1853,7 +1853,7 @@ func __zipWriterCreateRaw(w *Writer, fh *FileHeader) __zipWriterCreateRawPair {
 }
 
 func (w *Writer) CreateRaw(fh *FileHeader) (io.Writer, error) {
-	panic("archive/zip.CreateRaw: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.CreateRaw: unreachable (call sites desugar to __zipWriterCreateRaw")
 }
 
 
@@ -1983,7 +1983,7 @@ func __zipfileWriterWrite(w *fileWriter, p []byte) __zipfileWriterWritePair {
 }
 
 func (w *fileWriter) Write(p []byte) (int, error) {
-	panic("archive/zip.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Write: unreachable (call sites desugar to __zipfileWriterWrite")
 }
 
 
@@ -2069,7 +2069,7 @@ func __zipcountWriterWrite(w *countWriter, p []byte) __zipcountWriterWritePair {
 }
 
 func (w *countWriter) Write(p []byte) (int, error) {
-	panic("archive/zip.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Write: unreachable (call sites desugar to __zipcountWriterWrite")
 }
 
 
@@ -2325,7 +2325,7 @@ func __zipheaderFileInfoInfo(fi headerFileInfo) __zipheaderFileInfoInfoPair {
  return __zipheaderFileInfoInfoPair{f0: fi, f1: nil}}
 
 func (fi headerFileInfo) Info() (fs.FileInfo, error) {
-	panic("archive/zip.Info: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Info: unreachable (call sites desugar to __zipheaderFileInfoInfo")
 }
 
 
@@ -2366,7 +2366,7 @@ func __zipFileInfoHeader(fi fs.FileInfo) __zipFileInfoHeaderPair {
 }
 
 func FileInfoHeader(fi fs.FileInfo) (*FileHeader, error) {
-	panic("archive/zip.FileInfoHeader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.FileInfoHeader: unreachable (call sites desugar to __zipFileInfoHeader")
 }
 
 
@@ -2439,7 +2439,7 @@ func __ziptimeToMsDosTime(t time.Time) __ziptimeToMsDosTimePair {
 }
 
 func timeToMsDosTime(t time.Time) (fDate uint16, fTime uint16) {
-	panic("archive/zip.timeToMsDosTime: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.timeToMsDosTime: unreachable (call sites desugar to __ziptimeToMsDosTime")
 }
 
 
@@ -2656,7 +2656,7 @@ func __zippooledFlateWriterWrite(w *pooledFlateWriter, p []byte) __zippooledFlat
 }
 
 func (w *pooledFlateWriter) Write(p []byte) (n int, err error) {
-	panic("archive/zip.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Write: unreachable (call sites desugar to __zippooledFlateWriterWrite")
 }
 
 
@@ -2710,7 +2710,7 @@ func __zippooledFlateReaderRead(r *pooledFlateReader, p []byte) __zippooledFlate
 }
 
 func (r *pooledFlateReader) Read(p []byte) (n int, err error) {
-	panic("archive/zip.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("archive/zip.Read: unreachable (call sites desugar to __zippooledFlateReaderRead")
 }
 
 
