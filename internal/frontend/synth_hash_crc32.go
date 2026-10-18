@@ -62,7 +62,7 @@ type Table [256]uint32
 
 // P3-M9: *Table values are opaque tokens (the frontend forbids index
 // assignment on a pointer, WS E, slicing a pointer, WS E, pointer
-// composite literals to non-struct, WS E, and & on identifiers, WS D,
+// composite literals to non-struct, WS E, and & on identifiers,
 // so tables cannot be built dynamically). Each token maps to a polynomial
 // via polyOf; the CRC is computed bit-by-bit from the polynomial (value-
 // identical to the table walk). Retest trigger: WS E/D land.
@@ -155,9 +155,8 @@ func beUint32(b []byte) uint32 {
 }
 
 // AppendSingle is the single-result form of AppendBinary (the v1
-// frontend cannot emit or call multi-result functions (WS D); the real
+// the real
 // logic lives here, served via the mrM8 desugar to hash.__binaryAppend.
-// Re-test trigger: WS D lands.
 func (d *digest) AppendSingle(b []byte) []byte {
 	b = append(b, magic...)
 	b = beAppendUint32(b, tableSum(d.poly))
@@ -167,23 +166,22 @@ func (d *digest) AppendSingle(b []byte) []byte {
 
 // MarshalSingle is the single-result form of MarshalBinary (see
 // AppendSingle). Served via the mrM8 desugar to hash.__binaryMarshal.
-// Re-test trigger: WS D lands.
 func (d *digest) MarshalSingle() []byte {
 	return d.AppendSingle(make([]byte, 0, marshaledSize))
 }
 
 // AppendBinary implements encoding.BinaryAppender (fail-fast stub; real
 // logic is AppendSingle, served via the mrM8 desugar to
-// hash.__binaryAppend). Re-test trigger: WS D lands.
+// hash.__binaryAppend).
 func (d *digest) AppendBinary(b []byte) ([]byte, error) {
-	panic("hash/crc32: AppendBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/crc32: AppendBinary: unreachable (call sites desugar to __crc32Append")
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler (fail-fast stub;
 // real logic is MarshalSingle, served via the mrM8 desugar to
-// hash.__binaryMarshal). Re-test trigger: WS D lands.
+// hash.__binaryMarshal).
 func (d *digest) MarshalBinary() ([]byte, error) {
-	panic("hash/crc32: MarshalBinary: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/crc32: MarshalBinary: unreachable (call sites desugar to __crc32Marshal")
 }
 
 func (d *digest) UnmarshalBinary(b []byte) error {
@@ -201,20 +199,18 @@ func (d *digest) UnmarshalBinary(b []byte) error {
 }
 
 // CloneSinglePair is the single-result form of Clone (the v1 frontend
-// cannot emit or call multi-result functions (WS D); the real logic
+// cannot emit or call multi-result functions ; the real logic
 // lives here, served via the mrM8 desugar to hash.__hashClone).
-// Re-test trigger: WS D lands.
 func (d *digest) CloneSinglePair() hash.ClonePair {
 	// P3-M9: composite literal (the frontend forbids &ident in
-	// synthetic bodies, WS D).
+	// synthetic bodies).
 	return hash.ClonePair{C: &digest{crc: d.crc, poly: d.poly}, Err: nil}
 }
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is
 // CloneSinglePair, served via the mrM8 desugar to hash.__hashClone).
-// Re-test trigger: WS D lands.
 func (d *digest) Clone() (hash.Cloner, error) {
-	panic("hash/crc32: Clone: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/crc32: Clone: unreachable (call sites desugar to __crc32Clone")
 }
 
 // simpleUpdate is the textbook byte-at-a-time reflected CRC update. All
@@ -248,11 +244,10 @@ func Update(crc uint32, tab *Table, p []byte) uint32 {
 }
 
 // P3-M9: package-local multi-result helpers (see hash/adler32). The v1
-// frontend cannot emit or call multi-result functions (WS D), so
+// frontend cannot emit or call multi-result functions , so
 // Write/Clone/MarshalBinary/AppendBinary are served through the mrM8
 // desugar. These helpers take any (not hash.Hash) to avoid an interface
 // conversion that would lose the dynamic type's method set.
-// Re-test trigger: WS D lands.
 type writePair struct {
 	n   int
 	err error
@@ -285,11 +280,9 @@ func __crc32Append(d *digest, b []byte) bytesPair {
 	return bytesPair{d.AppendSingle(b), nil}
 }
 
-// WriteSingle is the single-result form of Write (the v1 frontend cannot
-// emit or call multi-result functions (WS D); the real logic lives here,
+// WriteSingle is the single-result form of Write (the real logic lives here,
 // served via the mrM8 desugar to hash.__hashWrite, which delegates to
 // this method through the hash.singleWriter interface. Re-test trigger:
-// WS D lands.
 func (d *digest) WriteSingle(p []byte) int {
 	d.crc = updateBitByBit(d.crc, d.poly, p)
 	return len(p)
@@ -297,9 +290,8 @@ func (d *digest) WriteSingle(p []byte) int {
 
 // Write implements hash.Hash (fail-fast stub; real logic is WriteSingle,
 // served via the mrM8 desugar to hash.__hashWrite). Re-test trigger:
-// WS D lands.
 func (d *digest) Write(p []byte) (n int, err error) {
-	panic("hash/crc32: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/crc32: Write: unreachable (call sites desugar to __crc32Write")
 }
 
 func (d *digest) Sum32() uint32 { return d.crc }
