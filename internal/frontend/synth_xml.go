@@ -334,7 +334,7 @@ func NewTokenDecoder(t TokenReader) *Decoder {
 	if d, ok := t.(*Decoder); ok {
 		return d
 	}
-	panic("xml.NewTokenDecoder: not in M7 scope (calling TokenReader.Token needs WS D; re-test when it lands)")
+	panic("xml.NewTokenDecoder: not in M7 scope (calling TokenReader.Token needs 2-result interface dispatch)")
 }
 
 // =====================================================================
@@ -445,14 +445,14 @@ type endElemPair struct {
 // desugared to __tokenOf (mrdesugar_m5.go, mrXmlToken); every other
 // position fails fast here. The body never runs.
 func (d *Decoder) Token() (Token, error) {
-	panic("xml.Decoder.Token: multi-result calls need WS D (only 2-target := and = call sites are desugared in M7; re-test when WS D lands)")
+	panic("xml.Decoder.Token: only 2-target := and = call sites are desugared in M7")
 }
 
 // RawToken is like [Decoder.Token] but does not verify that start and
 // end elements match and does not translate namespace prefixes to their
 // corresponding URLs. Same M7 desugar story as Token.
 func (d *Decoder) RawToken() (Token, error) {
-	panic("xml.Decoder.RawToken: multi-result calls need WS D (only 2-target := and = call sites are desugared in M7; re-test when WS D lands)")
+	panic("xml.Decoder.RawToken: only 2-target := and = call sites are desugared in M7")
 }
 
 // __tokenOf is the desugar target behind Decoder.Token: the real gc
@@ -727,7 +727,7 @@ func (d *Decoder) InputOffset() int64 {
 // need WS D (the mrXmlToken desugar only covers Token/RawToken).
 // Re-test when WS D lands.
 func (d *Decoder) InputPos() (line, column int) {
-	panic("xml.Decoder.InputPos: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("xml.Decoder.InputPos: not in M7 scope (no Appendix-M table entry; needs __-helper + desugar coverage)")
 }
 
 // Must read a single byte.
