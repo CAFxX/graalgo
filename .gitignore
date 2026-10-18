@@ -17,7 +17,5 @@ test/differential/diffharness
 # graalgo driver binary (built by `make graalgo`)
 /graalgo
 
-# fuzzer runtime state (journal, scratch programs, resume state)
-tools/fuzz/work/
 .gocache/
 .tmp/
