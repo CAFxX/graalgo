@@ -41,6 +41,7 @@ GENERATORS = [
     ("gen_synth_compress.py", ["synth_compress_bzip2.go", "synth_compress_flate.go",
                                "synth_compress_gzip.go", "synth_compress_lzw.go",
                                "synth_compress_zlib.go"]),
+    ("gen_synth_math.py", ["synth_math.go"]),
     ("gen_synth_mathbits.py", ["synth_mathbits.go"]),
     ("gen_synth_mathcmplx.py", ["synth_mathcmplx.go"]),
     ("gen_synth_mathrand.py", ["synth_mathrand.go"]),
