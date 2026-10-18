@@ -116,11 +116,15 @@ check: main $(OUT_TEST)/.built
 		python3 $(STDLIB_FORK)/gen-asm-inventory.py --check; \
 	fi
 	@echo "== p3frontend Go build/vet gate (P3-M10 self-attack FINDING-4) =="
+# Fail CLOSED: a missing Go toolchain is an ERROR, never a silent skip.
+# (2026-10-18, independent review P1-B: the old WARNING-and-continue meant
+# this gate never actually ran wherever the toolchain was absent.)
 	@GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
 	if [ -x "$$GO_BIN" ]; then \
 		cd $(P3FRONTEND) && GOTOOLCHAIN=local "$$GO_BIN" build ./... && GOTOOLCHAIN=local "$$GO_BIN" vet ./...; \
 	else \
-		echo "WARNING: Go toolchain not found ($$GO_BIN); p3frontend gate skipped"; \
+		echo "ERROR: Go toolchain not found ($$GO_BIN); p3frontend gate cannot run" >&2; \
+		exit 1; \
 	fi
 
 clean:
