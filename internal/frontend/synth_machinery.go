@@ -2341,7 +2341,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 			name = nt.Obj().Name() + "." + name
 		}
 	}
-	return scopeErrorf("%s.%s is not in %s scope (multi-result calls need WS D; re-test when it lands)",
+	return scopeErrorf("%s.%s is not in %s scope (multi-result declaration not emitted; needs __-helper + desugar coverage)",
 		fn.Pkg().Path(), name, milestone)
 }
 
