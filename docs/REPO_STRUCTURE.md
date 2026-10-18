@@ -188,7 +188,10 @@ Related: [Makefile](../Makefile) (root build entry point),
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
   tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
-  [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
+  [fuzz-soak/](../tools/fuzz-soak/) (fuzzing; the M8 fuzzer
+  tools/fuzz/ was retired 2026-10-18 — superseded by fuzz-soak — the
+  retired dir is intentionally unlinked so the markdown link gate stays
+  green),
   [torture/](../tools/torture/) (scheduler torture),
   [godebug-diff/](../tools/godebug-diff/),
   [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
