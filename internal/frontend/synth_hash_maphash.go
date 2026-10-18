@@ -161,30 +161,27 @@ func (h *Hash) WriteByte(b byte) error {
 
 // maphashWritePair is the single-result form of Write/WriteString's
 // results (the v1 frontend cannot emit or call multi-result functions
-// (WS D)). Served via the mrM8 desugar to __maphashWrite/
-// __maphashWriteString. Re-test trigger: WS D lands.
+//). Served via the mrM8 desugar to __maphashWrite/
+// __maphashWriteString.
 type maphashWritePair struct {
 	n   int
 	err error
 }
 
 // __maphashWrite serves h.Write(p) through the mrM8 desugar, delegating
-// to the single-result WriteSingle. Re-test trigger: WS D lands.
+// to the single-result WriteSingle.
 func __maphashWrite(h *Hash, p []byte) maphashWritePair {
 	return maphashWritePair{h.WriteSingle(p), nil}
 }
 
 // __maphashWriteString serves h.WriteString(s) through the mrM8 desugar,
 // delegating to the single-result WriteStringSingle. Re-test trigger:
-// WS D lands.
 func __maphashWriteString(h *Hash, s string) maphashWritePair {
 	return maphashWritePair{h.WriteStringSingle(s), nil}
 }
 
-// WriteSingle is the single-result form of Write (the v1 frontend cannot
-// emit or call multi-result functions (WS D); the real logic lives here,
+// WriteSingle is the single-result form of Write (the real logic lives here,
 // served via the mrM8 desugar to __maphashWrite). Re-test trigger:
-// WS D lands.
 func (h *Hash) WriteSingle(b []byte) int {
 	h.initSeed()
 	n := len(b)
@@ -201,14 +198,12 @@ func (h *Hash) WriteSingle(b []byte) int {
 
 // Write adds b to the hash (fail-fast stub; real logic is WriteSingle,
 // served via the mrM8 desugar to __maphashWrite). Re-test trigger:
-// WS D lands.
 func (h *Hash) Write(b []byte) (int, error) {
-	panic("hash/maphash: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/maphash: Write: unreachable (call sites desugar to __maphashWrite")
 }
 
 // WriteStringSingle is the single-result form of WriteString (see
 // WriteSingle). Served via the mrM8 desugar to __maphashWriteString.
-// Re-test trigger: WS D lands.
 func (h *Hash) WriteStringSingle(s string) int {
 	h.initSeed()
 	b := []byte(s)
@@ -225,9 +220,9 @@ func (h *Hash) WriteStringSingle(s string) int {
 
 // WriteString adds s to the hash (fail-fast stub; real logic is
 // WriteStringSingle, served via the mrM8 desugar to
-// __maphashWriteString). Re-test trigger: WS D lands.
+// __maphashWriteString).
 func (h *Hash) WriteString(s string) (int, error) {
-	panic("hash/maphash: WriteString: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/maphash: WriteString: unreachable (call sites desugar to __maphashWriteString")
 }
 
 // Seed returns the seed used to initialize the hash.
@@ -286,34 +281,33 @@ func (h *Hash) Size() int { return 8 }
 func (h *Hash) BlockSize() int { return bufSize }
 
 // maphashClonePair is the single-result form of Clone's results (the v1
-// frontend cannot emit or call multi-result functions (WS D)). Served via
-// the mrM8 desugar to __maphashClone. Re-test trigger: WS D lands.
+// frontend cannot emit or call multi-result functions). Served via
+// the mrM8 desugar to __maphashClone.
 type maphashClonePair struct {
 	c   hash.Cloner
 	err error
 }
 
 // __maphashClone serves h.Clone() through the mrM8 desugar, delegating
-// to the single-result CloneSinglePair. Re-test trigger: WS D lands.
+// to the single-result CloneSinglePair.
 func __maphashClone(h *Hash) maphashClonePair {
 	return h.CloneSinglePair()
 }
 
 // CloneSinglePair is the single-result form of Clone (see WriteSingle).
 // Served via the mrM8 desugar to __maphashClone. Re-test trigger:
-// WS D lands.
 func (h *Hash) CloneSinglePair() maphashClonePair {
 	h.initSeed()
 	// P3-M9: composite literal (the frontend forbids &ident in
-	// synthetic bodies, WS D).
+	// synthetic bodies).
 	return maphashClonePair{&Hash{seed: h.seed, state: h.state, buf: h.buf, n: h.n, total: h.total}, nil}
 }
 
 // Clone returns a copy of h with equivalent and independent state
 // (fail-fast stub; real logic is CloneSinglePair, served via the mrM8
-// desugar to __maphashClone). Re-test trigger: WS D lands.
+// desugar to __maphashClone).
 func (h *Hash) Clone() (hash.Cloner, error) {
-	panic("hash/maphash: Clone: multi-result call needs the mrM8 desugar (re-test: WS D)")
+	panic("hash/maphash: Clone: unreachable (call sites desugar to __maphashClone")
 }
 
 // Bytes returns the hash of b with the given seed.
