@@ -28,8 +28,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> tools/fuzz-soak -> tools -> repo.
-GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Repo root: run_batch.py -> harness -> tools/fuzz-soak -> tools -> repo
+# (four dirname hops from this file).
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 GRAALGO_RUN = os.path.join(GR, "internal", "backend", "graalgo-sync-run")
 

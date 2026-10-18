@@ -82,7 +82,11 @@ fi
 # JVM crash or launcher-internal failure (never the program's fault)?
 # (Checked AFTER the scope rejection above: P3SyncMain reports scope
 # rejections through the same "internal error building AST" line.)
-if grep -qE "Exception in thread|ClassCastException|FrameSlotTypeException|at graalgo\.|at com\.oracle\.truffle|^graalgo-sync-run: internal error|^graalgo-sync-run: execution failed" "$WORKDIR/gr.err" 2>/dev/null; then
+# The graalgo-sync-run: alternatives enumerate the prefixes P3SyncMain
+# actually emits (fatal error / internal error / cannot launch gofrontend /
+# gofrontend exited); the phase-1 graalgo-run "execution failed" marker is
+# dead here and stays out so it can never mask a real classification.
+if grep -qE "Exception in thread|ClassCastException|FrameSlotTypeException|at graalgo\.|at com\.oracle\.truffle|^graalgo-sync-run: (internal error|fatal error|cannot launch gofrontend|gofrontend exited)" "$WORKDIR/gr.err" 2>/dev/null; then
     first="$(grep -m1 -E "Exception|Error|graalgo-sync-run: " "$WORKDIR/gr.err" | head -c 200)"
     printf '{"file": "%s", "result": "CRASH", "detail": "%s"}\n' "$base" "$first"
     exit 0

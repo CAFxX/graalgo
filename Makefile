@@ -31,6 +31,9 @@
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
+#               + the fuzz-soak honest-gate tripwire test
+#               ([tools/fuzz-soak/harness/tripwire_gate_test.sh](
+#               tools/fuzz-soak/harness/tripwire_gate_test.sh))
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -135,6 +138,7 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	./tools/fuzz-soak/harness/tripwire_gate_test.sh
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

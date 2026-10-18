@@ -70,7 +70,7 @@ control flow, and a final deterministic state dump via `fmt.Println`.
 `run_batch.py`: builds the backend once (`make build` at the repo root:
 truffle + runtime + interop Java modules; ensures `internal/frontend/gofrontend`
 exists via `internal/frontend/build.sh build`), smoke-checks the toolchain
-(`graalgo-run --check` on a hello program — a broken backend fails the batch
+(`graalgo-sync-run --check` on a hello program — a broken backend fails the batch
 fast instead of emitting N bogus findings), generates N programs,
 runs `diff_one.sh` in parallel (`--jobs 4` default), classifies, dedups,
 writes `results.jsonl` + summary.
@@ -149,6 +149,10 @@ tools/fuzz-soak/
   harness/diff_one.sh  single-program differential
   harness/run_batch.py batch driver (parallel, classify, dedup)
   harness/triage.py    delta-debugging minimizer
+  harness/tripwire_gate_test.sh
+                       honest-gate tripwire: stub-driver scenarios asserting
+                       all-fail -> exit 2 (SOAK FAILED) and success -> exit 0;
+                       no backend needed; runs in `make check` (per-push CI)
   gha/Dockerfile       fanout image
   gha/driver/fuzz_driver.py
   gha/aggregate.py

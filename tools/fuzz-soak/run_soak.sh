@@ -27,7 +27,7 @@
 #   GO_BIN_DIR   Go toolchain bin dir (default: $HOME/tools/go/bin)
 #   JAVA_BIN     java binary (default: $HOME/tools/graalvm-jdk-25/bin/java)
 #   GRAALVM_HOME GraalVM root (default: derived from JAVA_BIN); the
-#                graalgo-run launcher wrapper uses this to pick its JVM
+#                graalgo-sync-run launcher wrapper uses this to pick its JVM
 #   JOBS         parallel diffs per batch (default: 4)
 #   BATCH        seeds per batch (default: 50)
 set -euo pipefail
