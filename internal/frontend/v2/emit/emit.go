@@ -13,6 +13,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"runtime"
 	"sort"
 
 	"graalgo-frontend-v2/checker"
@@ -42,6 +43,10 @@ type Emitter struct {
 	// Object table: types.Object → id.
 	objIDs  map[types.Object]int
 	objects []any
+	// sizes computes struct field offsets and type sizes for the
+	// compilation target (gc sizes for the host GOARCH). The type table
+	// carries real layout data from here — never placeholder zeros.
+	sizes types.Sizes
 }
 
 // Emit runs stage 3 and returns the in-memory program document. The
@@ -54,6 +59,7 @@ func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, erro
 		files:   files,
 		typeIDs: make(map[types.Type]int),
 		objIDs:  make(map[types.Object]int),
+		sizes:   types.SizesFor("gc", runtime.GOARCH),
 	}
 	return e.emitDocument(pkg)
 }
@@ -78,7 +84,9 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		if obj == nil {
 			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 		}
-		e.declareObject(obj)
+		if _, err := e.declareObject(obj); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, fd := range decls {
@@ -184,66 +192,126 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
 // declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
-	typ := e.typeID(obj.Type())
+// describeObject renders one types.Object for the object table. Every
+// object kind gets its own honest "kind" — never a silent "var" for
+// something that is not a variable. Unknown kinds fail loudly.
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
 	switch o := obj.(type) {
 	case *types.Var:
+		typ, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":  "var",
 			"name":  o.Name(),
 			"type":  typ,
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
+		typ, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
 			"type": typ,
+		}, nil
+	case *types.Const:
+		typ, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
 		}
-	default:
 		return map[string]any{
-			"kind": "var",
+			"kind": "const",
 			"name": o.Name(),
 			"type": typ,
+			"val":  o.Val().String(),
+		}, nil
+	case *types.TypeName:
+		typ, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
 		}
+		return map[string]any{
+			"kind": "typename",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	case *types.Label:
+		return map[string]any{
+			"kind": "label",
+			"name": o.Name(),
+		}, nil
+	case *types.PkgName:
+		return map[string]any{
+			"kind":    "pkgname",
+			"name":    o.Name(),
+			"pkgpath": o.Imported().Path(),
+		}, nil
+	case *types.Builtin:
+		return map[string]any{
+			"kind": "builtin",
+			"name": o.Name(),
+		}, nil
+	case *types.Nil:
+		return map[string]any{
+			"kind": "nil",
+		}, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported object kind %T", obj)
 	}
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
-func (e *Emitter) typeID(t types.Type) int {
+func (e *Emitter) typeID(t types.Type) (int, error) {
 	if id, ok := e.typeIDs[t]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.types)
 	e.typeIDs[t] = id
 	e.types = append(e.types, nil) // placeholder for recursion
-	e.types[id] = e.describeType(t)
-	return id
+	desc, err := e.describeType(t)
+	if err != nil {
+		return 0, err
+	}
+	e.types[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeType(t types.Type) map[string]any {
+// describeType renders one go/types type for the type table. Every
+// composite kind is emitted losslessly (real field offsets, real method
+// lists, real embedded types); type kinds the emitter cannot represent
+// (type parameters, unions) fail loudly instead of collapsing to a
+// lying "basic"/"unknown" entry.
+func (e *Emitter) describeType(t types.Type) (map[string]any, error) {
 	switch tt := t.(type) {
 	case *types.Basic:
 		class := basicClass(tt)
@@ -254,30 +322,50 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"class":   class,
 				"untyped": tt.Info()&types.IsUntyped != 0,
 			},
-		}
+		}, nil
 	case *types.Pointer:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "pointer",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Slice:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "slice",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Array:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "array",
-			"detail": map[string]any{"len": tt.Len(), "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"len": tt.Len(), "elem": elem},
+		}, nil
 	case *types.Map:
+		key, err := e.typeID(tt.Key())
+		if err != nil {
+			return nil, err
+		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "map",
 			"detail": map[string]any{
-				"key":  e.typeID(tt.Key()),
-				"elem": e.typeID(tt.Elem()),
+				"key":  key,
+				"elem": elem,
 			},
-		}
+		}, nil
 	case *types.Chan:
 		var dir string
 		switch tt.Dir() {
@@ -288,74 +376,178 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		case types.RecvOnly:
 			dir = "recv"
 		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "chan",
-			"detail": map[string]any{"dir": dir, "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"dir": dir, "elem": elem},
+		}, nil
 	case *types.Signature:
+		// Generic signatures have no representation yet: the type
+		// parameters would otherwise be silently dropped, turning a
+		// generic function into a plain one.
+		if tp := tt.TypeParams(); tp != nil && tp.Len() > 0 {
+			return nil, fmt.Errorf("emit: unsupported generic signature (type parameters not yet implemented)")
+		}
+		var recv any
+		if r := tt.Recv(); r != nil {
+			rt, err := e.typeID(r.Type())
+			if err != nil {
+				return nil, err
+			}
+			recv = map[string]any{"name": r.Name(), "type": rt}
+		}
 		params := []any{}
 		for i := 0; i < tt.Params().Len(); i++ {
 			p := tt.Params().At(i)
+			pt, err := e.typeID(p.Type())
+			if err != nil {
+				return nil, err
+			}
 			params = append(params, map[string]any{
 				"name": p.Name(),
-				"type": e.typeID(p.Type()),
+				"type": pt,
 			})
 		}
 		results := []any{}
 		for i := 0; i < tt.Results().Len(); i++ {
 			r := tt.Results().At(i)
+			rt, err := e.typeID(r.Type())
+			if err != nil {
+				return nil, err
+			}
 			results = append(results, map[string]any{
 				"name": r.Name(),
-				"type": e.typeID(r.Type()),
+				"type": rt,
 			})
 		}
 		return map[string]any{
 			"kind": "signature",
 			"detail": map[string]any{
+				"recv":     recv,
 				"params":   params,
 				"results":  results,
 				"variadic": tt.Variadic(),
 			},
+		}, nil
+	case *types.Alias:
+		// A type alias is fully described by its right-hand side.
+		rhs, err := e.typeID(tt.Rhs())
+		if err != nil {
+			return nil, err
 		}
+		return map[string]any{
+			"kind":   "alias",
+			"detail": map[string]any{"rhs": rhs},
+		}, nil
+	case *types.Tuple:
+		// Tuples are legitimate types: go/types gives a call with no
+		// results (e.g. println(x)) the empty tuple type, and multi-valued
+		// expressions tuple types. Emit the element list losslessly.
+		elems := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			et, err := e.typeID(tt.At(i).Type())
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, et)
+		}
+		return map[string]any{
+			"kind":   "tuple",
+			"detail": map[string]any{"elems": elems},
+		}, nil
 	case *types.Named:
+		underlying, err := e.typeID(tt.Underlying())
+		if err != nil {
+			return nil, err
+		}
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			msig, err := e.typeID(m.Type())
+			if err != nil {
+				return nil, err
+			}
+			methods = append(methods, map[string]any{"name": m.Name(), "sig": msig})
+		}
+		typeargs := []any{}
+		if ta := tt.TypeArgs(); ta != nil {
+			for i := 0; i < ta.Len(); i++ {
+				aid, err := e.typeID(ta.At(i))
+				if err != nil {
+					return nil, err
+				}
+				typeargs = append(typeargs, aid)
+			}
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
-				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				"underlying": underlying,
+				"methods":    methods,
+				"typeargs":   typeargs,
 			},
-		}
+		}, nil
 	case *types.Struct:
+		fvars := make([]*types.Var, tt.NumFields())
+		for i := 0; i < tt.NumFields(); i++ {
+			fvars[i] = tt.Field(i)
+		}
+		offs := e.sizes.Offsetsof(fvars)
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
+			ft, err := e.typeID(f.Type())
+			if err != nil {
+				return nil, err
+			}
 			fields = append(fields, map[string]any{
 				"name":     f.Name(),
-				"type":     e.typeID(f.Type()),
+				"type":     ft,
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
-				"offset":   0,
+				"offset":   offs[i],
 			})
 		}
 		return map[string]any{
 			"kind":   "struct",
 			"detail": map[string]any{"fields": fields},
-		}
+		}, nil
 	case *types.Interface:
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			msig, err := e.typeID(m.Type())
+			if err != nil {
+				return nil, err
+			}
+			methods = append(methods, map[string]any{"name": m.Name(), "sig": msig})
+		}
+		embedded := []any{}
+		for i := 0; i < tt.NumEmbeddeds(); i++ {
+			et, err := e.typeID(tt.EmbeddedType(i))
+			if err != nil {
+				return nil, err
+			}
+			embedded = append(embedded, et)
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"methods":  methods,
+				"embedded": embedded,
 			},
-		}
+		}, nil
 	default:
-		return map[string]any{
-			"kind":   "basic",
-			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
-		}
+		// %T is nil-safe; t.String() would panic on a nil type. Anything
+		// reaching here (type parameters, unions, ...) has no
+		// representation in the type table and must fail loudly rather
+		// than collapse to a lying entry.
+		return nil, fmt.Errorf("emit: unsupported type %T", t)
 	}
 }
 

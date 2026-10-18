@@ -31,7 +31,10 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
 	}
-	sig := e.typeID(fn.Type())
+	sig, err := e.typeID(fn.Type())
+	if err != nil {
+		return nil, err
+	}
 
 	params := []any{}
 	if fd.Type.Params != nil {
@@ -41,14 +44,51 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if pobj == nil {
 					continue
 				}
-				pid := e.declareParam(pobj)
+				pid, err := e.declareParam(pobj)
+				if err != nil {
+					return nil, err
+				}
+				pt, err := e.typeID(pobj.Type())
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", name, map[string]any{
 					"name": name.Name,
 					"obj":  pid,
-					"type": e.typeID(pobj.Type()),
+					"type": pt,
 				}))
 			}
 		}
+	}
+
+	// Method receiver: a method declaration carries its receiver as a
+	// first-class binding in "recv" (a list of param nodes, like params).
+	// Dropping it would silently turn the method into a free function.
+	var recv any
+	if fd.Recv != nil {
+		rlist := []any{}
+		for _, field := range fd.Recv.List {
+			for _, name := range field.Names {
+				robj := e.info.Info.Defs[name]
+				if robj == nil {
+					continue
+				}
+				rid, err := e.declareParam(robj)
+				if err != nil {
+					return nil, err
+				}
+				rt, err := e.typeID(robj.Type())
+				if err != nil {
+					return nil, err
+				}
+				rlist = append(rlist, e.node("param", name, map[string]any{
+					"name": name.Name,
+					"obj":  rid,
+					"type": rt,
+				}))
+			}
+		}
+		recv = rlist
 	}
 
 	var body any
@@ -67,6 +107,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	fields := map[string]any{
 		"name":    fn.Name(),
 		"sig":     sig,
+		"recv":    recv,
 		"params":  params,
 		"body":    body,
 		"pkgpath": pkgpath,
@@ -124,7 +165,14 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 			"x":   x,
 		}), nil
 	case *ast.BranchStmt:
-		return e.node("branch", s, map[string]any{"tok": st.Tok.String()}), nil
+		// v1 IR schema (docs/arch/frontend-v1.md): "op" plus "label"
+		// (str or null). The label is semantic — `break outer` without it
+		// targets the wrong loop.
+		var label any
+		if st.Label != nil {
+			label = st.Label.Name
+		}
+		return e.node("branch", s, map[string]any{"op": st.Tok.String(), "label": label}), nil
 	default:
 		return nil, fmt.Errorf("emit: unsupported stmt %T", s)
 	}
@@ -152,7 +200,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -177,13 +227,21 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		vs := spec.(*ast.ValueSpec)
 		if vs.Type != nil {
 			if tv, ok := e.info.Info.Types[vs.Type]; ok {
-				typ = e.typeID(tv.Type)
+				tid, err := e.typeID(tv.Type)
+				if err != nil {
+					return nil, err
+				}
+				typ = tid
 			}
 		}
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
 			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				objs = append(objs, oid)
 			} else {
 				objs = append(objs, -1)
 			}
@@ -287,14 +345,22 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+				kid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				key = kid
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+				vid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				value = vid
 			}
 		}
 	}
@@ -328,19 +394,27 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		xt, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("unary", x, map[string]any{
 			"op":   ex.Op.String(),
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": xt,
 		}), nil
 	case *ast.ParenExpr:
 		xn, err := e.emitExpr(ex.X)
 		if err != nil {
 			return nil, err
 		}
+		xt, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("paren", x, map[string]any{
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": xt,
 		}), nil
 	case *ast.CallExpr:
 		return e.emitCall(ex)
@@ -361,7 +435,11 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 	var typ any
 	if c.Type != nil {
 		if tv, ok := e.info.Info.Types[c.Type]; ok {
-			typ = e.typeID(tv.Type)
+			tid, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			typ = tid
 		}
 	}
 	elems := []any{}
@@ -376,12 +454,16 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 			if err != nil {
 				return nil, err
 			}
+			kt, err := e.exprType(kv)
+			if err != nil {
+				return nil, err
+			}
 			elems = append(elems, map[string]any{
 				"kind": "keyvalue",
 				"fields": map[string]any{
 					"key":   kn,
 					"value": vn,
-					"type":  e.exprType(kv),
+					"type":  kt,
 				},
 			})
 			continue
@@ -414,10 +496,14 @@ func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	ixt, err := e.exprType(ix)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("index", ix, map[string]any{
 		"x":     x,
 		"index": index,
-		"type":  e.exprType(ix),
+		"type":  ixt,
 	}), nil
 }
 
@@ -448,12 +534,16 @@ func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
 		}
 		max = mn
 	}
+	st, err := e.exprType(s)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("slice", s, map[string]any{
 		"x":    x,
 		"low":  low,
 		"high": high,
 		"max":  max,
-		"type": e.exprType(s),
+		"type": st,
 	}), nil
 }
 
@@ -472,19 +562,33 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
+		ot, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": ot,
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
+		ot, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": ot,
 		}), nil
 	}
 	return nil, fmt.Errorf("emit: unresolved ident %s", id.Name)
@@ -495,9 +599,13 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: no type for basiclit %s", l.Value)
 	}
+	bt, err := e.typeID(tv.Type)
+	if err != nil {
+		return nil, err
+	}
 	fields := map[string]any{
 		"value": l.Value,
-		"type":  e.typeID(tv.Type),
+		"type":  bt,
 	}
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
@@ -515,11 +623,15 @@ func (e *Emitter) emitBinary(b *ast.BinaryExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	bt, err := e.exprType(b)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("binary", b, map[string]any{
 		"op":   b.Op.String(),
 		"x":    x,
 		"y":    y,
-		"type": e.exprType(b),
+		"type": bt,
 	}), nil
 }
 
@@ -549,11 +661,15 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 			}
 		}
 	}
+	ct, err := e.exprType(c)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("call", c, map[string]any{
 		"fun":      fun,
 		"args":     args,
 		"builtin":  builtin,
-		"type":     e.exprType(c),
+		"type":     ct,
 		"ellipsis": c.Ellipsis.IsValid(),
 	}), nil
 }
@@ -561,16 +677,40 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	// Method call or field access — go/types Selection tells us.
 	if sel, ok := e.info.Info.Selections[s]; ok {
-		// Method or field selection.
 		x, err := e.emitExpr(s.X)
 		if err != nil {
 			return nil, err
 		}
-		_ = sel
+		// The selection is semantic data, not syntax: its kind (method
+		// value, method expression, or field access) and the index path
+		// through embedded fields. Dropping it loses promoted-field and
+		// promoted-method resolution — the backend cannot reconstruct
+		// which embedded field a selector refers to.
+		var selkind string
+		switch sel.Kind() {
+		case types.MethodVal:
+			selkind = "methodval"
+		case types.MethodExpr:
+			selkind = "methodexpr"
+		case types.FieldVal:
+			selkind = "field"
+		default:
+			return nil, fmt.Errorf("emit: unknown selection kind %v", sel.Kind())
+		}
+		index := []any{}
+		for _, i := range sel.Index() {
+			index = append(index, i)
+		}
+		st, err := e.exprType(s)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("selector", s, map[string]any{
-			"x":    x,
-			"sel":  s.Sel.Name,
-			"type": e.exprType(s),
+			"x":       x,
+			"sel":     s.Sel.Name,
+			"selkind": selkind,
+			"index":   index,
+			"type":    st,
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
@@ -583,14 +723,22 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					var err error
+					oid, err = e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
 				}
-				_ = pkgname
+				pt, err := e.exprType(s)
+				if err != nil {
+					return nil, err
+				}
 				return e.node("pkgref", s, map[string]any{
-					"pkg":  id.Name,
-					"name": s.Sel.Name,
-					"obj":  oid,
-					"type": e.exprType(s),
+					"pkg":     id.Name,
+					"pkgpath": pkgname.Imported().Path(),
+					"name":    s.Sel.Name,
+					"obj":     oid,
+					"type":    pt,
 				}), nil
 			}
 		}
@@ -599,9 +747,9 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 }
 
 // exprType returns the type-table id for an expression's type.
-func (e *Emitter) exprType(x ast.Expr) any {
+func (e *Emitter) exprType(x ast.Expr) (any, error) {
 	if tv, ok := e.info.Info.Types[x]; ok && tv.Type != nil {
 		return e.typeID(tv.Type)
 	}
-	return nil
+	return nil, nil
 }

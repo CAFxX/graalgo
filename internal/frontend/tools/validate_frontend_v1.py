@@ -300,6 +300,12 @@ def check_node(ctx, path, node, expr):
         need("op")
         if f.get("op") not in ("break", "continue", "goto", "fallthrough"):
             ctx.err(fp, f"unknown branch op {f.get('op')!r}")
+        # v1 spec (docs/arch/frontend-v1.md): branch carries "label: str or null".
+        # A missing label silently turns `break outer` into `break`.
+        if "label" not in f:
+            ctx.err(fp, "branch: missing required field 'label'")
+        elif f["label"] is not None and not isinstance(f["label"], str):
+            ctx.err(fp, "branch: label must be str or null")
     elif kind == "labeled":
         need("label")
         check_node(ctx, f"{fp}.stmt", f.get("stmt"), False)

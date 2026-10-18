@@ -165,12 +165,15 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
+		// The generic FuncDecl fails at declaration time now: the type
+		// table rejects generic signatures loudly instead of silently
+		// mis-emitting them as plain signatures.
 		name: "IndexListExpr_generics",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
 `,
-		want: "unsupported expr",
+		want: "unsupported generic signature",
 	},
 }
 
