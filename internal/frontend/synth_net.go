@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — net: needs host services (syscalls / sockets / TLS / clock); binds the FROZEN graalgo.os.* //go:linkname table (ADR-0004) or the Java runtime instead of real syscalls.
+// RETIRES WHEN: a general host-service binding lets the real GOROOT sources compile unchanged — then delete this file.
+// RE-TEST TRIGGER: real-source host binding lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 // P3-M9 (tier-4: net): synthetic `net` package.

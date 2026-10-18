@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — encoding: vendored verbatim; the real GOROOT tree does not compile under graalgo (go:linkname / asm / intrinsics / unsafe in the source or its closure — B-4).
+// RETIRES WHEN: graalgo compiles the real go1.27.1 GOROOT sources directly — then delete this file.
+// RE-TEST TRIGGER: real-source compilation lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 // P3-M7 (wave 1): synthetic top-level `encoding` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the

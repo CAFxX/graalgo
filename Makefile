@@ -135,6 +135,24 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	$(MAKE) check-synth-headers
+
+# Principle-4 synthetic-package header gate (REPO_STRUCTURE.md principle 4):
+# every non-test internal/frontend/synth_*.go must carry the
+# "SYNTHETIC (Principle 4)" note (why synthetic, what fix retires it,
+# re-test trigger). A synthetic without that note is a placeholder.
+check-synth-headers:
+	@echo "== synth Principle-4 header gate =="
+	@missing=""; \
+	for f in internal/frontend/synth_*.go; do \
+	  case "$$f" in *_test.go) continue;; esac; \
+	  grep -q 'SYNTHETIC (Principle 4)' "$$f" || missing="$$missing $$f"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+	  echo "SYNTHETIC-HEADER GATE FAILED - missing Principle-4 note:"; \
+	  for m in $$missing; do echo "  $$m"; done; exit 1; \
+	fi
+	@echo "synthetic Principle-4 headers clean"
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

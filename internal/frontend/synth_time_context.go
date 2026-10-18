@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — time/context: time needs host clock/timer services (Java intrinsics, ADR-0005); context is pure Go but bundled to share the time binding.
+// RETIRES WHEN: host clock/timer binding works for the real GOROOT sources and context compiles as-published — then delete this file.
+// RE-TEST TRIGGER: real-source host binding lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 // P3-M5 (WS E, ADR-0005): synthetic `time` and `context` packages.
 //
 // The two packages below are REAL Go source, embedded as text and

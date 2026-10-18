@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — math/rand (MINIMAL stub): retained dependency stub for the mathbig worker; SUPERSEDED by the full port in synth_mathrand.go (strict superset).
+// RETIRES WHEN: the mathbig worker drops the stub — then delete this file.
+// RE-TEST TRIGGER: mathbig worker migrates to synth_mathrand.go.
 package main
 
 const syntheticMathRandSource = (

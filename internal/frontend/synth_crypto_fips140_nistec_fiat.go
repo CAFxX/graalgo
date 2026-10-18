@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — crypto/internal/fips140/nistec/fiat: real go1.27.1 source does not compile under graalgo as-published (import closure hits go:linkname / asm / intrinsics / unsafe — B-4); pure-Go port.
+// RETIRES WHEN: graalgo compiles the real go1.27.1 GOROOT sources directly — then delete this file.
+// RE-TEST TRIGGER: real-source compilation lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/internal/fips140/nistec/fiat' package.

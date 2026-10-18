@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — N/A: this file is the synthetic-package machinery (parsed-package type, overlay registration, emission glue), NOT a synthetic stdlib package.
+// RETIRES WHEN: never independently — it retires with the last synthetic package it serves.
+// RE-TEST TRIGGER: removal of the synthetic-package mechanism itself (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 import (

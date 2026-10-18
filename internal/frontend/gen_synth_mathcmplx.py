@@ -52,7 +52,10 @@ FILES = ["abs.go", "conj.go", "isinf.go", "isnan.go", "phase.go",
          "polar.go", "rect.go", "exp.go", "log.go", "pow.go", "sin.go",
          "sqrt.go", "tan.go", "asin.go"]
 
-HEADER = '''// P3-M9 (tier1c): synthetic `math/cmplx` package.
+HEADER = '''// SYNTHETIC (Principle 4) — math/cmplx: real go1.27.1 source does not compile under graalgo as-published (import closure hits go:linkname / asm / intrinsics / unsafe — B-4); pure-Go port.
+// RETIRES WHEN: graalgo compiles the real go1.27.1 GOROOT sources directly — then delete this file.
+// RE-TEST TRIGGER: real-source compilation lands (B-4 phased removal: docs/arch/bridge-inventory.md).
+// P3-M9 (tier1c): synthetic `math/cmplx` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the
 // overlay importer (same mechanism as the P3-M7 synthetic math package,

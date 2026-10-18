@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — unicode: real go1.27.1 source does not compile under graalgo as-published (import closure hits go:linkname / asm / intrinsics / unsafe — B-4); pure-Go port.
+// RETIRES WHEN: graalgo compiles the real go1.27.1 GOROOT sources directly — then delete this file.
+// RE-TEST TRIGGER: real-source compilation lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 // P3-M9 (wave 3, tier-1a worker): synthetic `unicode` package.
 //
 // REAL Go source adapted from gc go1.27.1 ($GOROOT/src/unicode),

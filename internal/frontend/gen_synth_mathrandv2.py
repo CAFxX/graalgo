@@ -97,7 +97,10 @@ func (c *ChaCha8) Read(p []byte) (n int, err error) {
 }
 '''
 
-HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
+HEADER = '''// SYNTHETIC (Principle 4) — math/rand/v2: real go1.27.1 source uses constructs the graalgo frontend cannot compile; ported with the documented adaptations below.
+// RETIRES WHEN: frontend gains the underlying capability and the real GOROOT source compiles unchanged — then delete this file.
+// RE-TEST TRIGGER: the capability named in this file's adaptation notes lands (B-4 phased removal: docs/arch/bridge-inventory.md).
+// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 //
 // REAL Go source, embedded as text and type-checked on demand with the
 // overlay importer (same mechanism as the P3-M7 synthetic math package,

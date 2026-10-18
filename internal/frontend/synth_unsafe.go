@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — unsafe: gc's unsafe package has no Go source either; its members are compiler intrinsics. Built programmatically so go/types applies gc's own checking (builtins) — gc-exact by construction.
+// RETIRES WHEN: a real frontend unsafe-intrinsic surface replaces the programmatic build (the one deliberately non-source synthetic).
+// RE-TEST TRIGGER: frontend intrinsic-surface work lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 // Copyright 2026 The graalgo authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 //

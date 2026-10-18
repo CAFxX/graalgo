@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — crypto/internal/fips140/sha3: real go1.27.1 sources use amd64 asm kernels and //go:linkname runtime hooks the frontend cannot compile; software-only pure-Go port.
+// RETIRES WHEN: graalgo compiles amd64 asm kernels and resolves //go:linkname in the real sources — then delete this file.
+// RE-TEST TRIGGER: asm/linkname support for the real stdlib sources lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/internal/fips140/sha3' package.

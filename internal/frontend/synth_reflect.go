@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — reflect: real go1.27.1 source uses constructs the graalgo frontend cannot compile; ported with the documented adaptations below.
+// RETIRES WHEN: frontend gains the underlying capability and the real GOROOT source compiles unchanged — then delete this file.
+// RE-TEST TRIGGER: the capability named in this file's adaptation notes lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 import (

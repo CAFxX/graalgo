@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — unique: real source interns via the runtime with weak references; synthetic uses a mutex-guarded table that never shrinks (documented D1 — unobservable except memory use).
+// RETIRES WHEN: graalgo has runtime weak-reference interning for the real unique source.
+// RE-TEST TRIGGER: weakref interning lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 // P3-M9 (tier-1d): synthetic `unique` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the

@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — internal/graalgo/fmtstate: synthetic-only support package (not in the user import allow-list); exists to serve the synthetic packages importing it.
+// RETIRES WHEN: the synthetic packages importing it retire — then delete this file.
+// RE-TEST TRIGGER: re-evaluate when its dependents retire (B-4 phased removal: docs/arch/bridge-inventory.md).
 // P3-M9 (RC-6): synthetic `internal/graalgo/fmtstate` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the

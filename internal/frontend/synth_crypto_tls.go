@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — crypto/tls: needs host services (syscalls / sockets / TLS / clock); binds the FROZEN graalgo.os.* //go:linkname table (ADR-0004) or the Java runtime instead of real syscalls.
+// RETIRES WHEN: a general host-service binding lets the real GOROOT sources compile unchanged — then delete this file.
+// RE-TEST TRIGGER: real-source host binding lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 // P3-M9 (tier-5): synthetic `crypto/tls` package.
 //
 // Strategy per 2026-10-10 user directive: PREFER Java delegation via

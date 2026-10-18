@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — structs: marker-only annotation type; the empty struct is unobservable from Go code (no API reads it back).
+// RETIRES WHEN: trivially — delete when the overlay serves the real one-line source, or keep as the documented permanent marker.
+// RE-TEST TRIGGER: backend ever honors host layout (per this file's scope note).
 // P3-M9 (tier-1d): synthetic `structs` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the

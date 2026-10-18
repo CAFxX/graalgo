@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — internal/byteorder: vendored verbatim; the real GOROOT tree does not compile under graalgo (go:linkname / asm / intrinsics / unsafe in the source or its closure — B-4).
+// RETIRES WHEN: graalgo compiles the real go1.27.1 GOROOT sources directly — then delete this file.
+// RE-TEST TRIGGER: real-source compilation lands (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 const syntheticByteorderSource = (

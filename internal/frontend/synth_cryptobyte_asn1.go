@@ -1,3 +1,6 @@
+// SYNTHETIC (Principle 4) — golang.org/x/crypto/cryptobyte/asn1: synthetic-only support package (not in the user import allow-list); exists to serve the synthetic packages importing it.
+// RETIRES WHEN: the synthetic packages importing it retire — then delete this file.
+// RE-TEST TRIGGER: re-evaluate when its dependents retire (B-4 phased removal: docs/arch/bridge-inventory.md).
 package main
 
 // P3-M9 tier-5: synthetic 'golang.org/x/crypto/cryptobyte/asn1' package.
