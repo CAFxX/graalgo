@@ -467,7 +467,7 @@ func __bitsAdd(x, y, carry uint) bitsAddPair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsAdd via the m7MultiResultFuncs table.
 func Add(x, y, carry uint) (sum, carryOut uint) {
-	panic("math/bits: Add: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Add: unreachable (call sites desugar to __bitsAdd")
 }
 
 // bitsAdd32Pair is the Appendix M single-result carrier for Add32.
@@ -487,7 +487,7 @@ func __bitsAdd32(x, y, carry uint32) bitsAdd32Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsAdd32 via the m7MultiResultFuncs table.
 func Add32(x, y, carry uint32) (sum, carryOut uint32) {
-	panic("math/bits: Add32: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Add32: unreachable (call sites desugar to __bitsAdd32")
 }
 
 // bitsAdd64Pair is the Appendix M single-result carrier for Add64.
@@ -511,7 +511,7 @@ func __bitsAdd64(x, y, carry uint64) bitsAdd64Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsAdd64 via the m7MultiResultFuncs table.
 func Add64(x, y, carry uint64) (sum, carryOut uint64) {
-	panic("math/bits: Add64: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Add64: unreachable (call sites desugar to __bitsAdd64")
 }
 
 // bitsSubPair is the Appendix M single-result carrier for Sub.
@@ -535,7 +535,7 @@ func __bitsSub(x, y, borrow uint) bitsSubPair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsSub via the m7MultiResultFuncs table.
 func Sub(x, y, borrow uint) (diff, borrowOut uint) {
-	panic("math/bits: Sub: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Sub: unreachable (call sites desugar to __bitsSub")
 }
 
 // bitsSub32Pair is the Appendix M single-result carrier for Sub32.
@@ -560,7 +560,7 @@ func __bitsSub32(x, y, borrow uint32) bitsSub32Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsSub32 via the m7MultiResultFuncs table.
 func Sub32(x, y, borrow uint32) (diff, borrowOut uint32) {
-	panic("math/bits: Sub32: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Sub32: unreachable (call sites desugar to __bitsSub32")
 }
 
 // bitsSub64Pair is the Appendix M single-result carrier for Sub64.
@@ -582,7 +582,7 @@ func __bitsSub64(x, y, borrow uint64) bitsSub64Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsSub64 via the m7MultiResultFuncs table.
 func Sub64(x, y, borrow uint64) (diff, borrowOut uint64) {
-	panic("math/bits: Sub64: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Sub64: unreachable (call sites desugar to __bitsSub64")
 }
 
 // bitsMulPair is the Appendix M single-result carrier for Mul.
@@ -606,7 +606,7 @@ func __bitsMul(x, y uint) bitsMulPair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsMul via the m7MultiResultFuncs table.
 func Mul(x, y uint) (hi, lo uint) {
-	panic("math/bits: Mul: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Mul: unreachable (call sites desugar to __bitsMul")
 }
 
 // bitsMul32Pair is the Appendix M single-result carrier for Mul32.
@@ -626,7 +626,7 @@ func __bitsMul32(x, y uint32) bitsMul32Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsMul32 via the m7MultiResultFuncs table.
 func Mul32(x, y uint32) (hi, lo uint32) {
-	panic("math/bits: Mul32: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Mul32: unreachable (call sites desugar to __bitsMul32")
 }
 
 // bitsMul64Pair is the Appendix M single-result carrier for Mul64.
@@ -655,7 +655,7 @@ func __bitsMul64(x, y uint64) bitsMul64Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsMul64 via the m7MultiResultFuncs table.
 func Mul64(x, y uint64) (hi, lo uint64) {
-	panic("math/bits: Mul64: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Mul64: unreachable (call sites desugar to __bitsMul64")
 }
 
 // bitsDivPair is the Appendix M single-result carrier for Div.
@@ -679,7 +679,7 @@ func __bitsDiv(hi, lo, y uint) bitsDivPair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsDiv via the m7MultiResultFuncs table.
 func Div(hi, lo, y uint) (quo, rem uint) {
-	panic("math/bits: Div: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Div: unreachable (call sites desugar to __bitsDiv")
 }
 
 // bitsDiv32Pair is the Appendix M single-result carrier for Div32.
@@ -702,7 +702,7 @@ func __bitsDiv32(hi, lo, y uint32) bitsDiv32Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsDiv32 via the m7MultiResultFuncs table.
 func Div32(hi, lo, y uint32) (quo, rem uint32) {
-	panic("math/bits: Div32: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Div32: unreachable (call sites desugar to __bitsDiv32")
 }
 
 // bitsDiv64Pair is the Appendix M single-result carrier for Div64.
@@ -769,7 +769,7 @@ func __bitsDiv64(hi, lo, y uint64) bitsDiv64Pair {
 // with a fail-fast body; 2-target call sites desugar to
 // __bitsDiv64 via the m7MultiResultFuncs table.
 func Div64(hi, lo, y uint64) (quo, rem uint64) {
-	panic("math/bits: Div64: multi-result call needs the Appendix M desugar (re-test: WS D multi-result call support)")
+	panic("math/bits: Div64: unreachable (call sites desugar to __bitsDiv64")
 }
 
 
