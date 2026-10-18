@@ -67,9 +67,11 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 	return out
 }
 
-// Comparing a func value to nil is always false (except for a nil
-// func variable, which is useless to compare). go vet flags
-// comparisons where one side is a func type and the other is nil.
+// Comparing a declared function to nil is always false (==) or always
+// true (!=): a function declaration, method value, or package-level
+// function can never hold nil. A func-typed *variable*, struct field, or
+// map element may hold nil, so comparing one to nil is meaningful and is
+// not flagged. This matches go vet's nilfunc check.
 func runNilFunc(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -78,13 +80,20 @@ func runNilFunc(pass *Pass) []Diagnostic {
 			if !ok || (be.Op != token.EQL && be.Op != token.NEQ) {
 				return true
 			}
-			if isNil(pass, be.X) && isFuncType(pass, be.Y) ||
-				isNil(pass, be.Y) && isFuncType(pass, be.X) {
-				out = append(out, Diagnostic{
-					pass.position(be),
-					"comparison of function to nil is always " + constBool(be.Op == token.NEQ),
-				})
+			name := ""
+			if isNil(pass, be.X) {
+				name = namedFunc(pass, be.Y)
+			} else if isNil(pass, be.Y) {
+				name = namedFunc(pass, be.X)
 			}
+			if name == "" {
+				return true
+			}
+			out = append(out, Diagnostic{
+				pass.position(be),
+				"comparison of function " + name + " " + be.Op.String() +
+					" nil is always " + constBool(be.Op == token.NEQ),
+			})
 			return true
 		})
 	}
@@ -96,13 +105,26 @@ func isNil(pass *Pass, e ast.Expr) bool {
 	return ok && tv.IsNil()
 }
 
-func isFuncType(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
-	if !ok || tv.Type == nil {
-		return false
+// namedFunc reports the declared name if e denotes a declared function:
+// a plain identifier or selector resolving to *types.Func (a function
+// declaration, a method value, or a package-level function). It returns
+// "" for func-typed variables, parameters, struct fields, map elements,
+// and every other func-valued expression, which may legitimately hold
+// nil.
+func namedFunc(pass *Pass, e ast.Expr) string {
+	var id *ast.Ident
+	switch e := e.(type) {
+	case *ast.Ident:
+		id = e
+	case *ast.SelectorExpr:
+		id = e.Sel
+	default:
+		return ""
 	}
-	_, ok = tv.Type.Underlying().(*types.Signature)
-	return ok
+	if _, ok := pass.Info.ObjectOf(id).(*types.Func); ok {
+		return id.Name
+	}
+	return ""
 }
 
 func constBool(b bool) string {
@@ -132,14 +154,8 @@ func runBools(pass *Pass) []Diagnostic {
 				})
 				return true
 			}
-			if un, ok := be.Y.(*ast.UnaryExpr); ok && un.Op == token.NOT &&
-				(be.Op == token.EQL || be.Op == token.NEQ) {
-				out = append(out, Diagnostic{
-					pass.position(be),
-					"suspicious x == !y",
-				})
-				return true
-			}
+			// x == !y parses unambiguously as x == (!y): no precedence
+			// trap, so it is deliberately not flagged (matching go vet).
 			// x == true / x == false / x != true / x != false
 			if be.Op == token.EQL || be.Op == token.NEQ {
 				if isBoolConst(pass, be.X) || isBoolConst(pass, be.Y) {

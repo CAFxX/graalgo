@@ -22,7 +22,8 @@ func main() {
 	s := string(65)
 	_ = s
 	var f func()
-	if f == nil {
+	_ = f
+	if neverNil == nil {
 		fmt.Println("nil")
 	}
 	x := true
@@ -33,6 +34,8 @@ func main() {
 	return
 	fmt.Println("unreachable")
 }
+
+func neverNil() {}
 
 func leaky() {
 	ctx, cancel := context.WithCancel(context.Background())
