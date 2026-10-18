@@ -229,14 +229,14 @@ func __hexAppendDecode(dst, src []byte) hexDecodeStringPair {
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func Decode(dst, src []byte) (int, error) {
-	panic("encoding/hex: Decode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/hex: Decode: unreachable (call sites desugar to __hexDecode)")
 }
 
 // AppendDecode keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func AppendDecode(dst, src []byte) ([]byte, error) {
-	panic("encoding/hex: AppendDecode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/hex: AppendDecode: unreachable (call sites desugar to __hexAppendDecode)")
 }
 
 // EncodeToString returns the hexadecimal encoding of src.
@@ -250,7 +250,7 @@ func EncodeToString(src []byte) string {
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func DecodeString(s string) ([]byte, error) {
-	panic("encoding/hex: DecodeString: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/hex: DecodeString: unreachable (call sites desugar to __hexDecodeString)")
 }
 
 // hexDumpToChar maps a byte to its dump character (gc's toChar).
