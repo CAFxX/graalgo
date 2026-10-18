@@ -742,23 +742,17 @@ public final class NodeFactoryV2 {
             throw new FrontendException(where + ": selector.x has no type");
         }
         int typeId = ((Long) typeIdObj).intValue();
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
+        // Selector on a value of named struct type (e.g. p.X where p is a
+        // Point): resolve through the named type's underlying type, exactly
+        // like findFieldIndexByTypeId does for keyed literals.
+        Map<String, Object> typeMap = resolveTypeMap(types, typeId, where);
         // Handle pointer to struct: dereference.
         String kind = (String) typeMap.get("kind");
         if ("pointer".equals(kind)) {
             Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
-            Object elemObj = detail.get("elem");
+            Object elemObj = detail == null ? null : detail.get("elem");
             if (elemObj instanceof Long) {
-                typeId = ((Long) elemObj).intValue();
-                t = types.get(typeId);
-                typeMap = (Map<String, Object>) t;
+                typeMap = resolveTypeMap(types, ((Long) elemObj).intValue(), where);
                 kind = (String) typeMap.get("kind");
             }
         }
@@ -1298,19 +1292,48 @@ public final class NodeFactoryV2 {
     }
 
     /**
+     * Resolves a type-table id to its type map, following named-type
+     * indirection through {@code detail.underlying} (emit.go describeType
+     * describes named types with kind "named"). Throws FrontendException on
+     * malformed ids or indirection cycles instead of leaking
+     * IndexOutOfBoundsException.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> resolveTypeMap(List<Object> types, int typeId,
+            String where) {
+        // A named chain cannot legitimately be longer than the type table;
+        // the bound turns a malformed cycle into a clean FrontendException.
+        for (int hops = 0; hops <= types.size(); hops++) {
+            if (typeId < 0 || typeId >= types.size()) {
+                throw new FrontendException(where + ": bad type id " + typeId);
+            }
+            Object t = types.get(typeId);
+            if (!(t instanceof Map)) {
+                throw new FrontendException(where + ": type not a map");
+            }
+            Map<String, Object> typeMap = (Map<String, Object>) t;
+            if (!"named".equals(typeMap.get("kind"))) {
+                return typeMap;
+            }
+            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+            Object underlying = detail == null ? null : detail.get("underlying");
+            if (!(underlying instanceof Long)) {
+                throw new FrontendException(where + ": named type missing underlying id");
+            }
+            typeId = ((Long) underlying).intValue();
+        }
+        throw new FrontendException(where + ": named type indirection cycle");
+    }
+
+    /**
      * Finds a field index by type ID (for composite literals).
      */
     @SuppressWarnings("unchecked")
     private static int findFieldIndexByTypeId(List<Object> types, int typeId,
             String fieldName, String where) {
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
+        // Named struct types (e.g. Point{X: 1}) are described with kind
+        // "named": resolve through the underlying type before the kind check.
+        Map<String, Object> typeMap = resolveTypeMap(types, typeId, where);
         String kind = (String) typeMap.get("kind");
         if (!"struct".equals(kind)) {
             throw new FrontendException(where + ": keyed literal on non-struct type " + kind);
