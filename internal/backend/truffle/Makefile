@@ -141,8 +141,14 @@ check:
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
+# V2DecodeDemo is a demo tool (java graalgo.frontend.v2.V2DecodeDemo
+# <file.bin>): printing the decoded document is its contract, not a debug
+# leftover — same rationale as the launcher exclusions in the interop and
+# runtime gates. P1-F 2026-10-18: the gate pattern is broadened beyond
+# println to print/printf/write/append and printStackTrace, so a genuine
+# debug System.out.print("debug") can no longer slip through.
 	@echo "== debug-leftover grep gate (src/main only) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(print|println|printf|write|append)|printStackTrace' src/main/ | grep -v 'src/main/java/graalgo/frontend/v2/V2DecodeDemo.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="

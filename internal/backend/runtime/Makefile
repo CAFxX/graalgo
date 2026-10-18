@@ -127,13 +127,21 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
+# P1-F 2026-10-18: the gate pattern is broadened beyond println to
+# print/printf/write/append and printStackTrace. Two narrow per-site
+# allowlist entries cover the legitimate non-println sites, each pinning
+# the file AND the exact code text (line numbers stay wildcards so the
+# entry survives renumbering): BuiltinPrint's System.err.write is the Go
+# println builtin (Go writes it to stderr — that is the builtin's
+# contract), and Runtime.println's System.out.print lines are the M1 print
+# path the hello fixture compares on stdout. Neither is debug debris.
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(print|println|printf|write|append)|printStackTrace' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java' | grep -v -E 'BuiltinPrint\.java:[0-9]+:.*System\.err\.write\(bytes\);' | grep -v -E 'graalgo/runtime/Runtime\.java:[0-9]+:.*System\.out\.print'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3; updated P3-M9) =="
