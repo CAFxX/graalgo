@@ -99,23 +99,22 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
             keys = (Object[]) frame.getObject(keysSlot);
             i = frame.getInt(indexSlot);
         }
-        Object key = null;
         // P3-M7: iterate the snapshot directly. The containsKey re-check
         // (for deletes during iteration) was buggy: it dropped present
         // keys with nil values when the map also held container values.
         // Go spec permits producing or skipping entries deleted mid-iteration;
         // we produce from the snapshot (simple, correct for the common case).
-        if (i < keys.length) {
-            key = keys[i];
-            // Advance the per-invocation index before producing the entry
-            // (the body may break/continue/throw; the advance is already
-            // committed, matching the old keys[i++] ordering).
-            frame.setInt(indexSlot, i + 1);
-        }
-        if (key == null) {
-            // No live entry left (keys are never null in Phase 1).
+        if (i >= keys.length) {
+            // Snapshot exhausted. Stored keys are never Java null — a nil
+            // interface key is stored as GoInterface.NIL — so exhaustion is
+            // tested directly on the index, not via a null key sentinel.
             return false;
         }
+        Object key = keys[i];
+        // Advance the per-invocation index before producing the entry
+        // (the body may break/continue/throw; the advance is already
+        // committed, matching the old keys[i++] ordering).
+        frame.setInt(indexSlot, i + 1);
         Object val = map.get(key);
         if (keySlot >= 0) {
             if (keyBoxed) {

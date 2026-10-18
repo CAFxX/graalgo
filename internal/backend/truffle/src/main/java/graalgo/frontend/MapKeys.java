@@ -1,12 +1,14 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 
 /**
  * Canonical boxing for Go map keys (M4, WS E): int/uint kinds box as
  * {@link Long} (never {@link Integer}), floats as {@link Double},
- * strings as {@link GoString} — so literal-constructed keys and
+ * strings as {@link GoString}, nil interface keys as
+ * {@link graalgo.values.GoInterface#NIL} — so literal-constructed keys and
  * lookup keys always agree under {@link graalgo.values.GoEquality}.
  * Keys are value-copied at insertion (struct keys deep-copy), matching
  * Go's copy-at-insert semantics.
@@ -33,6 +35,15 @@ final class MapKeys {
             long v = Boxing.toLong(boxed, kind);
             boxed = Long.valueOf(v);
         }
-        return Boxing.copyForAssign(kind, boxed);
+        Object out = Boxing.copyForAssign(kind, boxed);
+        if (out == null && kind == GoKind.INTERFACE) {
+            // The nil interface value is a legal Go map key (gc accepts
+            // `m[nil] = 1`); it flows as Java null, so box it to the
+            // canonical NIL singleton — GoEquality hashes it 0 and equates
+            // it with itself, and it is never confused with end-of-data
+            // sentinels downstream (cf. RangeMapNode).
+            out = GoInterface.NIL;
+        }
+        return out;
     }
 }

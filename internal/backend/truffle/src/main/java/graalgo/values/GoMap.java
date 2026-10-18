@@ -9,6 +9,15 @@ package graalgo.values;
  * comma-ok form arrives with WS D). Tombstones keep probe chains intact
  * across deletes; the table doubles when occupancy (including tombstones)
  * exceeds 70%.
+ *
+ * <p>Stored keys are never Java {@code null}: a Java-null key (the nil
+ * interface value — legal in Go, gc accepts {@code m[nil] = 1}) is stored
+ * as the canonical {@link GoInterface#NIL} singleton, which
+ * {@link GoEquality} hashes 0 and equates with itself. Normalization
+ * happens here, at the storage boundary, so every entry point (the
+ * frontend's {@code MapKeys.box} paths and the reflect
+ * {@code Intrinsics.mapAssign/mapAccess/mapDelete} paths) agrees on one
+ * representation.
  */
 public final class GoMap {
     private static final byte EMPTY = 0;
@@ -44,15 +53,13 @@ public final class GoMap {
 
     /** Returns the value for {@code key}, or {@code null} if absent. */
     public Object get(Object key) {
-        int i = findSlot(key);
+        int i = findSlot(normKey(key));
         return i >= 0 ? values[i] : null;
     }
 
     /** Inserts or replaces {@code key → value}. */
     public void put(Object key, Object value) {
-        if (key == null) {
-            throw new IllegalArgumentException("Go map keys are never null in Phase 1 (WS D refines)");
-        }
+        key = normKey(key);
         if ((size + tombstones + 1) > (int) (keys.length * MAX_LOAD)) {
             resize(keys.length * 2);
         }
@@ -89,7 +96,7 @@ public final class GoMap {
 
     /** Removes {@code key}; no-op if absent. */
     public void delete(Object key) {
-        int i = findSlot(key);
+        int i = findSlot(normKey(key));
         if (i >= 0) {
             keys[i] = null;
             values[i] = null;
@@ -110,7 +117,7 @@ public final class GoMap {
 
     /** True when {@code key} is present (even with a null value). */
     public boolean containsKey(Object key) {
-        return findSlot(key) >= 0;
+        return findSlot(normKey(key)) >= 0;
     }
 
     /**
@@ -129,6 +136,16 @@ public final class GoMap {
             }
         }
         return out;
+    }
+
+    /**
+     * Canonicalizes a caller-supplied key: a Java-null key is the nil
+     * interface value, stored as {@link GoInterface#NIL} so it is never
+     * confused with "absent" (see the class doc). Idempotent — stored keys
+     * are already non-null.
+     */
+    private static Object normKey(Object key) {
+        return key == null ? GoInterface.NIL : key;
     }
 
     /** Slot index holding {@code key}, or -1. */

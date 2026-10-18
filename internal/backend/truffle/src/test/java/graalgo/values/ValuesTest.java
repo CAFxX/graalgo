@@ -144,6 +144,49 @@ public final class ValuesTest {
         assertEq(1, fm.size(), "NaN key still stored");
     }
 
+    public void testGoMapNilInterfaceKey() {
+        // L26: a Java-null key is the nil interface value (legal in Go:
+        // `m := map[any]int{}; m[nil] = 1`); it is stored as the
+        // GoInterface.NIL singleton and round-trips through every
+        // key-taking method, in either representation.
+        GoMap m = new GoMap();
+        m.put(null, 1L);
+        assertEq(1, m.size(), "nil key stored");
+        assertEq(1L, (Long) m.get(null), "get via null");
+        assertEq(1L, (Long) m.get(GoInterface.NIL), "get via NIL");
+        assertTrue(m.containsKey(null), "containsKey via null");
+        assertTrue(m.containsKey(GoInterface.NIL), "containsKey via NIL");
+        // Same key in both representations: no duplicate entry.
+        m.put(GoInterface.NIL, 2L);
+        assertEq(1, m.size(), "null and NIL are one key");
+        assertEq(2L, (Long) m.get(null), "overwrite via NIL visible via null");
+        // Snapshot never leaks Java null for the nil key.
+        Object[] snap = m.keysSnapshot();
+        assertEq(1, snap.length, "snapshot length");
+        assertTrue(snap[0] instanceof GoInterface gi && gi.isNil(),
+                "snapshot holds the NIL sentinel, not Java null");
+        // A typed nil (descriptor, null data) is a different key.
+        GoInterface typedNil = new GoInterface(new Object(), null, null);
+        m.put(typedNil, 3L);
+        assertEq(2, m.size(), "typed nil is a distinct key");
+        assertEq(2L, (Long) m.get(null), "nil key undisturbed");
+        assertEq(3L, (Long) m.get(typedNil), "typed nil lookup");
+        // Delete works through either representation.
+        m.delete(GoInterface.NIL);
+        assertTrue(!m.containsKey(null), "deleted via NIL");
+        assertEq(1, m.size(), "size after nil-key delete");
+        m.delete(null); // no-op
+        assertEq(1, m.size(), "double delete no-op");
+        // Resize keeps the nil key reachable.
+        GoMap big = new GoMap();
+        big.put(null, 7L);
+        for (long i = 0; i < 100; i++) {
+            big.put(i, i);
+        }
+        assertEq(101, big.size(), "size across resize");
+        assertEq(7L, (Long) big.get(null), "nil key survives resize");
+    }
+
     public void testGoStruct() {
         GoStructDescriptor d = GoStructDescriptor.layout("T",
                 List.of("a", "b", "s"), List.of(GoKind.INT32, GoKind.STRING, GoKind.BOOL));
