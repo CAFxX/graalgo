@@ -607,6 +607,15 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "timeToMsDosTime", "", "__ziptimeToMsDosTime", "__ziptimeToMsDosTimePair", []string{"fDate", "fTime"}, false},
 	{"archive/zip", "Write", "pooledFlateWriter", "__zippooledFlateWriterWrite", "__zippooledFlateWriterWritePair", []string{"n", "err"}, false},
 	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}, false},
+	// review-p1-stale-stubs: 5 archive/zip helpers that existed in the
+	// synthetic source but had no table entry (their stubs cited the
+	// landed WS D workstream). Covering them here removes the runtime
+	// panics. Helper/pair/field names verified against synth_archive_zip.go.
+	{"archive/zip", "findBodyOffset", "File", "__zipFilefindBodyOffset", "__zipFilefindBodyOffsetPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Info", "fileListEntry", "__zipfileListEntryInfo", "__zipfileListEntryInfoPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Stat", "openDir", "__zipopenDirStat", "__zipopenDirStatPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Read", "openDir", "__zipopenDirRead", "__zipopenDirReadPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Info", "headerFileInfo", "__zipheaderFileInfoInfo", "__zipheaderFileInfoInfoPair", []string{"f0", "f1"}, false},
 	{"mime", "ParseMediaType", "", "__mimeParseMediaType", "__mimeParseMediaTypePair", []string{"mediatype", "params", "err"}, false},
 	{"mime", "decode2231Enc", "", "__mimedecode2231Enc", "__mimedecode2231EncPair", []string{"f0", "f1"}, false},
 	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"f0", "rest"}, false},
