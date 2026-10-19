@@ -10,7 +10,12 @@ Builds fixture git repos in tmp dirs and runs the guard against them:
   3. commits not touching the snapshots must PASS
   4. a bare `Snapshot-Rebaseline:` (empty value) must FAIL
   5. uncommitted snapshot changes must FAIL loudly
-  6. no determinable pushed range must FAIL loudly (never pass vacuously)
+  6. dirty README.md alone must PASS (only the JSON baseline is guarded)
+  7. no determinable pushed range must FAIL loudly (never pass vacuously)
+  8. a merge commit laundering a snapshot change through conflict
+     resolution without a trailer must FAIL (V-1)
+  9. the same merge WITH a Snapshot-Rebaseline: trailer must PASS
+     (proving the trailer check, not merge-ness, is the gate)
 
 Run: python3 check_snapshot_rebaseline_test.py
 Exit code 0 = all controls behave as specified.
@@ -29,6 +34,10 @@ SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 SNAP = "test/snapshots/go1.27.1.json"
 SNAP_V1 = '{"format": "graalgo-behavior-snapshot/v1", "programs": []}\n'
 SNAP_V2 = '{"format": "graalgo-behavior-snapshot/v1", "programs": [{"name": "01_hello"}]}\n'
+SNAP_V3 = '{"format": "graalgo-behavior-snapshot/v1", "programs": [{"name": "01_hello"}, {"name": "02_world"}]}\n'
+SNAP_LAUNDERED = ('{"format": "graalgo-behavior-snapshot/v1", '
+                  '"programs": [{"name": "99_laundered"}], '
+                  '"note": "LAUNDERED by merge resolution"}\n')
 CODE = 'package foo\n\nfunc Foo() int { return 1 }\n'
 TRAILER = "Snapshot-Rebaseline: deliberate output change in 01_hello after fix"
 
@@ -165,6 +174,58 @@ class SnapshotRebaselineGuardTest(unittest.TestCase):
         rc, out = run_guard(d, push_before=None)
         self.assertEqual(rc, 1, f"guard must fail with no range:\n{out}")
         self.assertIn("vacuously", out)
+
+    def test_merge_laundering_snapshot_without_trailer_fails(self):
+        # THE V-1 positive control: a merge commit that introduces snapshot
+        # changes purely through conflict resolution (trailered re-records
+        # v2/v3 on both sides, merge resolving the conflict to laundered
+        # content with no trailer on the merge). Must fail, naming the
+        # merge commit.
+        d, shas = self.fixture([("base", {"a.go": CODE, SNAP: SNAP_V1})])
+        base = shas[0]
+        git(d, "checkout", "-q", "-b", "side-a", base)
+        commit(d, ["re-record to v2", TRAILER], {SNAP: SNAP_V2})
+        git(d, "checkout", "-q", "-b", "side-b", base)
+        commit(d, ["re-record to v3", TRAILER], {SNAP: SNAP_V3})
+        git(d, "checkout", "-q", "-b", "merged", "side-a")
+        git(d, "merge", "-q", "--no-commit", "side-b")  # conflicts on SNAP
+        with open(os.path.join(d, SNAP), "w") as f:
+            f.write(SNAP_LAUNDERED)
+        r = git(d, "add", "-A")
+        assert r.returncode == 0, r.stderr
+        r = git(d, "commit", "-q", "-m", "merge side-b (laundered resolution)")
+        assert r.returncode == 0, r.stderr
+        r = git(d, "rev-parse", "HEAD")
+        assert r.returncode == 0, r.stderr
+        merge = r.stdout.strip()
+        rc, out = run_guard(d, push_before=base)
+        self.assertEqual(rc, 1,
+                         f"guard must fail on laundered merge:\n{out}")
+        self.assertIn(merge[:12], out)
+        self.assertIn("Snapshot-Rebaseline", out)
+
+    def test_merge_with_trailer_passes(self):
+        # Symmetric control: the same laundered merge WITH the trailer
+        # passes, proving the trailer check (not merge-ness) is the gate.
+        d, shas = self.fixture([("base", {"a.go": CODE, SNAP: SNAP_V1})])
+        base = shas[0]
+        git(d, "checkout", "-q", "-b", "side-a", base)
+        commit(d, ["re-record to v2", TRAILER], {SNAP: SNAP_V2})
+        git(d, "checkout", "-q", "-b", "side-b", base)
+        commit(d, ["re-record to v3", TRAILER], {SNAP: SNAP_V3})
+        git(d, "checkout", "-q", "-b", "merged", "side-a")
+        git(d, "merge", "-q", "--no-commit", "side-b")  # conflicts on SNAP
+        with open(os.path.join(d, SNAP), "w") as f:
+            f.write(SNAP_LAUNDERED)
+        r = git(d, "add", "-A")
+        assert r.returncode == 0, r.stderr
+        r = git(d, "commit", "-q", "-m", "merge side-b",
+                "-m", TRAILER)
+        assert r.returncode == 0, r.stderr
+        rc, out = run_guard(d, push_before=base)
+        self.assertEqual(rc, 0,
+                         f"guard must pass on trailered merge:\n{out}")
+        self.assertIn("passed", out)
 
 
 if __name__ == "__main__":

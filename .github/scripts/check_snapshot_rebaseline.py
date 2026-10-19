@@ -15,6 +15,9 @@ The trailer is the human's declaration that the drift is intended. A bare
 `Snapshot-Rebaseline:` line (empty value) is rejected — the value must name
 the deliberate change. Re-recording is checked commit by commit, so a
 re-record cannot ride along inside an unrelated commit of the same push.
+Merge commits are inspected too: a merge is diffed against its first parent
+(the mainline), so a re-record laundered through conflict resolution cannot
+sneak past the trailer requirement either (V-1).
 
 Range determination, in order:
   1. $GITHUB_PUSH_BEFORE..HEAD  (direct push to the tracked branch: CI
@@ -89,8 +92,21 @@ def determine_range():
                   "vacuously.")
 
 
+def is_merge(sha):
+    """True when sha has more than one parent."""
+    r = run(["git", "rev-list", "--parents", "-n", "1", sha])
+    return r.returncode == 0 and len(r.stdout.split()) > 2
+
+
 def snapshot_touched_by(sha):
-    r = run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha])
+    # A merge commit introduces its tree through conflict resolution:
+    # diff-tree is silent on merges, so diff a merge against its first
+    # parent — exactly what the merge adds to the mainline.
+    if is_merge(sha):
+        r = run(["git", "diff", "--name-only", sha + "^1", sha])
+    else:
+        r = run(["git", "diff-tree", "--no-commit-id", "--name-only",
+                 "-r", sha])
     if r.returncode != 0:
         return []
     return [n for n in r.stdout.splitlines()
@@ -144,7 +160,9 @@ def main():
         print(f"  {label}")
         return 1
 
-    r = run(["git", "log", "--format=%H", "--no-merges", range_spec])
+    # Merges are included: a merge can introduce snapshot changes through
+    # conflict resolution (V-1), so it must carry the trailer too.
+    r = run(["git", "log", "--format=%H", range_spec])
     if r.returncode != 0:
         print("SNAPSHOT RE-BASELINE GUARD FAILED:")
         print(f"  could not list commits in {label}: {r.stderr.strip()}")
