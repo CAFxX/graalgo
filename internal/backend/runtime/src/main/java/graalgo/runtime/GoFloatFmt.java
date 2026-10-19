@@ -15,7 +15,11 @@ package graalgo.runtime;
  *       float32 values are widened first, also exact), rounded half-to-even
  *       — matching Go's {@code decimal.shouldRoundUp} on its exact
  *       expansion (exact halves round to even; the expansion never
- *       truncates, so the {@code trunc} arm never fires).</li>
+ *       truncates, so the {@code trunc} arm never fires). This includes
+ *       Go's {@code decimal.Round(0)} semantics: rounding to zero
+ *       significant digits may round up to {@code "1"} with {@code dp++}
+ *       (e.g. {@code %f} prec 0 of {@code 0.6} is {@code "1"}); only
+ *       {@code nd < 0} is a no-op that prints zeros.</li>
  * </ul>
  *
  * <p>Special values: NaN → {@code "NaN"}, +Inf → {@code "+Inf"},
@@ -32,6 +36,14 @@ public final class GoFloatFmt {
      * ({@code -1} = shortest), {@code bitSize} ∈ {32, 64}.
      */
     public static String formatFloat(double v, char fmt, int prec, int bitSize) {
+        if (bitSize == 32) {
+            // Narrow once, up front: Go callers pass float64(f32), so the
+            // float32 value is the semantic input. This also routes
+            // double-finite/float32-special inputs (underflow to +-0.0,
+            // overflow to +-Inf) through the normal NaN/Inf/zero paths
+            // instead of crashing in the digit routines below.
+            v = (float) v;
+        }
         boolean neg = isNegative(v, bitSize);
         double av = neg ? -v : v; // careful: -(-0.0) is +0.0; handled below
         if (Double.isNaN(av)) {
@@ -281,12 +293,28 @@ public final class GoFloatFmt {
                 want = prec == 0 ? 1 : prec;
             }
         }
-        if (want <= 0) {
-            // M8 closeout (triage class E): all significant digits lie
-            // beyond the requested precision (e.g. %f of 1e-300) — the
-            // value rounds to zero. (MathContext requires precision > 0;
-            // Go's decimal.Round produces an empty digit string here.)
+        if (want < 0) {
+            // Go's decimal.Round is a no-op for nd < 0 (ftoa.go calls
+            // d.Round(d.dp + prec) for '%f', which may be negative), and
+            // fmtEFG then prints all zeros for '%f' — the digits are
+            // irrelevant, so return them empty (e.g. %f of 1e-300).
             return new DecParts(new byte[0], 0);
+        }
+        if (want == 0) {
+            // Mirror Go's decimal.Round(0): rounding to zero significant
+            // digits may round UP to "1" with dp++ (e.g. %f prec 0 of 0.6
+            // is "1", of 0.9999999999999999 is "1"), not just down to "0".
+            // shouldRoundUp(a, 0) on the exact (never truncated) expansion:
+            // an exact single "5" is halfway -> half-to-even -> down
+            // (Go: nd > 0 is false for nd == 0); otherwise digit >= '5'.
+            boolean roundUp = !(sig.length() == 1 && sig.charAt(0) == '5')
+                    && sig.charAt(0) >= '5';
+            if (roundUp) {
+                // Go's RoundUp(0): all-9s path -> single "1", dp++.
+                return new DecParts(new byte[] {'1'}, dp + 1);
+            }
+            // Go's RoundDown(0): empty digits, dp unchanged.
+            return new DecParts(new byte[0], dp);
         }
         if (want < sig.length()) {
             // Round half-to-even on the exact expansion (== Go's
