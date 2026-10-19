@@ -9347,12 +9347,6 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 		}
 		return args[0], nil
 	}
-	// P3-M16 (r16): sync.indexLocal does pointer arithmetic via
-	// uintptr, which traps under D5. Lower to the "syncindexlocal"
-	// wire node.
-	if isSyncIndexLocalFunc(fn) {
-		return e.exportSyncIndexLocal(c)
-	}
 	// real-nethttp: //go:linkname consumer stubs alias to their provider.
 	// A call to the stub lowers to a direct call to the provider funcdecl,
 	// so multi-result linkname targets use the normal pair-returning

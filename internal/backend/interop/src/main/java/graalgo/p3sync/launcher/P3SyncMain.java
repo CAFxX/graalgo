@@ -46,7 +46,7 @@ import graalgo.p3sync.nodes.AtomicAddrNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
-import graalgo.p3sync.SyncIndexLocalNode;
+
 import graalgo.p3unsafe.UnsafeAddNode;
 import graalgo.p3unsafe.UnsafeFromPtrNode;
 import graalgo.p3unsafe.UnsafeFromUintNode;
@@ -422,9 +422,7 @@ public final class P3SyncMain {
                     (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
             factory.registerExprKind("unsafefromuint",
                     (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
-            // P3-M16 (r16): sync.indexLocal intrinsic (pointer arithmetic).
-            factory.registerExprKind("syncindexlocal",
-                    (node, ctx) -> SyncIndexLocalNode.build(node, factory, ctx));
+
             factory.registerExprKind("unsafeslice",
                     (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
             factory.registerExprKind("unsafeslicedata",
