@@ -142,6 +142,35 @@ def check_no_bridges(diff):
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 
+    # 3c. Java UnsupportedOperationException stubs. Checks #3/#3b only scan
+    # .go added lines; a newly added `throw new UnsupportedOperationException`
+    # fail-fast stub in backend Java would pass the gate silently. Fail loud
+    # on added .java lines that throw UOE with no message (nothing to go on —
+    # the Java analog of #3's bare-panic() rule) or whose line carries a stub
+    # keyword (same keyword set as #3/#3b: literal message, composed message,
+    # or trailing comment — a human adjudicates). Grandfathered sites are
+    # pre-existing lines, never in a diff, inventoried in
+    # docs/arch/bridge-inventory.md ("Adjudicated non-bridges": 53 sites at
+    # master 56a3dd68). Scope notes, deliberate and mirroring #3: a UOE with
+    # a specific non-keyword message (e.g. "send on closed channel") is NOT
+    # flagged — specific messages are legitimate errors, not stubs. A throw
+    # whose message sits on the following line is invisible to this per-line
+    # scan, the same limitation #3 has for Go.
+    java_stub_kw = r"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd)"
+    java_uoe_res = [
+        # Bare throw — nothing to go on.
+        r"throw\s+new\s+(?:java\.lang\.)?UnsupportedOperationException\s*\(\s*\)",
+        # Throw whose line carries a stub keyword.
+        rf"throw\s+new\s+(?:java\.lang\.)?UnsupportedOperationException\b.*{java_stub_kw}",
+    ]
+    for fname, line in added_lines:
+        if not fname or not fname.endswith(".java"):
+            continue
+        for pat in java_uoe_res:
+            if re.search(pat, line, re.I):
+                errors.append(f"JAVA STUB in {fname}: {line.strip()[:80]}")
+                break
+
     # 3. New panic stubs. The old regex only caught literal "not implemented"/
     #    "unsupported"/"todo" messages; fail-fast stubs also hide behind bare
     #    panic(), panic(""), panic("unreachable"), and composed messages like
@@ -193,6 +222,100 @@ def check_no_bridges(diff):
 
     return errors
 
+def _self_test():
+    """Positive/negative controls for the no-bridges checks.
+
+    Runs synthetic diffs through check_no_bridges() in-process: no repo I/O,
+    no network, no diff-source probing (main()'s never-pass-vacuously path
+    is untouched). Each case asserts the gate fails (or passes) as intended.
+    A control that stops failing fails LOUD — a silently-passing gate is
+    worse than no gate. Run: python3 .github/scripts/check_no_bridges.py
+    --self-test
+    """
+    java_file = "internal/backend/truffle/src/main/java/graalgo/runtime/Foo.java"
+
+    def diff_for(fname, *added):
+        lines = ["diff --git a/%s b/%s" % (fname, fname),
+                 "new file mode 100644",
+                 "--- /dev/null",
+                 "+++ b/%s" % fname,
+                 "@@ -0,0 +1,%d @@" % len(added)]
+        lines += ["+" + l for l in added]
+        return "\n".join(lines) + "\n"
+
+    cases = [
+        # (name, diff, expect_fail)
+        ("3c positive: java UOE stub, literal keyword message",
+         diff_for(java_file,
+                  "public final class Foo {",
+                  '        throw new UnsupportedOperationException("not implemented");',
+                  "}"),
+         True),
+        ("3c positive: java UOE stub, bare throw",
+         diff_for(java_file,
+                  "public final class Foo {",
+                  "        throw new UnsupportedOperationException();",
+                  "}"),
+         True),
+        ("3c positive: java UOE stub, composed message with keyword",
+         diff_for(java_file,
+                  "public final class Foo {",
+                  '        throw new UnsupportedOperationException("op " + name + " not supported");',
+                  "}"),
+         True),
+        ("3c positive: java UOE stub, switch-default guard with keyword",
+         diff_for(java_file,
+                  "public final class Foo {",
+                  '            default -> throw new UnsupportedOperationException("NYI: " + kind);',
+                  "}"),
+         True),
+        ("3c negative: java UOE with a specific non-keyword message is benign",
+         diff_for(java_file,
+                  "public final class Foo {",
+                  '        throw new UnsupportedOperationException("send on closed channel");',
+                  "}"),
+         False),
+        ("3c negative: grandfathered kind-guard shape (no keyword) passes",
+         diff_for("internal/backend/truffle/src/main/java/graalgo/frontend/NewNode.java",
+                  "public final class NewNode extends GoExprNode {",
+                  '            default -> throw new UnsupportedOperationException("not an integer op: " + op);',
+                  "}"),
+         False),
+        ("3c negative: ordinary java addition is untouched",
+         diff_for(java_file,
+                  "public final class Foo {",
+                  "        return System.nanoTime();",
+                  "}"),
+         False),
+        # Regression: the Go checks still behave.
+        ("3 positive: go panic stub still caught",
+         diff_for("internal/frontend/export.go",
+                  "package frontend",
+                  '        panic("not implemented")'),
+         True),
+        ("3 negative: go panic with a specific message still passes",
+         diff_for("internal/frontend/export.go",
+                  "package frontend",
+                  '        panic("send on closed channel")'),
+         False),
+    ]
+    failures = []
+    for name, diff, expect_fail in cases:
+        errors = check_no_bridges(diff)
+        failed = bool(errors)
+        ok = (failed == expect_fail)
+        print(("PASS " if ok else "FAIL ") + name)
+        if not ok:
+            print("   expected %s, got errors=%r"
+                  % ("fail" if expect_fail else "pass", errors))
+            failures.append(name)
+    if failures:
+        print("SELF-TEST FAILED: %d/%d controls broken"
+              % (len(failures), len(cases)))
+        return 1
+    print("SELF-TEST PASSED: %d/%d controls hold" % (len(cases), len(cases)))
+    return 0
+
 def main():
     diff, source = get_diff()
     if not diff.strip():
@@ -222,4 +345,6 @@ def main():
     return 0
 
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(_self_test())
     sys.exit(main())

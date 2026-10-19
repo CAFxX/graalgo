@@ -226,6 +226,84 @@ extend these entries or add new ones without a fresh independent review.
   call interception reuses the existing general runtime-overlay guard
   block, exactly like `NumGoroutine`.
 
+- **2026-10-19 — Grandfathered Java `UnsupportedOperationException`
+  fail-fast sites (gate check #3c, lane `rem-gate-java-stubs`).** The
+  no-bridges gate's stub checks (#3 Go panics, #3b panicMsg fields) never
+  scanned Java; check #3c now fails loud on any *added* `.java` line that
+  throws `UnsupportedOperationException` bare or with a stub keyword in the
+  message. The 53 pre-existing sites below are grandfathered: they are not
+  in any diff, so the gate never sees them, and each family was reviewed as
+  either a deliberate contract-freezing stub with a documented removal plan
+  or a legitimate unreachable-by-construction invariant. A *new* UOE throw
+  is always flagged — adjudicate it against these families; a human
+  decides. Census at master `56a3dd68`; line numbers are the `throw`
+  statement lines.
+  - **Family A — frozen Phase-1 stub surfaces (22 sites).** Deliberate
+    contract-freezing bodges: every method throws UOE with a "Phase 2"
+    message until the real implementation lands. Class-level STUB javadoc
+    names the phase and the tracking issue; removal = implementing Phase 2
+    (scheduler, netpoller, timers, GC interop, channels). Grandfathered as
+    documented, not as approved — no NEW such surface may land without an
+    inventory entry here.
+    - [ChanOps.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java):
+      lines 20, 26, 32, 38, 44, 50, 56 — `makeChan`/`send`/`recv`/`close`/`len`/`cap`/`selectGo`;
+      "Phase 2: channels need the scheduler (GG-0020)".
+    - [Scheduler.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Scheduler.java):
+      lines 21, 29, 37, 46 — `spawn`/`yield`/`park`/`runnableCount`;
+      Phase-2 scheduler (GG-0020).
+    - [Netpoll.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Netpoll.java):
+      lines 17, 23, 29, 38, 44 —
+      `init`/`open`/`close`/`waitForEvents`/`breakWait`; Phase 2/3 netpoller
+      (GG-0020).
+    - [Timers.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Timers.java):
+      lines 26, 34, 43 — `sleep`/`startTimer`/`stopTimer`; Phase-2 timer
+      heap (GG-0020). (`nanotime()` is real.)
+    - [GcInterop.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java):
+      lines 22, 31, 40 — `setFinalizer`/`keepAlive`/`gc`; Phase-2 GC interop
+      layer (P2-M4, ADR-0002 D4).
+  - **Family B — abstract base-class kind guards (6 sites).**
+    [GoExprNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/GoExprNode.java):
+    lines 76, 81, 86, 91, 96, 101 —
+    `executeLong`/`executeInt`/`executeFloat`/`executeDouble`/`executeBoolean`/`executeObject`
+    base implementations throw "has no * value". Subclasses override the
+    kinds they support, so reaching a base implementation is a backend
+    programming error. Legitimate invariants.
+  - **Family C — specialization kind-mismatch guards (24 sites).**
+    `default ->` arms (or explicit kind checks) inside specialized
+    `execute*` methods: reaching them means the node's specialization
+    disagrees with the dispatched kind — a backend programming error,
+    fail-loud by design. Legitimate invariants.
+    - [BinaryOpNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java):
+      lines 259, 285, 306, 343, 460, 500, 516.
+    - [BoxReadNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/BoxReadNode.java):
+      line 44.
+    - [CapIncDecNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/CapIncDecNode.java):
+      line 69.
+    - [CapReadNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/CapReadNode.java):
+      line 49.
+    - [ComplexNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/ComplexNode.java):
+      line 41.
+    - [ConstNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/ConstNode.java):
+      lines 130, 141.
+    - [ConvertNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/ConvertNode.java):
+      line 265 — catch-all for exporter-emitted kind pairs with no lowering;
+      specific message, no stub keyword.
+    - [GlobalBoxReadNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/GlobalBoxReadNode.java):
+      line 43.
+    - [GlobalReadNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/GlobalReadNode.java):
+      line 35.
+    - [IncDecNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/IncDecNode.java):
+      line 57.
+    - [UnaryOpNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/UnaryOpNode.java):
+      lines 85, 118, 129, 139, 148, 170.
+    - [VarReadNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/VarReadNode.java):
+      line 30.
+  - **Family D — mode-boundary guard (1 site).**
+    [Intrinsics.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Intrinsics.java):
+    line 693 — `itabFor` throws when no itab provider is installed
+    (phase-1-only mode has no method tables). Documented configuration
+    boundary, not unimplemented functionality.
+
 ## Retired
 
 Entries move here when the bridge is gone (same change that removes the
