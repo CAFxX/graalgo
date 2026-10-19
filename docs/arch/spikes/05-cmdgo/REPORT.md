@@ -55,7 +55,8 @@ agent-hour upgrade bound.
 ## 3. Matrix results
 
 52 scripts × 2 modes = 104 runs ([logs/matrix_results.jsonl](logs/matrix_results.jsonl); per-script
-logs in [logs/stock/](logs/stock/), [logs/wrapped/](logs/wrapped/); wrapper logs in [logs/wraplogs/](logs/wraplogs/)).
+logs in `logs/stock/` (raw logs removed as repo debris; results summarized below and in
+`matrix_results.jsonl`), [logs/wrapped/](logs/wrapped/); wrapper logs in [logs/wraplogs/](logs/wraplogs/)).
 
 - **Stock mode: 52/52 pass.**
 - **Wrapped mode (v1): 51/52 pass.** The single divergence was
