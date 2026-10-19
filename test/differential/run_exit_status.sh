@@ -57,6 +57,34 @@ GO="$DH_GO/bin/go"
 fail=0
 ncases=0
 
+# run_graalgo <timeout-s> -- <graalgo-args...>: runs the driver with a
+# deadline. On expiry the whole process tree (driver + backend) is
+# SIGKILLed and 124 is returned, so a backend hang fails loudly instead
+# of hanging the differential forever.
+run_graalgo() {
+  local timeout_s="$1"
+  shift
+  [ "${1:-}" = "--" ] && shift
+  "$GRAALGO" "$@" >"$WORK/gr.out" 2>"$WORK/gr.err" &
+  local drv=$!
+  local elapsed=0
+  while kill -0 "$drv" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout_s" ]; then
+      echo "TIMEOUT(${timeout_s}s): SIGKILLing driver tree rooted at $drv" >&2
+      for c in $(pgrep -P "$drv" 2>/dev/null); do
+        pkill -KILL -P "$c" 2>/dev/null || true
+        kill -KILL "$c" 2>/dev/null || true
+      done
+      kill -KILL "$drv" 2>/dev/null || true
+      wait "$drv" 2>/dev/null || true
+      return 124
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  wait "$drv"
+}
+
 # run_both <name> <mode> -- <go-run-args...>
 # Runs `go run` and `graalgo run` on the same args, capturing stdout,
 # stderr and exit code of each into $WORK.
@@ -67,7 +95,7 @@ run_both() {
   set +e
   "$GO" run "$@" >"$WORK/go.out" 2>"$WORK/go.err"
   go_code=$?
-  "$GRAALGO" run "$@" >"$WORK/gr.out" 2>"$WORK/gr.err"
+  run_graalgo 240 -- run "$@"
   gr_code=$?
   set -e
   ncases=$((ncases + 1))
@@ -138,8 +166,16 @@ EOF
 cat > "$WORK/deadlock.go" <<'EOF'
 package main
 
-func main() { select {} }
+import "runtime"
+
+func main() { runtime.Goexit() }
 EOF
+# NOTE: the Goexit-in-main shape is the "fatal deadlock" the design
+# probed (DESIGN.md §2, §5.1). A bare `select {}` instead hangs the
+# backend forever: the drainer-side deadlock detector (lane L31,
+# review branch wt/codereview-20261018/review-L31-deadlock-detector)
+# is not merged into this tree yet. That is a pre-existing backend
+# gap, out of scope for this exit-code lane.
 mkdir -p "$WORK/brokenpkg"
 cat > "$WORK/broken.go" <<'EOF'
 package main
