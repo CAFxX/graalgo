@@ -1279,6 +1279,11 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// interfaces). Concrete *bufio.Reader has the m7 entry; the pair
 	// lives in synth_io.go.
 	{"io", "ReadByte", "ioByteReaderPair", []string{"c", "err"}},
+	// P3-M9 (real-fmt): io.RuneReader.ReadRune. Real fmt's (*ss).ReadRune
+	// calls s.rs.ReadRune() on an io.RuneReader (3 results); the itab maps
+	// it to each concrete type's pair-returning __-helper (e.g. fmt's
+	// __readRune_ReadRune via the disk table), like io.ByteReader.ReadByte.
+	{"io", "ReadRune", "ioRuneReaderPair", []string{"r", "size", "err"}},
 	// P3 (WS D, Gate-1): io.WriterTo.WriteTo and io.ReaderFrom.ReadFrom.
 	// bufio (a dependency of image/png and many others) calls both on
 	// interface values: r.WriteTo(w) on io.WriterTo in (*Reader).WriteTo,
@@ -3492,6 +3497,41 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 			return nil, nil, err
 		}
 		args = append(args, x)
+	}
+	// fix-redmaster-r14: pack variadic arguments for variadic __-helpers.
+	// The multi-result desugar rewrites calls like fmt.Println("hello") to
+	// __Println("hello"), but __Println is variadic (func(a ...any)
+	// __PrintlnPair). Without packing, the backend receives a bare string
+	// where []any is expected. Pack trailing args into a slice literal,
+	// mirroring exportCallArgsPacked for direct calls.
+	//
+	// Do NOT pack if the trailing arg is already a slice literal of the
+	// variadic type (e.g. fmt.Println([]any{...}) — packing again would
+	// create []any{[]any{...}}).
+	helperFn, err := e.multiResultHelper(plan)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sig, ok := helperFn.Type().(*types.Signature); ok && sig.Variadic() && !c.Ellipsis.IsValid() {
+		n := sig.Params().Len()
+		alreadyPacked := false
+		if len(args) == n {
+			last := args[len(args)-1]
+			if last.Kind == "complit" {
+				sliceType := sig.Params().At(n - 1).Type()
+				if sliceTypeID, err := e.typeID(sliceType); err == nil {
+					if tid, ok := last.Fields["type"].(int); ok && tid == sliceTypeID {
+						alreadyPacked = true
+					}
+				}
+			}
+		}
+		if !alreadyPacked {
+			args, err = e.packVariadicArgs(c, sig, args)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	return args, preStmts, nil
 }

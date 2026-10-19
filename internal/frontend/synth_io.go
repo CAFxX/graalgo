@@ -278,6 +278,18 @@ type ioByteReaderPair struct {
 	err error
 }
 
+// ioRuneReaderPair is the P3-M9 (real-fmt) interface-dispatch carrier for
+// io.RuneReader.ReadRune (see ioReadPair). Real fmt's (*ss).ReadRune calls
+// s.rs.ReadRune() on an io.RuneReader; without this entry the 3-result
+// interface call is not classified and the backend rejects the raw
+// 3-target assign (lhs/rhs length mismatch), breaking the build of every
+// program importing fmt.
+type ioRuneReaderPair struct {
+	r    rune
+	size int
+	err  error
+}
+
 // ioWritePair is the P3-M8 (WS D) interface-dispatch carrier for
 // Writer.Write and StringWriter.WriteString (see ioReadPair).
 type ioWritePair struct {
