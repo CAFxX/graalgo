@@ -28,6 +28,9 @@ public final class IfaceTestRunner {
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
+        // R-5 remediation (2026-10-18): timer-channel Time values are
+        // stamped at the fire time (anchored wall clock), not at delivery.
+        TESTS.add(graalgo.p3time.TimerFireStampTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
@@ -35,8 +38,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
-        // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
-        TESTS.add(FmtStateItabTest.class);
+        // R-6 remediation (2026-10-18): GoHttp.clientDo maps transport
+        // failures to distinguishable Go errors and restores interrupts.
+        TESTS.add(graalgo.p3net.GoHttpTest.class);
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
         // isolation — identity-keyed, never structural.
         TESTS.add(graalgo.p3link.CondIsolationTest.class);

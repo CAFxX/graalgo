@@ -229,6 +229,15 @@ public final class GoNetpoll {
      */
     static volatile Runnable preClaimHookForTest;
 
+    /**
+     * Test-only hook run at the end of {@code armDeadline} (d &gt; 0),
+     * after the timer id is published and the heap entry is fireable.
+     * Lets tests simulate a carrier descheduled past a short deadline
+     * mid-arm (the R-1 race): the timeout must still be delivered to a
+     * parked waiter. Null in production.
+     */
+    static volatile Runnable armStallHookForTest;
+
     /** Number of registered pollDescs (tests). */
     static int descCount() {
         return DESCS.size();
@@ -721,24 +730,28 @@ public final class GoNetpoll {
             }
             setDeadlineState(pd, mode, abs);
             SchedulerCore sched = SchedulerCore.current();
-            // The callback validates its own id (stale fired timers are
-            // ignored) — see onDeadline. The id hand-off is an AtomicLong
-            // (P2-2): the old plain-array box had no happens-before edge
-            // between the carrier's write (after addCallback returns) and
-            // the timer thread's read. -1 = unpublished: a callback that
-            // (formally) fires before the hand-off is dropped instead of
-            // CAS-claiming -1 and delivering a spurious TIMEOUT (timer
-            // ids start at 1, so -1 never collides).
-            final AtomicLong idBox = new AtomicLong(-1);
-            long id = sched.timerHeap().addCallback(abs,
-                    () -> {
-                        long myId = idBox.get();
-                        if (myId >= 0) {
-                            onDeadline(pd, mode, myId);
-                        }
-                    });
-            idBox.set(id);
+            // R-1: the timer id is reserved and published in the pollDesc
+            // BEFORE the heap entry becomes fireable. The old code handed
+            // the id to the callback through an AtomicLong box set after
+            // addCallback returned; a carrier descheduled (quantum expiry)
+            // past a short deadline let the timer thread fire-and-drop the
+            // callback (myId == -1) while the deadline state stayed armed —
+            // a goroutine parked in pollWait never got POLL_ERR_TIMEOUT.
+            // Now the entry is born with its id and the id is installed
+            // first, so any fire observes the published id: onDeadline's
+            // CAS either delivers the timeout or drops a genuinely stale
+            // callback. There is no window in which the entry is fireable
+            // but its id is unpublished. (Timer ids start at 1, so -1
+            // still never collides with a real id.)
+            long id = sched.timerHeap().reserveId();
             setTimerId(pd, mode, id);
+            sched.timerHeap().addCallbackWithId(id, abs, () -> onDeadline(pd, mode, id));
+            Runnable hook = armStallHookForTest;
+            if (hook != null) {
+                // Test-only: simulate a carrier descheduled past the
+                // deadline mid-arm (the R-1 race window on the old code).
+                hook.run();
+            }
         } else {
             // d == 0: disarm. d < 0: expire immediately (gc: unblock
             // pending IO when the new deadline is in the past).

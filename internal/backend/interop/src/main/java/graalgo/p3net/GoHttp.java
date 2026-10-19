@@ -3,13 +3,20 @@ package graalgo.p3net;
 import com.oracle.truffle.api.dsl.Cached;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
+import java.net.ConnectException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.channels.UnresolvedAddressException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * P3-M9 (tier-5: net/http): Java-delegated HTTP client.
@@ -34,6 +41,12 @@ public final class GoHttp {
             .build();
 
     /**
+     * Per-request timeout (covers the whole exchange). Package-visible
+     * so tests can shrink it; production default 30s.
+     */
+    static volatile Duration requestTimeout = Duration.ofSeconds(30);
+
+    /**
      * Intrinsic: graalgo.http.client.do(method, url, headers, body).
      *
      * @param method HTTP method (e.g. "GET")
@@ -44,7 +57,10 @@ public final class GoHttp {
      *         int64 BE status, int64 BE headerCount,
      *         per header: int64 BE keyLen, key UTF-8 bytes,
      *                     int64 BE valLen, val UTF-8 bytes,
-     *         int64 BE bodyLen, body bytes.
+     *         int64 BE bodyLen, body bytes,
+     *         int64 BE errLen, err UTF-8 bytes (0 on success; on transport
+     *         failure status/headers/body are zero and err carries the
+     *         gc-style {@code *url.Error} message — R-6).
      *         P3-M10: a []byte wire format (not []interface{}) — the linkname
      *         dispatcher returns the target's result unboxed, and Go
      *         .([]interface{}) assertions need descriptor-identical
@@ -57,7 +73,7 @@ public final class GoHttp {
         try {
             HttpRequest.Builder rb = HttpRequest.newBuilder()
                     .uri(URI.create(u))
-                    .timeout(Duration.ofSeconds(30));
+                    .timeout(requestTimeout);
             byte[] bodyBytes = toByteArray(body);
             HttpRequest.BodyPublisher pub;
             if (bodyBytes == null || bodyBytes.length == 0) {
@@ -107,13 +123,107 @@ public final class GoHttp {
             }
             writeI64(out, respBody.length);
             out.write(respBody, 0, respBody.length);
+            writeI64(out, 0); // errLen: success
             byte[] enc = out.toByteArray();
             return goByteSlice(enc);
         } catch (Exception e) {
-            // Transport error: status 0, no headers, empty body. The Go
-            // side converts status 0 into an error.
-            return goByteSlice(new byte[24]);
-            // status=0, headerCount=0, bodyLen=0 (all zeros already).
+            // R-6: transport errors are distinguishable Go errors, not
+            // silent status-0. The interrupt flag is restored: java.net.http
+            // surfaces thread interrupts as InterruptedException (or an
+            // exception caused by one); swallowing it would strand the
+            // carrier's interrupt state.
+            if (isInterrupt(e)) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] errBytes = transportErrorMessage(m, u, e)
+                    .getBytes(StandardCharsets.UTF_8);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            writeI64(out, 0); // status
+            writeI64(out, 0); // headerCount
+            writeI64(out, 0); // bodyLen
+            writeI64(out, errBytes.length); // errLen
+            out.write(errBytes, 0, errBytes.length);
+            return goByteSlice(out.toByteArray());
+        }
+    }
+
+    /** True iff {@code e} is or wraps a thread interrupt. */
+    private static boolean isInterrupt(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof InterruptedException
+                    || t instanceof java.nio.channels.ClosedByInterruptException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Maps a transport failure to a gc-style {@code *url.Error} message:
+     * {@code <Op> "<url>": <detail>} (R-6). Go distinguishes dial refused
+     * / timeout / DNS / TLS failures through these messages; the old code
+     * collapsed them all into an opaque status-0.
+     */
+    static String transportErrorMessage(String method, String url, Throwable e) {
+        return urlErrorOp(method) + " \"" + url + "\": " + transportDetail(url, e);
+    }
+
+    /** gc net/http urlErrorOp: the request method mapped to the url.Error Op. */
+    private static String urlErrorOp(String method) {
+        if (method == null) {
+            return "Get";
+        }
+        return switch (method) {
+            case "GET" -> "Get";
+            case "POST" -> "Post";
+            case "PUT" -> "Put";
+            case "DELETE" -> "Delete";
+            case "HEAD" -> "Head";
+            case "OPTIONS" -> "Options";
+            case "PATCH" -> "Patch";
+            default -> method.isEmpty() ? "Get" : method;
+        };
+    }
+
+    /** The {@code <detail>} half of the url.Error message, by failure kind. */
+    private static String transportDetail(String url, Throwable e) {
+        if (e instanceof HttpConnectTimeoutException) {
+            return "dial tcp: i/o timeout";
+        }
+        if (e instanceof HttpTimeoutException) {
+            return "net/http: timeout awaiting response headers";
+        }
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof ConnectException) {
+                String msg = t.getMessage();
+                // gc spells it "connection refused" (lowercase).
+                String detail = (msg == null || msg.isEmpty())
+                        ? "connection refused" : msg.toLowerCase(Locale.ROOT);
+                return "dial tcp: connect: " + detail;
+            }
+            if (t instanceof UnknownHostException || t instanceof UnresolvedAddressException) {
+                return "dial tcp: lookup " + hostOf(url) + ": no such host";
+            }
+            if (t instanceof InterruptedException
+                    || t instanceof java.nio.channels.ClosedByInterruptException) {
+                return "context canceled";
+            }
+            if (t instanceof javax.net.ssl.SSLHandshakeException) {
+                String msg = t.getMessage();
+                return "tls: " + (msg == null ? "handshake failure" : msg);
+            }
+        }
+        String msg = e.getMessage();
+        return (msg == null || msg.isEmpty()) ? e.getClass().getSimpleName() : msg;
+    }
+
+    /** Best-effort host for DNS-failure messages; falls back to the URL. */
+    private static String hostOf(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host == null ? url : host;
+        } catch (IllegalArgumentException iae) {
+            return url;
         }
     }
 

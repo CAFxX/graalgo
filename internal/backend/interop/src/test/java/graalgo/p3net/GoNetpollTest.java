@@ -84,12 +84,12 @@ public final class GoNetpollTest {
         return out.get();
     }
 
-    /** Wire-format AF_INET 127.0.0.1:port. */
+    /** Wire-format AF_INET 127.0.0.1:port (D5: []byte is byte[]-backed). */
     private static GoSlice v4(int port) {
-        int[] a = new int[7];
+        byte[] a = new byte[7];
         a[0] = 2;
-        a[1] = (port >>> 8) & 0xFF;
-        a[2] = port & 0xFF;
+        a[1] = (byte) ((port >>> 8) & 0xFF);
+        a[2] = (byte) (port & 0xFF);
         a[3] = 127;
         a[4] = 0;
         a[5] = 0;
@@ -99,31 +99,23 @@ public final class GoNetpollTest {
 
     private static GoSlice bytes(String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int[] a = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            a[i] = b[i] & 0xFF;
-        }
-        return new GoSlice(a, 0, a.length, a.length);
+        return new GoSlice(b, 0, b.length, b.length);
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static String str(GoSlice gs, int n) {
-        int[] a = (int[]) gs.array();
-        byte[] b = new byte[n];
-        for (int i = 0; i < n; i++) {
-            b[i] = (byte) a[gs.offset() + i];
-        }
-        return new String(b, java.nio.charset.StandardCharsets.UTF_8);
+        byte[] a = (byte[]) gs.array();
+        return new String(a, gs.offset(), n, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static int boundPort(long cookie) {
         GoSlice b = buf(23);
         long r = GoNet.getsockname(cookie, b);
         assertTrue(r > 0, "getsockname ok: " + r);
-        int[] a = (int[]) b.array();
+        byte[] a = (byte[]) b.array();
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
@@ -231,7 +223,7 @@ public final class GoNetpollTest {
             // Peer addresses agree (fd-domain unification: cookies resolve).
             GoSlice pb = buf(23);
             assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
-            int[] a = (int[]) pb.array();
+            byte[] a = (byte[]) pb.array();
             assertEq(2, a[0], "peer family");
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
@@ -756,7 +748,7 @@ public final class GoNetpollTest {
                 GoSlice rb = buf(64);
                 GoSlice ab = buf(23);
                 long r = GoNet.recvfrom(a, rb, ab);
-                int[] aa = (int[]) ab.array();
+                byte[] aa = (byte[]) ab.array();
                 peer.set("fam=" + aa[0]);
                 got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
                 return null;
@@ -961,6 +953,74 @@ public final class GoNetpollTest {
             Object closed = Linknames.dispatch("graalgo.os.close",
                     new Object[]{cookie});
             assertEq(0, (Long) closed, "close via table");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * R-1 red-green: the timeout must be delivered even when the carrier
+     * is descheduled past a short deadline in the middle of arming it.
+     *
+     * <p>The old code published the timer id through an AtomicLong box
+     * <em>after</em> {@code addCallback} returned; a carrier stalled
+     * (quantum expiry) past the deadline let the timer thread fire the
+     * entry while the box was still -1, so the callback was dropped while
+     * the deadline state stayed armed — a goroutine parked in
+     * {@code pollWait} never got {@code POLL_ERR_TIMEOUT}. The fix
+     * publishes the reserved id before the entry becomes fireable.
+     *
+     * <p>The test parks a reader on a connected (data-less) socket, then
+     * arms a 50ms read deadline from a second goroutine while
+     * {@code armStallHookForTest} sleeps the arming carrier 300ms —
+     * simulating the descheduled-carrier window. The timer fires
+     * mid-stall; the waiter must still observe exactly one TIMEOUT (on
+     * the old code the wakeup would be lost and this test would hang
+     * past its 10s bound).
+     */
+    public void testDeadlineDeliveredWhenCarrierDescheduledMidArm() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long ctx = GoNetpoll.pollOpen(ss);
+            assertTrue(ctx != 0, "pollOpen accepted");
+            // Park a reader: connected, no data, no deadline yet.
+            AtomicLong res = new AtomicLong(-99);
+            CountDownLatch done = new CountDownLatch(1);
+            sched.spawn(() -> {
+                res.set(GoNetpoll.pollWait(ctx, (long) 'r'));
+                done.countDown();
+            });
+            Thread.sleep(200); // let the waiter park
+            // Arm a 50ms deadline while the carrier sleeps 300ms inside
+            // armDeadline (after the entry is fireable): the deadline
+            // expires mid-stall, on the old code the fire-and-drop window.
+            GoNetpoll.armStallHookForTest = () -> {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            };
+            try {
+                onGoroutine(sched, () -> {
+                    GoNetpoll.pollSetDeadline(ctx, 50_000_000L, (long) 'r');
+                    return null;
+                });
+            } finally {
+                GoNetpoll.armStallHookForTest = null;
+            }
+            assertTrue(done.await(10, TimeUnit.SECONDS),
+                    "waiter woken despite mid-arm descheduling");
+            assertEq(GoNetpoll.POLL_ERR_TIMEOUT, res.get(), "waiter sees TIMEOUT");
+            assertEq(-1, GoNetpoll.readTimerIdForTest(ctx),
+                    "live fire consumed the timer id");
+            closeSock(ss, ctx);
+            closeSock(cli[0], cli[1]);
+            closeSock(srv[0], srv[1]);
         } finally {
             teardown(prev);
         }

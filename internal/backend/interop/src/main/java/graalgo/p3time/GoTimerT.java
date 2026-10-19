@@ -92,6 +92,16 @@ public class GoTimerT {
     private boolean translatorAlive;
     /** AfterFunc: set (once per arming) when f's spawn is committed. */
     private final AtomicBoolean fCommitted = new AtomicBoolean(false);
+    /**
+     * R-5: wall-clock anchor for fire-time stamping, captured at arm
+     * time (constructor / reset). The delivered {@code time.Time} is
+     * {@code armWallNanos + (fireMono - armMonoNanos)} — the fire
+     * nanotime the heap provides, anchored to the wall clock — not the
+     * delivery instant at millisecond resolution. Under {@link #lock}.
+     */
+    private long armWallNanos;
+    /** R-5: monotonic anchor paired with {@link #armWallNanos}; under {@link #lock}. */
+    private long armMonoNanos;
 
     /**
      * @param timer     the Phase-2 one-shot timer (already armed)
@@ -115,6 +125,11 @@ public class GoTimerT {
         this.sched = SchedulerCore.current();
         this.internal = tc;
         this.user = new TimeChan();
+        // R-5: capture the anchor pair as close to the arm instant as
+        // this class can observe (the GoTimer armed just before this
+        // constructor ran); refreshed on every reset().
+        this.armWallNanos = System.currentTimeMillis() * 1_000_000L;
+        this.armMonoNanos = System.nanoTime();
         ensureTranslator();
     }
 
@@ -170,6 +185,9 @@ public class GoTimerT {
             was = timer.reset(ns);
             generation++;
             armed = true;
+            // R-5: re-anchor the wall clock at the new arm instant.
+            armWallNanos = System.currentTimeMillis() * 1_000_000L;
+            armMonoNanos = System.nanoTime();
             // Wake any translator parked on the old done, then install a
             // fresh one for the new arming (close-then-replace is atomic
             // under lock, so the translator re-reads a consistent pair).
@@ -275,7 +293,7 @@ public class GoTimerT {
                     throw new IllegalStateException("p3time: timer heap channel closed");
                 }
                 Object fireVal = ChanOps.selectRecvValue();
-                if (!(fireVal instanceof Long)) {
+                if (!(fireVal instanceof Long fireMono)) {
                     throw new IllegalStateException(
                             "p3time: timer heap channel delivered non-Long " + fireVal);
                 }
@@ -285,8 +303,6 @@ public class GoTimerT {
                     Panic.throwPanic(new GoString(
                             "send on closed channel".getBytes(StandardCharsets.UTF_8)));
                 }
-                GoStruct tv = new GoStruct(timeDesc,
-                        new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the
@@ -302,6 +318,19 @@ public class GoTimerT {
                     if (armed && generation != myGen) {
                         continue;
                     }
+                    // R-5: stamp the FIRE time, not the delivery time. The
+                    // heap delivers the fire nanotime on the monotonic
+                    // basis; the wall clock is anchored at arm time and
+                    // advanced by the monotonic delta — nanosecond
+                    // resolution, no translator latency, and elapsed-time
+                    // arithmetic (time.Since) tracks the monotonic clock
+                    // instead of degrading to delivery-time millis.
+                    // (The synthetic time.Time is struct{unixnano,isSet}:
+                    // the second long slot is the isSet flag, not a
+                    // monotonic reading — see TimeDescriptors.)
+                    long wallNanos = armWallNanos + Math.max(0L, fireMono - armMonoNanos);
+                    GoStruct tv = new GoStruct(timeDesc,
+                            new long[]{wallNanos, 1}, new Object[0]);
                     // AfterFunc: claim f BEFORE delivering, so a concurrent
                     // stop()->true (which claims first) guarantees f never runs.
                     // (Claimed here, after the generation check, so a dropped

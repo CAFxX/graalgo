@@ -131,7 +131,42 @@ public final class TimerHeap {
         if (callback == null) {
             throw new IllegalArgumentException("callback timer needs a callback");
         }
-        return add(deadlineNanos, null, null, callback, null, 0, 0);
+        return addCallbackWithId(reserveId(), deadlineNanos, callback);
+    }
+
+    /**
+     * Reserves a timer id for a subsequent {@link #addCallbackWithId}
+     * call. Lets a caller publish the id (e.g. in a pollDesc) BEFORE the
+     * heap entry becomes fireable, closing the publish-vs-fire race: a
+     * callback that fires after the reservation observes the reserved
+     * id even if the caller has not finished arming yet (R-1).
+     */
+    public long reserveId() {
+        return idGen.getAndIncrement();
+    }
+
+    /**
+     * Arms a raw callback timer under a previously {@linkplain #reserveId
+     * reserved} id: at {@code deadlineNanos}, runs {@code callback} on
+     * the timer thread (same contract as {@link #addCallback}). The id is
+     * never reassigned; a reserved-but-never-added id is harmless (it
+     * simply never becomes fireable).
+     */
+    public long addCallbackWithId(long reservedId, long deadlineNanos, Runnable callback) {
+        if (callback == null) {
+            throw new IllegalArgumentException("callback timer needs a callback");
+        }
+        if (reservedId < 0) {
+            throw new IllegalArgumentException("callback timer needs a reserved id");
+        }
+        synchronized (lock) {
+            Entry e = new Entry(deadlineNanos, reservedId, seqGen.getAndIncrement(),
+                    null, null, callback, null, 0);
+            heap.add(e);
+            byId.put(reservedId, e);
+            lock.notifyAll();
+            return reservedId;
+        }
     }
 
     /**

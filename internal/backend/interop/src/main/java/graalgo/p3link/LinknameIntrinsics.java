@@ -749,7 +749,9 @@ public final class LinknameIntrinsics {
     /**
      * Registers the {@code graalgo.http.client.do} intrinsic implemented
      * by {@link GoHttp} (P3-M9 tier-5, java.net.http.HttpClient
-     * delegation; the synthetic net/http Transport.RoundTrip drives it).
+     * delegation). Unwired since the P4 bridge-removal retired the
+     * synthetic net/http Transport.RoundTrip that drove it; retained as
+     * a callable intrinsic with R-6 distinguishable transport errors.
      * D5 argument types: method and URL arrive as GoString, headers as
      * GoSlice of GoString (flat k/v pairs), body as GoSlice of bytes
      * (see {@link GoHttp#clientDo} for the calling convention); returns

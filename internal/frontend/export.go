@@ -1715,8 +1715,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
-	// The client delegates to java.net.http.HttpClient via the
-	// graalgo.http.client.do intrinsic (registered in LinknameIntrinsics).
+	// (Historical: the synthetic client delegated to java.net.http.HttpClient
+	// via the graalgo.http.client.do intrinsic, still registered in
+	// LinknameIntrinsics but unwired since the P4 bridge-removal below.)
 	// P3-M10: importSyntheticPackage does not recurse into imports, so
 	// the block lists net/http's full transitive closure explicitly
 	// (topological order, leaves first) — cf. the needCryptoRand block.
