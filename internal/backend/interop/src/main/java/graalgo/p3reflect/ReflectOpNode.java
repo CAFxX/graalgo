@@ -1172,11 +1172,14 @@ public final class ReflectOpNode extends GoExprNode {
 
     /**
      * Unsigned 64-bit → double. The JDK has no {@code Long.toUnsignedDouble};
-     * shifting down first keeps the conversion exact up to 2^53 and correctly
-     * rounded beyond (the (x>>>1)*2.0+(x&1) idiom).
+     * splitting into high/low 32-bit halves keeps the conversion correctly
+     * rounded: both summands are exactly representable as doubles, so the
+     * single rounding of the sum is the correctly-rounded double of {@code x}.
      */
     private static double unsignedLongToDouble(long x) {
-        return (x >>> 1) * 2.0 + (x & 1);
+        // Split into high/low 32 bits: both summands are exactly representable,
+        // so the single rounding of the sum is the correctly-rounded double of x.
+        return (x >>> 32) * 4294967296.0 + (double) (x & 0xFFFFFFFFL);
     }
 
     private static Object fromDouble(double dv, GoKind tk) {

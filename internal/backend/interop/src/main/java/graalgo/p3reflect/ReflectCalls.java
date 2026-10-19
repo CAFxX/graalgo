@@ -68,8 +68,8 @@ public final class ReflectCalls {
     /**
      * Multi-result variant of {@link #invokeCallable}: returns one D5 value
      * per declared out (I-6). A {@code MakeFunc} type may declare multiple
-     * outs via {@code FuncOf}; v1 Go funcs declare at most one result
-     * (frontend WS D), so a multi-out {@link GoFunc}/{@link MethodVal}/
+     * outs via {@code FuncOf}; v1 Go funcs are transformed to at most
+     * single-result form (frontend WS D), so a multi-out {@link GoFunc}/{@link MethodVal}/
      * {@link BoundMethodVal} is unreachable — it fails loud here rather
      * than silently truncating to the first result.
      *

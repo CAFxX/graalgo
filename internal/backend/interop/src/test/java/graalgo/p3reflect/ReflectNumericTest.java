@@ -89,6 +89,21 @@ public final class ReflectNumericTest {
                 "uint64 max -> float64");
     }
 
+    /**
+     * Correct-rounding discriminator for {@code unsignedLongToDouble}.
+     * The old {@code (x>>>1)*2.0+(x&1)} idiom double-rounded this value to
+     * {@code 2.648933169328297e+17} (1 ulp low); the hi/lo split must produce
+     * the correctly-rounded {@code 2.6489331693282973e+17}. The 2^63 and
+     * 2^64-1 boundary tests above are exact under both implementations and
+     * would not discriminate — this test is the one that pins the rounding.
+     */
+    public void testUint64ToFloat64CorrectlyRounded() {
+        Object got = ReflectOpNode.convertNumeric(
+                Long.valueOf(0x3ad17117b280211L), GoKind.UINT64, GoKind.FLOAT64);
+        assertEquals(2.6489331693282973e+17, ((Double) got).doubleValue(),
+                "uint64(0x3ad17117b280211) -> float64 must be correctly rounded");
+    }
+
     /** uint32 with the sign bit set → float64 must be positive. */
     public void testUint32SignBitToFloat64() {
         Object got = ReflectOpNode.convertNumeric(
