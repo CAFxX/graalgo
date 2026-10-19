@@ -1,28 +1,28 @@
 #!/bin/bash
 # Differential runner for the P3-M5 timectx corpus (ADR-0005): each program
 # runs under stock gc 1.27.1 (built binary, run directly — `go run` masks
-# the exit code) and under graalgo-p3sync-run. Compares stdout bytes, exit
+# the exit code) and under graalgo-sync-run. Compares stdout bytes, exit
 # codes, and — for panic programs — the first stderr line.
 #
-# Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs print fixed strings
-# only (never measured durations).
+# Known JVM Unsafe warnings on stderr are filtered (harness noise).
+# Timing-sensitive programs print fixed strings only (never measured
+# durations); tc17 is the exception — it is self-checking (asserts the
+# fire-time properties internally and panics on failure, which the
+# exit-code comparison flags).
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+GR="$(cd ../../.. && pwd)"
 export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+# /tmp is a small shared tmpfs; keep JVM temp files on persistent disk
+# (a full /tmp silently yields empty output with exit 0 — a false pass).
+export TMPDIR="$GR/test/corpus/timectx/.tmp"
+mkdir -p "$TMPDIR"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -67,7 +67,7 @@ for go in tc*.go; do
     # Timing-sensitive programs run with gmp=1 only (single-threaded is
     # enough; the multi-gmp leg adds scheduling noise for sleeps).
     case "${go%.go}" in
-        tc02_*|tc03_*|tc05_*|tc06_*|tc09_*|tc13_*|tc16_*) run_one "$go" 1 ;;
+        tc02_*|tc03_*|tc05_*|tc06_*|tc09_*|tc13_*|tc16_*|tc17_*) run_one "$go" 1 ;;
         *) run_one "$go" 1; run_one "$go" 4 ;;
     esac
 done

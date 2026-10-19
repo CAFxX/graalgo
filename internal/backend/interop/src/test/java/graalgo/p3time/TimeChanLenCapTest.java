@@ -206,4 +206,59 @@ public final class TimeChanLenCapTest {
                     "ticker translator exited on shutdown");
         });
     }
+
+    /**
+     * P1-7: the mono->wall anchor tracks the wall clock and is linear
+     * in {@code nanoTime} (no scheduler needed — pure function).
+     */
+    public void testFireTimeClocksTracksWallClock() {
+        long n0 = System.nanoTime();
+        long w = FireTimeClocks.toWallNanos(n0);
+        long wallNow = System.currentTimeMillis() * 1_000_000L;
+        assertTrue(Math.abs(w - wallNow) < 100_000_000L,
+                "anchor tracks wall clock, off by " + (w - wallNow) + "ns");
+        assertEq(5_000L, FireTimeClocks.toWallNanos(n0 + 5_000L) - w,
+                "toWallNanos is linear in nanoTime");
+        assertTrue(FireTimeClocks.toWallNanos(n0 + 1) > w,
+                "toWallNanos is monotonic in nanoTime");
+    }
+
+    /**
+     * P1-7 translator regression: the delivered {@code Time} must be the
+     * heap's fire instant (nanoTime at the pop, converted to wall nanos),
+     * not a re-sampled, millis-quantized delivery time. Four one-shot
+     * fires: the old code reports every sample millis-quantized (0/4
+     * non-zero — deterministic failure); with the fix the
+     * sub-millisecond digits come from the heap's nanoTime fire sample
+     * (P(<3/4 non-zero) < 1e-11).
+     */
+    public void testTranslatorDeliversFireNanotime() throws Exception {
+        withScheduler(() -> inGoroutine(SchedulerCore.current(), () -> {
+            int granular = 0;
+            for (int i = 0; i < 4; i++) {
+                GoTimerT t = new GoTimerT(GoTimer.newTimer(20_000_000L), false, null, TIME_DESC);
+                GoChan.RecvResult r = t.userChannel().recv();
+                assertTrue(r.value() instanceof GoStruct,
+                        "fire value is a Time struct, got " + r.value());
+                long unixnano = ((GoStruct) r.value()).getLong(0);
+                long wallAtRecv = System.currentTimeMillis() * 1_000_000L;
+                // The fire instant precedes delivery: it must sit in a
+                // generous window around the receive-time wall clock. This
+                // catches epoch errors — a raw nanoTime delivered as unix
+                // nanos would be decades off.
+                assertTrue(unixnano <= wallAtRecv + 2_000_000L
+                                && unixnano >= wallAtRecv - 30_000_000_000L,
+                        "fire Time is the wall fire instant, got " + unixnano);
+                if (unixnano % 1_000_000L != 0) {
+                    granular++;
+                }
+                t.stop();
+            }
+            assertTrue(granular >= 3,
+                    "fire times have nanosecond granularity, got "
+                            + granular + "/4 non-millis-quantized");
+            waitUntil(() -> P3TimeRuntime.backgroundLive() == 0, 5_000,
+                    "translators exited after fires");
+        }));
+    }
 }

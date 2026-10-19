@@ -275,7 +275,7 @@ public class GoTimerT {
                     throw new IllegalStateException("p3time: timer heap channel closed");
                 }
                 Object fireVal = ChanOps.selectRecvValue();
-                if (!(fireVal instanceof Long)) {
+                if (!(fireVal instanceof Long fireNanos)) {
                     throw new IllegalStateException(
                             "p3time: timer heap channel delivered non-Long " + fireVal);
                 }
@@ -285,8 +285,14 @@ public class GoTimerT {
                     Panic.throwPanic(new GoString(
                             "send on closed channel".getBytes(StandardCharsets.UTF_8)));
                 }
+                // P1-7: the delivered value IS the heap's fire instant
+                // (nanoTime sampled at the pop). Report it — converted to
+                // wall-clock unix nanos — not a re-sampled delivery time:
+                // gc delivers the fire instant with nanosecond granularity
+                // (go1.27.1: 20/20 After fires non-millis-quantized,
+                // elapsed 100.006-100.008ms for d=100ms).
                 GoStruct tv = new GoStruct(timeDesc,
-                        new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
+                        new long[]{FireTimeClocks.toWallNanos(fireNanos), 1}, new Object[0]);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the

@@ -24,6 +24,7 @@ Go programs exercising the P3-M5 synthetic `time` and `context` packages
 | `tc14_context_cause.go` | `WithCancelCause`, `Cause` |
 | `tc15_sleep_zero_negative.go` | `Sleep(0)`, `Sleep(negative)` |
 | `tc16_timer_reset_expired.go` | `Reset` on expired timer |
+| `tc17_timer_fire_time.go` | P1-7: `After` fire instant — ns granularity + tolerance-banded accuracy (self-checking) |
 
 Timing-sensitive programs print fixed strings only, never measured
 durations. `run_differential.sh` follows the iface/sync harness pattern.
