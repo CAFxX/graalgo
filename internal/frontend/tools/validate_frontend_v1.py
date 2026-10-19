@@ -57,12 +57,20 @@ def check_pos(ctx, path, pos):
     if not isinstance(pos, dict):
         ctx.err(path, f"pos must be object, got {pos!r}")
         return
-    for k in ("file", "line", "col", "off", "len"):
+    for k in ("file", "col", "off"):
         v = pos.get(k)
         if not isinstance(v, int) or isinstance(v, bool) or v < 0:
             ctx.err(f"{path}.{k}", f"must be non-negative int, got {v!r}")
-    if not isinstance(pos.get("line"), int) or pos.get("line", 0) < 1:
-        ctx.err(f"{path}.line", "line is 1-based")
+    # line: 1-based for real source nodes; 0 marks a synthesized node with
+    # no source span (the exporter passes token.NoPos through).
+    v = pos.get("line")
+    if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+        ctx.err(f"{path}.line", f"must be non-negative int, got {v!r}")
+    # len: rune length of the node's source text; negative when a
+    # synthesized node's End() precedes its Pos() (e.g. helper params).
+    v = pos.get("len")
+    if not isinstance(v, int) or isinstance(v, bool):
+        ctx.err(f"{path}.len", f"must be int, got {v!r}")
 
 
 def check_types(ctx):
@@ -200,13 +208,31 @@ def check_node(ctx, path, node, expr):
             need(k)
 
     if kind == "funcdecl":
-        # handled structurally by caller; still validate common shape
-        for k in ("name", "sig", "params", "body"):
+        # handled structurally by caller; still validate common shape.
+        # body is ABSENT (not null) on bodyless declarations: //go:linkname
+        # bindings (linkname str), runtime intrinsics and assembly stubs
+        # (unimplemented: true). The normal form always carries obj.
+        for k in ("name", "sig", "params", "obj"):
             need(k)
+        if not isinstance(f.get("name"), str):
+            ctx.err(fp, "name must be a string")
+        ctx.check_obj_id(f"{fp}.obj", f.get("obj"))
         ctx.check_type_id(f"{fp}.sig", f.get("sig"))
         for j, prm in enumerate(f.get("params", [])):
             check_node(ctx, f"{fp}.params[{j}]", prm, False)
-        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        for j, r in enumerate(f.get("results") or []):
+            check_node(ctx, f"{fp}.results[{j}]", r, False)
+        if f.get("body") is not None:
+            check_node(ctx, f"{fp}.body", f["body"], False)
+        for k in ("pkgpath", "linkname"):
+            if k in f and not isinstance(f[k], str):
+                ctx.err(fp, f"{k} must be a string")
+        if "unimplemented" in f and not isinstance(f["unimplemented"], bool):
+            ctx.err(fp, "unimplemented must be bool")
+        if "instof" in f and not isinstance(f["instof"], int):
+            ctx.err(fp, "instof must be an int")
+        if "typeargs" in f and not isinstance(f["typeargs"], list):
+            ctx.err(fp, "typeargs must be a list")
     elif kind == "param":
         for k in ("name", "obj", "type"):
             need(k)
@@ -305,9 +331,20 @@ def check_node(ctx, path, node, expr):
         check_node(ctx, f"{fp}.stmt", f.get("stmt"), False)
     elif kind == "ident":
         need("name")
-        if "obj" in f and f["obj"] is not None:
-            ctx.check_obj_id(f"{fp}.obj", f["obj"])
-        type_ref("type")
+        if "builtin" in f:
+            # Builtin form: builtins have no go/types signature (NewBuiltin
+            # sets typ: Typ[Invalid], which the exporter must never
+            # serialize), so the node carries name+builtin and NO obj/type.
+            # Builtin calls dispatch via the call node's "builtin" marker.
+            if not isinstance(f.get("builtin"), str):
+                ctx.err(fp, "builtin must be a string")
+            for k in ("obj", "type"):
+                if k in f:
+                    ctx.err(fp, f"builtin ident must not carry {k!r}")
+        else:
+            if "obj" in f and f["obj"] is not None:
+                ctx.check_obj_id(f"{fp}.obj", f["obj"])
+            type_ref("type")
     elif kind == "basiclit":
         need("value")
         type_ref("type")
@@ -331,6 +368,14 @@ def check_node(ctx, path, node, expr):
         expr_node("fun")
         node_list("args")
         type_ref("type", nullable=True)
+        # builtin: str marker the backend's buildBuiltinCall dispatches on
+        # (the fun ident is then the builtin form, without obj/type).
+        if "builtin" in f and f["builtin"] is not None \
+                and not isinstance(f["builtin"], str):
+            ctx.err(fp, "builtin must be a string")
+        # ellipsis: append(s, x...) spread marker (M7).
+        if "ellipsis" in f and not isinstance(f["ellipsis"], bool):
+            ctx.err(fp, "ellipsis must be bool")
     elif kind == "convert":
         expr_node("x")
         type_ref("to")
@@ -408,8 +453,12 @@ def check_node(ctx, path, node, expr):
         ck = f.get("kind")
         if ck == "recv":
             expr_node("chan")
-            if "targets" in f and not all(isinstance(t, int) for t in f["targets"]):
-                ctx.err(fp, "targets must be object ids")
+            if "targets" in f:
+                if not isinstance(f["targets"], list):
+                    ctx.err(fp, "targets must be a list of object ids")
+                else:
+                    for j, t in enumerate(f["targets"]):
+                        ctx.check_obj_id(f"{fp}.targets[{j}]", t)
         elif ck == "send":
             expr_node("chan")
             expr_node("value")
@@ -456,6 +505,255 @@ def check_node(ctx, path, node, expr):
         # P3-M5 (WS E, ADR-0005 App W): time.AfterFunc(d, f).
         duration_field(ctx, fp, f)
         expr_node("func")
+        type_ref("type")
+    elif kind == "funclit":
+        # M5 (WS F): function literal. The main export path stamps "type"
+        # (the signature id, for interface boxing); the synthesized go/defer
+        # wrappers omit it (the backend derives the result type from
+        # results[0] instead).
+        node_list("params")
+        node_list("results")
+        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        type_ref("type", nullable=True)
+    elif kind == "defer":
+        # M5 (WS F): the deferred call, always a "call"-shaped node (the
+        # exporter wraps ifacemethod targets in a funclit so buildDefer
+        # sees call.fun).
+        need("call")
+        if "call" in f:
+            if not isinstance(f["call"], dict) or f["call"].get("kind") != "call":
+                ctx.err(fp, "defer.call must be a call node")
+            else:
+                check_node(ctx, f"{fp}.call", f["call"], False)
+    elif kind == "gostmt":
+        # P2-M1 (WS A): go statement; same call-node payload as defer.
+        need("call")
+        if "call" in f:
+            if not isinstance(f["call"], dict) or f["call"].get("kind") != "call":
+                ctx.err(fp, "gostmt.call must be a call node")
+            else:
+                check_node(ctx, f"{fp}.call", f["call"], False)
+    elif kind == "nil":
+        # M5 (WS F): the nil identifier in expression position.
+        type_ref("type")
+    elif kind == "addrof":
+        # P3-M9 (WS D): &x. Two shapes: {"x"} for a plain addressable
+        # operand, {"array","index"} for &a[i] (element pointer; the array
+        # may be a slice or a *[N]T dereference).
+        if "array" in f or "index" in f:
+            expr_node("array")
+            expr_node("index")
+        else:
+            expr_node("x")
+        type_ref("type")
+    elif kind == "deref":
+        # P3-M9 (WS D): *p (explicit or implicit receiver dereference).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "syncop":
+        # P3-M2b/M4 (WS D/C): sync primitive or atomic op. recv is the
+        # sync value (or the atomicaddr cell for package-level atomics).
+        for k in ("op", "synctyp"):
+            need(k)
+            if not isinstance(f.get(k), str):
+                ctx.err(fp, f"{k} must be a string")
+        expr_node("recv")
+        node_list("args")
+        type_ref("type")
+    elif kind == "syncnew":
+        # No longer emitted by gofrontend (retired); still accepted by the
+        # backend's SyncNewNode.build: synctyp names the sync/atomic type,
+        # type is the required result type id, newfunc (Pool only) is the
+        # New func value expression.
+        need("synctyp")
+        if not isinstance(f.get("synctyp"), str):
+            ctx.err(fp, "synctyp must be a string")
+        type_ref("type")
+        if f.get("newfunc") is not None:
+            check_node(ctx, f"{fp}.newfunc", f["newfunc"], True)
+    elif kind == "ifacemethod":
+        # P3-M3 (WS D, ADR-0003): interface method call with dynamic itab
+        # dispatch. sig/type are the method signature / result type ids;
+        # type is null for void calls.
+        expr_node("recv")
+        need("method")
+        if not isinstance(f.get("method"), str):
+            ctx.err(fp, "method must be a string")
+        type_ref("iface")
+        node_list("args")
+        type_ref("sig")
+        type_ref("type", nullable=True)
+    elif kind == "methodref":
+        # M6 (WS H): method-call fun target. obj is the method's
+        # funcdecl/instantiation object id; recv evaluates first and is
+        # passed as params[0]. The backend tolerates a missing/null type.
+        need("obj")
+        ctx.check_obj_id(f"{fp}.obj", f.get("obj"))
+        expr_node("recv")
+        type_ref("type", nullable=True)
+    elif kind == "methodvalue":
+        # P3-M9 (WS H): method value x.M — obj + recv; the backend binds
+        # the receiver into a GoFunc and ignores the static type.
+        need("obj")
+        ctx.check_obj_id(f"{fp}.obj", f.get("obj"))
+        expr_node("recv")
+        type_ref("type", nullable=True)
+    elif kind == "funcfieldcall":
+        # P3-M9 (WS D): multi-result call through a struct function field
+        # (c.generate(r)). pairType/pairFields describe the synthetic
+        # result pair. NOTE: no backend builder is registered for this
+        # kind (the sibling desugarFuncFieldCall path emits plain "call");
+        # the validator accepts the wire shape, it does not bless the gap.
+        expr_node("recv")
+        need("field")
+        if not isinstance(f.get("field"), str):
+            ctx.err(fp, "field must be a string")
+        node_list("args")
+        type_ref("pairType")
+        need("pairFields")
+        if not isinstance(f.get("pairFields"), list) or not all(
+                isinstance(s, str) for s in f["pairFields"]):
+            ctx.err(fp, "pairFields must be a list of strings")
+    elif kind == "unsafetooptr":
+        # M8: unsafe.Pointer -> *T.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafefromptr":
+        # M8: *T (or untyped nil) -> unsafe.Pointer.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafefromuint":
+        # M8: uintptr -> unsafe.Pointer.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafeadd":
+        # M8/D5: unsafe.Add(ptr, len) — evaluate-then-trap shape.
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafeslice":
+        # M8: unsafe.Slice(ptr, len).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafeslicedata":
+        # M8: unsafe.SliceData(s).
+        expr_node("slice")
+        type_ref("type")
+    elif kind == "unsafestring":
+        # M8: unsafe.String(ptr, len).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafestringdata":
+        # M8: unsafe.StringData(s).
+        expr_node("s")
+        type_ref("type")
+    elif kind == "abifuncpc":
+        # real-reflect (Phase 1): internal/abi FuncPCABI0/FuncPCABIInternal
+        # compile intrinsics. The "kind" FIELD names the intrinsic; arg is
+        # the func value; type must be the uintptr result id.
+        if f.get("kind") not in ("FuncPCABI0", "FuncPCABIInternal"):
+            ctx.err(fp, "abifuncpc kind must be 'FuncPCABI0' or "
+                        f"'FuncPCABIInternal', got {f.get('kind')!r}")
+        expr_node("arg")
+        type_ref("type")
+    elif kind == "reflectop":
+        # real-reflect: __reflect_*-shimmed reflect calls. op names the
+        # shim without the __reflect_ prefix.
+        need("op")
+        if not isinstance(f.get("op"), str):
+            ctx.err(fp, "op must be a string")
+        node_list("args")
+        type_ref("type")
+    elif kind == "sliceoverlap":
+        # P3-M9: crypto/internal/fips140/alias AnyOverlap/InexactOverlap.
+        expr_node("x")
+        expr_node("y")
+        if not isinstance(f.get("inexact"), bool):
+            ctx.err(fp, "inexact must be bool")
+        type_ref("type")
+    elif kind == "minmax":
+        # P4: builtin min/max — op is the builtin name, args the operands.
+        need("op")
+        if not isinstance(f.get("op"), str):
+            ctx.err(fp, "op must be a string")
+        node_list("args")
+        type_ref("type")
+    elif kind == "clear":
+        # P4: builtin clear(x) — void, no type field.
+        expr_node("x")
+    elif kind == "runtimecallers":
+        # runtime.Callers(skip, pc).
+        expr_node("skip")
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimecallersframes":
+        # runtime.CallersFrames(pcs).
+        expr_node("pcs")
+        type_ref("type")
+    elif kind == "runtimefuncforpc":
+        # runtime.FuncForPC(pc).
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimefuncname":
+        # (*runtime.Func).Name().
+        expr_node("f")
+        type_ref("type")
+    elif kind == "runtimefuncentry":
+        # (*runtime.Func).Entry().
+        expr_node("f")
+        type_ref("type")
+    elif kind == "runtimecaller":
+        # runtime.Caller(skip) — multi-result desugar (P3-M9, WS D).
+        expr_node("skip")
+        type_ref("type")
+    elif kind == "runtimeframesnext":
+        # (*runtime.Frames).Next() — multi-result desugar (P3-M9, WS D).
+        expr_node("f")
+        type_ref("type")
+    elif kind == "runtimefuncfileline":
+        # (*runtime.Func).FileLine(pc) — multi-result desugar (P3-M9, WS D).
+        expr_node("f")
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimegomaxprocs":
+        # P4: runtime.GOMAXPROCS(n).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "runtimegoroot":
+        # runtime.GOROOT().
+        type_ref("type")
+    elif kind == "runtimegosched":
+        # PKG-040: runtime.Gosched() — statement, no fields at all.
+        pass
+    elif kind == "runtimenumcpu":
+        # runtime.NumCPU().
+        type_ref("type")
+    elif kind == "runtimenumgoroutine":
+        # PKG-023: runtime.NumGoroutine().
+        type_ref("type")
+    elif kind == "runtimereadmemstats":
+        # runtime.ReadMemStats(m) — void, no type field.
+        expr_node("m")
+    elif kind == "runtimestack":
+        # runtime.Stack(buf, all).
+        node_list("args")
+        type_ref("type")
+    elif kind == "runtimeversion":
+        # runtime.Version().
+        type_ref("type")
+    elif kind in ("mathf64bits", "mathf64frombits", "mathf32bits",
+                  "mathf32frombits", "mathsqrt"):
+        # P3-M7 (ADR-0007 D5): synthetic math intrinsics, one wire kind
+        # each (the time-intrinsic precedent): single operand x.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "mathfma":
+        # P3-M7: math.FMA — three operands.
+        expr_node("x")
+        expr_node("y")
+        expr_node("z")
         type_ref("type")
     elif kind == "atomicaddr":
         # fix-linkname: package-level sync/atomic word ops wrap the *T
@@ -512,12 +810,13 @@ def selftest():
         "generator": {"tool": "gofrontend", "version": "0.1.0", "goroot": "go1.27.1"},
         "package": {"name": "main", "files": ["x.go"], "lang": "go1.27"},
         "types": [{"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": False}}],
-        "objects": [{"kind": "var", "name": "x", "type": 0, "param": False}],
+        "objects": [{"kind": "var", "name": "x", "type": 0, "param": False},
+                    {"kind": "func", "name": "main", "type": 0, "param": False}],
         "funcs": [{
             "kind": "funcdecl",
             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
             "fields": {
-                "name": "main", "sig": 0, "params": [],
+                "name": "main", "obj": 1, "sig": 0, "params": [],
                 "body": {"kind": "block",
                          "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
                          "fields": {"stmts": []}},
@@ -607,6 +906,193 @@ def selftest():
         lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
             _atomicaddr_stmt("bool")),
         "atomicaddr cell")
+
+    # rev-validator-drift: every live wire kind the validator learned gets
+    # at least one positive case in the exact shape the exporter emits.
+    _POS1 = {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}
+
+    def _ex():
+        return {"kind": "basiclit", "pos": dict(_POS1),
+                "fields": {"value": "1", "type": 0}}
+
+    def _blk():
+        return {"kind": "block", "pos": dict(_POS1),
+                "fields": {"stmts": []}}
+
+    def _call():
+        return {"kind": "call", "pos": dict(_POS1),
+                "fields": {"fun": _ex(), "args": [], "type": 0}}
+
+    def _add(name, kind, fields):
+        node = {"kind": kind, "pos": dict(_POS1), "fields": fields}
+        bad("ok-" + name,
+            lambda d, n=node: d["funcs"][0]["fields"]["body"]["fields"]
+                ["stmts"].append(n),
+            None)
+
+    _add("funclit", "funclit",
+         {"params": [], "results": [], "body": _blk(), "type": 0})
+    _add("funclit-notype", "funclit",
+         {"params": [], "results": [], "body": _blk()})
+    _add("defer", "defer", {"call": _call()})
+    _add("gostmt", "gostmt", {"call": _call()})
+    _add("nil", "nil", {"type": 0})
+    _add("addrof-x", "addrof", {"x": _ex(), "type": 0})
+    _add("addrof-array", "addrof",
+         {"array": _ex(), "index": _ex(), "type": 0})
+    _add("deref", "deref", {"x": _ex(), "type": 0})
+    _add("syncop", "syncop",
+         {"op": "Add", "synctyp": "WaitGroup", "recv": _ex(), "args": [],
+          "type": 0})
+    _add("syncnew", "syncnew", {"synctyp": "Mutex", "type": 0})
+    _add("ifacemethod", "ifacemethod",
+         {"recv": _ex(), "method": "M", "iface": 0, "args": [], "sig": 0,
+          "type": 0})
+    _add("methodref", "methodref", {"obj": 1, "recv": _ex(), "type": 0})
+    _add("methodvalue", "methodvalue", {"obj": 1, "recv": _ex(), "type": 0})
+    _add("funcfieldcall", "funcfieldcall",
+         {"recv": _ex(), "field": "generate", "args": [], "pairType": 0,
+          "pairFields": ["r1", "r2"]})
+    _add("unsafetooptr", "unsafetooptr", {"x": _ex(), "type": 0})
+    _add("unsafefromptr", "unsafefromptr", {"x": _ex(), "type": 0})
+    _add("unsafefromuint", "unsafefromuint", {"x": _ex(), "type": 0})
+    _add("unsafeadd", "unsafeadd",
+         {"ptr": _ex(), "len": _ex(), "type": 0})
+    _add("unsafeslice", "unsafeslice",
+         {"ptr": _ex(), "len": _ex(), "type": 0})
+    _add("unsafeslicedata", "unsafeslicedata", {"slice": _ex(), "type": 0})
+    _add("unsafestring", "unsafestring",
+         {"ptr": _ex(), "len": _ex(), "type": 0})
+    _add("unsafestringdata", "unsafestringdata", {"s": _ex(), "type": 0})
+    _add("abifuncpc", "abifuncpc",
+         {"kind": "FuncPCABI0", "arg": _ex(), "type": 0})
+    _add("reflectop", "reflectop", {"op": "ValueOf", "args": [], "type": 0})
+    _add("sliceoverlap", "sliceoverlap",
+         {"x": _ex(), "y": _ex(), "inexact": False, "type": 0})
+    _add("minmax", "minmax", {"op": "min", "args": [_ex()], "type": 0})
+    _add("clear", "clear", {"x": _ex()})
+    _add("runtimecallers", "runtimecallers",
+         {"skip": _ex(), "pc": _ex(), "type": 0})
+    _add("runtimecallersframes", "runtimecallersframes",
+         {"pcs": _ex(), "type": 0})
+    _add("runtimefuncforpc", "runtimefuncforpc", {"pc": _ex(), "type": 0})
+    _add("runtimefuncname", "runtimefuncname", {"f": _ex(), "type": 0})
+    _add("runtimefuncentry", "runtimefuncentry", {"f": _ex(), "type": 0})
+    _add("runtimecaller", "runtimecaller", {"skip": _ex(), "type": 0})
+    _add("runtimeframesnext", "runtimeframesnext", {"f": _ex(), "type": 0})
+    _add("runtimefuncfileline", "runtimefuncfileline",
+         {"f": _ex(), "pc": _ex(), "type": 0})
+    _add("runtimegomaxprocs", "runtimegomaxprocs", {"x": _ex(), "type": 0})
+    _add("runtimegoroot", "runtimegoroot", {"type": 0})
+    _add("runtimegosched", "runtimegosched", {})
+    _add("runtimenumcpu", "runtimenumcpu", {"type": 0})
+    _add("runtimenumgoroutine", "runtimenumgoroutine", {"type": 0})
+    _add("runtimereadmemstats", "runtimereadmemstats", {"m": _ex()})
+    _add("runtimestack", "runtimestack", {"args": [], "type": 0})
+    _add("runtimeversion", "runtimeversion", {"type": 0})
+    _add("mathf64bits", "mathf64bits", {"x": _ex(), "type": 0})
+    _add("mathf64frombits", "mathf64frombits", {"x": _ex(), "type": 0})
+    _add("mathf32bits", "mathf32bits", {"x": _ex(), "type": 0})
+    _add("mathf32frombits", "mathf32frombits", {"x": _ex(), "type": 0})
+    _add("mathsqrt", "mathsqrt", {"x": _ex(), "type": 0})
+    _add("mathfma", "mathfma",
+         {"x": _ex(), "y": _ex(), "z": _ex(), "type": 0})
+    # Bodyless funcdecl (linkname/asm stub): no "body" key at all.
+    bad("ok-funcdecl-bodyless",
+        lambda d: d["funcs"][0]["fields"].pop("body"),
+        None)
+    # Builtin ident form: name + builtin, no obj/type.
+    bad("ok-ident-builtin",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "ident", "pos": dict(_POS1),
+             "fields": {"name": "println", "builtin": "println"}}),
+        None)
+    # Call with the builtin marker the backend dispatches on.
+    bad("ok-call-builtin",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "call", "pos": dict(_POS1),
+             "fields": {"fun": {"kind": "ident", "pos": dict(_POS1),
+                                "fields": {"name": "println",
+                                           "builtin": "println"}},
+                        "args": [_ex()], "builtin": "println", "type": 0}}),
+        None)
+
+    # Negative cases for the closed sets and new shapes.
+    bad("bad-defer-call-kind",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "defer", "pos": dict(_POS1),
+             "fields": {"call": _blk()}}),
+        "must be a call node")
+    bad("bad-gostmt-call-nondict",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "gostmt", "pos": dict(_POS1),
+             "fields": {"call": "nope"}}),
+        "must be a call node")
+    bad("bad-addrof-no-operand",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "addrof", "pos": dict(_POS1),
+             "fields": {"type": 0}}),
+        "missing field 'x'")
+    bad("bad-abifuncpc-kind",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "abifuncpc", "pos": dict(_POS1),
+             "fields": {"kind": "Nope", "arg": _ex(), "type": 0}}),
+        "abifuncpc kind")
+    bad("bad-ident-builtin-type",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "ident", "pos": dict(_POS1),
+             "fields": {"name": "println", "builtin": "println", "type": 0}}),
+        "must not carry")
+    bad("bad-ifacemethod-method",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "ifacemethod", "pos": dict(_POS1),
+             "fields": {"recv": _ex(), "method": 42, "iface": 0, "args": [],
+                        "sig": 0, "type": 0}}),
+        "method must be a string")
+    bad("bad-funcfieldcall-pairfields",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "funcfieldcall", "pos": dict(_POS1),
+             "fields": {"recv": _ex(), "field": "f", "args": [],
+                        "pairType": 0, "pairFields": ["r1", 2]}}),
+        "pairFields must be a list of strings")
+    bad("bad-sliceoverlap-inexact",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "sliceoverlap", "pos": dict(_POS1),
+             "fields": {"x": _ex(), "y": _ex(), "inexact": "yes",
+                        "type": 0}}),
+        "inexact must be bool")
+    bad("bad-syncnew-synctyp",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "syncnew", "pos": dict(_POS1),
+             "fields": {"synctyp": 7, "type": 0}}),
+        "synctyp must be a string")
+    bad("bad-mathfma-z",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "mathfma", "pos": dict(_POS1),
+             "fields": {"x": _ex(), "y": _ex(), "type": 0}}),
+        "missing field 'z'")
+    bad("bad-funclit-no-body",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "funclit", "pos": dict(_POS1),
+             "fields": {"params": [], "results": []}}),
+        "must be an object")
+    bad("bad-funcdecl-linkname-type",
+        lambda d: d["funcs"][0]["fields"].update(linkname=42),
+        "linkname must be a string")
+    bad("bad-call-builtin-type",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "call", "pos": dict(_POS1),
+             "fields": {"fun": _ex(), "args": [], "builtin": 42,
+                        "type": 0}}),
+        "builtin must be a string")
+    bad("bad-selectcase-targets",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "select", "pos": dict(_POS1),
+             "fields": {"cases": [
+                 {"kind": "selectcase", "pos": dict(_POS1),
+                  "fields": {"kind": "recv", "chan": _ex(),
+                             "targets": [0, 99], "body": _blk()}}]}}),
+        "dangling object id")
 
     failures = 0
     for name, doc, want in cases:

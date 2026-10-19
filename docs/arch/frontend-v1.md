@@ -57,6 +57,12 @@ as `createSection(line, col, len)` (Truffle is char-based, so the wire is too;
 byte-based values crashed it with "charIndex out of range" on non-ASCII
 sources — M8 fuzzer find, fixed).
 
+Synthesized nodes (helpers with no source span, e.g. the `__BoundsDecode`
+params in `pkgvar_mrarg`) may carry degenerate positions: `line`/`col` 0
+(the exporter passes `token.NoPos` through) and a negative `len` (when the
+synthetic node's `End()` precedes its `Pos()`). The validator accepts this
+range; it is what the exporter emits.
+
 ## 4. Type table
 
 `types[i]` serializes one `go/types` type exactly once; expressions reference
@@ -134,7 +140,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `paren` | `x`, `type`: type id |
 | `convert` | `to`: type id, `from`: source type id (M7; needed for string<->slice to get the element kind), `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
 | `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` — string spread *and* slice spread since `007b42f`; only `append` carries it, and only for `...` calls) |
-| `fmtcall` | `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). Only the seven D4 symbols resolve; any other `fmt.X` is a scope error naming Phase 3. |
+| `fmtcall` | **Retired** — no longer emitted by gofrontend and no longer consumed by the backend (only dangling javadoc `{@link #buildFmtCall}` references remain in `NodeFactory.java`); kept in this table as history. Was: `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). |
 | `if` | `init`: stmt node or null, `cond`: expr node, `then`: block node, `else`: stmt node or null (block or `if` for else-if) |
 | `for` | `init`: stmt node or null, `cond`: expr node or null, `post`: stmt node or null, `body`: block node |
 | `range` | `key`, `value`: object ids or null (absent/blank), `define`: bool, `x`: expr node, `body`: block node |
@@ -145,7 +151,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `branch` | `op` ∈ {`break`,`continue`,`goto`,`fallthrough`}, `label`: str or null |
 | `labeled` | `label`: str, `stmt`: stmt node |
 | `defer` | `call`: expr node — a deferred call (M5, WS F) |
-| `funclit` | `params`: [param nodes], `results`: [param nodes], `body`: block node — a function literal (M5, WS F) |
+| `funclit` | `params`: [param nodes], `results`: [param nodes], `body`: block node, `type`: type id (optional — the main export path stamps the signature id so the factory can box the function value into an interface; the synthesized `go`/`defer` wrappers omit it and the factory derives the result type from `results[0]`) — a function literal (M5, WS F) |
 | `blank` | (no fields) — the blank identifier `_` in assignment lhs |
 | `complit` | `type`: type id, `keyed`: bool, `keys`: [expr nodes] (absent unless keyed map/array/slice), `fieldkeys`: [str] (absent unless keyed struct), `values`: [expr nodes] |
 | `index` | `x`, `index`: expr nodes, `type`: type id (element type; map elem type for comma-ok), `commaOk`: bool |
@@ -170,6 +176,47 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `atomicaddr` | `addr`: expr node (the `*T` address operand), `cell` ∈ {`int64`,`int32`} (the delegating cell kind; gc has no package-level bool atomics, so `bool` is not a cell) — an atomic cell view over a Go address: evaluates `addr` to its `GoPointer` and wraps it in a delegating `AtomicLong` / `AtomicInteger` cell, so the existing `syncop` atomic machinery serves the operation unchanged. No `type` field: the node evaluates to the opaque cell object, never directly observed. A nil address is gc's nil-dereference panic (fix-linkname; additive node kind, first emitted by gofrontend 0.7.0) |
+| `gostmt` | `call`: call node — a `go` statement; the call's `fun`/`args` are evaluated at statement time and the call runs on a new goroutine (P2-M1, WS A) |
+| `syncop` | `op`: str, `synctyp`: str (e.g. `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `Pool`, `Map`, `atomic.Int64`…), `recv`: expr node (the sync value — or the `atomicaddr` cell for package-level `sync/atomic` word ops), `args`: [expr nodes], `type`: type id — a sync primitive method call or a package-level `sync/atomic` operation (P3-M2b/M4, WS D/C, ADR-0002/ADR-0004) |
+| `syncnew` | `synctyp`: str, `type`: type id, `newfunc`: expr node or absent (`Pool` only, the `New` func value) — construction of a sync/atomic value. **Retired emission**: gofrontend no longer emits it (sync values lower as plain struct vars); still accepted by the backend's `SyncNewNode` |
+| `addrof` | `x`: expr node, `type`: type id — `&x`; **or** `array`: expr node, `index`: expr node, `type`: type id — `&a[i]`, the element pointer (the array may be a slice or a `*[N]T` dereference) (P3-M9, WS D) |
+| `deref` | `x`: expr node, `type`: type id — `*p`, explicit or implicit (receiver) dereference (P3-M9, WS D) |
+| `funcfieldcall` | `recv`: expr node, `field`: str, `args`: [expr nodes], `pairType`: type id, `pairFields`: [str] (result field names in order) — a multi-result call through a struct function field, e.g. `c.generate(r)` (P3-M9, WS D). **Note**: the backend has no builder registered for this kind (the sibling desugar path emits a plain `call` instead); the wire shape is specified here, the missing builder is a backend gap |
+| `unsafetooptr` | `x`: expr node, `type`: type id — `unsafe.Pointer` → `*T` (M8) |
+| `unsafefromptr` | `x`: expr node, `type`: type id — `*T` (or untyped nil) → `unsafe.Pointer` (M8) |
+| `unsafefromuint` | `x`: expr node, `type`: type id — `uintptr` → `unsafe.Pointer` (M8) |
+| `unsafeadd` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.Add(ptr, len)` (M8/D5; evaluate-then-trap shape) |
+| `unsafeslice` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.Slice(ptr, len)` (M8) |
+| `unsafeslicedata` | `slice`: expr node, `type`: type id — `unsafe.SliceData(s)` (M8) |
+| `unsafestring` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.String(ptr, len)` (M8) |
+| `unsafestringdata` | `s`: expr node, `type`: type id — `unsafe.StringData(s)` (M8) |
+| `abifuncpc` | `kind` ∈ {`FuncPCABI0`,`FuncPCABIInternal`} (the intrinsic name — a *field* literally named `kind`), `arg`: expr node (the func value), `type`: type id (must be `uintptr`) — the `internal/abi` compile intrinsics, returning an opaque stable func id (real-reflect Phase 1) |
+| `reflectop` | `op`: str (the shim name without the `__reflect_` prefix), `args`: [expr nodes], `type`: type id — a `__reflect_*`-shimmed `reflect` call (real-reflect) |
+| `sliceoverlap` | `x`, `y`: expr nodes (the two `[]byte` slices), `inexact`: bool, `type`: type id — `crypto/internal/fips140/alias.AnyOverlap` / `InexactOverlap` (P3-M9) |
+| `minmax` | `op`: str (the builtin name, `min`/`max`), `args`: [expr nodes], `type`: type id — the builtin `min`/`max` call (P4) |
+| `clear` | `x`: expr node — the builtin `clear(x)`; void, so no `type` field (P4) |
+| `runtimecallers` | `skip`, `pc`: expr nodes, `type`: type id — `runtime.Callers(skip, pc)` |
+| `runtimecallersframes` | `pcs`: expr node, `type`: type id — `runtime.CallersFrames(pcs)` |
+| `runtimefuncforpc` | `pc`: expr node, `type`: type id — `runtime.FuncForPC(pc)` |
+| `runtimefuncname` | `f`: expr node, `type`: type id — `(*runtime.Func).Name()` |
+| `runtimefuncentry` | `f`: expr node, `type`: type id — `(*runtime.Func).Entry()` |
+| `runtimecaller` | `skip`: expr node, `type`: type id — `runtime.Caller(skip)` (multi-result desugar; P3-M9, WS D) |
+| `runtimeframesnext` | `f`: expr node, `type`: type id — `(*runtime.Frames).Next()` (multi-result desugar; P3-M9, WS D) |
+| `runtimefuncfileline` | `f`, `pc`: expr nodes, `type`: type id — `(*runtime.Func).FileLine(pc)` (multi-result desugar; P3-M9, WS D) |
+| `runtimegomaxprocs` | `x`: expr node, `type`: type id — `runtime.GOMAXPROCS(n)` (P4) |
+| `runtimegoroot` | `type`: type id — `runtime.GOROOT()` |
+| `runtimegosched` | (no fields) — `runtime.Gosched()`, a statement (PKG-040) |
+| `runtimenumcpu` | `type`: type id — `runtime.NumCPU()` |
+| `runtimenumgoroutine` | `type`: type id — `runtime.NumGoroutine()` (PKG-023) |
+| `runtimereadmemstats` | `m`: expr node — `runtime.ReadMemStats(m)`; void, so no `type` field |
+| `runtimestack` | `args`: [expr nodes], `type`: type id — `runtime.Stack(buf, all)` |
+| `runtimeversion` | `type`: type id — `runtime.Version()` |
+| `mathf64bits` | `x`: expr node, `type`: type id — `math.Float64bits(x)` (P3-M7, ADR-0007 D5) |
+| `mathf64frombits` | `x`: expr node, `type`: type id — `math.Float64frombits(x)` (P3-M7, ADR-0007 D5) |
+| `mathf32bits` | `x`: expr node, `type`: type id — `math.Float32bits(x)` (P3-M7, ADR-0007 D5) |
+| `mathf32frombits` | `x`: expr node, `type`: type id — `math.Float32frombits(x)` (P3-M7, ADR-0007 D5) |
+| `mathsqrt` | `x`: expr node, `type`: type id — `math.Sqrt(x)` (P3-M7, ADR-0007 D5) |
+| `mathfma` | `x`, `y`, `z`: expr nodes, `type`: type id — `math.FMA(x, y, z)` (P3-M7, ADR-0007 D5) |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).
