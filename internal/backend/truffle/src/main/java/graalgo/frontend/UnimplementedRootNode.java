@@ -8,6 +8,8 @@ import com.oracle.truffle.api.source.SourceSection;
 
 import graalgo.runtime.Panic;
 import graalgo.safepoint.Safepoint;
+import graalgo.values.GoKind;
+import graalgo.values.GoString;
 
 /**
  * Root node for a bodyless function without {@code //go:linkname}
@@ -43,7 +45,17 @@ public final class UnimplementedRootNode extends RootNode {
         Safepoint.poll();
         String msg = "unimplemented: " + pkgPath + "." + funcName
                 + " (assembly function not implemented in graalgo)";
-        Panic.throwPanic(msg, null, null, this);
+        // D5: Panic.throwPanic takes the Go value in its D5 mapping — a raw
+        // java.lang.String is not a Go string, and with a null descriptor
+        // recover() would hand the value back unboxed, ClassCastExceptioning
+        // GoInterface.narrow inside TypeAssertNode (RV-P0-06 family). Wrap in
+        // GoString and pass the canonical predeclared-string descriptor (the
+        // same identity NodeFactory.typeDescriptorFor uses for `string`, via
+        // the process-wide basicDescriptorForName cache) so recover() boxes
+        // it as a GoInterface and r.(string) holds.
+        Panic.throwPanic(GoString.fromUtf8(msg),
+                NodeFactory.basicDescriptorForName("string", GoKind.STRING),
+                null, this);
         throw new IllegalStateException("throwPanic returned");
     }
 
