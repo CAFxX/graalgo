@@ -48,8 +48,14 @@ This package implements `go vet`-style static analyzers that run as part of
 
 - Analyzers are registered via `register()` in `init()` and run in order.
 - `Pass` carries the `token.FileSet`, parsed `[]*ast.File`, and `*types.Info`.
-- Type checking is best-effort: if `types.Config.Check` fails, analyzers
-  still run on the AST with partial type info.
+- `Run(paths)` groups files by directory and package clause and analyzes
+  each group as its own package, mirroring `go vet`'s per-package
+  behavior; files from different packages are never merged.
+- Type checking is best-effort: if `types.Config.Check` fails, the failure
+  is reported as a warning on stderr (naming unresolvable imports) and
+  analyzers still run on the AST with partial type info.
+- Parse failures are collected and returned; analysis continues with the
+  files that did parse.
 - `Run(paths)` returns diagnostics sorted by source position.
 - `asmdecl` and `framepointer` discover `.s` files in the directories
   containing the analyzed Go files.

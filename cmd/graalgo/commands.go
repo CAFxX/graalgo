@@ -270,7 +270,8 @@ func cmdVet(root string, args []string) int {
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
+	// Run the analyzers. vet.Run groups files by directory and package
+	// clause and analyzes each package separately, like `go vet`.
 	ds, err := vet.Run(files)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)

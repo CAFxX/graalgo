@@ -5,6 +5,7 @@
 package vet
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/importer"
@@ -12,6 +13,8 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"path/filepath"
+	"regexp"
 )
 
 // Analyzer is a single static check.
@@ -43,48 +46,110 @@ func Analyzers() []*Analyzer {
 }
 
 // Run analyzes the named Go source files and returns sorted diagnostics.
-// It parses with comments (for directive checks) and type-checks on a
-// best-effort basis: if type checking fails, analyzers still run on the
-// AST with whatever type info was gathered.
+// It parses with comments (for directive checks).
+//
+// Files are grouped by directory and package clause, and each group is
+// type-checked and analyzed as its own package, mirroring `go vet`'s
+// per-package behavior. Files from different packages are never merged
+// into a single fake package (which would produce redeclarations, wrong
+// resolution, and garbage diagnostics).
+//
+// Type checking is best-effort: if it fails, the failure is reported as a
+// warning on stderr (naming any unresolvable imports) and the analyzers
+// still run on the AST with whatever type info was gathered. Parse
+// failures are collected and returned; analysis continues with the files
+// that did parse.
 func Run(paths []string) ([]Diagnostic, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("vet: no files")
+	}
 	fset := token.NewFileSet()
-	var files []*ast.File
+	groups, gerr := groupFiles(fset, paths)
+
+	var out []Diagnostic
+	for i, g := range groups {
+		info := &types.Info{
+			Types:      make(map[ast.Expr]types.TypeAndValue),
+			Defs:       make(map[*ast.Ident]types.Object),
+			Uses:       make(map[*ast.Ident]types.Object),
+			Selections: make(map[*ast.SelectorExpr]*types.Selection),
+			Scopes:     make(map[ast.Node]*types.Scope),
+		}
+		conf := types.Config{
+			Importer:                 importer.Default(),
+			IgnoreFuncBodies:         false,
+			DisableUnusedImportCheck: true,
+		}
+		pkg, checkErr := conf.Check(fmt.Sprintf("vetpkg%d", i), fset, g.files, info)
+		if checkErr != nil {
+			reportTypeCheckError(g, checkErr)
+		}
+		// Type errors are tolerated: analyzers use best-effort info.
+
+		pass := &Pass{Fset: fset, Files: g.files, Info: info, Pkg: pkg}
+		for _, a := range analyzers {
+			out = append(out, a.Run(pass)...)
+		}
+	}
+	return SortDiagnostics(out), gerr
+}
+
+// fileGroup is a set of files that form one package: same directory and
+// same package clause.
+type fileGroup struct {
+	dir   string // absolute directory containing the files
+	name  string // package clause name
+	files []*ast.File
+}
+
+// groupFiles parses paths and groups the resulting files by (directory,
+// package clause). Files that fail to parse are skipped; their errors are
+// collected and returned so the caller can report them.
+func groupFiles(fset *token.FileSet, paths []string) ([]*fileGroup, error) {
+	var groups []*fileGroup
+	byKey := make(map[string]*fileGroup)
+	var errs []error
 	for _, path := range paths {
 		src, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("vet: %v", err)
+			errs = append(errs, fmt.Errorf("vet: %v", err))
+			continue
 		}
 		f, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
 		if err != nil {
-			return nil, fmt.Errorf("vet: parse %s: %v", path, err)
+			errs = append(errs, fmt.Errorf("vet: parse %s: %v", path, err))
+			continue
 		}
-		files = append(files, f)
+		dir, derr := filepath.Abs(filepath.Dir(path))
+		if derr != nil {
+			dir = filepath.Dir(path)
+		}
+		key := dir + "\x00" + f.Name.Name
+		g := byKey[key]
+		if g == nil {
+			g = &fileGroup{dir: dir, name: f.Name.Name}
+			byKey[key] = g
+			groups = append(groups, g)
+		}
+		g.files = append(g.files, f)
 	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("vet: no files")
-	}
+	return groups, errors.Join(errs...)
+}
 
-	info := &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
-	}
-	conf := types.Config{
-		Importer:                 importer.Default(),
-		IgnoreFuncBodies:         false,
-		DisableUnusedImportCheck: true,
-	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
-	// Type errors are tolerated: analyzers use best-effort info.
+// unresolvableImportRe matches go/types "could not import" errors, e.g.
+// `could not import "example.com/mod/pkg" (can't find import: ...)`.
+var unresolvableImportRe = regexp.MustCompile(`could not import ("[^"]+"|\S+)`)
 
-	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
-	var out []Diagnostic
-	for _, a := range analyzers {
-		out = append(out, a.Run(pass)...)
+// reportTypeCheckError surfaces a failed package type-check as a warning
+// on stderr instead of silently discarding it. An unresolvable import is
+// named explicitly so the user knows why analysis is degraded.
+func reportTypeCheckError(g *fileGroup, err error) {
+	fmt.Fprintf(os.Stderr, "graalgo vet: type-check of package %s in %s failed (%d file(s)); analyzers run with best-effort type info\n",
+		g.name, g.dir, len(g.files))
+	if m := unresolvableImportRe.FindStringSubmatch(err.Error()); m != nil {
+		fmt.Fprintf(os.Stderr, "graalgo vet: unresolvable import: %s\n", m[1])
 	}
-	return SortDiagnostics(out), nil
+	fmt.Fprintf(os.Stderr, "graalgo vet: type error: %v\n", err)
 }
 
 // position returns the source position of n.
