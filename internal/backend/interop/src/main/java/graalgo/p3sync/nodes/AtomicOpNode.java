@@ -36,6 +36,12 @@ import graalgo.values.GoKind;
  * a zero Pointer loads null, i.e. Go's nil {@code *T}); a Go
  * {@code any} result is {@code INTERFACE} kind.
  *
+ * <p>P1-6: {@code Value}'s Store/Swap/CompareAndSwap carry gc's misuse
+ * panics (nil values, inconsistent dynamic types) with gc's exact
+ * messages — see {@link graalgo.runtime.Atomics#storeValue},
+ * {@link graalgo.runtime.Atomics#swapValue}, and
+ * {@link graalgo.runtime.Atomics#compareAndSwapGoValue}.
+ *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1
  * {@code NodeFactory} change. The P3 launcher's {@code "syncop"}
@@ -260,11 +266,17 @@ public final class AtomicOpNode extends GoExprNode {
                 return Atomics.loadPointer(cellRef(frame));
             }
             case "atomic.Value.Store" -> {
-                Atomics.storePointer(cellRef(frame), args[0].executeObject(frame));
+                // P1-6: gc's misuse panics (nil / inconsistently typed
+                // stores) live in Atomics.storeValue; Pointer[T] keeps the
+                // unchecked storePointer (nil *T is legal there).
+                Atomics.storeValue(cellRef(frame), args[0].executeObject(frame));
                 return null;
             }
             case "atomic.Value.Swap" -> {
-                return Atomics.swapPointer(cellRef(frame), args[0].executeObject(frame));
+                // P1-6: as for Store — Atomics.swapValue carries gc's
+                // misuse panics and returns the previous value (nil when
+                // the Value was empty).
+                return Atomics.swapValue(cellRef(frame), args[0].executeObject(frame));
             }
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a void op");

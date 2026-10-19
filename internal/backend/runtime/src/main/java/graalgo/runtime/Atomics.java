@@ -5,6 +5,7 @@ import graalgo.runtime.sync.LongCell;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.values.GoEquality;
+import graalgo.values.GoInterface;
 import graalgo.values.GoPointer;
 
 /**
@@ -247,10 +248,38 @@ public final class Atomics {
      * dynamic type and equal dynamic value ({@link GoEquality#equal}) —
      * so separately boxed equal values compare equal, not just identical
      * wrapper objects.
+     *
+     * <p>P1-6: gc's misuse panics, with gc's exact messages
+     * (sync/atomic/value.go, go1.27.1, verified empirically): a nil
+     * {@code new} panics; an {@code old} whose dynamic type differs from
+     * {@code new}'s panics; a {@code new} whose dynamic type differs from
+     * the stored value's panics. A nil {@code old} on an empty Value
+     * stores {@code new} and reports true — gc does not panic there.
      */
     public static boolean compareAndSwapGoValue(AtomicReference<Object> addr, Object old, Object new_) {
+        if (isNilInterface(new_)) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: compare and swap of nil value into Value"));
+        }
+        if (!isNilInterface(old) && valueTypeKey(old) != valueTypeKey(new_)) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: compare and swap of inconsistently typed values"));
+        }
         for (;;) {
             Object cur = addr.get();
+            if (cur == null) {
+                // Empty Value: gc swaps only against a nil old.
+                if (!isNilInterface(old)) {
+                    return false;
+                }
+                if (addr.compareAndSet(null, new_)) {
+                    return true;
+                }
+                // Lost the race: retry against the fresh cell value.
+                continue;
+            }
+            if (valueTypeKey(cur) != valueTypeKey(new_)) {
+                Panic.throwPanic(
+                        GoStrings.of("sync/atomic: compare and swap of inconsistently typed value into Value"));
+            }
             if (!GoEquality.equal(cur, old)) {
                 return false;
             }
@@ -258,6 +287,87 @@ public final class Atomics {
                 return true;
             }
             // Lost the race: retry against the fresh value.
+        }
+    }
+
+    // -- atomic.Value misuse panics (P1-6) --------------------------------
+    // gc (sync/atomic/value.go, go1.27.1) rejects, with exact messages:
+    //   * Store(nil) / Swap(nil)
+    //       "sync/atomic: store of nil value into Value"
+    //       "sync/atomic: swap of nil value into Value"
+    //   * inconsistently typed Store / Swap
+    //       "sync/atomic: store of inconsistently typed value into Value"
+    //       "sync/atomic: swap of inconsistently typed value into Value"
+    // (CompareAndSwap's panics live in compareAndSwapGoValue above.)
+    // A nil Go any arrives as Java null or the GoInterface.NIL sentinel
+    // (cf. GoInterface.narrow); a typed nil carries a descriptor and is a
+    // legal non-nil interface value. The dynamic-type key is the
+    // GoInterface descriptor identity — the same granularity as gc's
+    // itab-pointer comparison and GoEquality's interface branch.
+    // The cell's type is monotonic (null, then one fixed type: once
+    // established, only same-type values can be installed), so the
+    // check-then-CAS loops match gc's serialized first-store protocol
+    // even under races.
+
+    /** Whether v is a nil Go interface value: Java null or GoInterface.NIL. */
+    static boolean isNilInterface(Object v) {
+        return v == null || (v instanceof GoInterface gi && gi.isNil());
+    }
+
+    /**
+     * Dynamic-type key of a non-nil atomic.Value payload: the canonical
+     * descriptor for boxed interface values; the Java class for any
+     * unboxed carrier (defensive — Value operands are boxed by
+     * construction in AtomicOpNode).
+     */
+    static Object valueTypeKey(Object v) {
+        if (v instanceof GoInterface gi) {
+            return gi.descriptor();
+        }
+        return v.getClass();
+    }
+
+    /**
+     * atomic.Value store with gc's misuse panics: nil and inconsistently
+     * typed stores panic with gc's exact messages. The first store
+     * establishes the cell's dynamic type atomically via the CAS loop.
+     */
+    public static void storeValue(AtomicReference<Object> addr, Object v) {
+        if (isNilInterface(v)) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: store of nil value into Value"));
+        }
+        Object key = valueTypeKey(v);
+        for (;;) {
+            Object cur = addr.get();
+            if (cur != null && valueTypeKey(cur) != key) {
+                Panic.throwPanic(GoStrings.of("sync/atomic: store of inconsistently typed value into Value"));
+            }
+            if (addr.compareAndSet(cur, v)) {
+                return;
+            }
+            // Lost the race: re-check against the fresh cell value.
+        }
+    }
+
+    /**
+     * atomic.Value swap with gc's misuse panics: nil and inconsistently
+     * typed swaps panic with gc's exact messages. Returns the previous
+     * value, or Java null (Go nil) when the Value was empty.
+     */
+    public static Object swapValue(AtomicReference<Object> addr, Object v) {
+        if (isNilInterface(v)) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: swap of nil value into Value"));
+        }
+        Object key = valueTypeKey(v);
+        for (;;) {
+            Object cur = addr.get();
+            if (cur != null && valueTypeKey(cur) != key) {
+                Panic.throwPanic(GoStrings.of("sync/atomic: swap of inconsistently typed value into Value"));
+            }
+            if (addr.compareAndSet(cur, v)) {
+                return cur;
+            }
+            // Lost the race: re-check against the fresh cell value.
         }
     }
 }

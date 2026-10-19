@@ -2837,6 +2837,19 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				e.mrHoistPre = e.mrHoistPre[:preBase]
 				initNode = x
 			} else {
+				// P1-6 (RV22): package-level `var v atomic.Value` (no
+				// init) — implicit syncnew, mirroring the local-var path
+				// (exportVarGenDecl): the zero Value is the
+				// AtomicReference cell (ADR-0002 D1).
+				if v, ok := e.info.Defs[n].(*types.Var); ok && atomicValueNamed(v.Type()) != nil {
+					tid, err := e.typeID(v.Type())
+					if err != nil {
+						return nil, err
+					}
+					initNode = e.node("syncnew", vs, map[string]any{
+						"synctyp": "atomic.Value", "type": tid,
+					})
+				}
 			}
 			if n.Name == "_" {
 				// Blank: no variable, but the initializer is evaluated
@@ -7397,6 +7410,24 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		if hasType && typeIsTimer != nil {
 			return nil, timerScopeErrorf(typeIsTimer, "var declaration")
 		}
+		// P1-6 (RV22): `var v atomic.Value` (no init) normalizes to an
+		// implicit syncnew per name — gc's ready-to-use zero Value is the
+		// AtomicReference cell (ADR-0002 D1); the factory's generic zero
+		// would leave method calls without a cell (see
+		// exportAtomicValueOp).
+		if hasType && len(vs.Values) == 0 {
+			if tv, ok := e.info.Types[vs.Type]; ok && tv.Type != nil && atomicValueNamed(tv.Type) != nil {
+				tid, err := e.typeID(tv.Type)
+				if err != nil {
+					return nil, err
+				}
+				for range vs.Names {
+					values = append(values, e.node("syncnew", vs, map[string]any{
+						"synctyp": "atomic.Value", "type": tid,
+					}))
+				}
+			}
+		}
 		vardecls = append(vardecls, e.node("vardecl", vs, map[string]any{
 			"names": names, "objs": objs, "define": false, "type": typ, "values": values,
 		}))
@@ -8727,6 +8758,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if nt := timeTimerTickerNamed(selection.Recv()); nt != nil {
 				return e.exportTimeOp(c, sel, nt)
 			}
+			// P1-6 (RV22): (*atomic.Value).Load/Store/Swap/CompareAndSwap
+			// lower to additive "syncop" wire nodes (synctyp
+			// "atomic.Value"; the Go value is the AtomicReference cell).
+			// The real method bodies drive through unsafe.Pointer and
+			// cannot execute — see exportAtomicValueOp.
+			if atomicValueNamed(selection.Recv()) != nil {
+				return e.exportAtomicValueOp(c, sel)
+			}
 			// P3-M8 (WS D): interface calls route to exportIfaceMethodCall FIRST —
 			// it owns the multi-result decision (pairPlan dispatch for table
 			// methods, fail-fast otherwise). The fail-fast below then applies
@@ -9006,6 +9045,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				if nt := timeTimerTickerNamedExact(tv.Type); nt != nil {
 					return nil, timerScopeErrorf(nt, "new()")
 				}
+				// P1-6 (RV22): new(atomic.Value) constructs the
+				// AtomicReference cell (ADR-0002 D1) via syncnew — the
+				// Go value IS the cell, so the pointer result needs no
+				// wrapping.
+				if atomicValueNamed(tv.Type) != nil {
+					ntyp, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("syncnew", c, map[string]any{
+						"synctyp": "atomic.Value", "type": ntyp,
+					}), nil
+				}
 			}
 		}
 	case "len", "cap":
@@ -9230,6 +9282,81 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 	return e.node("syncop", c, map[string]any{
 		"op": desc.op, "synctyp": desc.synctyp, "recv": recv, "args": args, "type": typ,
 	}), true, nil
+}
+
+// atomicValueOps is the (*atomic.Value) method set lowered to syncop
+// wire nodes (P1-6 remediation, RV22): gc's exact method names with
+// their argument counts.
+var atomicValueOps = map[string]int{
+	"Load": 0, "Store": 1, "Swap": 1, "CompareAndSwap": 2,
+}
+
+// atomicValueNamed reports whether t unwraps (through one pointer) to
+// the sync/atomic.Value named type — the any-typed atomic wrapper.
+// Structural on the resolved type (package path "sync/atomic" plus the
+// type name), mirroring timeTimerTickerNamed: a user type named Value
+// is never matched.
+func atomicValueNamed(t types.Type) *types.Named {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	nt, ok := t.(*types.Named)
+	if !ok {
+		return nil
+	}
+	obj := nt.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" {
+		return nil
+	}
+	if obj.Name() != "Value" {
+		return nil
+	}
+	return nt
+}
+
+// exportAtomicValueOp lowers (*atomic.Value).Load/Store/Swap/
+// CompareAndSwap method calls into the "syncop" wire node with synctyp
+// "atomic.Value" (P1-6 remediation, RV22), served by AtomicOpNode. The
+// real method bodies (sync/atomic/value.go) funnel the value through
+// unsafe.Pointer (efaceWords) which the backend cannot execute —
+// compiling them normally panics at runtime. This restores the P3-M10
+// design on the real-package footing: 503608ea retired the synthetic
+// overlay (and its method lowering), leaving the backend's atomic.Value
+// entries dead and every Value method call broken.
+//
+// The Go value IS the AtomicReference cell (ADR-0002 D1), so the
+// receiver expression evaluates to the cell directly — &/* is a no-op
+// at the value level. Construction sites (var/new/literal) emit
+// "syncnew" cells for the same reason.
+func (e *exporter) exportAtomicValueOp(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node, error) {
+	op := sel.Sel.Name
+	wantArgs, ok := atomicValueOps[op]
+	if !ok {
+		return nil, scopeErrorf("atomic.Value.%s is not in scope", op)
+	}
+	if len(c.Args) != wantArgs {
+		return nil, fmt.Errorf("gofrontend: atomic.Value.%s takes %d arguments, got %d",
+			op, wantArgs, len(c.Args))
+	}
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]*Node, 0, len(c.Args))
+	for _, a := range c.Args {
+		x, err := e.exportExpr(a)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, x)
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": "atomic.Value", "recv": recv, "args": args, "type": typ,
+	}), nil
 }
 
 // exportAtomicStorePointerStmt lowers a bare-statement
@@ -11247,6 +11374,18 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 		// time.NewTimer/time.NewTicker).
 		if nt := timeTimerTickerNamedExact(tv.Type); nt != nil {
 			return nil, timerScopeErrorf(nt, "composite literal")
+		}
+		// P1-6 (RV22): atomic.Value{...} constructs the AtomicReference
+		// cell (ADR-0002 D1) via syncnew. Elements are impossible — the
+		// field is unexported, so go/types already rejected any — and
+		// fail fast here in defense (the old M4 rule).
+		if atomicValueNamed(tv.Type) != nil {
+			if len(l.Elts) > 0 {
+				return nil, scopeErrorf("atomic.Value literal with elements is not in scope")
+			}
+			return e.node("syncnew", l, map[string]any{
+				"synctyp": "atomic.Value", "type": t,
+			}), nil
 		}
 	}
 	keyed := false

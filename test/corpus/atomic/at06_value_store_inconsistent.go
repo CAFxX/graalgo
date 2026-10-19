@@ -1,0 +1,14 @@
+// verifies: GG-0020
+package main
+
+import "sync/atomic"
+
+// P1-6 (RV22): Value.Store of an inconsistently typed value panics.
+// gc 1.27.1: "sync/atomic: store of inconsistently typed value into
+// Value". Uncaught to stderr; the `panic:` line is compared
+// byte-for-byte against gc.
+func main() {
+	var v atomic.Value
+	v.Store(1)
+	v.Store("s")
+}

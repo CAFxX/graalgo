@@ -125,3 +125,65 @@ func main() {
 		t.Fatalf("ExportFile with deferred atomic ops: %v", err)
 	}
 }
+
+// TestAtomicValueSyncopLowering: (*atomic.Value) method calls lower to
+// syncop wire nodes with synctyp "atomic.Value" (P1-6 remediation,
+// RV22) — the real method bodies drive through unsafe.Pointer and
+// cannot execute. Constructions (var/new/literal) lower to syncnew
+// cells.
+func TestAtomicValueSyncopLowering(t *testing.T) {
+	src := `package main
+
+import "sync/atomic"
+
+func main() {
+	var v atomic.Value
+	v.Store(42)
+	_ = v.Load()
+	_ = v.Swap(43)
+	_ = v.CompareAndSwap(43, 44)
+	p := new(atomic.Value)
+	p.Store("s")
+	_ = p.Load()
+	w := atomic.Value{}
+	w.Store(1.5)
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with atomic.Value ops: %v", err)
+	}
+	for _, op := range []string{`"op": "Load"`, `"op": "Store"`, `"op": "Swap"`, `"op": "CompareAndSwap"`} {
+		if !strings.Contains(out, op) {
+			t.Errorf("exported JSON missing syncop %s for atomic.Value", op)
+		}
+	}
+	if !strings.Contains(out, `"synctyp": "atomic.Value"`) {
+		t.Errorf("exported JSON missing syncop synctyp atomic.Value")
+	}
+	if !strings.Contains(out, `"kind": "syncnew"`) {
+		t.Errorf("exported JSON missing syncnew for atomic.Value constructions")
+	}
+	// No direct call to the real (*Value) method bodies may remain: every
+	// Value method call must have been intercepted above.
+	if strings.Contains(out, `sync/atomic.Value.Store`) {
+		t.Errorf("exported JSON still references the real (*atomic.Value).Store body")
+	}
+}
+
+// TestAtomicValueLiteralElementsRejected: atomic.Value{...} with elements
+// fails fast (the field is unexported; gc rejects it at type-check, and
+// the cell model has no element form).
+func TestAtomicValueLiteralElementsRejected(t *testing.T) {
+	src := `package main
+
+import "sync/atomic"
+
+func main() {
+	_ = atomic.Value{v: 1}
+}
+`
+	if _, err := ExportFile(writeSyncProg(t, src)); err == nil {
+		t.Errorf("ExportFile accepted atomic.Value{v: 1}: want type error")
+	}
+}
