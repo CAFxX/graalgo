@@ -45,6 +45,9 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // Codebase-review I-4 (2026-10-19): EC curve identification must use
+        // the named-curve OID, never the field size (secp256k1 != secp256r1).
+        TESTS.add(graalgo.p3x509.GoX509CurveTest.class);
     }
 
     private IfaceTestRunner() {}

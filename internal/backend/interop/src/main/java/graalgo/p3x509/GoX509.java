@@ -1,7 +1,6 @@
 package graalgo.p3x509;
 
 import java.io.ByteArrayInputStream;
-import java.math.BigInteger;
 import java.security.AlgorithmParameters;
 import java.security.KeyFactory;
 import java.security.cert.CertificateException;
@@ -10,7 +9,6 @@ import java.security.cert.X509Certificate;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.EdECPrivateKey;
 import java.security.interfaces.RSAPrivateCrtKey;
-import java.security.spec.ECGenParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -260,7 +258,13 @@ public final class GoX509 {
     /**
      * EC field size in bits (224, 256, 384, 521), or -1 if not EC.
      * The Go side maps this to the elliptic.Curve (P-224, P-256, P-384,
-     * P-521) — the JDK does not expose the curve OID directly.
+     * P-521). Field size alone cannot distinguish curves sharing a field
+     * (e.g. secp256r1 vs secp256k1); the OID mechanism used by the
+     * private-key path ({@link #ecCurveName}) is the authoritative curve
+     * identifier. This entry point keeps the field-size wire format for
+     * Go-side compatibility; a 256-bit non-P-256 certificate is therefore
+     * still reported as 256 here (known limitation, same bug family as the
+     * fixed private-key path).
      */
     public static Object ecFieldSize(Object certArg) {
         X509Certificate cert = unwrapCert(certArg);
@@ -669,8 +673,7 @@ public final class GoX509 {
             KeyFactory kf = KeyFactory.getInstance("EC");
             ECPrivateKey key =
                     (ECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
-            int fieldSize = key.getParams().getCurve().getField().getFieldSize();
-            String curveName = ecCurveName(fieldSize);
+            String curveName = ecCurveName(key);
             if (curveName == null) {
                 return null;
             }
@@ -711,6 +714,10 @@ public final class GoX509 {
     private static String trySec1(byte[] der) {
         // SEC1 ECPrivateKey: SEQUENCE { version, privateKey OCTET STRING,
         //   [0] parameters, [1] publicKey }. Extract d and the curve OID.
+        // The public point (x, y) is deliberately NOT derived here: the Go
+        // side derives it itself from d via ScalarBaseMult (the synthetic
+        // elliptic package already owns big-integer EC arithmetic), so no EC
+        // arithmetic is needed on the Java side at all.
         try {
             byte[] d = extractSec1PrivateKey(der);
             String oid = extractSec1CurveOid(der);
@@ -721,97 +728,10 @@ public final class GoX509 {
             if (curveName == null) {
                 return null;
             }
-            // Derive x,y from d via scalar multiplication using the JDK.
-            java.security.spec.ECParameterSpec spec = ecSpecForName(curveName);
-            if (spec == null) {
-                return null;
-            }
-            BigInteger s = new BigInteger(1, d);
-            java.security.spec.ECPoint w = scalarMultiply(spec, s);
-            if (w == null) {
-                return null;
-            }
-            return "EC:" + curveName + ":" + toHex(toFixed(w.getAffineX(), spec))
-                    + ":" + toHex(toFixed(w.getAffineY(), spec)) + ":" + toHex(d);
+            return "EC:" + curveName + ":" + toHex(d);
         } catch (Exception ignored) {
             return null;
         }
-    }
-
-    private static byte[] toFixed(BigInteger v, java.security.spec.ECParameterSpec spec) {
-        int size = (spec.getCurve().getField().getFieldSize() + 7) / 8;
-        byte[] raw = stripLeadingZero(v.toByteArray());
-        if (raw.length == size) {
-            return raw;
-        }
-        byte[] out = new byte[size];
-        System.arraycopy(raw, 0, out, size - raw.length,
-                Math.min(raw.length, size));
-        return out;
-    }
-
-    private static java.security.spec.ECParameterSpec ecSpecForName(String name) {
-        try {
-            AlgorithmParameters p = AlgorithmParameters.getInstance("EC");
-            p.init(new ECGenParameterSpec(name));
-            return p.getParameterSpec(
-                    java.security.spec.ECParameterSpec.class);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static java.security.spec.ECPoint scalarMultiply(
-            java.security.spec.ECParameterSpec spec, BigInteger s) {
-        // Double-and-add on the curve.
-        java.security.spec.EllipticCurve curve = spec.getCurve();
-        java.security.spec.ECPoint g = spec.getGenerator();
-        java.security.spec.ECPoint result = java.security.spec.ECPoint.POINT_INFINITY;
-        java.security.spec.ECPoint addend = g;
-        BigInteger k = s.mod(spec.getOrder());
-        while (k.signum() > 0) {
-            if (k.testBit(0)) {
-                result = ecAdd(curve, result, addend);
-            }
-            addend = ecDouble(curve, addend);
-            k = k.shiftRight(1);
-        }
-        return result;
-    }
-
-    private static java.security.spec.ECPoint ecAdd(
-            java.security.spec.EllipticCurve curve,
-            java.security.spec.ECPoint p, java.security.spec.ECPoint q) {
-        if (p.equals(java.security.spec.ECPoint.POINT_INFINITY)) {
-            return q;
-        }
-        if (q.equals(java.security.spec.ECPoint.POINT_INFINITY)) {
-            return p;
-        }
-        BigInteger prime = ((java.security.spec.ECFieldFp) curve.getField()).getP();
-        BigInteger a = curve.getA();
-        BigInteger x1 = p.getAffineX(), y1 = p.getAffineY();
-        BigInteger x2 = q.getAffineX(), y2 = q.getAffineY();
-        BigInteger lambda;
-        if (x1.equals(x2)) {
-            if (!y1.equals(y2)) {
-                return java.security.spec.ECPoint.POINT_INFINITY;
-            }
-            // Doubling.
-            lambda = x1.multiply(x1).multiply(BigInteger.valueOf(3)).add(a)
-                    .multiply(y1.shiftLeft(1).modInverse(prime)).mod(prime);
-        } else {
-            lambda = y2.subtract(y1).multiply(x2.subtract(x1).modInverse(prime))
-                    .mod(prime);
-        }
-        BigInteger x3 = lambda.multiply(lambda).subtract(x1).subtract(x2).mod(prime);
-        BigInteger y3 = lambda.multiply(x1.subtract(x3)).subtract(y1).mod(prime);
-        return new java.security.spec.ECPoint(x3, y3);
-    }
-
-    private static java.security.spec.ECPoint ecDouble(
-            java.security.spec.EllipticCurve curve, java.security.spec.ECPoint p) {
-        return ecAdd(curve, p, p);
     }
 
     private static byte[] extractSec1PrivateKey(byte[] der) {
@@ -852,6 +772,9 @@ public final class GoX509 {
         if ("1.2.840.10045.3.1.7".equals(oid)) {
             return "secp256r1";
         }
+        if ("1.3.132.0.10".equals(oid)) {
+            return "secp256k1";
+        }
         if ("1.3.132.0.34".equals(oid)) {
             return "secp384r1";
         }
@@ -864,21 +787,40 @@ public final class GoX509 {
         return null;
     }
 
-    /** Maps an EC field size in bits to a JDK curve name. */
-    private static String ecCurveName(int fieldSize) {
-        if (fieldSize == 224) {
-            return "secp224r1";
+    /**
+     * Maps an EC private key to its JDK curve name via the real named-curve
+     * OID. Field size alone cannot identify the curve: secp256r1, secp256k1
+     * and brainpoolP256r1 all have 256-bit fields, so a field-size table
+     * misidentifies secp256k1/brainpool keys as secp256r1 and the Go side
+     * then builds the wrong curve (ECDSA verification fails where gc
+     * succeeds). The JDK exposes the OID through
+     * {@code AlgorithmParameters("EC")} initialized with the key's params:
+     * for provider-known named curves the encoding is the bare named-curve
+     * OID DER (verified empirically for secp256r1/secp384r1, both direct
+     * and PKCS#8-parsed keys; secp256k1 is not supported by this JDK's
+     * SunEC, so its table entry is covered by synthetic SEC1 tests).
+     * Returns null when the OID is absent or not in
+     * {@link #ecCurveNameByOid}.
+     */
+    private static String ecCurveName(ECPrivateKey key) {
+        try {
+            AlgorithmParameters p = AlgorithmParameters.getInstance("EC");
+            p.init(key.getParams());
+            byte[] enc = p.getEncoded();
+            if (enc == null || enc.length < 4 || (enc[0] & 0xFF) != 0x06) {
+                return null;
+            }
+            int len = enc[1] & 0xFF;
+            if (len <= 0 || len + 2 != enc.length) {
+                // Long-form length or trailing bytes: not a bare OID.
+                return null;
+            }
+            byte[] oid = new byte[len];
+            System.arraycopy(enc, 2, oid, 0, len);
+            return ecCurveNameByOid(decodeOid(oid));
+        } catch (Exception e) {
+            return null;
         }
-        if (fieldSize == 256) {
-            return "secp256r1";
-        }
-        if (fieldSize == 384) {
-            return "secp384r1";
-        }
-        if (fieldSize == 521) {
-            return "secp521r1";
-        }
-        return null;
     }
 
     /** Parses all INTEGERs from a PKCS#1 SEQUENCE. */

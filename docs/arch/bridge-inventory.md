@@ -135,18 +135,36 @@ deliverable until the design lands.
 
 - **What:**
   [GoX509.java](../../internal/backend/interop/src/main/java/graalgo/p3x509/GoX509.java):
-  hand-rolled `scalarMultiply`/`ecAdd`/`ecDouble` and byte
-  pattern-matching DER helpers (`extractBitString`, `skipLength`,
-  `derLength`, `parsePkcs1Integers`, `extractSec1PrivateKey`, …) instead of
-  delegating to JDK crypto (`java.security`).
+  hand-rolled byte pattern-matching DER helpers (`extractBitString`,
+  `skipLength`, `derLength`, `parsePkcs1`, `parsePkcs1Integers`,
+  `extractSec1PrivateKey`, `extractSec1CurveOid`, `decodeOid`,
+  `unwrapOctetString`, `extractAuthorityKeyId`) plus `parseSpki`'s
+  try-each-`KeyFactory`-algorithm guessing, instead of delegating to JDK
+  crypto (`java.security`). (The hand-rolled `scalarMultiply`/`ecAdd`/
+  `ecDouble` were deleted 2026-10-19 by the rev-x509-curve lane: the Go
+  side re-derives the SEC1 public point itself via `ScalarBaseMult(d)` and
+  ignores transmitted x:y in all cases, so the deletion is
+  behavior-preserving; the deleted arithmetic was verified correct against
+  an independent reference before removal.)
 - **Why:** expedience during the TLS bring-up; the directive (prefer JDK
   delegation when semantically compatible) was not applied.
-- **Root-cause fix:** delegate to the JDK (e.g. derive SEC1 public points
-  via `KeyAgreement("ECDH")`, parse with `CertificateFactory`) or document
-  specifically why the JDK cannot cover a case, with differential tests vs
-  gc `x509.ParseECPrivateKey` over P-224/256/384/521. In flight: worktree
-  `real-x509` (coordinate — it retires synthetic `crypto/x509`, the Go-side
-  counterpart).
+- **Root-cause fix (corrected 2026-10-19 — the earlier
+  `KeyAgreement("ECDH")` proposal is unworkable):** `KeyAgreement.doPhase`
+  requires the peer's *public* key as input, and no public JDK API performs
+  raw EC scalar multiplication d·G, so ECDH cannot derive a SEC1 public
+  point from the private scalar alone. The workable decomposition, now
+  implemented for the scalar-multiplication half: `trySec1` returns only
+  `EC:curveName:d` (the curve OID was already extracted correctly via
+  `extractSec1CurveOid` + `ecCurveNameByOid`); the Go-side synthetic
+  `elliptic` package derives (x, y) via `ScalarBaseMult(d)`. Remaining:
+  keep a byte-level DER helper only where the JDK provably cannot cover
+  the case (e.g. `extractSec1CurveOid`: `CertificateFactory` never sees
+  private keys, and `KeyFactory` does not surface the SEC1 `[0] parameters`
+  context tag — document the specific why-not-JDK reason per helper), with
+  differential tests vs gc `x509.ParseECPrivateKey` over P-224/256/384/521.
+  The Go-side half belongs to in-flight worktree `real-x509` — it retires
+  the synthetic `crypto/x509` counterpart; coordinate there, do not
+  duplicate.
 - **Phase:** 1.
 
 ### B-6. `unsafe.Add` always traps (bridge by omission)
