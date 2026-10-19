@@ -6,6 +6,7 @@ import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
 import graalgo.frontend.WireKindRegistrar;
+import graalgo.sched.launcher.GoDebug;
 import graalgo.values.GoKind;
 import java.io.IOException;
 import java.io.InputStream;
@@ -54,6 +55,19 @@ public final class Main {
 
     /** Entry point without the System.exit, for tests. Returns the process exit code. */
     static int run(String[] args) {
+        // GODEBUG surface triage (P2-M5, WS E; GG-0055): parse and validate
+        // before anything else. Unknown knobs, malformed values, and
+        // non-default values of unsupported knobs are hard errors (never
+        // silently ignored); the panicnil knob installs pre-1.21 panic(nil)
+        // semantics. Mirrors graalgo.sched.launcher.SchedMain (the --gmp=N
+        // entry) — without this the knobs were dead on the standard path.
+        // gc fatals with exit status 2 on invalid GODEBUG.
+        try {
+            GoDebug.apply();
+        } catch (GoDebug.GoDebugException e) {
+            System.err.println("graalgo-run: fatal error: " + e.getMessage());
+            return 2;
+        }
         boolean check = false;
         boolean dumpVars = false;
         String dumpPoly = null;

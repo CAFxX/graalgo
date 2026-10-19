@@ -13,7 +13,9 @@ import java.util.concurrent.TimeUnit;
  * P2-M5 (WS E): GODEBUG surface triage tests.
  *
  * <p>Unit tests cover the parser/validator and the versioned registry;
- * subprocess tests cover the SchedMain startup hook end-to-end.
+ * subprocess tests cover the startup hook end-to-end on both launchers:
+ * {@code graalgo.sched.launcher.SchedMain} (--gmp=N entry) and
+ * {@code graalgo.launcher.Main} (the standard graalgo-run entry).
  *
  * <p>verifies: GG-0055 (GODEBUG triage: versioned registry, unknown-knob
  * deny-with-error, godebug-diff green)
@@ -273,6 +275,34 @@ public final class GoDebugTest {
     }
 
     // ------------------------------------------------------------------
+    // Subprocess tests: standard launcher (graalgo.launcher.Main) startup hook
+    // ------------------------------------------------------------------
+
+    /** verifies: GG-0055 (unknown knob denies at startup on the standard path, exit 2). */
+    public void testMainLauncherUnknownKnobDeniesAtStartup() throws Exception {
+        ProcessResult r = runMainLauncher("bogusknob=1", "db01_hello.go");
+        assertEquals(2, r.exitCode, "exit code");
+        assertTrue(r.stderr.contains("unknown GODEBUG"),
+                "stderr names the problem:\n" + r.stderr);
+        assertTrue(r.stderr.contains("bogusknob"), "stderr names the knob");
+    }
+
+    /** verifies: GG-0055 (panicnil=1 changes panic(nil) behavior on the standard path). */
+    public void testMainLauncherPanicnilChangesBehavior() throws Exception {
+        ProcessResult with = runMainLauncher("panicnil=1", "db06_panicnil_main.go");
+        ProcessResult without = runMainLauncher("", "db06_panicnil_main.go");
+        assertEquals(0, with.exitCode, "exit code with panicnil=1\nstderr:\n" + with.stderr);
+        assertEquals(0, without.exitCode, "exit code default\nstderr:\n" + without.stderr);
+        // The knob must change observable behavior: pre-1.21, recover()
+        // after panic(nil) returns nil; by default it returns non-nil.
+        // (Builtin println writes to stderr, like gc.)
+        assertTrue(with.stderr.contains("recovered nil\n"),
+                "panicnil=1: recover() must return nil, stderr:\n" + with.stderr);
+        assertTrue(without.stderr.contains("recovered non-nil\n"),
+                "default: recover() must return non-nil, stderr:\n" + without.stderr);
+    }
+
+    // ------------------------------------------------------------------
     // Harness
     // ------------------------------------------------------------------
 
@@ -290,6 +320,15 @@ public final class GoDebugTest {
     }
 
     private ProcessResult runSchedMain(String godebug, String program) throws Exception {
+        return runLauncher("graalgo.sched.launcher.SchedMain", List.of("--gmp=1"), godebug, program);
+    }
+
+    private ProcessResult runMainLauncher(String godebug, String program) throws Exception {
+        return runLauncher("graalgo.launcher.Main", List.of(), godebug, program);
+    }
+
+    private ProcessResult runLauncher(String mainClass, List<String> launcherArgs,
+            String godebug, String program) throws Exception {
         Path goFile = CORPUS.resolve(program).toAbsolutePath();
         String javaBin = Paths.get(System.getProperty("java.home"), "bin", "java").toString();
         List<String> cmd = new ArrayList<>();
@@ -298,8 +337,8 @@ public final class GoDebugTest {
         cmd.add("-Xss32m");
         cmd.add("-cp");
         cmd.add(System.getProperty("java.class.path"));
-        cmd.add("graalgo.sched.launcher.SchedMain");
-        cmd.add("--gmp=1");
+        cmd.add(mainClass);
+        cmd.addAll(launcherArgs);
         cmd.add(goFile.toString());
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().put("GODEBUG", godebug);
