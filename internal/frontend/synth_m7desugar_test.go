@@ -142,7 +142,7 @@ func TestM7ErrorsAsTypeDesugarWiring(t *testing.T) {
 	}
 
 	// 2. errors.AsType exists in the synthetic package with 2 results.
-	sp := getSyntheticPackage("errors")
+	sp := mustGetSyntheticPackage(t, "errors")
 	if sp == nil || sp.pkg == nil {
 		t.Fatal("synthetic package \"errors\" not loaded")
 	}
@@ -270,7 +270,7 @@ func checkDesugarWiringSynthetic(t *testing.T, want m7StrconvJsonExpect) {
 	if want.recvType != "" {
 		name = want.pkgPath + "." + want.recvType + "." + want.name
 	}
-	sp := getSyntheticPackage(want.pkgPath)
+	sp := mustGetSyntheticPackage(t, want.pkgPath)
 	if sp == nil || sp.pkg == nil {
 		t.Fatalf("synthetic package %q not loaded", want.pkgPath)
 	}

@@ -343,21 +343,31 @@ var syntheticSources = map[string]string{
 // The same *types.Package instance is returned to every importer, so
 // *types.Func/*types.TypeName objects are identical between the user's
 // type-check and the synthetic sources' own.
-func getSyntheticPackage(path string) *syntheticPackage {
+//
+// P1-13: build failures (broken committed sources) are returned as
+// errors carrying file/position info, following the getDiskPackage
+// pattern. Failures are not cached, so a later call retries the build.
+// The "no synthetic source" panic below is retained: every call site
+// guards with a syntheticSources map check first, so it fires only on
+// an internal caller bug, never on user input.
+func getSyntheticPackage(path string) (*syntheticPackage, error) {
 	synthMu.Lock()
 	if sp, ok := synthCache[path]; ok {
 		synthMu.Unlock()
-		return sp
+		return sp, nil
 	}
 	synthMu.Unlock()
-	sp := buildSyntheticPackage(path)
+	sp, err := buildSyntheticPackage(path)
+	if err != nil {
+		return nil, err
+	}
 	synthMu.Lock()
 	defer synthMu.Unlock()
 	if prev, ok := synthCache[path]; ok {
-		return prev
+		return prev, nil
 	}
 	synthCache[path] = sp
-	return sp
+	return sp, nil
 }
 
 // restoreRawStrings repairs generator backtick-stripping damage. Some
@@ -833,7 +843,7 @@ func importSpecPath(spec string) string {
 	return spec[i : i+1+j+1]
 }
 
-func buildSyntheticPackage(path string) *syntheticPackage {
+func buildSyntheticPackage(path string) (*syntheticPackage, error) {
 	src, ok := syntheticSources[path]
 	if !ok {
 		panic("gofrontend: no synthetic source for " + path)
@@ -859,7 +869,11 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	// the exporter's linkname scan (ADR-0004 D1); matches ExportFile.
 	file, err := parser.ParseFile(fset, path+".go", src, parser.AllErrors|parser.ParseComments)
 	if err != nil {
-		panic("gofrontend: synthetic " + path + " parse error: " + err.Error())
+		// P1-13: a broken committed synthetic source is a toolchain
+		// bug, not a user error — report it as a clean diagnostic
+		// carrying the scanner's file/position info, not a panic.
+		// scanner.ErrorList formats each error as file:line:col: msg.
+		return nil, fmt.Errorf("gofrontend: synthetic %s parse error: %v", path, err)
 	}
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
@@ -872,7 +886,9 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	conf := types.Config{Importer: overlayImporter{}}
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
-		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
+		// P1-13: as above — types.Error carries file:line:col, so the
+		// diagnostic pinpoints the broken declaration.
+		return nil, fmt.Errorf("gofrontend: synthetic %s type error: %v", path, err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
@@ -881,7 +897,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
 		raw: []byte(src),
-	}
+	}, nil
 }
 
 // timeIntrinsicNames are the synthetic time package's clock/timer entry
@@ -942,6 +958,19 @@ type synthGroup struct {
 	fis []*funcDeclInfo
 }
 
+// importSynthetic resolves a synthetic package by import path and merges
+// it into the document. This is the error-propagating entry point for the
+// import cascade: a broken committed synthetic source surfaces as a clean
+// diagnostic (via getSyntheticPackage) instead of a panic. Prefer this
+// over calling getSyntheticPackage + importSyntheticPackage separately.
+func (e *exporter) importSynthetic(path string) error {
+	sp, err := getSyntheticPackage(path)
+	if err != nil {
+		return err
+	}
+	return e.importSyntheticPackage(sp)
+}
+
 // importSyntheticPackage merges a synthetic package's real-Go
 // declarations into the document: package vars become globals (emitted
 // immediately, in source order — they cannot depend on user vars),
@@ -980,7 +1009,8 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	for _, imp := range sp.pkg.Imports() {
 		ip := imp.Path()
 		if _, ok := syntheticSources[ip]; ok {
-			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
+			// P1-13: build failure propagates as a clean diagnostic.
+			if err := e.importSynthetic(ip); err != nil {
 				return err
 			}
 			continue
@@ -1310,7 +1340,12 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				// function value (e.g. var AcceptFunc ... =
 				// syscall.Accept) to their pair info, so same-package
 				// call sites through the variable desugar.
-				if mrInfo := e.mrInfoForFuncValueInit(initExpr); mrInfo != nil {
+				// P1-13: lookup errors propagate as a clean diagnostic.
+				mrInfo, merr := e.mrInfoForFuncValueInit(initExpr)
+				if merr != nil {
+					return merr
+				}
+				if mrInfo != nil {
 					if vr, ok := e.info.Defs[n].(*types.Var); ok {
 						e.userMRVars[vr] = mrInfo
 					}
@@ -2009,7 +2044,12 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		// holding it desugar via the pair info linked at the variable's
 		// definition (userMRVars). Fail-fast stubs (no __-helper) keep
 		// the honest compile-time error below.
-		if plan := e.mrPlanForFuncValue(obj); plan != nil {
+		// P1-13: lookup errors propagate as a clean diagnostic.
+		plan, perr := e.mrPlanForFuncValue(obj)
+		if perr != nil {
+			return nil, perr
+		}
+		if plan != nil {
 			if plan.kind == mrUser {
 				// Pair-transformed function: the value is the transformed
 				// funcdecl itself (same as the M6 path above).

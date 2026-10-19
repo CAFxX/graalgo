@@ -1474,16 +1474,16 @@ func targsFromRecv(recv types.Type) []types.Type {
 // path/filepath's lstat), the FuncLit is found via e.etaVarLits and its
 // pair info via e.funcLitMRInfo. For vars aliasing a Func (e.g. lstat ->
 // os.Lstat), the table info is used. General (real-x509 lane).
-func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
+func (e *exporter) userMRInfoForVar(v *types.Var) (*userMRInfo, error) {
 	if mrInfo, ok := e.userMRVars[v]; ok {
-		return mrInfo
+		return mrInfo, nil
 	}
 	// Fallback: eta-expanded var (disk package). Find the FuncLit and
 	// its pair info.
 	if lit, ok := e.etaVarLits[v]; ok {
 		if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
 			e.userMRVars[v] = mrInfo
-			return mrInfo
+			return mrInfo, nil
 		}
 	}
 	// Fallback: var aliases a Func (e.g. lstat -> os.Lstat). Get the
@@ -1495,10 +1495,22 @@ func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
 		}
 		// Use the table classifiers to get the pair info.
 		// We need to construct a plan to get tmpType/pairFields.
-		var plan *mrPlan
-		if plan = classifyOsMultiResultCall(pkgPath, aliasedFn, nil); plan == nil {
-			if plan = classifyM7MultiResultCall(pkgPath, aliasedFn, nil); plan == nil {
-				plan = classifyM8MultiResultCall(pkgPath, aliasedFn, nil)
+		// P1-13: classifier errors (broken committed synthetic source)
+		// propagate; the first non-nil plan wins as before.
+		plan, err := classifyOsMultiResultCall(pkgPath, aliasedFn, nil)
+		if err != nil {
+			return nil, err
+		}
+		if plan == nil {
+			plan, err = classifyM7MultiResultCall(pkgPath, aliasedFn, nil)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if plan == nil {
+			plan, err = classifyM8MultiResultCall(pkgPath, aliasedFn, nil)
+			if err != nil {
+				return nil, err
 			}
 		}
 		if plan != nil {
@@ -1508,14 +1520,17 @@ func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
 					pairFields: plan.pairFields,
 				}
 				e.userMRVars[v] = mrInfo
-				return mrInfo
+				return mrInfo, nil
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
-func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
+func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) (*mrPlan, error) {
+	// P1-13: synthetic-package build failures (broken committed sources)
+	// propagate as errors carrying file/position info; all pre-existing
+	// returns were extended with an explicit nil error.
 	// P4 (generic MR): generic instantiation call, e.g. hashStr[string](...).
 	// The Fun is an IndexExpr/IndexListExpr. Check for instantiation MR
 	// info before the Ident/SelectorExpr cases (which don't match).
@@ -1524,7 +1539,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			kind:       mrUser,
 			tmpType:    mrInfo.pairType,
 			pairFields: mrInfo.pairFields,
-		}
+		}, nil
 	}
 	// P4 (driver-harden): dot-imported fmt F-family (Fprint/Fprintf/
 	// Fprintln called as bare idents). Detected structurally via the
@@ -1538,12 +1553,18 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+			// P1-13: userMRInfoForVar can fail on a broken committed
+			// synthetic source; propagate as a clean diagnostic.
+			mrInfo, err := e.userMRInfoForVar(v)
+			if err != nil {
+				return nil, err
+			}
+			if mrInfo != nil {
 				return &mrPlan{
 					kind:       mrUser,
 					tmpType:    mrInfo.pairType,
 					pairFields: mrInfo.pairFields,
-				}
+				}, nil
 			}
 			// General (real-x509 lane): Var aliases a multi-result Func
 			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
@@ -1557,18 +1578,25 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				// Try the general classifiers with the aliased Func.
 				// For os.Lstat, the os table handles it.
-				if plan := classifyOsMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
-					return plan
+				// P1-13: classifier errors propagate; first non-nil plan wins.
+				if plan, err := classifyOsMultiResultCall(pkgPath, aliasedFn, nil); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
 				// Fallback: try other tables.
-				if plan := classifyM7MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
-					return plan
+				if plan, err := classifyM7MultiResultCall(pkgPath, aliasedFn, nil); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
-				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
-					return plan
+				if plan, err := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
 			}
-			return nil
+			return nil, nil
 		}
 		if obj, ok := e.info.Uses[id].(*types.Func); ok {
 			if mrInfo, ok := e.userMRFuncs[obj]; ok {
@@ -1576,7 +1604,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					kind:       mrUser,
 					tmpType:    mrInfo.pairType,
 					pairFields: mrInfo.pairFields,
-				}
+				}, nil
 			}
 			// P3-M9 (WS D): same-package Ident calls to synthetic
 			// multi-result functions (e.g. parseSignature in the
@@ -1589,35 +1617,56 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			if obj.Pkg() != nil {
 				pkgPath := obj.Pkg().Path()
 				targs := targsFromInstances(e, id)
-				if plan := classifyM7MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
+				// P1-13: classifier errors propagate; first non-nil plan wins.
+				if plan, err := classifyM7MultiResultCall(pkgPath, obj, targs); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
-				if plan := classifyOsMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
+				if plan, err := classifyOsMultiResultCall(pkgPath, obj, targs); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
-				if plan := classifyM8MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
+				if plan, err := classifyM8MultiResultCall(pkgPath, obj, targs); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
-				if plan := classifyIoMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
+				if plan, err := classifyIoMultiResultCall(pkgPath, obj, targs); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
-				if plan := classifyM9MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
+				if plan, err := classifyM9MultiResultCall(pkgPath, obj, targs); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
 				// WS G (P3-M9): disk-package multi-result (dynamic table).
 				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
+					return plan, nil
 				}
 			}
 		}
-		return nil
+		return nil, nil
 	}
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	ctxPkg := getSyntheticPackage("context").pkg
-	timePkg := getSyntheticPackage("time").pkg
+	// P1-13: these are committed synthetic sources; a build failure is a
+	// toolchain bug surfaced here as a clean diagnostic with position info.
+	ctxSp, err := getSyntheticPackage("context")
+	if err != nil {
+		return nil, err
+	}
+	ctxPkg := ctxSp.pkg
+	timeSp, err := getSyntheticPackage("time")
+	if err != nil {
+		return nil, err
+	}
+	timePkg := timeSp.pkg
 	named := func(pkg *types.Package, name string) *types.Named {
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {
@@ -1632,7 +1681,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			obj := e.info.Uses[sel.Sel]
 			fn, ok := obj.(*types.Func)
 			if !ok {
-				return nil
+				return nil, nil
 			}
 			// Gate-1 #2: userMRFuncs check for package-qualified calls.
 			// Synthetic packages with real Go source (e.g., strings.Cut)
@@ -1643,38 +1692,49 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					kind:       mrUser,
 					tmpType:    mrInfo.pairType,
 					pairFields: mrInfo.pairFields,
-				}
+				}, nil
 			}
 			// P3-M7 (wave 1): encoding/* package-level multi-result
 			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
 			// pem.Decode, asn1.Marshal/Unmarshal).
 			targs := targsFromInstances(e, sel.Sel)
-			if plan := classifyM7MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
+			// P1-13: classifier errors propagate; first non-nil plan wins.
+			if plan, err := classifyM7MultiResultCall(pn.Imported().Path(), fn, targs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M8 (wave 2): the synthetic os package's multi-result
 			// API (osMultiResultFuncs table above).
-			if plan := classifyOsMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
+			if plan, err := classifyOsMultiResultCall(pn.Imported().Path(), fn, targs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M8 (wave 2): the crypto/* multi-result API
 			// (m8MultiResultFuncs table above).
-			if plan := classifyM8MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
+			if plan, err := classifyM8MultiResultCall(pn.Imported().Path(), fn, targs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M8 (WS D): the synthetic io package's multi-result API
 			// (ioMultiResultFuncs table above).
-			if plan := classifyIoMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
+			if plan, err := classifyIoMultiResultCall(pn.Imported().Path(), fn, targs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M9 (tier-4: net): the synthetic net packages' multi-result
 			// API (m9MultiResultFuncs table above).
-			if plan := classifyM9MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
+			if plan, err := classifyM9MultiResultCall(pn.Imported().Path(), fn, targs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// WS G (P3-M9): disk-package multi-result (dynamic table).
 			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
+				return plan, nil
 			}
 			// P4 (driver-harden): the fmt F-family (Fprint/Fprintf/
 			// Fprintln). Detected structurally: package "fmt", one of
@@ -1690,25 +1750,25 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					}
 					nt := named(ctxPkg, "cancelCtx")
 					if nt == nil {
-						return nil
+						return nil, nil
 					}
 					return &mrPlan{
 						kind: mrWithCancel, helperPkg: "context",
 						helperName: "__with" + fn.Name()[4:],
 						tmpType:    types.NewPointer(nt),
 						methodRecv: nt, methodName: method,
-					}
+					}, nil
 				case "WithDeadline", "WithTimeout":
 					nt := named(ctxPkg, "timerCtx")
 					if nt == nil {
-						return nil
+						return nil, nil
 					}
 					return &mrPlan{
 						kind: mrWithDeadline, helperPkg: "context",
 						helperName: "__with" + fn.Name()[4:],
 						tmpType:    types.NewPointer(nt),
 						methodRecv: nt, methodName: "cancelFunc",
-					}
+					}, nil
 				}
 			case "runtime":
 				// runtime.Caller(skip): the 4-result stack-inspection
@@ -1718,27 +1778,27 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if fn.Name() == "Caller" {
 					nt := named(pn.Imported(), "callerPair")
 					if nt == nil {
-						return nil
+						return nil, nil
 					}
 					return &mrPlan{
 						kind: mrRuntimeStack, rtStackOp: rtStackCaller,
 						tmpType: nt, pairFields: []string{"pc", "file", "line", "ok"},
-					}
+					}, nil
 				}
 			case "time":
 				if fn.Name() == "ParseDuration" {
 					nt := named(timePkg, "durationPair")
 					if nt == nil {
-						return nil
+						return nil, nil
 					}
 					return &mrPlan{
 						kind: mrParseDur, helperPkg: "time",
 						helperName: "__parseDuration",
 						tmpType:    nt, pairFields: []string{"d", "err"},
-					}
+					}, nil
 				}
 			}
-			return nil
+			return nil, nil
 		}
 	}
 	// Method call: ctx.Deadline(). Must be the synthetic context method
@@ -1751,26 +1811,31 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		if f, ok := selection.Obj().(*types.Func); ok && isDeadlineMethod(f) {
 			nt := named(ctxPkg, "deadlinePair")
 			if nt == nil {
-				return nil
+				return nil, nil
 			}
 			return &mrPlan{
 				kind: mrDeadline, helperPkg: "context",
 				helperName: "__deadlineOf",
 				tmpType:    nt, pairFields: []string{"d", "ok"},
-			}
+			}, nil
 		}
 		if f, ok := selection.Obj().(*types.Func); ok {
 			if helper, ok := isXmlTokenMethod(f); ok {
-				xmlPkg := getSyntheticPackage("encoding/xml").pkg
+				// P1-13: build failure surfaces as a clean diagnostic.
+				xmlSp, err := getSyntheticPackage("encoding/xml")
+				if err != nil {
+					return nil, err
+				}
+				xmlPkg := xmlSp.pkg
 				nt := named(xmlPkg, "tokenPair")
 				if nt == nil {
-					return nil
+					return nil, nil
 				}
 				return &mrPlan{
 					kind: mrXmlToken, helperPkg: "encoding/xml",
 					helperName: helper, prependRecv: true,
 					tmpType: nt, pairFields: []string{"tok", "err"},
-				}
+				}, nil
 			}
 		}
 		// P3-M7 (wave 1): encoding/* multi-result methods
@@ -1787,7 +1852,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					tmpType:     mrInfo.pairType,
 					pairFields:  mrInfo.pairFields,
 					prependRecv: false,
-				}
+				}, nil
 			}
 			// mrRuntimeStack: the synthetic runtime package's
 			// multi-result stack-inspection methods ((*Frames).Next,
@@ -1795,50 +1860,63 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// runtime overlay's Frames/Func — a user method with the same
 			// name is never desugared.
 			if plan := classifyRuntimeStackMethod(f, selection); plan != nil {
-				return plan
+				return plan, nil
 			}
 			// mrSyncMap: the synthetic sync package's multi-result Map
 			// methods (Load/LoadOrStore/LoadAndDelete/Swap). The
 			// receiver's named type must be the sync overlay's Map.
 			if plan := classifySyncMapMethod(f, selection); plan != nil {
-				return plan
+				return plan, nil
 			}
 			// mrTrivialFwd: a synthetic stub method whose body trivially
 			// forwards to a function-typed parameter (single
 			// `return p()`). Classified structurally — any synthetic
 			// stub with that shape inlines, not just one named method.
-			if plan := classifyTrivialForwarder(f); plan != nil {
-				return plan
+			// P1-13: classifier errors propagate; first non-nil plan wins.
+			if plan, err := classifyTrivialForwarder(f); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			mtargs := targsFromRecv(selection.Recv())
-			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
-				return plan
+			if plan, err := classifyM7MultiResultCall(f.Pkg().Path(), f, mtargs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M8 (wave 2): os methods + io/fs DirEntry.Info.
-			if plan := classifyOsMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
-				return plan
+			if plan, err := classifyOsMultiResultCall(f.Pkg().Path(), f, mtargs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M8 (wave 2): crypto/* multi-result API.
-			if plan := classifyM8MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
-				return plan
+			if plan, err := classifyM8MultiResultCall(f.Pkg().Path(), f, mtargs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M8 (WS D): the synthetic io package's multi-result
 			// API (WriteString, ReadAtLeast, ReadFull, Copy, CopyN,
 			// CopyBuffer, ReadAll, LimitedReader.Read,
 			// discard.Write/WriteString).
-			if plan := classifyIoMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
-				return plan
+			if plan, err := classifyIoMultiResultCall(f.Pkg().Path(), f, mtargs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// P3-M9 (tier-4: net): the synthetic net packages'
 			// multi-result API (m9MultiResultFuncs table above) —
 			// methods too (e.g. (*net.Dialer).Dial), mirroring the
 			// package-qualified arm.
-			if plan := classifyM9MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
-				return plan
+			if plan, err := classifyM9MultiResultCall(f.Pkg().Path(), f, mtargs); err != nil {
+				return nil, err
+			} else if plan != nil {
+				return plan, nil
 			}
 			// WS G (P3-M9): disk-package multi-result methods (dynamic table).
 			if plan := classifyDiskMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
-				return plan
+				return plan, nil
 			}
 			// P3-M8 (WS D): multi-result calls on interface values
 			// (r.Read(buf) with r of interface type). Concrete
@@ -1847,13 +1925,15 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// method with no helper never reaches the ifacemethod
 			// path.
 			if recvIface(selection.Recv()) != nil {
-				if plan := e.classifyIfaceMultiResultCall(selection); plan != nil {
-					return plan
+				if plan, err := e.classifyIfaceMultiResultCall(selection); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
 				// WS G (P3-M9, BUG-MODPROBE-005): disk-package
 				// interface methods with multi-result.
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
-					return plan
+					return plan, nil
 				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
@@ -1863,8 +1943,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// ifacemethod fallback; classify with the lenient
 			// fallback classifier.
 			if _, isTP := selection.Recv().(*types.TypeParam); isTP {
-				if plan := e.classifyIfaceFallbackMultiResultCall(selection); plan != nil {
-					return plan
+				if plan, err := e.classifyIfaceFallbackMultiResultCall(selection); err != nil {
+					return nil, err
+				} else if plan != nil {
+					return plan, nil
 				}
 			}
 		}
@@ -1878,12 +1960,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		if v, ok := selection.Obj().(*types.Var); ok {
 			if sig, ok := v.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
 				if plan := e.classifyGeneralFuncField(selection, v); plan != nil {
-					return plan
+					return plan, nil
 				}
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // mrPlanForFuncValue resolves the pair-desugar plan for a multi-result
@@ -1902,49 +1984,60 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 // single-result functions need no plan; generic templates are excluded
 // (a value needs an instantiation, WS H); fail-fast stubs have no
 // __-helper and keep their honest compile-time error at the use site.
-func (e *exporter) mrPlanForFuncValue(fn *types.Func) *mrPlan {
+func (e *exporter) mrPlanForFuncValue(fn *types.Func) (*mrPlan, error) {
+	// P1-13: classifier errors propagate as a clean diagnostic.
 	if fn == nil {
-		return nil
+		return nil, nil
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok || sig.Results().Len() <= 1 {
-		return nil
+		return nil, nil
 	}
 	if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
-		return nil
+		return nil, nil
 	}
 	if mrInfo, ok := e.userMRFuncs[fn]; ok {
 		return &mrPlan{
 			kind:       mrUser,
 			tmpType:    mrInfo.pairType,
 			pairFields: mrInfo.pairFields,
-		}
+		}, nil
 	}
 	if fn.Pkg() == nil {
-		return nil
+		return nil, nil
 	}
 	pkgPath := fn.Pkg().Path()
 	// No call site, so no type arguments: targs is nil (generic
 	// templates were excluded above).
-	if plan := classifyM7MultiResultCall(pkgPath, fn, nil); plan != nil {
-		return plan
+	if plan, err := classifyM7MultiResultCall(pkgPath, fn, nil); err != nil {
+		return nil, err
+	} else if plan != nil {
+		return plan, nil
 	}
-	if plan := classifyOsMultiResultCall(pkgPath, fn, nil); plan != nil {
-		return plan
+	if plan, err := classifyOsMultiResultCall(pkgPath, fn, nil); err != nil {
+		return nil, err
+	} else if plan != nil {
+		return plan, nil
 	}
-	if plan := classifyM8MultiResultCall(pkgPath, fn, nil); plan != nil {
-		return plan
+	if plan, err := classifyM8MultiResultCall(pkgPath, fn, nil); err != nil {
+		return nil, err
+	} else if plan != nil {
+		return plan, nil
 	}
-	if plan := classifyIoMultiResultCall(pkgPath, fn, nil); plan != nil {
-		return plan
+	if plan, err := classifyIoMultiResultCall(pkgPath, fn, nil); err != nil {
+		return nil, err
+	} else if plan != nil {
+		return plan, nil
 	}
-	if plan := classifyM9MultiResultCall(pkgPath, fn, nil); plan != nil {
-		return plan
+	if plan, err := classifyM9MultiResultCall(pkgPath, fn, nil); err != nil {
+		return nil, err
+	} else if plan != nil {
+		return plan, nil
 	}
 	if plan := classifyDiskMultiResultCall(pkgPath, fn, nil); plan != nil {
-		return plan
+		return plan, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyTrivialForwarder recognizes a synthetic stub method whose body
@@ -1954,19 +2047,24 @@ func (e *exporter) mrPlanForFuncValue(fn *types.Func) *mrPlan {
 // call at the call site. The check is structural — it inspects the
 // synthetic package's AST for the shape, never the package/type/method
 // name. Returns nil when f is not such a forwarder.
-func classifyTrivialForwarder(f *types.Func) *mrPlan {
+func classifyTrivialForwarder(f *types.Func) (*mrPlan, error) {
+	// P1-13: a broken committed synthetic source surfaces
+	// as a clean diagnostic instead of a panic.
 	if f == nil || f.Pkg() == nil {
-		return nil
+		return nil, nil
 	}
 	pkgPath := f.Pkg().Path()
 	if _, ok := syntheticSources[pkgPath]; !ok {
-		return nil // not a synthetic package; no AST to inspect
+		return nil, nil // not a synthetic package; no AST to inspect
 	}
 	sig, ok := f.Type().(*types.Signature)
 	if !ok || sig.Results().Len() < 2 {
-		return nil // multi-result desugar only; single results need no plan
+		return nil, nil // multi-result desugar only; single results need no plan
 	}
-	sp := getSyntheticPackage(pkgPath)
+	sp, err := getSyntheticPackage(pkgPath)
+	if err != nil {
+		return nil, err
+	}
 	// Match the FuncDecl by name; for methods also match the receiver's
 	// named type (handles *T receivers and generic instantiations).
 	var wantRecv string
@@ -2035,19 +2133,19 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 				p := sig.Params().At(i)
 				if p.Name() == funIdent.Name {
 					if _, ok := p.Type().Underlying().(*types.Signature); !ok {
-						return nil
+						return nil, nil
 					}
 					return &mrPlan{
 						kind:        mrTrivialFwd,
 						pairFields:  []string{"v", "err"}, // arity placeholder
 						fwdParamIdx: i,
-					}
+					}, nil
 				}
 			}
-			return nil
+			return nil, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyGeneralFuncField handles func-typed struct field calls for ANY
@@ -2172,13 +2270,15 @@ func isXmlTokenMethod(f *types.Func) (string, bool) {
 // must match the table entry — a user type with the same method name
 // (e.g. a local Encoding.Decode) is never desugared. Returns nil when
 // the call is not one of the table's operations.
-func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) (*mrPlan, error) {
+	// P1-13: a broken committed synthetic source surfaces
+	// as a clean diagnostic instead of a panic.
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
-		return nil
+		return nil, nil
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	recvName := ""
 	if recv := sig.Recv(); recv != nil {
@@ -2197,8 +2297,11 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 	// ifaceFallback (their recvType names the concrete type). Table-driven,
 	// not package-name-keyed (P2-F3, review-n1).
 	if recvName == "" {
-		if plan := classifyM7MultiResultCallIfaceFallback(pkgPath, fn, targs); plan != nil {
-			return plan
+		// P1-13: classifier errors propagate.
+		if plan, err := classifyM7MultiResultCallIfaceFallback(pkgPath, fn, targs); err != nil {
+			return nil, err
+		} else if plan != nil {
+			return plan, nil
 		}
 	}
 	for _, mf := range m7MultiResultFuncs {
@@ -2209,20 +2312,23 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		// change in the synthetic source fails the desugar loudly instead
 		// of extracting the wrong fields.
 		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
+			return nil, nil
 		}
 		helperPkg := mf.pkgPath
 		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
-			return nil
+			return nil, nil
 		}
 		nt, _ := obj.Type().(*types.Named)
 		if nt == nil {
-			return nil
+			return nil, nil
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
@@ -2230,9 +2336,9 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyOsMultiResultCall recognizes the P3-M8 (wave 2) Appendix M
@@ -2345,13 +2451,13 @@ func classifySyncMapMethod(f *types.Func, selection *types.Selection) *mrPlan {
 	return nil
 }
 
-func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) (*mrPlan, error) {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
-		return nil
+		return nil, nil
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	recvName := ""
 	if recv := sig.Recv(); recv != nil {
@@ -2368,20 +2474,23 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			continue
 		}
 		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
+			return nil, nil
 		}
 		helperPkg := mf.helperPkg
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
-			return nil
+			return nil, nil
 		}
 		nt, _ := obj.Type().(*types.Named)
 		if nt == nil {
-			return nil
+			return nil, nil
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
@@ -2389,18 +2498,18 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
-func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) (*mrPlan, error) {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
-		return nil
+		return nil, nil
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	recvName := ""
 	if recv := sig.Recv(); recv != nil {
@@ -2420,20 +2529,23 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		// change in the synthetic source fails the desugar loudly instead
 		// of extracting the wrong fields.
 		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
+			return nil, nil
 		}
 		helperPkg := mf.helperPkg
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
-			return nil
+			return nil, nil
 		}
 		nt, _ := obj.Type().(*types.Named)
 		if nt == nil {
-			return nil
+			return nil, nil
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
@@ -2441,22 +2553,22 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyM8MultiResultCall recognizes the P3-M8 (wave 2) crypto/*
 // multi-result API (m8MultiResultFuncs table above). Same contract as
 // classifyOsMultiResultCall: helperPkg overrides the package the __-helper
 // and pair struct are looked up in.
-func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) (*mrPlan, error) {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
-		return nil
+		return nil, nil
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	recvName := ""
 	if recv := sig.Recv(); recv != nil {
@@ -2473,20 +2585,23 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			continue
 		}
 		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
+			return nil, nil
 		}
 		helperPkg := mf.helperPkg
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
-			return nil
+			return nil, nil
 		}
 		nt, _ := obj.Type().(*types.Named)
 		if nt == nil {
-			return nil
+			return nil, nil
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
@@ -2494,9 +2609,9 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyIoMultiResultCall recognizes the P3-M8 (WS D) synthetic io
@@ -2505,13 +2620,13 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 // LimitedReader.Read and discard.Write/WriteString methods (prependRecv
 // applies — all have receivers). Same contract as
 // classifyM7MultiResultCall.
-func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) (*mrPlan, error) {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
-		return nil
+		return nil, nil
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	recvName := ""
 	if recv := sig.Recv(); recv != nil {
@@ -2531,20 +2646,23 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		// in the synthetic source fails the desugar loudly instead of
 		// extracting the wrong fields.
 		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
+			return nil, nil
 		}
 		helperPkg := mf.pkgPath
 		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
-			return nil
+			return nil, nil
 		}
 		nt, _ := obj.Type().(*types.Named)
 		if nt == nil {
-			return nil
+			return nil, nil
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
@@ -2552,9 +2670,9 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyIfaceMultiResultCall recognizes P3-M8 (WS D) multi-result calls
@@ -2564,17 +2682,17 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 // the same method shape dispatch; the pair type comes from the
 // m8IfaceMultiResultMethods table. Returns nil when the method is not a
 // dispatched multi-result interface method.
-func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrPlan {
+func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) (*mrPlan, error) {
 	if selection.Kind() != types.MethodVal {
-		return nil
+		return nil, nil
 	}
 	f, ok := selection.Obj().(*types.Func)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	sig, ok := f.Type().(*types.Signature)
 	if !ok || sig.Results().Len() < 2 {
-		return nil
+		return nil, nil
 	}
 	for _, m := range m8IfaceMultiResultMethods {
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
@@ -2588,10 +2706,13 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
-		if sp == nil {
-			continue
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
 		}
+		// P1-13: the old `if sp == nil { continue }` guard is dead —
+		// getSyntheticPackage returns non-nil sp on success — and is
+		// removed; failures propagate as errors above.
 		obj := sp.pkg.Scope().Lookup(m.pairType)
 		if obj == nil {
 			continue
@@ -2622,9 +2743,9 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		return &mrPlan{
 			kind: mrIfaceMethod, helperPkg: helperPkg,
 			tmpType: nt, pairFields: m.pairFields,
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyIfaceFallbackMultiResultCall is the WS H fallback variant of
@@ -2640,17 +2761,17 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 // helper's pair is returned, and field extraction is by name — so only
 // the field count and names must match. Non-type-param results still get
 // the strict check.
-func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selection) *mrPlan {
+func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selection) (*mrPlan, error) {
 	if selection.Kind() != types.MethodVal {
-		return nil
+		return nil, nil
 	}
 	f, ok := selection.Obj().(*types.Func)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	sig, ok := f.Type().(*types.Signature)
 	if !ok || sig.Results().Len() < 2 {
-		return nil
+		return nil, nil
 	}
 	for _, m := range m8IfaceMultiResultMethods {
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
@@ -2664,10 +2785,13 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
-		if sp == nil {
-			continue
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
 		}
+		// P1-13: the old `if sp == nil { continue }` guard is dead —
+		// getSyntheticPackage returns non-nil sp on success — and is
+		// removed; failures propagate as errors above.
 		obj := sp.pkg.Scope().Lookup(m.pairType)
 		if obj == nil {
 			continue
@@ -2707,9 +2831,9 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		return &mrPlan{
 			kind: mrIfaceMethod, helperPkg: helperPkg,
 			tmpType: nt, pairFields: m.pairFields,
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // classifyUserIfaceMultiResultCall is the general (non-whitelist,
@@ -2890,17 +3014,19 @@ func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName
 // result types, or the dispatch would extract wrong fields: a mismatch
 // fails the export loudly (ok=false → the method stays out of the table
 // → dispatch fails fast with "missing method").
-func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool) {
+func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool, error) {
+	// P1-13: a broken committed synthetic source surfaces as a clean
+	// diagnostic instead of a panic.
 	if mobj == nil || mobj.Pkg() == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	sig, ok := mobj.Type().(*types.Signature)
 	if !ok || sig.Results().Len() < 2 {
-		return nil, false
+		return nil, false, nil
 	}
 	recv := sig.Recv()
 	if recv == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	rt := recv.Type()
 	if pt, ok := rt.(*types.Pointer); ok {
@@ -2908,11 +3034,11 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	}
 	nt, ok := rt.(*types.Named)
 	if !ok || nt.Obj() == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	helperPkg, helperName, ok := multiResultHelperFor(mobj.Pkg().Path(), mobj.Name(), nt.Obj().Name())
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	var fi *funcDeclInfo
 	// P3-M9: try synthFuncIDs first (string-keyed). The *types.Func from
@@ -2929,24 +3055,27 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 			var ok bool
 			helperFn, ok = helperObj.(*types.Func)
 			if !ok {
-				return nil, false
+				return nil, false, nil
 			}
 		} else {
-			sp := getSyntheticPackage(helperPkg)
-			if sp == nil {
-				return nil, false
+			// P1-13: build failure propagates as a clean diagnostic;
+			// the old `if sp == nil` guard is dead (getSyntheticPackage
+			// returns non-nil sp on success) and is removed.
+			sp, err := getSyntheticPackage(helperPkg)
+			if err != nil {
+				return nil, false, err
 			}
 			helperObj := sp.pkg.Scope().Lookup(helperName)
 			var ok bool
 			helperFn, ok = helperObj.(*types.Func)
 			if !ok {
-				return nil, false
+				return nil, false, nil
 			}
 		}
 		var ok bool
 		fi, ok = e.funcByObj[helperFn]
 		if !ok || fi == nil {
-			return nil, false
+			return nil, false, nil
 		}
 	}
 	// Positional shape check: the helper's single result is the pair
@@ -2962,7 +3091,7 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	// (no type params to bind).
 	hsig := fi.sig
 	if hsig == nil || hsig.Results().Len() != 1 {
-		return nil, false
+		return nil, false, nil
 	}
 	prt := hsig.Results().At(0).Type()
 	if pt, ok := prt.(*types.Pointer); ok {
@@ -2970,11 +3099,11 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	}
 	pnt, ok := prt.(*types.Named)
 	if !ok {
-		return nil, false
+		return nil, false, nil
 	}
 	pst, ok := pnt.Underlying().(*types.Struct)
 	if !ok || pst.NumFields() != sig.Results().Len() {
-		return nil, false
+		return nil, false, nil
 	}
 	savedSubst := e.subst
 	if hps := fi.sig.TypeParams(); hps.Len() > 0 {
@@ -2995,9 +3124,9 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	}
 	e.subst = savedSubst
 	if !match {
-		return nil, false
+		return nil, false, nil
 	}
-	return fi, true
+	return fi, true, nil
 }
 
 // classifyM7MultiResultCallIfaceFallback retries a receiver-less
@@ -3006,30 +3135,33 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 // reflect.Type's MethodByName/FieldByName/FieldByNameFunc selected via
 // the Type interface desugar through the rtype entries). Table-driven via
 // the entry flag, not package-name-keyed (P2-F3, review-n1).
-func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targs []types.Type) (*mrPlan, error) {
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath != pkgPath || mf.name != fn.Name() || !mf.ifaceFallback {
 			continue
 		}
 		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
+			return nil, nil
 		}
 		helperPkg := mf.pkgPath
 		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil, err
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
-			return nil
+			return nil, nil
 		}
 		nt, _ := obj.Type().(*types.Named)
 		if nt == nil {
-			return nil
+			return nil, nil
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
@@ -3037,9 +3169,9 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
-		}
+		}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // isDeadlineMethod reports whether f is the synthetic context package's
@@ -3066,7 +3198,14 @@ func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*No
 	if !ok {
 		return nil, false, nil
 	}
-	plan := e.classifyMultiResultCall(c)
+	// P1-13: classifier errors propagate as a clean diagnostic.
+	// Note: on error we return handled=true so the caller propagates
+	// the error instead of continuing normal export (a broken synthetic
+	// source is a toolchain bug; it must fail fast, not fall through).
+	plan, err := e.classifyMultiResultCall(c)
+	if err != nil {
+		return nil, true, err
+	}
 	if plan == nil {
 		return nil, false, nil
 	}
@@ -3367,7 +3506,12 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 			return nil, err
 		}
 	} else {
-		sp = getSyntheticPackage(plan.helperPkg)
+		// P1-13: build failure propagates as a clean diagnostic.
+		var err error
+		sp, err = getSyntheticPackage(plan.helperPkg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// P3-M8b: import the synthetic package so its helpers are registered
 	// in funcByObj (idempotent). Without this, synthHelperCallNode fails
@@ -3416,7 +3560,12 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 		// call to its __-helper, emit the temp vardecl as a pre-statement,
 		// and spread the pair fields as separate arguments.
 		if inner, ok := unparen(a).(*ast.CallExpr); ok {
-			if innerPlan := e.classifyMultiResultCall(inner); innerPlan != nil {
+			// P1-13: classifier errors propagate as a clean diagnostic.
+			innerPlan, cerr := e.classifyMultiResultCall(inner)
+			if cerr != nil {
+				return nil, nil, cerr
+			}
+			if innerPlan != nil {
 				// Per Go spec, a multi-valued call as an argument must be
 				// the sole argument (besides the prepended receiver).
 				// The type checker guarantees this for valid Go.

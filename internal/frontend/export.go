@@ -611,7 +611,11 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	// This replaces the 300+ line per-package switch; new synthetic
 	// packages work automatically when added to syntheticSources.
 	if _, ok := syntheticSources[path]; ok {
-		return getSyntheticPackage(path).pkg, nil
+		sp, err := getSyntheticPackage(path)
+		if err != nil {
+			return nil, err
+		}
+		return sp.pkg, nil
 	}
 	// WS G (P3-M9, module-probe lane): third-party imports resolve from
 	// local disk (module cache/GOPATH) through the general overlay. A path
@@ -1575,12 +1579,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	if needTime {
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSynthetic("time"); err != nil {
 			return "", err
 		}
 	}
 	if needContext {
-		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+		if err := e.importSynthetic("context"); err != nil {
 			return "", err
 		}
 	}
@@ -1589,7 +1593,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// fmt.State for fmt.Formatter dispatch. The package is synthetic-only
 	// (never imported by user code) and tiny, so import it unconditionally;
 	// importSyntheticPackage is idempotent.
-	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
+	if err := e.importSynthetic("internal/graalgo/fmtstate"); err != nil {
 		return "", err
 	}
 	// P3-M7 (wave 1): synthetic sort is self-contained (no
@@ -1598,19 +1602,19 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// reflect package); importSyntheticPackage recurses into synthetic
 	// dependencies in post-order, so no manual ordering is needed here.
 	if needErrors {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
 	}
 	if needSort {
-		if err := e.importSyntheticPackage(getSyntheticPackage("sort")); err != nil {
+		if err := e.importSynthetic("sort"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): synthetic bytes package (synth_bytes.go).
 	// Requires m7-errors-sort for the errors dependency.
 	if needBytes {
-		if err := e.importSyntheticPackage(getSyntheticPackage("bytes")); err != nil {
+		if err := e.importSynthetic("bytes"); err != nil {
 			return "", err
 		}
 	}
@@ -1618,7 +1622,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// Self-contained: no synthetic->synthetic imports, so no ordering
 	// constraints.
 	if needMath {
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSynthetic("math"); err != nil {
 			return "", err
 		}
 	}
@@ -1627,10 +1631,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// reconstructed overflow/divide sentinels), so errors must be
 	// imported first.
 	if needMathBits {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+		if err := e.importSynthetic("math/bits"); err != nil {
 			return "", err
 		}
 	}
@@ -1638,49 +1642,49 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// synth_mathcmplx.go). Imports the synthetic math and math/bits
 	// packages, so those (and their deps) must be imported first.
 	if needMathCmplx {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSynthetic("math"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+		if err := e.importSynthetic("math/bits"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/cmplx")); err != nil {
+		if err := e.importSynthetic("math/cmplx"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9: synthetic math/rand (full port, tier1c; imports the synthetic
 	// math package) and internal/byteorder (vendored; no deps).
 	if needMathRand {
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSynthetic("math"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand")); err != nil {
+		if err := e.importSynthetic("math/rand"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic math/rand/v2 (full port; imports synthetic
 	// math, math/bits and internal/byteorder).
 	if needMathRandV2 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSynthetic("math"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+		if err := e.importSynthetic("math/bits"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("internal/byteorder")); err != nil {
+		if err := e.importSynthetic("internal/byteorder"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand/v2")); err != nil {
+		if err := e.importSynthetic("math/rand/v2"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic bufio (full port; imports bytes which is
 	// emitted via needBytes).
 	if needBufio {
-		if err := e.importSyntheticPackage(getSyntheticPackage("bufio")); err != nil {
+		if err := e.importSynthetic("bufio"); err != nil {
 			return "", err
 		}
 	}
@@ -1690,27 +1694,27 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// math/bits/slices/strconv/hash/hash/adler32/hash/crc32/time) are
 	// imported by their own need-flags above.
 	if needFlate {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/flate")); err != nil {
+		if err := e.importSynthetic("compress/flate"); err != nil {
 			return "", err
 		}
 	}
 	if needGzip {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/gzip")); err != nil {
+		if err := e.importSynthetic("compress/gzip"); err != nil {
 			return "", err
 		}
 	}
 	if needZlib {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/zlib")); err != nil {
+		if err := e.importSynthetic("compress/zlib"); err != nil {
 			return "", err
 		}
 	}
 	if needLzw {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/lzw")); err != nil {
+		if err := e.importSynthetic("compress/lzw"); err != nil {
 			return "", err
 		}
 	}
 	if needBzip2 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/bzip2")); err != nil {
+		if err := e.importSynthetic("compress/bzip2"); err != nil {
 			return "", err
 		}
 	}
@@ -1725,24 +1729,24 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// import needed.
 	// P3-M9 (tier1c): synthetic path.
 	if needPath {
-		if err := e.importSyntheticPackage(getSyntheticPackage("path")); err != nil {
+		if err := e.importSynthetic("path"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic text/scanner.
 	if needTextScanner {
-		if err := e.importSyntheticPackage(getSyntheticPackage("text/scanner")); err != nil {
+		if err := e.importSynthetic("text/scanner"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic regexp/syntax (scope-limited).
 	if needRegexpSyntax {
-		if err := e.importSyntheticPackage(getSyntheticPackage("regexp/syntax")); err != nil {
+		if err := e.importSynthetic("regexp/syntax"); err != nil {
 			return "", err
 		}
 	}
 	if needByteorder {
-		if err := e.importSyntheticPackage(getSyntheticPackage("internal/byteorder")); err != nil {
+		if err := e.importSynthetic("internal/byteorder"); err != nil {
 			return "", err
 		}
 	}
@@ -1762,47 +1766,47 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// Must come before strings (which imports io for io.EOF).
 	if needIo {
 		// P3-M8: io's error vars use errors.New — import errors first.
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+		if err := e.importSynthetic("io"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): the synthetic strings package (see synth_strings.go).
 	// P3-M8: imports synthetic io (io.EOF), so io must be imported first.
 	if needStrings {
-		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
+		if err := e.importSynthetic("strings"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): synthetic encoding/xml (see synth_xml.go).
 	// Self-contained: no synthetic dependencies.
 	if needXml {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/xml")); err != nil {
+		if err := e.importSynthetic("encoding/xml"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): encoding/csv + encoding/gob (see synth_enc_csv_gob.go).
 	if needCsv {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/csv")); err != nil {
+		if err := e.importSynthetic("encoding/csv"); err != nil {
 			return "", err
 		}
 	}
 	if needGob {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/gob")); err != nil {
+		if err := e.importSynthetic("encoding/gob"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): strconv + encoding/json (see synth_strconv.go,
 	// synth_json.go).
 	if needStrconv {
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSynthetic("strconv"); err != nil {
 			return "", err
 		}
 	}
 	if needJson {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/json")); err != nil {
+		if err := e.importSynthetic("encoding/json"); err != nil {
 			return "", err
 		}
 	}
@@ -1814,42 +1818,42 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// mrdesugar_m5.go). encoding/pem implies encoding/base64 (its bodies
 	// reference base64.CorruptInputError and base64.StdEncoding).
 	if needBase32 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/base32")); err != nil {
+		if err := e.importSynthetic("encoding/base32"); err != nil {
 			return "", err
 		}
 	}
 	if needBase64 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/base64")); err != nil {
+		if err := e.importSynthetic("encoding/base64"); err != nil {
 			return "", err
 		}
 	}
 	if needHex {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/hex")); err != nil {
+		if err := e.importSynthetic("encoding/hex"); err != nil {
 			return "", err
 		}
 	}
 	if needBinary {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/binary")); err != nil {
+		if err := e.importSynthetic("encoding/binary"); err != nil {
 			return "", err
 		}
 	}
 	if needAscii85 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/ascii85")); err != nil {
+		if err := e.importSynthetic("encoding/ascii85"); err != nil {
 			return "", err
 		}
 	}
 	if needPem {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/pem")); err != nil {
+		if err := e.importSynthetic("encoding/pem"); err != nil {
 			return "", err
 		}
 	}
 	if needAsn1 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/asn1")); err != nil {
+		if err := e.importSynthetic("encoding/asn1"); err != nil {
 			return "", err
 		}
 	}
 	if needEncoding {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding")); err != nil {
+		if err := e.importSynthetic("encoding"); err != nil {
 			return "", err
 		}
 	}
@@ -1857,26 +1861,26 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// P3-M8 (wave 2): synthetic hash package (synth_crypto_hash.go).
 	// Imports io (needIo block above imports errors first, then io).
 	if needHash {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+		if err := e.importSynthetic("hash"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M8 (wave 2): synthetic iter package (synth_reflect.go).
 	// Self-contained: no synthetic imports.
 	if needIter {
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSynthetic("iter"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (wave 3, tier-1a worker): synthetic cmp package (synth_cmp.go).
 	// Self-contained: no synthetic imports.
 	if needCmp {
-		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+		if err := e.importSynthetic("cmp"); err != nil {
 			return "", err
 		}
 	}
 	if needIter {
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSynthetic("iter"); err != nil {
 			return "", err
 		}
 	}
@@ -1885,23 +1889,23 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// imported before slices itself (package-level initializers may call
 	// synthetic functions).
 	if needSlices {
-		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+		if err := e.importSynthetic("cmp"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSynthetic("iter"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("slices")); err != nil {
+		if err := e.importSynthetic("slices"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (wave 3, tier-1a worker): synthetic maps package
 	// (synth_maps.go). The source imports iter.
 	if needMaps {
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSynthetic("iter"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("maps")); err != nil {
+		if err := e.importSynthetic("maps"); err != nil {
 			return "", err
 		}
 	}
@@ -1910,17 +1914,17 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// (utf16 deliberately duplicates the surrogate constants to avoid
 	// depending on package unicode, mirroring gc).
 	if needUnicode {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unicode")); err != nil {
+		if err := e.importSynthetic("unicode"); err != nil {
 			return "", err
 		}
 	}
 	if needUnicodeUtf8 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unicode/utf8")); err != nil {
+		if err := e.importSynthetic("unicode/utf8"); err != nil {
 			return "", err
 		}
 	}
 	if needUnicodeUtf16 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unicode/utf16")); err != nil {
+		if err := e.importSynthetic("unicode/utf16"); err != nil {
 			return "", err
 		}
 	}
@@ -1947,13 +1951,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// errors.New) and imports time (time.Time in the FileInfo/DirEntry
 	// signatures), so errors and time are imported first.
 	if needIoFs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSynthetic("time"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+		if err := e.importSynthetic("io/fs"); err != nil {
 			return "", err
 		}
 	}
@@ -1972,19 +1976,19 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// (The needStrconv/needErrors blocks above only ran if the user
 		// imported those packages directly — not for a pure
 		// `import "syscall"` program.)
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSynthetic("time"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+		if err := e.importSynthetic("io/fs"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSynthetic("strconv"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+		if err := e.importSynthetic("syscall"); err != nil {
 			return "", err
 		}
 	}
@@ -1994,7 +1998,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// drives the netpoller via linknames (no internal/poll import: its
 	// FD struct contains sync.Mutex, rejected by the frontend M2 scope).
 	if needNet {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net")); err != nil {
+		if err := e.importSynthetic("net"); err != nil {
 			return "", err
 		}
 	}
@@ -2005,25 +2009,25 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// importSyntheticPackage is idempotent, so overlap with other
 	// need-blocks is safe.
 	if needOs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSynthetic("time"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+		if err := e.importSynthetic("io"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+		if err := e.importSynthetic("io/fs"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+		if err := e.importSynthetic("syscall"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSynthetic("strconv"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("os")); err != nil {
+		if err := e.importSynthetic("os"); err != nil {
 			return "", err
 		}
 	}
@@ -2073,12 +2077,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	}
 	// P3-M9 (tier-1d): leaf utilities unique/structs.
 	if needUnique {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unique")); err != nil {
+		if err := e.importSynthetic("unique"); err != nil {
 			return "", err
 		}
 	}
 	if needStructs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("structs")); err != nil {
+		if err := e.importSynthetic("structs"); err != nil {
 			return "", err
 		}
 	}
@@ -2089,22 +2093,22 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// helpers); strconv (imported by crypto); crypto (sha256 calls
 	// crypto.RegisterHash); then crypto/sha256 itself.
 	if needCryptoSha256 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSynthetic("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+		if err := e.importSynthetic("io"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+		if err := e.importSynthetic("hash"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSynthetic("strconv"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto")); err != nil {
+		if err := e.importSynthetic("crypto"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/sha256")); err != nil {
+		if err := e.importSynthetic("crypto/sha256"); err != nil {
 			return "", err
 		}
 	}
@@ -2122,7 +2126,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	if needCryptoSubtle {
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/subtle")); err != nil {
+		if err := e.importSynthetic("crypto/subtle"); err != nil {
 			return "", err
 		}
 	}
@@ -2291,17 +2295,17 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// imported by its own need-block above (importSyntheticPackage is
 	// idempotent); list and ring are self-contained.
 	if needContainerHeap {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/heap")); err != nil {
+		if err := e.importSynthetic("container/heap"); err != nil {
 			return "", err
 		}
 	}
 	if needContainerList {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/list")); err != nil {
+		if err := e.importSynthetic("container/list"); err != nil {
 			return "", err
 		}
 	}
 	if needContainerRing {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/ring")); err != nil {
+		if err := e.importSynthetic("container/ring"); err != nil {
 			return "", err
 		}
 	}
@@ -2815,7 +2819,12 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				// initialized with a multi-result function value (func lit
 				// or named function) to its pair info, so call sites
 				// through the variable desugar.
-				if mrInfo := e.mrInfoForFuncValueInit(initExpr); mrInfo != nil {
+				// P1-13: lookup errors propagate as a clean diagnostic.
+				mrInfo, merr := e.mrInfoForFuncValueInit(initExpr)
+				if merr != nil {
+					return nil, merr
+				}
+				if mrInfo != nil {
 					if vr, ok := e.info.Defs[n].(*types.Var); ok {
 						e.userMRVars[vr] = mrInfo
 					}
@@ -5394,7 +5403,12 @@ func (e *exporter) buildMethodTableInst(t types.Type, sel *types.Selection, mobj
 	fi, ok := e.funcByObj[mobj]
 	helperMapped := false
 	if !ok {
-		if hfi, ok := e.multiResultHelperFunc(mobj); ok {
+		// P1-13: helper-build failure propagates as a clean diagnostic.
+		hfi, hok, herr := e.multiResultHelperFunc(mobj)
+		if herr != nil {
+			return nil, herr
+		}
+		if hok {
 			fi, helperMapped = hfi, true
 		} else if tfi := e.methodTableTemplate(rn, mname); tfi != nil {
 			fi = tfi
@@ -6670,7 +6684,10 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		// fail-fast (TestMultiResultFailFastKept), and interface calls
 		// keep the D1 exportIfaceMethodCall path via exportExpr below.
 		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
-			if plan := e.classifyMultiResultCall(c); plan != nil &&
+			// P1-13: classifier errors propagate as a clean diagnostic.
+			if plan, cerr := e.classifyMultiResultCall(c); cerr != nil {
+				return nil, cerr
+			} else if plan != nil &&
 				(plan.kind == mrM7 || plan.kind == mrXmlToken) {
 				return e.exportBareMultiResultCall(s, c, plan)
 			}
@@ -6698,7 +6715,10 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		// 0/1 results).
 		if len(s.Results) == 1 {
 			if c, ok := unparen(s.Results[0]).(*ast.CallExpr); ok {
-				if plan := e.classifyMultiResultCall(c); plan != nil {
+				// P1-13: classifier errors propagate as a clean diagnostic.
+				if plan, cerr := e.classifyMultiResultCall(c); cerr != nil {
+					return nil, cerr
+				} else if plan != nil {
 					unpacked, pre, err := e.hoistMRCallArg(c, plan)
 					if err != nil {
 						return nil, err
@@ -6903,7 +6923,10 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	// statement position (exportBareMultiResultCall). Gated on the same
 	// concrete helper-call plans (mrM7, mrXmlToken); the M5 kinds keep
 	// their pinned fail-fast and other positions are unaffected.
-	if plan := e.classifyMultiResultCall(s.Call); plan != nil &&
+	// P1-13: classifier errors propagate as a clean diagnostic.
+	if plan, cerr := e.classifyMultiResultCall(s.Call); cerr != nil {
+		return nil, cerr
+	} else if plan != nil &&
 		(plan.kind == mrM7 || plan.kind == mrXmlToken) {
 		return e.exportDeferMultiResultCall(s, plan)
 	}
@@ -6982,7 +7005,10 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	// the __-helper call with the pair dropped, mirroring the bare
 	// statement position. Gated on the same concrete helper-call plans
 	// (mrM7, mrXmlToken).
-	if plan := e.classifyMultiResultCall(s.Call); plan != nil &&
+	// P1-13: classifier errors propagate as a clean diagnostic.
+	if plan, cerr := e.classifyMultiResultCall(s.Call); cerr != nil {
+		return nil, cerr
+	} else if plan != nil &&
 		(plan.kind == mrM7 || plan.kind == mrXmlToken) {
 		return e.exportGoMultiResultCall(s, plan)
 	}
@@ -7357,7 +7383,10 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 			// Re-test trigger: extend exportMultiResultDesugar to
 			// ValueSpec positions (see DESIGN.md §5).
 			if c, ok := unparen(v).(*ast.CallExpr); ok {
-				if plan := e.classifyMultiResultCall(c); plan != nil && plan.kind == mrIfaceMethod {
+				// P1-13: classifier errors propagate as a clean diagnostic.
+				if plan, cerr := e.classifyMultiResultCall(c); cerr != nil {
+					return nil, cerr
+				} else if plan != nil && plan.kind == mrIfaceMethod {
 					return nil, scopeErrorf("multi-result interface call in var declaration is not supported in frontend/v1 scope (M8 limitation: only 2-target := and = desugar; see DESIGN.md §5)")
 				}
 			}
@@ -7369,7 +7398,12 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 			// MR-closure-var / PKG-035: link a var declared with a
 			// multi-result function value initializer (func lit or named
 			// function) to its pair info.
-			if mrInfo := e.mrInfoForFuncValueInit(v); mrInfo != nil {
+			// P1-13: lookup errors propagate as a clean diagnostic.
+			mrInfo, merr := e.mrInfoForFuncValueInit(v)
+			if merr != nil {
+				return nil, merr
+			}
+			if mrInfo != nil {
 				// Single-valued function value: binds Names[i] when counts
 				// match, else the sole name.
 				var name *ast.Ident
@@ -7461,7 +7495,10 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 	// call sites through the variable desugar. A function value is
 	// single-valued; in `x := f` it binds LHS[0], and in
 	// `a, b := g(), h` RHS[i] binds LHS[i].
-	e.linkFuncValueMRVars(s)
+	// P1-13: lookup errors propagate as a clean diagnostic.
+	if err := e.linkFuncValueMRVars(s); err != nil {
+		return nil, err
+	}
 	return e.node("vardecl", s, map[string]any{
 		"names": names, "objs": objs, "define": true, "type": nil, "values": values,
 	}), nil
@@ -7480,13 +7517,15 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 // (mrPlanForFuncValue: userMRFuncs or the table classifiers), or from the
 // aliased variable's existing link. Returns nil when the initializer is
 // not a multi-result function value.
-func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
+func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) (*userMRInfo, error) {
+	// P1-13: a broken committed synthetic source surfaces as a clean
+	// diagnostic instead of a panic.
 	x = unparen(x)
 	if lit, ok := x.(*ast.FuncLit); ok {
 		if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
-			return mrInfo
+			return mrInfo, nil
 		}
-		return nil
+		return nil, nil
 	}
 	var fn *types.Func
 	switch x := x.(type) {
@@ -7498,7 +7537,7 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 			// function value (linked earlier in export order). The same
 			// pair-returning value flows, so the same pair info applies.
 			if mrInfo, ok := e.userMRVars[v]; ok {
-				return mrInfo
+				return mrInfo, nil
 			}
 		}
 	case *ast.SelectorExpr:
@@ -7510,18 +7549,21 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 		}
 	}
 	if fn == nil {
-		return nil
+		return nil, nil
 	}
-	plan := e.mrPlanForFuncValue(fn)
+	plan, err := e.mrPlanForFuncValue(fn)
+	if err != nil {
+		return nil, err
+	}
 	if plan == nil {
-		return nil
+		return nil, nil
 	}
 	nt, ok := plan.tmpType.(*types.Named)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	sig, _ := fn.Type().(*types.Signature)
-	return &userMRInfo{pairType: nt, pairFields: plan.pairFields, origSig: sig}
+	return &userMRInfo{pairType: nt, pairFields: plan.pairFields, origSig: sig}, nil
 }
 
 // linkFuncValueMRVars registers *types.Var -> pair info for variables
@@ -7529,9 +7571,14 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 // function, PKG-035 generalizing MR-closure-var). Called after the RHS
 // values are exported (so exportFuncLit has recorded the lit's pair info
 // in e.funcLitMRInfo).
-func (e *exporter) linkFuncValueMRVars(s *ast.AssignStmt) {
+func (e *exporter) linkFuncValueMRVars(s *ast.AssignStmt) error {
+	// P1-13: a broken committed synthetic source surfaces as a clean
+	// diagnostic instead of a panic.
 	for i, rhs := range s.Rhs {
-		mrInfo := e.mrInfoForFuncValueInit(rhs)
+		mrInfo, err := e.mrInfoForFuncValueInit(rhs)
+		if err != nil {
+			return err
+		}
 		if mrInfo == nil {
 			continue
 		}
@@ -7552,6 +7599,7 @@ func (e *exporter) linkFuncValueMRVars(s *ast.AssignStmt) {
 			e.userMRVars[v] = mrInfo
 		}
 	}
+	return nil
 }
 
 // exportAssign handles `=` and op-assignments. The lhs may be a plain
@@ -10443,7 +10491,12 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			// the old skip (dispatch fails fast with "missing method"
 			// — loud, never silent).
 			var hfi *funcDeclInfo
-			hfi, ok = e.multiResultHelperFunc(mobj)
+			// P1-13: helper-build failure propagates as a clean diagnostic.
+			var herr error
+			hfi, ok, herr = e.multiResultHelperFunc(mobj)
+			if herr != nil {
+				return nil, false, herr
+			}
 			if !ok {
 				// P3-M9 (instantiation method tables): the method-set
 				// object of an instantiated type is a copy that never
@@ -10706,13 +10759,21 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	// precedent).
 	var pairPlan *mrPlan
 	if sig.Results().Len() > 1 {
-		pairPlan = e.classifyIfaceMultiResultCall(selection)
+		// P1-13: classifier errors propagate as a clean diagnostic.
+		var perr error
+		pairPlan, perr = e.classifyIfaceMultiResultCall(selection)
+		if perr != nil {
+			return nil, perr
+		}
 		// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): if the
 		// strict classification fails (e.g., generic Point[P] interface
 		// with type-parameter results), try the lenient fallback
 		// classifier.
 		if pairPlan == nil {
-			pairPlan = e.classifyIfaceFallbackMultiResultCall(selection)
+			pairPlan, perr = e.classifyIfaceFallbackMultiResultCall(selection)
+			if perr != nil {
+				return nil, perr
+			}
 		}
 		// WS G (P3-M9, BUG-MODPROBE-005): disk-package interface
 		// methods with multi-result (e.g.
@@ -10833,7 +10894,12 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	// proceeds like the concrete Appendix M desugar.
 	var pairPlan *mrPlan
 	if sig.Results().Len() > 1 {
-		pairPlan = e.classifyIfaceFallbackMultiResultCall(selection)
+		// P1-13: classifier errors propagate as a clean diagnostic.
+		var perr error
+		pairPlan, perr = e.classifyIfaceFallbackMultiResultCall(selection)
+		if perr != nil {
+			return nil, perr
+		}
 		// P4 (WS D, general interface MR): fall back to the general
 		// user-interface classifier when the whitelist misses.
 		if pairPlan == nil {
@@ -10949,7 +11015,10 @@ func (e *exporter) exportCallArgs(c *ast.CallExpr) ([]*Node, error) {
 	args := make([]*Node, 0, len(c.Args))
 	for _, a := range c.Args {
 		if inner, ok := unparen(a).(*ast.CallExpr); ok {
-			if innerPlan := e.classifyMultiResultCall(inner); innerPlan != nil &&
+			// P1-13: classifier errors propagate as a clean diagnostic.
+			if innerPlan, cerr := e.classifyMultiResultCall(inner); cerr != nil {
+				return nil, cerr
+			} else if innerPlan != nil &&
 				(innerPlan.kind == mrUser || innerPlan.kind == mrFuncField) {
 				// User-defined multi-result call as argument: hoist to
 				// temp, unpack.
@@ -11012,7 +11081,12 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 			// pair-returning.
 			if id, ok := c.Fun.(*ast.Ident); ok {
 				if v, ok := e.info.Uses[id].(*types.Var); ok {
-					if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+					// P1-13: lookup errors propagate as a clean diagnostic.
+					mrInfo, merr := e.userMRInfoForVar(v)
+					if merr != nil {
+						return nil, merr
+					}
+					if mrInfo != nil {
 						tid, err := e.typeID(mrInfo.pairType)
 						if err != nil {
 							return nil, err

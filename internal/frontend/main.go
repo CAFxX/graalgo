@@ -63,16 +63,27 @@ func main() {
 			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic: no synthetic source for %q\n", path)
 			os.Exit(2)
 		}
-		// Build the synthetic package. getSyntheticPackage panics on
-		// parse/type errors; recover and report as a clean failure.
+		// Build the synthetic package. Parse/type failures come back as
+		// a clean error (P1-13: getSyntheticPackage returns errors, no
+		// longer panics on broken committed sources). The recover below
+		// stays as a last-resort guard for genuinely unexpected
+		// internal panics (e.g. the "no synthetic source" panic, which
+		// is unreachable here because of the map check above but is
+		// retained by design) so the tool still exits 2 with a message
+		// instead of a stack trace. The error path provably covers the
+		// parse/type failures; the recover covers the unprovable rest.
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, r)
+					fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: internal error: %v\n", path, r)
 					os.Exit(2)
 				}
 			}()
-			sp := getSyntheticPackage(path)
+			sp, err := getSyntheticPackage(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, err)
+				os.Exit(2)
+			}
 			fmt.Printf("ok %s (%d decls)\n", path, sp.pkg.Scope().Len())
 		}()
 		return
