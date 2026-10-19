@@ -318,6 +318,19 @@ public final class GoFuncRootNode extends RootNode {
     }
 
     /**
+     * The wire function name (e.g. {@code main}, {@code foo}). Overrides
+     * the default class-based root name the way {@link LinknameRootNode}
+     * and {@link UnimplementedRootNode} already do, so tooling that asks
+     * a {@code GoFunc}'s target for its name (notably resolving the
+     * {@code internal/abi} func-PC id space to a {@code *runtime.Func})
+     * gets the Go-level name instead of a Java class name.
+     */
+    @Override
+    public String getName() {
+        return funcName;
+    }
+
+    /**
      * Wraps a concrete value in a GoInterface for interface params (M5, WS F).
      * Infers the basic descriptor from the Java type. Package-visible for
      * {@link LinknameRootNode} (P3-M4): a linkname target returning a

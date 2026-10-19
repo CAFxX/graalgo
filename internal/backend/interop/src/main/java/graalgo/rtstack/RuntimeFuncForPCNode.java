@@ -14,9 +14,12 @@ import graalgo.values.GoPointer;
  * {@code runtime.FuncForPC(pc)}: the {@code "runtimefuncforpc"} wire node.
  *
  * <p>Returns a {@code *runtime.Func} describing the function containing
- * the interned PC, or Go nil when the PC is unknown. (Java null is the
+ * the PC, or Go nil when the PC is unknown. (Java null is the
  * nil {@code *Func}; a non-nil result is a {@link GoPointer} to a
- * {@link GoFuncInfo}.)
+ * {@link GoFuncInfo}.) The PC may come from either func-PC id space:
+ * {@code runtime.Callers}-interned PCs or the {@code internal/abi}
+ * entry ids that {@code reflect.Value.Pointer()} returns for funcs
+ * (see {@link GoFuncInfo#forPc(long)}).
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook.

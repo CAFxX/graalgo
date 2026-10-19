@@ -56,6 +56,9 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.GcDifferentialTest.class);
         TESTS.add(graalgo.runtime.GcTortureTest.class);
         TESTS.add(graalgo.runtime.GcVisibilityTest.class);
+        // I-11 (2026-10-19 review): FuncForPC resolves both func-PC id
+        // spaces (StackTrace-interned and internal/abi FuncIds).
+        TESTS.add(graalgo.runtime.GoFuncInfoTest.class);
         TESTS.add(graalgo.jfr.JfrEventsTest.class);
         TESTS.add(graalgo.runtime.sync.SyncStressTest.class);
         TESTS.add(graalgo.runtime.sync.GoPoolTest.class);
