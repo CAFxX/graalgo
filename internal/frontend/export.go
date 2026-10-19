@@ -6844,11 +6844,14 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	// RV22-P1-9: resolve the qualifier to its package object and compare
+	// the import path, mirroring the exportCall intrinsic gate — the
+	// identifier spelling is irrelevant (`import rt "runtime"`).
+	if !ok || !isRuntimePkgName(info.Uses[pkgIdent]) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8396,6 +8399,21 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 	return nil
 }
 
+// isRuntimePkgName reports whether obj is the *types.PkgName denoting an
+// import of the standard "runtime" package, resolved by import path —
+// never by identifier spelling. RV22-P1-9: `import rt "runtime"` renames
+// the qualifier but resolves to the same package object; name-keyed
+// gating ("pkgIdent.Name == runtime") rejected valid Go. A nil object,
+// a shadowed non-package identifier, or any other import path returns
+// false.
+func isRuntimePkgName(obj types.Object) bool {
+	pkgName, ok := obj.(*types.PkgName)
+	if !ok || pkgName.Imported() == nil {
+		return false
+	}
+	return pkgName.Imported().Path() == "runtime"
+}
+
 // exportCall exports a call expression: either a Go conversion T(x) (the
 // call target denotes a *types.TypeName), emitted as a "convert" node
 // (M3, WS D — new node kind, additive per docs/frontend-v1.md §8), a call
@@ -8484,8 +8502,15 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+		// RV22-P1-9: gate on the resolved package object (import path), not
+		// the identifier spelling — `import rt "runtime"` renames the
+		// qualifier but denotes the same package. Both the qualifier's
+		// package object and the selected function's package are
+		// compared by path (the codebase's structural-identity rule,
+		// cf. the sync/atomic block above and :639); a user package
+		// merely named "runtime" (other import path) is never intercepted.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && isRuntimePkgName(e.info.Uses[pkgIdent]) {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
