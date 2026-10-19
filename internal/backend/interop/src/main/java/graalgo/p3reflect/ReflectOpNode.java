@@ -1103,7 +1103,10 @@ public final class ReflectOpNode extends GoExprNode {
         return k == GoKind.FLOAT32 || k == GoKind.FLOAT64;
     }
 
-    private static Object convertNumeric(Object d5, GoKind fk, GoKind tk) {
+    /**
+     * reflect.Convert's numeric path. Package-visible for unit tests.
+     */
+    static Object convertNumeric(Object d5, GoKind fk, GoKind tk) {
         // Via double/long intermediates (v1 range; matches ConvertNode).
         if (tk == GoKind.COMPLEX64 || tk == GoKind.COMPLEX128) {
             double re = toDouble(d5, fk);
@@ -1119,7 +1122,13 @@ public final class ReflectOpNode extends GoExprNode {
         }
         if (isFloatKind(tk)) {
             double dv = toDouble(d5, fk);
-            return tk == GoKind.FLOAT32 ? Float.valueOf((float) dv) : Double.valueOf(dv);
+            // NOTE: keep the branches separate — a ternary
+            // (Float.valueOf(..) : Double.valueOf(..)) undergoes binary
+            // numeric promotion and reboxes the float32 result as Double.
+            if (tk == GoKind.FLOAT32) {
+                return Float.valueOf((float) dv);
+            }
+            return Double.valueOf(dv);
         }
         long lv;
         if (isFloatKind(fk)) {
@@ -1134,14 +1143,40 @@ public final class ReflectOpNode extends GoExprNode {
         };
     }
 
-    private static double toDouble(Object d5, GoKind fk) {
+    /**
+     * Numeric D5 value → double for reflect Convert. Unsigned kinds widen
+     * through their unsigned conversion so the high bit survives:
+     * {@code uint64(1<<63)} converts to {@code +9.223372036854776E18}, not
+     * {@code -9.22e18} (I-5). UINT8/UINT16 arrive pre-masked as non-negative
+     * Integers (see {@code ReflectValues} box/unbox), so only the 32/64-bit
+     * unsigned kinds need the unsigned path.
+     *
+     * <p>Package-visible for unit tests.
+     */
+    static double toDouble(Object d5, GoKind fk) {
         if (d5 instanceof Double dd) {
             return dd;
         }
         if (d5 instanceof Float ff) {
             return ff;
         }
-        return ((Number) d5).longValue();
+        long lv = ((Number) d5).longValue();
+        if (fk == GoKind.UINT64) {
+            return unsignedLongToDouble(lv);
+        }
+        if (fk == GoKind.UINT32) {
+            return Integer.toUnsignedLong((int) lv);
+        }
+        return (double) lv;
+    }
+
+    /**
+     * Unsigned 64-bit → double. The JDK has no {@code Long.toUnsignedDouble};
+     * shifting down first keeps the conversion exact up to 2^53 and correctly
+     * rounded beyond (the (x>>>1)*2.0+(x&1) idiom).
+     */
+    private static double unsignedLongToDouble(long x) {
+        return (x >>> 1) * 2.0 + (x & 1);
     }
 
     private static Object fromDouble(double dv, GoKind tk) {
@@ -1241,17 +1276,26 @@ public final class ReflectOpNode extends GoExprNode {
         Object callable = ReflectRefs.denotedValue(p.ptr(), t.kind);
         // Unbox the []Value args to D5.
         Object[] d5Args = unboxArgs(args, t, sliceCall);
-        Object result = ReflectCalls.invokeCallable(callable, d5Args);
-        // Box the results as a []Value (the synthetic __reflect_call
-        // declares []Value; v1 has no multi-result funcs).
-        GoStructDescriptor desc = ReflectTypes.valueDescriptor();
-        if (t.outs.isEmpty()) {
-            return new GoSlice(new GoStruct[0], 0, 0, 0);
+        // Invoke, then box every declared result as a []Value (I-6: a
+        // 2-result func's Call(args)[1] must return the second value, never
+        // panic with index-out-of-range from a truncated slice).
+        Object[] d5Results = ReflectCalls.invokeCallableMulti(callable, d5Args, t.outs.size());
+        return boxResults(ReflectTypes.valueDescriptor(), d5Results, t);
+    }
+
+    /**
+     * Boxes D5 call results as a []Value, one Value per declared out.
+     * Package-visible for unit tests.
+     */
+    static GoSlice boxResults(GoStructDescriptor desc, Object[] d5Results, TypeInfo funcType) {
+        int n = funcType.outs.size();
+        GoStruct[] values = new GoStruct[n];
+        for (int i = 0; i < n; i++) {
+            long resultTok = funcType.outs.get(i).tok;
+            long h = ReflectRefs.intern(d5Results[i]);
+            values[i] = ReflectValues.pack(desc, resultTok, h, 0);
         }
-        long resultTok = t.outs.get(0).tok;
-        long h = ReflectRefs.intern(result);
-        GoStruct v = ReflectValues.pack(desc, resultTok, h, 0);
-        return new GoSlice(new GoStruct[]{v}, 0, 1, 1);
+        return new GoSlice(values, 0, n, n);
     }
 
     private static Object[] unboxArgs(GoSlice args, TypeInfo funcType, boolean sliceCall) {

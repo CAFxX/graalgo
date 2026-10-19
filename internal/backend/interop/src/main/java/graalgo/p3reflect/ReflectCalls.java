@@ -62,30 +62,50 @@ public final class ReflectCalls {
      * Returns the D5 result (single result; v1 has no multi-result funcs).
      */
     public static Object invokeCallable(Object callable, Object[] d5Args) {
+        return invokeCallableMulti(callable, d5Args, 1)[0];
+    }
+
+    /**
+     * Multi-result variant of {@link #invokeCallable}: returns one D5 value
+     * per declared out (I-6). A {@code MakeFunc} type may declare multiple
+     * outs via {@code FuncOf}; v1 Go funcs declare at most one result
+     * (frontend WS D), so a multi-out {@link GoFunc}/{@link MethodVal}/
+     * {@link BoundMethodVal} is unreachable — it fails loud here rather
+     * than silently truncating to the first result.
+     *
+     * <p>Package-visible for unit tests.
+     */
+    static Object[] invokeCallableMulti(Object callable, Object[] d5Args, int numOuts) {
+        if (callable instanceof MakeFuncVal mfv) {
+            return invokeMakeFuncMulti(mfv, d5Args, numOuts);
+        }
+        if (numOuts > 1) {
+            throw new IllegalStateException(
+                    "reflect: Call of func with " + numOuts
+                            + " results is not supported in v1 (WS D)");
+        }
         if (callable instanceof GoFunc gf) {
-            return GoCalls.invoke(gf, d5Args);
+            return new Object[]{GoCalls.invoke(gf, d5Args)};
         }
         if (callable instanceof MethodVal mv) {
-            return GoCalls.invoke(mv.method.func, d5Args);
+            return new Object[]{GoCalls.invoke(mv.method.func, d5Args)};
         }
         if (callable instanceof BoundMethodVal bmv) {
             Object[] withRecv = new Object[d5Args.length + 1];
             withRecv[0] = bmv.receiver;
             System.arraycopy(d5Args, 0, withRecv, 1, d5Args.length);
-            return GoCalls.invoke(bmv.method.func, withRecv);
-        }
-        if (callable instanceof MakeFuncVal mfv) {
-            return invokeMakeFunc(mfv, d5Args);
+            return new Object[]{GoCalls.invoke(bmv.method.func, withRecv)};
         }
         throw new IllegalStateException(
                 "reflect: not a callable: " + callable);
     }
 
     /**
-     * The MakeFunc trampoline: D5 args → []Value → callback → D5 result.
+     * The MakeFunc trampoline: D5 args → []Value → callback → D5 results.
      * The callback is a synthetic {@code func([]Value) []Value} Value.
+     * Unboxes one D5 value per declared out (I-6).
      */
-    private static Object invokeMakeFunc(MakeFuncVal mfv, Object[] d5Args) {
+    private static Object[] invokeMakeFuncMulti(MakeFuncVal mfv, Object[] d5Args, int numOuts) {
         ReflectTypes.Table table = ReflectTypes.table();
         ReflectTypes.TypeInfo funcType = table.info(mfv.funcTok);
         // Build the []Value argument.
@@ -101,17 +121,38 @@ public final class ReflectCalls {
         // Invoke the callback: __reflect_call on the callback Value.
         Object result = invokeCallable(
                 ReflectRefs.load(unpackHandle(mfv.callback)), new Object[]{valuesSlice});
-        // Convert the []Value result back to D5. Single-result (v1).
-        GoSlice resultSlice = (GoSlice) result;
-        if (resultSlice.len() == 0) {
-            return null;
+        // Convert the []Value result back to D5, one per declared out.
+        return unboxMakeFuncResults((GoSlice) result, numOuts);
+    }
+
+    /**
+     * Unboxes a MakeFunc callback's []Value result slice to D5, one value
+     * per declared out. A result count that disagrees with the declared
+     * type fails loud (the callback violated the MakeFunc contract), except
+     * the legacy single-out empty result which maps to a nil D5 value.
+     *
+     * <p>Package-visible for unit tests.
+     */
+    static Object[] unboxMakeFuncResults(GoSlice resultSlice, int numOuts) {
+        if (numOuts == 1 && resultSlice.len() == 0) {
+            // Legacy single-out behavior: an empty []Value maps to nil D5.
+            return new Object[]{null};
         }
-        // The callback is a real Go func value; its []Value result slice may
-        // be backed by Object[] rather than GoStruct[] — read via Array.get.
-        GoStruct resultValue = (GoStruct) java.lang.reflect.Array.get(
-                resultSlice.array(), resultSlice.offset());
-        // Unbox the single Value to D5.
-        return ReflectValues.unbox(resultValue);
+        if (resultSlice.len() != numOuts) {
+            throw new IllegalStateException(
+                    "reflect: MakeFunc callback returned " + resultSlice.len()
+                            + " values, want " + numOuts);
+        }
+        Object[] d5 = new Object[numOuts];
+        for (int i = 0; i < numOuts; i++) {
+            // The callback is a real Go func value; its []Value result slice
+            // may be backed by Object[] rather than GoStruct[] — read via
+            // Array.get.
+            GoStruct resultValue = (GoStruct) java.lang.reflect.Array.get(
+                    resultSlice.array(), resultSlice.offset() + i);
+            d5[i] = ReflectValues.unbox(resultValue);
+        }
+        return d5;
     }
 
     private static long unpackHandle(GoStruct v) {
