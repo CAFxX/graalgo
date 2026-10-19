@@ -354,4 +354,133 @@ public void testInvalidTypeWireEntryFailsLoud() {
         }
         assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
     }
+
+    /**
+     * Review 2026-10-19-07 P1 (sliceTokFor): the array-slicing path must
+     * mint slice tokens under the same fully-structural key as
+     * {@link ReflectTypes#sliceOf}. The old kind-only key
+     * ("slice:basic:ARRAY") both collided distinct unnamed composite
+     * element types and diverged from SliceOf tokens, so Go-level
+     * {@code reflect.Type ==} returned false where gc returns true.
+     *
+     * <p>Pins the canonical behavior sliceTokFor now delegates to:
+     * repeated sliceOf calls share one token; structurally different
+     * element types mint different tokens; the minted TypeInfo has the
+     * slice shape (size 24, align 8) with the right elem.
+     */
+    public void testSliceOfIsStructuralAndCanonical() {
+        String doc = """
+                {"types": [
+                  {"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": false}},
+                  {"kind": "array", "detail": {"elem": 0, "len": 2}},
+                  {"kind": "array", "detail": {"elem": 0, "len": 3}}
+                ]}
+                """;
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+
+        long arr2 = -1;
+        long arr3 = -1;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && ti.kind == GoKind.ARRAY) {
+                if (ti.arrayLen == 2) {
+                    arr2 = ti.tok;
+                } else if (ti.arrayLen == 3) {
+                    arr3 = ti.tok;
+                }
+            }
+        }
+        assertTrue(arr2 != -1, "no [2]int TypeInfo built");
+        assertTrue(arr3 != -1, "no [3]int TypeInfo built");
+        assertTrue(arr2 != arr3, "[2]int and [3]int share a token");
+
+        // Canonical: same element type -> same token.
+        long s1 = ReflectTypes.sliceOf(arr2);
+        long s2 = ReflectTypes.sliceOf(arr2);
+        assertTrue(s1 == s2, "sliceOf is not canonical: " + s1 + " != " + s2);
+
+        // Structural: different element types -> different tokens
+        // (the old "slice:basic:ARRAY" key collided these).
+        long s3 = ReflectTypes.sliceOf(arr3);
+        assertTrue(s3 != s1,
+                "sliceOf([2]int) and sliceOf([3]int) collided on token " + s1);
+
+        // Shape: the minted slice TypeInfo matches the pre-fix layout
+        // (SLICE, size 24, align 8) with the correct elem.
+        ReflectTypes.TypeInfo si = table.info(s1);
+        assertTrue(si.kind == GoKind.SLICE, "slice kind should be SLICE, got " + si.kind);
+        assertTrue(si.size == 24 && si.align == 8,
+                "slice size/align should be 24/8, got " + si.size + "/" + si.align);
+        assertTrue(si.elem != null && si.elem.tok == arr2,
+                "slice elem should be the [2]int token");
+        ReflectTypes.TypeInfo si3 = table.info(s3);
+        assertTrue(si3.elem != null && si3.elem.tok == arr3,
+                "second slice elem should be the [3]int token, got "
+                        + (si3.elem == null ? "null" : si3.elem.tok));
+    }
+
+    /**
+     * Review 2026-10-19-07 P1, same bug family (boundMethodTok): bound
+     * method values must mint func tokens under the same fully-structural
+     * key as {@link ReflectTypes#funcOf}. The old ad-hoc kind-only key
+     * ("func(basic:ARRAY)(basic:INT)") both collided distinct composite
+     * parameter types and diverged from FuncOf tokens.
+     *
+     * <p>Pins the canonical behavior boundMethodTok now delegates to.
+     */
+    public void testFuncOfIsStructuralAndCanonical() {
+        String doc = """
+                {"types": [
+                  {"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": false}},
+                  {"kind": "array", "detail": {"elem": 0, "len": 2}},
+                  {"kind": "array", "detail": {"elem": 0, "len": 3}}
+                ]}
+                """;
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+
+        long intTok = -1;
+        long arr2 = -1;
+        long arr3 = -1;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti == null) {
+                continue;
+            }
+            if (ti.kind == GoKind.INT64) {
+                intTok = ti.tok;
+            } else if (ti.kind == GoKind.ARRAY) {
+                if (ti.arrayLen == 2) {
+                    arr2 = ti.tok;
+                } else if (ti.arrayLen == 3) {
+                    arr3 = ti.tok;
+                }
+            }
+        }
+        assertTrue(intTok != -1, "no int TypeInfo built");
+        assertTrue(arr2 != -1, "no [2]int TypeInfo built");
+        assertTrue(arr3 != -1, "no [3]int TypeInfo built");
+
+        // Canonical: same signature -> same token.
+        long f1 = ReflectTypes.funcOf(new long[]{arr2}, new long[]{intTok}, false);
+        long f2 = ReflectTypes.funcOf(new long[]{arr2}, new long[]{intTok}, false);
+        assertTrue(f1 == f2, "funcOf is not canonical: " + f1 + " != " + f2);
+
+        // Structural: same-kind composite params with different structure
+        // must not collide (the old key collided these).
+        long f3 = ReflectTypes.funcOf(new long[]{arr3}, new long[]{intTok}, false);
+        assertTrue(f3 != f1,
+                "funcOf([2]int) and funcOf([3]int) collided on token " + f1);
+
+        // Shape: the minted func TypeInfo matches the pre-fix layout
+        // (FUNC, size 8, align 8) with receiver-stripped ins/outs.
+        ReflectTypes.TypeInfo fi = table.info(f1);
+        assertTrue(fi.kind == GoKind.FUNC, "func kind should be FUNC, got " + fi.kind);
+        assertTrue(fi.size == 8 && fi.align == 8,
+                "func size/align should be 8/8, got " + fi.size + "/" + fi.align);
+        assertTrue(fi.ins.size() == 1 && fi.ins.get(0).tok == arr2,
+                "func ins should be [[2]int]");
+        assertTrue(fi.outs.size() == 1 && fi.outs.get(0).tok == intTok,
+                "func outs should be [int]");
+        assertTrue(!fi.variadic, "func should not be variadic");
+    }
 }

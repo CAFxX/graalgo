@@ -1205,29 +1205,11 @@ public final class ReflectOpNode extends GoExprNode {
         return ReflectValues.pack(desc, p.typ(), h, flag);
     }
 
-    /** Token for []E (synthesized if absent). */
+    /** Token for []E (synthesized if absent). Delegates to the canonical
+     *  {@link ReflectTypes#sliceOf} so array-slicing and reflect.SliceOf
+     *  mint tokens under the same fully-structural key. */
     private static long sliceTokFor(long elemTok) {
-        ReflectTypes.Table table = ReflectTypes.table();
-        TypeInfo elem = table.info(elemTok);
-        String key = "slice:" + elemKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
-    }
-
-    private static String elemKey(TypeInfo t) {
-        if (t.isNamed()) {
-            return "named:" + t.pkgPath + "." + t.name;
-        }
-        return "basic:" + t.kind;
+        return ReflectTypes.sliceOf(elemTok);
     }
 
     // ------------------------------------------------------------------
@@ -1297,41 +1279,22 @@ public final class ReflectOpNode extends GoExprNode {
         return ReflectValues.pack(ReflectTypes.valueDescriptor(), boundTok, handle, flag);
     }
 
-    /** Token for a bound method's func type (receiver stripped). */
+    /** Token for a bound method's func type (receiver stripped). Delegates
+     *  to the canonical {@link ReflectTypes#funcOf} so bound-method func
+     *  types and reflect.FuncOf mint tokens under the same fully-structural
+     *  key (the previous ad-hoc kind-only key both collided distinct
+     *  composite param types and diverged from FuncOf tokens). */
     private static long boundMethodTok(ReflectTypes.MethodInfo mi) {
-        ReflectTypes.Table table = ReflectTypes.table();
         TypeInfo ft = mi.funcType;
-        StringBuilder sb = new StringBuilder("func(");
+        long[] ins = new long[ft.ins.size() - 1];
         for (int i = 1; i < ft.ins.size(); i++) {
-            if (i > 1) {
-                sb.append(',');
-            }
-            sb.append(elemKey(ft.ins.get(i)));
+            ins[i - 1] = ft.ins.get(i).tok;
         }
-        sb.append(")(");
+        long[] outs = new long[ft.outs.size()];
         for (int i = 0; i < ft.outs.size(); i++) {
-            if (i > 0) {
-                sb.append(',');
-            }
-            sb.append(elemKey(ft.outs.get(i)));
+            outs[i] = ft.outs.get(i).tok;
         }
-        sb.append(')');
-        if (ft.variadic) {
-            sb.append("...");
-        }
-        String key = sb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
-        TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
-                null, null, 0, null, List.of(), List.of(),
-                List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
+        return ReflectTypes.funcOf(ins, outs, ft.variadic);
     }
 
     /** __reflect_makefunc. */
