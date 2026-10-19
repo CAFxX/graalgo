@@ -7,6 +7,7 @@ import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 
 // verifies: GG-0020 (WS G builtin)
 /**
@@ -68,7 +69,17 @@ public final class MakeNode extends GoExprNode {
         long cap = capChild != null ? capChild.executeLong(frame) : len;
         if (len < 0 || cap < 0 || len > cap) {
             // gc: "makeslice: len out of range" panic.
-            Panic.throwPanic("makeslice: len out of range", null, null, this);
+            // D5: Panic.throwPanic takes the Go value in its D5 mapping — a raw
+            // java.lang.String is not a Go string, and with a null descriptor
+            // recover() would hand the value back unboxed, ClassCastExceptioning
+            // GoInterface.narrow inside TypeAssertNode (RV-P0-06 family). Wrap in
+            // GoString and pass the canonical predeclared-string descriptor (the
+            // same identity NodeFactory.typeDescriptorFor uses for `string`, via
+            // the process-wide basicDescriptorForName cache) so recover() boxes
+            // it as a GoInterface and r.(string) holds.
+            Panic.throwPanic(GoString.fromUtf8("makeslice: len out of range"),
+                    NodeFactory.basicDescriptorForName("string", GoKind.STRING),
+                    null, this);
         }
         return Intrinsics.makeslice(elemKind, elemDesc, (int) len, (int) cap);
     }
