@@ -1584,14 +1584,6 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M9 (RC-6): the fmt.State implementation (internal/graalgo/fmtstate)
-	// must be in the export so Fmt.handleMethods can box a PrinterState as
-	// fmt.State for fmt.Formatter dispatch. The package is synthetic-only
-	// (never imported by user code) and tiny, so import it unconditionally;
-	// importSyntheticPackage is idempotent.
-	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
-		return "", err
-	}
 	// P3-M7 (wave 1): synthetic sort is self-contained (no
 	// synthetic->synthetic imports). Synthetic errors imports reflect
 	// (PKG-022: real errors.As is implemented over the synthetic
@@ -6200,8 +6192,7 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	}
 	// P3-M9 (RC-6): //go:linkname on methods is allowed (previously M4
 	// scope). The receiver is passed as the first arg; intrinsics that
-	// don't need it (e.g. fmtstate.PrinterState methods, which operate on
-	// the thread-local Printer) ignore it.
+	// don't need it ignore it.
 	if fi.isTemplate && symbol != "" {
 		return nil, scopeErrorf("//go:linkname on generic func %s is not in M4 scope", fd.Name.Name)
 	}
@@ -11527,13 +11518,12 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// Registry-driven (P1-N3, review-n1): every package with a synthetic
 	// source resolves through the overlay importer, so qualified
 	// const/var idents lower through exportSyntheticQualified. This
-	// replaces the hand-maintained 115-name chain, which had drifted: 18
+	// replaces the hand-maintained 115-name chain, which had drifted: 17
 	// syntheticSources entries were missing from it (net, net/http,
 	// net/http/httptest, net/netip, net/textproto, net/url, archive/tar,
 	// archive/zip, mime, mime/multipart, mime/quotedprintable,
 	// internal/reflectlite, iter, internal/byteorder, internal/poll,
-	// internal/nettrace, internal/singleflight,
-	// internal/graalgo/fmtstate).
+	// internal/nettrace, internal/singleflight).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {

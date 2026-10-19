@@ -64,26 +64,6 @@ public final class IfaceMethodTable {
     private record ItabKey(String descriptorName, int ifaceId) {}
 
     /**
-     * Installs a single method target (P3-M9, RC-6): used by the runtime to
-     * register Java-implemented methods (e.g. fmt.State for Fmt.handleMethods)
-     * that have no Go body in the export. Drops the itab cache.
-     *
-     * @param descriptorName the concrete type's descriptor name
-     * @param methodName the method name
-     * @param target the method target
-     */
-    public static void installMethod(String descriptorName, String methodName, IfaceMethodTarget target) {
-        synchronized (LOCK) {
-            Map<String, Map<String, IfaceMethodTarget>> copy = new HashMap<>(table);
-            Map<String, IfaceMethodTarget> methods = new HashMap<>(copy.getOrDefault(descriptorName, Map.of()));
-            methods.put(methodName, target);
-            copy.put(descriptorName, Map.copyOf(methods));
-            table = Map.copyOf(copy);
-            itabs.clear();
-        }
-    }
-
-    /**
      * Installs the method tables. Defensive deep copy: later mutation of
      * the caller's maps cannot corrupt the registry. Drops the itab cache.
      */
@@ -167,17 +147,6 @@ public final class IfaceMethodTable {
     /** Number of cached itabs (tests: PIC-hit counting). */
     static int itabCacheSize() {
         return itabs.size();
-    }
-
-    /**
-     * Looks up a method target by (descriptor name, method name) (P3-M9,
-     * RC-6: public for Fmt.handleMethods).
-     *
-     * @return the target, or null if not found
-     */
-    public static IfaceMethodTarget lookup(String descriptorName, String methodName) {
-        Map<String, IfaceMethodTarget> methods = table.get(descriptorName);
-        return methods == null ? null : methods.get(methodName);
     }
 
     /**
