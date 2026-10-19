@@ -13,6 +13,7 @@ import com.oracle.truffle.api.source.Source;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
+import graalgo.launcher.BackendStatus;
 import graalgo.iface.IfaceDispatchBuilder;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
@@ -96,6 +97,19 @@ import graalgo.sched.nodes.GoStatementNode;
  * <p>Exit codes match Phase 1/2: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
  *
+ * <p>Exit-code disambiguation (fix-p1-run-exitcode): the driver
+ * ({@code graalgo run}) may pass the driver-internal flag
+ * {@code --status-file=<path>} (never shown in {@code --help}, stripped
+ * before parsing, never visible to the guest's {@code os.Args}). When
+ * present and this launcher fails on its <em>own</em> failure paths
+ * (usage/input errors, gofrontend failures, internal errors,
+ * {@code --emit-wire} write failures, scheduler interruption, a crashed
+ * scheduler), it writes a sentinel JSON document at that path so the
+ * driver can distinguish a backend failure from a program outcome.
+ * Program outcomes (uncaught Go panic → 2, Goexit deadlock in main → 2)
+ * write no sentinel. The flag is optional: without it, exit codes 0/1/2
+ * are exactly as documented above.
+ *
  * <p>verifies: GG-0017 (sync slice)
  */
 public final class P3SyncMain {
@@ -107,17 +121,38 @@ public final class P3SyncMain {
     static final int EXIT_PANIC = 2;
 
     public static void main(String[] args) {
-        System.exit(run(args));
+        // fix-p1-run-exitcode: extract the driver-internal --status-file
+        // flag before parsing; write the sentinel iff this run is a
+        // backend failure (not a program outcome).
+        String statusFile = BackendStatus.extractStatusFile(args);
+        BackendStatus.RunResult r = runDetailed(BackendStatus.stripStatusFile(args));
+        if (statusFile != null && r.exitCode() != 0 && r.backendFailure()) {
+            BackendStatus.writeStatusFile(statusFile, r.exitCode());
+        }
+        System.exit(r.exitCode());
     }
 
     /** Entry point without System.exit, for tests. */
     static int run(String[] args) {
+        // Kept for the in-JVM test seam and FastCycleDaemon's reflective
+        // run(String[]) lookup: the sentinel machinery lives in main()
+        // only, so run() stays a pure exit-code function.
+        return runDetailed(args).exitCode();
+    }
+
+    /**
+     * The launcher body, returning the exit code plus whether a non-zero
+     * code is the backend's own failure (→ sentinel) or the program's
+     * outcome (→ no sentinel, driver keeps {@code exit status N}).
+     */
+    static BackendStatus.RunResult runDetailed(String[] args) {
         // P2-M5 (WS E): GODEBUG surface triage — same as SchedMain.
         try {
             GoDebug.apply();
         } catch (GoDebug.GoDebugException e) {
             System.err.println("graalgo-sync-run: fatal error: " + e.getMessage());
-            return 2;
+            // fix-p1-run-exitcode: a launcher failure (→ sentinel).
+            return BackendStatus.RunResult.backend(2);
         }
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
@@ -199,7 +234,7 @@ public final class P3SyncMain {
                 case "--dump-polymorphism" -> dumpPolymorphism = true;
                 case "--help", "-h" -> {
                     usage();
-                    return EXIT_OK;
+                    return BackendStatus.RunResult.program(EXIT_OK);
                 }
                 default -> {
                     if (a.startsWith("-")) {
@@ -223,7 +258,7 @@ public final class P3SyncMain {
             Path p = Paths.get(f);
             if (!Files.isReadable(p)) {
                 System.err.println("graalgo-sync-run: cannot read input file: " + f);
-                return EXIT_INPUT_ERROR;
+                return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
             }
             paths.add(p);
         }
@@ -235,7 +270,7 @@ public final class P3SyncMain {
                 json = Files.readString(Paths.get(wireInput), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 System.err.println("graalgo-sync-run: cannot read --wire-input file: " + e.getMessage());
-                return EXIT_INPUT_ERROR;
+                return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
             }
         } else try {
             json = runGofrontend(paths, testPackageDir);
@@ -250,10 +285,11 @@ public final class P3SyncMain {
             } else {
                 System.err.print(e.buildLog);
             }
-            return e.exit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(
+                    e.exit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR);
         } catch (IOException e) {
             System.err.println("graalgo-sync-run: cannot launch gofrontend: " + e.getMessage());
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
 
         // Phase 4 (build-artifact): dump the frontend JSON and exit.
@@ -264,9 +300,9 @@ public final class P3SyncMain {
                 Files.writeString(Paths.get(emitWire), json, StandardCharsets.UTF_8);
             } catch (IOException e) {
                 System.err.println("graalgo-sync-run: cannot write --emit-wire file: " + e.getMessage());
-                return EXIT_INPUT_ERROR;
+                return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
             }
-            return EXIT_OK;
+            return BackendStatus.RunResult.program(EXIT_OK);
         }
 
         // Build one Truffle Source per input file; the frontend's position
@@ -278,7 +314,7 @@ public final class P3SyncMain {
                 srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
             } catch (IOException e) {
                 System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
-                return EXIT_INPUT_ERROR;
+                return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
             }
             sources[i] = Source.newBuilder("go", srcText,
                     paths.get(i).getFileName().toString()).build();
@@ -471,10 +507,10 @@ public final class P3SyncMain {
             LinknameIntrinsics.install(doc, program);
         } catch (FrontendException e) {
             System.err.println("graalgo-sync-run: internal error building AST: " + e.getMessage());
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
         if (check) {
-            return EXIT_OK;
+            return BackendStatus.RunResult.program(EXIT_OK);
         }
         // M10 (self-attack D3): preload all graalgo classes before guest
         // execution, so a guest that exhausts the process's fds cannot
@@ -511,7 +547,12 @@ public final class P3SyncMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
-        final int[] exitCode = {EXIT_OK};
+        // fix-p1-run-exitcode: the classification travels with the exit
+        // code. Program outcomes: uncaught Go panic and Goexit-deadlock in
+        // main (gc: exit 2, probed) are PROGRAM (no sentinel). A crashed
+        // scheduler ("goroutine died from an internal error") and an
+        // interruption are the backend's own failures → BACKEND.
+        final BackendStatus.RunResult[] result = {BackendStatus.RunResult.program(EXIT_OK)};
         try {
             sched.spawn(() -> {
                 VirtualFrame frame = Truffle.getRuntime()
@@ -526,7 +567,7 @@ public final class P3SyncMain {
                     }
                     System.err.println(
                             "fatal error: all goroutines are asleep - deadlock!");
-                    exitCode[0] = EXIT_PANIC;
+                    result[0] = BackendStatus.RunResult.program(EXIT_PANIC);
                 }
             });
             // P3-M5 (WS E, ADR-0005): timer translators are background
@@ -541,7 +582,7 @@ public final class P3SyncMain {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         } finally {
             SchedulerCore.install(prev);
         }
@@ -552,12 +593,14 @@ public final class P3SyncMain {
             dumpPolymorphism();
         }
         if (sched.panicked()) {
-            return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
+            return BackendStatus.RunResult.program(EXIT_PANIC); // uncaught Go panic in some goroutine (gc: exit 2)
         }
         if (sched.crashed()) {
-            return EXIT_INPUT_ERROR; // internal error, already reported on stderr
+            // "goroutine died from an internal error" — the backend's
+            // fault, not the program's.
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
-        return exitCode[0];
+        return result[0];
     }
 
     /**
@@ -600,10 +643,12 @@ public final class P3SyncMain {
         }
     }
 
-    private static int usageError(String msg) {
+    private static BackendStatus.RunResult usageError(String msg) {
         System.err.println("graalgo-sync-run: " + msg);
         usage();
-        return EXIT_INPUT_ERROR;
+        // fix-p1-run-exitcode: usage errors are the backend's own
+        // failure (→ sentinel when the driver passes --status-file).
+        return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
     }
 
     /** gofrontend failure: exit code + stderr build log. */

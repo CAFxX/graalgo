@@ -105,8 +105,11 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
+	// fix-p1-run-exitcode: on a failed pre-pass the driver returns 1,
+	// never the backend's raw code — `go run` exits 1 when the build
+	// fails, and the backend's code-2 build-failure code must not leak.
 	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
-		return code
+		return 1
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)

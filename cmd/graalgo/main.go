@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 )
 
 const version = "0.4.0"
@@ -190,46 +191,141 @@ func isGraalgoRoot(dir string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// backendResult is the outcome of one backend invocation. The backend's
+// exit code is not the whole story: a signal death (ExitCode() == -1)
+// and a launch failure are distinguished, because `go run` renders a
+// signal death as "signal: <name>" rather than "exit status -1".
+type backendResult struct {
+	code     int       // process exit code; -1 if it didn't exit
+	sig      os.Signal // non-nil if the process died from a signal
+	startErr error     // non-nil if the backend couldn't be launched
+}
+
+// backendRunnerOverride replaces the resolved graalgo-sync-run path when
+// set. Test seam only: the driver unit tests point it at a fake backend
+// script that implements the launcher contract (sentinel iff instructed,
+// arbitrary exit codes, signal death on demand).
+var backendRunnerOverride string
+
+// runBackend is the single exec choke point for backend invocations: it
+// invokes internal/backend/graalgo-sync-run with the given args, wiring
+// stdio through.
+func runBackend(root string, args []string) backendResult {
+	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
+	if backendRunnerOverride != "" {
+		runner = backendRunnerOverride
+	}
+	cmd := exec.Command(runner, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	var r backendResult
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			r.code = ee.ExitCode()
+			// syscall.WaitStatus is unix-only; graalgo targets
+			// Linux/GraalVM (consistent with the rest of the backend).
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				r.sig = ws.Signal()
+			}
+			return r
+		}
+		r.startErr = err
+		return r
+	}
+	r.code = 0
+	return r
+}
+
 // graalgoRun invokes internal/backend/graalgo-sync-run with the given args,
 // wiring stdio through. Returns the process exit code.
+//
+// A signal death or a start failure returns 1 rather than leaking Go's
+// -1/err conventions: downstream callers only test `!= 0`.
 //
 // NOTE: privilege-conferring signals (e.g. PKG-001's test-package-dir)
 // travel as explicit argv flags, never environment variables: env is
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
 func graalgoRun(root string, args []string) int {
-	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
-	cmd := exec.Command(runner, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "graalgo: %v\n", err)
+	r := runBackend(root, args)
+	if r.startErr != nil {
+		fmt.Fprintf(os.Stderr, "graalgo: %v\n", r.startErr)
 		return 1
 	}
-	return 0
+	if r.sig != nil {
+		return 1
+	}
+	return r.code
 }
 
 // graalgoRunProgram invokes the backend for `graalgo run` and emulates
 // `go run`'s exit contract: when the program exits non-zero, `go run`
 // prints "exit status N" to stderr and exits 1 (rather than propagating
-// the raw code). This keeps `graalgo run` byte-identical to `go run` on
-// stderr and exit code for programs that exit non-zero.
+// the raw code).
 //
-// Known wart: the backend's own failure codes (1 = input error, 2 =
-// build failure) share the exit-code space with program exits, so a
-// backend failure also gets the "exit status N" treatment; `go run`
-// prints no such line for its own build failures. Disambiguating needs
-// a backend exit-code convention change.
+// The backend's own failures are disambiguated from program outcomes via
+// an out-of-band sentinel file (fix-p1-run-exitcode): the driver creates
+// a private temp dir and passes --status-file=<path> to the backend,
+// which writes a status document only on its own failure paths. File
+// presence (with a non-zero exit) means "the backend itself failed" —
+// the backend's stderr already carries the message, so the driver stays
+// silent and returns 1, exactly like `go run` on a build failure.
+// Absence means the exit code/signal is the program's outcome.
+//
+// A backend killed by a signal is rendered as "signal: <name>"
+// (syscall.SIGKILL.String() == "killed", byte-identical to `go run`);
+// the old code printed "exit status -1".
+//
+// Degraded-but-safe fallbacks: if the temp dir cannot be created, the
+// driver warns and runs without the flag (legacy behavior); if the
+// sentinel write fails inside the backend, the driver falls back to
+// "exit status N". Behavior is never worse than before the change.
 func graalgoRunProgram(root string, args []string) int {
-	code := graalgoRun(root, args)
-	if code != 0 {
-		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
+	// Step 1: private temp dir for the status sentinel.
+	statusDir, err := os.MkdirTemp("", "graalgo-run-*")
+	statusFile := ""
+	if err != nil {
+		// E4: degraded but safe — legacy behavior (no flag).
+		fmt.Fprintf(os.Stderr, "graalgo: warning: cannot create status dir: %v\n", err)
+	} else {
+		defer os.RemoveAll(statusDir)
+		statusFile = filepath.Join(statusDir, "backend-status.json")
+		// Step 2: the flag travels as explicit argv (PKG-001 precedent),
+		// prepended so it precedes every launcher flag and, crucially,
+		// precedes "--" — the launcher strips it before "--", so it never
+		// reaches the guest's os.Args.
+		args = append([]string{"--status-file=" + statusFile}, args...)
+	}
+
+	r := runBackend(root, args)
+
+	// Step 3: start failure (unchanged from the old behavior).
+	if r.startErr != nil {
+		fmt.Fprintf(os.Stderr, "graalgo: %v\n", r.startErr)
 		return 1
 	}
+	// Step 4: signal death — `go run` prints "signal: <name>", no
+	// "exit status" line, rc 1.
+	if r.sig != nil {
+		fmt.Fprintf(os.Stderr, "signal: %s\n", r.sig)
+		return 1
+	}
+	// Step 5: the backend's own failure (sentinel present). Honored only
+	// when the exit code is non-zero: a sentinel with code 0 is
+	// impossible by construction and is ignored defensively.
+	if r.code != 0 && statusFile != "" {
+		if _, serr := os.Stat(statusFile); serr == nil {
+			return 1
+		}
+	}
+	// Step 6: program outcome — gc-exact for program exits, incl.
+	// os.Exit(N), uncaught panics, and deadlocks.
+	if r.code != 0 {
+		fmt.Fprintf(os.Stderr, "exit status %d\n", r.code)
+		return 1
+	}
+	// Step 7.
 	return 0
 }
 

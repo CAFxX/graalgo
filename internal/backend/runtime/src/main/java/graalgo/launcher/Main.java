@@ -39,6 +39,18 @@ import java.util.ServiceLoader;
  * arrive with WS F/G). Computed values are observable in tests via
  * frame-slot reads (the {@code --dump-vars} debug aid prints them); the WS G
  * {@code println} intrinsic becomes the program-observable channel.
+ *
+ * <p>Exit-code disambiguation (fix-p1-run-exitcode): the driver
+ * ({@code graalgo run}) may pass the driver-internal flag
+ * {@code --status-file=<path>} (never shown in {@code --help}, never
+ * visible to the guest's {@code os.Args}). When present and this launcher
+ * fails on its <em>own</em> failure paths (usage/input errors, gofrontend
+ * failures, internal errors, snapshot write failures), it writes a
+ * sentinel JSON document at that path so the driver can distinguish a
+ * backend failure from a program outcome. Program outcomes (uncaught Go
+ * panic → 2, Goexit deadlock → 2, the M2 RuntimeException stand-in → 1)
+ * write no sentinel. The flag is optional: without it, exit codes 0/1/2
+ * are exactly as documented above.
  */
 public final class Main {
     private Main() {}
@@ -49,11 +61,31 @@ public final class Main {
     static final int EXIT_PANIC = 2; // uncaught Go panic or Goexit in main (gc: exit 2)
 
     public static void main(String[] args) {
-        System.exit(run(args));
+        // fix-p1-run-exitcode: extract the driver-internal --status-file
+        // flag before parsing; write the sentinel iff this run is a
+        // backend failure (not a program outcome).
+        String statusFile = BackendStatus.extractStatusFile(args);
+        BackendStatus.RunResult r = runDetailed(BackendStatus.stripStatusFile(args));
+        if (statusFile != null && r.exitCode() != 0 && r.backendFailure()) {
+            BackendStatus.writeStatusFile(statusFile, r.exitCode());
+        }
+        System.exit(r.exitCode());
     }
 
     /** Entry point without the System.exit, for tests. Returns the process exit code. */
     static int run(String[] args) {
+        // Kept for the in-JVM test seam and FastCycleDaemon's reflective
+        // run(String[]) lookup: the sentinel machinery lives in main()
+        // only, so run() stays a pure exit-code function.
+        return runDetailed(args).exitCode();
+    }
+
+    /**
+     * The launcher body, returning the exit code plus whether a non-zero
+     * code is the backend's own failure (→ sentinel) or the program's
+     * outcome (→ no sentinel, driver keeps {@code exit status N}).
+     */
+    static BackendStatus.RunResult runDetailed(String[] args) {
         boolean check = false;
         boolean dumpVars = false;
         String dumpPoly = null;
@@ -110,23 +142,40 @@ public final class Main {
             if (batchFile.isEmpty()) {
                 return usageError("--batch requires a file argument");
             }
-            return runBatch(batchFile);
+            // fix-p1-run-exitcode: batch mode is unchanged — the process
+            // exit stays 0 after processing, per-entry results are in the
+            // JSON, and no sentinel is written (the driver never passes
+            // --status-file with --batch).
+            return BackendStatus.RunResult.program(runBatch(batchFile));
         }
         if (file == null) {
             return usageError("no input file");
         }
-        return runOne(file, check, dumpVars, dumpPoly);
+        return runOneDetailed(file, check, dumpVars, dumpPoly);
     }
 
     /**
      * Runs one file through frontend → AST → execute.
-     * Extracted from {@link #run} so batch mode reuses the exact same path.
+     * Extracted from {@link #runDetailed} so batch mode reuses the exact same path.
+     *
+     * <p>Package-visible int seam for batch mode ({@link #runBatch});
+     * the classified variant is {@link #runOneDetailed}.
      */
     static int runOne(String file, boolean check, boolean dumpVars, String dumpPoly) {
+        return runOneDetailed(file, check, dumpVars, dumpPoly).exitCode();
+    }
+
+    /**
+     * Classified variant of {@link #runOne}: non-zero returns carry
+     * whether the failure is the backend's own (→ sentinel) or the
+     * program's outcome (→ no sentinel).
+     */
+    static BackendStatus.RunResult runOneDetailed(
+            String file, boolean check, boolean dumpVars, String dumpPoly) {
         Path p = Paths.get(file);
         if (!Files.isReadable(p)) {
             System.err.println("graalgo-run: cannot read input file: " + file);
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
 
         // Frontend: gofrontend type-checks the file and emits frontend/v1 JSON.
@@ -144,11 +193,12 @@ public final class Main {
             } else {
                 System.err.print(e.buildLog);
             }
-            return e.gofrontendExit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(
+                    e.gofrontendExit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR);
         } catch (IOException e) {
             System.err.println("graalgo-run: cannot launch gofrontend ("
                     + ToolPaths.gofrontend() + "): " + e.getMessage());
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
 
         final String srcText;
@@ -156,7 +206,7 @@ public final class Main {
             srcText = Files.readString(p, StandardCharsets.UTF_8);
         } catch (IOException e) {
             System.err.println("graalgo-run: cannot read input file: " + file);
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
         Source source = Source.newBuilder("go", srcText, p.getFileName().toString()).build();
         final NodeFactory.Program program;
@@ -182,15 +232,15 @@ public final class Main {
             if (msg != null && (msg.contains("not supported in frontend/v1 scope")
                     || msg.contains("not supported in v1"))) {
                 System.err.println("graalgo-run: " + msg);
-                return EXIT_BUILD_FAILURE;
+                return BackendStatus.RunResult.backend(EXIT_BUILD_FAILURE);
             }
             // gofrontend accepted the program but the factory cannot build it:
             // a launcher-internal inconsistency, never the program's fault.
             System.err.println("graalgo-run: internal error building AST: " + msg);
-            return EXIT_INPUT_ERROR;
+            return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
         }
         if (check) {
-            return EXIT_OK;
+            return BackendStatus.RunResult.program(EXIT_OK);
         }
 
         // M10 (self-attack D3): preload all graalgo classes before guest
@@ -202,7 +252,13 @@ public final class Main {
             // M9 (WS L): enable call-site polymorphism recording for this run.
             graalgo.values.CallSiteProbes.setEnabled(true);
         }
-        int exitCode = EXIT_OK;
+        // fix-p1-run-exitcode: the classification travels with the exit
+        // code — program outcomes (panics, Goexit, SOE) are PROGRAM (no
+        // sentinel); the M2 RuntimeException stand-in is deliberately
+        // PROGRAM so today's `exit status 1` is preserved with no
+        // regression (the exit-1-vs-gc-2 fidelity gap there is a separate
+        // WS-F-mapping follow-up).
+        BackendStatus.RunResult result = BackendStatus.RunResult.program(EXIT_OK);
         try {
             if (dumpVars) {
                 VirtualFrame frame = Truffle.getRuntime()
@@ -229,11 +285,11 @@ public final class Main {
             } else {
                 program.root().getCallTarget().call();
             }
-            exitCode = EXIT_OK;
+            result = BackendStatus.RunResult.program(EXIT_OK);
         } catch (graalgo.runtime.PanicException pe) {
             // M5 (WS F): uncaught Go panic → gc-comparable output, exit 2.
             reportPanic(pe);
-            exitCode = EXIT_PANIC;
+            result = BackendStatus.RunResult.program(EXIT_PANIC);
         } catch (graalgo.runtime.Goexit g) {
             // M5 (WS F): Goexit in main = gc's fatal deadlock (exit 2).
             // (Exit 0 applies to non-main goroutines, Phase 2.)
@@ -241,12 +297,12 @@ public final class Main {
             System.err.println();
             System.err.println("goroutine 1 [running]:");
             System.err.println("main.main()");
-            exitCode = EXIT_PANIC;
+            result = BackendStatus.RunResult.program(EXIT_PANIC);
         } catch (RuntimeException e) {
             // M2 stand-in: Go panics (incl. divide-by-zero) surface here until
             // WS F maps them to Go panic values.
             System.err.println("graalgo-run: execution failed: " + e);
-            exitCode = EXIT_INPUT_ERROR;
+            result = BackendStatus.RunResult.program(EXIT_INPUT_ERROR);
         } catch (StackOverflowError soe) {
             // M10 (self-attack): guest recursion burns host stack (-Xss32m,
             // M5 stance). Catching here — after the stack unwound — reports
@@ -254,7 +310,7 @@ public final class Main {
             // Truffle exception-profiling cascade. gc also aborts (exit 2)
             // on runaway recursion; the depth limit itself is documented.
             reportStackOverflow();
-            exitCode = EXIT_PANIC;
+            result = BackendStatus.RunResult.program(EXIT_PANIC);
         } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
             // M10 (self-attack): Truffle's exception profiler can itself
             // blow the exhausted stack while handling a StackOverflowError,
@@ -262,7 +318,7 @@ public final class Main {
             // rethrow anything else.
             if (isStackOverflowCascade(e)) {
                 reportStackOverflow();
-                exitCode = EXIT_PANIC;
+                result = BackendStatus.RunResult.program(EXIT_PANIC);
             } else {
                 throw e;
             }
@@ -296,11 +352,11 @@ public final class Main {
                     }
                 } catch (IOException e) {
                     System.err.println("graalgo-run: cannot write polymorphism snapshot: " + e);
-                    return EXIT_INPUT_ERROR;
+                    return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
                 }
             }
         }
-        return exitCode;
+        return result;
     }
 
     /**
@@ -453,10 +509,12 @@ public final class Main {
         }
     }
 
-    private static int usageError(String msg) {
+    private static BackendStatus.RunResult usageError(String msg) {
         System.err.println("graalgo-run: " + msg);
         usage();
-        return EXIT_INPUT_ERROR;
+        // fix-p1-run-exitcode: usage errors are the backend's own
+        // failure (→ sentinel when the driver passes --status-file).
+        return BackendStatus.RunResult.backend(EXIT_INPUT_ERROR);
     }
 
     private static void usage() {
