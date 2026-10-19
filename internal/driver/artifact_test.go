@@ -2,9 +2,13 @@ package driver
 
 import (
 	"bytes"
+	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -201,4 +205,92 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestEmitRelativeOutputPath is a regression test for the flagship
+// command: `graalgo build` without -o derives a BARE relative output
+// name (DefaultOutputName returns e.g. "prog"). Emit compiles the
+// launcher in its own temp dir, so it must resolve a relative output
+// path against the CALLER's working directory — otherwise the binary
+// lands in the temp dir (deleted on return) and Emit fails with a
+// confusing "cannot chmod prog: no such file or directory".
+func TestEmitRelativeOutputPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode: compiles a launcher binary")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	// Bare relative name, exactly what DefaultOutputName returns when
+	// -o is not given.
+	if err := Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    []byte(`{"frontend":"v1"}`),
+	}); err != nil {
+		t.Fatalf("Emit with relative output path: %v", err)
+	}
+
+	out := filepath.Join(tmp, "prog")
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("binary not in caller cwd: %v", err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact %s is not executable", out)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary (first bytes: %q)", data[:min(32, len(data))])
+	}
+}
+
+// TestEmitEscapesHostileRoot verifies the graalgo root is baked into
+// the generated launcher as a properly quoted Go string literal. A
+// root containing quotes or backslashes must neither break the
+// generated source nor inject code into it. Pre-fix, Emit failed here
+// because the raw interpolation produced uncompilable launcher source.
+func TestEmitEscapesHostileRoot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode: compiles a launcher binary")
+	}
+
+	hostile := `/opt/graal"go\dir"; rm -rf /`
+	out := filepath.Join(t.TempDir(), "prog")
+	if err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: hostile,
+		WireJSON:    []byte(`{"frontend":"v1"}`),
+	}); err != nil {
+		t.Fatalf("Emit with hostile root: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The exact hostile value must round-trip into the binary.
+	if !bytes.Contains(data, []byte(hostile)) {
+		t.Errorf("artifact does not bake in the exact root %q", hostile)
+	}
+
+	// The generated source itself must parse: the template's graalgoRoot
+	// line takes a pre-quoted %s, so any root round-trips syntactically.
+	src := fmt.Sprintf(launcherTemplate, strconv.Quote(hostile))
+	if _, err := parser.ParseFile(token.NewFileSet(), "launcher.go", src, parser.AllErrors); err != nil {
+		t.Fatalf("generated launcher source does not parse: %v", err)
+	}
+	if want := "const graalgoRoot = " + strconv.Quote(hostile); !strings.Contains(src, want) {
+		t.Errorf("generated source does not contain %q", want)
+	}
 }
