@@ -23,7 +23,11 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   behavior must fail loudly here — never silently.
 - `make snapshot` — **re-records** the baseline. Run only for a toolchain
   upgrade or a deliberately re-baselined behavior change, then commit the
-  result. Never run to make a red check green.
+  result. Never run to make a red check green. The commit MUST carry a
+  `Snapshot-Rebaseline:` trailer naming the deliberate change — per-push CI
+  fails any commit that touches [test/snapshots/](test/snapshots/) without
+  one (convention: [test/snapshots/README.md](test/snapshots/README.md)
+  §"Re-baselining is a declared act").
 - Per-package Go tests: `go test ./...` inside the package's own module
   directory (see [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md)).
 - Differential harness: [test/differential/run.sh](test/differential/run.sh)

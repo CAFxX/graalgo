@@ -37,13 +37,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (wt.py integrate + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # The no-bridges gate diffs the pushed range on direct master
+          # pushes (wt.py integrate + push, no PR): github.event.before
+          # (threaded in as GITHUB_PUSH_BEFORE) ...HEAD, falling back to
+          # HEAD~1...HEAD when no before-ref is available. A shallow
+          # checkout has no history to diff against and the gate fails
+          # loudly instead of inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
+        env:
+          # The full pushed range, not just the tip commit: on an N-commit
+          # ff-merge push the gate inspects every pushed commit (G-1,
+          # 2026-10-19 review).
+          GITHUB_PUSH_BEFORE: ${{ github.event.before }}
         run: python3 .github/scripts/check_no_bridges.py
+
+      - name: Snapshot re-baseline guard (trailer required)
+        # A commit that changes behavior AND re-records test/snapshots/
+        # passes snapshot-check green; this gate requires every commit that
+        # touches the snapshots to declare the deliberate change with a
+        # Snapshot-Rebaseline: trailer (G-2, 2026-10-19 review). Only
+        # meaningful when a range was pushed: skip on the weekly full-suite
+        # schedule and manual dispatches.
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          GITHUB_PUSH_BEFORE: ${{ github.event.before }}
+        run: python3 .github/scripts/check_snapshot_rebaseline.py
 
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1

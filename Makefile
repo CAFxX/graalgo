@@ -104,7 +104,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check check-gates test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -131,10 +131,19 @@ build:
 graalgo:
 	$(GO) build -o graalgo ./cmd/graalgo/
 
-check:
+check: check-gates
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+
+# Self-tests for the CI gate scripts ([.github/scripts/](.github/scripts/)):
+# positive and negative controls for the no-bridges gate (G-1) and the
+# snapshot re-baseline guard (G-2). Fast (~20s); fixture git repos in tmp
+# dirs. A gate whose own controls fail is a broken gate — fix the gate,
+# never delete the control.
+check-gates:
+	python3 .github/scripts/check_no_bridges_test.py
+	python3 .github/scripts/check_snapshot_rebaseline_test.py
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
@@ -234,7 +243,9 @@ test: build
 # srctest adapters (layer 2), which test the frontend.
 #
 # `make snapshot` RE-RECORDS the baseline: run only for a toolchain upgrade
-# or a deliberately re-baselined behavior change, then commit the result.
+# or a deliberately re-baselined behavior change, then commit the result
+# with a `Snapshot-Rebaseline:` trailer (per-push CI enforces it — see
+# [test/snapshots/README.md](test/snapshots/README.md)).
 # `make snapshot-check` verifies the current tree against the committed
 # baseline and fails on drift (this is what per-push CI runs via `make all`).
 DH := test/differential

@@ -94,6 +94,46 @@ behavior change, then commit the result. It requires a built tree
 (`build` is a prerequisite) and takes a few minutes (each corpus program
 runs twice under a fresh JVM).
 
+## Re-baselining is a declared act
+
+Re-recording the baseline **launders** any behavior change into the new
+baseline: a commit that changes behavior *and* re-records the snapshot in
+the same change passes `snapshot-check` green, with no record of what
+changed or why. The re-baseline guard
+([`check_snapshot_rebaseline.py`](../../.github/scripts/check_snapshot_rebaseline.py),
+per-push CI) closes this hole: **every commit that modifies
+`test/snapshots/*.json` must carry an explicit trailer in its commit
+message:**
+
+```
+Snapshot-Rebaseline: <what deliberately changed and why>
+```
+
+Rules:
+
+- The trailer value must name the deliberate change (non-empty); a bare
+  `Snapshot-Rebaseline:` line is rejected by the guard.
+- The check is per-commit, not per-push: in a multi-commit push, a
+  re-record cannot ride along inside an unrelated commit — the commit that
+  touches the snapshot is the one that must carry the trailer.
+- `make snapshot` does not add the trailer for you. Write the commit
+  message deliberately: the trailer is the human's declaration that the
+  drift is intended, and a reviewer reads it as such.
+- Uncommitted or staged changes under `test/snapshots/` fail the guard
+  loudly: commit the re-record with the trailer, never leave it dirty.
+
+Example:
+
+```
+Re-baseline 01_hello after the channel-close semantic fix
+
+The close-then-send path now panics with the gc message instead of
+deadlocking; 01_hello's recorded stderr changes accordingly.
+
+Snapshot-Rebaseline: deliberate stderr change in 01_hello after the
+channel-close semantic fix (PKG-123)
+```
+
 ## Checking
 
 ```bash

@@ -16,15 +16,20 @@ Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
   3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
-                           checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+  4. <before>...HEAD       (direct master push: the FULL pushed range, from
+                           github.event.before threaded in by CI via
+                           GITHUB_PUSH_BEFORE (or --before for local runs).
+                           Covers every commit in an N-commit ff-merge, not
+                           just the tip — G-1, 2026-10-19 review.)
+  5. HEAD~1...HEAD         (fallback when no push-before ref is available,
+                           e.g. local runs; inspects only the tip commit)
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
-CI must check out full history (fetch-depth: 0) for source 4 to resolve.
+CI must check out full history (fetch-depth: 0) for sources 4-5 to resolve.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -65,6 +70,28 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
+def get_push_before():
+    """Pre-push ref for the master-push diff source, or None.
+
+    CI threads github.event.before in via the GITHUB_PUSH_BEFORE env var;
+    --before SHA on the command line serves local/fixture runs. An
+    all-zeros ref (first push of a new ref — carries no range information)
+    or an empty value is treated as absent: the HEAD~1...HEAD fallback
+    applies.
+    """
+    before = ""
+    if "--before" in sys.argv:
+        i = sys.argv.index("--before")
+        if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("--"):
+            before = sys.argv[i + 1]
+    if not before:
+        before = os.environ.get("GITHUB_PUSH_BEFORE", "")
+    before = before.strip()
+    if not before or set(before) == {"0"}:
+        return None
+    return before
+
+
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
 
@@ -72,14 +99,26 @@ def get_diff():
     treat that as a loud failure, never a vacuous pass.
     """
     # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
+    # then to the master-push delta. On a direct master push the checkout
+    # lands exactly on origin/master, so sources 1-3 are all empty and the
+    # push-before range (<before>...HEAD) inspects every pushed commit —
+    # not just the tip (G-1). A shallow checkout (no history at all) yields
+    # nothing from the last sources — that is a failure, not a skip.
+    push_before = get_push_before()
     candidates = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
         ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
-        ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
     ]
+    if push_before:
+        candidates.append(
+            (f"{push_before}...HEAD (master push, full range)",
+             ["git", "diff", f"{push_before}...HEAD", "--", "."]),
+        )
+    candidates.append(
+        ("HEAD~1...HEAD (master push, tip only)",
+         ["git", "diff", "HEAD~1...HEAD", "--", "."]),
+    )
     for name, cmd in candidates:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -198,12 +237,14 @@ def main():
     if not diff.strip():
         # Never pass vacuously: on the standard integration path (wt.py
         # integrate + push, no PR) every diff source above is empty only when
-        # the checkout has no history to diff against. Skipping here is
-        # exactly the false-green hole this check exists to close.
+        # the checkout has no history to diff against (or the push-before ref
+        # does not resolve). Skipping here is exactly the false-green hole
+        # this check exists to close.
         print("NO-BRIDGES CHECK FAILED:")
         print("  could not determine any diff to inspect (no PR diff, no")
-        print("  working-tree changes, and HEAD~1 is unavailable — is this a")
-        print("  shallow checkout? CI must use fetch-depth: 0).")
+        print("  working-tree changes, no usable push-before ref, and HEAD~1")
+        print("  is unavailable — is this a shallow checkout? CI must use")
+        print("  fetch-depth: 0).")
         print("  Refusing to pass vacuously.")
         return 1
 
