@@ -102,23 +102,9 @@ public final class FreezeSignatureTest {
         FROZEN.add(new Sig(BuiltinPrint.class.getName(), "println",
             new Class<?>[]{BuiltinPrint.Arg[].class}, void.class));
 
-        // fmt stub (D4).
-        Class<?> goStr = graalgo.values.GoString.class;
-        Class<?> goIface = graalgo.values.GoInterface.class;
-        FROZEN.add(new Sig(Fmt.class.getName(), "sprintf",
-            new Class<?>[]{String.class, Fmt.Arg[].class}, goStr));
-        FROZEN.add(new Sig(Fmt.class.getName(), "sprint",
-            new Class<?>[]{Fmt.Arg[].class}, goStr));
-        FROZEN.add(new Sig(Fmt.class.getName(), "sprintln",
-            new Class<?>[]{Fmt.Arg[].class}, goStr));
-        FROZEN.add(new Sig(Fmt.class.getName(), "print",
-            new Class<?>[]{Fmt.Arg[].class}, int.class));
-        FROZEN.add(new Sig(Fmt.class.getName(), "printf",
-            new Class<?>[]{String.class, Fmt.Arg[].class}, int.class));
-        FROZEN.add(new Sig(Fmt.class.getName(), "println",
-            new Class<?>[]{Fmt.Arg[].class}, int.class));
-        FROZEN.add(new Sig(Fmt.class.getName(), "errorf",
-            new Class<?>[]{String.class, Fmt.Arg[].class}, goIface));
+        // fmt stub (D4) removed 2026-10-19: the Java fmt reimplementation
+        // (Fmt, FmtScan, FmtCallNode) was deleted by the real-fmt2 lane
+        // (real fmt now compiles from disk); its freeze entries died with it.
 
         // Timers.
         FROZEN.add(new Sig(Timers.class.getName(), "nanotime", new Class<?>[]{},

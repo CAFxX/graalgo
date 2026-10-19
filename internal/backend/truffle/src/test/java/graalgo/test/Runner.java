@@ -32,7 +32,8 @@ public final class Runner {
         TESTS.add(graalgo.values.ValuesTest.class);
         TESTS.add(graalgo.values.CallSiteProbesTest.class);
         TESTS.add(graalgo.values.CellIdentityTest.class);
-        TESTS.add(graalgo.runtime.FmtVerbMatrixTest.class);
+        // FmtVerbMatrixTest removed 2026-10-19: the file was deleted by the
+        // real-fmt2 lane (test for deleted code); its registration died with it.
         TESTS.add(graalgo.runtime.FreezeSignatureTest.class);
         TESTS.add(graalgo.frontend.SectionClampTest.class);
         TESTS.add(graalgo.frontend.WrapInterfaceTest.class);
