@@ -1,7 +1,7 @@
 # P1-12 design: `(*runtime.Func).Name()` and the stale `panicMsg` marker
 
 Lane: `wt/graalgo-review-20261018/p1-12-funcname-table` (review item RV22-P1-12).
-Scope: `internal/frontend/export.go` only — the `panicMsg` marker
+Scope: [internal/frontend/export.go](../../internal/frontend/export.go) only — the `panicMsg` marker
 (`resolveMethodCall`, ~:4759) and the injected-`panic` AST (`methodRefNode`,
 ~:9646). No backend touch.
 
@@ -60,7 +60,7 @@ at stack-capture time in the backend; `FuncForPC` interns them and
 interception, same `f`/`type` wire shape, same `derefFunc` unwrap.
 
 **(c) gc guarantees for edge cases.** gc's `(*Func).Name` returns `""` for
-a nil `*Func` (verified in `~/tools/go/src/runtime/symtab.go`:809-812);
+a nil `*Func` (verified against the local Go 1.27.1 runtime sources);
 graalgo's `RtStack.derefFunc` raises a nil-dereference panic instead. That
 is a **backend** behavioral drift, out of this lane's frontend-only scope —
 flagged here for the coordinator, not fixed here. Closures/generics:
