@@ -118,7 +118,7 @@ public final class Main {
                 case "--help":
                 case "-h":
                     usage();
-                    return EXIT_OK;
+                    return BackendStatus.RunResult.program(EXIT_OK);
                 default:
                     if (a.startsWith("-")) {
                         return usageError("unknown flag: " + a);
