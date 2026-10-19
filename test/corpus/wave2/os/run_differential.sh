@@ -21,7 +21,7 @@ set -u
 # corpus dir is its own directory and the graalgo leg uses the product
 # launcher wrapper (internal/backend/graalgo-sync-run, P3SyncMain).
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
+REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
 OSDIR="$HERE"
 export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp/m8-os}"
 export GOCACHE="$HOME/workspace/.gocache-m8-os"
