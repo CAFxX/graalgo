@@ -28,7 +28,7 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 	if len(reg.Sources) < 100 {
 		t.Fatalf("registry resolved %d sources, want >= 100", len(reg.Sources))
 	}
-	for _, path := range []string{"os", "net/http", "reflect", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
+	for _, path := range []string{"os", "encoding/json", "crypto/sha256", "internal/poll", "syscall", "net", "io"} {
 		src, ok := reg.Sources[path]
 		if !ok {
 			t.Errorf("registry missing source for %q", path)
@@ -55,14 +55,19 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 
 func TestSyntheticShadowSet(t *testing.T) {
 	reg := testRegistry(t)
-	for _, path := range []string{"os", "runtime", "fmt", "sync", "sync/atomic", "time", "context",
-		"net/http", "reflect", "internal/poll", "syscall", "encoding/json"} {
+	// Overlaid: substituted by the overlay importer (dedicated synthetic
+	// stubs or syntheticSources registry entries) — their real-stdlib
+	// files are never compiled. sync/sync-atomic/reflect/fmt resolve from
+	// disk now (real packages), so they are NOT shadowed.
+	for _, path := range []string{"os", "runtime", "unsafe", "time", "context",
+		"encoding/json", "net", "io", "syscall", "internal/poll", "slices", "maps"} {
 		if !reg.Shadowed[path] {
 			t.Errorf("shadow set missing overlaid package %q", path)
 		}
 	}
 	// Not overlaid: their real-stdlib files are still compiled.
-	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo"} {
+	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo",
+		"fmt", "sync", "sync/atomic", "reflect"} {
 		if reg.Shadowed[path] {
 			t.Errorf("shadow set wrongly contains non-overlaid package %q", path)
 		}

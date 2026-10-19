@@ -320,9 +320,10 @@ func TestProvidedExtraction(t *testing.T) {
 		"graalgo.tls.newClientEngine",
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
-		"reflect.TypeOf", "encoding/json.Marshal", "crypto/sha256.New",
-		"net/http.Get", "syscall.Getenv", "maps.Clone",
-		"internal/reflectlite.TypeOf",
+		"encoding/json.Marshal", "crypto/sha256.New",
+		"syscall.Getenv", "maps.Clone",
+		// net/http and internal/reflectlite were retired from the synthetic
+		// set (they compile from disk now) — no longer provided by graalgo.
 	}
 	for _, w := range want {
 		if !provided.has(w) {

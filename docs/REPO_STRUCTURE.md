@@ -188,9 +188,8 @@ Related: [Makefile](../Makefile) (root build entry point),
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
   tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
-  [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
+  [fuzz-soak/](../tools/fuzz-soak/) (fuzzing),
   [torture/](../tools/torture/) (scheduler torture),
-  [godebug-diff/](../tools/godebug-diff/),
   [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
   [req/](../tools/req/) (requirements CLI), and
   [precommit-check.sh](../tools/precommit-check.sh) (mechanical pre-commit

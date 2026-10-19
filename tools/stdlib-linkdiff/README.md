@@ -2,6 +2,17 @@
 
 The graalgo linkname-diff tool (P3-M6, GG-0021; SPEC §3.6).
 
+## Tool-rot remediation (2026-10-19)
+
+Decision: **repaired**, not retired. This tool is the mechanical
+enforcement of SPEC §3.6's skip-list growth kill trigger, so it must run
+on every Go upgrade; the twin relationship with `stdlib-excl` (canonical
+tree resolution + pin/manifest cross-check) was worth keeping. The
+2026-10-14 `phases/` removal had left it dead on startup (manifest/pin
+reads and all three provided-set extractions joined into the removed
+tree); every path is now repointed at the live layout and the tool
+re-verified against the vendored go1.27.1 tree.
+
 Scans a Go source tree for `//go:linkname` directives and classifies each
 target as **SATISFIED** (provided by graalgo), **ROUTED** (explicit entry
 in [routes.txt](routes.txt)), or **MISSING** (lands on the skip-list — never silently
@@ -19,12 +30,13 @@ run — never hand-maintained — so per-release drift shows up as a snapshot
 diff rather than silent staleness.
 
 1. **P3-M4 intrinsic registry** — `Linknames.register("symbol", …)` calls in
-   `phases/phase3/src/main/java/graalgo/p3link/LinknameIntrinsics.java`
+   [internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java](../../internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java)
    (Go→intrinsic direction). Today: `runtime.fastrand`,
    `runtime.fastrandn`, `runtime.nanotime`,
    `graalgo.runtime.Linknames.callGo`.
 2. **Synthetic `runtime`, `fmt`, `sync`, `sync/atomic`** — the builder
-   functions in `phases/phase3/src/p3frontend/importer.go`
+   functions in
+   [internal/frontend/p3frontend/importer.go](../../internal/frontend/p3frontend/importer.go)
    (`syntheticRuntimePackage`, `syntheticFmtPackage`,
    `syntheticSyncPackage`, `syntheticAtomicPackage`), plus the
    package-level `syncMethodSpecs` map and `syncLockerInterface`
@@ -32,7 +44,7 @@ diff rather than silent staleness.
    `sync.(*Mutex).Lock`, `sync/atomic.(*Int64).Load`.
 3. **Synthetic `time`, `context`** — `syntheticTimePackage` /
    `syntheticContextPackage` in
-   `phases/phase3/src/p3frontend/synth_time_context.go`.
+   [internal/frontend/p3frontend/synth_time_context.go](../../internal/frontend/p3frontend/synth_time_context.go).
 4. **Normative `time`/`context` sources** — the `syntheticTimeSource` /
    `syntheticContextSource` embedded Go sources in
    [internal/frontend/synth_time_context.go](../../internal/frontend/synth_time_context.go)
@@ -86,7 +98,7 @@ package.
    `~/workspace/graalgo-stdlib/<ver>/` (flat layout -- the target dir
    IS the src root, no `src/` subdir), used only when the committed
    `vendor-manifest.json` records the same `goVersion` as
-   `phases/phase3/stdlib-fork/pinned-version.txt` (a manifest/pin skew
+   [tools/stdlib-fork/pinned-version.txt](../stdlib-fork/pinned-version.txt) (a manifest/pin skew
    fails loud);
 2. otherwise the live toolchain's `GOROOT/src`, announced loudly on
    stderr -- results then pin to the live toolchain, not the vendored
@@ -110,12 +122,12 @@ Run this on every Go upgrade, as part of the upgrade's Phase 2
 
 1. **Snapshot the provided set** (records what graalgo provides at this
    release):
-   `stdlib-linkdiff --snapshot phases/phase3/stdlib-fork/provided-<ver>.json`
+   `stdlib-linkdiff --snapshot tools/stdlib-fork/provided-<ver>.json`
 2. **Run the diff** against the new tree (pass it explicitly -- the
    default resolution follows the pin, which still names the old
    version until the cutover; note the flat layout: the target dir IS
    the src root, no `src/` subdir):
-   `stdlib-linkdiff --goroot <new-tree>/ --json phases/phase3/stdlib-fork/linkname-trial-<ver>.json --md phases/phase3/stdlib-fork/linkname-trial-<ver>.md`
+   `stdlib-linkdiff --goroot <new-tree>/ --json tools/stdlib-fork/linkname-trial-<ver>.json --md tools/stdlib-fork/linkname-trial-<ver>.md`
 3. **Read `SKIP_LIST_SIZE`** from the JSON. Compare against the previous
    release's report. SPEC §3.6 kill trigger: growth > 15 twice.
 4. **Triage new MISSING targets**: for each new skip-list entry decide —
@@ -129,7 +141,7 @@ Run this on every Go upgrade, as part of the upgrade's Phase 2
    (the extractor fails loudly on missing sources instead).
 
 The trial report naming convention is
-`phases/phase3/stdlib-fork/linkname-trial-<go-version>.{json,md}`.
+`tools/stdlib-fork/linkname-trial-<go-version>.{json,md}`.
 
 ## Testing
 

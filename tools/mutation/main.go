@@ -79,18 +79,14 @@ func main() {
 		fmt.Printf("[%s] %s: %s (%s)\n", m.ID, verdict, m.Description, detail)
 	}
 
-	// Write report (R2#6: persist to hidden_files, not just /tmp)
+	// Write report to the run workdir only. Per repo AGENTS.md §5,
+	// hidden_files/ must never reappear and per-run evidence belongs in
+	// commit messages — the report path is printed so the caller can
+	// copy or quote it where it matters.
 	report, _ := json.MarshalIndent(results, "", "  ")
-	os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644)
-	fmt.Printf("\nreport: %s/report.json\n", workdir)
-
-	// Also copy to the repo's hidden_files for durability
-	persistDir := "/home/hatch/workspace/graalgo/phases/phase1/hidden_files/mutation"
-	os.MkdirAll(persistDir, 0755)
-	ts := time.Now().Format("20060102-150405")
-	persistPath := filepath.Join(persistDir, "report-"+ts+".json")
-	os.WriteFile(persistPath, report, 0644)
-	fmt.Printf("persisted: %s\n", persistPath)
+	reportPath := filepath.Join(workdir, "report.json")
+	os.WriteFile(reportPath, report, 0644)
+	fmt.Printf("\nreport: %s\n", reportPath)
 
 	// Summary
 	killed, survived, errors := 0, 0, 0
@@ -144,17 +140,25 @@ func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string)
 		return "ERROR", err.Error()
 	}
 
-	// Compile single file against out/classes
+	// Compile the single mutated file against the built module classes.
+	// Post phases/ removal the language core (incl. NodeFactory) compiles
+	// in the runtime module's joint round, so the compile classpath is
+	// runtime/out/classes : truffle/out/classes : truffle/lib jars —
+	// the same split the truffle Makefile's main/test targets use.
 	overlayClasses := filepath.Join(mdir, "classes")
 	os.MkdirAll(overlayClasses, 0755)
-	phase1 := filepath.Join(repo, "phases/phase1")
-	cp := fmt.Sprintf("%s/out/classes:%s", phase1, jarCP(phase1))
+	truffle := filepath.Join(repo, "internal", "backend", "truffle")
+	runtime := filepath.Join(repo, "internal", "backend", "runtime")
+	cp := fmt.Sprintf("%s:%s:%s",
+		filepath.Join(runtime, "out", "classes"),
+		filepath.Join(truffle, "out", "classes"),
+		jarCP(truffle))
 	cmd := exec.Command(javaBin(),
 		"-Xlint:deprecation", "-Werror",
 		"-cp", cp,
 		"-d", overlayClasses,
 		overlaySrc)
-	cmd.Dir = phase1
+	cmd.Dir = truffle
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "ERROR", fmt.Sprintf("javac: %v\n%s", err, out)
 	}
@@ -194,19 +198,30 @@ func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
 }
 
 func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string) {
-	phase1 := filepath.Join(repo, "phases/phase1")
-	// Build classpath: overlay (if any) : out/test : out/classes : jars
+	truffle := filepath.Join(repo, "internal", "backend", "truffle")
+	runtime := filepath.Join(repo, "internal", "backend", "runtime")
+	// Build classpath: overlay (if any) : truffle test-classes :
+	// runtime classes (joint round) : truffle classes (stubs) : jars.
+	// Mirrors the truffle Makefile's `test` target exactly, with the
+	// mutant overlay prepended so it shadows the baseline class.
 	cp := ""
 	if ov, ok := extraEnv["CLASSPATH_OVERLAY"]; ok {
 		cp = ov + ":"
 	}
-	cp += fmt.Sprintf("%s/out/test:%s/out/classes:%s", phase1, phase1, jarCP(phase1))
+	cp += fmt.Sprintf("%s:%s:%s:%s",
+		filepath.Join(truffle, "out", "test-classes"),
+		filepath.Join(runtime, "out", "classes"),
+		filepath.Join(truffle, "out", "classes"),
+		jarCP(truffle))
 
-	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test).
+	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test),
+	// plus the repo-dir property and test tmpdir the Makefile's `test` target sets.
 	cmd := exec.Command(javaRunBin(),
 		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
+		"-Dgraalgo.repo.dir="+repo,
+		"-Djava.io.tmpdir="+filepath.Join(truffle, "out", "test-tmp"),
 		"-cp", cp, "graalgo.test.Runner")
-	cmd.Dir = phase1
+	cmd.Dir = truffle
 	cmd.Env = os.Environ()
 	for k, v := range extraEnv {
 		if k == "CLASSPATH_OVERLAY" {
@@ -273,9 +288,9 @@ func goBin() string {
 	return "/home/hatch/tools/go/bin/go"
 }
 
-func jarCP(phase1 string) string {
-	// Match Makefile CP: lib/*.jar
-	jars, _ := filepath.Glob(filepath.Join(phase1, "lib", "*.jar"))
+func jarCP(moduleDir string) string {
+	// Match the Makefile's lib/*.jar classpath (truffle module).
+	jars, _ := filepath.Glob(filepath.Join(moduleDir, "lib", "*.jar"))
 	return strings.Join(jars, ":")
 }
 

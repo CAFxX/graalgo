@@ -94,7 +94,7 @@ func buildSyntheticRegistry(dir string) (*synthRegistry, error) {
 	if len(reg.Sources) == 0 {
 		return nil, fmt.Errorf("syntheticSources map: no entries resolved (source drift?)")
 	}
-	shadowed, err := overlayShadowed(dir)
+	shadowed, err := overlayShadowed(dir, reg.Sources)
 	if err != nil {
 		return nil, err
 	}
@@ -278,35 +278,48 @@ func primaryIdent(expr ast.Expr) string {
 	return ""
 }
 
-// overlayShadowed parses export.go's overlayImporter.Import method and
-// returns every import path in its switch: the set of packages the
-// overlay substitutes, whose real-stdlib files graalgo never compiles.
-func overlayShadowed(dir string) (map[string]bool, error) {
+// overlayShadowed returns every import path the overlay substitutes —
+// whose real-stdlib files graalgo never compiles. overlayImporter.Import
+// substitutes two classes of packages: the dedicated synthetic stubs
+// (the dedicatedSyntheticStubs map in export.go) and every syntheticSources
+// registry entry (resolved via getSyntheticPackage before disk). The set
+// is therefore the union of the stub-map keys and the registry keys.
+func overlayShadowed(dir string, syntheticPaths map[string]string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for p := range syntheticPaths {
+		out[p] = true
+	}
 	path := filepath.Join(dir, "export.go")
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	out := map[string]bool{}
 	found := false
 	for _, decl := range f.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != "Import" || fd.Recv == nil || len(fd.Recv.List) == 0 {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
 			continue
 		}
-		recv := fd.Recv.List[0].Type
-		if id, ok := recv.(*ast.Ident); !ok || id.Name != "overlayImporter" {
-			continue
-		}
-		found = true
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			cc, ok := n.(*ast.CaseClause)
-			if !ok {
-				return true
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "dedicatedSyntheticStubs" {
+				continue
 			}
-			for _, e := range cc.List {
-				lit, ok := e.(*ast.BasicLit)
+			if len(vs.Values) != 1 {
+				continue
+			}
+			cl, ok := vs.Values[0].(*ast.CompositeLit)
+			if !ok {
+				continue
+			}
+			found = true
+			for _, elt := range cl.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				lit, ok := kv.Key.(*ast.BasicLit)
 				if !ok || lit.Kind != token.STRING {
 					continue
 				}
@@ -316,14 +329,13 @@ func overlayShadowed(dir string) (map[string]bool, error) {
 				}
 				out[s] = true
 			}
-			return true
-		})
+		}
 	}
 	if !found {
-		return nil, fmt.Errorf("%s: overlayImporter.Import not found (source drift?)", path)
+		return nil, fmt.Errorf("%s: dedicatedSyntheticStubs not found (source drift?)", path)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("%s: overlayImporter.Import has no cases (source drift?)", path)
+		return nil, fmt.Errorf("%s: no shadowed packages resolved (source drift?)", path)
 	}
 	return out, nil
 }
