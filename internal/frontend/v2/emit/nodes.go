@@ -41,7 +41,10 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if pobj == nil {
 					continue
 				}
-				pid := e.declareParam(pobj)
+				pid, err := e.declareParam(pobj)
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", name, map[string]any{
 					"name": name.Name,
 					"obj":  pid,
@@ -152,7 +155,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -183,7 +188,11 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
 			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				objs = append(objs, oid)
 			} else {
 				objs = append(objs, -1)
 			}
@@ -287,14 +296,22 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+				koid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				key = koid
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+				valOid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				value = valOid
 			}
 		}
 	}
@@ -472,7 +489,10 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -480,7 +500,10 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -583,7 +606,11 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					toid, err := e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
+					oid = toid
 				}
 				_ = pkgname
 				return e.node("pkgref", s, map[string]any{

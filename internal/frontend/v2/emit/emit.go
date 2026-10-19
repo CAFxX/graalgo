@@ -78,7 +78,9 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		if obj == nil {
 			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 		}
-		e.declareObject(obj)
+		if _, err := e.declareObject(obj); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, fd := range decls {
@@ -184,29 +186,33 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
 // declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
 	typ := e.typeID(obj.Type())
 	switch o := obj.(type) {
 	case *types.Var:
@@ -215,19 +221,41 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any 
 			"name":  o.Name(),
 			"type":  typ,
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
 			"type": typ,
-		}
-	default:
+		}, nil
+	case *types.Const:
+		// Reachable: a named constant referenced in an expression
+		// (e.g. `const k = 3; x := k + 1`). Previously mislabeled "var".
 		return map[string]any{
-			"kind": "var",
+			"kind": "const",
 			"name": o.Name(),
 			"type": typ,
-		}
+		}, nil
+	case *types.TypeName:
+		// Reachable: a type conversion `T(x)` — the Fun ident resolves to
+		// the *types.TypeName. Previously mislabeled "var".
+		return map[string]any{
+			"kind": "typename",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	case *types.Nil:
+		// Reachable: the `nil` ident in an expression.
+		return map[string]any{
+			"kind": "nil",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	default:
+		// *types.Builtin, *types.PkgName and *types.Label are filtered by
+		// the callers before reaching here. Anything else is a programming
+		// error — fail loudly rather than mislabeling it "var".
+		return nil, fmt.Errorf("emit: unsupported object %T (%s)", obj, o.Name())
 	}
 }
 
@@ -325,6 +353,26 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"underlying": e.typeID(tt.Underlying()),
 				"methods":    []any{},
 			},
+		}
+	case *types.Alias:
+		// Type alias (gotypesalias=1 has been the default since Go 1.23):
+		// an alias is transparent, so resolve it to the right-hand-side
+		// type. Without this case, e.g. `type I = int` fell into default
+		// and produced {"kind":"basic","class":"unknown"}, which the Java
+		// backend rejects.
+		return e.describeType(tt.Rhs())
+	case *types.Tuple:
+		// A call with no results (e.g. println(x)) has the empty tuple
+		// type (). Tuples are not first-class Go values, so describe the
+		// element types truthfully; without this case the tuple fell into
+		// default and produced {"kind":"basic","class":"unknown"}.
+		elems := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			elems = append(elems, e.typeID(tt.At(i).Type()))
+		}
+		return map[string]any{
+			"kind":   "tuple",
+			"detail": map[string]any{"elems": elems},
 		}
 	case *types.Struct:
 		fields := []any{}

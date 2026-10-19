@@ -65,9 +65,16 @@ Related: [Makefile](../Makefile) (root build entry point),
       Go→Java binary interface in
       [encode/](../internal/frontend/v2/encode/), decoded by
       [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
+      and built into Truffle nodes by
+      [NodeFactoryV2.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
       in the Java backend; wire contract pinned by
       `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side and
-      `BinaryDecoderTest` on the Java side; `make test-v2` runs its suite).
+      `BinaryDecoderTest` on the Java side; end-to-end round-trip coverage
+      by [roundtrip_golden_test.go](../internal/frontend/v2/encode/roundtrip_golden_test.go)
+      (Go pipeline → golden `.bin` files checked in under
+      [src/test/resources/graalgo/frontend/v2/roundtrip/](../internal/backend/truffle/src/test/resources/graalgo/frontend/v2/roundtrip/))
+      and [V2RoundTripTest.java](../internal/backend/truffle/src/test/java/graalgo/frontend/v2/V2RoundTripTest.java)
+      (golden `.bin` → `buildProgram`); `make test-v2` runs the Go suite).
   - The IR is the `frontend/v1` JSON wire format: specified in
     [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by

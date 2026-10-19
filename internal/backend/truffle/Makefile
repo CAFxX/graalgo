@@ -120,7 +120,8 @@ run: main
 
 # The differential test runner (graalgo.test.Runner) exercises the launcher
 # too, so the runtime classes join the test classpath (shadow order:
-# replacements before stubs).
+# replacements before stubs). src/test/resources holds test fixtures
+# (e.g. the v2 round-trip golden .bin files) loaded via getResourceAsStream.
 test: main $(OUT_TEST)/.built
 	mkdir -p out/test-tmp
 	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the differential
@@ -128,7 +129,7 @@ test: main $(OUT_TEST)/.built
 	# (Java ignores the TMPDIR env var for java.io.tmpdir).
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(P1_DIR_PROP) $(JAVA_FLAGS) \
-	-cp "$(OUT_TEST):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner
+	-cp "$(CURDIR)/src/test/resources:$(OUT_TEST):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
