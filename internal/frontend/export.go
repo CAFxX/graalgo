@@ -9138,7 +9138,7 @@ func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
 type atomicWordOp struct {
 	op      string // syncop op: Load/Store/Add/Swap/CompareAndSwap
 	synctyp string // e.g. "atomic.Uint64"
-	cell    string // atomicaddr cell kind: "int64", "int32", "bool"
+	cell    string // atomicaddr cell kind: "int64" or "int32" (gc has no package-level bool atomics, so "bool" is not a cell)
 	nargs   int    // value args after addr
 }
 

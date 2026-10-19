@@ -169,6 +169,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `timeafter` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.After(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `atomicaddr` | `addr`: expr node (the `*T` address operand), `cell` ∈ {`int64`,`int32`} (the delegating cell kind; gc has no package-level bool atomics, so `bool` is not a cell) — an atomic cell view over a Go address: evaluates `addr` to its `GoPointer` and wraps it in a delegating `AtomicLong` / `AtomicInteger` cell, so the existing `syncop` atomic machinery serves the operation unchanged. No `type` field: the node evaluates to the opaque cell object, never directly observed. A nil address is gc's nil-dereference panic (fix-linkname; additive node kind, first emitted by gofrontend 0.7.0) |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Schema validator for the graalgo frontend/v1 JSON wire format.
 
-Enforces the contract documented in ../../../phases/phase1/docs/frontend-v1.md:
+Enforces the contract documented in ../../../docs/arch/frontend-v1.md:
   - top-level document shape and "frontend": "v1" version pin
   - type-table entries: known kinds, required detail fields, in-range refs
   - object-table entries
@@ -457,6 +457,15 @@ def check_node(ctx, path, node, expr):
         duration_field(ctx, fp, f)
         expr_node("func")
         type_ref("type")
+    elif kind == "atomicaddr":
+        # fix-linkname: package-level sync/atomic word ops wrap the *T
+        # address operand in a delegating AtomicLong / AtomicInteger cell
+        # (fields addr and cell only; no type: the node evaluates to the
+        # opaque cell object, never directly observed). gc has no
+        # package-level bool atomics, so "bool" is not a cell kind.
+        if f.get("cell") not in ("int64", "int32"):
+            ctx.err(fp, f"atomicaddr cell must be 'int64' or 'int32', got {f.get('cell')!r}")
+        expr_node("addr")
     else:
         ctx.err(path, f"unknown node kind {kind!r}")
 
@@ -572,6 +581,32 @@ def selftest():
                               "fields": {"value": "1", "type": 0}},
                         "to": 99}}),
         "dangling type id")
+
+    # fix-linkname: atomicaddr is a live wire kind (package-level
+    # sync/atomic word ops). The positive case uses the exact shape the
+    # exporter emits (addr expr, cell string); "bool" is not a cell kind
+    # (gc has no package-level bool atomics) and must be rejected,
+    # matching AtomicAddrNode.build's FrontendException.
+    def _atomicaddr_stmt(cell):
+        return {"kind": "atomicaddr",
+                "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                "fields": {"addr": {"kind": "basiclit",
+                                    "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                                    "fields": {"value": "0", "type": 0}},
+                           "cell": cell}}
+
+    bad("ok-atomicaddr-int64",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            _atomicaddr_stmt("int64")),
+        None)
+    bad("ok-atomicaddr-int32",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            _atomicaddr_stmt("int32")),
+        None)
+    bad("bad-atomicaddr-cell",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            _atomicaddr_stmt("bool")),
+        "atomicaddr cell")
 
     failures = 0
     for name, doc, want in cases:

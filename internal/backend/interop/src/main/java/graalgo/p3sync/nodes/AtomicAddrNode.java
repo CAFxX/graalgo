@@ -73,7 +73,8 @@ public final class AtomicAddrNode extends GoExprNode {
     /**
      * Builds the node from the {@code "atomicaddr"} wire node. Fields:
      * {@code addr} (the {@code *T} address expression) and
-     * {@code cell} ({@code "int64"}, {@code "int32"}, or {@code "bool"}).
+     * {@code cell} ({@code "int64"} or {@code "int32"}; gc has no
+     * package-level bool atomics, so {@code "bool"} is not a cell kind).
      */
     public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
             NodeFactory factory) {
