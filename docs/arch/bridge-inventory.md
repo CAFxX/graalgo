@@ -33,7 +33,10 @@ deliverable until the design lands.
   delete the machinery wholesale: `syntheticSources` + the import overlay,
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
   allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
-  intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
+  intrinsic predicates, the `"syncop"`/`"atomicaddr"` wire nodes and the
+  `runtime*` stack-inspection wire nodes (`runtimecaller(s)`,
+  `runtimecallersframes`, `runtimeframesnext`, `runtimefuncforpc`,
+  `runtimefuncname`, `runtimefuncentry`, `runtimefuncfileline`), and
   `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
@@ -70,7 +73,7 @@ deliverable until the design lands.
 ### B-3. Frontend package-name-keyed special-case machinery
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
-  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
+  - `synth_machinery.go`: `syntheticSources` import overlay (~line 70, 130
     entries), `isMultiResultSynthetic` (~line 2113) /
     `multiResultSyntheticError` (~line 2207) ~60-path chains,
     `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
@@ -81,10 +84,13 @@ deliverable until the design lands.
   - [diskimport.go](../../internal/frontend/diskimport.go):
     `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
     switches (~line 402) and the linkname package allowlist;
-  - [export.go](../../internal/frontend/export.go): `"syncop"` and
-    `"runtimecaller"` custom wire nodes for stdlib functions, and the
-    `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+  - [export.go](../../internal/frontend/export.go): the `runtime*`
+    scheduler/environment/stack wire nodes for the synthetic `runtime`
+    package (see B-10; the `"syncop"`/`"atomicaddr"` atomic-op nodes are
+    covered by B-2, the `time.Now` eta-expansion is hardcoded by
+    package+symbol name ([mr_disk.go](../../internal/frontend/mr_disk.go)
+    ~lines 211–228), and `t.C` on `*time.Timer`/`*time.Ticker` lowers to
+    the `"timec"` node (see B-8).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -109,10 +115,11 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 140 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 140 files in [internal/frontend/](../../internal/frontend/)
+  matching `synth_*.go` (129 implementation files + 11 `synth_*_test.go`
+  test files; ~24 authored, the rest verbatim-ported from go1.27.1) plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
@@ -175,6 +182,195 @@ deliverable until the design lands.
   through the backend so `runtime.Callers` walks the actual guest stack;
   then delete the synthetic intrinsics.
 - **Phase:** 4.
+
+### B-8. `time*` wire-node family (synthetic `time` intrinsics)
+
+- **What:** eight additive wire nodes emitted for the synthetic `time`
+  package (P3-M5 WS E, ADR-0005 D1): `timenow`/`timesleep`/`timeafter`/
+  `timetick`/`timenew` (timer + ticker kinds)/`timeafterfunc` from
+  `timeIntrinsicNode` in
+  [synth_machinery.go](../../internal/frontend/synth_machinery.go)
+  (~line 1452); `timeop` for `(*time.Timer).Stop/Reset` and
+  `(*time.Ticker).Stop/Reset` (`exportTimeOp`, ~line 1734); `timec` for
+  the `t.C` field on `*time.Timer`/`*time.Ticker` (the Go values are
+  opaque Java objects; the struct field exists only for type-checking —
+  [export.go](../../internal/frontend/export.go) ~line 11507). Backend:
+  `graalgo.p3time.nodes` (`TimeNowNode`, `TimeSleepNode`,
+  `TimeAfterNode`, `TimeTickNode`, `TimeNewNode`, `TimeAfterFuncNode`,
+  `TimeOpNode`, `TimeCNode`), registered in
+  [P3KindRegistrations.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java)
+  (~lines 105–112), on the scheduler timer heap in
+  [Timers.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Timers.java).
+- **Why:** the real `time` sources did not compile; the synthetic package
+  declares the timer API and the backend reimplements the timer
+  machinery in Java.
+- **Root-cause fix:** compile the real `time` sources (Phase 2); the
+  timer heap becomes the trap path for the real runtime's timer code,
+  and these nodes retire with the synthetic package.
+- **Note (2026-10-19):** this entry closes the P1-5(a) staleness item —
+  on disk at `56a3dd68` B-2 contains no `Timers` text at all (the
+  "stubbed sleep/timer-heap" description does not exist in the current
+  inventory); the current code state is: `Timers.java` claims sleep is
+  "now real" (parks the goroutine on the scheduler timer heap,
+  `Timers.java:34-38`), with `TimeAfter/Timer/Ticker` delivery nodes and
+  differential tests (`TimerTest`, `TimerDifferentialTest`,
+  `test/corpus/phase2/timers/tm01–tm09`). Whether timers work
+  end-to-end (the PKG-048 claim in `Makefile:153` /
+  `test/regression/pkg031/repeat_test.go:30`) is owned by the P1-1
+  verify-or-fix lane — this entry documents the code's claims, not the
+  verdict.
+
+### B-9. `math*` wire-node family (synthetic `math` intrinsics)
+
+- **What:** six wire nodes — `mathf64bits`, `mathf64frombits`,
+  `mathf32bits`, `mathf32frombits`, `mathsqrt`, `mathfma` — emitted from
+  the intrinsic map in
+  [synth_machinery.go](../../internal/frontend/synth_machinery.go)
+  (~line 1588) for the synthetic `math` package. Backend: pure-arithmetic
+  nodes registered in
+  [P3KindRegistrations.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java)
+  (~lines 130–140).
+- **Why:** the real `math` sources did not compile; these six functions
+  lower directly to backend arithmetic instead of Go bodies.
+- **Root-cause fix:** retire with the synthetic `math` package (Phase 2).
+  Alternative: adjudicate as permanent gc-parity intrinsics — gc itself
+  intrinsifies `Sqrt`/`FMA`/bit-casts, so the wire node IS the real
+  implementation shape; no independent adjudication has been requested
+  yet, so they stay inventoried here.
+- **Phase:** 2.
+
+### B-10. `runtime*` wire-node family (synthetic `runtime` overlay API)
+
+- **What:** sixteen additive wire nodes emitted in the synthetic
+  `runtime` package's guard block in
+  [export.go](../../internal/frontend/export.go) (~lines 8505–8720) and
+  [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go)
+  (`desugarRuntimeStack`, ~line 3183):
+  - *Scheduler/host primitives:* `runtimenumcpu`, `runtimenumgoroutine`,
+    `runtimegosched`, `runtimegomaxprocs`.
+  - *Stack inspection:* `runtimecallers`, `runtimecaller`,
+    `runtimecallersframes`, `runtimeframesnext`, `runtimefuncforpc`,
+    `runtimefuncname`, `runtimefuncentry`, `runtimefuncfileline`
+    (backend: [rtstack/](../../internal/backend/interop/src/main/java/graalgo/rtstack/)).
+  - *Environment introspection:* `runtimereadmemstats`, `runtimegoroot`,
+    `runtimeversion`, `runtimestack` (backend:
+    [rtmemstats/](../../internal/backend/interop/src/main/java/graalgo/rtmemstats/)).
+  Backend nodes registered in
+  [P3KindRegistrations.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java)
+  (~lines 147–185) via the public `registerExprKind`/`registerStmtKind`
+  hooks — no Phase-1 factory change. (The review's P1-2 list missed the
+  five variable-emitted kinds `runtimecaller`/`runtimeframesnext`/
+  `runtimefuncname`/`runtimefuncentry`/`runtimefuncfileline`; the full
+  set was re-enumerated from disk for this entry.)
+- **Why:** the synthetic `runtime` overlay declares these symbols with no
+  bodies; the frontend lowers calls to wire nodes and the backend
+  implements them.
+- **Root-cause fix / verdict, by sub-family:**
+  - *Scheduler/host primitives — real implementations (adjudicated
+    precedent, evidence below):*
+    [NumCPUNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/NumCPUNode.java)
+    returns the host processor count;
+    [NumGoroutineNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/NumGoroutineNode.java)
+    reads the scheduler's live-goroutine counter (PKG-023, independent
+    review CLEAN, gate-allowlisted);
+    [GoschedNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/GoschedNode.java)
+    calls `SchedulerCore.yieldCurrent()` (PKG-040, independent review
+    CLEAN, gate-allowlisted);
+    [GoMaxProcsNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/GoMaxProcsNode.java)
+    keeps a process-wide cell initialized to the host CPU count with gc
+    set/return-previous semantics. These four predate the gate and were
+    never gate-flagged; the PKG-023/PKG-040 adjudications cite "the
+    `runtimenumcpu` precedent" — this entry is that precedent, recorded
+    with its evidence, closing the circular justification the review
+    flagged. Formal gate-allowlist adjudication for `runtimenumcpu`/
+    `runtimegomaxprocs` still needs a fresh independent review before
+    they move to `ADJUDICATED_WIRE_NODES`.
+  - *Stack inspection — bridges:* synthetic `rtstack` implementations of
+    `runtime.Callers`/`CallersFrames`/`FuncForPC`/etc. Retire with B-7
+    (Phase 4: real call-site metadata threading).
+  - *Environment introspection — bridges with no Go-side retirement:*
+    the launcher/VM is the only possible source of truth for GOROOT,
+    the toolchain version string, and JVM memory stats; no real Go
+    source could compute these. Keep inventoried; recommend an
+    independent adjudication as permanent environment intrinsics.
+- **Phase:** 4 (stack) / permanent-intrinsic adjudication (environment);
+  the scheduler primitives stand as adjudicated.
+
+### B-11. `unsafe*` wire-node family (synthetic `unsafe` intrinsics)
+
+- **What:** eight wire nodes — `unsafeslice`, `unsafeslicedata`,
+  `unsafestring`, `unsafestringdata`, `unsafeadd`, `unsafefromptr`,
+  `unsafefromuint`, `unsafetooptr` — emitted from
+  [synth_unsafe.go](../../internal/frontend/synth_unsafe.go) (~lines
+  138–233) for the synthetic `unsafe` package. Backend:
+  [p3unsafe/](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/)
+  (`UnsafeSliceNode`, `UnsafeStringNode`, `UnsafeAddNode`, …),
+  registered in
+  [P3KindRegistrations.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java)
+  (~lines 188–202).
+- **Why:** the value model has no byte-addressed pointer arithmetic, so
+  `unsafe` conversions are implemented as backend nodes over the Go
+  value representations.
+- **Root-cause fix:** the byte-addressed value model (or documented trap
+  contract) — Phase 4, same as B-6 (`unsafeadd` already traps there via
+  `UnsafeOps.addTrap`).
+- **Phase:** 4.
+
+### B-12. Miscellaneous stdlib wire nodes
+
+- **`abifuncpc`** — the `internal/abi` `FuncPCABI0`/`FuncPCABIInternal`
+  compile intrinsics (real-reflect Phase 1). Emission:
+  `exportAbiFuncPCIntrinsic` in
+  [synth_machinery.go](../../internal/frontend/synth_machinery.go)
+  (~line 1665). Backend:
+  [AbiFuncPCNode.java](../../internal/backend/interop/src/main/java/graalgo/p3abi/AbiFuncPCNode.java)
+  returns an opaque stable func id from the
+  [FuncIds](../../internal/backend/truffle/src/main/java/graalgo/values/FuncIds.java)
+  registry (same func → same id, non-zero for non-nil funcs) — gc
+  implements these as compile intrinsics returning the entry PC, and
+  graalgo has no PCs, so the opaque id IS the gc-parity mechanism
+  (resolvable back to the `GoFunc` by the Phase-4 `reflectcall`
+  linkname). Verdict: permanent intrinsic mechanism, not a logic shim;
+  retirement only with a real PC model (not planned). Note: registered
+  only in
+  [P3SyncMain.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java)
+  (~line 444), not in `P3KindRegistrations` — registration asymmetry to
+  reconcile with the launcher audit.
+- **`atomicaddr`** — wraps the `*T` operand of `sync/atomic` word ops in
+  a delegating `AtomicLong`/`AtomicInteger` cell so the existing
+  `AtomicOpNode` serves the op unchanged (emission:
+  `exportAtomicWordOp` in
+  [export.go](../../internal/frontend/export.go) ~line 9206; backend
+  [AtomicAddrNode.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/nodes/AtomicAddrNode.java)).
+  Lowering glue for the B-2 cell representation; retires with B-2 (Phase 3).
+- **`reflectop`** — the synthetic `reflect` package's `__reflect_*`
+  intrinsics (emission: `exportReflectIntrinsic` in
+  [synth_reflect.go](../../internal/frontend/synth_reflect.go) ~line
+  2914; backend
+  [ReflectOpNode.java](../../internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectOpNode.java)).
+  Retires with the synthetic `reflect` package (Phase 1, `real-reflect2`
+  in flight).
+- **`sliceoverlap`** — `crypto/internal/fips140/alias.AnyOverlap`/
+  `InexactOverlap` (emission: `exportAliasIntrinsic` in
+  [synth_machinery.go](../../internal/frontend/synth_machinery.go)
+  ~line 1615). The real package uses `uintptr(unsafe.Pointer(...))`,
+  which traps under D5; the node implements overlap detection directly
+  on `GoSlice` values (array identity + range intersection), registered
+  in the Phase-1
+  [NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
+  (~line 372). Retires with the byte-addressed value model (Phase 4).
+- **`syncop`** — `sync/atomic` word ops (via `exportAtomicWordOp`) and
+  the synthetic `sync` package's multi-result `Map` methods (via
+  `desugarSyncMap` in
+  [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go) ~line 3294).
+  Backend:
+  [SyncOpNode.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/nodes/SyncOpNode.java) /
+  [AtomicOpNode.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/nodes/AtomicOpNode.java).
+  Retires with B-2/B-3 (Phase 3). Note: the backend also registers a
+  `"syncnew"` kind that the frontend never emits (legacy of the old
+  construction path — delete with the Phase-3 machinery).
+- **Phase:** 1 (`reflectop`) → 3 (`syncop`/`atomicaddr`) → 4
+  (`sliceoverlap`); `abifuncpc` is a permanent mechanism.
 
 ## Adjudicated non-bridges
 
