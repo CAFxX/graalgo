@@ -9333,6 +9333,26 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if isAbiFuncPCIntrinsicFunc(fn) {
 		return e.exportAbiFuncPCIntrinsic(c, fn.Name())
 	}
+	// P3-M16 (r16): internal/abi.NoEscape is a gc compile intrinsic
+	// ("compiles down to nothing"). Its real body does uintptr(p) followed
+	// by unsafe.Pointer(x^0), which traps under graalgo's D5 forged-pointer
+	// rule. Lower calls to the identity: return the (single) argument.
+	if isAbiNoEscapeFunc(fn) {
+		args, err := e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
+		if len(args) != 1 {
+			return nil, scopeErrorf("abi.NoEscape takes 1 argument")
+		}
+		return args[0], nil
+	}
+	// P3-M16 (r16): sync.indexLocal does pointer arithmetic via
+	// uintptr, which traps under D5. Lower to the "syncindexlocal"
+	// wire node.
+	if isSyncIndexLocalFunc(fn) {
+		return e.exportSyncIndexLocal(c)
+	}
 	// real-nethttp: //go:linkname consumer stubs alias to their provider.
 	// A call to the stub lowers to a direct call to the provider funcdecl,
 	// so multi-result linkname targets use the normal pair-returning

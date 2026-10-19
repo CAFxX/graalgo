@@ -26,7 +26,15 @@ public final class GoStruct {
         this.objects = objects.clone();
     }
 
-    /** The Go zero value for the described struct type. */
+    /** The Go zero value for the described struct type.
+     *
+     * <p>P3-M16 (r16): STRUCT-kind fields (including embedded) are
+     * initialized to recursive zero structs, not Java null. Go's zero value
+     * has zero values for all fields; a null embedded struct breaks
+     * promoted field access (e.g. {@code l.shared} through embedded
+     * structs in {@code sync.Pool}'s {@code []poolLocal}, which nil-deref
+     * panics). Recursion terminates: Go struct types cannot directly
+     * contain themselves. */
     public static GoStruct zero(GoStructDescriptor descriptor) {
         Object[] objects = new Object[descriptor.objectsCount()];
         for (int i = 0; i < descriptor.fields().size(); i++) {
@@ -44,6 +52,12 @@ public final class GoStruct {
                 // WS G: a complex field's zero value is (0+0i), not nil.
                 objects[f.index()] = f.kind() == GoKind.COMPLEX64
                         ? GoComplex32.ZERO : GoComplex64.ZERO;
+            } else if (!f.inLongs() && f.kind() == GoKind.STRUCT && f.structDesc() != null) {
+                // P3-M16: a struct field's zero value is the recursive zero
+                // struct, not null. Without this, promoted field selection
+                // through an embedded struct (selpath length > 1)
+                // dereferences null.
+                objects[f.index()] = GoStruct.zero(f.structDesc());
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);

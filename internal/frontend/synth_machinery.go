@@ -1655,6 +1655,43 @@ func isAbiFuncPCIntrinsicFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && abiFuncPCIntrinsicNames[fn.Name()]
 }
 
+// isAbiNoEscapeFunc reports whether fn is internal/abi.NoEscape.
+// gc implements NoEscape as a compile intrinsic ("compiles down to
+// nothing"); its real body (uintptr(p) then unsafe.Pointer(x^0)) would trap
+// under graalgo's D5 forged-pointer rule, so calls lower to the identity.
+func isAbiNoEscapeFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && fn.Name() == "NoEscape"
+}
+
+// isSyncIndexLocalFunc reports whether fn is sync.indexLocal.
+// indexLocal does pointer arithmetic (unsafe.Pointer(uintptr(l) + i*size))
+// which traps under graalgo's D5 forged-pointer rule. Calls lower to the
+// "syncindexlocal" wire node, which resolves the handle to the array base
+// and returns the i-th element pointer directly.
+func isSyncIndexLocalFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "sync" && fn.Name() == "indexLocal"
+}
+
+// exportSyncIndexLocal lowers a call to sync.indexLocal(l, i) to the
+// "syncindexlocal" wire node. Fields: "l" (the unsafe.Pointer base),
+// "i" (the index), "type" (result *poolLocal type-table id).
+func (e *exporter) exportSyncIndexLocal(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 2 {
+		return nil, scopeErrorf("sync.indexLocal takes 2 arguments")
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncindexlocal", c, map[string]any{
+		"l": args[0], "i": args[1], "type": typ,
+	}), nil
+}
+
 // exportAbiFuncPCIntrinsic lowers a call to abi.FuncPCABI0/FuncPCABIInternal
 // into the "abifuncpc" wire node. Fields: "kind" (the intrinsic name),
 // "arg" (the func value, as any), "type" (result uintptr type id).

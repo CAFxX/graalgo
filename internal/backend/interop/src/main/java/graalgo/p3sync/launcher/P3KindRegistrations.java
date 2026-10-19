@@ -25,6 +25,7 @@ import graalgo.p3sync.nodes.AtomicAddrNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
+import graalgo.p3sync.SyncIndexLocalNode;
 import graalgo.p3time.nodes.TimeAfterFuncNode;
 import graalgo.p3time.nodes.TimeAfterNode;
 import graalgo.p3time.nodes.TimeCNode;
@@ -193,6 +194,11 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslice",
                 (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
+        factory.registerExprKind("unsafeslicedata",
+                (node, ctx) -> UnsafeSliceDataNode.build(node, factory, ctx));
+        // P3-M16 (r16): sync.indexLocal intrinsic (pointer arithmetic).
+        factory.registerExprKind("syncindexlocal",
+                (node, ctx) -> SyncIndexLocalNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslicedata",
                 (node, ctx) -> UnsafeSliceDataNode.build(node, factory, ctx));
         factory.registerExprKind("unsafestring",
