@@ -45,6 +45,11 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // Codebase-review 2026-10-19 SPKI follow-up to I-4: the SPKI and
+        // cert paths must identify EC curves by name, never by field size
+        // (a 256-bit field does not imply secp256r1).
+        TESTS.add(graalgo.p3x509.GoX509SpkiTest.class);
+        TESTS.add(graalgo.p3x509.GoX509CertCurveTest.class);
     }
 
     private IfaceTestRunner() {}

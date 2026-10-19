@@ -695,8 +695,8 @@ public final class LinknameIntrinsics {
                 args -> GoX509.ecX(args[0]), 1);
         Linknames.register("graalgo.x509.ecY",
                 args -> GoX509.ecY(args[0]), 1);
-        Linknames.register("graalgo.x509.ecFieldSize",
-                args -> GoX509.ecFieldSize(args[0]), 1);
+        Linknames.register("graalgo.x509.ecCurveName",
+                args -> GoX509.ecCurveName(args[0]), 1);
         Linknames.register("graalgo.x509.ed25519Raw",
                 args -> GoX509.ed25519Raw(args[0]), 1);
         Linknames.register("graalgo.x509.parseSpki",

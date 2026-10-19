@@ -100,8 +100,8 @@ func graalgoX509EcX(cert any) []byte
 //go:linkname graalgoX509EcY graalgo.x509.ecY
 func graalgoX509EcY(cert any) []byte
 
-//go:linkname graalgoX509EcFieldSize graalgo.x509.ecFieldSize
-func graalgoX509EcFieldSize(cert any) int64
+//go:linkname graalgoX509EcCurveName graalgo.x509.ecCurveName
+func graalgoX509EcCurveName(cert any) string
 
 //go:linkname graalgoX509Ed25519Raw graalgo.x509.ed25519Raw
 func graalgoX509Ed25519Raw(cert any) []byte
@@ -551,21 +551,15 @@ func __mrParsePKIXPublicKeyFromCert(javaCert any, pubAlg string) __mrParsePKIXPu
 	case "EC", "ECDSA":
 		x := graalgoX509EcX(javaCert)
 		y := graalgoX509EcY(javaCert)
-		fs := graalgoX509EcFieldSize(javaCert)
-		if x == nil || y == nil || fs < 0 {
+		name := graalgoX509EcCurveName(javaCert)
+		if x == nil || y == nil || name == "" {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
 		}
-		var curve elliptic.Curve
-		switch fs {
-		case 224:
-			curve = elliptic.P224()
-		case 256:
-			curve = elliptic.P256()
-		case 384:
-			curve = elliptic.P384()
-		case 521:
-			curve = elliptic.P521()
-		default:
+		// The curve is identified by name, never by field size (a
+		// 256-bit field does not imply secp256r1; the old field-size
+		// mapping silently built P-256 for secp256k1 certificates).
+		curve := curveFromName(name)
+		if curve == nil {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
 		}
 		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil}
@@ -655,35 +649,22 @@ func __parseSpkiComponents(s string) __mrParsePKIXPublicKeyPair {
 		}
 		return __mrParsePKIXPublicKeyPair{&rsa.PublicKey{N: new(big.Int).SetBytes(n), E: e}, nil}
 	case "EC":
-		// "x_hex:y_hex:fieldSize"
+		// "curveName:x_hex:y_hex" — the curve is identified by its JDK
+		// name, never by field size (a 256-bit field does not imply
+		// secp256r1; the old field-size mapping silently built P-256
+		// for secp256k1 keys).
 		parts := __splitColon(rest)
 		if len(parts) != 3 {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse EC SPKI")}
 		}
-		x := __hexToBytes(parts[0])
-		y := __hexToBytes(parts[1])
-		fs := 0
-		for i := 0; i < len(parts[2]); i++ {
-			if parts[2][i] < '0' || parts[2][i] > '9' {
-				return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse EC field size")}
-			}
-			fs = fs*10 + int(parts[2][i]-'0')
+		curve := curveFromName(parts[0])
+		if curve == nil {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
 		}
+		x := __hexToBytes(parts[1])
+		y := __hexToBytes(parts[2])
 		if x == nil || y == nil {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
-		}
-		var curve elliptic.Curve
-		switch fs {
-		case 224:
-			curve = elliptic.P224()
-		case 256:
-			curve = elliptic.P256()
-		case 384:
-			curve = elliptic.P384()
-		case 521:
-			curve = elliptic.P521()
-		default:
-			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
 		}
 		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil}
 	case "Ed25519":
@@ -1011,7 +992,8 @@ func __mrParsePrivateKeyDescriptor(desc, wantFmt string) __mrParsePrivateKeyDesc
 		}
 		return __mrParsePrivateKeyDescriptorPair{priv, nil}
 	case "EC":
-		// SEC1: EC:curveName:x:y:d ; PKCS#8: EC:curveName:d (x,y derived).
+		// EC: EC:curveName:d (x,y derived Go-side via ScalarBaseMult);
+		// a 5-part EC:curveName:x:y:d form is also accepted.
 		if len(rest) != 5 && len(rest) != 3 {
 			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
@@ -1063,6 +1045,9 @@ func __mrParsePrivateKeyDescriptor(desc, wantFmt string) __mrParsePrivateKeyDesc
 }
 
 // curveFromName maps a JDK curve name to the synthetic elliptic.Curve.
+// secp256k1 is deliberately absent: gc's x509 rejects it ("unsupported
+// elliptic curve"), so an unmapped name fails loudly here too instead of
+// being mistaken for secp256r1.
 func curveFromName(name string) elliptic.Curve {
 	switch name {
 	case "secp224r1":

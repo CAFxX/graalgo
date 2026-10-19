@@ -258,19 +258,24 @@ public final class GoX509 {
     }
 
     /**
-     * EC field size in bits (224, 256, 384, 521), or -1 if not EC.
-     * The Go side maps this to the elliptic.Curve (P-224, P-256, P-384,
-     * P-521) — the JDK does not expose the curve OID directly.
+     * EC curve name (e.g. "secp256r1") for the certificate's public key,
+     * or "" if the public key is not EC or the curve is not a known named
+     * curve. The Go side maps the name to the elliptic.Curve via the same
+     * table as the private-key and SPKI paths (see {@link #ecCurveName}).
+     * A field-size-keyed mapping was used here before; it is removed because
+     * field size cannot identify the curve (I-4 bug family: a 256-bit field
+     * does not imply secp256r1, e.g. secp256k1). Backs
+     * {@code graalgo.x509.ecCurveName}.
      */
-    public static Object ecFieldSize(Object certArg) {
+    public static Object ecCurveName(Object certArg) {
         X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.ECPublicKey)) {
-            return -1L;
+            return toGoString("");
         }
-        java.security.interfaces.ECPublicKey ec =
-                (java.security.interfaces.ECPublicKey) key;
-        return (long) ec.getParams().getCurve().getField().getFieldSize();
+        String name =
+                ecCurveName((java.security.interfaces.ECPublicKey) key);
+        return toGoString(name == null ? "" : name);
     }
 
     /**
@@ -466,10 +471,16 @@ public final class GoX509 {
         if (key instanceof java.security.interfaces.ECPublicKey) {
             java.security.interfaces.ECPublicKey ec =
                     (java.security.interfaces.ECPublicKey) key;
+            // The curve travels by NAME, never by field size: a 256-bit
+            // field does not imply secp256r1 (I-4 bug family). Unknown or
+            // unnameable curves fail here (null), never misidentified.
+            String curveName = ecCurveName(ec);
+            if (curveName == null) {
+                return null;
+            }
             byte[] x = stripLeadingZero(ec.getW().getAffineX().toByteArray());
             byte[] y = stripLeadingZero(ec.getW().getAffineY().toByteArray());
-            long fs = ec.getParams().getCurve().getField().getFieldSize();
-            return "EC:" + toHex(x) + ":" + toHex(y) + ":" + fs;
+            return "EC:" + curveName + ":" + toHex(x) + ":" + toHex(y);
         }
         String alg = key.getAlgorithm();
         if ("Ed25519".equalsIgnoreCase(alg) || "EdDSA".equalsIgnoreCase(alg)) {
@@ -624,9 +635,9 @@ public final class GoX509 {
      * Parses a private key (PKCS#8, PKCS#1 or SEC1 EC) and returns a
      * colon-separated descriptor {@code FMT:ALG:hex:hex:...} where FMT is
      * PKCS8, PKCS1 or SEC1 and ALG is RSA, EC or Ed25519. RSA components:
-     * n, e, d, p, q. EC components: curveName, x, y, d (SEC1) or
-     * curveName, d (PKCS#8; x,y derived). Ed25519: seed. Empty string on
-     * failure. Backs {@code graalgo.x509.parsePrivateKey}.
+     * n, e, d, p, q. EC components: curveName, d (x,y derived); a
+     * curveName, x, y, d form is also accepted. Ed25519: seed. Empty string
+     * on failure. Backs {@code graalgo.x509.parsePrivateKey}.
      */
     public static Object parsePrivateKey(Object derArg) {
         byte[] der = toBytes(derArg);
@@ -669,8 +680,7 @@ public final class GoX509 {
             KeyFactory kf = KeyFactory.getInstance("EC");
             ECPrivateKey key =
                     (ECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
-            int fieldSize = key.getParams().getCurve().getField().getFieldSize();
-            String curveName = ecCurveName(fieldSize);
+            String curveName = ecCurveName(key);
             if (curveName == null) {
                 return null;
             }
@@ -852,6 +862,9 @@ public final class GoX509 {
         if ("1.2.840.10045.3.1.7".equals(oid)) {
             return "secp256r1";
         }
+        if ("1.3.132.0.10".equals(oid)) {
+            return "secp256k1";
+        }
         if ("1.3.132.0.34".equals(oid)) {
             return "secp384r1";
         }
@@ -864,21 +877,41 @@ public final class GoX509 {
         return null;
     }
 
-    /** Maps an EC field size in bits to a JDK curve name. */
-    private static String ecCurveName(int fieldSize) {
-        if (fieldSize == 224) {
-            return "secp224r1";
+    /**
+     * Maps an EC key (public or private) to its JDK curve name via the real
+     * named-curve OID. Field size alone cannot identify the curve:
+     * secp256r1, secp256k1 and brainpoolP256r1 all have 256-bit fields, so
+     * a field-size table misidentifies secp256k1/brainpool keys as secp256r1
+     * and the Go side then builds the wrong curve (the I-4 bug family; the
+     * SPKI path had the same defect). The JDK exposes the OID through
+     * {@code AlgorithmParameters("EC")} initialized with the key's params:
+     * for provider-known named curves the encoding is the bare named-curve
+     * OID DER (verified empirically for secp256r1/secp384r1/secp521r1 and
+     * secp256k1 public keys, and secp256r1/secp384r1 private keys, both
+     * direct and DER-parsed). Only a bare short-form OID TLV is accepted
+     * ({@code enc[0]==0x06}, {@code len+2==enc.length}); explicit-parameter
+     * encodings, long-form lengths and unknown OIDs return null (fail loudly
+     * at the call site), never a guessed name.
+     */
+    private static String ecCurveName(java.security.interfaces.ECKey key) {
+        try {
+            AlgorithmParameters p = AlgorithmParameters.getInstance("EC");
+            p.init(key.getParams());
+            byte[] enc = p.getEncoded();
+            if (enc == null || enc.length < 4 || (enc[0] & 0xFF) != 0x06) {
+                return null;
+            }
+            int len = enc[1] & 0xFF;
+            if (len <= 0 || len + 2 != enc.length) {
+                // Long-form length or trailing bytes: not a bare OID.
+                return null;
+            }
+            byte[] oid = new byte[len];
+            System.arraycopy(enc, 2, oid, 0, len);
+            return ecCurveNameByOid(decodeOid(oid));
+        } catch (Exception e) {
+            return null;
         }
-        if (fieldSize == 256) {
-            return "secp256r1";
-        }
-        if (fieldSize == 384) {
-            return "secp384r1";
-        }
-        if (fieldSize == 521) {
-            return "secp521r1";
-        }
-        return null;
     }
 
     /** Parses all INTEGERs from a PKCS#1 SEQUENCE. */
