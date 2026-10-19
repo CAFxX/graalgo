@@ -8,8 +8,11 @@ import graalgo.values.GoKind;
 
 /**
  * {@code unsafe.Add(ptr, len)} (P3-M8): the {@code "unsafeadd"} wire node.
- * Always traps (D5/GG-0015): handles admit no byte arithmetic. Both
- * operands still evaluate, matching gc's argument evaluation order.
+ * Always traps (D5/GG-0015): handles admit no byte arithmetic. The trap
+ * is a Go panic carrying the documented message — recoverable via Go
+ * {@code recover()} — not an internal-error crash (B-6 interim,
+ * RV22-P1-8). Both operands still evaluate, matching gc's argument
+ * evaluation order.
  */
 public final class UnsafeAddNode extends GoExprNode {
     @Child private GoExprNode ptrChild;
@@ -25,7 +28,7 @@ public final class UnsafeAddNode extends GoExprNode {
     public long executeLong(VirtualFrame frame) {
         ptrChild.executeLong(frame);
         lenChild.executeLong(frame);
-        UnsafeOps.addTrap();
+        UnsafeOps.addTrap(this);
         throw new AssertionError("unreachable");
     }
 

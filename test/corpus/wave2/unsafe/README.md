@@ -43,8 +43,12 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
 ## Intentional-divergence pins (NOT differential — see below)
 
 8. [`03a_add_trap`](03a_add_trap.go) / [`03c_uintptr2ptr_trap`](03c_uintptr2ptr_trap.go) —
-   the two remaining D5 traps, each with a `.panic` file pinning the exact first
-   stderr line (`UnsafeEscapeException`, exit 1). gc implements both,
+   the two remaining D5 traps, each with a `.panic` file pinning the exact
+   first stderr line. `03a` (`unsafe.Add`) pins a *Go panic* carrying the
+   documented trap message (recoverable via `recover()` — pinned end to end
+   by `UnsafeAddTrapTest` in the interop Java suite; B-6 interim,
+   RV22-P1-8). `03c` (`uintptr → unsafe.Pointer`) still pins an
+   `UnsafeEscapeException` internal-error first line. gc implements both,
    so the gc leg exits 0: the exit code differs BY DESIGN. The `.panic`
    line and (empty) stdout are the assertions. Runner gap (see handoff):
    `run_wave.sh` compares exit codes unconditionally; these need a

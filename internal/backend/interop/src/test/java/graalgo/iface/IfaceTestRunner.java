@@ -25,6 +25,9 @@ public final class IfaceTestRunner {
         TESTS.add(ItabForIntrinsicTest.class);
         TESTS.add(AtomicContentionTest.class);
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
+        // RV22-P1-8 (2026-10-19): unsafe.Add traps with a recoverable Go
+        // panic (B-6 interim), never an internal-error crash.
+        TESTS.add(graalgo.p3sync.launcher.UnsafeAddTrapTest.class);
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);

@@ -1,6 +1,7 @@
 package graalgo.p3unsafe;
 
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.frontend.NodeFactory;
 import graalgo.runtime.Panic;
 import graalgo.values.GoComplex32;
 import graalgo.values.GoComplex64;
@@ -42,8 +43,11 @@ import graalgo.values.UnsafeHandles;
  * with gc-exact {@code "runtime error: ..."} messages (fully differential);
  * shapes the handle model cannot represent panic with an
  * {@code "unsafe.<op>: ..."} message (intentional, documented divergence —
- * gc would silently reinterpret); D5 traps ({@link #addTrap},
- * {@link #fromUintTrap}) throw {@link UnsafeHandles.UnsafeEscapeException}.
+ * gc would silently reinterpret); the D5 {@code unsafe.Add} trap
+ * ({@link #addTrap}) panics with a Go panic carrying the documented
+ * message — recoverable via Go {@code recover()} (B-6 interim, RV22-P1-8);
+ * the {@code uintptr → unsafe.Pointer} D5 trap ({@link #fromUintTrap})
+ * still throws {@link UnsafeHandles.UnsafeEscapeException}.
  * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> trap:
  * it yields the handle as an integer identity token (PKG-007; see
  * {@link graalgo.values.GoConvert#unsafePointerToUintptr}) — the token is
@@ -245,13 +249,29 @@ public final class UnsafeOps {
 
     /**
      * {@code unsafe.Add} always traps (D5/GG-0015): handles admit no byte
-     * arithmetic. Re-test trigger: a byte-addressed value model (no plan).
+     * arithmetic. Interim (B-6; RV22-P1-8): a Go panic carrying the
+     * documented message — recoverable via Go {@code recover()} — instead
+     * of an internal-error crash. The value is a {@link GoString} (the D5
+     * string mapping): a raw Java {@code String} would render as
+     * {@code (?) 0xADDR} on the uncaught path (PanicRendering). The
+     * canonical {@code string} descriptor (via
+     * {@link NodeFactory#basicDescriptorForName}, the process-wide
+     * unification point) makes the recovered value a proper Go
+     * {@code any}: without it, interface operations on the recovered value
+     * (e.g. {@code ==}) fail. Re-test trigger: a byte-addressed value
+     * model (no plan).
+     *
+     * @param site the throwing wire node, for panic source attribution.
      */
-    public static void addTrap() {
-        throw new UnsafeHandles.UnsafeEscapeException(
-                "unsafe.Add: pointer arithmetic on unsafe.Pointer traps "
-                        + "(D5: handles admit no byte arithmetic; "
-                        + "re-test: byte-addressed value model)");
+    public static void addTrap(Node site) {
+        Panic.throwPanic(
+                GoString.fromUtf8(
+                        "unsafe.Add: pointer arithmetic on unsafe.Pointer traps "
+                                + "(D5: handles admit no byte arithmetic; "
+                                + "re-test: byte-addressed value model)"),
+                NodeFactory.basicDescriptorForName("string", GoKind.STRING),
+                null,
+                site);
     }
 
     /**

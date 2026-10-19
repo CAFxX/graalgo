@@ -153,13 +153,17 @@ deliverable until the design lands.
 
 - **What:**
   [UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
-  `addTrap` (~line 248) throws on `unsafe.Add` — a legal, common gc
-  operation (used by `reflect`, `encoding/binary` internals) — killing the
-  program with an internal error.
+  `addTrap` (~line 248) traps on `unsafe.Add` — a legal, common gc
+  operation (used by `reflect`, `encoding/binary` internals).
 - **Why:** the value model has no byte-addressed pointer arithmetic yet.
-- **Root-cause fix:** needs design — a byte-addressed value model; at
-  minimum, trap with a Go panic carrying the documented message instead of
-  an internal-error crash.
+- **Interim fix (RV22-P1-8, 2026-10-19):** the trap is now a Go panic
+  carrying the documented message — `"unsafe.Add: pointer arithmetic on
+  unsafe.Pointer traps (D5: handles admit no byte arithmetic; re-test:
+  byte-addressed value model)"` — recoverable via Go `recover()`, instead
+  of an internal-error crash. Pinned by
+  `test/corpus/wave2/unsafe/03a_add_trap.panic` and the `UnsafeAddTrapTest`
+  end-to-end test (panic fires, message exact, recoverable).
+- **Root-cause fix:** needs design — a byte-addressed value model.
 - **Phase:** 4.
 
 ### B-7. `rtstack` synthetic `runtime` stack intrinsics
