@@ -1538,16 +1538,13 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
-				}
-			}
 			// General (real-x509 lane): Var aliases a multi-result Func
-			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
+			// (e.g. path/filepath's lstat -> os.Lstat). Check FIRST:
+			// desugar as the aliased Func via the table plan (helper
+			// call). userMRInfoForVar below would also match via its own
+			// varFuncAliases fallback, but it yields an mrUser plan whose
+			// desugar calls the variable directly — and a removed-spec
+			// alias var was never declared (F-2b).
 			if aliasedFn, ok := e.varFuncAliases[v]; ok {
 				// Build a synthetic SelectorExpr call for classification.
 				// The table classifiers take (pkgPath, fn, targs).
@@ -1566,6 +1563,18 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
+				}
+			}
+			// MR-closure-var: call through a variable holding a multi-result
+			// closure (e.g. readModuleLine(elem) where readModuleLine :=
+			// func(...) (T, error) {...}). The variable was linked to the
+			// func lit's pair info at its definition; desugar via the pair
+			// exactly like a named user MR function.
+			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
 				}
 			}
 			return nil

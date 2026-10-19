@@ -497,3 +497,47 @@ func TestSyntheticSkipNarrowing(t *testing.T) {
 		t.Fatal("mrPlanForFuncValue(time.ParseDuration) non-nil, want nil (fail-fast stub, no pair form)")
 	}
 }
+
+// TestMRFuncValueDiskLstatAlias pins the preserved disk path (independent
+// review 2026-10-18, F-2): the real path/filepath's `var lstat = os.Lstat`
+// keeps the removeAliasedSpecs=true behavior — the spec is removed, the
+// Var->Func alias is recorded, and the lstat call inside Glob desugars
+// through the alias map (varFuncAliases / userMRInfoForVar fallback) via
+// the table classifiers. If the alias path regressed, export would fail
+// with the M5 value-position scope error.
+func TestMRFuncValueDiskLstatAlias(t *testing.T) {
+	doc := exportFuncValueProg(t, `package main
+
+import "path/filepath"
+
+func main() {
+	ms, _ := filepath.Glob("*.go")
+	println(len(ms))
+}
+`)
+	// The lstat(filename) call inside Glob desugared: a __p5mr_ pair-temp
+	// vardecl holding the pair call exists in the wire doc.
+	found := false
+	for _, n := range findAllKind(doc, "vardecl") {
+		names, _ := n["fields"].(map[string]any)["names"].([]any)
+		if len(names) != 1 {
+			continue
+		}
+		name, _ := names[0].(string)
+		if !strings.HasPrefix(name, "__p5mr_") {
+			continue
+		}
+		vals, _ := n["fields"].(map[string]any)["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		call, _ := vals[0].(map[string]any)
+		if call["kind"] != "call" {
+			continue
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("no desugared __p5mr_ pair-temp vardecl found (disk lstat alias path)")
+	}
+}
