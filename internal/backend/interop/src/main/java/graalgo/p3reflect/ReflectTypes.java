@@ -9,7 +9,6 @@ import graalgo.frontend.TypeTable;
 import graalgo.iface.IfaceItab;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTarget;
-import graalgo.p3log.P3Log;
 import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
@@ -1071,10 +1070,9 @@ public final class ReflectTypes {
             if (func == null) {
                 // Disk-MR stubs are skipped by the frontend; the method is
                 // not available via reflect. Skip instead of failing.
-                P3Log.warn(ReflectTypes.class,
-                        path + ": reflect: method \"" + name
-                        + "\" refers to unknown function object id " + objId
-                        + " (skipped; likely a disk-MR stub)");
+                // (No warning: this is an expected condition for every
+                // desugared multi-result method, and logging it would
+                // pollute the guest program's stderr observable.)
                 continue;
             }
             Integer sigId = funcdeclSig.get(objId);
