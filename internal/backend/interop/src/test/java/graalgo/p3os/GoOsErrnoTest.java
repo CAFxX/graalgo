@@ -1,6 +1,7 @@
 package graalgo.p3os;
 
 import java.io.IOException;
+import java.net.SocketException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NonReadableChannelException;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +21,7 @@ import java.util.List;
 
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
+import graalgo.p3net.GoNet;
 
 /**
  * Unit tests for {@link GoOs} (P3-M8, wave 2, R1): the single
@@ -193,6 +195,32 @@ public final class GoOsErrnoTest {
     public void testErrnoBrokenPipe() {
         // The JDK's message is "Broken pipe" (verified 2026-10-07).
         checkEq(GoOs.EPIPE, GoOs.errno(new IOException("Broken pipe")), "broken pipe");
+    }
+
+    public void testErrnoConnectionReset() {
+        // I-9 (2026-10-19): TCP RST on the read side. The JDK reports
+        // SocketException("Connection reset"[" by peer"]) — the
+        // "Connection reset" string is present in this JDK's java.base
+        // image (verified 2026-10-19). gc reports ECONNRESET on read, so
+        // errors.Is(err, syscall.ECONNRESET) must hold (net/http retry
+        // logic); collapsing to EIO was the bug.
+        checkEq(GoNet.ECONNRESET, GoOs.errno(new SocketException("Connection reset")),
+                "connection reset");
+        checkEq(GoNet.ECONNRESET, GoOs.errno(new SocketException("Connection reset by peer")),
+                "connection reset by peer");
+        // The socket-path mapper inherits the branch via its GoOs.errno
+        // fallthrough (I-9 design: one shared branch, no call-site
+        // context — EPIPE/"broken pipe" is write-side-only by OS
+        // semantics, already covered above).
+        checkEq(GoNet.ECONNRESET,
+                GoNet.sockErrno(new SocketException("Connection reset")),
+                "sockErrno connection reset");
+        // Priority preserved: a refused connect still maps to
+        // ECONNREFUSED via the ConnectException subclass branch, never
+        // ECONNRESET.
+        checkEq(GoNet.ECONNREFUSED,
+                GoNet.sockErrno(new java.net.ConnectException("Connection refused")),
+                "sockErrno connect refused");
     }
 
     public void testErrnoTooManyOpenFiles() {

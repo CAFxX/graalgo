@@ -4,6 +4,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.nio.channels.SelectionKey;
 
 import graalgo.frontend.FrontendException;
 import graalgo.p3os.GoOs;
@@ -717,6 +718,77 @@ public final class GoNetpollTest {
             assertEq(0, GoOs.close(ss), "close");
             assertEq(0, GoOs.close(cli[0]), "close client");
             closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * I-2: cross-mode interest arming is atomic. Concurrent Read+Write on
+     * one Conn is idiomatic Go, so the reader and writer waiter threads'
+     * {@code setInterest} calls race. The old read-modify-write
+     * ({@code interestOps() | bit}) could lose a bit, parking the loser
+     * with zero interest and no future wakeup. This hammers the real
+     * {@code setInterest} from a reader and a writer thread at once and
+     * asserts no bit is ever lost. ({@code testConcurrentWaitFailsFast}
+     * covers same-mode waiter exclusion; this covers cross-mode interest
+     * integrity.)
+     */
+    public void testCrossModeInterestAtomic() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            long cs = GoNet.socket(2, 1, 0);
+            assertTrue(cs >= 16, "socket cookie: " + cs);
+            long ctx = GoNetpoll.pollOpen(cs);
+            assertTrue(ctx != 0, "pollOpen");
+            try {
+                // pollOpen registers on the selector thread; wait for the key.
+                long end = System.currentTimeMillis() + 10_000;
+                while (GoNetpoll.interestOpsForTest(ctx) < 0
+                        && System.currentTimeMillis() < end) {
+                    Thread.sleep(10);
+                }
+                assertTrue(GoNetpoll.interestOpsForTest(ctx) >= 0, "key registered");
+                final int want = SelectionKey.OP_READ | SelectionKey.OP_WRITE;
+                final int ITERS = 2000;
+                for (int i = 0; i < ITERS; i++) {
+                    GoNetpoll.setInterestForTest(ctx, GoNetpoll.MODE_READ, false);
+                    GoNetpoll.setInterestForTest(ctx, GoNetpoll.MODE_WRITE, false);
+                    CountDownLatch go = new CountDownLatch(1);
+                    AtomicReference<Throwable> err = new AtomicReference<>();
+                    Thread reader = new Thread(() -> {
+                        try {
+                            go.await();
+                            GoNetpoll.setInterestForTest(ctx, GoNetpoll.MODE_READ, true);
+                        } catch (Throwable t) {
+                            err.set(t);
+                        }
+                    }, "i2-reader");
+                    Thread writer = new Thread(() -> {
+                        try {
+                            go.await();
+                            GoNetpoll.setInterestForTest(ctx, GoNetpoll.MODE_WRITE, true);
+                        } catch (Throwable t) {
+                            err.set(t);
+                        }
+                    }, "i2-writer");
+                    reader.start();
+                    writer.start();
+                    go.countDown();
+                    reader.join(10_000);
+                    writer.join(10_000);
+                    assertTrue(!reader.isAlive() && !writer.isAlive(),
+                            "hammer threads joined at iter " + i);
+                    if (err.get() != null) {
+                        throw new AssertionError("hammer thread failed at iter " + i, err.get());
+                    }
+                    int ops = GoNetpoll.interestOpsForTest(ctx);
+                    assertTrue((ops & want) == want,
+                            "I-2: lost interest bit at iter " + i + ": ops=" + ops);
+                }
+            } finally {
+                closeSock(cs, ctx);
+            }
         } finally {
             teardown(prev);
         }

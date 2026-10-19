@@ -379,6 +379,22 @@ public final class GoOs {
                 if (ml.contains("broken pipe")) {
                     return EPIPE; // verified: "Broken pipe" on this JDK
                 }
+                // I-9 (2026-10-19): TCP RST on the read side. The JDK
+                // surfaces it as SocketException("Connection reset"
+                // [" by peer"]); gc reports ECONNRESET on read (and EPIPE
+                // on write — the "broken pipe" branch above), so collapsing
+                // it to EIO breaks errors.Is(err, syscall.ECONNRESET)
+                // (e.g. net/http retry logic). This branch lives in the
+                // shared os mapper (R1) because stream I/O goes through
+                // graalgo.os.read/write (fd unification) — GoNet.sockErrno
+                // inherits it via its GoOs.errno fallthrough. Message
+                // domains are disjoint by syscall direction (EPIPE only
+                // ever comes from a write), so no call-site context is
+                // needed; the "Connection reset" string is present in this
+                // JDK's java.base image (verified 2026-10-19).
+                if (ml.contains("connection reset")) {
+                    return graalgo.p3net.GoNet.ECONNRESET;
+                }
                 // M10 (self-attack D3): fd exhaustion must surface as
                 // EMFILE/ENFILE (gc parity), not EIO — Go programs
                 // distinguish "too many open files" (e.g. netpoll

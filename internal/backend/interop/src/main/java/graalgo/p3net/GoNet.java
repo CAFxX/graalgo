@@ -233,6 +233,14 @@ public final class GoNet {
      * Socket-aware errno mapper: socket-specific exception types first,
      * then {@link GoOs#errno} for the rest. The only exception→errno
      * translation on the socket path (mirrors GoOs R1 discipline).
+     *
+     * <p>I-9 (2026-10-19): TCP RST ("Connection reset") maps to
+     * {@link #ECONNRESET} via the {@code GoOs.errno} fallthrough below
+     * (the branch lives there because stream I/O goes through
+     * {@code graalgo.os.read/write}); "Broken pipe" likewise falls
+     * through to {@code EPIPE}. The subclass branches above keep
+     * priority, so e.g. a refused connect still reports
+     * {@code ECONNREFUSED}, never {@code ECONNRESET}.
      */
     public static int sockErrno(Throwable t) {
         if (t instanceof java.net.SocketException se) {

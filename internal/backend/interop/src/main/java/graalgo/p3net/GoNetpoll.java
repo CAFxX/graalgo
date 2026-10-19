@@ -691,8 +691,17 @@ public final class GoNetpoll {
             bit = mode == MODE_READ ? SelectionKey.OP_READ : SelectionKey.OP_WRITE;
         }
         try {
-            int ops = key.interestOps();
-            key.interestOps(on ? (ops | bit) : (ops & ~bit));
+            // I-2 (2026-10-19): atomic bit ops. The old read-modify-write
+            // (interestOps() | bit) raced across reader/writer waiter
+            // threads — concurrent Read+Write on one Conn is idiomatic Go
+            // — and could lose a bit, parking the waiter with zero interest
+            // and no future wakeup. interestOpsOr/And are atomic on this
+            // JDK (VarHandle getAndBitwiseOr/And on SelectionKeyImpl).
+            if (on) {
+                key.interestOpsOr(bit);
+            } else {
+                key.interestOpsAnd(~bit);
+            }
         } catch (CancelledKeyException ignored) {
             // Raced with close; the waiter will observe closing via checkErr
             // on its next wait, and the current wait's waker paths are
@@ -902,7 +911,8 @@ public final class GoNetpoll {
         SelectionKey key = pd.key;
         if (key != null && key.isValid()) {
             try {
-                key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT);
+                // I-2 (2026-10-19): atomic clear — see setInterest.
+                key.interestOpsAnd(~SelectionKey.OP_CONNECT);
             } catch (CancelledKeyException ignored) {
                 // Raced with close.
             }
@@ -928,6 +938,23 @@ public final class GoNetpoll {
     static long writeTimerIdForTest(long ctx) {
         PollDesc pd = DESCS.get(ctx);
         return pd == null ? -1 : pd.writeTimerId.get();
+    }
+
+    /**
+     * Test hook: drives the real {@link #setInterest} for one mode.
+     * Lets tests hammer the interest RMW concurrently across modes
+     * (the production concurrent-Read+Write shape) without parking
+     * a waiter (I-2).
+     */
+    static void setInterestForTest(long ctx, int mode, boolean on) {
+        setInterest(requireDesc(ctx), mode, on);
+    }
+
+    /** Test hook: the key's current interestOps (-1 if no key yet). */
+    static int interestOpsForTest(long ctx) {
+        PollDesc pd = DESCS.get(ctx);
+        SelectionKey k = pd == null ? null : pd.key;
+        return k == null ? -1 : k.interestOps();
     }
 
     /**
