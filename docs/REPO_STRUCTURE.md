@@ -46,8 +46,17 @@ Related: [Makefile](../Makefile) (root build entry point),
       [importer.go](../internal/frontend/p3frontend/importer.go),
       [flatten.go](../internal/frontend/p3frontend/flatten.go),
       [export.go](../internal/frontend/p3frontend/export.go),
-      [asm.go](../internal/frontend/p3frontend/asm.go)) with its own test
-      suite.
+      [asm.go](../internal/frontend/p3frontend/asm.go) — thin adapter over
+      `asmstrategy`, selection stays here) with its own test suite.
+    - [asmstrategy/](../internal/frontend/asmstrategy/) — shared Plan 9
+      assembly strategy (ADR-0007 addendum): the generated inventory
+      ([zz_asm_inventory_gen.go](../internal/frontend/asmstrategy/zz_asm_inventory_gen.go),
+      single generated artifact, emitted by
+      [tools/stdlib-fork/gen-asm-inventory.py](../tools/stdlib-fork/gen-asm-inventory.py))
+      plus the resolution policy
+      ([asmstrategy.go](../internal/frontend/asmstrategy/asmstrategy.go)),
+      consumed by gofrontend's `buildDiskPackage` hook and p3frontend's
+      adapter.
     - [go/](../internal/frontend/go/) — vendored pristine go1.27.1
       `src/go/*`; load-bearing via the `build.sh` overlay, intentional per
       [VENDORING.md](../internal/frontend/VENDORING.md).

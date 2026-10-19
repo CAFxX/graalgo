@@ -250,6 +250,23 @@ public final class NodeFactory {
     public record Program(GoRootNode root, FrameDescriptor descriptor, Map<String, Integer> slotsByName,
             Map<String, GoKind> kindsByName, Map<Integer, GoFunc> functions) {}
 
+    /**
+     * One carried Plan 9 assembly disposition (frontend/v1 {@code "asm"}
+     * section, ADR-0007 addendum D4/D5): the inventory's verdict for one
+     * buildable {@code .s} file of a from-disk dependency package.
+     * Retained in program metadata for wave tooling.
+     */
+    public record AsmDisposition(String file, String category, String replacement, String reason) {}
+
+    /**
+     * Categories the wire may carry: replaced categories only. The
+     * frontend fails fast on {@code unsupported} / {@code uncategorized},
+     * so they never reach the wire; seeing one here is a contract
+     * violation, failed at program-build time (D5 integrity assertion).
+     */
+    private static final Set<String> ASM_REPLACED_CATEGORIES =
+            Set.of("evaporate", "intrinsify", "emulate-then-intrinsify", "jvm-math");
+
     private final Source source;
     /** One Truffle Source per input file; position "file" indices select
      * among them (frontend/v1 wire format). source is sources[0]. */
@@ -262,6 +279,15 @@ public final class NodeFactory {
      * ReflectTypes, LinknameIntrinsics) reuse this instead of re-parsing
      * the JSON text (5x parse of a 200MB document was the gmp1 bottleneck). */
     private Json.Object document;
+    /**
+     * Carried Plan 9 assembly dispositions by package import path
+     * (frontend/v1 {@code "asm"} section, ADR-0007 addendum D5). Parsed
+     * and integrity-checked by {@link #buildProgram}; empty when the
+     * frontend emitted no {@code asm} section. The lookup is keyed by
+     * each bodyless decl's own {@code pkgpath} field -- structural, never
+     * a package-name switch.
+     */
+    private Map<String, List<AsmDisposition>> asmDispositions = Map.of();
     /** Shared function-literal counter for unique trace names (M5, WS F). */
     private int funclitCounter;
     /**
@@ -553,6 +579,88 @@ public final class NodeFactory {
         return document;
     }
 
+    /**
+     * Parses the frontend/v1 {@code "asm"} section into dispositions by
+     * package import path (ADR-0007 addendum D5).
+     *
+     * <p>Program-build-time integrity assertion: the wire only carries
+     * replaced categories, each with a non-empty replacement pointer
+     * (the frontend fails fast on {@code unsupported} / {@code
+     * uncategorized}, so they are never emitted). A dangling replacement
+     * pointer or a non-replaced category is a wave-planning / frontend
+     * bug: fail the program build here, not the first call.
+     */
+    private static Map<String, List<AsmDisposition>> parseAsmSection(Json.Object doc) {
+        Json.Value asm = doc.opt("asm");
+        if (asm == null) {
+            return Map.of();
+        }
+        if (!(asm instanceof Json.Array arr)) {
+            throw new FrontendException("asm: must be an array of package dispositions");
+        }
+        Map<String, List<AsmDisposition>> out = new LinkedHashMap<>();
+        for (int i = 0; i < arr.size(); i++) {
+            String ppath = "asm[" + i + "]";
+            if (!(arr.get(i) instanceof Json.Object po)) {
+                throw new FrontendException(ppath + ": must be an object");
+            }
+            String pkg = po.string("package", ppath);
+            Json.Array files = po.array("files", ppath);
+            List<AsmDisposition> list = new ArrayList<>(files.size());
+            for (int j = 0; j < files.size(); j++) {
+                String fpath = ppath + ".files[" + j + "]";
+                if (!(files.get(j) instanceof Json.Object fo)) {
+                    throw new FrontendException(fpath + ": must be an object");
+                }
+                String file = fo.string("file", fpath);
+                String category = fo.string("category", fpath);
+                String replacement = fo.string("replacement", fpath);
+                String reason = fo.string("reason", fpath);
+                if (!ASM_REPLACED_CATEGORIES.contains(category) || replacement.isEmpty()) {
+                    throw new FrontendException("asm: " + pkg + "/" + file
+                            + ": invalid disposition (category=" + category
+                            + ", replacement empty=" + replacement.isEmpty()
+                            + "): the wire carries replaced categories with"
+                            + " non-empty replacement pointers only");
+                }
+                list.add(new AsmDisposition(file, category, replacement, reason));
+            }
+            out.put(pkg, List.copyOf(list));
+        }
+        return Map.copyOf(out);
+    }
+
+    /**
+     * Carried Plan 9 assembly dispositions by package import path
+     * (frontend/v1 {@code "asm"} section; empty when the frontend emitted
+     * none). Retained in program metadata for wave tooling (ADR-0007
+     * addendum D5).
+     */
+    public Map<String, List<AsmDisposition>> asmDispositions() {
+        return asmDispositions;
+    }
+
+    /**
+     * Renders the carried dispositions for pkgPath as the detail fragment
+     * of the enriched {@code unimplemented} panic (D5), or "" when the
+     * package carries none. Keyed by the decl's own {@code pkgpath}
+     * field -- structural, never a package-name switch.
+     */
+    private String asmDetailFor(String pkgPath) {
+        List<AsmDisposition> ds = asmDispositions.get(pkgPath);
+        if (ds == null || ds.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (AsmDisposition d : ds) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(d.file()).append(": ").append(d.category()).append(": ").append(d.reason());
+        }
+        return sb.toString();
+    }
+
     public Program buildProgram(String jsonText) {
         Json.Value v = Json.parse(jsonText);
         if (!(v instanceof Json.Object doc)) {
@@ -565,6 +673,9 @@ public final class NodeFactory {
                     + "\": this factory implements frontend/v1 only"
                     + " (additive-only rule: breaking wire changes bump the major version)");
         }
+        // ADR-0007 addendum D5: parse + integrity-check the carried asm
+        // dispositions (absent section -> empty map; additive wire data).
+        this.asmDispositions = parseAsmSection(doc);
         TypeTable types = new TypeTable(doc.array("types", "document"));
         Json.Array objects = doc.array("objects", "document");
         Json.Array funcs = doc.array("funcs", "document");
@@ -677,9 +788,13 @@ public final class NodeFactory {
                     // Bodyless function without //go:linkname: build a
                     // stub that panics if called. The pkgpath field
                     // identifies the declaring package for the message.
+                    // ADR-0007 addendum D5: when the frontend carried asm
+                    // dispositions for the package, the panic names the
+                    // exact .s file, its decided category, and the reason.
                     String pkgPath = fields.opt("pkgpath") instanceof Json.Str ps
                             ? ps.value() : "";
-                    UnimplementedRootNode root = new UnimplementedRootNode(name, pkgPath);
+                    UnimplementedRootNode root =
+                            new UnimplementedRootNode(name, pkgPath, asmDetailFor(pkgPath));
                     root.setSourceSection(sectionFor(fn, "funcdecl"));
                     target = root.getCallTarget();
                 } else {

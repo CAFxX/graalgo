@@ -52,10 +52,12 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"graalgo-frontend/asmstrategy"
 )
 
 // frontendVersion is the JSON protocol version emitted. Additive-only changes
-// keep "v1"; any breaking change bumps to "v2" (docs/frontend-v1.md §8).
+// keep "v1"; any breaking change bumps to "v2" (docs/arch/frontend-v1.md §8).
 const frontendVersion = "v1"
 
 // langVersion is the Go language version assumed when type-checking.
@@ -64,7 +66,7 @@ const frontendVersion = "v1"
 const langVersion = "go1.27"
 
 // ---------------------------------------------------------------------------
-// JSON model (field-for-field contract: docs/frontend-v1.md).
+// JSON model (field-for-field contract: docs/arch/frontend-v1.md).
 // ---------------------------------------------------------------------------
 
 // Doc is the root of a frontend/v1 document.
@@ -80,6 +82,26 @@ type Doc struct {
 	// Obj == -1 means "evaluate Init for side effects, discard"
 	// (package-level `var _ = ...`).
 	Globals []GlobalEnt `json:"globals"`
+	// Asm lists the Plan 9 assembly dispositions (ADR-0007 addendum, D4)
+	// for each from-disk dependency package that had buildable .s files.
+	// Additive; absent for synthetic packages, for third-party disk
+	// packages, and when empty (omitempty).
+	Asm []AsmPackage `json:"asm,omitempty"`
+}
+
+// AsmPackage is one from-disk dependency package's assembly dispositions
+// (frontend/v1 wire, additive since the ADR-0007 M7 addendum).
+type AsmPackage struct {
+	Package string       `json:"package"` // import path
+	Files   []AsmFileRes `json:"files"`
+}
+
+// AsmFileRes is the inventory resolution for one buildable .s file.
+type AsmFileRes struct {
+	File        string `json:"file"`        // base name
+	Category    string `json:"category"`    // stored category, never "uncategorized"
+	Replacement string `json:"replacement"` // inventory replacement pointer
+	Reason      string `json:"reason"`
 }
 
 // GlobalEnt is one package-level variable (M7): the object-table id of
@@ -984,6 +1006,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		importedSynthetic: make(map[string]bool),
 		// WS G (P3-M9): track importPkgTree walks for idempotency.
 		importedPkgTree: make(map[string]bool),
+		// ADR-0007 addendum D4: asm inventory resolutions by import path,
+		// collected as disk packages merge (importSyntheticPackage).
+		asmDispositions: make(map[string][]asmstrategy.AsmResolution),
 		// P3-M9 (WS D): user-defined multi-result functions transformed
 		// to pair-returning form.
 		userMRFuncs: make(map[*types.Func]*userMRInfo),
@@ -2491,6 +2516,34 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if doc.Objects == nil {
 		doc.Objects = []ObjectEnt{}
 	}
+	// ADR-0007 addendum D4: carry the Plan 9 assembly dispositions of
+	// every merged from-disk dependency package that had buildable .s
+	// files. Sorted by import path (deterministic); files sorted by base
+	// name. Absent (omitempty) when the hook is disabled or no disk
+	// package had .s files -- so default builds emit byte-identical
+	// documents to before this change.
+	if len(e.asmDispositions) > 0 {
+		pkgs := make([]string, 0, len(e.asmDispositions))
+		for p := range e.asmDispositions {
+			pkgs = append(pkgs, p)
+		}
+		sort.Strings(pkgs)
+		doc.Asm = make([]AsmPackage, 0, len(pkgs))
+		for _, p := range pkgs {
+			res := e.asmDispositions[p]
+			files := make([]AsmFileRes, 0, len(res))
+			for _, r := range res {
+				files = append(files, AsmFileRes{
+					File:        filepath.Base(r.File),
+					Category:    r.Category,
+					Replacement: r.Replacement,
+					Reason:      r.Reason,
+				})
+			}
+			sort.Slice(files, func(i, j int) bool { return files[i].File < files[j].File })
+			doc.Asm = append(doc.Asm, AsmPackage{Package: p, Files: files})
+		}
+	}
 
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -3024,6 +3077,11 @@ type exporter struct {
 	// have no syntheticPackage, and enumerateInstantiations assumes
 	// every importedSynthetic key resolves via getSyntheticPackage.
 	importedPkgTree map[string]bool
+	// ADR-0007 addendum D4: asm inventory resolutions by import path,
+	// recorded in importSyntheticPackage as disk packages merge (nil
+	// resolutions are never stored); emitted on the wire's asm section,
+	// sorted by import path, when non-empty.
+	asmDispositions map[string][]asmstrategy.AsmResolution
 	// P3-M5 (WS E, ADR-0005 App C): sequence counter for synthetic
 	// temporaries created by the channel-ops lowering (__rng_*,
 	// __select_blank_*, __close_*); keeps the names unique across

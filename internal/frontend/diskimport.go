@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"graalgo-frontend/asmstrategy"
 )
 
 // errDiskNotFound reports that an import path resolves to no source
@@ -267,6 +269,55 @@ func getDiskPackage(importPath string) (*syntheticPackage, error) {
 	return sp, nil
 }
 
+// asmFailFastEnabled is the D8 hard gate for the ADR-0007 addendum hook:
+// the asm fail-fast check is DISABLED by default. The mechanism is fully
+// built and tested; only *enablement* is gated. Enabling is a deliberate,
+// sequenced act (flip the switch only after the wave-2 reflect disposition
+// for makeFuncStub/methodValueCall is decided -- owner: the real-reflect2
+// track). Mechanism: GRAALGO_ASM_FAILFAST=1.
+func asmFailFastEnabled() bool {
+	return os.Getenv("GRAALGO_ASM_FAILFAST") == "1"
+}
+
+// testAsmInventory is a test-only seam: when non-nil, the D2 hook
+// resolves against it instead of the embedded production inventory. Tests
+// install a constructed inventory to exercise the fail-fast path without
+// depending on the real GOROOT's inventory contents. Always nil in
+// production.
+var testAsmInventory *asmstrategy.Inventory
+
+// setTestAsmInventory installs a test inventory for the D2 hook,
+// returning a restore function for defer.
+func setTestAsmInventory(inv *asmstrategy.Inventory) func() {
+	prev := testAsmInventory
+	testAsmInventory = inv
+	return func() { testAsmInventory = prev }
+}
+
+// asmHookInventory returns the inventory for the D2 hook: the test
+// seam when installed, otherwise the embedded production inventory.
+func asmHookInventory() (*asmstrategy.Inventory, error) {
+	if testAsmInventory != nil {
+		return testAsmInventory, nil
+	}
+	return asmstrategy.LoadEmbedded()
+}
+
+// asmFailFastCheck resolves sFiles (go/build's bp.SFiles: the .s files gc
+// would assemble) against the asm inventory and returns the per-file
+// resolutions for the wire (D4). It returns (nil, nil) when the hook is
+// disabled (D8 hard gate) -- default builds are unaffected.
+func asmFailFastCheck(dir, importPath string, sFiles []string) ([]asmstrategy.AsmResolution, error) {
+	if !asmFailFastEnabled() {
+		return nil, nil
+	}
+	inv, err := asmHookInventory()
+	if err != nil {
+		return nil, err
+	}
+	return inv.CheckAsmFiles(dir, importPath, sFiles, runtime.GOROOT())
+}
+
 // buildDiskPackage parses and type-checks the third-party package at its
 // resolved source directory, returning it in the syntheticPackage shape so
 // the export machinery consumes it unchanged.
@@ -295,6 +346,34 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: cannot load package %q from %s: %w", importPath, dir, err)
+	}
+	// ADR-0007 addendum (M6 remediation, obligation 1): every .s file gc
+	// would assemble for this package must resolve to an inventory
+	// disposition. purego (forced on above) selects Go fallbacks; it does
+	// not disposition the .s files in bp.SFiles, which gc would still
+	// assemble. Unsupported/uncategorized files fail the build here --
+	// never silently ignored.
+	//
+	// Scoping is structural (D2): the check applies iff dir is under
+	// <runtime.GOROOT()>/src (IsStdlibDir -- a path prefix, not a
+	// package-name list). Third-party dirs (module cache, GOPATH) keep
+	// today's behavior: purego fallback selection, bodyless decls -> the
+	// generic "unimplemented" marker (loud at call time). The inventory
+	// cannot disposition what it does not cover, and failing third-party
+	// asm would regress the documented GRAALGO_BUILD_TAGS=purego pattern
+	// (e.g. segmentio/asm). This boundary is deliberate, not a gap.
+	//
+	// D8 HARD GATE: the hook is DISABLED by default (asmFailFastEnabled).
+	// It must not be enabled until the wave-2 reflect strategy for
+	// makeFuncStub/methodValueCall is decided (owner: the real-reflect2
+	// track); enabling it undecided turns `make all` red for every
+	// reflect-importing program.
+	var asmResolutions []asmstrategy.AsmResolution
+	if asmstrategy.IsStdlibDir(dir, runtime.GOROOT()) {
+		asmResolutions, err = asmFailFastCheck(dir, importPath, bp.SFiles)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if len(bp.GoFiles) == 0 {
 		return nil, fmt.Errorf("gofrontend: package %q has no buildable Go files in %s", importPath, dir)
@@ -348,6 +427,10 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 		path: importPath, pkg: pkg,
 		files: files, info: info, fset: fset, raws: raws,
 		etaVarLits: etaVarLits, varFuncAliases: varAliases,
+		// ADR-0007 addendum D2/D4: the inventory resolutions for this
+		// package's buildable .s files (nil when the hook is disabled);
+		// the exporter carries them on the wire's asm section.
+		asmResolutions: asmResolutions,
 	}, nil
 }
 

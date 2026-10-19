@@ -461,6 +461,37 @@ def check_node(ctx, path, node, expr):
         ctx.err(path, f"unknown node kind {kind!r}")
 
 
+def check_asm(ctx):
+    # ADR-0007 addendum D4: the additive top-level "asm" section. Absent
+    # (omitempty) when the frontend carried no dispositions; when present
+    # each entry is validated field-for-field.
+    asm = ctx.doc.get("asm")
+    if asm is None:
+        return
+    if not isinstance(asm, list):
+        ctx.err("asm", "must be an array")
+        return
+    for i, entry in enumerate(asm):
+        p = f"asm[{i}]"
+        if not isinstance(entry, dict):
+            ctx.err(p, "must be an object")
+            continue
+        if not isinstance(entry.get("package"), str):
+            ctx.err(p, "package must be a string")
+        files = entry.get("files")
+        if not isinstance(files, list):
+            ctx.err(p, "files must be an array")
+            continue
+        for j, f in enumerate(files):
+            fp = f"{p}.files[{j}]"
+            if not isinstance(f, dict):
+                ctx.err(fp, "must be an object")
+                continue
+            for k in ("file", "category", "replacement", "reason"):
+                if not isinstance(f.get(k), str):
+                    ctx.err(fp, f"{k} must be a string")
+
+
 def validate(doc):
     ctx = Ctx(doc)
     if not isinstance(doc, dict):
@@ -485,6 +516,7 @@ def validate(doc):
             ctx.err("package.files", "must be a non-empty array")
     check_types(ctx)
     check_objects(ctx)
+    check_asm(ctx)
     funcs = doc.get("funcs")
     if not isinstance(funcs, list) or not funcs:
         ctx.err("funcs", "must be a non-empty array")
@@ -524,6 +556,22 @@ def selftest():
         cases.append((name, d, want_substr))
 
     bad("ok-positive", lambda d: None, None)
+    # ADR-0007 addendum D4: a document carrying the additive asm section
+    # must validate (positive case); a malformed asm entry must not.
+    bad("ok-asm-section",
+        lambda d: d.update(asm=[{
+            "package": "sync/atomic",
+            "files": [{
+                "file": "asm.s",
+                "category": "intrinsify",
+                "replacement": "graalgo.runtime.Atomics",
+                "reason": "public atomic ops",
+            }],
+        }]),
+        None)
+    bad("bad-asm-entry",
+        lambda d: d.update(asm=[{"package": "sync/atomic", "files": [{"file": "asm.s"}]}]),
+        "category")
     bad("bad-version", lambda d: d.update(frontend="v2"), "frontend")
     bad("unknown-node-kind",
         lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(

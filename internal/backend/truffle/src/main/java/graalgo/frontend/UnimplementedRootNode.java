@@ -30,19 +30,35 @@ import graalgo.safepoint.Safepoint;
 public final class UnimplementedRootNode extends RootNode {
     private final String funcName;
     private final String pkgPath;
+    /**
+     * ADR-0007 addendum D5: carried assembly dispositions for the
+     * declaring package, pre-rendered as "[file: category: reason, ...]"
+     * detail ("" when the frontend carried none). Enriches the panic so
+     * the on-call failure names the exact .s file, its decided category,
+     * and the reason instead of the generic stub message.
+     */
+    private final String asmDetail;
     private SourceSection sourceSection;
 
     public UnimplementedRootNode(String funcName, String pkgPath) {
+        this(funcName, pkgPath, "");
+    }
+
+    public UnimplementedRootNode(String funcName, String pkgPath, String asmDetail) {
         super((TruffleLanguage<?>) null, FrameDescriptor.newBuilder().build());
         this.funcName = funcName;
         this.pkgPath = pkgPath;
+        this.asmDetail = asmDetail == null ? "" : asmDetail;
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
         Safepoint.poll();
-        String msg = "unimplemented: " + pkgPath + "." + funcName
-                + " (assembly function not implemented in graalgo)";
+        String msg = asmDetail.isEmpty()
+                ? "unimplemented: " + pkgPath + "." + funcName
+                        + " (assembly function not implemented in graalgo)"
+                : "unimplemented: " + pkgPath + "." + funcName
+                        + ": assembly dispositions for this package: [" + asmDetail + "]";
         Panic.throwPanic(msg, null, null, this);
         throw new IllegalStateException("throwPanic returned");
     }

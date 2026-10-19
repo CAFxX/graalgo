@@ -10,6 +10,8 @@ import (
 	"math"
 	"strings"
 	"sync"
+
+	"graalgo-frontend/asmstrategy"
 )
 
 // syntheticPackage is a parsed + type-checked synthetic package: the
@@ -35,6 +37,12 @@ type syntheticPackage struct {
 	// os.Lstat), for direct call-site desugar without eta-expansion.
 	// Populated by etaExpandMRFuncValues (real-x509 lane).
 	varFuncAliases map[*types.Var]*types.Func
+	// asmResolutions holds the ADR-0007 addendum inventory resolutions
+	// for this package's buildable .s files (D2 hook in
+	// buildDiskPackage). Nil for synthetic packages and when the hook is
+	// disabled (D8 hard gate); the exporter carries non-empty values on
+	// the wire's asm section (D4).
+	asmResolutions []asmstrategy.AsmResolution
 }
 
 // srcForFile returns the source bytes for f: per-file bytes for disk
@@ -955,6 +963,13 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 		return nil
 	}
 	e.importedSynthetic[sp.path] = true
+	// ADR-0007 addendum D4: record this package's asm inventory
+	// resolutions for the wire's asm section. Only from-disk packages
+	// carry resolutions (synthetic packages have none); importPkgTree
+	// flows through here, as do the direct synthetic-import paths.
+	if len(sp.asmResolutions) > 0 {
+		e.asmDispositions[sp.path] = sp.asmResolutions
+	}
 	// GENERAL (fix-make-unknown): recurse into synthetic dependencies. A
 	// synthetic package's imports that are themselves synthetic (e.g.
 	// net/netip importing unique) must be imported first, otherwise their

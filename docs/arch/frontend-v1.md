@@ -26,7 +26,8 @@ byte-identical (`TestDeterministic`).
   "package":   { "name": "main", "files": ["hello.go"], "lang": "go1.27" },
   "types":     [ ... ],
   "objects":   [ ... ],
-  "funcs":     [ ... ]
+  "funcs":     [ ... ],
+  "asm":       [ ... ]
 }
 ```
 
@@ -40,6 +41,7 @@ byte-identical (`TestDeterministic`).
 | `types` | Type table (§4). |
 | `objects` | Object table (§5). |
 | `funcs` | Top-level `funcdecl` nodes, in source order (§6). |
+| `asm` | **Additive (ADR-0007 addendum, D4):** Plan 9 assembly dispositions, one entry per from-disk dependency package that had buildable `.s` files, sorted by import path. Absent (`omitempty`) for synthetic packages, third-party disk packages, and when empty. Each entry: `{ "package": <import path>, "files": [ { "file": <base name>, "category": <stored category, never "uncategorized">, "replacement": <inventory replacement pointer>, "reason": <why> } ] }`. The backend consumes this structurally (§6 `funcdecl` `unimplemented` row): the `unimplemented` panic for a bodyless decl names the exact `.s` file, its decided category, and the reason via a lookup keyed by the decl's own `pkgpath` field; the backend also integrity-asserts every carried resolution (replaced category, non-empty `replacement`) at program-build time. |
 
 ## 3. Source positions
 
@@ -116,7 +118,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 
 | kind | fields |
 |---|---|
-| `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node, `pkgpath`: str (the declaring package's import path — additive since the fix-linkname change; cross-package `//go:linkname` resolution binds every compiled function under `pkgpath.name`, so the backend can resolve Go→Go linknames without re-deriving the path) — or, for a `//go:linkname`-bound function (P3-M4, WS C, ADR-0004; first emitted by gofrontend 0.5.0): `name`, `sig`, `params`, `results` (optional), `linkname`: str (the target symbol) and NO `body` field; the factory builds a `LinknameRootNode` dispatching by symbol name instead of a Go body — or, for a bodyless function without `//go:linkname` (typically an assembly implementation; general mechanism, not name-keyed): `name`, `sig`, `params`, `results` (optional), `pkgpath`: str, `unimplemented`: bool (true) and NO `body` field; the factory builds an `UnimplementedRootNode` that panics if called |
+| `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node, `pkgpath`: str (the declaring package's import path — additive since the fix-linkname change; cross-package `//go:linkname` resolution binds every compiled function under `pkgpath.name`, so the backend can resolve Go→Go linknames without re-deriving the path) — or, for a `//go:linkname`-bound function (P3-M4, WS C, ADR-0004; first emitted by gofrontend 0.5.0): `name`, `sig`, `params`, `results` (optional), `linkname`: str (the target symbol) and NO `body` field; the factory builds a `LinknameRootNode` dispatching by symbol name instead of a Go body — or, for a bodyless function without `//go:linkname` (typically an assembly implementation; general mechanism, not name-keyed): `name`, `sig`, `params`, `results` (optional), `pkgpath`: str, `unimplemented`: bool (true) and NO `body` field; the factory builds an `UnimplementedRootNode` that panics if called. When the document carries the top-level `asm` section (§2, ADR-0007 addendum D4/D5), the factory looks up the decl's own `pkgpath` there (structural, never a package-name switch) and the panic names the exact `.s` file, its decided category, and the reason instead of the generic message |
 | `param` | `name`, `obj`: object id, `type`: type id |
 | `block` | `stmts`: [stmt nodes] |
 | `vardecl` | `names`: [str], `objs`: [object ids] (parallel to `names`), `define`: bool (`true` for `:=`), `type`: type id or null, `values`: [expr nodes] |

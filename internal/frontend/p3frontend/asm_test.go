@@ -2,6 +2,8 @@ package p3frontend
 
 import (
 	"go/build"
+
+	"graalgo-frontend/asmstrategy"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,10 +118,11 @@ func oracleAsmFiles(t *testing.T, dir string) []string {
 // is re-run.
 func TestAsmInventoryComplete(t *testing.T) {
 	src := gorootSrc(t)
-	inv, err := loadAsmInventory()
+	sInv, err := asmstrategy.LoadEmbeddedAs("p3frontend")
 	if err != nil {
 		t.Fatal(err)
 	}
+	inv := sInv.Entries()
 	disk := enumerateSFiles(t, src)
 	if len(disk) == 0 {
 		t.Fatal("no .s files enumerated: walker broken?")
@@ -150,10 +153,11 @@ func TestAsmInventoryComplete(t *testing.T) {
 // of the five SPEC §2.8 dispositions (the loader's parse-time check is
 // what enforces this; this test pins the contract at the test level).
 func TestAsmInventoryCategoriesKnown(t *testing.T) {
-	inv, err := loadAsmInventory()
+	sInv, err := asmstrategy.LoadEmbeddedAs("p3frontend")
 	if err != nil {
 		t.Fatal(err)
 	}
+	inv := sInv.Entries()
 	known := map[string]bool{
 		"evaporate": true, "intrinsify": true,
 		"emulate-then-intrinsify": true, "jvm-math": true,
@@ -444,10 +448,11 @@ func TestAsmHookInLoader(t *testing.T) {
 // it against a scratch tree containing fake .s AND .S files and
 // require it to report exactly those files.
 func TestAsmCompletenessCheckerDetectsFakeFile(t *testing.T) {
-	inv, err := loadAsmInventory()
+	sInv, err := asmstrategy.LoadEmbeddedAs("p3frontend")
 	if err != nil {
 		t.Fatal(err)
 	}
+	inv := sInv.Entries()
 	fakeRoot := t.TempDir()
 	writeFiles(t, fakeRoot, map[string]string{
 		"src/fakepkg/sneaky_amd64.s": "TEXT ·sneaky(SB),$0-0\n\tRET\n",
