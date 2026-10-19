@@ -354,4 +354,242 @@ public void testInvalidTypeWireEntryFailsLoud() {
         }
         assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
     }
+
+    /**
+     * I-3 (2026-10-19 review): the runtime type-synthesis paths
+     * (ptrTo/arrayOf/sliceOf/mapOf/chanOf/funcOf/structOf) used to be
+     * check-then-act on an unsynchronized HashMap + ArrayList, so two
+     * threads synthesizing types concurrently could mint the same token
+     * twice and skew every later token. This test hammers all seven
+     * paths from 8 threads at once (barrier-synchronized cold start, so
+     * the first iterations genuinely race) and pins the post-fix
+     * invariants: same shape -&gt; same token on every thread, distinct
+     * shapes -&gt; distinct tokens, and token == byTok index throughout.
+     */
+    public void testConcurrentTypeSynthesisIsCanonical() throws Exception {
+        String doc = "{\"types\": [{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"int\", \"class\": \"int\", \"untyped\": false}}]}";
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long intTok = table.tokForKind(GoKind.INT64);
+
+        int threads = 8;
+        int iters = 60;
+        java.util.concurrent.CyclicBarrier barrier =
+                new java.util.concurrent.CyclicBarrier(threads);
+        java.util.concurrent.ConcurrentMap<String, Long> seen =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.List<Throwable> errors =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        Thread[] ts = new Thread[threads];
+        for (int t = 0; t < threads; t++) {
+            final int id = t;
+            ts[t] = new Thread(() -> {
+                try {
+                    barrier.await();
+                    for (int i = 0; i < iters; i++) {
+                        // Shared shapes: every thread synthesizes the same types.
+                        agree(seen, errors, "ptr", ReflectTypes.ptrTo(intTok));
+                        agree(seen, errors, "slice", ReflectTypes.sliceOf(intTok));
+                        agree(seen, errors, "array", ReflectTypes.arrayOf(intTok, 4));
+                        agree(seen, errors, "map", ReflectTypes.mapOf(intTok, intTok));
+                        agree(seen, errors, "chan", ReflectTypes.chanOf(intTok, 0));
+                        agree(seen, errors, "func", ReflectTypes.funcOf(
+                                new long[]{intTok}, new long[]{intTok}, false));
+                        agree(seen, errors, "struct", ReflectTypes.structOf(
+                                new String[]{"a", "b"}, new long[]{intTok, intTok},
+                                new String[]{"", ""}, new String[]{"", ""},
+                                new boolean[]{false, false}));
+                        // Thread-distinct shape: must mint a token no other
+                        // thread's shape shares.
+                        agree(seen, errors, "mine" + id, ReflectTypes.structOf(
+                                new String[]{"f" + id}, new long[]{intTok},
+                                new String[]{""}, new String[]{""},
+                                new boolean[]{false}));
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                }
+            });
+            ts[t].start();
+        }
+        for (Thread th : ts) {
+            th.join();
+        }
+        assertTrue(errors.isEmpty(), "concurrent synthesis raised: " + errors);
+        // 7 shared shapes + 8 thread-distinct shapes = 15 distinct tokens.
+        java.util.Set<Long> distinct = new java.util.HashSet<>(seen.values());
+        assertTrue(distinct.size() == 7 + threads,
+                "expected " + (7 + threads) + " distinct tokens, got " + distinct.size()
+                        + " (tokens: " + seen + ")");
+        // Phase B: distinct-key race — every mint is a brand-new key, so
+        // every operation is a potential cross-thread collision on the
+        // token mint. Pre-fix this reliably mints duplicate tokens.
+        int dthreads = 16;
+        int diters = 150;
+        java.util.concurrent.CyclicBarrier b2 =
+                new java.util.concurrent.CyclicBarrier(dthreads);
+        java.util.concurrent.ConcurrentMap<String, Long> seen2 =
+                new java.util.concurrent.ConcurrentHashMap<>();
+        Thread[] ds = new Thread[dthreads];
+        for (int t = 0; t < dthreads; t++) {
+            final int id = t;
+            ds[t] = new Thread(() -> {
+                try {
+                    b2.await();
+                    for (int i = 0; i < diters; i++) {
+                        long tok = ReflectTypes.arrayOf(intTok, id * 100000 + i);
+                        seen2.put("d" + id + "-" + i, tok);
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                }
+            });
+            ds[t].start();
+        }
+        for (Thread th : ds) {
+            th.join();
+        }
+        assertTrue(errors.isEmpty(),
+                "concurrent distinct-key synthesis raised: " + errors);
+        java.util.Set<Long> ddistinct = new java.util.HashSet<>(seen2.values());
+        assertTrue(ddistinct.size() == dthreads * diters,
+                "expected " + (dthreads * diters) + " distinct tokens for "
+                        + (dthreads * diters) + " distinct shapes, got "
+                        + ddistinct.size() + " (duplicate tokens minted)");
+        // Structural invariants: token == byTok index, and every keyToTok
+        // value resolves to its own entry.
+        for (int i = 1; i < table.byTok.size(); i++) {
+            ReflectTypes.TypeInfo ti = table.byTok.get(i);
+            assertTrue(ti != null && ti.tok == i,
+                    "token/index skew at byTok[" + i + "]");
+        }
+        for (Map.Entry<String, Long> e : table.keyToTok.entrySet()) {
+            long v = e.getValue();
+            assertTrue(v >= 1 && v < table.byTok.size(),
+                    "keyToTok value out of range for key " + e.getKey() + ": " + v);
+            assertTrue(table.byTok.get((int) v).tok == v,
+                    "keyToTok entry " + e.getKey() + " -> " + v
+                            + " resolves to a different token");
+        }
+    }
+
+    private static void agree(java.util.concurrent.ConcurrentMap<String, Long> seen,
+            java.util.List<Throwable> errors, String shape, long tok) {
+        Long prev = seen.putIfAbsent(shape, tok);
+        if (prev != null && prev != tok) {
+            errors.add(new AssertionError(
+                    "shape " + shape + " got two tokens: " + prev + " and " + tok));
+        }
+    }
+
+    /**
+     * I-7 (2026-10-19 review): reflect-created structs used to get a
+     * fresh GoStructDescriptor per structDescFor call, but
+     * GoStruct.equals requires descriptor identity and hashCode uses
+     * the descriptor's identity hash — so two reflect.New(T).Elem()
+     * values of the same type were never ==-equal and never matched as
+     * map keys, where gc says equal. The descriptor is now memoized per
+     * type token in the TypeInfo: this test pins descriptor identity,
+     * value equality, and map-key interchangeability for two
+     * independently synthesized values of the same struct type (plus a
+     * nested struct level).
+     */
+    public void testReflectStructDescriptorsAreCanonical() {
+        String doc = "{\"types\": ["
+                + "{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"int\", \"class\": \"int\", \"untyped\": false}},"
+                + "{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"string\", \"class\": \"string\", \"untyped\": false}}]}";
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long intTok = table.tokForKind(GoKind.INT64);
+        long strTok = table.tokForKind(GoKind.STRING);
+
+        // Two independent syntheses of the same shape, as two
+        // reflect.New(T) calls would produce.
+        String[] names = {"a", "b"};
+        long[] toks = {intTok, strTok};
+        String[] tags = {"", ""};
+        String[] pkgs = {"", ""};
+        boolean[] anon = {false, false};
+        long t1 = ReflectTypes.structOf(names, toks, tags, pkgs, anon);
+        long t2 = ReflectTypes.structOf(names, toks, tags, pkgs, anon);
+        assertTrue(t1 == t2, "structOf not canonical: " + t1 + " vs " + t2);
+
+        graalgo.values.GoStructDescriptor d1 = table.info(t1).structDescriptor();
+        graalgo.values.GoStructDescriptor d2 = table.info(t2).structDescriptor();
+        assertTrue(d1 == d2, "struct descriptors not canonical per token");
+
+        // Two zero values of the same type: equal, same hash, and
+        // interchangeable as map keys.
+        graalgo.values.GoStruct s1 = graalgo.values.GoStruct.zero(d1);
+        graalgo.values.GoStruct s2 = graalgo.values.GoStruct.zero(d2);
+        assertTrue(s1.equals(s2),
+                "two zero structs of the same type are not equal");
+        assertTrue(s2.equals(s1), "struct equality not symmetric");
+        assertTrue(s1.hashCode() == s2.hashCode(),
+                "equal structs have different hashCodes");
+        java.util.Map<graalgo.values.GoStruct, String> m = new java.util.HashMap<>();
+        m.put(s1, "v");
+        assertTrue("v".equals(m.get(s2)),
+                "struct map-key lookup failed across two values of the same type");
+
+        // Nested struct level: the inner type's descriptor is canonical too.
+        long inner = ReflectTypes.structOf(
+                new String[]{"x"}, new long[]{intTok},
+                new String[]{""}, new String[]{""}, new boolean[]{false});
+        long o1 = ReflectTypes.structOf(
+                new String[]{"in"}, new long[]{inner},
+                new String[]{""}, new String[]{""}, new boolean[]{false});
+        long o2 = ReflectTypes.structOf(
+                new String[]{"in"}, new long[]{inner},
+                new String[]{""}, new String[]{""}, new boolean[]{false});
+        assertTrue(o1 == o2, "nested structOf not canonical");
+        assertTrue(table.info(inner).structDescriptor()
+                        == table.info(inner).structDescriptor(),
+                "nested struct descriptor not canonical");
+        assertTrue(table.info(o1).structDescriptor()
+                        == table.info(o2).structDescriptor(),
+                "outer struct descriptor not canonical");
+
+        // Concurrent first-use: the lazy memoization must publish a
+        // single descriptor instance even when raced.
+        java.util.concurrent.CyclicBarrier dbarrier =
+                new java.util.concurrent.CyclicBarrier(4);
+        java.util.concurrent.atomic.AtomicReference<
+                graalgo.values.GoStructDescriptor> firstRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.List<Throwable> derrors =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        Thread[] dt = new Thread[4];
+        for (int i = 0; i < 4; i++) {
+            dt[i] = new Thread(() -> {
+                try {
+                    dbarrier.await();
+                    for (int j = 0; j < 50; j++) {
+                        graalgo.values.GoStructDescriptor d =
+                                table.info(t1).structDescriptor();
+                        if (!firstRef.compareAndSet(null, d) && firstRef.get() != d) {
+                            derrors.add(new AssertionError(
+                                    "concurrent structDescriptor() published two instances"));
+                        }
+                    }
+                } catch (Throwable th) {
+                    derrors.add(th);
+                }
+            });
+            dt[i].start();
+        }
+        for (Thread th : dt) {
+            try {
+                th.join();
+            } catch (InterruptedException e) {
+                throw new AssertionError("interrupted joining descriptor threads", e);
+            }
+        }
+        assertTrue(derrors.isEmpty(),
+                "concurrent descriptor memoization failed: " + derrors);
+    }
 }

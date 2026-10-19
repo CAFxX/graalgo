@@ -516,19 +516,6 @@ public final class ReflectOpNode extends GoExprNode {
         };
     }
 
-    private static graalgo.values.GoStructDescriptor structDescFor(TypeInfo t) {
-        // The struct's GoStructDescriptor: built from the wire via layout.
-        // (Captured per-type at install in a full implementation; here we
-        // build on demand from the field list.)
-        List<String> names = new ArrayList<>();
-        List<GoKind> kinds = new ArrayList<>();
-        for (ReflectTypes.FieldInfo f : t.fields) {
-            names.add(f.name);
-            kinds.add(f.type.kind);
-        }
-        return GoStructDescriptor.layout(ReflectTypes.typeString(t.tok), names, kinds);
-    }
-
     /**
      * Zero GoStruct for a (possibly synthesized) struct type. Nested
      * aggregates are zero-filled recursively: struct fields get zero
@@ -537,7 +524,11 @@ public final class ReflectOpNode extends GoExprNode {
      * nested struct fields null, breaking Field() chains on New(T).)
      */
     private static GoStruct zeroStruct(TypeInfo t) {
-        graalgo.values.GoStructDescriptor desc = structDescFor(t);
+        // Canonical descriptor per type token, memoized in the TypeInfo
+        // (I-7): every value of the type shares the identical descriptor
+        // instance, so GoStruct.equals/hashCode agree across separately
+        // created values (e.g. two reflect.New(T).Elem() results).
+        graalgo.values.GoStructDescriptor desc = t.structDescriptor();
         GoStruct s = new GoStruct(desc, new long[desc.longsCount()],
                 new Object[desc.objectsCount()]);
         for (int i = 0; i < t.fields.size(); i++) {
@@ -1210,17 +1201,10 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectTypes.Table table = ReflectTypes.table();
         TypeInfo elem = table.info(elemTok);
         String key = "slice:" + elemKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
+        // Atomic check-mint-publish under the table monitor (I-3).
+        return table.internComposite(key, tok -> new TypeInfo(tok, GoKind.SLICE,
+                "", "", 24, 8, elem, null, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1));
     }
 
     private static String elemKey(TypeInfo t) {
@@ -1320,18 +1304,13 @@ public final class ReflectOpNode extends GoExprNode {
             sb.append("...");
         }
         String key = sb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
         List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
-        TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
-                null, null, 0, null, List.of(), List.of(),
-                List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
+        // Atomic check-mint-publish under the table monitor (I-3):
+        // concurrent Method(i) calls on the same method agree on one
+        // token instead of skewing the table.
+        return table.internComposite(key, tok -> new TypeInfo(tok, GoKind.FUNC,
+                "", "", 8, 8, null, null, 0, null, List.of(), List.of(),
+                List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1));
     }
 
     /** __reflect_makefunc. */

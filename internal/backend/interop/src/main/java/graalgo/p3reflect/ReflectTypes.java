@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * The runtime GoRType table (P3-M8, wave 2, reflect package).
@@ -138,6 +140,20 @@ public final class ReflectTypes {
         public final String basicName;
         /** Representative wire type id (for diagnostics). */
         public final int wireId;
+        /**
+         * Canonical value-layout descriptor for this type (STRUCT kind),
+         * memoized on first use. Every GoStruct value created for this
+         * token shares the identical descriptor instance, which
+         * {@code GoStruct.equals} (descriptor identity) and
+         * {@code hashCode} (identity hash of the descriptor) require: two
+         * {@code reflect.New(T).Elem()} values of the same type are
+         * {@code ==}-equal and interchangeable as map keys, as gc
+         * mandates. Lazily built because TypeInfos are constructed
+         * before (and sometimes replaced after) installation; the
+         * descriptor is a pure function of the final fields, so the
+         * double-checked publication is safe.
+         */
+        private volatile graalgo.values.GoStructDescriptor structDesc;
 
         TypeInfo(long tok, GoKind kind, String name, String pkgPath, long size, int align,
                 TypeInfo elem, TypeInfo key, int arrayLen, ChanDir chanDir,
@@ -167,17 +183,59 @@ public final class ReflectTypes {
         public boolean isNamed() {
             return !name.isEmpty();
         }
+
+        /**
+         * The canonical {@code GoStructDescriptor} for this type's
+         * token: identical instance on every call, for every value of
+         * the type, however the value was created. STRUCT kind only.
+         */
+        public graalgo.values.GoStructDescriptor structDescriptor() {
+            graalgo.values.GoStructDescriptor d = structDesc;
+            if (d == null) {
+                synchronized (this) {
+                    d = structDesc;
+                    if (d == null) {
+                        List<String> names = new ArrayList<>(fields.size());
+                        List<GoKind> kinds = new ArrayList<>(fields.size());
+                        for (FieldInfo f : fields) {
+                            names.add(f.name);
+                            kinds.add(f.type.kind);
+                        }
+                        d = graalgo.values.GoStructDescriptor.layout(
+                                ReflectTypes.typeString(tok), names, kinds);
+                        structDesc = d;
+                    }
+                }
+            }
+            return d;
+        }
     }
 
     /** The installed per-run table. */
     public static final class Table {
-        final List<TypeInfo> byTok = new ArrayList<>();
-        final Map<String, Long> keyToTok = new HashMap<>();
+        /**
+         * Token {@code ->} TypeInfo. CopyOnWriteArrayList: reads
+         * ({@link #info}, the hot path) are lock-free and always see a
+         * consistent snapshot; writes (type synthesis) are rare and
+         * serialized under the table monitor. The token == index
+         * invariant is established only inside the monitor (see
+         * {@link #internComposite} / {@link #addUnkeyed}); entries are
+         * never removed, so a token validated by {@link #info} stays
+         * valid.
+         */
+        final List<TypeInfo> byTok = new CopyOnWriteArrayList<>();
+        /**
+         * Structural key {@code ->} canonical token. ConcurrentHashMap:
+         * lock-free reads; all writes happen under the table monitor
+         * together with the matching byTok update.
+         */
+        final Map<String, Long> keyToTok = new ConcurrentHashMap<>();
         private final Map<GoKind, Long> basicKindToTok = new HashMap<>();
         /** Wire type id → canonical token (for descriptor lookup). */
         private final Map<Integer, Long> wireIdToTok = new HashMap<>();
         /** Token → canonical GoTypeDescriptor (for `any` boxing; memoized). */
-        private final Map<Long, graalgo.values.GoTypeDescriptor> tokToDesc = new HashMap<>();
+        private final Map<Long, graalgo.values.GoTypeDescriptor> tokToDesc =
+                new ConcurrentHashMap<>();
         /**
          * Wire ids currently being built (phase-B recursion stack). Used
          * to cut reference cycles: a reference to an id in this set
@@ -204,6 +262,51 @@ public final class ReflectTypes {
                 throw new IllegalStateException("reflect: no basic type for kind " + kind);
             }
             return t;
+        }
+
+        /**
+         * Atomically interns a synthesized composite type: the
+         * check-existing {@code ->} mint-token {@code ->} publish
+         * sequence runs under the table monitor, so two threads
+         * synthesizing the same structural shape always agree on one
+         * token and distinct shapes never share one. (I-3: the old
+         * check-then-act on an unsynchronized HashMap + ArrayList let
+         * concurrent synthesizers mint the same token twice and skew
+         * every later token.)
+         *
+         * <p>Publish order is byTok entry first, then the key mapping: a
+         * lock-free reader that resolves the key via keyToTok is ordered
+         * after the put (ConcurrentHashMap happens-before), hence after
+         * the add (same-thread program order) — it can never observe a
+         * token whose entry is not yet in byTok.
+         */
+        long internComposite(String key,
+                java.util.function.LongFunction<TypeInfo> build) {
+            synchronized (this) {
+                Long existing = keyToTok.get(key);
+                if (existing != null) {
+                    return existing;
+                }
+                long newTok = byTok.size();
+                TypeInfo info = build.apply(newTok);
+                byTok.add(info);
+                keyToTok.put(key, newTok);
+                return newTok;
+            }
+        }
+
+        /**
+         * Mints a token for an unkeyed synthesized type (e.g.
+         * promoted-method wrapper func types): the mint + add is atomic
+         * under the table monitor so concurrent synthesizers cannot
+         * collide on {@code byTok.size()}.
+         */
+        long addUnkeyed(java.util.function.LongFunction<TypeInfo> build) {
+            synchronized (this) {
+                long newTok = byTok.size();
+                byTok.add(build.apply(newTok));
+                return newTok;
+            }
         }
     }
 
@@ -263,33 +366,47 @@ public final class ReflectTypes {
         Table table = table();
         graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
         if (d == null) {
-            TypeInfo t = table.info(tok);
-            if (t.isNamed()) {
-                d = graalgo.frontend.NodeFactory.namedDescriptorFor(t.name, t.kind);
-            } else if (!t.basicName.isEmpty()) {
-                d = graalgo.frontend.NodeFactory.basicDescriptorForName(
-                        canonicalBasicName(t.basicName), t.kind);
-            } else if (t.kind == graalgo.values.GoKind.POINTER
-                    && t.elem != null && t.elem.isNamed()) {
-                d = graalgo.frontend.NodeFactory.namedDescriptorFor(
-                        "*" + t.elem.name, t.kind);
-            } else {
-                d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
-                if (d == null) {
-                    for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
-                        if (e.getValue() == tok) {
-                            d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
-                            if (d != null) {
-                                break;
-                            }
+            // Built at most once per token: concurrent builders race to
+            // putIfAbsent and the losers adopt the winner, so the
+            // canonical instance is still unique per token (the old
+            // unsynchronized get/put could publish two instances and
+            // corrupt the HashMap under contention).
+            d = buildDescriptorForTok(table, tok);
+            graalgo.values.GoTypeDescriptor prev = table.tokToDesc.putIfAbsent(tok, d);
+            if (prev != null) {
+                d = prev;
+            }
+        }
+        return d;
+    }
+
+    private static graalgo.values.GoTypeDescriptor buildDescriptorForTok(Table table, long tok) {
+        graalgo.values.GoTypeDescriptor d;
+        TypeInfo t = table.info(tok);
+        if (t.isNamed()) {
+            d = graalgo.frontend.NodeFactory.namedDescriptorFor(t.name, t.kind);
+        } else if (!t.basicName.isEmpty()) {
+            d = graalgo.frontend.NodeFactory.basicDescriptorForName(
+                    canonicalBasicName(t.basicName), t.kind);
+        } else if (t.kind == graalgo.values.GoKind.POINTER
+                && t.elem != null && t.elem.isNamed()) {
+            d = graalgo.frontend.NodeFactory.namedDescriptorFor(
+                    "*" + t.elem.name, t.kind);
+        } else {
+            d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
+            if (d == null) {
+                for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
+                    if (e.getValue() == tok) {
+                        d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
+                        if (d != null) {
+                            break;
                         }
                     }
                 }
-                if (d == null) {
-                    d = buildStructuralDescriptorOnDemand(t);
-                }
             }
-            table.tokToDesc.put(tok, d);
+            if (d == null) {
+                d = buildStructuralDescriptorOnDemand(t);
+            }
         }
         return d;
     }
@@ -1660,10 +1777,6 @@ public final class ReflectTypes {
         Table table = table();
         TypeInfo t = table.info(tok);
         String key = "ptr:" + structuralKey(t);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
         // Synthesize: no wire id, empty method table. Documented in the
         // design: *T from PtrTo has no methods; when the wire carries a
         // *T entry (methods present) it canonicalizes to this same key
@@ -1671,13 +1784,12 @@ public final class ReflectTypes {
         // its own token and this synthesized one is method-less.
         // (In practice the wire always carries *T for named T, so this
         // path serves genuinely new pointers.)
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, GoKind.POINTER, "", "", 8, 8,
-                t, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
+        // The whole check-mint-publish runs under the table monitor
+        // (Table.internComposite): concurrent PtrTo calls agree on one
+        // token instead of skewing the table (I-3).
+        return table.internComposite(key, newTok -> new TypeInfo(newTok, GoKind.POINTER,
+                "", "", 8, 8, t, null, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1));
     }
 
     /** arrayOf: token for [n]T (synthesized; no methods). */
@@ -1685,18 +1797,10 @@ public final class ReflectTypes {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
         String key = "array:" + n + ":" + structuralKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         long size = elem.size * n;
-        TypeInfo info = new TypeInfo(newTok, GoKind.ARRAY, "", "", size, elem.align,
-                elem, null, n, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
+        return table.internComposite(key, newTok -> new TypeInfo(newTok, GoKind.ARRAY,
+                "", "", size, elem.align, elem, null, n, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1));
     }
 
     /** sliceOf: token for []T (synthesized; no methods). */
@@ -1704,18 +1808,10 @@ public final class ReflectTypes {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
         String key = "slice:" + structuralKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         // Slice header: ptr, len, cap (3 words)
-        TypeInfo info = new TypeInfo(newTok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
+        return table.internComposite(key, newTok -> new TypeInfo(newTok, GoKind.SLICE,
+                "", "", 24, 8, elem, null, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1));
     }
 
     /** mapOf: token for map[K]V (synthesized; no methods). */
@@ -1724,18 +1820,10 @@ public final class ReflectTypes {
         TypeInfo key = table.info(keyTok);
         TypeInfo elem = table.info(elemTok);
         String keyStr = "map:" + structuralKey(key) + ":" + structuralKey(elem);
-        Long existing = table.keyToTok.get(keyStr);
-        if (existing != null) {
-            return existing;
-        }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(keyStr, newTok);
         // Map is a pointer-sized header in the value model
-        TypeInfo info = new TypeInfo(newTok, GoKind.MAP, "", "", 8, 8,
-                elem, key, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
+        return table.internComposite(keyStr, newTok -> new TypeInfo(newTok, GoKind.MAP,
+                "", "", 8, 8, elem, key, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1));
     }
 
     /** chanOf: token for chan T with direction (synthesized; no methods). */
@@ -1744,17 +1832,9 @@ public final class ReflectTypes {
         TypeInfo elem = table.info(elemTok);
         ChanDir dir = ChanDir.values()[dirOrdinal];
         String key = "chan:" + dir + ":" + structuralKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, GoKind.CHAN, "", "", 8, 8,
-                elem, null, 0, dir, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
+        return table.internComposite(key, newTok -> new TypeInfo(newTok, GoKind.CHAN,
+                "", "", 8, 8, elem, null, 0, dir, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1));
     }
 
     /** funcOf: token for func(in...) out (synthesized; no methods). */
@@ -1778,17 +1858,11 @@ public final class ReflectTypes {
             keySb.append("variadic");
         }
         String key = keySb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, GoKind.FUNC, "", "", 8, 8,
-                null, null, 0, null, List.of(), List.of(),
-                ins, outs, variadic, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
+        List<TypeInfo> canonIns = List.copyOf(ins);
+        List<TypeInfo> canonOuts = List.copyOf(outs);
+        return table.internComposite(key, newTok -> new TypeInfo(newTok, GoKind.FUNC,
+                "", "", 8, 8, null, null, 0, null, List.of(), List.of(),
+                canonIns, canonOuts, variadic, List.of(), "", -1));
     }
 
     /**
@@ -1826,30 +1900,39 @@ public final class ReflectTypes {
         }
         keySb.append('}');
         String key = keySb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
         long size = alignUp(offset, maxAlign);
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         List<FieldInfo> fieldInfos = List.copyOf(fields);
-        // Reserve the struct's index BEFORE promoteMethods appends wrapper
-        // func types: newTok must address the struct, not a wrapper.
-        TypeInfo info = new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
-                null, null, 0, null, fieldInfos, List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        // Promoted methods from anonymous (embedded) fields, gc rules:
-        // shallower embedding depth wins; same-depth duplicates are
-        // ambiguous and dropped; only exported method names promote.
-        List<MethodInfo> promoted = promoteMethods(table, info, fieldInfos);
-        if (!promoted.isEmpty()) {
-            table.byTok.set((int) newTok, new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
-                    null, null, 0, null, fieldInfos, List.copyOf(promoted),
-                    List.of(), List.of(), false, List.of(), "", -1));
+        // The whole check-mint-publish sequence runs under the table
+        // monitor (I-3): concurrent StructOf calls agree on one token.
+        // The struct's index is reserved BEFORE promoteMethods appends
+        // wrapper func types (newTok must address the struct, not a
+        // wrapper), and the key is published only after the final
+        // TypeInfo — with promoted methods — is in place, so no thread
+        // can ever observe the intermediate method-less entry via the
+        // table. promoteMethods re-enters the monitor via funcOf's
+        // intern (same thread: reentrant, no deadlock).
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long newTok = table.byTok.size();
+            TypeInfo placeholder = new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
+                    null, null, 0, null, fieldInfos, List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(placeholder);
+            // Promoted methods from anonymous (embedded) fields, gc rules:
+            // shallower embedding depth wins; same-depth duplicates are
+            // ambiguous and dropped; only exported method names promote.
+            List<MethodInfo> promoted = promoteMethods(table, placeholder, fieldInfos);
+            TypeInfo info = promoted.isEmpty() ? placeholder
+                    : new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
+                            null, null, 0, null, fieldInfos, List.copyOf(promoted),
+                            List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.set((int) newTok, info);
+            table.keyToTok.put(key, newTok);
+            return newTok;
         }
-        return newTok;
     }
 
     private static long alignUp(long offset, int align) {
@@ -1929,13 +2012,17 @@ public final class ReflectTypes {
         List<TypeInfo> ins = new ArrayList<>();
         ins.add(outer);
         ins.addAll(m.funcType.ins.subList(1, m.funcType.ins.size()));
-        long wrapperTok = table.byTok.size();
-        TypeInfo wrapperType = new TypeInfo(wrapperTok, GoKind.FUNC,
-                "", "", 8, 8, null, null, 0, null,
-                List.of(), List.of(), List.copyOf(ins),
-                m.funcType.outs, m.funcType.variadic,
-                List.of(), "", -1);
-        table.byTok.add(wrapperType);
+        // Minted under the table monitor (Table.addUnkeyed): the mint +
+        // add is atomic, so concurrent struct synthesis cannot collide on
+        // byTok.size() (I-3). Runs inside structOf's critical section
+        // today (reentrant); stays correct for any future caller.
+        long wrapperTok = table.addUnkeyed(newTok ->
+                new TypeInfo(newTok, GoKind.FUNC,
+                        "", "", 8, 8, null, null, 0, null,
+                        List.of(), List.of(), List.copyOf(ins),
+                        m.funcType.outs, m.funcType.variadic,
+                        List.of(), "", -1));
+        TypeInfo wrapperType = table.info(wrapperTok);
         // gc reports PkgPath "" for promoted methods (observed).
         return new MethodInfo(m.name, "", wrapperType, wrapped,
                 m.pointerReceiver, index, m.implKey);
