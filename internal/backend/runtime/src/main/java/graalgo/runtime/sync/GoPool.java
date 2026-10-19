@@ -1,5 +1,7 @@
 package graalgo.runtime.sync;
 
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
 import java.util.Collections;
@@ -41,7 +43,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *       stored in the Pool may be removed automatically at any time"
  *       behavior, genuinely GC-driven. Overflow from a full thread-local
  *       shared queue spills to the global queue; overflow from a full
- *       global queue spills into the victim — memory stays bounded.</li>
+ *       global queue spills into the victim. Memory stays bounded: the
+ *       local and global queues have hard caps, and the victim deque is
+ *       hard-capped at {@code VICTIM_CAP} (oldest dropped first) with
+ *       reclaimed wrappers purged via a {@link java.lang.ref.ReferenceQueue},
+ *       so even a Put-heavy workload with no Gets cannot grow it.</li>
  * </ul>
  *
  * <p>Go semantics preserved:
@@ -69,6 +75,13 @@ public final class GoPool {
     /** Bound for the global shared queue; beyond it, the oldest items
      * spill into the weakly-held victim. */
     private static final int GLOBAL_SHARED_CAP = 256;
+    /** Bound for the victim deque; beyond it, the oldest victim entries
+     * are dropped. Dropping is contract-safe: {@code sync.Pool} permits
+     * removing any stored item at any time, and gc drops its entire victim
+     * generation at every GC. Sized as a small multiple of
+     * {@link #GLOBAL_SHARED_CAP} so the victim generation stays
+     * proportional to the primary spillover. */
+    private static final int VICTIM_CAP = 4 * GLOBAL_SHARED_CAP;
 
     /** Per-thread pool (gc's {@code poolLocal}). */
     private static final class Local {
@@ -101,7 +114,22 @@ public final class GoPool {
     private final Set<Local> allLocals =
             Collections.newSetFromMap(new IdentityHashMap<>());
     private final Deque<Object> globalShared = new ArrayDeque<>();
+    /**
+     * Victim generation (gc's post-{@code poolCleanup} victim), weakly
+     * held: the JVM GC reclaims entries under memory pressure, which is
+     * the documented "any item stored in the Pool may be removed
+     * automatically at any time" behavior, genuinely GC-driven.
+     * Hard-capped at {@link #VICTIM_CAP}: without the cap, a Put-heavy
+     * workload with no Gets would accumulate {@link WeakReference}
+     * wrappers forever — the wrappers themselves are strongly held by this
+     * deque even after their referents die. Wrappers whose referents were
+     * reclaimed are purged through {@link #victimQueue} under the pool
+     * lock, so dead wrappers never even occupy cap slots for long.
+     */
     private final Deque<WeakReference<Object>> victim = new ArrayDeque<>();
+    /** Reclamation queue for {@link #victim} wrappers; drained under the
+     * pool lock in {@link #put}. */
+    private final ReferenceQueue<Object> victimQueue = new ReferenceQueue<>();
 
     /** The New field ({@code func() any} as a GoFunc, or null). */
     private volatile Object newFunc;
@@ -146,15 +174,35 @@ public final class GoPool {
             return;
         }
         synchronized (lock) {
+            purgeReclaimedVictims();
             int n = l.shared.size() / 2;
             for (int i = 0; i < n; i++) {
                 globalShared.addLast(l.shared.pollFirst());
             }
             while (globalShared.size() > GLOBAL_SHARED_CAP) {
-                victim.addLast(new WeakReference<>(globalShared.pollFirst()));
+                if (victim.size() >= VICTIM_CAP) {
+                    // Drop oldest: sync.Pool's contract permits removing
+                    // any stored item at any time (gc drops the whole
+                    // victim generation at each GC).
+                    victim.pollFirst();
+                }
+                victim.addLast(new WeakReference<>(globalShared.pollFirst(), victimQueue));
             }
         }
         l.shared.addLast(x);
+    }
+
+    /**
+     * Purges victim wrappers whose referents the JVM GC has reclaimed.
+     * Must hold {@link #lock}: {@link #victim} is touched only under the
+     * lock, in {@link #put} and {@link #get}. Each wrapper is removed at
+     * most once, so the scan cost amortizes to O(1) per reclaimed entry.
+     */
+    private void purgeReclaimedVictims() {
+        Reference<?> r;
+        while ((r = victimQueue.poll()) != null) {
+            victim.remove(r);
+        }
     }
 
     /**
