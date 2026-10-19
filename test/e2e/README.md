@@ -16,9 +16,18 @@ This directory holds end-to-end proofs: real published Go modules compiled
   `modprobe/bugs/`, 2026-10-14). Every entry names the general fix or the
   blocking graalgo gap; module sources are never patched.
 
-## Status
+## Running
 
-`run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
-before it runs again — see the driver-hardening lane.
+Requires `make generate build` at the repo root first (the gofrontend
+binary and the backend classes). Then:
+
+```bash
+make e2e        # all probes
+# or directly:
+test/e2e/run_module.sh test/e2e/uuid
+test/e2e/run_module.sh test/e2e/uuid case01 case02   # selected cases
+```
+
+`go.sum` in each probe directory is **tracked**: it pins the gc leg's
+module checksums so the probe is reproducible without network access.
+(Recorded decision, 2026-10-18: keep-and-track, not delete.)

@@ -1,25 +1,31 @@
 #!/bin/bash
-# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
+# Single-program differential: gc 1.27.1 vs the graalgo product launcher
+# (internal/backend/graalgo-sync-run, P3SyncMain).
 # Usage: diff_one.sh <go-file> <workdir> <gmp>
 # Emits a JSON result record to stdout.
 set -uo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: tools/fuzz-soak/harness/diff_one.sh -> tools/fuzz-soak -> tools -> repo.
+GR="${GR:-$(cd "$HERE/../.." && pwd)}"
+GRAALGO_RUN="${GRAALGO_RUN:-$GR/internal/backend/graalgo-sync-run}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR/.tmp}"
+mkdir -p "$TMPDIR"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
+
+if [ ! -x "$GRAALGO_RUN" ]; then
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "graalgo-sync-run missing (run make build)"}\n' "$base"
+    exit 0
+fi
 
 # 1. gc build
 if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
@@ -31,10 +37,12 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (300s timeout). The launcher runs gofrontend (whose
+# closed-world whole-program wire document is ~100MB even for hello-world —
+# measured 2026-10-18) and then parses it on the JVM; under load the leg
+# needs well over the old 120s budget. A timeout here is still recorded as
+# HANG, not silently dropped.
+timeout 300 "$GRAALGO_RUN" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 
@@ -48,7 +56,7 @@ fi
 
 # Hang?
 if [ "$gr_exit" = 124 ]; then
-    printf '{"file": "%s", "result": "HANG", "detail": "graalgo timeout 120s"}\n' "$base"
+    printf '{"file": "%s", "result": "HANG", "detail": "graalgo timeout 300s"}\n' "$base"
     exit 0
 fi
 if [ "$gc_exit" = 124 ]; then

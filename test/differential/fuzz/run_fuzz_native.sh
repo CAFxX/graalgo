@@ -16,7 +16,7 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE1_DIR   phase-1 tree with the graalgo-run launcher
+#   BACKEND_DIR  tree with the graalgo-run launcher
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +36,8 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/phases/phase1}"
+# BACKEND_DIR: tree holding the graalgo-run launcher (used by backends.json).
+export BACKEND_DIR="${BACKEND_DIR:-$REPO_ROOT/internal/backend}"
 
 FUZZTIME="30"
 OUTDIR=""
@@ -67,7 +68,7 @@ python3 "$HERE/replay.py" --fuzzdir "$HERE/testdata/fuzz" --out "$REPLAY_DIR" | 
 echo "== [3/4] differential: gc vs graalgo =="
 cd "$DH_ROOT"
 go build -o "$OUTDIR/diffharness" ./cmd/diffharness
-PHASE1_DIR="$PHASE1_DIR" \
+BACKEND_DIR="$BACKEND_DIR" \
 "$OUTDIR/diffharness" run \
   -config "$DH_ROOT/backends.json" \
   -corpus "$REPLAY_DIR" \

@@ -104,9 +104,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-e2e e2e test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-ci test-regression
+all: generate build snapshot-check check test-v2 test-ci test-regression test-e2e
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -159,6 +159,22 @@ test-regression: generate build graalgo
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
+
+# End-to-end module probes ([test/e2e/](test/e2e/)): real published Go
+# modules compiled as-published (never patched), output byte-identical to
+# `go run` (gc 1.27.1) on both --gmp=1 and --gmp=4 legs. In `all` (hence
+# per-push CI): this suite proves the Phase-4 headline milestone, and it
+# was dead-on-arrival after the restructure — never leave it unwired again.
+# /tmp is a 512M shared tmpfs: keep gc builds and per-case outputs on the
+# persistent disk (test/e2e/.tmp is gitignored). The runner needs the gc
+# module cache; the uuid probe's go.sum is tracked so no network is needed.
+E2E_TMP := $(CURDIR)/test/e2e/.tmp
+test-e2e: generate build
+	mkdir -p $(E2E_TMP) && \
+	export TMPDIR="$(E2E_TMP)" GOTMPDIR="$(E2E_TMP)"; \
+	test/e2e/run_module.sh test/e2e/uuid
+# Alias for the module-probe suite.
+e2e: test-e2e
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the

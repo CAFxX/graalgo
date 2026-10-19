@@ -52,12 +52,12 @@ if [ ! -d "$GOROOT_TEST" ]; then
   exit 2
 fi
 
-PHASE1_DIR="$REPO_ROOT/internal/backend"
-if [ ! -x "$PHASE1_DIR/graalgo-run" ]; then
-  echo "conformance: $PHASE1_DIR/graalgo-run missing/not executable" >&2
+BACKEND_DIR="${BACKEND_DIR:-$REPO_ROOT/internal/backend}"
+if [ ! -x "$BACKEND_DIR/graalgo-run" ]; then
+  echo "conformance: $BACKEND_DIR/graalgo-run missing/not executable" >&2
   exit 2
 fi
-if [ ! -d "$PHASE1_DIR/runtime/out/classes" ]; then
+if [ ! -d "$BACKEND_DIR/runtime/out/classes" ]; then
   echo "conformance: backend classes not built; run 'make build' at the repo root first" >&2
   exit 2
 fi
@@ -83,7 +83,7 @@ TIMEOUT_ARGS=()
 if [ -n "${DH_TIMEOUT:-}" ]; then
   TIMEOUT_ARGS=(-timeout "$DH_TIMEOUT")
 fi
-PHASE1_DIR="$PHASE1_DIR" \
+BACKEND_DIR="$BACKEND_DIR" \
 "$OUTDIR/diffharness" srctest run \
   -dir "$GOROOT_TEST" \
   -exclusions "$HERE/srctest-exclusions.yaml" \

@@ -16,9 +16,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
-GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: tools/fuzz-soak/harness/run_batch.py -> tools/fuzz-soak -> tools -> repo.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,15 +39,20 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build Java modules once (the product launcher needs the backend
+    # classes; diff_one.sh needs the gofrontend binary).
+    print("== building graalgo backend ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=1200)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
         sys.exit(1)
     print("build ok", flush=True)
+    gofrontend = os.path.join(GR, "internal", "frontend", "gofrontend")
+    if not (os.path.isfile(gofrontend) and os.access(gofrontend, os.X_OK)):
+        print(f"gofrontend missing at {gofrontend}; run 'make generate' at the repo root first")
+        sys.exit(1)
 
     # 2. Generate programs.
     seeds = list(range(start, end))
@@ -71,8 +76,10 @@ def main():
         workdir = os.path.join(outdir, "work", f"seed_{s:05d}")
         os.makedirs(workdir, exist_ok=True)
         gofile = os.path.join(progdir, f"fuzz_{s:05d}.go")
+        # 330s: just above diff_one.sh's own 300s graalgo timeout so a HANG
+        # is recorded by the harness, not by this watchdog.
         r = sh(f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {args.gmp}",
-               timeout=300)
+               timeout=330)
         try:
             rec = json.loads(r.stdout.strip().split("\n")[-1])
         except Exception:

@@ -19,7 +19,7 @@ catch.
 gen/generator.py  --seed N -->  fuzz_NNNN.go (deterministic Go program)
         |
 harness/run_batch.py  (parallel driver)
-        +-- diff_one.sh : gc build+run  vs  graalgo P3SyncMain run
+        +-- diff_one.sh : gc build+run  vs  graalgo product launcher run
         |       compare stdout bytes, exit codes, panic lines
         +-- classify: PASS | SCOPE | WRONG_OUTPUT | CRASH | HANG
                      | GO_PANIC_MISMATCH | EXIT_MISMATCH | GC_BUILD_FAIL
@@ -60,7 +60,7 @@ control flow, and a final deterministic state dump via `fmt.Println`.
 `diff_one.sh <go-file>`: 
 1. `go build` (gc 1.27.1) → gc binary; build failure = generator bug.
 2. Run gc binary, timeout 10s → stdout/exit.
-3. Run `graalgo.p3sync.launcher.P3SyncMain --gmp=1 -- <file>`,
+3. Run `internal/backend/graalgo-sync-run --gmp=1 -- <file>`,
    timeout 120s (JVM startup dominates) → stdout/stderr/exit.
 4. Emit a JSON result record.
 
@@ -136,7 +136,7 @@ submits.
 ## 6. Files
 
 ```
-fuzzing/
+tools/fuzz-soak/
   DESIGN.md            this file
   gen/generator.py     seeded Go program generator
   harness/diff_one.sh  single-program differential

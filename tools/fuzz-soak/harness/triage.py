@@ -5,7 +5,8 @@ Given a failing program and its failure signature, repeatedly removes
 statements/functions while the failure persists, producing a minimal
 reproducer.
 
-Usage: triage.py --prog failing.go --out minimal.go [--workdir DIR]
+Usage: triage.py <failing.go> --out <minimized-dir> [--workdir DIR]
+   (also accepts --prog <failing.go> as a long-form alias)
 
 The "interesting" test re-runs diff_one.sh and checks the result matches
 the original failure category.
@@ -18,8 +19,10 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: tools/fuzz-soak/harness/triage.py -> tools/fuzz-soak -> tools -> repo.
+_GR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+GR = os.environ.get("GR", _GR)
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def diff_result(gofile, workdir):
@@ -115,12 +118,21 @@ def minimize(prog_path, out_path, workdir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--prog", required=True)
+    # run_soak.sh invokes triage.py positionally (triage.py <prog> --out <dir>).
+    ap.add_argument("prog_pos", nargs="?",
+                    help="failing program (positional, as run_soak.sh invokes it)")
+    ap.add_argument("--prog", default=None,
+                    help="failing program (long-form alias for the positional)")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--workdir", default="/tmp/triage")
+    ap.add_argument("--workdir",
+                    default=os.path.join(FUZZ, ".tmp", "triage"),
+                    help="scratch dir (default: tools/fuzz-soak/.tmp/triage)")
     args = ap.parse_args()
+    prog = args.prog or args.prog_pos
+    if not prog:
+        ap.error("a failing program is required (positional or --prog)")
     os.makedirs(args.workdir, exist_ok=True)
-    ok = minimize(args.prog, args.out, args.workdir)
+    ok = minimize(prog, args.out, args.workdir)
     sys.exit(0 if ok else 1)
 
 
