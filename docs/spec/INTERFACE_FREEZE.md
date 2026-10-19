@@ -50,7 +50,7 @@ the Truffle AST, executes `main`.
 | Exit 0 | success |
 | Exit 1 | usage error (wrong arity) |
 | Exit 2 | frontend error: parse, type, or scope rejection |
-| `toolVersion` | `"0.1.0"` (emitted as `generator.version`) |
+| `toolVersion` | `"0.7.0"` (emitted as `generator.version`) |
 
 The launcher resolves the binary via `ToolPaths.gofrontend()` (INTERNAL
 resolution logic; the *contract above* is FROZEN).
@@ -206,8 +206,20 @@ Phase-1 import overlay (D4), not as builtins.
 | Artifact | Current | Bump rule |
 |---|---|---|
 | frontend/v1 wire format | `v1` | new field renames/removals → `v2` |
-| `gofrontend` toolVersion | `0.1.0` | any CLI/JSON behavior change |
+| `gofrontend` toolVersion | `0.7.0` | any CLI/JSON behavior change (standing rule below) |
 | Interface freeze | v2 (this document; v2 delta = ADR-0008 makeslice/growslice `elemDesc`) | any FROZEN change → v3 + ADR |
+
+**Bump history** (all additive wire data, per the §5 bump rule: a new wire
+node kind or field is a JSON behavior change):
+- 0.4.0 → 0.5.0 — linkname wire field ([ADR-0004 D1](../dev/adr/ADR-0004-m4-freeze-exceptions.md))
+- 0.5.0 → 0.6.0 — synthetic time/context wire nodes (`timenew`/`timeop`/`timenow`/`timesleep`/`timeafter`/`timetick`/`timeafterfunc`, `chanclose` marker) ([ADR-0005 §D3](../dev/adr/ADR-0005-time-context.md))
+- 0.6.0 → 0.7.0 — channel-op wire nodes (`makechan`/`send`/`recv`/`chanclose`/`select`/`selectcase`; `chanclose` marker retired, unary `<-` replaced by `recv`; `go f(args)` desugar) ([ADR-0005 Appendices C/N](../dev/adr/ADR-0005-time-context.md))
+
+**Standing rule:** the `toolVersion` bump and the §2.1/§5 table updates land
+in the same change. The constant lives in
+[`internal/frontend/main.go`](../../internal/frontend/main.go) and is asserted
+by [`TestToolVersionBump`](../../internal/frontend/iface_export_test.go); the
+freeze document is part of the change, never a follow-up.
 
 ## 6. Machine checks
 

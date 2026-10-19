@@ -7,9 +7,25 @@ desugaring, no import overlay, no JSON wire format.
 **Scope:** The new frontend accepts **ALL Go syntax from the start** — the
 complete Go 1.27 language, including generics (type parameters, instantiation,
 constraints), not a subset. If `go/parser` accepts it, v2 handles it.
-**No JSON:** v2 skips the `frontend/v1` JSON wire format entirely. It constructs
-backend nodes directly via a proper Go→Java API (not serialized JSON). The JSON
-was a bodge for passing data between processes; v2 is a proper pipeline.
+**No JSON:** v2 emits no JSON. The emitter builds an in-memory `*Document`
+(stage 3 below), and the Go→Java boundary is a **versioned binary
+serialization** of that Document: [`internal/frontend/v2/encode/`](../../internal/frontend/v2/encode/)
+encodes it (`"g2bi"` magic, tagged values, zigzag-varint integers,
+length-prefixed strings/collections; `FORMAT_VERSION`, currently 1, rejects
+skew loudly), and the Java backend decodes it with
+[`BinaryDecoder`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
+before
+[`NodeFactoryV2.buildProgram(byte[] data)`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
+constructs the Truffle nodes. The binary wire replaced the v1 JSON transfer
+across the Go→Java process boundary (his 2026-10-15 order: "that should
+obviously skip the json"). It is **not** a direct in-process Go→Java API —
+that is a later step, via circular compilation of the v2 Go code so it calls
+`NodeFactoryV2` in-process (see "Next" in
+[`internal/frontend/v2/PROGRESS.md`](../../internal/frontend/v2/PROGRESS.md)).
+The v2 rules below (no synthetic packages, no name-keyed branches) are about
+what the emitter produces, not how the Document crosses the boundary: the
+binary format is generic (it encodes the Document's map structure without
+per-node-kind hardcoding), so it introduces no special cases of its own.
 
 ## 1. Why v2
 
@@ -30,7 +46,7 @@ reaches differential parity on the corpus.
 ## 2. Pipeline stages
 
 ```
-.go files → [parse] → ast.Package → [check] → typed info → [emit] → backend nodes (direct, no JSON)
+.go files → [parse] → ast.Package → [check] → typed info → [emit] → in-memory Document → [encode] → binary wire format → [BinaryDecoder + NodeFactoryV2] → backend nodes
 ```
 
 ### Stage 1 — Parse (`v2/parser/`)
@@ -61,7 +77,12 @@ reaches differential parity on the corpus.
 
 ### Stage 3 — Emit (`v2/emit/`)
 
-- Walks the typed AST and constructs backend nodes directly (no JSON).
+- Walks the typed AST and emits an in-memory `*Document` (no JSON). The
+  Document crosses the Go→Java boundary as the binary wire format
+  ([`encode/`](../../internal/frontend/v2/encode/) on the Go side,
+  [`BinaryDecoder`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
+  / [`NodeFactoryV2`](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
+  on the Java side) and is turned into backend nodes there.
 - **Deterministic emission order.** `pkg.Files` is a Go map; emission
   visits files sorted by name and declarations sorted by source position,
   so the same package always yields the same function order and
@@ -98,11 +119,13 @@ not add new ones.
 
 ## 4. Migration plan
 
-1. **Bootstrap** (this track): skeleton with all three stages, emitting
-   valid v1 JSON for a hello-world program. Differential test against v1
-   output.
-2. **Parity**: extend node coverage until v2 passes the differential corpus
-   (`test/corpus/`) with zero drift vs v1.
+1. **Bootstrap** (this track, done 2026-10-15): skeleton with all three stages,
+   emitting an in-memory Document for a hello-world program (serialized to the
+   binary wire format for the Java side). Differential test: behavioral —
+   programs built via v2 vs gc on the corpus. v2 emits no JSON, so there is no
+   v1-JSON output to compare against.
+2. **Parity**: extend node coverage until v2 passes the behavioral differential
+   corpus ([`test/corpus/`](../../test/corpus/)) with zero drift vs gc.
 3. **Cutover**: when parity is reached, v2 becomes the default frontend.
    v1 is deleted (not kept as a fallback).
 4. **Cleanup**: the 142 `synth_*.go` files, the import overlay, and the
@@ -115,7 +138,8 @@ internal/frontend/v2/
   go.mod          — separate module (graalgo-frontend-v2)
   parser/         — stage 1: go/parser wrapper
   checker/        — stage 2: go/types wrapper, real importer
-  emit/           — stage 3: typed AST → backend nodes (direct construction, no JSON serialization)
+  emit/           — stage 3: typed AST → in-memory *Document (no JSON)
+  encode/         — Go→Java binary interface: Encode(*Document) → "g2bi" bytes (versioned via FORMAT_VERSION)
   driver/         — main: CLI (mirrors v1 flags for drop-in replacement)
   testdata/       — corpus inputs for differential testing vs v1
 ```
