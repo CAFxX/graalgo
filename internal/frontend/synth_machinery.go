@@ -1287,12 +1287,23 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				// (var stays nil). The function cannot be captured as a
 				// value in v1; call sites through the var use the alias
 				// map (varFuncAliases) to desugar as the original Func.
+				// P1-14: the lookup is by object identity, not by
+				// (path, name). The key alone does not distinguish a
+				// package-level function from a method of the same name
+				// (e.g. time.After the intrinsic vs (*Time).After the
+				// method, both registered under "time.After"); a bare
+				// key match silently dropped the initializer of
+				// `var FAfter = time.After` in disk packages. The
+				// *types.Func pointer is shared: imports resolve through
+				// the overlay importer, which returns the cached
+				// *types.Package, so the use-site object and the
+				// registration object are identical.
 				if sel, ok := unparen(initExpr).(*ast.SelectorExpr); ok {
 					if _, isSel := e.info.Selections[sel]; !isSel {
 						if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
 							if obj.Pkg() != nil && e.synthFuncIDs != nil {
 								key := obj.Pkg().Path() + "." + obj.Name()
-								if _, ok := e.synthFuncIDs[key]; ok {
+								if fi, ok := e.synthFuncIDs[key]; ok && fi.obj == obj {
 									// Skip: leave init nil.
 									varInits = append(varInits, ginit{oid: sv.oids[i], init: nil, expr: nil, pos: e.pos(n)})
 									continue
