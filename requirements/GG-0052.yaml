@@ -5,7 +5,9 @@ rationale: Closes Phase-0 question 6; hand config is a permanent tax otherwise.
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: 'Phase-5 done-gate: agent-derived configs, zero hand entries, or measured tax.'
+verification_plan: 'Phase-5 done-gate: agent-derived configs, zero hand entries, or measured tax. (Not yet exercisable — see traceability.)'
+traceability: 'No live trace: Phase-5-gated; no tracing-agent pipeline exists and no AOT reachability metadata pipeline has been built. Re-test trigger: Phase-5 reachability work begins — then either the zero-hand-entry target is met or the hand-authored tax is measured and explicitly accepted.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — Phase-5-gated; no tracing-agent pipeline exists; verification plan unexecutable until the re-test trigger.'

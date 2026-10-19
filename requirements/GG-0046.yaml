@@ -5,7 +5,9 @@ rationale: The sharpest drop-in edge; lag pushes modules into switch/refuse path
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Toolchain-switch scenario tests.
+verification_plan: Toolchain-switch scenario tests. (Not yet exercisable — see traceability.)
+traceability: 'No live trace: cmd/graalgo implements "version" as a fixed string (version 0.4.0); no GOTOOLCHAIN selection logic exists anywhere in the driver. Re-test trigger: toolchain-switch scenario tests exist and pass.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — no GOTOOLCHAIN selection logic in the driver; verification plan unexecutable until the re-test trigger.'

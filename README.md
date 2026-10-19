@@ -9,7 +9,9 @@
 # graalgo
 
 graalgo compiles Go to GraalVM Truffle AST nodes — a JIT-compiled Go
-toolchain that is a drop-in replacement for `go`.
+toolchain working toward drop-in replacement for `go`. Five commands are
+implemented so far: `build`, `run`, `test`, `vet`, and `fmt` (the other
+14 `go` commands are not yet supported).
 
 Quickstart:
 

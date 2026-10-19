@@ -12,8 +12,8 @@ Related: [Makefile](../Makefile) (root build entry point),
 
 ## Directory tree
 
-- [README.md](../README.md) — what graalgo is, quickstart (drop-in `go` via
-  `alias go=graalgo`).
+- [README.md](../README.md) — what graalgo is, quickstart (`alias go=graalgo`
+  for the five implemented commands).
 - [AGENTS.md](../AGENTS.md) — operating manual for agents working in this
   repo.
 - [Makefile](../Makefile) — root build entry point. `make all` regenerates
@@ -22,7 +22,8 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [cmd/](../cmd/)
   - [graalgo/](../cmd/graalgo/) — the product: one binary, one entry point.
     `main.go` implements the driver commands `build`, `run`, `test`, `vet`,
-    `fmt` (drop-in for `go`).
+    `fmt` (drop-in for those five `go` commands; the other 14 `go` commands
+    are not yet implemented).
 - [internal/](../internal/) — private implementation. Nothing outside the
   module imports it (Go `internal` convention); everything user-facing flows
   through [cmd/graalgo/](../cmd/graalgo/).

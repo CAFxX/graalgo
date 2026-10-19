@@ -5,7 +5,9 @@ rationale: Closes Phase-0 question 7; closed-world AOT cannot load new code.
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Plugin tests pass in JIT mode; AOT mode returns the documented error.
+verification_plan: Plugin tests pass in JIT mode; AOT mode returns the documented error. (Partially exercisable — see traceability.)
+traceability: 'Partial live trace: tools/stdlib-fork/exclusions.yaml records the "plugin" package as excluded (unsupported in v1, SPEC §3.8 GG-0023) — covers the AOT-side exclusion-list entry. The JIT-only plugin.Open support has no trace: no JIT mode exists yet. Re-test trigger: a JIT mode exists with plugin.Open conformance tests.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — AOT-side exclusion traced to tools/stdlib-fork/exclusions.yaml; JIT-mode plugin support has no trace.'

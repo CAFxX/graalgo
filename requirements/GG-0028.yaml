@@ -5,7 +5,9 @@ rationale: What drop-in actually requires at the cache layer.
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Cache-behavior differential tests; shared-GOCACHE smoke test.
+verification_plan: Cache-behavior differential tests; shared-GOCACHE smoke test. (Currently unexecutable — see traceability.)
+traceability: 'No live trace: graalgo has no build-cache layer at all. The statement''s mechanism ("auto-namespace via toolID (`tool -V=full` through the wrapper)") is wrapper-era and obsolete after the driver reimplementation (GG-0011 known_gap). Re-test trigger: a build-cache implementation lands.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — no build-cache implementation exists; wrapper-era mechanism obsolete; verification plan unexecutable until the re-test trigger.'

@@ -5,7 +5,9 @@ rationale: The enforcement mechanism that keeps 'always latest' credible.
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Sprint process exercised at least once on a drill (Phase 6 done-gate).
+verification_plan: Sprint process exercised at least once on a drill (Phase 6 done-gate). (Not yet exercisable — see traceability.)
+traceability: 'Process requirement; no toil bounds exist to breach — no upgrade has been executed since 2026-10-03 locking, and no toil accounting process is running. The "Phase 6 done-gate" refers to the superseded research-era phase plan. Re-test trigger: the first toil-bound breach, or the planned enforcement drill.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — no toil bounds or breach events; process requirement, not yet exercisable.'

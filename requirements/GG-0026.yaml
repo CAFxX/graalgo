@@ -5,7 +5,9 @@ rationale: Closes Phase-0 question 11; isolates are native-image-only.
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Process-isolation conformance; documented fidelity delta vs isolate mode.
+verification_plan: Process-isolation conformance; documented fidelity delta vs isolate mode. (Currently unexecutable — see traceability.)
+traceability: 'No live trace in graalgo code, tests, tools, or current docs (references only in archived docs/arch/). The momo consumer project is PAUSED by the owner''s direct order of 2026-10-13; no graalgo process-isolation fallback exists. Re-test trigger: momo resumes AND the JIT-mode fallback is implemented.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — no live implementation trace; parked behind the momo pause; verification plan unexecutable until the re-test trigger.'

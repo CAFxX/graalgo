@@ -5,7 +5,9 @@ rationale: Closes Phase-0 question 10; vet analyzes source via go/*, unaffected 
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Vet-related txtar scripts pass through the wrapper.
+verification_plan: 'Vet analyzer unit tests (internal/vet/*_test.go) plus differential-corpus behavior parity for vet cases. Note: graalgo vet runs in-process AST analyzers, not the stock go vet binary (see known_gap).'
+known_gap: 'Statement predates the driver reimplementation: internal/vet/ implements go vet-style analyzers against parsed AST and type information (docs/REPO_STRUCTURE.md, internal/vet/README.md) — the stock `go vet` binary is NOT reused. Deliberate consequence of the reimplemented-driver architecture (GG-0011 known_gap). Trigger: the statement is re-scoped via a superseding requirement describing the AST-analyzer architecture, or the wrapper architecture returns.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: known_gap recorded — internal/vet/ reimplements vet analyzers (no stock-binary reuse); verification_plan rewritten to the vet unit tests; the referenced txtar matrix never existed.'

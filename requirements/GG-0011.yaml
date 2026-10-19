@@ -5,7 +5,9 @@ rationale: Reimplementation rejected (~74k LOC, lowest fidelity-per-effort); the
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Spike 5 (txtar matrix through the wrapper); toil accounting compares wrapper vs fork.
+verification_plan: Driver architecture conformance via driver unit tests (cmd/graalgo/*_test.go), the differential corpus (test/differential/run.sh), and make snapshot-check (test/snapshots/ baseline). Wrapper-vs-fork toil comparison is moot post-fork; per-release upgrade toil has no live tracking process yet.
+known_gap: 'Statement ("the driver SHALL NOT be reimplemented") predates the architecture decision: cmd/graalgo is a reimplemented driver CLI (implements build, run, test, vet, fmt). The -toolexec wrapper path was not pursued. Trigger: the statement is re-scoped via a superseding requirement describing the reimplemented-driver architecture.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: known_gap recorded — driver reimplemented (cmd/graalgo/), wrapper path not pursued; verification_plan rewritten to real harnesses; the referenced Spike-5 txtar matrix never existed.'

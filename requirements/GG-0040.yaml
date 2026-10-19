@@ -5,7 +5,9 @@ rationale: Patches are security/bug-fix only; the full runbook would be waste.
 parent: ""
 status: locked
 superseded_by: ""
-verification_plan: Patch-note review record per patch.
+verification_plan: Patch-note review record per patch. (Not yet exercisable — see traceability.)
+traceability: 'Process requirement; exercisable only at patch-release events. No tracked patch release has been processed since 2026-10-03 locking (the upgrade workflow itself is unexercised). Re-test trigger: the first tracked patch release ships with a patch-note review record.'
 history:
     - '2026-10-03: created (draft)'
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-19: traceability recorded — process requirement, not yet exercisable; no patch-release event since locking.'
