@@ -811,7 +811,7 @@ func (c *Conn) Handshake() error {
 				// fail loudly instead of livelocking.
 				stalledWraps++
 				if stalledWraps > maxStalledWraps {
-					return errors.New("tls: handshake stalled (wrap produced no output)")
+					return errors.New("tls: handshake stalled")
 				}
 				time.Sleep(time.Millisecond)
 			}
