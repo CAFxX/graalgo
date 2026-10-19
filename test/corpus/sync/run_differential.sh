@@ -36,7 +36,9 @@ run_one() { # $1 = go file, $2 = gmp
     local gcbin="$TMP/$base.gc"
 
     go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
-    "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
+    # Pin the gc leg's GOMAXPROCS to the same gmp the graalgo leg runs with,
+    # so gmp-sensitive programs (sy16) compare equal stdout on any host.
+    GOMAXPROCS="$gmp" "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
     "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
 
     local ok=1
@@ -66,6 +68,8 @@ run_one() { # $1 = go file, $2 = gmp
 for go in sy*.go; do
     base="${go%.go}"
     case "$base" in
+        # sy16 asserts GOMAXPROCS(0) == 2: it runs with --gmp=2 only (README).
+        sy16_*) run_one "$go" 2 ;;
         sy03_*|sy05_*|sy08_*|sy12_*|sy13_*|sy14_*|sy15_*) run_one "$go" 1 ;;  # panic programs: single gmp is enough
         *) run_one "$go" 1; run_one "$go" 4 ;;
     esac

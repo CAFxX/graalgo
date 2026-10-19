@@ -4,6 +4,7 @@ import graalgo.frontend.FrontendException;
 import graalgo.p3builtin.nodes.GoMaxProcsNode;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -56,11 +57,27 @@ public final class SyncRuntimePinTest {
      * Hammer: 32 threads (8x GOMAXPROCS) pin/unpin in a tight loop. Every
      * observed id must be in {@code [0, GOMAXPROCS)}, and no id may ever
      * be held by two threads at once (the pre-fix race).
+     *
+     * <p>The 32 threads are gated through a {@code Semaphore(GOMAXPROCS)},
+     * modeling the implementation's documented precondition that at most
+     * {@code min(GOMAXPROCS, carriers)} goroutines are ever inside pin
+     * sections concurrently. Raw threads are not scheduler-admitted
+     * goroutines: without the gate, pool exhaustion (the fail-fast
+     * {@code FrontendException}) is reachable and expected, not a bug.
+     *
+     * <p>The gate preserves the negative control: the pre-fix ids are
+     * {@code floorMod(denseThreadId, GOMAXPROCS)}, so threads {@code t} and
+     * {@code t + GOMAXPROCS} still hold congruent ids in the pin section at
+     * the same time and the hammer still fails against the pre-fix classes.
      */
     public void testPinIdsUniqueUnderHammer() throws Exception {
         withGmp(4, () -> {
             int threads = 32;
             int iters = 300;
+            int gmp = 4;
+            // Model the documented precondition: at most GOMAXPROCS pin
+            // sections in flight at once, like the scheduler's admit loop.
+            Semaphore inFlight = new Semaphore(gmp);
             ConcurrentHashMap<Integer, Boolean> held = new ConcurrentHashMap<>();
             CountDownLatch start = new CountDownLatch(1);
             CountDownLatch done = new CountDownLatch(threads);
@@ -70,23 +87,28 @@ public final class SyncRuntimePinTest {
                     try {
                         start.await();
                         for (int i = 0; i < iters; i++) {
-                            int id = SyncRuntime.procPin();
+                            inFlight.acquire();
                             try {
-                                if (id < 0 || id >= 4) {
-                                    throw new AssertionError(
-                                            "pin id out of range: " + id);
+                                int id = SyncRuntime.procPin();
+                                try {
+                                    if (id < 0 || id >= gmp) {
+                                        throw new AssertionError(
+                                                "pin id out of range: " + id);
+                                    }
+                                    if (held.putIfAbsent(id, Boolean.TRUE) != null) {
+                                        throw new AssertionError(
+                                                "pin id " + id + " held concurrently by two threads");
+                                    }
+                                    // Widen the race window: spin while holding.
+                                    for (int s = 0; s < 50; s++) {
+                                        Thread.onSpinWait();
+                                    }
+                                    held.remove(id);
+                                } finally {
+                                    SyncRuntime.procUnpin();
                                 }
-                                if (held.putIfAbsent(id, Boolean.TRUE) != null) {
-                                    throw new AssertionError(
-                                            "pin id " + id + " held concurrently by two threads");
-                                }
-                                // Widen the race window: spin while holding.
-                                for (int s = 0; s < 50; s++) {
-                                    Thread.onSpinWait();
-                                }
-                                held.remove(id);
                             } finally {
-                                SyncRuntime.procUnpin();
+                                inFlight.release();
                             }
                         }
                     } catch (Throwable e) {

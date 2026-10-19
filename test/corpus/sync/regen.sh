@@ -19,6 +19,14 @@ export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
 for go in sy*.go; do
     base="${go%.go}"
     case "$base" in
+        sy16_*)
+            # sy16 asserts GOMAXPROCS(0) == 2: pin GOMAXPROCS so the recorded
+            # .expected ("ok") is host-independent.
+            GOMAXPROCS=2 go run "$go" > "$base.expected" 2> /tmp/sy-regen.stderr || {
+                echo "FAIL: $go exited nonzero"; cat /tmp/sy-regen.stderr; exit 1
+            }
+            echo "$base: $(wc -l < "$base.expected") stdout lines"
+            ;;
         sy03_*|sy05_*|sy08_*|sy12_*|sy13_*|sy14_*|sy15_*)
             go run "$go" > /dev/null 2> /tmp/sy-regen.stderr || true
             head -1 /tmp/sy-regen.stderr > "$base.panic.gc"
