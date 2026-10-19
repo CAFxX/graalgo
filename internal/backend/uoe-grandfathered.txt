@@ -1,0 +1,48 @@
+# Grandfathered UnsupportedOperationException throws for the Makefile
+# placeholder grep gate (internal/backend/{interop,runtime,truffle}/Makefile).
+#
+# Each non-comment line is "<module-relative path>:<throw statement line>",
+# exactly as produced by:
+#   grep -rn --include='*.java' -E 'throw new UnsupportedOperationException' src/ \
+#     | sed -e 's/^\([^:]*\):[0-9][0-9]*:/\1:/'
+# (the sed strips grep's line numbers so this list is immune to line drift;
+# the gate matches with `grep -F -x`, so these `#` comments and any blank
+# lines can never match a hit).
+#
+# The 53 sites below are the census at master 56a3dd68, adjudicated in
+# docs/arch/bridge-inventory.md ("Adjudicated non-bridges", Families A-D,
+# lane rem-gate-java-stubs): deliberate contract-freezing stubs with a
+# documented removal plan (Family A), abstract base-class kind guards
+# (Family B), specialization kind-mismatch guards (Family C), and one
+# mode-boundary guard (Family D). They are grandfathered as documented,
+# not as approved — any NEW `throw new UnsupportedOperationException`
+# fails the gate. Do NOT extend this list without a fresh independent
+# review; a changed message or a new site fails loud for re-adjudication.
+src/main/java/graalgo/frontend/BinaryOpNode.java:                default -> throw new UnsupportedOperationException("not a complex op: " + op);
+src/main/java/graalgo/frontend/BinaryOpNode.java:            default -> throw new UnsupportedOperationException("not a complex op: " + op);
+src/main/java/graalgo/frontend/BinaryOpNode.java:            default -> throw new UnsupportedOperationException("not a float op: " + op);
+src/main/java/graalgo/frontend/BinaryOpNode.java:            default -> throw new UnsupportedOperationException("not an integer op: " + op);
+src/main/java/graalgo/frontend/BinaryOpNode.java:            throw new UnsupportedOperationException("not a boolean op: " + op);
+src/main/java/graalgo/frontend/BinaryOpNode.java:        throw new UnsupportedOperationException("not an object op: " + op + " on " + operandKind);
+src/main/java/graalgo/frontend/BoxReadNode.java:            default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");
+src/main/java/graalgo/frontend/CapIncDecNode.java:            default -> throw new UnsupportedOperationException("++/-- on " + kind);
+src/main/java/graalgo/frontend/CapReadNode.java:            default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");
+src/main/java/graalgo/frontend/ComplexNode.java:            throw new UnsupportedOperationException("real/imag use typed executes");
+src/main/java/graalgo/frontend/ConstNode.java:            default -> throw new UnsupportedOperationException("const " + kind() + " has no double value");
+src/main/java/graalgo/frontend/ConstNode.java:            default -> throw new UnsupportedOperationException("const " + kind() + " has no float value");
+src/main/java/graalgo/frontend/ConvertNode.java:        throw new UnsupportedOperationException("conversion " + from + " -> " + to + " has no object value");
+src/main/java/graalgo/frontend/GlobalBoxReadNode.java:            default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");
+src/main/java/graalgo/frontend/GlobalReadNode.java:            default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");
+src/main/java/graalgo/frontend/GoExprNode.java:        throw new UnsupportedOperationException(
+src/main/java/graalgo/frontend/IncDecNode.java:            default -> throw new UnsupportedOperationException("++/-- on " + kind);
+src/main/java/graalgo/frontend/UnaryOpNode.java:            default -> throw new UnsupportedOperationException("not a float unary op: " + op);
+src/main/java/graalgo/frontend/UnaryOpNode.java:            default -> throw new UnsupportedOperationException("not an integer unary op: " + op);
+src/main/java/graalgo/frontend/UnaryOpNode.java:        throw new UnsupportedOperationException(
+src/main/java/graalgo/frontend/UnaryOpNode.java:        throw new UnsupportedOperationException("not a boolean unary op: " + op);
+src/main/java/graalgo/frontend/VarReadNode.java:            default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");
+src/main/java/graalgo/runtime/ChanOps.java:        throw new UnsupportedOperationException(
+src/main/java/graalgo/runtime/GcInterop.java:        throw new UnsupportedOperationException(
+src/main/java/graalgo/runtime/Intrinsics.java:            throw new UnsupportedOperationException(
+src/main/java/graalgo/runtime/Netpoll.java:        throw new UnsupportedOperationException(
+src/main/java/graalgo/runtime/Scheduler.java:        throw new UnsupportedOperationException(
+src/main/java/graalgo/runtime/Timers.java:        throw new UnsupportedOperationException(

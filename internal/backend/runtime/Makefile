@@ -127,13 +127,31 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
+# BuiltinPrint is excluded from the debug gate: it implements Go's
+# print/println builtins, which gc routes to stderr — verified functional.
+# Runtime is excluded: Runtime.println is the M1 print path and a frozen
+# call entry point (FreezeSignatureTest, M9 INTERFACE_FREEZE.md §3.4) —
+# verified functional, not a debug leftover.
+# The placeholder gate fails on ANY `throw new UnsupportedOperationException`
+# (not just "stub"-messaged ones — review G-3, 2026-10-19). The 53
+# pre-existing legitimate throws are grandfathered via
+# ../uoe-grandfathered.txt (adjudicated in
+# docs/arch/bridge-inventory.md "Adjudicated non-bridges", Families A-D,
+# lane rem-gate-java-stubs); a new throw, or a changed grandfathered
+# message, fails loud. A missing/empty allowlist fails loud too — the gate
+# never passes vacuously.
+UOE_ALLOWLIST := ../uoe-grandfathered.txt
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@if ! grep -q . $(UOE_ALLOWLIST) 2>/dev/null; then \
+		echo "PLACEHOLDER GATE MISCONFIGURED: $(UOE_ALLOWLIST) missing or empty"; exit 1; fi
+	@if grep -rn --include='*.java' -E 'throw new UnsupportedOperationException' src/ | sed -e 's/^\([^:]*\):[0-9][0-9]*:/\1:/' | grep -v -F -x -f $(UOE_ALLOWLIST); then \
+		echo "PLACEHOLDER GATE FAILED: new UnsupportedOperationException throw (not in allowlist)"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(println|print|write)' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java' | grep -v 'src/main/java/graalgo/runtime/BuiltinPrint.java' | grep -v 'src/main/java/graalgo/runtime/Runtime.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3; updated P3-M9) =="

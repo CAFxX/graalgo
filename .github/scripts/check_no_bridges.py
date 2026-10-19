@@ -100,22 +100,51 @@ def check_no_bridges(diff):
         elif line.startswith("+") and not line.startswith("+++"):
             added_lines.append((current_file, line[1:]))
 
-    # 1. New synth_*.go files. Only genuinely NEW files count (the --- line
-    #    is /dev/null); modifying a grandfathered synth_*.go is not a new
-    #    bridge — without this, every master push touching a synthetic file
-    #    would fail the gate.
+    # 1. New synthetic stdlib files. Only genuinely NEW files count (the ---
+    #    line is /dev/null); modifying a grandfathered synth_*.go is not a
+    #    new bridge — without this, every master push touching a synthetic
+    #    file would fail the gate.
+    #    Evasion hardening (review G-3, 2026-10-19): the old check keyed on
+    #    the literal "synth_" filename infix, so a synthetic package named
+    #    e.g. "shim_fmt.go" passed silently. Now two nets: (a) any new .go
+    #    file whose name carries a synthetic-ish infix (synth/shim/fake,
+    #    any case); (b) any new .go file under internal/frontend/ whose
+    #    ADDED content registers synthetic stdlib surface (addFunc /
+    #    synthetic*Package / registerSynthetic — check 5's patterns) is a
+    #    synthetic package by content, whatever its name.
+    synth_name_res = [r'synth', r'shim', r'fake']
+    synth_content_res = [r'addFunc\s*\(', r'synthetic.*Package\s*\(', r'registerSynthetic']
     new_synth = set()
+    new_file_lines = {}
     prev_was_devnull = False
+    cur_new_file = None
     for line in diff.split("\n"):
         if line.startswith("--- /dev/null"):
             prev_was_devnull = True
+            cur_new_file = None
         elif line.startswith("+++ b/"):
-            if prev_was_devnull and "synth_" in line and line.endswith(".go"):
-                new_synth.add(line[6:])
+            if prev_was_devnull:
+                cur_new_file = line[6:]
+                new_file_lines[cur_new_file] = []
+                if cur_new_file.endswith(".go") and any(
+                        re.search(p, cur_new_file, re.I) for p in synth_name_res):
+                    new_synth.add(cur_new_file)
+            else:
+                cur_new_file = None
             prev_was_devnull = False
         elif line.startswith("--- "):
             prev_was_devnull = False
-    for f in new_synth:
+            cur_new_file = None
+        elif cur_new_file is not None and line.startswith("+") and not line.startswith("+++"):
+            new_file_lines[cur_new_file].append(line[1:])
+    for fname, added in new_file_lines.items():
+        if fname in new_synth or not fname.endswith(".go"):
+            continue
+        if "internal/frontend/" not in fname:
+            continue
+        if any(re.search(p, l) for l in added for p in synth_content_res):
+            new_synth.add(fname)
+    for f in sorted(new_synth):
         errors.append(f"NEW SYNTHETIC FILE: {f} — synthetic stdlib packages are banned")
 
     # 2. Package-name conditionals (stdlib names)
@@ -134,11 +163,18 @@ def check_no_bridges(diff):
             ]
             for pat in patterns:
                 if re.search(pat, line):
-                    # Allow in test files and docs. ("_test." covers
-                    # *_test.go harnesses, e.g. drift-test importers that
-                    # resolve synthetic import paths like the pre-existing
-                    # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
+                    # Allow in real test files only: a _test.go suffix or a
+                    # test directory component (repo-root-relative diff
+                    # paths look like "test/...", so match both the
+                    # leading and the interior component). The old "/test"
+                    # substring also exempted e.g. "latest"/"contest"
+                    # paths — review G-3, 2026-10-19. Pre-existing stubs
+                    # are never in a diff, so drift-test importers
+                    # resolving synthetic import paths (e.g.
+                    # `if path == "bytes"`) in *_test.go harnesses stay
+                    # exempt.
+                    if not (fname.endswith("_test.go") or fname.startswith("test/")
+                            or "/test/" in fname):
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 
@@ -169,8 +205,15 @@ def check_no_bridges(diff):
         m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
         if m:
             node_kind = m.group(1)
-            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
-            if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
+            # Flag stdlib-family wire node kinds. Vocabulary (review G-3,
+            # 2026-10-19): the B-8..B-12 wire-node families in
+            # docs/arch/bridge-inventory.md (time*, math*, runtime*,
+            # unsafe*, plus abifuncpc/atomicaddr/reflectop/sliceoverlap/
+            # syncop), the original fmt/os/net prefixes, and plausible
+            # future low-level kinds the review names (mapassign,
+            # chanmake, memmove). "sliceexpr" is a general AST kind, not
+            # the "slice*" family — excluded so it is not flagged.
+            if re.match(r'^(?!sliceexpr$)(runtime|fmt|sync|os|net|time|math|unsafe|atomic|abi|reflect|slice|map|chan|mem)[a-z]', node_kind):
                 # Adjudicated real implementations are not bridges.
                 if any(f_sub in fname and nk == node_kind
                        for f_sub, nk in ADJUDICATED_WIRE_NODES):

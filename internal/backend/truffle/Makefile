@@ -136,13 +136,26 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 
 # placeholder grep gate (done-gate 5): fails on TODO/FIXME/stub markers in src,
 # plus the gofrontend check (gofmt/vet/tests/vendoring diff gate).
+# The placeholder gate fails on ANY `throw new UnsupportedOperationException`
+# (not just "stub"-messaged ones — review G-3, 2026-10-19). The 53
+# pre-existing legitimate throws are grandfathered via
+# ../uoe-grandfathered.txt (adjudicated in
+# docs/arch/bridge-inventory.md "Adjudicated non-bridges", Families A-D,
+# lane rem-gate-java-stubs); a new throw, or a changed grandfathered
+# message, fails loud. A missing/empty allowlist fails loud too — the gate
+# never passes vacuously.
+UOE_ALLOWLIST := ../uoe-grandfathered.txt
 check:
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@if ! grep -q . $(UOE_ALLOWLIST) 2>/dev/null; then \
+		echo "PLACEHOLDER GATE MISCONFIGURED: $(UOE_ALLOWLIST) missing or empty"; exit 1; fi
+	@if grep -rn --include='*.java' -E 'throw new UnsupportedOperationException' src/ | sed -e 's/^\([^:]*\):[0-9][0-9]*:/\1:/' | grep -v -F -x -f $(UOE_ALLOWLIST); then \
+		echo "PLACEHOLDER GATE FAILED: new UnsupportedOperationException throw (not in allowlist)"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(println|print|write)' src/main/; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="

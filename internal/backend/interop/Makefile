@@ -91,13 +91,29 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # MUST print "fatal error: <s>" to stderr before exit(2) — that is the gc
 # contract, not a debug leftover. Any other System.out/err.println still
 # fails the gate.
+# The placeholder gate fails on ANY `throw new UnsupportedOperationException`
+# (not just "stub"-messaged ones — review G-3, 2026-10-19). The 53
+# pre-existing legitimate throws are grandfathered via
+# ../uoe-grandfathered.txt (adjudicated in
+# docs/arch/bridge-inventory.md "Adjudicated non-bridges", Families A-D,
+# lane rem-gate-java-stubs); a new throw, or a changed grandfathered
+# message, fails loud. A missing/empty allowlist fails loud too — the gate
+# never passes vacuously.
+# LinknameIntrinsics is excluded from the debug gate: runtimeWrite maps Go
+# fd 1/2 to System.out/System.err (the GoOs stdio mapping's write path) —
+# verified functional, not a debug leftover.
+UOE_ALLOWLIST := ../uoe-grandfathered.txt
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
+	@if ! grep -q . $(UOE_ALLOWLIST) 2>/dev/null; then \
+		echo "PLACEHOLDER GATE MISCONFIGURED: $(UOE_ALLOWLIST) missing or empty"; exit 1; fi
+	@if grep -rn --include='*.java' -E 'throw new UnsupportedOperationException' src/ | sed -e 's/^\([^:]*\):[0-9][0-9]*:/\1:/' | grep -v -F -x -f $(UOE_ALLOWLIST); then \
+		echo "PLACEHOLDER GATE FAILED: new UnsupportedOperationException throw (not in allowlist)"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v -F 'System.err.println("fatal error: '; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(println|print|write)' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v 'src/main/java/graalgo/p3link/LinknameIntrinsics.java' | grep -v -F 'System.err.println("fatal error: '; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
