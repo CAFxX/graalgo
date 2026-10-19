@@ -17,6 +17,18 @@
 # compiles only the 8 frozen stubs (against this module's classes); one
 # javac round cannot hold two classes with the same fully-qualified name.
 #
+# The joint round also includes the interop module's sources (INTEROP_SRC).
+# r16's DerefNode references interop's graalgo.p3reflect/p3unsafe, while the
+# interop module builds against this module's out/classes — a genuine
+# source-level cycle that no build ordering can resolve, only a single
+# javac round. (The Main launcher's WireKindRegistrar uses ServiceLoader
+# precisely to avoid a compile-time runtime->interop edge; DerefNode's
+# direct references are the one exception, resolved here by the joint
+# round.) The interop module's own main target still compiles its sources
+# into interop/out/classes (first on the interop launcher's classpath);
+# both copies are always fresh: this round's .built depends on the interop
+# sources below, and interop's .built depends on this module's .built.
+#
 # Classpath order stays load-bearing: runtime/out/classes comes BEFORE
 # truffle/out/classes, so the phase-2 "owns" replacements shadow the
 # truffle module's stubs — if the stubs loaded instead, their loud
@@ -39,7 +51,12 @@ TRUFFLE_CLASSES := $(TRUFFLE)/out/classes
 INTEROP := ../interop
 INTEROP_CLASSES := $(INTEROP)/out/classes
 LIB := $(wildcard $(TRUFFLE)/lib/*.jar)
-CP := $(INTEROP_CLASSES):$(subst $(eval) ,:,$(strip $(LIB)))
+LIB_CP := $(subst $(eval) ,:,$(strip $(LIB)))
+# INTEROP_CLASSES stays on the *runtime* classpath (ServiceLoader providers
+# and the interop launcher's overlay order) but NOT on the joint round's
+# *compile* classpath: the interop classes now come from INTEROP_SRC in the
+# same javac round (see the cycle note above).
+CP := $(INTEROP_CLASSES):$(LIB_CP)
 
 # The 8 frozen phase-1 stubs, as paths relative to a src/main/java root.
 # Historical artifacts of the GG-0020 interface freeze: they compile in the
@@ -54,6 +71,9 @@ SRC_MAIN := $(shell find src/main/java -name '*.java')
 # Truffle-module sources for the joint round, minus the 8 stubs (compiled
 # by the truffle module's own main target — see the cycle note above).
 TRUFFLE_SRC := $(filter-out $(addprefix $(TRUFFLE)/src/main/java/,$(STUB_REL)),$(shell find $(TRUFFLE)/src/main/java -name '*.java'))
+# Interop-module sources for the joint round (see the cycle note above).
+# No exclusions: interop has no same-FQN overlaps with the other two trees.
+INTEROP_SRC := $(shell find $(INTEROP)/src/main/java -name '*.java')
 SRC_TEST := $(shell find src/test/java -name '*.java')
 SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
 OUT_MAIN := out/classes
@@ -79,15 +99,15 @@ JAVAC_FLAGS := -Xlint:deprecation -Werror
 all: main
 
 main: $(OUT_MAIN)/.built
-$(OUT_MAIN)/.built: $(SRC_MAIN) $(TRUFFLE_SRC) $(SRC_RES)
+$(OUT_MAIN)/.built: $(SRC_MAIN) $(TRUFFLE_SRC) $(INTEROP_SRC) $(SRC_RES)
 	@for s in $(STUB_REL); do \
 	  [ -f $(TRUFFLE)/src/main/java/$$s ] || { echo "STUB-SHADOW GATE FAILED: stub missing: $$s"; exit 1; }; \
 	  [ -f src/main/java/$$s ] || { echo "STUB-SHADOW GATE FAILED: replacement missing: $$s"; exit 1; }; \
 	done
 	mkdir -p $(OUT_MAIN)
 	$(JAVAC) -version
-	$(JAVAC) $(JAVAC_FLAGS) -cp "$(CP)" -processorpath "$(CP)" \
-		-d $(OUT_MAIN) $(SRC_MAIN) $(TRUFFLE_SRC)
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(LIB_CP)" -processorpath "$(LIB_CP)" \
+		-d $(OUT_MAIN) $(SRC_MAIN) $(TRUFFLE_SRC) $(INTEROP_SRC)
 	@if [ -d src/main/resources ]; then \
 		cp -r src/main/resources/. $(OUT_MAIN)/; fi
 	touch $(OUT_MAIN)/.built
