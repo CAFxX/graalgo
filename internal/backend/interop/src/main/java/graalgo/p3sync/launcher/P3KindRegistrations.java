@@ -191,6 +191,11 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
         factory.registerExprKind("unsafefromuint",
                 (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
+        // fix-redmaster-r12: the "unsafearrayindex" wire node for the
+        // uintptr(p) + uintptr(i)*unsafe.Sizeof(T) idiom (handle-based
+        // element pointer arithmetic, e.g. sync.Pool's indexLocal).
+        factory.registerExprKind("unsafearrayindex",
+                (node, ctx) -> graalgo.p3unsafe.UnsafeArrayIndexNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslice",
                 (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslicedata",
@@ -205,6 +210,15 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         // P3-M8 (wave 2, reflect): the "reflectop" wire node.
         factory.registerExprKind("reflectop",
                 (node, ctx) -> graalgo.p3reflect.ReflectOpNode.build(node, ctx, factory));
+        // real-reflect (Phase 1): the "abifuncpc" wire node for the
+        // internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsics.
+        factory.registerExprKind("abifuncpc",
+                (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
+        // fix-redmaster-r12: the "abitypeof" wire node for the
+        // internal/abi.TypeOf intrinsic (unsafe interface reinterpretation
+        // replaced by direct materialization).
+        factory.registerExprKind("abitypeof",
+                (node, ctx) -> graalgo.p3abi.AbiTypeOfNode.build(node, factory, ctx));
         // P2-M1 (WS A): the go statement.
         factory.registerStmtKind("gostmt",
                 (node, ctx) -> GoStatementNode.build(node, ctx, factory));

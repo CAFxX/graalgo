@@ -35,6 +35,17 @@ public final class DerefWriteNode extends GoStmtNode {
             return; // unreachable
         } else if (o instanceof GoPointer gp) {
             p = gp;
+        } else if (o instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
+            // fix-redmaster-r12: *addr = val where addr is &x.v of an
+            // atomic.Pointer/Value (FieldAddrNode's cell transparency yields
+            // the cell itself, e.g. StorePointer(&x.v, ...) in the generic
+            // (*Pointer[T]).Store body). Write the cell, mirroring
+            // DerefNode's read path for the same shape.
+            @SuppressWarnings("unchecked")
+            java.util.concurrent.atomic.AtomicReference<Object> cell =
+                    (java.util.concurrent.atomic.AtomicReference<Object>) ar;
+            cell.set(Boxing.copyForAssign(elemKind, Boxing.box(elemKind, value, frame)));
+            return;
         } else {
             throw new FrontendException("deref write: not a pointer: " + o);
         }

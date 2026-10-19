@@ -278,6 +278,15 @@ type ioByteReaderPair struct {
 	err error
 }
 
+// ioRuneReaderPair is the fix-redmaster-r12 interface-dispatch carrier
+// for io.RuneReader.ReadRune (see ioByteReaderPair). fmt/scan.go calls
+// ReadRune on the io.RuneScanner interface value.
+type ioRuneReaderPair struct {
+	r    rune
+	size int
+	err  error
+}
+
 // ioWritePair is the P3-M8 (WS D) interface-dispatch carrier for
 // Writer.Write and StringWriter.WriteString (see ioReadPair).
 type ioWritePair struct {

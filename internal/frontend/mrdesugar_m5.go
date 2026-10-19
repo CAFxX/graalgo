@@ -1279,6 +1279,14 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// interfaces). Concrete *bufio.Reader has the m7 entry; the pair
 	// lives in synth_io.go.
 	{"io", "ReadByte", "ioByteReaderPair", []string{"c", "err"}},
+	// fix-redmaster-r12: io.RuneReader.ReadRune (fmt/scan.go calls it on
+	// the io.RuneScanner interface: r, size, err = s.rs.ReadRune()).
+	// Concrete *strings.Reader has the m7 entry (__stringsReaderReadRune
+	// returning stringsReaderReadRuneTriple); the interface pair lives
+	// here in synth_io.go. Field extraction is positional (selpath), so
+	// the concrete triple's (ch, size, err) aligns with this pair's
+	// (r, size, err).
+	{"io", "ReadRune", "ioRuneReaderPair", []string{"r", "size", "err"}},
 	// P3 (WS D, Gate-1): io.WriterTo.WriteTo and io.ReaderFrom.ReadFrom.
 	// bufio (a dependency of image/png and many others) calls both on
 	// interface values: r.WriteTo(w) on io.WriterTo in (*Reader).WriteTo,

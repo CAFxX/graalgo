@@ -5986,6 +5986,14 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		if fi.obj != nil && isAbiFuncPCIntrinsicFunc(fi.obj) {
 			return e.exportAbiFuncPCDecl(fi)
 		}
+		// fix-redmaster-r12: internal/abi.TypeOf uses unsafe interface
+		// reinterpretation which cannot work on graalgo. Replace the body
+		// with the "abitypeof" intrinsic, so function values and indirect
+		// calls work. Direct call sites are intercepted (see
+		// exportAbiTypeOfIntrinsic).
+		if fi.obj != nil && isAbiTypeOfFunc(fi.obj) {
+			return e.exportAbiTypeOfDecl(fi)
+		}
 		// P3-M4 (WS C, ADR-0004 D1): a bodyless function carrying
 		// //go:linkname binds to an intrinsic by symbol name.
 		return e.exportLinknameDecl(fi)
@@ -9131,6 +9139,42 @@ func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
 	return e.node("deref", c, map[string]any{"x": px, "type": tid}), nil
 }
 
+// exportAtomicPointerOp lowers a same-package ident call to
+// atomic.SwapPointer / atomic.CompareAndSwapPointer (e.g. in the generic
+// (*Pointer[T]) method bodies: SwapPointer(&x.v, unsafe.Pointer(new)))
+// to the "syncop" wire node with synctyp "atomic.Pointer", reusing the
+// AtomicOpNode machinery that serves the Pointer[T] method forms. The
+// address operand (&x.v) evaluates to the AtomicReference cell via
+// FieldAddrNode's cell transparency, which AtomicOpNode's cellRef expects.
+// Same scoped divergence as the word ops: atomicity without gc's ordering
+// guarantee (see exportAtomicLoadPointer).
+func (e *exporter) exportAtomicPointerOp(c *ast.CallExpr, op string) (*Node, error) {
+	nargs := map[string]int{"Swap": 1, "CompareAndSwap": 2}[op]
+	if len(c.Args) != nargs+1 {
+		return nil, fmt.Errorf("gofrontend: atomic.%sPointer takes %d arguments, got %d",
+			op, nargs+1, len(c.Args))
+	}
+	addr, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	var args = make([]*Node, 0, len(c.Args)-1)
+	for _, a := range c.Args[1:] {
+		x, err := e.exportExpr(a)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, x)
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": "atomic.Pointer", "recv": addr, "args": args, "type": typ,
+	}), nil
+}
+
 // atomicWordOp describes one package-level sync/atomic word/bool
 // operation (fix-linkname): the syncop op name, the atomic synctyp
 // (shared with the typed wrappers so AtomicOpNode serves both), the
@@ -9235,23 +9279,33 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 // exportAtomicStorePointerStmt lowers a bare-statement
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
 // of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
+//
+// fix-redmaster-r12: also matches the same-package ident form
+// (StorePointer(&x.v, ...) in the generic (*Pointer[T]).Store body).
+// Both shapes discriminate on the resolved object, not the identifier
+// spelling (R2-P1-1).
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
-	sel, ok := unwrapSelector(c.Fun)
-	if !ok {
-		return nil, false, nil
-	}
-	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return nil, false, nil
-	}
-	// R2-P1-1: discriminate on the resolved object, not the identifier
-	// spelling — a renamed import (atom "sync/atomic") is still the
-	// package; a shadowed local named "atomic" is not.
-	if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); !isPkg {
-		return nil, false, nil
-	}
-	obj, ok := e.info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
+	if sel, ok := unwrapSelector(c.Fun); ok {
+		pkgIdent, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return nil, false, nil
+		}
+		// R2-P1-1: discriminate on the resolved object, not the identifier
+		// spelling — a renamed import (atom "sync/atomic") is still the
+		// package; a shadowed local named "atomic" is not.
+		if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); !isPkg {
+			return nil, false, nil
+		}
+		obj, ok := e.info.Uses[sel.Sel].(*types.Func)
+		if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
+			return nil, false, nil
+		}
+	} else if ident, ok := unparen(c.Fun).(*ast.Ident); ok {
+		fn, ok := e.info.Uses[ident].(*types.Func)
+		if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "sync/atomic" || fn.Name() != "StorePointer" {
+			return nil, false, nil
+		}
+	} else {
 		return nil, false, nil
 	}
 	if len(c.Args) != 2 {
@@ -9288,6 +9342,24 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if fn.Pkg() != nil && fn.Pkg().Path() == "sync/atomic" {
 		if n, handled, err := e.exportAtomicWordOp(c, fn.Name()); handled {
 			return n, err
+		}
+		// fix-redmaster-r12: sync/atomic pointer ops called from within
+		// the sync/atomic package — the generic (*Pointer[T]) method
+		// bodies call the bodyless assembly functions as plain idents
+		// (LoadPointer(&x.v), StorePointer(&x.v, ...), ...). Lower like
+		// the qualified atomic.LoadPointer / atomic.StorePointer forms;
+		// the bodyless funcs have no Go implementation to call, and
+		// without this the method bodies panic in the UnimplementedRootNode
+		// stub (e.g. sync.Pool.Get via poolChain.popTail).
+		// Identification is by resolved object (package + declared name),
+		// not identifier spelling — a shadowed local is not a *types.Func.
+		switch fn.Name() {
+		case "LoadPointer":
+			return e.exportAtomicLoadPointer(c)
+		case "SwapPointer":
+			return e.exportAtomicPointerOp(c, "Swap")
+		case "CompareAndSwapPointer":
+			return e.exportAtomicPointerOp(c, "CompareAndSwap")
 		}
 	}
 	// PKG-012 (fix-atomic-rtatomic): internal/runtime/atomic word ops
@@ -9332,6 +9404,15 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// exportAbiFuncPCDecl).
 	if isAbiFuncPCIntrinsicFunc(fn) {
 		return e.exportAbiFuncPCIntrinsic(c, fn.Name())
+	}
+	// fix-redmaster-r12: internal/abi.TypeOf uses unsafe interface
+	// reinterpretation which cannot work on graalgo. Lower to the
+	// "abitypeof" wire node (direct GoInterface to *abi.Type
+	// materialization). Intercepted before the funcByObj lookup; the
+	// declaration emits a synthesized intrinsic body (see
+	// exportAbiTypeOfDecl).
+	if isAbiTypeOfFunc(fn) {
+		return e.exportAbiTypeOfIntrinsic(c)
 	}
 	// real-nethttp: //go:linkname consumer stubs alias to their provider.
 	// A call to the stub lowers to a direct call to the provider funcdecl,

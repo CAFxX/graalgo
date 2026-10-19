@@ -421,6 +421,10 @@ public final class P3SyncMain {
                     (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
             factory.registerExprKind("unsafefromuint",
                     (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
+            // fix-redmaster-r12: the "unsafearrayindex" wire node for the
+            // uintptr(p) + uintptr(i)*unsafe.Sizeof(T) idiom.
+            factory.registerExprKind("unsafearrayindex",
+                    (node, ctx) -> graalgo.p3unsafe.UnsafeArrayIndexNode.build(node, factory, ctx));
             factory.registerExprKind("unsafeslice",
                     (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
             factory.registerExprKind("unsafeslicedata",
@@ -443,6 +447,12 @@ public final class P3SyncMain {
             // Phase-1/Phase-2 change.
             factory.registerExprKind("abifuncpc",
                     (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
+            // fix-redmaster-r12: the "abitypeof" wire node for the
+            // internal/abi.TypeOf intrinsic (unsafe interface
+            // reinterpretation replaced by direct materialization).
+            // Public extension hook — no Phase-1/Phase-2 change.
+            factory.registerExprKind("abitypeof",
+                    (node, ctx) -> graalgo.p3abi.AbiTypeOfNode.build(node, factory, ctx));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).

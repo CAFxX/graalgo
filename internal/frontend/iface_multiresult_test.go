@@ -598,3 +598,90 @@ func main() {
 		t.Fatalf("want 2 ifacemethod Read nodes (bare statements), got %d", reads)
 	}
 }
+
+// TestD1IfaceMultiResultReadRune pins the fix-redmaster-r12 wire shape of
+// `r, size, err := rr.ReadRune()` through the io.RuneReader interface:
+// a desugared block whose temp holds an ifacemethod node typed as the
+// interface pair io.ioRuneReaderPair, followed by three selector
+// extractions. Red-green: on the pre-fix tree this fails to export
+// (the call is not classified, emitting a 3-lhs/1-rhs assign the
+// backend rejects with "lhs/rhs length mismatch" — the fmt/scan.go:189
+// build failure).
+func TestD1IfaceMultiResultReadRune(t *testing.T) {
+	const src = `package main
+
+import (
+	"io"
+	"strings"
+)
+
+func main() {
+	var rr io.RuneReader = strings.NewReader("hello")
+	r, size, err := rr.ReadRune()
+	println(r, size, err == nil)
+}
+`
+
+	doc := d1ExportIfaceProg(t, src)
+	nodes := findAllKind(doc, "ifacemethod")
+	if len(nodes) == 0 {
+		t.Fatal("no ifacemethod node in wire doc")
+	}
+	var readRuneNode map[string]any
+	for _, n := range nodes {
+		if n["fields"].(map[string]any)["method"] == "ReadRune" {
+			readRuneNode = n
+		}
+	}
+	if readRuneNode == nil {
+		t.Fatal("no ifacemethod node for ReadRune")
+	}
+	f := readRuneNode["fields"].(map[string]any)
+	// The node's type must be the ioRuneReaderPair type-table id.
+	typeID, _ := f["type"].(float64)
+	types := typeEntries(t, doc)
+	te, ok := types[int(typeID)].(map[string]any)
+	if !ok {
+		t.Fatalf("ifacemethod type id %v out of range", typeID)
+	}
+	detail, _ := te["detail"].(map[string]any)
+	if detail["name"] != "io.ioRuneReaderPair" {
+		t.Fatalf("ifacemethod type = %v, want io.ioRuneReaderPair", detail["name"])
+	}
+	// The desugared block: __p5mr_N := <ifacemethod>, then three
+	// selector extractions assigned to r, size, and err.
+	blocks := findAllKind(doc, "block")
+	found := false
+	for _, b := range blocks {
+		stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
+		if len(stmts) != 4 {
+			continue
+		}
+		s0, _ := stmts[0].(map[string]any)
+		if s0["kind"] != "vardecl" {
+			continue
+		}
+		vals, _ := s0["fields"].(map[string]any)["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		v0, _ := vals[0].(map[string]any)
+		if v0["kind"] != "ifacemethod" {
+			continue
+		}
+		s1, _ := stmts[1].(map[string]any)
+		s2, _ := stmts[2].(map[string]any)
+		s3, _ := stmts[3].(map[string]any)
+		names1, _ := s1["fields"].(map[string]any)["names"].([]any)
+		names2, _ := s2["fields"].(map[string]any)["names"].([]any)
+		names3, _ := s3["fields"].(map[string]any)["names"].([]any)
+		if len(names1) == 1 && names1[0] == "r" &&
+			len(names2) == 1 && names2[0] == "size" &&
+			len(names3) == 1 && names3[0] == "err" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no desugared block __p5mr_N := rr.ReadRune(); r := ...; size := ...; err := ... found")
+	}
+}

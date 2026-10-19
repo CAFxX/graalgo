@@ -26,7 +26,15 @@ public final class GoStruct {
         this.objects = objects.clone();
     }
 
-    /** The Go zero value for the described struct type. */
+    /** The Go zero value for the described struct type.
+     *
+     * <p>fix-redmaster-r12: STRUCT-kind fields (including embedded) are
+     * initialized to recursive zero structs, not Java null. Go's zero value
+     * has zero values for all fields; a null embedded struct breaks
+     * promoted field access (e.g. {@code l.private} through embedded
+     * {@code poolLocalInternal} in {@code sync.Pool}'s {@code []poolLocal},
+     * which nil-deref panics in {@code SelectorWriteNode}). Recursion
+     * terminates: Go struct types cannot directly contain themselves. */
     public static GoStruct zero(GoStructDescriptor descriptor) {
         Object[] objects = new Object[descriptor.objectsCount()];
         for (int i = 0; i < descriptor.fields().size(); i++) {
@@ -44,9 +52,84 @@ public final class GoStruct {
                 // WS G: a complex field's zero value is (0+0i), not nil.
                 objects[f.index()] = f.kind() == GoKind.COMPLEX64
                         ? GoComplex32.ZERO : GoComplex64.ZERO;
+            } else if (!f.inLongs() && f.kind() == GoKind.STRUCT && f.structDesc() != null) {
+                // fix-redmaster-r12: a struct field's zero value is the
+                // recursive zero struct, not null. Without this, promoted
+                // field selection through an embedded struct (selpath
+                // length > 1) dereferences null in SelectorWriteNode.
+                //
+                // fix-redmaster-r12 (sync cells): a field whose type is a
+                // sync/sync.atomic wrapper is NOT a GoStruct at runtime —
+                // the Go value IS the Java cell (ADR-0002 D1). The
+                // factory's fieldZeroTemplate already maps these to fresh
+                // cells; the runtime zero path must agree, or the
+                // &x.v-is-the-cell invariant (FieldAddrNode, DerefNode,
+                // the generic atomic.Pointer[T] bodies) breaks. E.g.
+                // make([]poolLocal, n) left poolChain.tail as a zero
+                // GoStruct, so (*Pointer[poolChainElt]).Load panicked.
+                Object cell = syncPrimitiveCell(f.structDesc().typeName());
+                objects[f.index()] = cell != null ? cell : GoStruct.zero(f.structDesc());
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);
+    }
+
+    /**
+     * fix-redmaster-r12: fresh Java cell for a sync/sync.atomic wrapper
+     * type, or null when the qualified type name is not a sync primitive.
+     *
+     * <p>Twin of {@code NodeFactory.syncPrimitiveName} +
+     * {@code NodeFactory.newSyncPrimitive} (which drive the factory-time
+     * {@code fieldZeroTemplate}): the two mappings must stay in lockstep,
+     * or the factory-time and runtime zero values disagree on the
+     * representation and the atomic cell invariant breaks. Keyed on the
+     * Go type's qualified name — the same structural signal the factory
+     * uses — never on a package's behavior.
+     */
+    private static Object syncPrimitiveCell(String typeName) {
+        if (typeName == null) {
+            return null;
+        }
+        String prim;
+        if (typeName.startsWith("sync/atomic.")) {
+            String base = typeName.substring("sync/atomic.".length());
+            int br = base.indexOf('[');
+            if (br >= 0) {
+                base = base.substring(0, br);
+            }
+            prim = switch (base) {
+                case "Int64", "Uint64", "Uintptr" -> "atomic.Int64";
+                case "Int32", "Uint32", "Bool" -> "atomic.Int32";
+                case "Pointer", "Value" -> "atomic.Pointer";
+                default -> null;
+            };
+        } else if (typeName.startsWith("sync.")) {
+            // Only Pool and Map are cells; Mutex/RWMutex/WaitGroup/Once
+            // stay plain GoStructs (their real bodies assume struct
+            // layout) — mirrors syncPrimitiveName exactly.
+            String base = typeName.substring("sync.".length());
+            if (base.indexOf('[') >= 0) {
+                return null;
+            }
+            prim = switch (base) {
+                case "Pool" -> "sync.Pool";
+                case "Map" -> "sync.Map";
+                default -> null;
+            };
+        } else {
+            return null;
+        }
+        if (prim == null) {
+            return null;
+        }
+        return switch (prim) {
+            case "sync.Pool" -> new graalgo.runtime.sync.GoPool();
+            case "sync.Map" -> new graalgo.runtime.sync.GoSyncMap();
+            case "atomic.Int64" -> new graalgo.runtime.sync.GoAtomicInt64();
+            case "atomic.Int32" -> new graalgo.runtime.sync.GoAtomicInt32();
+            case "atomic.Pointer" -> new java.util.concurrent.atomic.AtomicReference<>();
+            default -> null;
+        };
     }
 
     public GoStructDescriptor descriptor() {

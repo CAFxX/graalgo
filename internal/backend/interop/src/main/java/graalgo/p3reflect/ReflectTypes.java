@@ -1048,7 +1048,18 @@ public final class ReflectTypes {
             // NumMethod/MethodByName. Build a MethodInfo with the
             // interface method's signature (receiver prepended) and a
             // synthetic GoFunc that performs the redispatch.
+            //
+            // Unsupported entries (obj -1, wire "index" null, no
+            // "embeddedIface") are skipped: the method is not available
+            // for reflection (e.g. disk-package multi-result stubs).
+            // This is general: any method whose funcdecl is unavailable.
             if (objId == -1) {
+                Json.Value idxv = m.opt("index");
+                Json.Value embv = m.opt("embeddedIface");
+                if (idxv instanceof Json.Null && !(embv instanceof Json.Num)) {
+                    // Unsupported: skip (not in reflect method table).
+                    continue;
+                }
                 MethodInfo redispatch = readRedispatchMethod(table, types, shells,
                         path, functions, funcdeclSig, m, name, receiver,
                         sorted.size());
@@ -2022,6 +2033,22 @@ public final class ReflectTypes {
     private static volatile graalgo.values.GoStructDescriptor structFieldDesc;
     private static volatile graalgo.values.GoStructDescriptor rtypeDescStruct;
     private static volatile graalgo.values.GoTypeDescriptor rtypeDesc;
+    // fix-redmaster-buildok (r5): descriptors for internal/abi type
+    // materialization (abi.TypeOf intrinsic). The materialized descriptors
+    // are fully-populated most-derived structs (e.g. PtrType for *T), so
+    // the real reflect package's pure-Go methods work unmodified.
+    private static volatile graalgo.values.GoStructDescriptor abiTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiPtrTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiInterfaceTypeDesc;
+    // fix-redmaster-r5-p1 (P1-A): descriptors for all derived abi types.
+    // materialize() builds proper derived descriptors for every kind the
+    // abi.TypeOf intrinsic can produce, not just Pointer and Interface.
+    private static volatile graalgo.values.GoStructDescriptor abiChanTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiMapTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiSliceTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiFuncTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiArrayTypeDesc;
+    private static volatile graalgo.values.GoStructDescriptor abiStructTypeDesc;
 
     /**
      * Captures the struct descriptors for the synthetic reflect structs.
@@ -2058,6 +2085,58 @@ public final class ReflectTypes {
             rtypeDesc = descriptorFor(types, "reflect.rtype");
         } catch (FrontendException e) {
             rtypeDesc = null;
+        }
+        // fix-redmaster-buildok (r5): internal/abi type descriptors for
+        // materialized descriptors (abi.TypeOf intrinsic). Tolerant of
+        // programs that don't import internal/abi.
+        try {
+            abiTypeDesc = structDescFor(types, "internal/abi.Type");
+        } catch (FrontendException e) {
+            abiTypeDesc = null;
+        }
+        try {
+            abiPtrTypeDesc = structDescFor(types, "internal/abi.PtrType");
+        } catch (FrontendException e) {
+            abiPtrTypeDesc = null;
+        }
+        try {
+            abiInterfaceTypeDesc = structDescFor(types, "internal/abi.InterfaceType");
+        } catch (FrontendException e) {
+            abiInterfaceTypeDesc = null;
+        }
+        // fix-redmaster-r5-p1 (P1-A): capture all derived abi type
+        // descriptors. materialize() builds proper derived descriptors for
+        // every kind, so real reflect methods reading derived fields
+        // (ChanType.Elem, MapType.Key, FuncType.In, etc.) work.
+        try {
+            abiChanTypeDesc = structDescFor(types, "internal/abi.ChanType");
+        } catch (FrontendException e) {
+            abiChanTypeDesc = null;
+        }
+        try {
+            abiMapTypeDesc = structDescFor(types, "internal/abi.MapType");
+        } catch (FrontendException e) {
+            abiMapTypeDesc = null;
+        }
+        try {
+            abiSliceTypeDesc = structDescFor(types, "internal/abi.SliceType");
+        } catch (FrontendException e) {
+            abiSliceTypeDesc = null;
+        }
+        try {
+            abiFuncTypeDesc = structDescFor(types, "internal/abi.FuncType");
+        } catch (FrontendException e) {
+            abiFuncTypeDesc = null;
+        }
+        try {
+            abiArrayTypeDesc = structDescFor(types, "internal/abi.ArrayType");
+        } catch (FrontendException e) {
+            abiArrayTypeDesc = null;
+        }
+        try {
+            abiStructTypeDesc = structDescFor(types, "internal/abi.StructType");
+        } catch (FrontendException e) {
+            abiStructTypeDesc = null;
         }
     }
 
@@ -2185,6 +2264,15 @@ public final class ReflectTypes {
         return d;
     }
 
+    /** The reflect.rtype struct descriptor (for direct struct construction). */
+    public static graalgo.values.GoStructDescriptor rtypeStructDescriptor() {
+        graalgo.values.GoStructDescriptor d = rtypeDescStruct;
+        if (d == null) {
+            throw new IllegalStateException("reflect: descriptors not captured");
+        }
+        return d;
+    }
+
     /**
      * Boxes a type token as a {@code reflect.Type} interface value
      * (GoInterface over an rtype struct). The itab is left null and built
@@ -2199,5 +2287,378 @@ public final class ReflectTypes {
         graalgo.values.GoStruct rt = new graalgo.values.GoStruct(
                 rtypeDescStruct, new long[0], new Object[]{tok});
         return new graalgo.values.GoInterface(rtypeDesc, rt, null);
+    }
+
+    // ------------------------------------------------------------------
+    // Materialized descriptors (fix-redmaster-buildok r5).
+    //
+    // The runtime materializes *internal/abi.Type as fully-populated
+    // most-derived GoStructs (e.g. PtrType for *T, InterfaceType for
+    // interfaces), so the real reflect package's pure-Go methods (Kind(),
+    // Elem(), ...) work unmodified — they read struct fields directly and
+    // use unsafe reinterpretation between *Type and derived types.
+    // ------------------------------------------------------------------
+
+    /** Maps a GoKind to the numeric internal/abi.Kind value (gc-exact). */
+    private static int abiKind(graalgo.values.GoKind kind) {
+        return switch (kind) {
+            case BOOL -> 1;
+            case INT8 -> 3;
+            case INT16 -> 4;
+            case INT32 -> 5;
+            case INT64 -> 6;
+            case UINT8 -> 8;
+            case UINT16 -> 9;
+            case UINT32 -> 10;
+            case UINT64 -> 11;
+            case FLOAT32 -> 13;
+            case FLOAT64 -> 14;
+            case COMPLEX64 -> 15;
+            case COMPLEX128 -> 16;
+            case ARRAY -> 17;
+            case CHAN -> 18;
+            case FUNC -> 19;
+            case INTERFACE -> 20;
+            case MAP -> 21;
+            case POINTER -> 22;
+            case SLICE -> 23;
+            case STRING -> 24;
+            case STRUCT -> 25;
+            case UNSAFE_POINTER -> 26;
+            default -> 0;
+        };
+    }
+
+    /** The internal/abi.Type struct descriptor (for materialized descriptors). */
+    public static graalgo.values.GoStructDescriptor abiTypeDescriptor() {
+        graalgo.values.GoStructDescriptor d = abiTypeDesc;
+        if (d == null) {
+            throw new IllegalStateException("reflect: internal/abi.Type descriptor not captured");
+        }
+        return d;
+    }
+
+    /**
+     * Builds a flattened descriptor for a derived abi type (e.g. PtrType).
+     * The base Type fields come first (at their original indices, so *Type
+     * accesses work), followed by the derived fields. This makes the
+     * materialized struct layout-compatible with both *Type and *DerivedType
+     * static types, which the unsafe reinterpretation in abi.Type.Elem()
+     * relies on.
+     */
+    private static graalgo.values.GoStructDescriptor flattenedDesc(
+            String name,
+            graalgo.values.GoStructDescriptor base,
+            java.util.List<String> extraNames,
+            java.util.List<graalgo.values.GoKind> extraKinds) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        java.util.List<graalgo.values.GoKind> kinds = new java.util.ArrayList<>();
+        for (graalgo.values.GoStructDescriptor.Field f : base.fields()) {
+            names.add(f.name());
+            kinds.add(f.kind());
+        }
+        names.addAll(extraNames);
+        kinds.addAll(extraKinds);
+        // Build via layout (7-arg version with null nested descriptors).
+        int n = names.size();
+        java.util.List<Integer> arrayLens = new java.util.ArrayList<>(n);
+        java.util.List<graalgo.values.GoKind> arrayElemKinds = new java.util.ArrayList<>(n);
+        java.util.List<graalgo.values.GoStructDescriptor> arrayElemDescs = new java.util.ArrayList<>(n);
+        java.util.List<graalgo.values.GoStructDescriptor> structDescs = new java.util.ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            arrayLens.add(-1);
+            arrayElemKinds.add(null);
+            arrayElemDescs.add(null);
+            structDescs.add(null);
+        }
+        return graalgo.values.GoStructDescriptor.layout(name, names, kinds,
+                arrayLens, arrayElemKinds, arrayElemDescs, structDescs);
+    }
+
+    /**
+     * Materializes the fully-populated internal/abi.Type GoStruct for a
+     * type token. Composite kinds produce the most-derived struct
+     * (PtrType for POINTER, InterfaceType for INTERFACE); the common
+     * Type fields (Size_, Align_, Kind_, ...) are populated from the
+     * TypeInfo.
+     *
+     * <p>Results are cached per token (descriptors are immutable and
+     * pointer-identity matters for unsafe round-trips).
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Long, graalgo.values.GoStruct>
+            MATERIALIZED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static graalgo.values.GoStruct materialize(long tok) {
+        return MATERIALIZED.computeIfAbsent(tok, ReflectTypes::materializeUncached);
+    }
+
+    // ------------------------------------------------------------------
+    // General derived-descriptor materialization (fix-redmaster-r5-p1 P1-A).
+    //
+    // The abi.TypeOf intrinsic can return any kind. For each composite
+    // kind, materialize() builds the most-derived abi struct (e.g.
+    // ChanType for CHAN) with the derived fields populated from the
+    // TypeInfo, so real reflect methods reading derived fields
+    // (ChanType.Elem, MapType.Key, FuncType.In, etc.) work.
+    //
+    // This is a general, data-driven mechanism: per-kind variation lives
+    // in the DERIVED_SPECS table (declarative field specs), not in
+    // per-kind functions. Adding a kind means adding a table entry.
+    // ------------------------------------------------------------------
+
+    /** One derived field to populate in a materialized struct. */
+    private static final class DerivedField {
+        /** Field name in the derived abi struct (e.g. "Elem"). */
+        final String name;
+        /** Kind for descriptor building (determines longs vs objects). */
+        final graalgo.values.GoKind kind;
+        /** Computes the field value from the TypeInfo. */
+        final java.util.function.Function<TypeInfo, Object> valueFn;
+
+        DerivedField(String name, graalgo.values.GoKind kind,
+                     java.util.function.Function<TypeInfo, Object> valueFn) {
+            this.name = name;
+            this.kind = kind;
+            this.valueFn = valueFn;
+        }
+    }
+
+    /** Declarative spec for materializing a derived abi type. */
+    private static final class DerivedSpec {
+        /** Qualified name for the flattened descriptor (e.g. "internal/abi.ChanType"). */
+        final String typeName;
+        /** Guards on the captured wire descriptor (null when program lacks the type). */
+        final java.util.function.Supplier<graalgo.values.GoStructDescriptor> descGuard;
+        /** Derived fields to populate, in order. */
+        final java.util.List<DerivedField> fields;
+
+        DerivedSpec(String typeName,
+                    java.util.function.Supplier<graalgo.values.GoStructDescriptor> descGuard,
+                    java.util.List<DerivedField> fields) {
+            this.typeName = typeName;
+            this.descGuard = descGuard;
+            this.fields = fields;
+        }
+    }
+
+    /** Materializes a *Type field by recursing (null when absent). */
+    private static Object materializeTypeField(TypeInfo ti,
+            java.util.function.Function<TypeInfo, TypeInfo> sel) {
+        TypeInfo child = sel.apply(ti);
+        if (child == null) {
+            return null;
+        }
+        return materialize(child.tok);
+    }
+
+    /** Maps our ChanDir to the abi.ChanDir numeric value (gc-exact). */
+    private static long chanDirAbiValue(ChanDir dir) {
+        if (dir == null) {
+            return 0;
+        }
+        return switch (dir) {
+            case RECV -> 1; // abi.RecvDir
+            case SEND -> 2; // abi.SendDir
+            case BOTH -> 3; // abi.BothDir
+        };
+    }
+
+    /**
+     * The derived-descriptor specs, keyed by GoKind. Each spec lists the
+     * derived abi type's fields that real reflect methods read, with a
+     * value function extracting them from the TypeInfo.
+     *
+     * <p>Field mappings (from internal/abi/type.go and map.go):
+     * <ul>
+     *   <li>PtrType: Elem *Type
+     *   <li>ChanType: Elem *Type, Dir ChanDir
+     *   <li>MapType: Key *Type, Elem *Type
+     *   <li>SliceType: Elem *Type
+     *   <li>ArrayType: Elem *Type, Len uintptr
+     *   <li>FuncType: InCount uint16, OutCount uint16
+     *   <li>StructType: (Fields omitted — StructField.Name encoding is
+     *       out of scope; NumField/Field work via the TypeInfo table)
+     *   <li>InterfaceType: (PkgPath/Methods omitted — left zero as before)
+     * </ul>
+     */
+    private static final java.util.Map<graalgo.values.GoKind, DerivedSpec> DERIVED_SPECS =
+            java.util.Map.ofEntries(
+        java.util.Map.entry(graalgo.values.GoKind.POINTER,
+            new DerivedSpec("internal/abi.PtrType", () -> abiPtrTypeDesc,
+                java.util.List.of(
+                    new DerivedField("Elem", graalgo.values.GoKind.POINTER,
+                        ti -> materializeTypeField(ti, t -> t.elem))))),
+        java.util.Map.entry(graalgo.values.GoKind.CHAN,
+            new DerivedSpec("internal/abi.ChanType", () -> abiChanTypeDesc,
+                java.util.List.of(
+                    new DerivedField("Elem", graalgo.values.GoKind.POINTER,
+                        ti -> materializeTypeField(ti, t -> t.elem)),
+                    new DerivedField("Dir", graalgo.values.GoKind.INT64,
+                        ti -> chanDirAbiValue(ti.chanDir))))),
+        java.util.Map.entry(graalgo.values.GoKind.MAP,
+            new DerivedSpec("internal/abi.MapType", () -> abiMapTypeDesc,
+                java.util.List.of(
+                    new DerivedField("Key", graalgo.values.GoKind.POINTER,
+                        ti -> materializeTypeField(ti, t -> t.key)),
+                    new DerivedField("Elem", graalgo.values.GoKind.POINTER,
+                        ti -> materializeTypeField(ti, t -> t.elem))))),
+        java.util.Map.entry(graalgo.values.GoKind.SLICE,
+            new DerivedSpec("internal/abi.SliceType", () -> abiSliceTypeDesc,
+                java.util.List.of(
+                    new DerivedField("Elem", graalgo.values.GoKind.POINTER,
+                        ti -> materializeTypeField(ti, t -> t.elem))))),
+        java.util.Map.entry(graalgo.values.GoKind.ARRAY,
+            new DerivedSpec("internal/abi.ArrayType", () -> abiArrayTypeDesc,
+                java.util.List.of(
+                    new DerivedField("Elem", graalgo.values.GoKind.POINTER,
+                        ti -> materializeTypeField(ti, t -> t.elem)),
+                    new DerivedField("Len", graalgo.values.GoKind.UINT64,
+                        ti -> (long) ti.arrayLen)))),
+        java.util.Map.entry(graalgo.values.GoKind.FUNC,
+            new DerivedSpec("internal/abi.FuncType", () -> abiFuncTypeDesc,
+                java.util.List.of(
+                    new DerivedField("InCount", graalgo.values.GoKind.UINT16,
+                        ti -> (long) ti.ins.size()),
+                    new DerivedField("OutCount", graalgo.values.GoKind.UINT16,
+                        ti -> (long) ti.outs.size())))),
+        java.util.Map.entry(graalgo.values.GoKind.STRUCT,
+            new DerivedSpec("internal/abi.StructType", () -> abiStructTypeDesc,
+                java.util.List.of())),
+        java.util.Map.entry(graalgo.values.GoKind.INTERFACE,
+            new DerivedSpec("internal/abi.InterfaceType", () -> abiInterfaceTypeDesc,
+                java.util.List.of()))
+    );
+
+    /** Cache of flattened derived descriptors, keyed by GoKind. */
+    private static final java.util.concurrent.ConcurrentHashMap<graalgo.values.GoKind,
+            graalgo.values.GoStructDescriptor> DERIVED_FLAT_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static graalgo.values.GoStruct materializeUncached(long tok) {
+        TypeInfo ti = table().info(tok);
+        // For composite kinds, build the most-derived struct with the
+        // embedded Type populated. The wire represents embedded structs as
+        // nested fields (not flattened).
+        DerivedSpec spec = DERIVED_SPECS.get(ti.kind);
+        if (spec != null && spec.descGuard.get() != null) {
+            return materializeDerived(ti, spec);
+        }
+        return materializeBaseType(ti, abiTypeDescriptor());
+    }
+
+    /**
+     * Materializes a derived abi type GoStruct from its spec. Builds (once)
+     * a flattened descriptor: the base Type fields at their original
+     * indices, followed by the spec's derived fields. Populates base
+     * fields from the TypeInfo and derived fields via the spec's value
+     * functions.
+     */
+    private static graalgo.values.GoStruct materializeDerived(TypeInfo ti, DerivedSpec spec) {
+        graalgo.values.GoStructDescriptor desc = DERIVED_FLAT_DESCS.computeIfAbsent(
+                ti.kind, k -> {
+                    java.util.List<String> names = new java.util.ArrayList<>();
+                    java.util.List<graalgo.values.GoKind> kinds = new java.util.ArrayList<>();
+                    for (DerivedField f : spec.fields) {
+                        names.add(f.name);
+                        kinds.add(f.kind);
+                    }
+                    return flattenedDesc(spec.typeName, abiTypeDescriptor(), names, kinds);
+                });
+        long[] longs = new long[desc.longsCount()];
+        Object[] objects = new Object[desc.objectsCount()];
+        // Index derived fields by name for the population loop.
+        java.util.Map<String, DerivedField> byName = new java.util.HashMap<>();
+        for (DerivedField f : spec.fields) {
+            byName.put(f.name, f);
+        }
+        for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
+            String name = f.name();
+            DerivedField df = byName.get(name);
+            if (df != null) {
+                Object v = df.valueFn.apply(ti);
+                if (f.inLongs()) {
+                    longs[f.index()] = v instanceof Number n ? n.longValue() : 0;
+                } else {
+                    objects[f.index()] = v;
+                }
+                continue;
+            }
+            // Base Type field: populate from TypeInfo (same as materializeBaseType).
+            switch (name) {
+                case "Size_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.size;
+                }
+                case "PtrBytes" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Hash" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "TFlag" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Align_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "FieldAlign_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "Kind_" -> {
+                    if (f.inLongs()) longs[f.index()] = abiKind(ti.kind);
+                }
+                case "Equal", "GCData" -> {
+                    if (!f.inLongs()) objects[f.index()] = null;
+                }
+                case "Str", "PtrToThis" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                default -> {
+                    // Unknown field: leave zero.
+                }
+            }
+        }
+        return new graalgo.values.GoStruct(desc, longs, objects);
+    }
+
+    /** Materializes a base internal/abi.Type GoStruct. */
+    private static graalgo.values.GoStruct materializeBaseType(TypeInfo ti,
+            graalgo.values.GoStructDescriptor desc) {
+        long[] longs = new long[desc.longsCount()];
+        Object[] objects = new Object[desc.objectsCount()];
+        for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
+            switch (f.name()) {
+                case "Size_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.size;
+                }
+                case "PtrBytes" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Hash" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "TFlag" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                case "Align_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "FieldAlign_" -> {
+                    if (f.inLongs()) longs[f.index()] = ti.align;
+                }
+                case "Kind_" -> {
+                    if (f.inLongs()) longs[f.index()] = abiKind(ti.kind);
+                }
+                case "Equal", "GCData" -> {
+                    if (!f.inLongs()) objects[f.index()] = null;
+                }
+                case "Str", "PtrToThis" -> {
+                    if (f.inLongs()) longs[f.index()] = 0;
+                }
+                default -> {
+                    // Unknown field: leave zero.
+                }
+            }
+        }
+        return new graalgo.values.GoStruct(desc, longs, objects);
     }
 }

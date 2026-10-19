@@ -188,6 +188,72 @@ func (e *exporter) exportUnsafeRuntimeCall(c *ast.CallExpr, name string, typ any
 	}
 }
 
+// matchUnsafeArrayIndex matches the array-index-via-unsafe idiom:
+//
+//	uintptr(p) + uintptr(i)*unsafe.Sizeof(T)
+//
+// (addition operands and multiplication factors in either order; the
+// Sizeof is constant-folded by go/types). This is the shape of
+// indexLocal-style helpers (e.g. sync.Pool's per-P array indexing via
+// unsafe.Pointer arithmetic). Returns the base pointer expression p and
+// the index expression i.
+//
+// The match is structural (AST shape + types), not name-keyed: any
+// package's indexLocal-like helper matches.
+func matchUnsafeArrayIndex(e *exporter, expr ast.Expr) (base, index ast.Expr, ok bool) {
+	bin, ok := expr.(*ast.BinaryExpr)
+	if !ok || bin.Op != token.ADD {
+		return nil, nil, false
+	}
+	if b, i, ok := splitBaseOffset(e, bin.X, bin.Y); ok {
+		return b, i, true
+	}
+	return splitBaseOffset(e, bin.Y, bin.X)
+}
+
+// splitBaseOffset matches base=uintptr(p), offset=index*const.
+func splitBaseOffset(e *exporter, base, offset ast.Expr) (ast.Expr, ast.Expr, bool) {
+	p := unwrapUintptrConv(e, base)
+	if p == nil {
+		return nil, nil, false
+	}
+	mul, ok := offset.(*ast.BinaryExpr)
+	if !ok || mul.Op != token.MUL {
+		return nil, nil, false
+	}
+	// uintptr(i)*C or C*uintptr(i); C must be a constant integer
+	// (the constant-folded unsafe.Sizeof).
+	if idx := unwrapUintptrConv(e, mul.X); idx != nil && isConstInt(e, mul.Y) {
+		return p, idx, true
+	}
+	if idx := unwrapUintptrConv(e, mul.Y); idx != nil && isConstInt(e, mul.X) {
+		return p, idx, true
+	}
+	return nil, nil, false
+}
+
+// unwrapUintptrConv returns the operand of a uintptr(x) conversion, or nil
+// if expr is not a uintptr conversion. Verified via go/types, not the
+// identifier spelling (robust against shadowing).
+func unwrapUintptrConv(e *exporter, expr ast.Expr) ast.Expr {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil
+	}
+	// Must be a conversion to uintptr (type-checked).
+	if t := e.info.TypeOf(call); t == nil || !isUintptr(t) {
+		return nil
+	}
+	return call.Args[0]
+}
+
+// isConstInt reports whether expr is a constant integer expression
+// (go/types constant-folded, e.g. unsafe.Sizeof(T)).
+func isConstInt(e *exporter, expr ast.Expr) bool {
+	tv, ok := e.info.Types[expr]
+	return ok && tv.Value != nil
+}
+
 // exportUnsafeConversion lowers conversions involving unsafe.Pointer.
 // dstT is the conversion target type. It returns handled=false when
 // neither side is unsafe.Pointer (the caller falls through to the existing
@@ -222,6 +288,25 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 			}), true, nil
 		}
 		if isUintptr(srcT) {
+			// fix-redmaster-r12: the array-index-via-unsafe idiom
+			// (uintptr(p) + uintptr(i)*unsafe.Sizeof(T), e.g.
+			// sync.Pool's indexLocal) lowers to the unsafearrayindex
+			// wire node — handle-based element pointer arithmetic.
+			// Structural match, not name-keyed. Falls through to the
+			// D5 trap for all other uintptr->unsafe.Pointer shapes.
+			if base, index, ok := matchUnsafeArrayIndex(e, c.Args[0]); ok {
+				baseNode, err := e.exportExpr(base)
+				if err != nil {
+					return nil, true, err
+				}
+				indexNode, err := e.exportExpr(index)
+				if err != nil {
+					return nil, true, err
+				}
+				return e.node("unsafearrayindex", c, map[string]any{
+					"base": baseNode, "index": indexNode, "type": to,
+				}), true, nil
+			}
 			return e.node("unsafefromuint", c, map[string]any{
 				"x": x, "type": to,
 			}), true, nil

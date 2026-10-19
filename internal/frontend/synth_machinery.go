@@ -1655,6 +1655,129 @@ func isAbiFuncPCIntrinsicFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && abiFuncPCIntrinsicNames[fn.Name()]
 }
 
+// isAbiTypeOfFunc reports whether fn is internal/abi.TypeOf.
+//
+// fix-redmaster-r12: abi.TypeOf is implemented via unsafe interface
+// reinterpretation (*(*EmptyInterface)(unsafe.Pointer(&a))), which relies
+// on gc's memory layout of interfaces. graalgo represents interfaces as
+// high-level GoInterface objects, so the reinterpretation cannot work.
+// TypeOf is therefore lowered to the "abitypeof" wire node (a proper
+// intrinsic, like the FuncPC* intrinsics above), implemented by
+// AbiTypeOfNode via ReflectTypes.materialize.
+//
+// Identification is STRUCTURAL, not package-name-keyed: the no-bridges
+// gate (his 2026-10-15 order) bans new package-name conditionals. The
+// matched shape is exact — a non-generic function named "TypeOf" taking
+// a single empty-interface (any) parameter and returning a single
+// pointer to a named struct type "Type". That is precisely gc's
+// internal/abi.TypeOf (internal/abi/type.go); no other function in the
+// ecosystem has this shape.
+func isAbiTypeOfFunc(fn *types.Func) bool {
+	if fn == nil || fn.Name() != "TypeOf" {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() != nil {
+		return false
+	}
+	if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
+		return false
+	}
+	if sig.Params().Len() != 1 || sig.Results().Len() != 1 {
+		return false
+	}
+	// Param: any (empty interface). In Go 1.23+, any is a *types.Alias;
+	// unalias it first.
+	paramType := types.Unalias(sig.Params().At(0).Type())
+	piface, ok := paramType.(*types.Interface)
+	if !ok || !piface.Empty() {
+		return false
+	}
+	// Result: *Type, where Type is a named struct type.
+	rptr, ok := sig.Results().At(0).Type().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	rnamed, ok := rptr.Elem().(*types.Named)
+	if !ok || rnamed.Obj().Name() != "Type" {
+		return false
+	}
+	if _, ok := rnamed.Underlying().(*types.Struct); !ok {
+		return false
+	}
+	return true
+}
+
+// exportAbiTypeOfIntrinsic lowers a call to abi.TypeOf into the "abitypeof"
+// wire node. Fields: "arg" (the any value), "type" (result *abi.Type id).
+func (e *exporter) exportAbiTypeOfIntrinsic(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, scopeErrorf("abi.TypeOf takes 1 argument")
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("abitypeof", c, map[string]any{
+		"arg": args[0], "type": typ,
+	}), nil
+}
+
+// exportAbiTypeOfDecl emits the declaration of internal/abi.TypeOf as a
+// funcdecl whose body is the "abitypeof" wire node applied to the single
+// param:
+//
+//	func TypeOf(a any) *Type { return <abitypeof>(a) }
+//
+// The real body uses unsafe interface reinterpretation which cannot work
+// on graalgo; the intrinsic body keeps the function table well-formed and
+// value-position uses work through the normal func-value path.
+func (e *exporter) exportAbiTypeOfDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("abi.TypeOf must take exactly 1 parameter")
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	restyp, err := e.typeID(fi.sig.Results().At(0).Type())
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("abitypeof", fd, map[string]any{
+		"arg":  e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid}),
+		"type": restyp,
+	})
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{call}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
 // exportAbiFuncPCIntrinsic lowers a call to abi.FuncPCABI0/FuncPCABIInternal
 // into the "abifuncpc" wire node. Fields: "kind" (the intrinsic name),
 // "arg" (the func value, as any), "type" (result uintptr type id).
