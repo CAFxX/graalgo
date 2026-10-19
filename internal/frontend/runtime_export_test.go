@@ -544,3 +544,63 @@ func main() {
 		t.Errorf("exported JSON has %d runtimegosched nodes, want 2 (defer + go)", n)
 	}
 }
+
+// TestRuntimeFuncMethodValueScopeError (P1-12): a method value of a
+// synthetic stack-inspection method (`f := fn.Name`) has no funcdecl for
+// the "methodvalue" wire node to reference. It must fail at compile time
+// with the named WS D scope error — never with an exporter crash (the
+// pre-fix behavior: nil dereference on the stale panicMsg marker) and
+// never with an injected runtime panic.
+func TestRuntimeFuncMethodValueScopeError(t *testing.T) {
+	for _, tc := range []struct{ recv, meth string }{
+		{"fn", "Name"},
+		{"fn", "Entry"},
+		{"fn", "FileLine"},
+	} {
+		src := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	fn := runtime.FuncForPC(pcs[0])
+	_ = n
+	if fn == nil {
+		return
+	}
+	f := ` + tc.recv + `.` + tc.meth + `
+	_ = f
+}
+`
+		_, err := ExportFile(writeSyncProg(t, src))
+		if err == nil {
+			t.Errorf("method value %s.%s: expected scope error, got success", tc.recv, tc.meth)
+			continue
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "method value "+tc.meth) || !strings.Contains(msg, "not supported") {
+			t.Errorf("method value %s.%s: error %q is not the named scope error", tc.recv, tc.meth, msg)
+		}
+	}
+	// (*Frames).Next is covered by the same structural guard.
+	src := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	_, _ = n, frames
+	f := frames.Next
+	_ = f
+}
+`
+	_, err := ExportFile(writeSyncProg(t, src))
+	if err == nil {
+		t.Errorf("method value frames.Next: expected scope error, got success")
+	} else if msg := err.Error(); !strings.Contains(msg, "method value Next") || !strings.Contains(msg, "not supported") {
+		t.Errorf("method value frames.Next: error %q is not the named scope error", msg)
+	}
+}
