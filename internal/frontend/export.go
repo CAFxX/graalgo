@@ -6844,11 +6844,20 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if !ok {
 		return nil, false
 	}
+	// fix-p0-runtime-alias: R2-P2-9 pattern — discriminate on the resolved
+	// object, not the identifier spelling: rt "runtime"; rt.Gosched() is
+	// intercepted, while a shadowed local named runtime is not.
+	if _, isPkg := info.Uses[pkgIdent].(*types.PkgName); !isPkg {
+		return nil, false
+	}
+	// Matched by import PATH, not declared name: a user package named
+	// "runtime" (e.g. fakert/runtime) never matches — the overlay's path
+	// is exactly "runtime".
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8460,11 +8469,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
-		// local named runtime is not. The structural obj.Pkg().Name()
-		// check below stays as the second gate.
+		// local named runtime is not. The structural second gate below
+		// matches the func's package by import PATH, not declared name
+		// (fix-p0-runtime-alias): a user package named "runtime" never
+		// matches — the overlay's path is exactly "runtime".
 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
 				}
 				if len(c.Args) != 0 {
@@ -8484,8 +8495,17 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+		// fix-p0-runtime-alias: R2-P2-9 pattern — discriminate on the
+		// resolved object, not the identifier spelling: rt "runtime";
+		// rt.GC() is intercepted, while a shadowed local named runtime
+		// is not. The func's package is matched by import PATH, not
+		// declared name: a user package named "runtime"
+		// (e.g. fakert/runtime) never matches — the overlay's path is
+		// exactly "runtime" (syntheticRuntimePackage).
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
+			_, isPkg := e.info.Uses[pkgIdent].(*types.PkgName)
+			obj, isFn := e.info.Uses[sel.Sel].(*types.Func)
+			if isPkg && isFn && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
