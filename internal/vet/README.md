@@ -11,7 +11,7 @@ This package implements `go vet`-style static analyzers that run as part of
 | `printf` | Format string/argument consistency for `fmt.Printf`, `Sprintf`, `Fprintf`, `Errorf`, `Scanf`, `Sscanf`, `Fscanf`, `log.Printf/Fatalf/Panicf`, `testing.T.Errorf/Fatalf` |
 | `unreachable` | Code after `return`, `panic`, `break`/`continue`/`goto`, or infinite loops |
 | `stringintconv` | `string(int)` conversions that yield a single rune instead of digits |
-| `nilfunc` | Comparisons of func values to nil that are always true/false |
+| `nilfunc` | Comparisons of declared functions to nil that are always true/false (func variables are nilable and never flagged) |
 | `bools` | Redundant `x == true`, suspicious `!x == y` precedence |
 | `atomic` | Direct assignment to `sync/atomic` typed values (use `Store`) |
 | `copylocks` | Locks (`sync.Mutex`, `RWMutex`, `WaitGroup`, or structs containing them) passed by value |

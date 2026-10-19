@@ -67,9 +67,13 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 	return out
 }
 
-// Comparing a func value to nil is always false (except for a nil
-// func variable, which is useless to compare). go vet flags
-// comparisons where one side is a func type and the other is nil.
+// Comparing a declared function to nil is always false (==) or always
+// true (!=). Mirrors go vet's nilfunc analyzer
+// (golang.org/x/tools/go/analysis/passes/nilfunc): only the *declared
+// function* case fires — never a func variable, which is nilable. The
+// operand is resolved through type info, so a package-qualified reference
+// (pkg.Fn), a method value (v.M), an instantiated generic (F[int]), or a
+// parenthesized reference all resolve to the *types.Func declaration.
 func runNilFunc(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -78,31 +82,74 @@ func runNilFunc(pass *Pass) []Diagnostic {
 			if !ok || (be.Op != token.EQL && be.Op != token.NEQ) {
 				return true
 			}
-			if isNil(pass, be.X) && isFuncType(pass, be.Y) ||
-				isNil(pass, be.Y) && isFuncType(pass, be.X) {
-				out = append(out, Diagnostic{
-					pass.position(be),
-					"comparison of function to nil is always " + constBool(be.Op == token.NEQ),
-				})
+			// Only want comparisons with a nil identifier on one side.
+			var other ast.Expr
+			switch {
+			case isNil(pass, be.X):
+				other = be.Y
+			case isNil(pass, be.Y):
+				other = be.X
+			default:
+				return true
 			}
+			// Only want declared functions: the operand must resolve to
+			// a *types.Func in type info's Uses map.
+			fn, ok := pass.Info.Uses[usedIdent(pass, other)].(*types.Func)
+			if !ok {
+				return true
+			}
+			out = append(out, Diagnostic{
+				pass.position(be),
+				"comparison of function " + fn.Name() + " " + be.Op.String() +
+					" nil is always " + constBool(be.Op == token.NEQ),
+			})
 			return true
 		})
 	}
 	return out
 }
 
+// unparen strips parentheses exactly like go/ast.Unparen (go1.22+); the
+// vet package lives in the root module with a go1.21 floor, so the
+// stdlib helper cannot be used here.
+func unparen(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}
+
+// usedIdent mirrors golang.org/x/tools nilfunc's use of
+// typesinternal.UsedIdent: it returns the identifier that the type
+// checker's Uses map keys on for a (possibly parenthesized, qualified,
+// or instantiated) function reference.
+func usedIdent(pass *Pass, e ast.Expr) *ast.Ident {
+	e = unparen(e)
+	// Look through type instantiation if necessary (e.g. F[int]).
+	switch d := e.(type) {
+	case *ast.IndexExpr:
+		if pass.Info.Types[d.Index].IsType() {
+			e = d.X
+		}
+	case *ast.IndexListExpr:
+		e = d.X
+	}
+	switch e := unparen(e).(type) {
+	// Info.Uses holds the resolved object even for selector expressions.
+	case *ast.Ident:
+		return e
+	case *ast.SelectorExpr:
+		return e.Sel
+	}
+	return nil
+}
+
 func isNil(pass *Pass, e ast.Expr) bool {
 	tv, ok := pass.Info.Types[e]
 	return ok && tv.IsNil()
-}
-
-func isFuncType(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
-	if !ok || tv.Type == nil {
-		return false
-	}
-	_, ok = tv.Type.Underlying().(*types.Signature)
-	return ok
 }
 
 func constBool(b bool) string {
