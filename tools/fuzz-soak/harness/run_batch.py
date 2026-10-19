@@ -16,9 +16,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: run_batch.py -> harness -> fuzz-soak -> tools -> repo (four levels).
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,9 +39,11 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build once: the root `make build` target compiles all backend
+    # modules (truffle/runtime/interop, javac -Werror) and builds the
+    # gofrontend binary the launcher needs (a truffle-Makefile dependency).
+    print("== building graalgo backend (make build) ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=1200)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])

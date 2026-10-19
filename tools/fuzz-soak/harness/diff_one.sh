@@ -1,5 +1,5 @@
 #!/bin/bash
-# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
+# Single-program differential: gc 1.27.1 vs graalgo (P3SyncMain product launcher).
 # Usage: diff_one.sh <go-file> <workdir> <gmp>
 # Emits a JSON result record to stdout.
 set -uo pipefail
@@ -8,18 +8,26 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: harness/diff_one.sh -> fuzz-soak -> tools -> repo (three levels).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GR="${GR:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+# Product launcher: graalgo.p3sync.launcher.P3SyncMain via the blessed wrapper
+# (load-bearing classpath order + java.io.tmpdir handling live there).
+SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+# Keep JVM temp off /tmp (small shared tmpfs): per-seed workdir on the
+# persistent disk. graalgo-sync-run forwards TMPDIR as -Djava.io.tmpdir.
+export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR}"
+mkdir -p "$TMPDIR"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
+
+# 0. Backend launcher must exist (run_batch.py runs `make build` first).
+if [ ! -x "$SYNC_RUN" ]; then
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "backend launcher missing: %s (run make build at the repo root)"}\n' "$base" "$SYNC_RUN"
+    exit 0
+fi
 
 # 1. gc build
 if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
@@ -31,10 +39,10 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (120s timeout; JVM startup dominates).
+# NOTE: no bare `--` before the file: since the M9 era, everything after a
+# bare `--` is the Go program's argv (os.Args), not the input file.
+timeout 120 "$SYNC_RUN" --gmp="$GMP" "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 
