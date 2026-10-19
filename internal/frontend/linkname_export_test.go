@@ -147,3 +147,51 @@ func main() {
 		t.Errorf("atomic.LoadBool error was not 'undefined': %v", err)
 	}
 }
+
+// TestRuntimeProvidedLinknameStdlib (F-1 interim, positive): the real
+// stdlib sync package declares directive-less bodyless
+// `func runtime_Semacquire(s *uint32)` ("defined in package runtime");
+// the exporter must route it to the exact linkname symbol
+// "sync.runtime_Semacquire" so the backend dispatches to its intrinsic.
+func TestRuntimeProvidedLinknameStdlib(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+var _ = sync.Mutex{}
+
+func main() {}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile importing sync: %v", err)
+	}
+	if !strings.Contains(out, `"linkname": "sync.runtime_Semacquire"`) &&
+		!strings.Contains(out, `"linkname":"sync.runtime_Semacquire"`) {
+		t.Errorf("sync.runtime_Semacquire did not route to linkname;\n%s", out[:2000])
+	}
+}
+
+// TestRuntimeProvidedLinknameUserPackage (F-1 interim, negative): a
+// bodyless `func runtime_foo()` in a USER package must NOT be misrouted
+// to a fabricated "main.runtime_foo" linkname. It is an unimplemented
+// stub (fail-loud at call time), never a linkname.
+func TestRuntimeProvidedLinknameUserPackage(t *testing.T) {
+	src := `package main
+
+func runtime_foo()
+
+func main() {}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with user runtime_foo: %v", err)
+	}
+	if strings.Contains(out, "main.runtime_foo") {
+		t.Errorf("user bodyless runtime_foo misrouted to linkname symbol main.runtime_foo;\n%s", out[:2000])
+	}
+	if !strings.Contains(out, `"unimplemented": true`) &&
+		!strings.Contains(out, `"unimplemented":true`) {
+		t.Errorf("user bodyless runtime_foo not marked unimplemented;\n%s", out[:2000])
+	}
+}

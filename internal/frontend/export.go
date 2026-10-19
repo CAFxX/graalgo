@@ -6181,6 +6181,32 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 	return ""
 }
 
+// runtimeProvidedPackages is the interim F-1 gate (ADR-0009): the stdlib
+// packages whose go1.27.1 GOROOT sources declare directive-less bodyless
+// `func runtime_*` functions that package runtime provides via //go:linkname
+// (the provider directives are inventoried in the ADR appendix).
+// Determined by: every `^func runtime_` decl in GOROOT outside package
+// runtime, minus decls carrying their own //go:linkname (arena, weak —
+// handled by linknameDirective, the heuristic never fires), minus
+// synthetic packages (os, syscall, internal/poll, unique, math/rand,
+// math/rand/v2, net, hash/maphash, internal/bytealg, crypto/internal/boring
+// — explicit directives in their synthetic sources). Package runtime
+// itself is excluded: its own bodyless functions are assembly-backed,
+// never linkname-provided. Deleted when the generated exact-symbol table
+// (ADR-0009) lands.
+var runtimeProvidedPackages = map[string]bool{
+	"sync":          true,
+	"sync/atomic":   true,
+	"internal/sync": true,
+}
+
+// isRuntimeProvidedPackage reports whether pkgPath is a stdlib package
+// known to receive runtime-provided `runtime_*` functions (F-1 interim
+// gate; see runtimeProvidedPackages and ADR-0009).
+func isRuntimeProvidedPackage(pkgPath string) bool {
+	return runtimeProvidedPackages[pkgPath]
+}
+
 // exportLinknameDecl emits a bodyless function (P3-M4, WS C, ADR-0004 D1)
 // as a funcdecl with no "body". A bodyless function carrying //go:linkname
 // gets the additive "linkname" field and the factory builds a
@@ -6231,9 +6257,19 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// assembly — they're intrinsics that the backend must implement.
 		// Emit as a linkname so the backend dispatches to the Java
 		// intrinsic instead of panicking on "unimplemented".
+		//
+		// INTERIM (F-1, ADR-0009): the prefix heuristic is name-keyed and
+		// uninventoried, so it is gated to the stdlib packages actually
+		// known to declare directive-less bodyless `runtime_*` functions
+		// provided by package runtime (isRuntimeProvidedPackage). A
+		// bodyless `runtime_*` anywhere else falls through to
+		// "unimplemented" (honest fail-loud stub) instead of a fabricated
+		// linkname symbol. The structural fix is a generated exact-symbol
+		// table from GOROOT's runtime //go:linkname directives.
 		if fi.obj != nil && fi.obj.Name() != "" {
 			funcName := fi.obj.Name()
-			if len(funcName) > 8 && funcName[:8] == "runtime_" && pkgPath != "runtime" {
+			if len(funcName) > 8 && strings.HasPrefix(funcName, "runtime_") &&
+				isRuntimeProvidedPackage(pkgPath) {
 				// Runtime-provided intrinsic: symbol is pkgpath.name
 				// (e.g., "sync.runtime_Semacquire"). The backend's
 				// Linknames.dispatch will fail fast if no intrinsic
