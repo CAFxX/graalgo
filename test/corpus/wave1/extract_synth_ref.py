@@ -22,7 +22,7 @@ behavior is therefore the synthetic source executed by stock gc — the same
 sources §11 of the P3-M7 code review validated as gc-faithful on adversarial
 inputs — not real std.
 
-Usage: extract_synth_ref.py <phase1-frontend-dir> <prog.go> <outdir>
+Usage: extract_synth_ref.py <frontend-dir> <prog.go> <outdir>
 Prints the GOPATH on stdout.
 """
 

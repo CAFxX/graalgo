@@ -22,7 +22,7 @@ extracted main package. The reference behavior is therefore the synthetic
 source executed by stock gc — the same sources the wave-2 review validates
 as gc-faithful — not real std.
 
-Usage: extract_synth_ref.py <phase1-frontend-dir> <prog.go> <outdir>
+Usage: extract_synth_ref.py <frontend-dir> <prog.go> <outdir>
 Prints the GOPATH on stdout.
 """
 

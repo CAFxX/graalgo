@@ -5,7 +5,7 @@
 # exit codes, and — for panic programs — the first stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs (marked with an
+# internal/frontend/p3frontend/DESIGN.md §7). Timing-sensitive programs (marked with an
 # empty <base>.timing file) print fixed strings only (never measured
 # durations) and run with gmp=1 only; all other programs run with gmp=1
 # and gmp=4 (the timectx convention).
@@ -21,9 +21,10 @@
 # use M7-extension constructors (csv.NewReaderString, gob.NewBufferEncoder,
 # ...) absent from real std, so the gc leg cannot build them against GOROOT
 # (a GOPATH cannot shadow the standard library). For these, the gc leg
-# builds the program against the extracted phase-1 synthetic sources
-# (extract_synth_ref.py) — the same sources the P3-M7 review §11 validated
-# as gc-faithful — with imports rewritten to a temp GOPATH.
+# builds the program against the extracted synthetic sources
+# (extract_synth_ref.py reads the synthetic*Source consts from
+# internal/frontend/synth_*.go) — the same sources the P3-M7 review §11
+# validated as gc-faithful — with imports rewritten to a temp GOPATH.
 #
 # Usage: run_wave.sh [pkg|all] — run one package subdir, or every wave-2
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
@@ -35,15 +36,14 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Resolve the repo root from this script's own path (works from any checkout).
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GR="${GR:-$(cd "$HERE/../../.." && pwd)}"
+REPO_ROOT="$GR"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave2/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m8-tmp/wave2"
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp/m8-wave2}"
 export GOCACHE="$HOME/workspace/.gocache-m8-wave2"
 mkdir -p "$TMPDIR"
 
@@ -61,15 +61,14 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== checking backend build =="
+[ -x "$REPO_ROOT/internal/backend/graalgo-sync-run" ] || { echo "graalgo-sync-run missing: run 'make build' at $REPO_ROOT first"; exit 1; }
+[ -d "$REPO_ROOT/internal/backend/interop/out/classes" ] || { echo "backend classes not built: run 'make build' at $REPO_ROOT first"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M8b: point java.io.tmpdir at $TMPDIR (never /tmp): the JVM's shared-
-# memory files warn "Insufficient space" on the 512M /tmp tmpfs, which is
-# harness noise in every corpus run's stderr.
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m "-Djava.io.tmpdir=$TMPDIR" -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# The launcher wrapper sets -Djava.io.tmpdir from TMPDIR (P3-M8b: never /tmp —
+# the JVM's shared-memory files warn "Insufficient space" on the 512M /tmp
+# tmpfs, which is harness noise in every corpus run's stderr).
+GRAALGO_RUN=( "$REPO_ROOT/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -79,15 +78,15 @@ pass=0; fail=0; scopelimited=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
 # build_gc <go file> <gcbin>: stock-gc reference leg. Programs marked
-# <base>.synthetic build against the extracted phase-1 synthetic sources;
-# all others build against real std.
+# <base>.synthetic build against the extracted synthetic sources (from
+# internal/frontend/synth_*.go); all others build against real std.
 build_gc() {
     local go="$1" gcbin="$2" base="${1%.go}"
     if [ -f "$base.synthetic" ]; then
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$REPO_ROOT/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m8prog/main.go" \

@@ -25,10 +25,10 @@ it is no longer the snapshot backend.
   behavior delta.
 - `README.md` — this file.
 
-**Path note:** the phase-3 plan suggested
-`phases/phase3/hidden_files/snapshots/` as the evidence location; these live
-at `test/snapshots/` instead — snapshots are a first-class versioned
-deliverable (committed, CI-gated), not internal bookkeeping.
+**Path note:** the research-era phase-3 plan suggested keeping snapshots as
+internal evidence; these live at `test/snapshots/` instead — snapshots are
+a first-class versioned deliverable (committed, CI-gated), not internal
+bookkeeping.
 
 ## Format (`graalgo-behavior-snapshot/v1`)
 

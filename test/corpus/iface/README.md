@@ -38,7 +38,7 @@ corpus is that integration test.
 ```
 
 The differential runner filters the known JVM `Unsafe` warnings on
-stderr (harness noise, cf. `p3frontend/DESIGN.md` §7). Programs are
+stderr (harness noise, cf. [`internal/frontend/p3frontend/DESIGN.md`](../../../internal/frontend/p3frontend/DESIGN.md) §7). Programs are
 single-goroutine; one `--gmp=1` run each (the sync corpus's gmp sweep
 covers the scheduler).
 

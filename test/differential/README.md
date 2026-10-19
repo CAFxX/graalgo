@@ -53,7 +53,8 @@ backends[0] (the reference); `run` compares every backend against the first.
 | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
 | `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | Phase-1 launcher; `GRAALGO_RUN=${PHASE1_DIR}/graalgo-run` |
 
-`PHASE1_DIR` is exported by `run.sh` (defaults to `<repo>/phases/phase1`);
+`PHASE1_DIR` is exported by `run_conformance.sh` and `fuzz/run_fuzz_native.sh`
+(defaults to `<repo>/internal/backend`);
 export it yourself for manual `diffharness` invocations. `gc-a` stays the
 reference: `validate` still compares gc-b against gc-a only.
 

@@ -60,8 +60,8 @@ func TestDiffEntries_BuildLogOnlyCompared(t *testing.T) {
 }
 
 func TestScrubEnvPaths(t *testing.T) {
-	in := "build [/home/u/checkout/phases/phase1/graalgo-run --check /home/u/checkout/tools/diffharness/corpus/13_x/main.go] failed"
-	got := scrubEnvPaths(in, "/home/u/checkout/tools/diffharness/corpus")
+	in := "build [/home/u/checkout/internal/backend/graalgo-run --check /home/u/checkout/test/differential/corpus/13_x/main.go] failed"
+	got := scrubEnvPaths(in, "/home/u/checkout/test/differential/corpus")
 	if strings.Contains(got, "/home/u/checkout") {
 		t.Fatalf("machine paths not scrubbed: %q", got)
 	}
@@ -72,7 +72,7 @@ func TestScrubEnvPaths(t *testing.T) {
 
 func TestScrubEnvPaths_LeavesProgramOutputAlone(t *testing.T) {
 	in := "hello, world\n"
-	if got := scrubEnvPaths(in, "/home/u/checkout/tools/diffharness/corpus"); got != in {
+	if got := scrubEnvPaths(in, "/home/u/checkout/test/differential/corpus"); got != in {
 		t.Fatalf("program output mangled: %q -> %q", in, got)
 	}
 }

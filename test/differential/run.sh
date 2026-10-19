@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CI entry point for the diffharness smoke layer (graalgo spike 7).
 #
-# Spike kill triggers (see spikes/07-harness/REPORT.md):
+# Spike kill triggers (see docs/arch/spikes/07-harness/REPORT.md):
 #   K1: any mutation class the harness cannot detect -> FAIL
 #   K2: systematic false positives on the unmutated corpus -> FAIL
 #   K3: harness flakiness (rerun control diverges) -> FAIL

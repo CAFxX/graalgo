@@ -9,24 +9,20 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+REPO_ROOT="$GR"
 export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp/m7-math}"
 export GOCACHE="$HOME/workspace/.gocache-m7-math"
 mkdir -p "$TMPDIR"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== checking backend build =="
+[ -x "$REPO_ROOT/internal/backend/graalgo-sync-run" ] || { echo "graalgo-sync-run missing: run 'make build' at $REPO_ROOT first"; exit 1; }
+[ -d "$REPO_ROOT/internal/backend/interop/out/classes" ] || { echo "backend classes not built: run 'make build' at $REPO_ROOT first"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# The launcher wrapper sets -Djava.io.tmpdir from TMPDIR (P3-M7R2: keeps the
+# JVM off /tmp — a full /tmp silently yields empty output with exit 0,
+# methodology review finding).
+GRAALGO_RUN=( "$REPO_ROOT/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

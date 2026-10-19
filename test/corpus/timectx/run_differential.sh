@@ -5,24 +5,22 @@
 # codes, and — for panic programs — the first stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs print fixed strings
+# internal/frontend/p3frontend/DESIGN.md §7). Timing-sensitive programs print fixed strings
 # only (never measured durations).
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Backend: the product launcher (P3SyncMain) via the wrapper at
+# internal/backend/graalgo-sync-run. Requires `make build` at the repo root
+# first — the wrapper never builds; it fails loudly when classes are missing.
+REPO_ROOT="$(cd ../../.. && pwd)"
 export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== checking backend build =="
+[ -x "$REPO_ROOT/internal/backend/graalgo-sync-run" ] || { echo "graalgo-sync-run missing: run 'make build' at $REPO_ROOT first"; exit 1; }
+[ -d "$REPO_ROOT/internal/backend/interop/out/classes" ] || { echo "backend classes not built: run 'make build' at $REPO_ROOT first"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+GRAALGO_RUN=( "$REPO_ROOT/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

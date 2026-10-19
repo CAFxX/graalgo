@@ -1,8 +1,8 @@
 # P3-M7 wave-1 differential corpus
 
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
-bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
-see `phases/phase3/hidden_files/m7-CHECKLIST.md`), differential vs stock
+bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort),
+differential vs stock
 gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## Layout
@@ -72,7 +72,7 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 `go run` masks the exit code) and under `P3SyncMain`, and byte-compares
 stdout, exit codes, and (for panic programs) the first stderr line.
 Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
-cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
+cf. [`internal/frontend/p3frontend/DESIGN.md`](../../../internal/frontend/p3frontend/DESIGN.md) §7). Modeled exactly on
 `corpus/timectx/run_differential.sh` (same phases, same comparisons);
 only the program discovery (per-package dirs, `[0-9][0-9]_*.go` glob,
 `.timing` marker) is wave-1 specific.
@@ -101,7 +101,7 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-1 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m7-int/phases/phase3/hidden_files/m7-tmp/<pkg>
+export TMPDIR=$HOME/workspace/.tmp/m7-<pkg>
 export GOCACHE=$HOME/workspace/.gocache-m7-<pkg>
 ```
 

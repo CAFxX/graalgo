@@ -9,33 +9,35 @@
 #   stderr line is compared (wave3 convention).
 #
 # Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
+#   GR        repo root (default: the checkout containing this script)
 #   GO        gc toolchain (default ~/tools/go/bin/go)
-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
 #   TMPDIR    scratch (default <probe-dir>/.tmp, created)
+#
+# Requires `make build` at the repo root first: the graalgo leg runs through
+# the product launcher wrapper (internal/backend/graalgo-sync-run,
+# P3SyncMain), which never builds and fails loudly when classes are missing.
 #
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
 set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
+GR="${GR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 GO="${GO:-$HOME/tools/go/bin/go}"
-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
+SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
-fi
+echo "== checking backend build =="
+[ -x "$SYNC_RUN" ] || { echo "graalgo-sync-run missing: run 'make build' at $GR first"; exit 1; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "backend classes not built: run 'make build' at $GR first"; exit 1; }
+
+# Product launcher (P3SyncMain) via the wrapper: it resolves the gofrontend
+# binary (internal/frontend/gofrontend) and -Djava.io.tmpdir from TMPDIR
+# itself, so no manual classpath assembly is needed.
+GRAALGO_RUN=( "$SYNC_RUN" )
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
 

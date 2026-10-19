@@ -74,5 +74,5 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
 
 Per `corpus/wave2/README.md`: never `/tmp`. The runner sets its own
 `TMPDIR`/`GOCACHE`; ad-hoc go builds use
-`TMPDIR=$HOME/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/unsafe`
+`TMPDIR=$HOME/workspace/.tmp/m8-unsafe`
 `GOCACHE=$HOME/workspace/.gocache-m8-unsafe`.

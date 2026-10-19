@@ -518,7 +518,7 @@ func cmdTypeparamRun(args []string) error {
 }
 
 // cmdSrctest implements the GOROOT/test differential adapter (conformance
-// layer: PLAN.md §5 layer 2, GG-0029/GG-0032). Modes mirror typeparam.
+// layer: docs/arch/phases/phase3/PLAN.md §5 layer 2, GG-0029/GG-0032). Modes mirror typeparam.
 func cmdSrctest(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("srctest needs a mode: scan|run")

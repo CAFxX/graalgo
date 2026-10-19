@@ -11,10 +11,11 @@ The package is synthetic-only (like `internal/reflectlite`): no user
 program can import `internal/*`, so `00_functions.go` is `.scopelimited` +
 `nogc` — neither leg runs under `run_wave3.sh`.
 
-## Correctness evidence (the tier1d harness)
+## Correctness evidence (the tier-1d procedure)
 
-`phases/phase3/hidden_files/m9-tmp/tier1d-harness/` extracts
-`syntheticBytealgSource` to a GOPATH (`src/internal/bytealg/`) and runs
+Extract `syntheticBytealgSource` (the const in
+[`internal/frontend/synth_bytealg.go`](../../../../../internal/frontend/synth_bytealg.go))
+to a GOPATH (`src/internal/bytealg/`) and run
 this exact corpus program under stock gc 1.27.1 against it. The program is
 self-checking: every result is cross-checked against the stdlib wrappers
 (`bytes`/`strings`) that consume bytealg, over empty/singleton/text/

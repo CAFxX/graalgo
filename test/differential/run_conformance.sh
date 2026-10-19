@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Conformance layer runner (PLAN.md §5 layer 2, GG-0029/GG-0032):
+# Conformance layer runner (docs/arch/phases/phase3/PLAN.md §5 layer 2, GG-0029/GG-0032):
 # GOROOT/test language suite (356 files) differential vs stock gc.
 #
 # The srctest adapter classifies every file (run / errorcheck / structural
@@ -9,7 +9,8 @@
 #
 # Exit status is non-zero on any unexplained divergence (a divergence not
 # covered by the exclusion list). New divergences are triaged into
-# srctest-exclusions.yaml with a reason code (four-way triage per PLAN §5:
+# srctest-exclusions.yaml with a reason code (four-way triage per
+# docs/arch/phases/phase3/PLAN.md §5:
 # graalgo bug / upstream change / backend-specific+reason-code /
 # nondeterminism-normalization) or fixed in the frontend.
 #

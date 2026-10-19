@@ -1,3 +1,3 @@
 reason: external programs cannot import internal/* (go tool restriction); the package is synthetic-only (like internal/reflectlite) — user imports are not admitted by the import allow-list
-retest: n/a — internal packages are never user-importable; re-verify via the tier1d harness (phases/phase3/hidden_files/m9-tmp/tier1d-harness/) which runs this self-checking program under gc against the extracted synthetic source
+retest: n/a — internal packages are never user-importable; re-verify via the tier-1d procedure (extract syntheticBytealgSource from internal/frontend/synth_bytealg.go to a GOPATH) which runs this self-checking program under gc against the extracted synthetic source
 nogc: import "internal/bytealg" is rejected by the go tool outside the parent tree of an internal/ directory
