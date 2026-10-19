@@ -3500,9 +3500,6 @@ public final class NodeFactory {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {

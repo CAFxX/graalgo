@@ -174,6 +174,25 @@ public final class Main {
                 registrar.registerAll(factory);
             }
             program = factory.buildProgram(json);
+            // P3-M3 (WS D, ADR-0003): install the interface method tables.
+            // Method objIDs resolve through Program.functions(); a missing
+            // objID fails fast here. Installed on every build (even empty)
+            // so a previous program's tables can never leak into this run.
+            // (Mirrors P3SyncMain: the main launcher must install the same
+            // per-run tables as the sync launcher.)
+            graalgo.frontend.Json.Object doc = factory.document();
+            graalgo.iface.IfaceMethodTable.install(
+                    graalgo.iface.IfaceMethodTables.resolve(doc, program.functions()));
+            // P3-M8 (wave 2, reflect): install the GoRType table (canonical
+            // per structural identity). Installed on every build (even empty)
+            // so a previous program's tables can never leak into this run.
+            graalgo.p3reflect.ReflectTypes.install(doc, program.functions());
+            // P3-M4 (WS C, ADR-0004): linkname symbol table (both
+            // directions), itabFor provider, interface method lists, and
+            // Go function bindings for callGo. Installed on every build
+            // (even empty) so a previous program's bindings can never
+            // leak into this run (registries are static).
+            graalgo.p3link.LinknameIntrinsics.install(doc, program);
         } catch (FrontendException e) {
             // M9 acceptance: scope errors (program uses constructs outside
             // frontend/v1 scope) are the program's fault → EXIT_BUILD_FAILURE.
