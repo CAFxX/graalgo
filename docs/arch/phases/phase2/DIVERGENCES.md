@@ -29,6 +29,57 @@ post-fix.
 
 (The remainder of this entry is the pre-fix record.)
 
+### DIV-M3-2: `select` on `time.After` hangs forever — UNVERIFIED CLAIM (PKG-048)
+
+**Status: UNVERIFIED — not an accepted divergence.** Two comments on master
+assert timer channels do not fire end-to-end under graalgo
+([Makefile:153](../../../../Makefile#L153),
+[test/regression/pkg031/repeat_test.go:30](../../../../test/regression/pkg031/repeat_test.go#L30):
+"timer channels do not fire under graalgo (PKG-048: select on time.After
+hangs forever)"). The regression suite's failability for hang bugs rests on
+the outer `timeout 600` instead of an in-test watchdog *because* of this
+claim. The claim was introduced 2026-10-16 by the PKG-031 regression lane
+(commit `01921f21`) and was never tracked anywhere else.
+
+**Static audit (2026-10-19, rem-timer-p1048): no integration gap found.**
+The full chain exists on disk:
+
+- Exporter lowers the time intrinsics to wire nodes
+  (`internal/frontend/synth_machinery.go:1437-1509`): `time.After` →
+  `timeafter`, `time.Tick` → `timetick`, `time.NewTimer`/`time.NewTicker` →
+  `timenew` (kind=timer/ticker), `time.AfterFunc` → `timeafterfunc`,
+  `time.Sleep` → `timesleep`, `time.Now` → `timenow`.
+- Both launchers register all eight time wire kinds: `graalgo.launcher.Main`
+  discovers interop's `P3KindRegistrations` via `ServiceLoader`
+  (`WireKindRegistrar`; `META-INF/services/graalgo.frontend.WireKindRegistrar`;
+  registration at
+  `internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java:105-113`);
+  `P3SyncMain` registers them directly
+  (`.../p3sync/launcher/P3SyncMain.java:312-320`).
+- The nodes are real, not stubs: `TimeAfterNode` arms a `GoTimerT` one-shot
+  on the scheduler timer heap; `Timers.sleep` parks on the timer heap
+  (`internal/backend/runtime/src/main/java/graalgo/runtime/Timers.java:38-54`).
+  Unit-tested: `TimerTest.java`, `TimerDifferentialTest.java`, differential
+  corpus `test/corpus/phase2/timers/tm01-tm15` (tm02/tm03/tm11 cover
+  select-on-`time.After` at the Java differential level).
+
+**What is still unknown:** whether `select` on `time.After` actually fires
+when a Go program runs through the full driver (the corpus `.go` files are
+Java-level differential only; they "double as the future end-to-end corpus"
+per `test/corpus/phase2/timers/README.md`).
+
+**Re-test trigger (gated on green master):** on green master, run the timer
+differential corpus end-to-end through the driver plus a
+select-on-`time.After` smoke test. If timers fire: delete the two stale
+comments and close this entry. If the hang reproduces: this becomes a P0
+bug (core coordination primitive) and the integration is fixed properly.
+Record the verdict here either way.
+
+**Note:** the `REPO_STRUCTURE.md:98` "stubbed sleep/timer-heap" claim that
+contradicted `Timers.java` is already refreshed by the review-clean
+`fix-p1-inventory-predicates` lane (RV-P1-07, commit `176ed885`, blocked on
+the red-CI gate) — not duplicated here.
+
 ## P2-M4 (GC interop, ADR-0002)
 
 ### DIV-M4-1: finalizer runs with a nil argument (no resurrection)
