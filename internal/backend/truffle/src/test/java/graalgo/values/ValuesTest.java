@@ -163,6 +163,29 @@ public final class ValuesTest {
         assertTrue(z.equals(z.copy()), "struct equals");
     }
 
+    public void testGoStructZeroNestedStruct() {
+        // fix-redmaster-r13: STRUCT-kind fields (including embedded structs
+        // like sync.Pool's poolLocalInternal) zero-initialize to recursive
+        // zero structs, not Java null. A null embedded struct nil-deref
+        // panics on promoted field access (the fmt.newPrinter <-
+        // sync.Pool.Get nil-deref that kept red master red after the build
+        // fix). Fails on the pre-fix tree (getObject(0) is null).
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("x"), List.of(GoKind.INT32),
+                List.of(-1), Arrays.asList((GoKind) null),
+                Arrays.asList((GoStructDescriptor) null),
+                Arrays.asList((GoStructDescriptor) null));
+        GoStructDescriptor outer = GoStructDescriptor.layout("Outer",
+                List.of("e"), List.of(GoKind.STRUCT),
+                List.of(-1), Arrays.asList((GoKind) null),
+                Arrays.asList((GoStructDescriptor) null),
+                Arrays.asList(inner));
+        GoStruct z = GoStruct.zero(outer);
+        Object e = z.getObject(0);
+        assertTrue(e instanceof GoStruct, "nested struct field is a zero GoStruct, not null");
+        assertEq(0, ((GoStruct) e).getLong(0), "nested zero int field");
+    }
+
     public void testGoInterface() {
         assertTrue(GoInterface.NIL.isNil(), "nil interface");
         GoInterface v = new GoInterface("desc", 42L, "itab");
