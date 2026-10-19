@@ -16,9 +16,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
-GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: harness/run_batch.py -> fuzz-soak -> tools -> repo.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,9 +39,9 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
+    # 1. Build Java modules once (root `make build`: truffle + runtime + interop).
     print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    r = sh(f"make -C {GR} build", timeout=600)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
@@ -71,8 +71,11 @@ def main():
         workdir = os.path.join(outdir, "work", f"seed_{s:05d}")
         os.makedirs(workdir, exist_ok=True)
         gofile = os.path.join(progdir, f"fuzz_{s:05d}.go")
+        # Propagate GR explicitly: diff_one.sh derives its own GR default,
+        # which must match the tree run_batch.py resolved above.
+        env = dict(os.environ, GR=GR)
         r = sh(f"bash {FUZZ}/harness/diff_one.sh {gofile} {workdir} {args.gmp}",
-               timeout=300)
+               timeout=300, env=env)
         try:
             rec = json.loads(r.stdout.strip().split("\n")[-1])
         except Exception:

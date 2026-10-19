@@ -8,15 +8,18 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+GR="${GR:-$HOME/workspace/graalgo}"
+BACKEND="$GR/internal/backend"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+export TMPDIR="${FUZZ_TMPDIR:-/tmp/graalgo-fuzz-soak}"
+mkdir -p "$TMPDIR"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+# Classpath mirrors the interop module's sanctioned RUN_CP
+# (internal/backend/interop/Makefile): interop/out/classes FIRST — this
+# order is load-bearing for graalgo.p3sync.launcher.P3SyncMain — then
+# runtime, truffle, then the GraalVM jars.
+CP="$BACKEND/interop/out/classes:$BACKEND/runtime/out/classes:$BACKEND/truffle/out/classes:$(ls "$BACKEND/truffle/lib/"*.jar 2>/dev/null | tr '\n' ':')"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
