@@ -43,7 +43,9 @@ jobs:
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
-        run: python3 .github/scripts/check_no_bridges.py
+        run: |
+          python3 .github/scripts/check_no_bridges.py
+          python3 .github/scripts/check_no_bridges.py --self-test
 
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1

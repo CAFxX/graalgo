@@ -6,7 +6,8 @@ Fails if the diff introduces new bridges:
 - New synth_*.go files
 - New package-name conditionals in frontend/backend
 - New panic stubs
-- New wire node kinds for stdlib functions
+- New wire node kinds on the frontend wire (inverted allowlist: any added
+  kind outside the explicit allowlist fails — see check 4)
 - New synthetic function registrations
 
 Existing bridges are grandfathered (they're in the removal queue — see
@@ -25,6 +26,7 @@ shallow checkout with no history), it fails loudly instead of skipping.
 CI must check out full history (fetch-depth: 0) for source 4 to resolve.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -64,6 +66,132 @@ ADJUDICATED_REGISTRATIONS = {
     # stdlib logic.
     ("internal/frontend/export.go", "Gosched"),
 }
+
+# ---------------------------------------------------------------------------
+# Wire-node kind allowlist (check 4). INVERTED CHECK (2026-10-19, P1-3
+# remediation): the old check flagged name patterns that *looked*
+# stdlib-specific (r'^(runtime|fmt|sync|os|net)[a-z]') — a denylist that
+# silently missed time*/unsafe*/strings*/bytes*/strconv*/reflect*/crypto*/
+# syscall*/io*/bufio*/context*/errors*/encoding*/math*/sort* kinds and only
+# scanned export.go, while wire nodes are also emitted from
+# internal/frontend/synth_machinery.go, chanops_m5.go, mrdesugar_m5.go,
+# synth_reflect.go, synth_unsafe.go and internal/frontend/v2/emit/nodes.go.
+# The inverted check flags ANY node kind added to the wire that is not in
+# the explicit allowlist below. A new bridge needs a new kind name, so it
+# cannot pass silently; a genuinely new generic AST kind fails loudly and a
+# human adds it here in the same change (with independent review).
+#
+# Generation (disk truth — re-run to refresh after a legitimate addition):
+#   grep -rhoE '\.node\s*\(\s*"[^"]+"' --include='*.go' internal/frontend/ \
+#     | sed -E 's/.*\(\s*"([^"]+)".*/\1/' | sort -u
+# plus the &Node{Kind: "<lit>"} literals (currently only "basiclit").
+# Snapshot below taken 2026-10-19 at master 56a3dd68 (83 kinds: 51+32).
+#
+# GENERIC_WIRE_NODE_KINDS: go/ast-vocabulary node kinds — the language's own
+# constructs (statements, expressions, channel builtins, builtin calls like
+# clear/minmax). The method* entries (methodref/methodvalue/ifacemethod/
+# funcfieldcall) are dispatch machinery, not stdlib surface.
+#
+# KNOWN_STDLIB_WIRE_NODE_KINDS: stdlib-specific kinds already present in the
+# tree at the snapshot above (time*/unsafe*/runtime* families plus syncop,
+# reflectop, sliceoverlap, abifuncpc, atomicaddr). Grandfathering authority
+# for these is docs/arch/bridge-inventory.md; the gate only inspects ADDED
+# lines, so anything already in the tree is grandfathered by construction —
+# this set exists so a re-added or moved kind does not false-positive, and
+# the gate fires only on genuinely NEW kinds.
+#
+# Adjudicated entries (ADJUDICATED_WIRE_NODES above) are honored first: they
+# are the narrow per-symbol, per-file exemption record with review refs.
+GENERIC_WIRE_NODE_KINDS = {
+    "addrof",
+    "assign",
+    "basiclit",
+    "binary",
+    "blank",
+    "block",
+    "branch",
+    "call",
+    "caseclause",
+    "chanclose",
+    "clear",
+    "complit",
+    "compositelit",
+    "convert",
+    "defer",
+    "deref",
+    "exprstmt",
+    "for",
+    "funcdecl",
+    "funcfieldcall",
+    "funclit",
+    "gostmt",
+    "ident",
+    "if",
+    "ifacemethod",
+    "incdec",
+    "index",
+    "labeled",
+    "makechan",
+    "methodref",
+    "methodvalue",
+    "minmax",
+    "nil",
+    "param",
+    "paren",
+    "pkgref",
+    "range",
+    "recv",
+    "return",
+    "select",
+    "selectcase",
+    "selector",
+    "send",
+    "slice",
+    "sliceexpr",
+    "switch",
+    "typeassert",
+    "typecase",
+    "typeswitch",
+    "unary",
+    "vardecl"
+}
+
+KNOWN_STDLIB_WIRE_NODE_KINDS = {
+    "abifuncpc",
+    "atomicaddr",
+    "reflectop",
+    "runtimecallers",
+    "runtimecallersframes",
+    "runtimefuncforpc",
+    "runtimegomaxprocs",
+    "runtimegoroot",
+    "runtimegosched",
+    "runtimenumcpu",
+    "runtimenumgoroutine",
+    "runtimereadmemstats",
+    "runtimestack",
+    "runtimeversion",
+    "sliceoverlap",
+    "syncop",
+    "timeafter",
+    "timeafterfunc",
+    "timec",
+    "timenew",
+    "timenow",
+    "timeop",
+    "timesleep",
+    "timetick",
+    "unsafeadd",
+    "unsafefromptr",
+    "unsafefromuint",
+    "unsafeslice",
+    "unsafeslicedata",
+    "unsafestring",
+    "unsafestringdata",
+    "unsafetooptr"
+}
+
+WIRE_NODE_KINDS_ALLOWLIST = GENERIC_WIRE_NODE_KINDS | KNOWN_STDLIB_WIRE_NODE_KINDS
 
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
@@ -162,19 +290,27 @@ def check_no_bridges(diff):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
 
-    # 4. New wire node kinds for stdlib
+    # 4. New wire node kinds (inverted allowlist — see the sets above).
+    # Scans every frontend .go file that emits wire nodes (export.go,
+    # synth_machinery.go, chanops_m5.go, mrdesugar_m5.go, synth_reflect.go,
+    # synth_unsafe.go, v2/emit/nodes.go — enumerated from disk 2026-10-19;
+    # the directory scope below covers future emitter files without a file
+    # list to go stale). Both emission shapes are covered: the exporter /
+    # v2-Emitter .node("kind", ...) calls and direct &Node{Kind: "kind", ...}
+    # literals.
     for fname, line in added_lines:
-        if not fname or "export.go" not in fname:
+        if not fname or not fname.endswith(".go"):
             continue
-        m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
-        if m:
-            node_kind = m.group(1)
-            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
-            if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
-                # Adjudicated real implementations are not bridges.
-                if any(f_sub in fname and nk == node_kind
-                       for f_sub, nk in ADJUDICATED_WIRE_NODES):
-                    continue
+        if "internal/frontend/" not in fname:
+            continue
+        kinds = re.findall(r'\.node\s*\(\s*"([^"]+)"', line)
+        kinds += re.findall(r'Node\{Kind:\s*"([^"]+)"', line)
+        for node_kind in sorted(set(kinds)):
+            # Adjudicated real implementations are not bridges.
+            if any(f_sub in fname and nk == node_kind
+                   for f_sub, nk in ADJUDICATED_WIRE_NODES):
+                continue
+            if node_kind not in WIRE_NODE_KINDS_ALLOWLIST:
                 errors.append(f"SUSPICIOUS WIRE NODE in {fname}: {node_kind}")
 
     # 5. New synthetic function registrations
@@ -193,7 +329,17 @@ def check_no_bridges(diff):
 
     return errors
 
-def main():
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--self-test" in argv:
+        # Self-test with positive controls (a synthetic timefoo/unsafebar
+        # wire node must fail the gate; adjudicated additions must pass).
+        # Imported lazily so the gate itself stays dependency-free.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import test_check_no_bridges
+        return test_check_no_bridges.main()
+
     diff, source = get_diff()
     if not diff.strip():
         # Never pass vacuously: on the standard integration path (wt.py
