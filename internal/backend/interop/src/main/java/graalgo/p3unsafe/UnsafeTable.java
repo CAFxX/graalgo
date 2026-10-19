@@ -245,8 +245,22 @@ public final class UnsafeTable {
      * <p>P1-3: idempotent via the {@link #normalized} cache — the same box
      * object always yields the same carrier array, so identity interning
      * is stable (p1 == p2 for the same pointer).
+     *
+     * <p>I-1 (2026-10-19 review): synchronized, not a ConcurrentHashMap.
+     * {@code ConcurrentHashMap} is equals/hashCode-keyed, but scalar boxes
+     * ({@code Integer}, ...) implement <em>value</em> equality — two
+     * distinct boxes holding equal values would collapse to one carrier
+     * and one handle, breaking P3-M10's {@code &x != &y} gc parity. The
+     * identity semantics of the {@code IdentityHashMap} are load-bearing,
+     * and the get-then-put is a compound check-then-act, so the table
+     * monitor (the same lock {@link #intern}, {@link #internEqual} and
+     * {@link #free} already hold) is the right primitive. Re-entrant with
+     * {@code intern}; the previously racy caller
+     * ({@code UnsafeOps.openScalar} on node execute paths) now serializes
+     * here too, making the class-level "all methods are thread-safe"
+     * claim true.
      */
-    Object normalizeScalar(Object referent) {
+    synchronized Object normalizeScalar(Object referent) {
         if (referent instanceof Integer
                 || referent instanceof Long
                 || referent instanceof Float
