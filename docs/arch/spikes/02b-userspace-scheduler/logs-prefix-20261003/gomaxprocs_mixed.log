@@ -1,5 +1,0 @@
-=== gomaxprocs_mixed (par=2 gmp=2 quantumNs=1000000) ===
-gomaxprocs_mixed cap=2 spinner_iters=721836034 iters_per_sec=120306005.7
-NOTE: report alongside the pure-compute baseline (2 spinners, no sleeper)
-sched{cap=2 inflight_now~na parkEvents=3540 admissions=3540 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=3543 drainerUtilPct=1.34}
-exit=0

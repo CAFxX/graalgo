@@ -1,5 +1,0 @@
-=== o3_select (par=2 gmp=2 quantumNs=1000000) ===
-o3 nCh=8 nSel=20000 counts=[2474, 2523, 2543, 2501, 2508, 2480, 2382, 2589] maxmin_ratio=1.087 RESULT=PASS
-sched{cap=2 inflight_now~na parkEvents=4 admissions=4 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=6 drainerUtilPct=1.85}
-O3 RESULT=PASS
-exit=0

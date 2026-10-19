@@ -1,9 +1,0 @@
-=== o1_q100us (par=2 gmp=2 quantumNs=100000) ===
-o1 nSpin=2 secs=5 cap=2 quantumNs=100000 samples=9489
-ponger_iters=9216
-spinner_counts=[157339649, 157479937]
-spinner_cv=0.0004
-rtt_ns mean=518366 p50=251738 p99=4394554 max=27731036
-RESULT=PARTIAL
-sched{cap=2 inflight_now~na parkEvents=33630 admissions=33629 wakeupCalls=19038 wakeupWon=19038 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=52671 drainerUtilPct=2.29}
-exit=0

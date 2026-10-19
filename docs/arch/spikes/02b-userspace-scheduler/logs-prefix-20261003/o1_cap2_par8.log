@@ -1,9 +1,0 @@
-=== o1_cap2_par8 (par=8 gmp=2 quantumNs=1000000) ===
-o1 nSpin=2 secs=5 cap=2 quantumNs=1000000 samples=20359
-ponger_iters=19456
-spinner_counts=[208012289, 212198401]
-spinner_cv=0.0100
-rtt_ns mean=244099 p50=37056 p99=2817449 max=30869065
-RESULT=PARTIAL
-sched{cap=2 inflight_now~na parkEvents=43042 admissions=43041 wakeupCalls=40773 wakeupWon=40773 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=83818 drainerUtilPct=3.95}
-exit=0

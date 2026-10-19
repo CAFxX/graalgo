@@ -1,5 +1,0 @@
-=== o4_timer (par=2 gmp=2 quantumNs=1000000) ===
-o4 nSpin=2 nSleeps=2000 sleepNs=2000000 excess_ns p50=2016327 p99=28046721 max=30993954 RESULT=PASS
-sched{cap=2 inflight_now~na parkEvents=8508 admissions=8508 wakeupCalls=2000 wakeupWon=2000 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=10511 drainerUtilPct=0.76}
-O4 RESULT=PASS
-exit=0
