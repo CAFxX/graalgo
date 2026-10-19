@@ -37,6 +37,7 @@ import graalgo.p3time.nodes.TimeTickNode;
 import graalgo.p3unsafe.UnsafeAddNode;
 import graalgo.p3unsafe.UnsafeFromPtrNode;
 import graalgo.p3unsafe.UnsafeFromUintNode;
+import graalgo.p3unsafe.UnsafePtrAddNode;
 import graalgo.p3unsafe.UnsafeSliceDataNode;
 import graalgo.p3unsafe.UnsafeSliceNode;
 import graalgo.p3unsafe.UnsafeStringDataNode;
@@ -202,6 +203,12 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> UnsafeStringDataNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeadd",
                 (node, ctx) -> UnsafeAddNode.build(node, factory, ctx));
+        // fix-redmaster-abifuncpc: the "unsafeptradd" wire node for the
+        // unsafe.Pointer(uintptr(p) + k*unsafe.Sizeof(T)) idiom (element-
+        // indexed pointer arithmetic). Public extension hook — no Phase-1/
+        // Phase-2 change.
+        factory.registerExprKind("unsafeptradd",
+                (node, ctx) -> UnsafePtrAddNode.build(node, factory, ctx));
         UnsafeTable.install();
         // P3-M8 (wave 2, reflect): the "reflectop" wire node.
         factory.registerExprKind("reflectop",

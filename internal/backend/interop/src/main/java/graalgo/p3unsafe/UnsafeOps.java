@@ -264,4 +264,48 @@ public final class UnsafeOps {
                         + "(D5: a handle can never be materialized from an integer; "
                         + "re-test: byte-addressed value model)");
     }
+
+    /**
+     * Element-indexed pointer arithmetic for the {@code "unsafeptradd"} wire
+     * node (fix-redmaster-abifuncpc): {@code unsafe.Pointer(uintptr(p) +
+     * k*unsafe.Sizeof(T))}.
+     *
+     * <p>The base {@code ptrHandle} must resolve to an {@link
+     * UnsafeTable.ArrayRef} — the storage-identity interning in {@link
+     * UnsafeFromPtrNode} produces these for {@code &arr[i]} element pointers
+     * and {@code SliceData} views. The result is a new {@code ArrayRef}
+     * {@code k} elements forward, interned by value equality (so the same
+     * (array, index) always yields the same handle, matching gc pointer
+     * identity).
+     *
+     * <p>This is not D5 byte arithmetic: the base is a proven-valid handle
+     * (the frontend matched {@code uintptr(p)} with {@code p:
+     * unsafe.Pointer}, not an arbitrary integer) and {@code k} is a
+     * proven-whole element count (the frontend matched the
+     * {@code k*unsafe.Sizeof(T)} factor). A non-ArrayRef base or an
+     * out-of-range index traps — the D5 discipline is unchanged.
+     */
+    public static long ptrAdd(long ptrHandle, long index) {
+        Object referent = UnsafeTable.current().resolve(ptrHandle);
+        if (!(referent instanceof UnsafeTable.ArrayRef ar)) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptradd: base is not an array element reference "
+                            + "(D5: no arithmetic on opaque handles)");
+        }
+        long newOffset = (long) ar.offset() + index;
+        if (newOffset < 0 || newOffset > Integer.MAX_VALUE) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptradd: element index out of range: " + newOffset);
+        }
+        // Bounds-check against the backing array length. The ArrayRef offset
+        // is an element index; the array is a Java array.
+        int len = java.lang.reflect.Array.getLength(ar.array());
+        if (newOffset >= len) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptradd: element index " + newOffset
+                            + " out of bounds (len " + len + ")");
+        }
+        return UnsafeTable.current().internEqual(
+                new UnsafeTable.ArrayRef(ar.array(), (int) newOffset));
+    }
 }

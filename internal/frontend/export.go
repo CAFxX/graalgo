@@ -8404,6 +8404,18 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 // func-valued variable (M5, WS F — deferred calls and recursion). Other
 // call shapes are scope errors (WS D).
 func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
+	// fix-redmaster-abifuncpc: bare LoadPointer/StorePointer idents inside
+	// the sync/atomic package itself (e.g. (*Pointer[T]).Load's
+	// LoadPointer(&x.v)). The selector path above only catches
+	// package-qualified atomic.LoadPointer; inside the package the call is
+	// a bare ident resolving to the same *types.Func.
+	if ident, ok := c.Fun.(*ast.Ident); ok {
+		if obj, ok := e.info.Uses[ident].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
+			if ident.Name == "LoadPointer" {
+				return e.exportAtomicLoadPointer(c)
+			}
+		}
+	}
 	// M5 (WS F): runtime.Goexit() — the Phase-1 Goexit trigger. Emitted as
 	// a "call" node with the goexit marker; the factory builds GoexitNode.
 	// M6 (WS H): method calls — possibly wrapped in an index expression
@@ -9116,9 +9128,25 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 // exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to *addr: a
 // plain deref read of the unsafe.Pointer. Scoped divergence from gc (see
 // the exportCall interception): atomicity without the ordering guarantee.
+//
+// fix-redmaster-abifuncpc: when addr is &x.v where v is already an
+// unsafe.Pointer field (the (*Pointer[T]).Load pattern), simplify to x.v
+// directly — the addrof/deref roundtrip on a handle-valued field is fragile.
 func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
 	if len(c.Args) != 1 {
 		return nil, fmt.Errorf("gofrontend: atomic.LoadPointer takes 1 argument")
+	}
+	// Simplify &x.v to x.v when v is an unsafe.Pointer field.
+	if unary, ok := c.Args[0].(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		if sel, ok := unary.X.(*ast.SelectorExpr); ok {
+			if ft := e.info.TypeOf(sel); ft != nil && types.Unalias(ft) == types.Typ[types.UnsafePointer] {
+				px, err := e.exportExpr(sel)
+				if err != nil {
+					return nil, err
+				}
+				return px, nil
+			}
+		}
 	}
 	px, err := e.exportExpr(c.Args[0])
 	if err != nil {
@@ -9236,6 +9264,15 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
 // of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
+	// fix-redmaster-abifuncpc: also accept the bare ident form used inside
+	// the sync/atomic package itself (e.g. (*Pointer[T]).Store's
+	// StorePointer(&x.v, ...)).
+	if ident, ok := c.Fun.(*ast.Ident); ok {
+		if obj, ok := e.info.Uses[ident].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" && ident.Name == "StorePointer" {
+			return e.exportAtomicStorePointer(s, c)
+		}
+		return nil, false, nil
+	}
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
 		return nil, false, nil
@@ -9254,6 +9291,30 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
 		return nil, false, nil
 	}
+	if len(c.Args) != 2 {
+		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
+	}
+	px, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, true, err
+	}
+	vx, err := e.exportExpr(c.Args[1])
+	if err != nil {
+		return nil, true, err
+	}
+	tid, err := e.typeID(types.Typ[types.UnsafePointer])
+	if err != nil {
+		return nil, true, err
+	}
+	lhs := e.node("deref", c, map[string]any{"x": px, "type": tid})
+	return e.node("assign", s, map[string]any{
+		"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{vx},
+	}), true, nil
+}
+
+// exportAtomicStorePointer is the shared body for the bare-ident form of
+// atomic.StorePointer (fix-redmaster-abifuncpc).
+func (e *exporter) exportAtomicStorePointer(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
 	if len(c.Args) != 2 {
 		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
 	}
