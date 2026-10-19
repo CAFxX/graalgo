@@ -2002,9 +2002,11 @@ public final class NodeFactory {
                 base = base.substring(0, br);
             }
             switch (base) {
-                case "Int64", "Uint64", "Uintptr", "Int32", "Uint32", "Bool",
-                     "Pointer", "Value":
+                case "Int64", "Uint64", "Uintptr", "Int32", "Uint32", "Bool":
                     return "atomic." + base;
+                // fix-redmaster-abifuncpc: Pointer/Value are NOT primitives.
+                // The real GOROOT methods expect GoStruct receivers (x.v).
+                // Returning null makes them plain GoStructs.
             }
         }
         return null;
