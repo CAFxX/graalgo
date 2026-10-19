@@ -60,13 +60,16 @@ control flow, and a final deterministic state dump via `fmt.Println`.
 `diff_one.sh <go-file>`: 
 1. `go build` (gc 1.27.1) → gc binary; build failure = generator bug.
 2. Run gc binary, timeout 10s → stdout/exit.
-3. Run `graalgo.p3sync.launcher.P3SyncMain --gmp=1 -- <file>`,
-   timeout 120s (JVM startup dominates) → stdout/stderr/exit.
+3. Run [`internal/backend/graalgo-sync-run`](../../internal/backend/graalgo-sync-run)
+   `--gmp=1 <file>` (`graalgo.p3sync.launcher.P3SyncMain`, the product
+   launcher; no bare `--` — everything after one is the Go program's
+   argv), timeout 120s (JVM startup dominates) → stdout/stderr/exit.
 4. Emit a JSON result record.
 
-`run_batch.py`: builds the Java modules once, generates N programs,
-runs `diff_one.sh` in parallel (`-P 4` default, respects load-shed
-backoff), classifies, dedups, writes `results.jsonl` + summary.
+`run_batch.py`: runs the root `make build` once (backend modules +
+gofrontend), generates N programs, runs `diff_one.sh` in parallel
+(`-P 4` default, respects load-shed backoff), classifies, dedups,
+writes `results.jsonl` + summary.
 
 Classification:
 | Result | Meaning |
