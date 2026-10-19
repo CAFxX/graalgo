@@ -45,6 +45,9 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // I-8 (2026-10-19 review): wrap errno side-channel (take
+        // semantics, 0/1/2 code namespace, close cleanup).
+        TESTS.add(graalgo.p3tls.TlsWrapErrorTest.class);
     }
 
     private IfaceTestRunner() {}

@@ -78,6 +78,27 @@ public final class TlsRuntime {
     private static final ConcurrentHashMap<Long, byte[]> PENDING =
             new ConcurrentHashMap<>();
 
+    /**
+     * Errno side-channel for wrap() failures (I-8). {@link #wrap} returns
+     * null on failure, which the Go side cannot distinguish from a
+     * legitimate empty output — the handshake driving loop therefore
+     * could not tell "transient no-output" from "engine dead" and spun
+     * forever on sleep-retry. Each failed wrap() records a code here
+     * keyed by handle; {@link #wrapError} takes (reads and clears) it.
+     *
+     * <p>Code namespace — SHARED with the unwrap error path. The unwrap
+     * lane (fix-p1-tls-unwrap) must use these same codes for its own
+     * map/trap; codes 3 and above are reserved for its decision on
+     * clean-peer-close vs errno 0 implying io.EOF. Do not assign new
+     * codes here without coordinating with that lane.
+     */
+    static final long TLS_ERR_NONE = 0;
+    static final long TLS_ERR_BAD_HANDLE = 1;
+    static final long TLS_ERR_ENGINE_THREW = 2;
+
+    private static final ConcurrentHashMap<Long, Long> WRAP_ERROR =
+            new ConcurrentHashMap<>();
+
     private static final int APP_BUF = 17 * 1024;
     private static final int NET_BUF = 17 * 1024;
 
@@ -451,10 +472,17 @@ public final class TlsRuntime {
     /**
      * Wraps application/handshake data into TLS records.
      * graalgo.tls.wrap(handle, plaintext) -> ciphertext (may be empty).
+     *
+     * <p>Returns null on failure (bad handle, or the engine threw). The
+     * failure reason is recorded in the {@link #WRAP_ERROR} side-channel;
+     * the Go side reads it with {@code graalgo.tls.wrapError} (take
+     * semantics) to fail fast instead of spin-retrying (I-8).
      */
     public static Object wrap(Object handleArg, Object plaintextArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        long handle = num(handleArg);
+        SSLEngine engine = ENGINES.get(handle);
         if (engine == null) {
+            WRAP_ERROR.put(handle, TLS_ERR_BAD_HANDLE);
             return null;
         }
         try {
@@ -518,10 +546,29 @@ public final class TlsRuntime {
                 }
             }
             byte[] result = out.toByteArray();
+            // Success: drop any stale recorded error so a later
+            // wrapError() take cannot observe a previous failure.
+            WRAP_ERROR.remove(handle);
             return toGoBytes(result);
         } catch (Exception e) {
+            WRAP_ERROR.put(handle, TLS_ERR_ENGINE_THREW);
             return null;
         }
+    }
+
+    /**
+     * Takes (reads and clears) the recorded {@link #wrap} error for a
+     * handle. Take semantics: each recorded failure is observed at most
+     * once; a second take returns {@link #TLS_ERR_NONE}. Fits the
+     * existing long-returning trap vocabulary (engineStatus, hasPending,
+     * runTasks, connectionState).
+     * graalgo.tls.wrapError(handle) -> error code
+     * (0=none, 1=bad handle, 2=engine threw).
+     */
+    public static long wrapError(Object handleArg) {
+        long handle = num(handleArg);
+        Long code = WRAP_ERROR.remove(handle);
+        return code != null ? code : TLS_ERR_NONE;
     }
 
     /**
@@ -780,6 +827,9 @@ public final class TlsRuntime {
         long handle = num(handleArg);
         SSLEngine engine = ENGINES.remove(handle);
         PENDING.remove(handle);
+        // I-8: drop any recorded wrap error for the handle — a dead
+        // handle must not leave a stale entry behind.
+        WRAP_ERROR.remove(handle);
         if (engine != null) {
             try {
                 engine.closeInbound();

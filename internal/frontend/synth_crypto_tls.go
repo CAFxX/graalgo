@@ -686,6 +686,15 @@ const (
 	engineNeedTask   = 3
 )
 
+// Wrap error codes (from graalgo.tls.wrapError, I-8 errno side-channel).
+// Shared namespace with the unwrap error path (see TlsRuntime.java);
+// codes 3 and above are reserved for the unwrap lane (fix-p1-tls-unwrap).
+const (
+	wrapErrNone        = 0
+	wrapErrBadHandle   = 1
+	wrapErrEngineThrew = 2
+)
+
 //go:linkname beginHandshakeTrap graalgo.tls.beginHandshake
 func beginHandshakeTrap(engineHandle int64) int64
 
@@ -694,6 +703,9 @@ func engineStatusTrap(engineHandle int64) int64
 
 //go:linkname wrapTrap graalgo.tls.wrap
 func wrapTrap(engineHandle int64, plaintext []byte) []byte
+
+//go:linkname wrapErrorTrap graalgo.tls.wrapError
+func wrapErrorTrap(engineHandle int64) int64
 
 //go:linkname unwrapTrap graalgo.tls.unwrap
 func unwrapTrap(engineHandle int64, netData []byte) []byte
@@ -731,6 +743,13 @@ func (c *Conn) Handshake() error {
 		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
 	}
 	tmp := make([]byte, 1<<14)
+	// I-8: consecutive NEED_WRAP iterations whose wrap() produced no
+	// output. A NEED_WRAP with empty output is a transitional state
+	// that must resolve in a few cycles; persisting past
+	// maxStalledWraps means the engine is stuck (previously this spun
+	// forever on 1ms sleep-retry: wrap() failure reads as len 0).
+	const maxStalledWraps = 10000
+	stalledWraps := 0
 	for {
 		st := engineStatusTrap(c.engineHandle)
 		switch st {
@@ -752,6 +771,20 @@ func (c *Conn) Handshake() error {
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
+			if out == nil {
+				// I-8: wrap() failed (bad handle or the engine threw) —
+				// fail fast with the recorded reason instead of
+				// sleep-retrying a nil output forever (nil reads as
+				// len 0 below, which was the unbounded livelock).
+				switch wrapErrorTrap(c.engineHandle) {
+				case wrapErrBadHandle:
+					return errors.New("tls: wrap failed (bad engine handle)")
+				case wrapErrEngineThrew:
+					return errors.New("tls: wrap failed (TLS engine error)")
+				}
+				// No recorded error (e.g. the handle was closed
+				// concurrently): treat as transient empty output.
+			}
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
 			// the engine may have more (e.g. Finished) — wrap again
@@ -764,6 +797,7 @@ func (c *Conn) Handshake() error {
 				out = append(out, out2...)
 			}
 			if len(out) > 0 {
+				stalledWraps = 0
 				if err := writeAll(c.conn, out); err != nil {
 					return err
 				}
@@ -772,6 +806,13 @@ func (c *Conn) Handshake() error {
 				// wrap produces no bytes (transitional state). Spinning
 				// here starves the peer goroutine on a single worker
 				// (--gmp=1): yield so it can make progress.
+				// I-8: bound the stall — a NEED_WRAP that keeps
+				// producing no output is not a transitional state;
+				// fail loudly instead of livelocking.
+				stalledWraps++
+				if stalledWraps > maxStalledWraps {
+					return errors.New("tls: handshake stalled (wrap produced no output)")
+				}
 				time.Sleep(time.Millisecond)
 			}
 		case engineNeedUnwrap:
@@ -781,6 +822,7 @@ func (c *Conn) Handshake() error {
 			// already input waiting, or the handshake deadlocks.
 			if hasPendingTrap(c.engineHandle) != 0 {
 				_ = unwrapTrap(c.engineHandle, nil)
+				stalledWraps = 0
 				continue
 			}
 			n, err := c.conn.Read(tmp)
@@ -790,9 +832,11 @@ func (c *Conn) Handshake() error {
 			if n == 0 {
 				continue
 			}
+			stalledWraps = 0
 			_ = unwrapTrap(c.engineHandle, tmp[:n])
 		case engineNeedTask:
 			runTasksTrap(c.engineHandle)
+			stalledWraps = 0
 		default:
 			return fmt.Errorf("tls: handshake failed (status %d)", st)
 		}
@@ -911,7 +955,16 @@ func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 	}
 	out := wrapTrap(c.engineHandle, b)
 	if out == nil {
-		return __tlsConnWritePair{0, errors.New("tls: wrap failed")}
+		// I-8: surface the recorded wrap failure reason instead of a
+		// bare "wrap failed".
+		switch wrapErrorTrap(c.engineHandle) {
+		case wrapErrBadHandle:
+			return __tlsConnWritePair{0, errors.New("tls: wrap failed (bad engine handle)")}
+		case wrapErrEngineThrew:
+			return __tlsConnWritePair{0, errors.New("tls: wrap failed (TLS engine error)")}
+		default:
+			return __tlsConnWritePair{0, errors.New("tls: wrap failed")}
+		}
 	}
 	if err := writeAll(c.conn, out); err != nil {
 		return __tlsConnWritePair{0, err}

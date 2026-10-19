@@ -712,7 +712,7 @@ public final class LinknameIntrinsics {
     }
 
     /**
-     * Registers the 11 {@code graalgo.tls.*} intrinsics implemented by
+     * Registers the 12 {@code graalgo.tls.*} intrinsics implemented by
      * {@link TlsRuntime} (P3-M9 tier-5, SSLEngine delegation). The Go side
      * (synth_crypto_tls.go) drives the handshake state machine; these traps
      * only implement the cryptographic operations. Engine handles are longs
@@ -732,6 +732,8 @@ public final class LinknameIntrinsics {
                 args -> TlsRuntime.engineStatus(args[0]), 1);
         Linknames.register("graalgo.tls.wrap",
                 args -> TlsRuntime.wrap(args[0], args[1]), 2);
+        Linknames.register("graalgo.tls.wrapError",
+                args -> TlsRuntime.wrapError(args[0]), 1);
         Linknames.register("graalgo.tls.unwrap",
                 args -> TlsRuntime.unwrap(args[0], args[1]), 2);
         Linknames.register("graalgo.tls.hasPending",
