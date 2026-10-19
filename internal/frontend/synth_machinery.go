@@ -8,6 +8,8 @@ import (
 	"go/token"
 	"go/types"
 	"math"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -35,6 +37,16 @@ type syntheticPackage struct {
 	// os.Lstat), for direct call-site desugar without eta-expansion.
 	// Populated by etaExpandMRFuncValues (real-x509 lane).
 	varFuncAliases map[*types.Var]*types.Func
+	// scopeStubs is the P1-11 (RV22) capability manifest: synthetic
+	// functions whose body is exactly panic("... not in M{5,7,8,9}
+	// scope ...") with at most one result — unimplemented in the
+	// current milestone. Maps *types.Func to the stub's own message
+	// (milestone + re-test trigger), which becomes the compile-time
+	// error at user reference sites. Built structurally by
+	// buildScopeStubs (never by name); nil when the package has none.
+	// Multi-result stubs are excluded — the Appendix-M desugar +
+	// isMultiResultSyntheticFailFast machinery owns them.
+	scopeStubs map[*types.Func]string
 }
 
 // srcForFile returns the source bytes for f: per-file bytes for disk
@@ -877,11 +889,87 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
 	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
-	return &syntheticPackage{
+	sp := &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
 		raw: []byte(src),
 	}
+	// P1-11 (RV22): derive the scope-gap stub manifest from the
+	// type-checked AST (structural — see buildScopeStubs).
+	sp.scopeStubs = buildScopeStubs(sp)
+	return sp
+}
+
+// scopeStubPattern matches the fail-fast message of a scope-gap stub:
+// a synthetic function not implemented in the current milestone.
+var scopeStubPattern = regexp.MustCompile(`not in M[5789] scope`)
+
+// buildScopeStubs scans the synthetic package's parsed sources for
+// scope-gap stubs (P1-11, RV22): FuncDecls whose body is exactly one
+// statement, panic("<string literal>"), with the literal matching
+// scopeStubPattern and at most one result. Multi-result stubs are
+// excluded — the Appendix-M desugar + isMultiResultSyntheticFailFast
+// machinery owns them. Faithful gc-mirror panics (panic calls inside
+// real, multi-statement bodies) never match: the single-statement
+// shape check excludes them by construction.
+//
+// The classification is structural (cf. classifyTrivialForwarder in
+// mrdesugar_m5.go): never by package, type, or function name. The
+// recorded message is the stub's own — milestone + re-test trigger
+// included — and becomes the compile-time error at user reference
+// sites.
+func buildScopeStubs(sp *syntheticPackage) map[*types.Func]string {
+	var out map[*types.Func]string
+	for _, file := range sp.files {
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil || len(fd.Body.List) != 1 {
+				continue
+			}
+			es, ok := fd.Body.List[0].(*ast.ExprStmt)
+			if !ok {
+				continue
+			}
+			ce, ok := es.X.(*ast.CallExpr)
+			if !ok || len(ce.Args) != 1 {
+				continue
+			}
+			id, ok := ce.Fun.(*ast.Ident)
+			if !ok || id.Name != "panic" {
+				continue
+			}
+			lit, ok := ce.Args[0].(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				continue
+			}
+			msg, err := strconv.Unquote(lit.Value)
+			if err != nil || !scopeStubPattern.MatchString(msg) {
+				continue
+			}
+			nres := 0
+			if fd.Type.Results != nil {
+				for _, fld := range fd.Type.Results.List {
+					if len(fld.Names) == 0 {
+						nres++
+					} else {
+						nres += len(fld.Names)
+					}
+				}
+			}
+			if nres > 1 {
+				continue
+			}
+			fn, ok := sp.info.Defs[fd.Name].(*types.Func)
+			if !ok || fn == nil {
+				continue
+			}
+			if out == nil {
+				out = make(map[*types.Func]string)
+			}
+			out[fn] = msg
+		}
+	}
+	return out
 }
 
 // timeIntrinsicNames are the synthetic time package's clock/timer entry
@@ -1400,6 +1488,11 @@ func (e *exporter) exportSyntheticBodies(doc *Doc) error {
 			}
 		}
 	}
+	// P1-11 (RV22): mark synthetic body emission so scopeGapStub stays
+	// exempt for intra-package references (see the flag's doc).
+	prevEmission := e.inSyntheticEmission
+	e.inSyntheticEmission = true
+	defer func() { e.inSyntheticEmission = prevEmission }()
 	for _, g := range e.synthGroups {
 		savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
 		savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
@@ -1927,6 +2020,14 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 	if e.isMultiResultSyntheticFailFast(fn) {
 		return nil, true, multiResultSyntheticError(fn)
 	}
+	// P1-11 (RV22): single/zero-result scope-gap stubs fail fast at
+	// compile time with the stub's own message (milestone + re-test
+	// trigger) instead of compiling and panicking at runtime.
+	// Multi-result stubs are owned by the check above; scopeGapStub
+	// never claims them.
+	if msg, ok := e.scopeGapStub(fn); ok {
+		return nil, true, scopeErrorf("%s", msg)
+	}
 	// Real-Go package-level function: direct call via funcByObj (the
 	// declaration was imported by importSyntheticPackage).
 	n, err := e.exportFuncCall(c, sel.Sel, fn)
@@ -1986,6 +2087,14 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		}
 		if obj.Pkg() != nil && obj.Pkg().Path() == "math" && mathIntrinsicNames[obj.Name()] {
 			return nil, scopeErrorf("math.%s is an intrinsic and cannot be used in value position (M7)", obj.Name())
+		}
+		// P1-11 (RV22): a scope-gap stub has no honest value form — fail
+		// fast at compile time (cf. the fail-fast stub checks below),
+		// instead of emitting a reference to a panic body. Placed before
+		// the funcByObj branch: stubs are registered there (linkable),
+		// but linking a stub is exactly the runtime-panic bodge.
+		if msg, ok := e.scopeGapStub(obj); ok {
+			return nil, scopeErrorf("%s", msg)
 		}
 		// P3-M8b: a named synthetic function in value position (e.g.
 		// sha256.New passed to hmac.New) lowers via the M6 func-value
@@ -2294,6 +2403,45 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		// Concrete receiver: fall through to the result-count check below.
 	}
 	return sig.Results().Len() > 1
+}
+
+// scopeGapStub reports whether fn is a single/zero-result scope-gap stub
+// of a synthetic package (P1-11, RV22): its body is exactly
+// panic("... not in M{5,7,8,9} scope ..."), i.e. it is declared with an
+// exact gc signature for type-checking but unimplemented in the current
+// milestone. The returned message is the stub's own (milestone +
+// re-test trigger) and becomes the compile-time error at user reference
+// sites — such references fail fast instead of compiling and panicking
+// at runtime.
+//
+// The manifest is structural (buildScopeStubs), derived from the
+// synthetic source, never hand-maintained or name-keyed.
+// Multi-result stubs are never reported here: the Appendix-M desugar +
+// isMultiResultSyntheticFailFast machinery owns them.
+//
+// References from inside synthetic package bodies are exempt (returns
+// false while e.inSyntheticEmission): real synthetic bodies may call
+// stubs internally (os.ExpandEnv→os.Expand,
+// json.__decoderToken→jsonReadAll, fs helpers→__fsReadDir); failing
+// there would make importing the package a compile error. The
+// transitive closure is follow-up work (see the P1-11 design doc).
+func (e *exporter) scopeGapStub(fn *types.Func) (string, bool) {
+	if e.inSyntheticEmission {
+		return "", false
+	}
+	if fn == nil || fn.Pkg() == nil {
+		return "", false
+	}
+	path := fn.Pkg().Path()
+	if _, ok := syntheticSources[path]; !ok {
+		return "", false
+	}
+	sp := getSyntheticPackage(path)
+	if len(sp.scopeStubs) == 0 {
+		return "", false
+	}
+	msg, ok := sp.scopeStubs[fn]
+	return msg, ok
 }
 
 func multiResultSyntheticError(fn *types.Func) error {

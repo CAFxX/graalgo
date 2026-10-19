@@ -3038,6 +3038,14 @@ type exporter struct {
 	// by exportSyntheticBodies after the user's.
 	synthGlobals []GlobalEnt
 	synthGroups  []synthGroup
+	// P1-11 (RV22): true while exportSyntheticBodies emits synthetic
+	// package bodies. scopeGapStub is exempt then: real synthetic
+	// bodies may reference scope stubs internally
+	// (os.ExpandEnv→os.Expand, json.__decoderToken→jsonReadAll,
+	// fs.__fsGlobDir/__fsWalkDir→__fsReadDir); failing there would
+	// make importing the package a compile error. User-code references
+	// are unaffected (they are all exported before synthetic bodies).
+	inSyntheticEmission bool
 	// P3-M9 (WS D): user-defined multi-result functions transformed to
 	// pair-returning form. Maps *types.Func -> pair info for call-site
 	// desugar. Unlike the synthetic table-driven mechanism, this is

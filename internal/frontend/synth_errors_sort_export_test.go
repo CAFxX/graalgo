@@ -12,8 +12,10 @@ import (
 // a program importing "errors" and "sort" exports cleanly; the real-Go
 // declarations become funcdecls in the wire doc; the multi-result
 // sort.Find is skipped at export (WS D — call sites fail fast); the
-// fail-fast single-result members (errors.As, sort.Slice, ...) ARE
-// exported (their panic bodies run if called).
+// fail-fast single-result members (sort.Slice, ...) are still emitted
+// (dead declarations), but user references to them fail at compile time
+// with the stub's M7 scope error (P1-11) instead of compiling and
+// panicking at runtime.
 func TestSyntheticErrorsSortM7(t *testing.T) {
 	src := `package main
 
