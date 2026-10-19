@@ -586,6 +586,109 @@ func main() {
 	if strings.Contains(out, "not implemented") {
 		t.Errorf("exported JSON still contains the retired panicMsg stub text")
 	}
+	// Deferred-evaluation shape pin (veto remediation, 2026-10-18): the
+	// bound method value must be a closure, not an eagerly-evaluated call.
+	// Each method-value call node's factory funclit must RETURN a nested
+	// zero-arg funclit (the deferred value), and the intrinsic wire node
+	// must live inside that nested closure's body — never evaluated by
+	// the factory call itself. The pre-fix shape
+	// call(fun=funclit(params=[__mv_recv], body=return(wire))) binds the
+	// eagerly-computed string instead of a func() string and has no
+	// nested funclit at all, so this pin fails on it.
+	mvCalls := 0
+	for _, c := range findNodes(t, out, "call") {
+		fun, ok := nodeFields(t, c)["fun"].(map[string]any)
+		if !ok || fun["kind"] != "funclit" {
+			continue
+		}
+		wireKind := ""
+		for _, k := range []string{"runtimefuncname", "runtimefuncentry"} {
+			if subtreeHasKind(fun, k) {
+				wireKind = k
+				break
+			}
+		}
+		if wireKind == "" {
+			continue
+		}
+		mvCalls++
+		nested := nestedFunclits(fun)
+		if len(nested) != 1 {
+			t.Errorf("method-value call: factory funclit holds %d nested funclits, want 1 (the deferred closure)", len(nested))
+			continue
+		}
+		closureFields := nodeFields(t, nested[0])
+		params, ok := closureFields["params"].([]any)
+		if !ok {
+			t.Errorf("method-value closure has no params array in fields")
+		} else if len(params) != 0 {
+			t.Errorf("method-value closure has %d params, want 0 (deferred, receiver captured)", len(params))
+		}
+		inFactory := countSubtreeKind(fun, wireKind)
+		inClosure := countSubtreeKind(nested[0], wireKind)
+		if inClosure < 1 || inFactory != inClosure {
+			t.Errorf("method-value call: %q wire nodes in factory=%d closure=%d, want all %d inside the deferred closure",
+				wireKind, inFactory, inClosure, inFactory)
+		}
+	}
+	if mvCalls != 2 {
+		t.Errorf("found %d method-value factory call nodes, want 2 (Name + Entry)", mvCalls)
+	}
+}
+
+// subtreeHasKind reports whether any node in n's subtree (inclusive) has
+// the given kind.
+func subtreeHasKind(n map[string]any, kind string) bool {
+	return countSubtreeKind(n, kind) > 0
+}
+
+// countKind counts nodes with the given kind in n's subtree (inclusive).
+func countSubtreeKind(n map[string]any, kind string) int {
+	count := 0
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == kind {
+				count++
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(n)
+	return count
+}
+
+// nestedFunclits collects funclit nodes strictly below n (n itself
+// excluded).
+func nestedFunclits(n map[string]any) []map[string]any {
+	var out []map[string]any
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "funclit" {
+				out = append(out, v)
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	for _, c := range n {
+		walk(c)
+	}
+	return out
 }
 
 // TestRuntimeStackMethodValueMultiResultFails: method values on the

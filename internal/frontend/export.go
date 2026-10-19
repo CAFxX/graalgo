@@ -9853,12 +9853,21 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 
 // runtimeStackMethodValue eta-expands a single-result stack-inspection
 // intrinsic in method-value position (e.g. `f := fn.Name`) into a real
-// closure: (func(r *runtime.Func) string { return <wire> })(recv). The
-// receiver is evaluated once, when the method value is created (Go
-// semantics); the body reuses the exact wire node the direct-call path
-// emits (exportCall's runtimeStackMethod interception), so behavior is
-// identical to the call form. The IIFE shape (funclit with params applied
-// to exported args) is the exportCloseDeferGo precedent.
+// closure: a zero-arg funclit capturing a temp that holds the receiver.
+// The receiver is evaluated once, when the method value is created (Go
+// semantics), as the argument of the immediately-invoked factory funclit;
+// the factory binds it to __mv_recv and RETURNS the zero-arg closure.
+// The closure body reuses the exact wire node the direct-call path emits
+// (exportCall's runtimeStackMethod interception), so behavior is identical
+// to the call form — but deferred to each invocation of the method value.
+// The outer IIFE shape (funclit with params applied to exported args) is
+// the exportCloseDeferGo precedent; unlike the defer position, the
+// invocation is NOT part of the returned value — the outer call evaluates
+// to the closure itself, typed as the method value's func type t.
+// (Veto remediation, 2026-10-18: the previous shape returned
+// call(fun=funclit(params=[__mv_recv]), args=[recv], type=<string>), an
+// immediately-invoked function whose result — the eagerly-evaluated string
+// — was bound instead of the deferred func() string.)
 func (e *exporter) runtimeStackMethodValue(sel *ast.SelectorExpr, selection *types.Selection, mname string, recv *Node, t int) (*Node, error) {
 	fn, ok := selection.Obj().(*types.Func)
 	if !ok {
@@ -9879,9 +9888,11 @@ func (e *exporter) runtimeStackMethodValue(sel *ast.SelectorExpr, selection *typ
 	if mname == "Entry" {
 		kind = "runtimefuncentry"
 	}
-	// The wrapper's receiver parameter: a fresh *types.Var per expansion
+	// The temp holding the receiver: a fresh *types.Var per expansion
 	// (objIDs is keyed by object identity, so repeated expansions of the
-	// same method value never collide).
+	// same method value never collide). It is the factory funclit's
+	// parameter — evaluated once as the IIFE argument at creation time,
+	// then captured by the deferred closure.
 	recvType := selection.Recv()
 	pv := types.NewParam(token.NoPos, nil, "__mv_recv", recvType)
 	pid, err := e.defVar(pv, true)
@@ -9893,21 +9904,34 @@ func (e *exporter) runtimeStackMethodValue(sel *ast.SelectorExpr, selection *typ
 		return nil, err
 	}
 	param := e.node("param", sel, map[string]any{"name": "__mv_recv", "obj": pid, "type": ptid})
-	paramIdent := e.node("ident", sel, map[string]any{"name": "__mv_recv", "obj": pid, "type": ptid})
-	wire := e.node(kind, sel, map[string]any{"f": paramIdent, "type": resTid})
-	ret := e.node("return", sel, map[string]any{"results": []*Node{wire}})
-	body := e.node("block", sel, map[string]any{"stmts": []*Node{ret}})
-	// The wrapper's declared result, as a "param" node like exportFuncLit's
-	// results, so the factory allocates the result slot.
+	tmpIdent := e.node("ident", sel, map[string]any{"name": "__mv_recv", "obj": pid, "type": ptid})
+	wire := e.node(kind, sel, map[string]any{"f": tmpIdent, "type": resTid})
+	wireRet := e.node("return", sel, map[string]any{"results": []*Node{wire}})
+	wireBody := e.node("block", sel, map[string]any{"stmts": []*Node{wireRet}})
+	// The deferred method value itself: a zero-arg funclit capturing the
+	// temp, typed as the method value's static func type t (the
+	// methodValueNode contract). The factory resolves the ident to the
+	// outer funclit's parameter slot through its general closure-capture
+	// mechanism (CapReadNode over the $closure chain).
 	rv := types.NewParam(token.NoPos, nil, "", resType)
 	result, err := e.exportParamVar(sel, rv)
 	if err != nil {
 		return nil, err
 	}
-	funclit := e.node("funclit", sel, map[string]any{
-		"params": []*Node{param}, "results": []*Node{result}, "body": body, "type": t,
+	closure := e.node("funclit", sel, map[string]any{
+		"params": []*Node{}, "results": []*Node{result}, "body": wireBody, "type": t,
 	})
-	return e.node("call", sel, map[string]any{"fun": funclit, "args": []*Node{recv}, "type": resTid}), nil
+	// The factory funclit: binds recv once, returns the closure. A
+	// desugared factory funclit (the exportGoschedDeferGo precedent): no
+	// "type" field and no results — the GoReturn value carries the closure
+	// to the call site (GoFuncRootNode falls back to the GoReturn value
+	// when there is no result slot).
+	retClosure := e.node("return", sel, map[string]any{"results": []*Node{closure}})
+	factoryBody := e.node("block", sel, map[string]any{"stmts": []*Node{retClosure}})
+	factory := e.node("funclit", sel, map[string]any{
+		"params": []*Node{param}, "results": []*Node{}, "body": factoryBody,
+	})
+	return e.node("call", sel, map[string]any{"fun": factory, "args": []*Node{recv}, "type": t}), nil
 }
 
 // exportMethodCall exports a method call x.M(args) (M6, WS H). The receiver
