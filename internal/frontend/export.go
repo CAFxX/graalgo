@@ -9142,10 +9142,11 @@ func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
 // exportAtomicPointerOp lowers a same-package ident call to
 // atomic.SwapPointer / atomic.CompareAndSwapPointer (e.g. in the generic
 // (*Pointer[T]) method bodies: SwapPointer(&x.v, unsafe.Pointer(new)))
-// to the "syncop" wire node with synctyp "atomic.Pointer", reusing the
-// AtomicOpNode machinery that serves the Pointer[T] method forms. The
-// address operand (&x.v) evaluates to the AtomicReference cell via
-// FieldAddrNode's cell transparency, which AtomicOpNode's cellRef expects.
+// to the "atomicaddr"+"syncop" wire nodes with synctyp
+// "atomic.UnsafePointer", reusing the AtomicOpNode machinery. The address
+// operand (*unsafe.Pointer) is wrapped in an int64 cell by atomicaddr
+// (unsafe.Pointer is a long handle, D5); the result kind is UNSAFE_POINTER
+// for Swap (the Go return type) and BOOL for CompareAndSwap.
 // Same scoped divergence as the word ops: atomicity without gc's ordering
 // guarantee (see exportAtomicLoadPointer).
 func (e *exporter) exportAtomicPointerOp(c *ast.CallExpr, op string) (*Node, error) {
@@ -9170,8 +9171,9 @@ func (e *exporter) exportAtomicPointerOp(c *ast.CallExpr, op string) (*Node, err
 	if err != nil {
 		return nil, err
 	}
+	recv := e.node("atomicaddr", c, map[string]any{"addr": addr, "cell": "int64"})
 	return e.node("syncop", c, map[string]any{
-		"op": op, "synctyp": "atomic.Pointer", "recv": addr, "args": args, "type": typ,
+		"op": op, "synctyp": "atomic.UnsafePointer", "recv": recv, "args": args, "type": typ,
 	}), nil
 }
 

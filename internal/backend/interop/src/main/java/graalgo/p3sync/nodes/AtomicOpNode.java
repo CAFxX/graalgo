@@ -87,7 +87,12 @@ public final class AtomicOpNode extends GoExprNode {
             Map.entry("atomic.Pointer.CompareAndSwap", GoKind.BOOL),
             Map.entry("atomic.Value.Load", GoKind.INTERFACE),
             Map.entry("atomic.Value.Swap", GoKind.INTERFACE),
-            Map.entry("atomic.Value.CompareAndSwap", GoKind.BOOL));
+            Map.entry("atomic.Value.CompareAndSwap", GoKind.BOOL),
+            // fix-redmaster-r12: package-level SwapPointer/CompareAndSwapPointer
+            // (sync/atomic). unsafe.Pointer is a long handle (D5); the ops
+            // are the Uintptr mechanics with UNSAFE_POINTER result kind.
+            Map.entry("atomic.UnsafePointer.Swap", GoKind.UNSAFE_POINTER),
+            Map.entry("atomic.UnsafePointer.CompareAndSwap", GoKind.BOOL));
 
     /** Expected D5 argument count per op. */
     private static final Map<String, Integer> ARG_COUNTS = Map.of(
@@ -168,6 +173,9 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
+            // fix-redmaster-r12: package-level SwapPointer (unsafe.Pointer is
+            // a long handle; same mechanics as Uintptr).
+            case "atomic.UnsafePointer.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
             // PKG-053: integer binary/comparison nodes always read
             // operands via executeLong (BinaryOpNode), so the 32-bit
             // ops serve it too by delegating to executeInt.
@@ -210,6 +218,9 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uint64.CompareAndSwap" -> Atomics.compareAndSwapInt64(cell64(frame),
                     args[0].executeLong(frame), args[1].executeLong(frame));
             case "atomic.Uintptr.CompareAndSwap" -> Atomics.compareAndSwapUintptr(cell64(frame),
+                    args[0].executeLong(frame), args[1].executeLong(frame));
+            // fix-redmaster-r12: package-level CompareAndSwapPointer.
+            case "atomic.UnsafePointer.CompareAndSwap" -> Atomics.compareAndSwapUintptr(cell64(frame),
                     args[0].executeLong(frame), args[1].executeLong(frame));
             case "atomic.Int32.CompareAndSwap" -> Atomics.compareAndSwapInt32(cell32(frame),
                     args[0].executeInt(frame), args[1].executeInt(frame));

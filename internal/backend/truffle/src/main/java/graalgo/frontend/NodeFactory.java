@@ -4654,11 +4654,7 @@ public final class NodeFactory {
                 // Blank: evaluate and discard; no target type to convert to.
                 GoKind tk = targetKind(l);
                 int tid = targetTypeId(l);
-                try {
-                    v = maybeConvert(v, tk, tid, ctx, path);
-                } catch (RuntimeException ex) {
-                    throw new FrontendException(path + ": DEBUG r12 maybeConvert " + v.kind() + " -> " + tk + " (rhs node " + v.getClass().getSimpleName() + ")", ex);
-                }
+                v = maybeConvert(v, tk, tid, ctx, path);
             }
             int tmp = newTmp(v.kind(), ctx);
             prog.add(new AssignNode(tmp, v.kind(), v));
