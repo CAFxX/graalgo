@@ -22,7 +22,9 @@ oracle) and by `gofrontend` → `NodeFactory`.
   The test runs the oracle with `GOTOOLCHAIN=local GOMAXPROCS=1`.
 - **Edge-case coverage** (each pinned against a past or plausible bug):
   - `sl04_shifts`: shift counts ≥ 64 (Go: `<<`→0, signed `>>`→sign-extended,
-    unsigned `>>`→0 — Java's count masking must never leak through).
+    unsigned `>>`→0 — Java's count masking must never leak through), and
+    unsigned counts with the high bit set (huge positive, never negative:
+    no negative-shift panic — P0 fix-p0-shift-unsigned-count).
   - `sl05_int_uint`: mixed int/uint, unsigned division/modulo/shift with the
     high bit set (Java's `/`, `%`, `>>` are sign-sensitive; Go's are not).
   - `sl06_multiassign`: multi-value assignment and the swap `a, b = b, a`

@@ -810,6 +810,13 @@ public final class NodeFactoryV2 {
                 } catch (Exception e) {
                     throw new FrontendException(where + ": bad binary op \"" + op + "\"");
                 }
+                if (bop.isShift()) {
+                    // Shifts: the result kind is the left operand's kind,
+                    // but the count keeps its own Go kind — Go panics only
+                    // on a negative count *value*, and an unsigned count is
+                    // never negative (P0 fix-p0-shift-unsigned-count).
+                    return new BinaryOpNode(bop, k, x, y, y.kind());
+                }
                 return new BinaryOpNode(bop, k, x, y);
             }
             case "unary": {

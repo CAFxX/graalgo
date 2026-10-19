@@ -29,8 +29,10 @@ import graalgo.values.GoString;
  *       zero-extended, per signedness) {@code long} value and truncated to
  *       the width: wraparound, {@code minint/-1} (no trap), and bitwise
  *       ops are all exact.</li>
- *   <li>Shifts implement Go's rule, never Java's count masking: negative
- *       count panics; count ≥ 64 yields 0 for {@code <<} and unsigned
+ *   <li>Shifts implement Go's rule, never Java's count masking: a negative
+ *       <em>signed</em> count panics (an unsigned count is never negative —
+ *       its high-bit-set pattern is a huge positive count, shifting every
+ *       bit out); count ≥ 64 yields 0 for {@code <<} and unsigned
  *       {@code >>}, and sign extension for signed {@code >>}; smaller
  *       counts shift the extended value and truncate to the width.</li>
  *   <li>Float arithmetic is IEEE 754 (matches Go); comparisons follow
@@ -106,7 +108,9 @@ public final class BinaryOpNode extends GoExprNode {
             return this == LAND || this == LOR;
         }
 
-        boolean isShift() {
+        /** True for the shift operators {@code <<} and {@code >>}. Public:
+         * the v2 factory ({@code graalgo.frontend.v2}) needs it too. */
+        public boolean isShift() {
             return this == SHL || this == SHR;
         }
     }
@@ -116,23 +120,46 @@ public final class BinaryOpNode extends GoExprNode {
     private final Op op;
     /** The kind the operation works in (== kind() for arithmetic). */
     private final GoKind operandKind;
+    /**
+     * The Go kind of the right (count) operand, consulted only by shift
+     * ops: Go panics only on a <em>negative</em> count <em>value</em>, and an
+     * unsigned count is never negative even when its 64-bit pattern has the
+     * high bit set (P0 fix-p0-shift-unsigned-count). For non-shift ops the
+     * factory passes {@code operandKind} and the field is unused.
+     */
+    private final GoKind countKind;
 
     /**
      * @param kind the result kind (BOOL for comparisons/logical ops)
      * @param operandKind the kind the operation works in
      */
     public BinaryOpNode(Op op, GoKind kind, GoKind operandKind, GoExprNode left, GoExprNode right) {
-        super(kind);
-        checkCombo(op, kind, operandKind);
-        this.op = op;
-        this.operandKind = operandKind;
-        this.left = left;
-        this.right = right;
+        this(op, kind, operandKind, left, right, operandKind);
     }
 
     /** Arithmetic-only constructor: result kind == operand kind. */
     public BinaryOpNode(Op op, GoKind kind, GoExprNode left, GoExprNode right) {
-        this(op, kind, kind, left, right);
+        this(op, kind, kind, left, right, kind);
+    }
+
+    /**
+     * Shift constructor: the result kind is the left operand's kind, but the
+     * count operand keeps its own Go kind — the count's signedness decides
+     * the negative-count panic, never the left operand's.
+     */
+    public BinaryOpNode(Op op, GoKind kind, GoExprNode left, GoExprNode right, GoKind countKind) {
+        this(op, kind, kind, left, right, countKind);
+    }
+
+    private BinaryOpNode(Op op, GoKind kind, GoKind operandKind,
+            GoExprNode left, GoExprNode right, GoKind countKind) {
+        super(kind);
+        checkCombo(op, kind, operandKind);
+        this.op = op;
+        this.operandKind = operandKind;
+        this.countKind = countKind;
+        this.left = left;
+        this.right = right;
     }
 
     private static void checkCombo(Op op, GoKind kind, GoKind operandKind) {
@@ -242,16 +269,20 @@ public final class BinaryOpNode extends GoExprNode {
             case XOR -> l ^ r;
             case AND_NOT -> l & ~r;
             case SHL -> {
-                if (r < 0) {
+                // Go panics only on a negative count *value*; an unsigned
+                // count is never negative. Its high-bit-set 64-bit pattern
+                // is a huge positive count (>= 2^63), so every bit shifts
+                // out (P0 fix-p0-shift-unsigned-count).
+                if (r < 0 && !countKind.isUintKind()) {
                     Panic.throwPanic(GoErrors.negativeShift(), null, null, this);
                 }
-                yield r >= 64 ? 0L : l << r;
+                yield (r >= 64 || r < 0) ? 0L : l << r;
             }
             case SHR -> {
-                if (r < 0) {
+                if (r < 0 && !countKind.isUintKind()) {
                     Panic.throwPanic(GoErrors.negativeShift(), null, null, this);
                 }
-                if (r >= 64) {
+                if (r >= 64 || r < 0) {
                     yield unsigned ? 0L : (l < 0 ? -1L : 0L);
                 }
                 yield unsigned ? l >>> r : l >> r;

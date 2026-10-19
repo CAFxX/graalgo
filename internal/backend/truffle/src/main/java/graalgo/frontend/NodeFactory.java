@@ -3039,7 +3039,12 @@ public final class NodeFactory {
             // Go spec: the result type is the left operand's type (the
             // exporter already sets binary.type to it). The count is read
             // as a long; numeric nodes extend it correctly, so no wrapper.
-            return new BinaryOpNode(op, kind, maybeConvert(x, kind, path), y);
+            // The count keeps its own kind: Go panics only on a negative
+            // count *value*, and an unsigned count is never negative — the
+            // node needs the count's signedness so e.g. uint64(1<<64-1)
+            // (high bit set, huge positive) doesn't spuriously panic
+            // (P0 fix-p0-shift-unsigned-count).
+            return new BinaryOpNode(op, kind, maybeConvert(x, kind, path), y, y.kind());
         }
         return new BinaryOpNode(op, kind, maybeConvert(x, kind, path), maybeConvert(y, kind, path));
     }
