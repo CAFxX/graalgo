@@ -91,23 +91,24 @@ Conventions:
 | `public static void println(Arg[] args)` | `println` builtin → **stderr**. [T] |
 | `public record Arg(GoKind kind, Object value)` | Argument box. |
 
-### fmt stub — `graalgo.runtime.Fmt` (D4; replaceable-in-Phase-3)
+### fmt stub — `graalgo.runtime.Fmt` (D4; REMOVED 2026-10-19)
 
-The seven pure functions (D4). Real formatting logic held to the
-verb-conformance matrix (`corpus/fmt/matrix.tsv`, 122 rows differential
-vs gc); the *package* is a stub — resolved only via the frontend Phase-1
-import overlay, never linked as a real `fmt`.
+The Java fmt implementation was deleted by the real-fmt2 change: the
+exporter no longer emits `fmtcall` wire nodes and real `fmt` from GOROOT is
+used instead. The seven D4 signatures below no longer exist; their freeze
+pins were dropped from `FreezeSignatureTest` in the same change
+(fix-redmaster-r18). Retained here as history.
 
 | Signature | Notes |
 |-----------|-------|
-| `public static GoString sprintf(String format, Arg[] args)` | [T] |
-| `public static GoString sprint(Arg[] args)` | [T] |
-| `public static GoString sprintln(Arg[] args)` | [T] |
-| `public static int print(Arg[] args)` | → stdout; returns bytes written. [T] |
-| `public static int printf(String format, Arg[] args)` | → stdout; returns bytes written. [T] |
-| `public static int println(Arg[] args)` | → stdout; returns bytes written. [T] |
-| `public static GoInterface errorf(String format, Arg[] args)` | Dynamic type `*errors.errorString`. [T] |
-| `public record Arg(Object value, GoKind kind, String typeName, GoKind keyKind, String keyTypeName, GoKind elemKind, String elemTypeName)` | Full type metadata. |
+| `public static GoString sprintf(String format, Arg[] args)` | [T] — removed |
+| `public static GoString sprint(Arg[] args)` | [T] — removed |
+| `public static GoString sprintln(Arg[] args)` | [T] — removed |
+| `public static int print(Arg[] args)` | → stdout; returns bytes written. [T] — removed |
+| `public static int printf(String format, Arg[] args)` | → stdout; returns bytes written. [T] — removed |
+| `public static int println(Arg[] args)` | → stdout; returns bytes written. [T] — removed |
+| `public static GoInterface errorf(String format, Arg[] args)` | Dynamic type `*errors.errorString`. [T] — removed |
+| `public record Arg(Object value, GoKind kind, String typeName, GoKind keyKind, String keyTypeName, GoKind elemKind, String elemTypeName)` | Full type metadata. — removed |
 
 ### Atomics — `graalgo.runtime.Atomics` (REAL)
 

@@ -227,8 +227,9 @@ M9 review gate (≥2 independent reviews, all findings remediated) is closed.
 ## 8. INTERNAL (explicitly not frozen)
 
 Individual node implementations (`*Node.java` bodies), `NodeFactory`
-private builders, `Fmt`/`PanicRendering` internals, `DeferredCall`/
-`DeferChain` internals, `Intrinsics` STUB bodies (the *signatures* are
-frozen, the Phase-2 implementations are not), test-only code, and everything
-under `tools/` (harness implementation; the *corpus expectations* are
-versioned separately).
+private builders, `PanicRendering` internals (`Fmt` internals were listed
+here until the real-fmt2 change deleted the Java fmt implementation),
+`DeferredCall`/`DeferChain` internals, `Intrinsics` STUB bodies (the
+*signatures* are frozen, the Phase-2 implementations are not), test-only
+code, and everything under `tools/` (harness implementation; the *corpus
+expectations* are versioned separately).

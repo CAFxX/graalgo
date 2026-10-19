@@ -8,6 +8,7 @@ import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import java.util.ServiceLoader;
 
 /**
  * Pointer dereference read {@code *p} (P3-M9, WS D).
@@ -32,6 +33,32 @@ public final class DerefNode extends GoExprNode {
     @Child private GoExprNode ptr;
     /** Struct descriptor when the dereferenced type is a struct; null otherwise. */
     private final GoStructDescriptor structDesc;
+
+    /**
+     * The interop service provider (p3unsafe/p3reflect), resolved once via
+     * {@link ServiceLoader}. The lookup is lazy because the truffle module
+     * must compile without the interop module on the classpath; every
+     * product launcher ships interop, so a missing provider is a
+     * deployment error and fails loud.
+     */
+    private static volatile DerefInterop interopServices;
+
+    private static DerefInterop interop() {
+        DerefInterop s = interopServices;
+        if (s == null) {
+            synchronized (DerefNode.class) {
+                s = interopServices;
+                if (s == null) {
+                    s = ServiceLoader.load(DerefInterop.class).findFirst()
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "DerefNode: no DerefInterop provider on the classpath"
+                                            + " (the interop module is required at runtime)"));
+                    interopServices = s;
+                }
+            }
+        }
+        return s;
+    }
 
     public DerefNode(GoKind kind, GoExprNode ptr) {
         this(kind, ptr, null);
@@ -157,7 +184,7 @@ public final class DerefNode extends GoExprNode {
                 return l;
             }
             // The word as an unsafe.Pointer address: intern for a handle.
-            return graalgo.p3unsafe.UnsafeTable.current().intern(word);
+            return interop().internUnsafeWord(word);
         }
         return Boxing.toLong(word, kind);
     }
@@ -192,9 +219,7 @@ public final class DerefNode extends GoExprNode {
      * TypeInfo; function/pointer fields are nil.
      */
     private static GoStruct materializeAbiType(GoInterface gi) {
-        long tok = graalgo.p3reflect.ReflectValues.typeof(gi);
-        graalgo.p3reflect.ReflectTypes.TypeInfo ti =
-                graalgo.p3reflect.ReflectTypes.table().info(tok);
+        DerefInterop.AbiTypeInfo ti = interop().abiTypeInfo(gi);
 
         GoStructDescriptor desc = abiTypeDescriptor();
         long[] longs = new long[desc.longsCount()];
@@ -202,13 +227,13 @@ public final class DerefNode extends GoExprNode {
         for (var f : desc.fields()) {
             if (f.inLongs()) {
                 longs[f.index()] = switch (f.name()) {
-                    case "Size_" -> ti.size;
+                    case "Size_" -> ti.size();
                     case "PtrBytes" -> 0L;
                     case "Hash" -> 0L;
                     case "TFlag" -> 0L;
-                    case "Align_" -> ti.align;
-                    case "FieldAlign_" -> ti.align;
-                    case "Kind_" -> abiKindValue(ti.kind);
+                    case "Align_" -> ti.align();
+                    case "FieldAlign_" -> ti.align();
+                    case "Kind_" -> abiKindValue(ti.kind());
                     case "Str" -> 0L;
                     case "PtrToThis" -> 0L;
                     default -> 0L;
