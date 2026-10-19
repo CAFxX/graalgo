@@ -29,6 +29,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
+        // fix-redmaster-r17 F1: P3KindRegistrations must not contain
+        // duplicate wire-kind registrations (startup crash).
+        TESTS.add(graalgo.p3sync.launcher.KindRegistrationsTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.

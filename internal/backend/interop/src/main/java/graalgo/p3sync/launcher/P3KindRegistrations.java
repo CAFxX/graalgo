@@ -196,9 +196,6 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslicedata",
                 (node, ctx) -> UnsafeSliceDataNode.build(node, factory, ctx));
-
-        factory.registerExprKind("unsafeslicedata",
-                (node, ctx) -> UnsafeSliceDataNode.build(node, factory, ctx));
         factory.registerExprKind("unsafestring",
                 (node, ctx) -> UnsafeStringNode.build(node, factory, ctx));
         factory.registerExprKind("unsafestringdata",
