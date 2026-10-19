@@ -1269,6 +1269,14 @@ public final class NodeFactoryV2 {
         int compResolved = resolveUnderlyingId(scope.types, compTypeId, where);
         Map<String, Object> compEntry = typeEntry(scope.types, compResolved, where);
         String compKind = (String) compEntry.get("kind");
+        // v1 parity: &T{...} is only legal for struct T. Anything else is
+        // rejected loud at build time (mirrors v1 buildComplit's guard);
+        // otherwise CompositeLitNode.executeObject's POINTER case NPEs on
+        // the null structDesc at runtime.
+        if (isPointer && !"struct".equals(compKind)) {
+            throw new FrontendException(
+                    where + ": pointer composite literal to non-struct (WS E)");
+        }
         Map<String, Object> compDetail = typeDetail(compEntry, where);
 
         List<Object> elems = getList(fields, "elems", where);
@@ -1687,20 +1695,27 @@ public final class NodeFactoryV2 {
      * struct/array fields (mirrors v1's structZeroTemplate). The template is
      * built once per type; callers copy it per evaluation (never share
      * mutable zeros).
+     *
+     * <p>The cache is keyed by the incoming (possibly named) type id, and the
+     * descriptor is built from that same id: {@code structDescriptorForV2}
+     * resolves internally while preserving the qualified name, so a named
+     * struct's zero template carries the named descriptor. Resolving first
+     * would mint an anonymous {@code "struct#N"} descriptor instead, breaking
+     * descriptor-identity equality ({@code GoStruct.equals}) against
+     * explicitly built zero values of the same named type.
      */
     private static GoStruct structZeroTemplateV2(List<Object> types, int typeId, String where) {
-        int resolved = resolveUnderlyingId(types, typeId, where);
-        GoStruct t = V2_ZERO_TEMPLATES.get(resolved);
+        GoStruct t = V2_ZERO_TEMPLATES.get(typeId);
         if (t != null) {
             return t;
         }
-        if (!V2_ZERO_VISITING.get().add(resolved)) {
+        if (!V2_ZERO_VISITING.get().add(typeId)) {
             throw new FrontendException(where + ": cyclic struct type graph at type id "
-                    + resolved + " (WS E)");
+                    + typeId + " (WS E)");
         }
         try {
-            GoStructDescriptor desc = structDescriptorForV2(types, resolved, where);
-            int[] ftids = structFieldTypeIdsV2(types, resolved, where);
+            GoStructDescriptor desc = structDescriptorForV2(types, typeId, where);
+            int[] ftids = structFieldTypeIdsV2(types, typeId, where);
             Object[] objects = new Object[desc.objectsCount()];
             for (int i = 0; i < desc.fields().size(); i++) {
                 GoStructDescriptor.Field f = desc.field(i);
@@ -1709,10 +1724,10 @@ public final class NodeFactoryV2 {
                 }
             }
             t = new GoStruct(desc, new long[desc.longsCount()], objects);
-            GoStruct prev = V2_ZERO_TEMPLATES.putIfAbsent(resolved, t);
+            GoStruct prev = V2_ZERO_TEMPLATES.putIfAbsent(typeId, t);
             return prev != null ? prev : t;
         } finally {
-            V2_ZERO_VISITING.get().remove(resolved);
+            V2_ZERO_VISITING.get().remove(typeId);
         }
     }
 

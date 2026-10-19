@@ -304,4 +304,46 @@ public final class NodeFactoryV2CompositeLitTest {
         }
         throw new AssertionError("composite literal of int must be rejected");
     }
+
+    public void testNamedStructZeroTemplateSharesDescriptor() {
+        // V-1 veto fix: the zero template for a NAMED struct field must carry
+        // the named descriptor ("main.Point"), not the anonymous "struct#N"
+        // descriptor — GoStruct equality is descriptor-identity based, so a
+        // zero-filled named field must == an explicitly built zero value.
+        // types: 0=int, 1=struct{X int}, 2=Point (named "main.Point" -> 1),
+        // 3=struct{P Point; N int} (Outer)
+        List<Object> types = l(basicType("int", "int"), structType("X", 0),
+                namedType("main.Point", 1), structType("P", 2, "N", 0));
+        Object v = evalCompositeLit(types, compositeLit(3,
+                l(keyValue(identKey("N"), basicLit("3", 0)))));
+        check(v instanceof GoStruct, "Outer{N:3} must build a GoStruct");
+        GoStruct outer = (GoStruct) v;
+        Object p = outer.getObject(0);
+        check(p instanceof GoStruct, "missing named struct field must be a zero GoStruct");
+        Object q = evalCompositeLit(types, compositeLit(2, l()));
+        check(q instanceof GoStruct, "Point{} must build a GoStruct");
+        check(((GoStruct) p).descriptor() == ((GoStruct) q).descriptor(),
+                "zero-filled named field must share the named descriptor (identity), got "
+                + ((GoStruct) p).descriptor().typeName() + " vs "
+                + ((GoStruct) q).descriptor().typeName());
+        check("main.Point".equals(((GoStruct) p).descriptor().typeName()),
+                "zero template descriptor must be the named one, got: "
+                + ((GoStruct) p).descriptor().typeName());
+    }
+
+    public void testPointerToSliceLitFailsLoud() {
+        // V-2 veto fix (v1 parity): &[]int{...} is rejected loud at build
+        // time, not NPEd at runtime in CompositeLitNode.executeObject.
+        // types: 0=int, 1=[]int, 2=*[]int
+        List<Object> types = l(basicType("int", "int"), sliceType(0), pointerType(1));
+        try {
+            evalCompositeLit(types, compositeLit(2, l(basicLit("1", 0))));
+        } catch (FrontendException e) {
+            check(e.getMessage().contains("pointer composite literal to non-struct"),
+                    "error must name the pointer-to-non-struct problem, got: "
+                    + e.getMessage());
+            return;
+        }
+        throw new AssertionError("&[]int{...} must be rejected at build time");
+    }
 }
