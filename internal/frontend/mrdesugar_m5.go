@@ -3508,6 +3508,17 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 	// Do NOT pack if the trailing arg is already a slice literal of the
 	// variadic type (e.g. fmt.Println([]any{...}) — packing again would
 	// create []any{[]any{...}}).
+	//
+	// fix-redmaster-r15: the already-packed guard compares TYPES with
+	// types.Identical on the source expression's type from e.info.Types,
+	// not wire type ids. e.typeID interns by Go pointer identity
+	// (e.typeIDs[t]), so the same source type `[]any` from two different
+	// type-checker instances — the caller's package for the literal, the
+	// disk fmt package for the __Println signature — mints two different
+	// ids, and an id comparison can never fire for the documented case.
+	// Structural identity is independent of which checker minted the
+	// type, so the guard fires for every already-packed slice literal,
+	// not just complits created by packVariadicArgs itself.
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, nil, err
@@ -3519,10 +3530,8 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 			last := args[len(args)-1]
 			if last.Kind == "complit" {
 				sliceType := sig.Params().At(n - 1).Type()
-				if sliceTypeID, err := e.typeID(sliceType); err == nil {
-					if tid, ok := last.Fields["type"].(int); ok && tid == sliceTypeID {
-						alreadyPacked = true
-					}
+				if tv, ok := e.info.Types[argExprs[len(argExprs)-1]]; ok && tv.Type != nil {
+					alreadyPacked = types.Identical(tv.Type, sliceType)
 				}
 			}
 		}
