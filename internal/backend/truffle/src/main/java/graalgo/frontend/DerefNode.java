@@ -129,7 +129,7 @@ public final class DerefNode extends GoExprNode {
      *       word is stored as-is when the carrier matches.</li>
      * </ul>
      */
-    private static GoStruct materializeInterfaceAsStruct(GoInterface gi, GoStructDescriptor desc) {
+    public static GoStruct materializeInterfaceAsStruct(GoInterface gi, GoStructDescriptor desc) {
         long[] longs = new long[desc.longsCount()];
         Object[] objects = new Object[desc.objectsCount()];
         var fields = desc.fields();
@@ -180,6 +180,15 @@ public final class DerefNode extends GoExprNode {
             }
             // Data word as *T: pointer to the data value.
             return new GoPointer(word);
+        }
+        if (kind == GoKind.UNSAFE_POINTER) {
+            // P3-M17: unsafe.Pointer fields carry interned handles (Long),
+            // not the raw value. The data word as unsafe.Pointer is the
+            // handle for the value's storage identity.
+            if (word instanceof Long l) {
+                return l;
+            }
+            return Long.valueOf(graalgo.p3unsafe.UnsafeTable.current().intern(word));
         }
         return word;
     }
