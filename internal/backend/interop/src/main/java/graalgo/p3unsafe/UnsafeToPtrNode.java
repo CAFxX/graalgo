@@ -32,6 +32,11 @@ import graalgo.values.GoStructDescriptor;
  * wrapped in a {@code B}-described struct (the inner value is shared, so
  * gc's aliasing is preserved). All decisions are descriptor-driven; no
  * package or type names are special-cased.
+ *
+ * <p>P3-M18: the single-field wrapper may also have an interface-typed
+ * field (e.g. {@code reflect.rtype{t abi.Type}} where the referent is an
+ * {@code abi.Type} interface value). In that case a {@code GoInterface}
+ * referent is wrapped directly in the target descriptor.
  */
 public final class UnsafeToPtrNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -44,6 +49,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
     private final String wrappedTypeName;
     private final int wrappedFieldIndex;
     /**
+     * Non-null when the target {@code *T} is a single-field struct wrapper
+     * whose field is an interface (e.g. {@code *reflect.rtype} over
+     * {@code *abi.Type} via {@code toRType}): a {@code GoInterface} referent
+     * is wrapped in the target descriptor. The interface field's index in
+     * the objects array.
+     */
+    private final GoStructDescriptor ifaceWrapperDesc;
+    private final int ifaceWrapperFieldIndex;
+    /**
      * Non-null when the target {@code *T} is a two-field
      * (POINTER, UNSAFE_POINTER) struct (e.g. {@code *abi.EmptyInterface}):
      * a {@code GoInterface} referent is materialized as the struct.
@@ -52,12 +66,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
 
     private UnsafeToPtrNode(GoExprNode child, GoStructDescriptor wrapperDesc,
             String wrappedTypeName, int wrappedFieldIndex,
+            GoStructDescriptor ifaceWrapperDesc, int ifaceWrapperFieldIndex,
             GoStructDescriptor ifaceStructDesc) {
         super(GoKind.POINTER);
         this.child = child;
         this.wrapperDesc = wrapperDesc;
         this.wrappedTypeName = wrappedTypeName;
         this.wrappedFieldIndex = wrappedFieldIndex;
+        this.ifaceWrapperDesc = ifaceWrapperDesc;
+        this.ifaceWrapperFieldIndex = ifaceWrapperFieldIndex;
         this.ifaceStructDesc = ifaceStructDesc;
     }
 
@@ -75,6 +92,19 @@ public final class UnsafeToPtrNode extends GoExprNode {
             objects[wrappedFieldIndex] = gs;
             referent = new GoStruct(wrapperDesc,
                     new long[wrapperDesc.longsCount()], objects);
+        } else if (ifaceWrapperDesc != null) {
+            // P3-M18: reinterpretation (*B)(unsafe.Pointer(p)) where B is a
+            // single-field struct with an interface field (e.g. *reflect.rtype
+            // over *abi.Type via toRType) and p points to an interface value:
+            // wrap the interface in B's descriptor. The interface field holds
+            // the GoInterface directly; layout matches gc (2 words).
+            Object r = referent instanceof graalgo.values.GoBox gb ? gb.get() : referent;
+            if (r instanceof graalgo.values.GoInterface gi && !gi.isNil()) {
+                Object[] objects = new Object[ifaceWrapperDesc.objectsCount()];
+                objects[ifaceWrapperFieldIndex] = gi;
+                referent = new GoStruct(ifaceWrapperDesc,
+                        new long[ifaceWrapperDesc.longsCount()], objects);
+            }
         } else if (ifaceStructDesc != null) {
             // P3-M17: (*S)(unsafe.Pointer(&i)) where S is a two-field
             // (pointer, unsafe-pointer) struct and i is an interface value
@@ -98,16 +128,22 @@ public final class UnsafeToPtrNode extends GoExprNode {
         Json.Object f = node.object("fields", "unsafetooptr");
         int typeId = UnsafeWire.requireTypeId(f, "unsafetooptr");
         WrapperInfo wi = wrapperInfo(ctx, typeId, "unsafetooptr.fields");
+        IfaceWrapperInfo iwi = ifaceWrapperInfo(ctx, typeId, "unsafetooptr.fields");
         GoStructDescriptor ifaceDesc = ifaceStructInfo(ctx, typeId, "unsafetooptr.fields");
         GoExprNode n = new UnsafeToPtrNode(
                 UnsafeWire.child(f, "unsafetooptr", "x", factory, ctx),
                 wi == null ? null : wi.desc,
                 wi == null ? null : wi.wrappedTypeName,
                 wi == null ? -1 : wi.wrappedFieldIndex,
+                iwi == null ? null : iwi.desc,
+                iwi == null ? -1 : iwi.fieldIndex,
                 ifaceDesc);
         n.setTypeId(typeId);
         return n;
     }
+
+    /** Build-time interface-wrapper detection; fail-closed (null) on any mismatch. */
+    private record IfaceWrapperInfo(GoStructDescriptor desc, int fieldIndex) {}
 
     /** Build-time wrapper detection; fail-closed (null) on any mismatch. */
     private record WrapperInfo(GoStructDescriptor desc, String wrappedTypeName,
@@ -136,6 +172,38 @@ public final class UnsafeToPtrNode extends GoExprNode {
             }
             return new WrapperInfo(desc, field.structDesc().typeName(),
                     field.index());
+        } catch (RuntimeException e) {
+            return null; // fail-closed: no wrapping
+        }
+    }
+
+    /**
+     * Detects a single-field struct target whose field is an interface
+     * (e.g. {@code *reflect.rtype} with field {@code t abi.Type}).
+     * Returns the descriptor and field index, or null fail-closed.
+     */
+    private static IfaceWrapperInfo ifaceWrapperInfo(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        try {
+            Json.Object entry = ctx.types.entry(typeId, path);
+            if (!"pointer".equals(entry.string("kind", path))) {
+                return null;
+            }
+            int elemId = entry.object("detail", path).intValue("elem", path);
+            GoStructDescriptor desc;
+            try {
+                desc = NodeFactory.structDescriptorFor(ctx, elemId, path);
+            } catch (FrontendException e) {
+                return null; // target is not a struct
+            }
+            if (desc.fields().size() != 1) {
+                return null;
+            }
+            var field = desc.fields().get(0);
+            // Interface-kind field lives in objects array (not longs).
+            if (field.kind() != GoKind.INTERFACE || field.inLongs()) {
+                return null;
+            }
+            return new IfaceWrapperInfo(desc, field.index());
         } catch (RuntimeException e) {
             return null; // fail-closed: no wrapping
         }
