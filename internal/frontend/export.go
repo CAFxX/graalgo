@@ -10505,6 +10505,19 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		}
 		fi, ok := e.funcByObj[mobj]
 		helperMapped := false
+		// For multi-result methods, the backend v1 cannot build a GoFunc
+		// for the original funcdecl (NodeFactory throws "function with
+		// multiple results is not supported in v1"). The itab MUST map to
+		// the pair-returning __-helper (per the mrIfaceMethod design,
+		// mrdesugar_m5.go:87-92). Try the helper FIRST — funcByObj hitting
+		// does not mean the backend can use it. This is structural: it
+		// applies to every multi-result method, never name-keyed.
+		if msig, sok := mobj.Type().(*types.Signature); sok && msig.Results().Len() > 1 {
+			if hfi, hok := e.multiResultHelperFunc(mobj); hok {
+				fi, ok = hfi, true
+				helperMapped = true
+			}
+		}
 		if !ok {
 			// P3-M8 (WS D): multi-result synthetic methods are skipped
 			// from funcByObj (v1 cannot emit multi-result funcdecls),

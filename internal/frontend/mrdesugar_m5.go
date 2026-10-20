@@ -2887,6 +2887,47 @@ func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName
 	return "", "", false
 }
 
+// overrideTypeMatch reports whether a synthetic helper's pair field type
+// matches the corresponding disk method's result type. The
+// m7HelperPkgOverride declares the helper's package as the synthetic
+// counterpart of the method's retired package, so same-named types are
+// the same logical type even though they are nominally distinct
+// (different *types.Package). Recurses through pointers; named types
+// match by name ONLY when their packages are the declared override pair
+// (m7HelperPkgOverride[diskPkgPath] == synthPkgPath) — bare name equality
+// is never used, so same-named types in unrelated packages cannot match.
+// Anything else falls back to types.Identical.
+func overrideTypeMatch(synth, disk types.Type) bool {
+	if types.Identical(synth, disk) {
+		return true
+	}
+	sp, sok := synth.(*types.Pointer)
+	dp, dok := disk.(*types.Pointer)
+	if sok || dok {
+		if !sok || !dok {
+			return false
+		}
+		return overrideTypeMatch(sp.Elem(), dp.Elem())
+	}
+	sn, sok := synth.(*types.Named)
+	dn, dok := disk.(*types.Named)
+	if sok && dok {
+		sno, dno := sn.Obj(), dn.Obj()
+		if sno == nil || dno == nil || sno.Name() != dno.Name() {
+			return false
+		}
+		spk, dpk := sno.Pkg(), dno.Pkg()
+		if spk == nil || dpk == nil {
+			return false
+		}
+		// Table-verified pairing: the disk type's package must declare
+		// the synth type's package as its m7 override counterpart.
+		override, ok := m7HelperPkgOverride[dpk.Path()]
+		return ok && override == spk.Path()
+	}
+	return false
+}
+
 // multiResultHelperFunc maps a multi-result synthetic method to its
 // pair-returning __-helper's funcDeclInfo (P3-M8, WS D) — the itab target
 // for interface dispatch of that method. It returns ok=false when the
@@ -2918,6 +2959,15 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	helperPkg, helperName, ok := multiResultHelperFor(mobj.Pkg().Path(), mobj.Name(), nt.Obj().Name())
 	if !ok {
 		return nil, false
+	}
+	// The __-helpers for a retired synthetic package live in its
+	// replacement (m7HelperPkgOverride): reflect retired from synthetic
+	// to the disk importer, but its M7 __-helpers still live in the
+	// synthetic reflect_m7 package. Without this, the lookup below
+	// searches the real package's scope and misses. This mirrors the
+	// classifier fixes (m7_override_iface_test.go).
+	if override, ook := m7HelperPkgOverride[helperPkg]; ook {
+		helperPkg = override
 	}
 	var fi *funcDeclInfo
 	// P3-M9: try synthFuncIDs first (string-keyed). The *types.Func from
@@ -2992,8 +3042,27 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 		}
 	}
 	match := true
+	// isOverride: the helper lives in the declared override package of
+	// the method's package (m7HelperPkgOverride: the method's package
+	// retired from synthetic to the disk importer). The helper's pair
+	// field types (synthetic) are then nominally distinct from the
+	// method's result types (disk) although they are the same logical
+	// types, so types.Identical is the wrong test; match by name within
+	// the declared package pairing instead (overrideTypeMatch verifies
+	// the pairing, not bare name equality). A mere package difference
+	// with no declared override keeps the strict identical check.
+	_, isOverride := m7HelperPkgOverride[mobj.Pkg().Path()]
+	isOverride = isOverride && m7HelperPkgOverride[mobj.Pkg().Path()] == helperPkg
 	for i := 0; i < pst.NumFields(); i++ {
-		if !types.Identical(e.substType(pst.Field(i).Type()), sig.Results().At(i).Type()) {
+		pf := e.substType(pst.Field(i).Type())
+		rf := sig.Results().At(i).Type()
+		var ok bool
+		if isOverride {
+			ok = overrideTypeMatch(pf, rf)
+		} else {
+			ok = types.Identical(pf, rf)
+		}
+		if !ok {
 			match = false
 			break
 		}

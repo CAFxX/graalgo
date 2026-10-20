@@ -377,6 +377,26 @@ func (e *exporter) importPkgTree(path string) error {
 		return nil
 	}
 	e.importedPkgTree[path] = true
+	// M7 helper sidecars (m7HelperPkgOverride): a package retired from
+	// synthetic to the disk importer keeps its multi-result __-helpers
+	// and pair types in a synthetic sidecar package. Method tables map
+	// multi-result methods to those helpers (the mrIfaceMethod design:
+	// the itab must resolve every interface method to a buildable
+	// single-result GoFunc), so the sidecar must be imported with the
+	// package's tree — even when no concrete M7 call site exists to
+	// trigger multiResultHelper's on-demand import. Table-driven via
+	// m7HelperPkgOverride, never package-name-keyed. Imported before
+	// the package itself so method tables built during the package's
+	// own import already resolve its helpers.
+	if override, ok := m7HelperPkgOverride[path]; ok {
+		osp := getSyntheticPackage(override)
+		if osp == nil {
+			return scopeErrorf("gofrontend: m7HelperPkgOverride[%q] = %q has no synthetic source", path, override)
+		}
+		if err := e.importSyntheticPackage(osp); err != nil {
+			return err
+		}
+	}
 	sp, err := resolvePkgTree(path)
 	if err != nil {
 		return err
