@@ -91,12 +91,12 @@ Conventions:
 | `public static void println(Arg[] args)` | `println` builtin → **stderr**. [T] |
 | `public record Arg(GoKind kind, Object value)` | Argument box. |
 
-### fmt stub — `graalgo.runtime.Fmt` (D4; replaceable-in-Phase-3)
+### fmt stub — `graalgo.runtime.Fmt` (D4; RETIRED)
 
-The seven pure functions (D4). Real formatting logic held to the
-verb-conformance matrix (`corpus/fmt/matrix.tsv`, 122 rows differential
-vs gc); the *package* is a stub — resolved only via the frontend Phase-1
-import overlay, never linked as a real `fmt`.
+The Java fmt bridge was deleted by the real-fmt2 lane: the real `fmt`
+package from GOROOT is the implementation now (behavior covered by the
+differential corpus vs gc). The seven signatures below are retained here
+only as history; they are no longer frozen and no longer exist.
 
 | Signature | Notes |
 |-----------|-------|
