@@ -106,6 +106,21 @@ public final class Linknames {
                         + symbol + "\"");
     }
 
+    /**
+     * Reports whether a Java intrinsic is registered or a Go function is
+     * bound under {@code symbol} (fix-redmaster-r28, Fix 4). Lets the
+     * bodyless-function stub ({@code UnimplementedRootNode}) dispatch to
+     * a registered implementation for an assembly function instead of
+     * panicking: gc resolves such functions to the runtime's
+     * implementation, and a registered intrinsic is exactly that. A
+     * symbol with neither an intrinsic nor a bound Go function still
+     * takes the honest "unimplemented" panic path — this method never
+     * invents an implementation.
+     */
+    public static boolean hasSymbol(String symbol) {
+        return TARGETS.containsKey(symbol) || GO_FUNCS.containsKey(symbol);
+    }
+
     /** Binds a compiled Go function under its qualified Go name (launcher). */
     public static void bindGo(String qualifiedName, GoFunc fn) {
         if (qualifiedName == null || fn == null) {

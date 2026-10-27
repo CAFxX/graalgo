@@ -10,6 +10,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
+import graalgo.p3reflect.ReflectMem;
 import graalgo.p3net.GoHttp;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
@@ -150,6 +151,10 @@ public final class LinknameIntrinsics {
         // uncontended Lock/Unlock never calls it, which is why the gap
         // stayed hidden until now).
         registerInternalSyncIntrinsics();
+        // fix-redmaster-r28 (Fix 4): reflect's runtime-provided memory
+        // primitives (unsafe_New, typedmemmove) — see
+        // registerReflectMemIntrinsics.
+        registerReflectMemIntrinsics();
     }
 
     /**
@@ -780,6 +785,22 @@ public final class LinknameIntrinsics {
      * failing fast on a symbol with no provider (gc: undefined-symbol
      * link error). Method instantiations remain out of scope.
      */
+    /**
+     * fix-redmaster-r28 (Fix 4): reflect's runtime-provided memory
+     * primitives. In gc these are bodyless declarations in reflect
+     * ("implemented in package runtime"); graalgo resolves them through
+     * the {@code UnimplementedRootNode} fallback, which dispatches to
+     * the intrinsic registered here under {@code pkgpath.name}. The
+     * implementations in {@link ReflectMem} are general over graalgo
+     * carriers (not per-type special cases) and fail closed on shapes
+     * they do not understand.
+     */
+    private static void registerReflectMemIntrinsics() {
+        Linknames.register("reflect.unsafe_New", args -> ReflectMem.unsafeNew(args[0]), 1);
+        Linknames.register("reflect.typedmemmove",
+                args -> ReflectMem.typedmemmove(args[0], args[1], args[2]), 3);
+    }
+
     static void bindGoFuncs(Json.Object doc, NodeFactory.Program program) {
         Json.Object pkg = doc.object("package", "document");
         String docPkgName = pkg.string("name", "document.package");

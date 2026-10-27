@@ -3,11 +3,14 @@ package graalgo.frontend;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
+import graalgo.values.GoCell;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
+import graalgo.values.GoSlice;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import graalgo.values.UnsafeHandles;
 
 /**
  * Pointer dereference read {@code *p} (P3-M9, WS D).
@@ -49,6 +52,23 @@ public final class DerefNode extends GoExprNode {
             // Java null is the nil *T (e.g., var p *int).
             Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
         }
+        if (o instanceof Long l && kind() == GoKind.UNSAFE_POINTER) {
+            // fix-redmaster-r27: *p where p: unsafe.Pointer. A *T deref
+            // for T != unsafe.Pointer goes through UnsafeToPtrNode, which
+            // resolves the handle to a GoPointer first — but the
+            // unsafe.Pointer→unsafe.Pointer conversion is the identity,
+            // so this deref sees the bare handle. A bare Long operand here
+            // is therefore always a handle, never bits (unsafe.Pointer
+            // values are uniformly handles in the P3-M8 model); decoding
+            // it with fromLongBits would return the handle itself as the
+            // word. Resolve it and read the word at the referent instead
+            // (this is reflect's packEfaceData case:
+            // *(*unsafe.Pointer)(v.ptr) reading a direct-interface value's
+            // data word). This check MUST precede the GoPointer branch: a
+            // *unsafe.Pointer operand resolves to a stored handle, which
+            // is the result itself and must not be resolved further.
+            return wordAtHandle(l.longValue());
+        }
         if (o instanceof GoPointer p) {
             if (p.isNil()) {
                 Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
@@ -78,6 +98,51 @@ public final class DerefNode extends GoExprNode {
             return Long.valueOf(0);
         }
         return o;
+    }
+
+    /**
+     * Reads the machine word at a handle (fix-redmaster-r27): the word
+     * stored at the address an {@code unsafe.Pointer} handle denotes.
+     * Array elements and variable contents that are scalar words (Long)
+     * return directly; a slice header's first word is its data pointer
+     * (an ArrayRef handle). Anything else — struct first words (which
+     * need field layout), pointer words (which need location-faithful
+     * handles), object words — traps fail-closed rather than returning
+     * a wrong word: a wrong data word silently corrupts every interface
+     * value built from it (reflect's packEface), while a trap names the
+     * missing case.
+     */
+    private Object wordAtHandle(long handle) {
+        Object referent = graalgo.p3unsafe.UnsafeTable.current().resolve(handle);
+        if (referent == null) {
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+        }
+        if (referent instanceof graalgo.p3unsafe.UnsafeTable.ArrayRef ar) {
+            Object elem = java.lang.reflect.Array.get(ar.array(), ar.offset());
+            if (elem instanceof Long l) {
+                return l;
+            }
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe word read: array element is not a scalar word: "
+                            + (elem == null ? "null" : elem.getClass().getSimpleName()));
+        }
+        if (referent instanceof GoCell cell) {
+            Object value = cell.get();
+            if (value instanceof Long l) {
+                return l;
+            }
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe word read: variable contents are not a scalar word: "
+                            + (value == null ? "null" : value.getClass().getSimpleName()));
+        }
+        if (referent instanceof GoSlice gs) {
+            // Slice header word 0 is the data pointer.
+            return Long.valueOf(graalgo.p3unsafe.UnsafeTable.current().internEqual(
+                    new graalgo.p3unsafe.UnsafeTable.ArrayRef(gs.array(), gs.offset())));
+        }
+        throw new UnsafeHandles.UnsafeEscapeException(
+                "unsafe word read: unsupported referent: "
+                        + referent.getClass().getSimpleName());
     }
 
     @Override
@@ -201,7 +266,17 @@ public final class DerefNode extends GoExprNode {
      * TypeInfo; function/pointer fields are nil.
      */
     private static GoStruct materializeAbiType(GoInterface gi) {
-        long tok = graalgo.p3reflect.ReflectValues.typeof(gi);
+        return materializeAbiTypeForTok(graalgo.p3reflect.ReflectValues.typeof(gi));
+    }
+
+    /**
+     * Materializes the {@code internal/abi.Type} struct for a type token
+     * (fix-redmaster-r27: shared by materializeAbiType and by extended-type
+     * materialization in UnsafeToPtrNode, which needs abi.Type structs for
+     * field/element types). Registers the struct → token mapping so the
+     * unsafe layer can recover the TypeInfo from a bare abi.Type struct.
+     */
+    public static GoStruct materializeAbiTypeForTok(long tok) {
         graalgo.p3reflect.ReflectTypes.TypeInfo ti =
                 graalgo.p3reflect.ReflectTypes.table().info(tok);
 
@@ -227,7 +302,79 @@ public final class DerefNode extends GoExprNode {
                 objects[f.index()] = null;
             }
         }
-        return new GoStruct(desc, longs, objects);
+        GoStruct s = new GoStruct(desc, longs, objects);
+        try {
+            graalgo.p3reflect.ReflectTypes.table().noteAbiType(s, tok);
+        } catch (RuntimeException ignored) {
+            // No run installed (e.g. build-time use): mapping unavailable,
+            // extended-type materialization fails closed there.
+        }
+        return s;
+    }
+
+    /**
+     * Encodes an abi.Name's byte data (fix-redmaster-r27): flags byte,
+     * varint name length, name bytes, then (when a tag is present) varint
+     * tag length + tag bytes. Mirrors internal/abi.NewName's layout
+     * (without the trailing pkgPath nameOff, which field names do not
+     * carry). Returns null for a nil name (Bytes == nil).
+     */
+    public static byte[] encodeAbiName(String name, String tag, boolean exported, boolean embedded) {
+        if (name == null) {
+            return null;
+        }
+        byte[] nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] tagBytes = tag == null ? new byte[0]
+                : tag.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte bits = 0;
+        if (exported) {
+            bits |= 1;
+        }
+        if (tagBytes.length > 0) {
+            bits |= 1 << 1;
+        }
+        if (embedded) {
+            bits |= 1 << 3;
+        }
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(bits);
+        writeUvarint(out, nameBytes.length);
+        out.write(nameBytes, 0, nameBytes.length);
+        if (tagBytes.length > 0) {
+            writeUvarint(out, tagBytes.length);
+            out.write(tagBytes, 0, tagBytes.length);
+        }
+        return out.toByteArray();
+    }
+
+    private static void writeUvarint(java.io.ByteArrayOutputStream out, int v) {
+        while (true) {
+            int b = v & 0x7f;
+            v >>>= 7;
+            if (v == 0) {
+                out.write(b);
+                return;
+            }
+            out.write(b | 0x80);
+        }
+    }
+
+    /**
+     * Builds an abi.Name struct ({Bytes *byte}) for encoded name data
+     * (fix-redmaster-r27). Null data yields the zero Name (nil Bytes).
+     * The Bytes pointer is an element pointer into the encoded array, so
+     * Name's DataChecked arithmetic reads the encoding back.
+     */
+    public static GoStruct newAbiNameStruct(GoStructDescriptor nameDesc, byte[] encoded) {
+        long[] longs = new long[nameDesc.longsCount()];
+        Object[] objects = new Object[nameDesc.objectsCount()];
+        for (var f : nameDesc.fields()) {
+            if (!f.inLongs() && f.kind() == GoKind.POINTER) {
+                objects[f.index()] = encoded == null ? new GoPointer((Object) null)
+                        : new GoPointer((Object) encoded, 0);
+            }
+        }
+        return new GoStruct(nameDesc, longs, objects);
     }
 
     /** Cached descriptor for internal/abi.Type. */

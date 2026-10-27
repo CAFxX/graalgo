@@ -1,12 +1,18 @@
 package graalgo.p3unsafe;
 
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.frontend.GoFieldCell;
+import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Panic;
+import graalgo.values.GoCell;
 import graalgo.values.GoComplex32;
 import graalgo.values.GoComplex64;
+import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
+import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 import graalgo.values.UnsafeHandles;
 
 /**
@@ -307,5 +313,294 @@ public final class UnsafeOps {
         }
         return UnsafeTable.current().internEqual(
                 new UnsafeTable.ArrayRef(ar.array(), (int) newOffset));
+    }
+
+    /**
+     * Byte-offset pointer arithmetic for the {@code "unsafeptraddbytes"}
+     * wire node (fix-redmaster-r27): {@code unsafe.Pointer(uintptr(p) + x)}
+     * for a general byte offset {@code x}.
+     *
+     * <p>The base {@code ptrHandle} must be a proven-valid handle (the
+     * frontend matched {@code uintptr(p)} with {@code p: unsafe.Pointer},
+     * not an arbitrary integer), so the D5 discipline is unchanged for
+     * genuinely integer-derived pointers (those still trap via
+     * {@code "unsafefromuint"}). The byte offset is resolved against the
+     * base referent's layout: a struct field (recursing into nested
+     * struct/array/slice fields for interior offsets), an array/slice
+     * element (with alignment and bounds checks), or a cell's contents.
+     * Nil bases, scalar bases, misaligned or out-of-range offsets, and
+     * one-past-end struct offsets trap — fail closed, never silently
+     * aliasing the wrong storage.
+     *
+     * <p>Array element sizes come from the carrier, not from a name or a
+     * type-table lookup the handle model does not carry: primitive Java
+     * arrays have Java size == Go size for every graalgo primitive
+     * carrier, and Object arrays are homogeneous, so one representative
+     * element determines the element size (recursing into nested arrays).
+     * Empty or all-nil Object arrays trap: their element type is
+     * unknowable from contents.
+     */
+    public static long ptrAddBytes(long ptrHandle, long byteOffset) {
+        Object referent = UnsafeTable.current().resolve(ptrHandle);
+        if (referent == null) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptraddbytes: nil base pointer "
+                            + "(D5: no arithmetic on opaque handles)");
+        }
+        if (byteOffset == 0) {
+            // Offset 0 is the identity — EXCEPT for struct bases, where
+            // the struct pointer itself is not dereferenceable as a field
+            // type (reflect's Field(0) → add(ptr, 0) must yield a field-0
+            // cell, or the field read below fails unboxing the struct).
+            // A cell holding a struct is the same case (the cell's
+            // contents, not the cell, is the struct). This also covers
+            // zero-sized element types, whose offset is always 0.
+            if (referent instanceof GoStruct gs) {
+                return UnsafeTable.current().intern(structAtByteOffset(gs, 0));
+            }
+            if (referent instanceof GoCell cell && cell.get() instanceof GoStruct gs) {
+                return UnsafeTable.current().intern(structAtByteOffset(gs, 0));
+            }
+            return ptrHandle;
+        }
+        Object target = resolveByteTarget(referent, byteOffset);
+        // ArrayRefs intern by value equality (same (array, index) -> same
+        // handle, matching gc pointer identity); cells intern by identity.
+        if (target instanceof UnsafeTable.ArrayRef ar) {
+            return UnsafeTable.current().internEqual(ar);
+        }
+        return UnsafeTable.current().intern(target);
+    }
+
+    /** Resolves a byte offset against one referent shape (fail-closed). */
+    private static Object resolveByteTarget(Object referent, long byteOffset) {
+        if (referent instanceof UnsafeTable.ArrayRef ar) {
+            return arrayAtByteOffset(ar.array(), ar.offset(), byteOffset);
+        }
+        if (referent instanceof GoCell cell) {
+            Object value = cell.get();
+            if (value instanceof GoStruct gs) {
+                return structAtByteOffset(gs, byteOffset);
+            }
+            if (value instanceof GoSlice gs) {
+                return arrayAtByteOffset(gs.array(), gs.offset(), byteOffset);
+            }
+            if (value != null && value.getClass().isArray()) {
+                return arrayAtByteOffset(value, 0, byteOffset);
+            }
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptraddbytes: cell contents are not byte-addressable: "
+                            + (value == null ? "null" : value.getClass().getSimpleName()));
+        }
+        if (referent instanceof GoStruct gs) {
+            return structAtByteOffset(gs, byteOffset);
+        }
+        if (referent instanceof GoSlice gs) {
+            return arrayAtByteOffset(gs.array(), gs.offset(), byteOffset);
+        }
+        if (referent.getClass().isArray()) {
+            return arrayAtByteOffset(referent, 0, byteOffset);
+        }
+        throw new UnsafeHandles.UnsafeEscapeException(
+                "unsafeptraddbytes: base is not a byte-addressable referent: "
+                        + referent.getClass().getSimpleName());
+    }
+
+    /**
+     * Element-indexed view of a byte offset into a Java array: the Go
+     * element size comes from the array's carrier (see {@link
+     * #ptrAddBytes}).
+     */
+    private static UnsafeTable.ArrayRef arrayAtByteOffset(Object array, int baseOffset, long byteOffset) {
+        long elemSize = goElemSize(array);
+        if (elemSize <= 0) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptraddbytes: cannot determine element size for "
+                            + array.getClass().getSimpleName());
+        }
+        if (byteOffset % elemSize != 0) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptraddbytes: misaligned byte offset " + byteOffset
+                            + " for element size " + elemSize);
+        }
+        long newOffset = (long) baseOffset + byteOffset / elemSize;
+        int len = java.lang.reflect.Array.getLength(array);
+        if (newOffset < 0 || newOffset >= len) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptraddbytes: element index " + newOffset
+                            + " out of bounds (len " + len + ")");
+        }
+        return new UnsafeTable.ArrayRef(array, (int) newOffset);
+    }
+
+    /** Go element size in bytes for a Java array's elements (0 = unknown). */
+    private static long goElemSize(Object array) {
+        Class<?> comp = array.getClass().getComponentType();
+        if (comp == null) {
+            return 0;
+        }
+        if (comp.isPrimitive()) {
+            // Every graalgo primitive carrier has Java size == Go size.
+            return switch (comp.getSimpleName()) {
+                case "byte", "boolean" -> 1;
+                case "char", "short" -> 2;
+                case "int", "float" -> 4;
+                case "long", "double" -> 8;
+                default -> 0;
+            };
+        }
+        if (comp != Object.class) {
+            // Not a graalgo carrier shape; fail closed.
+            return 0;
+        }
+        // Object[]: homogeneous Go elements — inspect a representative.
+        int len = java.lang.reflect.Array.getLength(array);
+        for (int i = 0; i < len; i++) {
+            Object elem = java.lang.reflect.Array.get(array, i);
+            if (elem != null) {
+                return goValueSize(elem);
+            }
+        }
+        return 0; // empty or all-nil: element type unknowable from contents
+    }
+
+    /** Go ABI size in bytes of one stored value (0 = unknown). */
+    private static long goValueSize(Object value) {
+        if (value instanceof GoStruct gs) {
+            return Intrinsics.structSizeBytes(gs.descriptor());
+        }
+        if (value instanceof GoString) {
+            return 16;
+        }
+        if (value instanceof GoSlice) {
+            return 24;
+        }
+        if (value instanceof GoInterface) {
+            return 16;
+        }
+        if (value instanceof GoComplex32) {
+            return 8;
+        }
+        if (value instanceof GoComplex64) {
+            return 16;
+        }
+        if (value.getClass().isArray()) {
+            // Nested Go array: length * element size (recursive).
+            long elemSize = goElemSize(value);
+            return elemSize <= 0 ? 0
+                    : (long) java.lang.reflect.Array.getLength(value) * elemSize;
+        }
+        // Pointers, maps, funcs, chans, and other scalar-carrying objects.
+        return 8;
+    }
+
+    /**
+     * Field view of a byte offset into a GoStruct: walks the ABI field
+     * layout (declaration order, natural alignment — mirroring {@link
+     * Intrinsics#structSizeBytes}) and returns a {@link GoFieldCell} for
+     * the field at the offset, or an {@link UnsafeTable.ArrayRef} for an
+     * interior offset into a nested array/slice field, recursing into
+     * nested struct fields.
+     */
+    private static Object structAtByteOffset(GoStruct structVal, long byteOffset) {
+        GoStructDescriptor desc = structVal.descriptor();
+        long offset = 0;
+        int declIdx = 0;
+        for (GoStructDescriptor.Field f : desc.fields()) {
+            long[] sa = fieldSizeAndAlign(f);
+            long fieldSize = sa[0];
+            long align = sa[1];
+            long fieldStart = (offset + align - 1) / align * align;
+            if (byteOffset >= fieldStart && byteOffset < fieldStart + fieldSize) {
+                if (byteOffset == fieldStart) {
+                    return new GoFieldCell(structVal, declIdx, f.kind());
+                }
+                return structFieldInterior(structVal, f, declIdx, byteOffset - fieldStart);
+            }
+            offset = fieldStart + fieldSize;
+            declIdx++;
+        }
+        throw new UnsafeHandles.UnsafeEscapeException(
+                "unsafeptraddbytes: byte offset " + byteOffset + " outside struct");
+    }
+
+    /** Interior offset into a composite field (nested struct/array/slice). */
+    private static Object structFieldInterior(GoStruct structVal, GoStructDescriptor.Field f,
+            int declIdx, long inner) {
+        if (f.inLongs()) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafeptraddbytes: interior offset into a scalar field");
+        }
+        Object value = structVal.getObject(declIdx);
+        if (value instanceof GoStruct nested) {
+            return structAtByteOffset(nested, inner);
+        }
+        if (value instanceof GoSlice gs) {
+            return arrayAtByteOffset(gs.array(), gs.offset(), inner);
+        }
+        if (value != null && value.getClass().isArray()) {
+            return arrayAtByteOffset(value, 0, inner);
+        }
+        throw new UnsafeHandles.UnsafeEscapeException(
+                "unsafeptraddbytes: interior offset into a non-composite field: "
+                        + (value == null ? "null" : value.getClass().getSimpleName()));
+    }
+
+    /**
+     * Returns {@code {size, alignment}} for one struct field, mirroring
+     * the runtime {@code Intrinsics} layout rules (whose
+     * {@code structSizeAndAlign} is private).
+     */
+    private static long[] fieldSizeAndAlign(GoStructDescriptor.Field f) {
+        long basic = Intrinsics.elemSizeBytes(f.kind());
+        if (basic != 0) {
+            return new long[]{basic, Math.min(basic, 8)};
+        }
+        if (f.kind() == GoKind.STRUCT) {
+            GoStructDescriptor nested = f.structDesc();
+            if (nested == null) {
+                throw new UnsafeHandles.UnsafeEscapeException(
+                        "unsafeptraddbytes: STRUCT field without nested descriptor");
+            }
+            return structSizeAndAlign(nested);
+        }
+        if (f.kind() == GoKind.ARRAY) {
+            long[] esa = arrayElemSizeAndAlign(f);
+            if (f.arrayLen() < 0) {
+                throw new UnsafeHandles.UnsafeEscapeException(
+                        "unsafeptraddbytes: ARRAY field without array length");
+            }
+            return new long[]{(long) f.arrayLen() * esa[0], esa[1]};
+        }
+        throw new UnsafeHandles.UnsafeEscapeException(
+                "unsafeptraddbytes: unsupported field kind " + f.kind());
+    }
+
+    /** Returns {@code {size, alignment}} for a struct descriptor. */
+    private static long[] structSizeAndAlign(GoStructDescriptor desc) {
+        long offset = 0;
+        long maxAlign = 1;
+        for (GoStructDescriptor.Field f : desc.fields()) {
+            long[] sa = fieldSizeAndAlign(f);
+            long align = sa[1];
+            maxAlign = Math.max(maxAlign, align);
+            offset = (offset + align - 1) / align * align;
+            offset += sa[0];
+        }
+        return new long[]{(offset + maxAlign - 1) / maxAlign * maxAlign, maxAlign};
+    }
+
+    /** Returns {@code {size, alignment}} for an ARRAY-kind field's element. */
+    private static long[] arrayElemSizeAndAlign(GoStructDescriptor.Field f) {
+        GoKind ek = f.arrayElemKind();
+        long basic = ek == null ? 0 : Intrinsics.elemSizeBytes(ek);
+        if (basic != 0) {
+            return new long[]{basic, Math.min(basic, 8)};
+        }
+        if (ek == GoKind.STRUCT && f.arrayElemDesc() != null) {
+            return structSizeAndAlign(f.arrayElemDesc());
+        }
+        throw new UnsafeHandles.UnsafeEscapeException(
+                "unsafeptraddbytes: unsupported array element kind " + ek);
     }
 }

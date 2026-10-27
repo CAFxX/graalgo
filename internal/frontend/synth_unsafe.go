@@ -246,6 +246,31 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 					"ptr": ptr, "index": index, "type": to,
 				}), true, nil
 			}
+			// fix-redmaster-r27: general byte-offset pointer arithmetic.
+			// unsafe.Pointer(uintptr(p) + x) for an arbitrary byte offset
+			// x is the standard Go idiom for &p[k], field addresses, and
+			// reflect's add() — all of which the element-count form above
+			// cannot express (the offset is a field offset or a runtime
+			// size value, not a Sizeof multiple). It lowers to the
+			// "unsafeptraddbytes" wire node: the backend resolves the
+			// byte offset against the base referent's layout (struct
+			// field, array/slice element) and traps only for bases it
+			// cannot address (preserving the D5 trap for genuinely opaque
+			// integers). This is general: any Go code using this idiom
+			// works, not a package- or symbol-keyed special case.
+			if ptrArg, offsetArg := splitByteAdd(e, c.Args[0]); ptrArg != nil {
+				ptr, err := e.exportExpr(ptrArg)
+				if err != nil {
+					return nil, true, err
+				}
+				offset, err := e.exportExpr(offsetArg)
+				if err != nil {
+					return nil, true, err
+				}
+				return e.node("unsafeptraddbytes", c, map[string]any{
+					"ptr": ptr, "offset": offset, "type": to,
+				}), true, nil
+			}
 			return e.node("unsafefromuint", c, map[string]any{
 				"x": x, "type": to,
 			}), true, nil
@@ -342,6 +367,69 @@ func splitPtrAdd(e *exporter, uintptrExpr ast.Expr) (ptrArg, indexArg ast.Expr) 
 		k = un
 	}
 	return p, k
+}
+
+// splitByteAdd recognizes the general byte-offset idiom
+//
+//	unsafe.Pointer(uintptr(p) + x)
+//	unsafe.Pointer(uintptr(p) - x)
+//
+// where p has type unsafe.Pointer and x is any byte offset (a field offset,
+// a runtime size value, or an index times a runtime size). It returns the
+// unsafe.Pointer operand p and the byte-offset operand (negated for the
+// SUB form), or (nil, nil) if the expression is not of this form.
+//
+// It is the fallback after splitPtrAdd: the element-count form is strictly
+// more informative (the backend can index the array referent directly),
+// but most real pointer arithmetic — reflect's add(), field addresses,
+// arrayAt() with runtime sizes — has no static Sizeof factor, so it must
+// lower to a byte-offset node rather than trap. A uintptr->unsafe.Pointer
+// conversion whose argument is not a pointer-arithmetic expression at all
+// (an opaque integer, a computed address) still keeps the D5 trap.
+func splitByteAdd(e *exporter, uintptrExpr ast.Expr) (ptrArg, offsetArg ast.Expr) {
+	bin, ok := uintptrExpr.(*ast.BinaryExpr)
+	if !ok {
+		return nil, nil
+	}
+	var ptrConv, offset ast.Expr
+	neg := false
+	switch bin.Op {
+	case token.ADD:
+		switch {
+		case isUintptrOfUnsafePointer(e, bin.X):
+			ptrConv, offset = bin.X, bin.Y
+		case isUintptrOfUnsafePointer(e, bin.Y):
+			ptrConv, offset = bin.Y, bin.X
+		default:
+			return nil, nil
+		}
+	case token.SUB:
+		// Only uintptr(p) - offset. (offset - uintptr(p) would negate the
+		// base handle, which is meaningless.)
+		if !isUintptrOfUnsafePointer(e, bin.X) {
+			return nil, nil
+		}
+		ptrConv, offset = bin.X, bin.Y
+		neg = true
+	default:
+		return nil, nil
+	}
+	// ptrConv is uintptr(p); extract p.
+	call, ok := ptrConv.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil, nil
+	}
+	p := call.Args[0]
+	if neg {
+		un := &ast.UnaryExpr{Op: token.SUB, X: offset}
+		// The synthesized node has no source position; give it the type
+		// of its operand so the exporter can lower it.
+		if ot := e.info.TypeOf(offset); ot != nil {
+			e.info.Types[un] = types.TypeAndValue{Type: ot}
+		}
+		offset = un
+	}
+	return p, offset
 }
 
 // isUintptrOfUnsafePointer reports whether expr is a conversion uintptr(p)

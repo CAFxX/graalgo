@@ -175,6 +175,30 @@ public final class ReflectTypes {
         private final Map<GoKind, Long> basicKindToTok = new HashMap<>();
         /** Wire type id → canonical token (for descriptor lookup). */
         private final Map<Integer, Long> wireIdToTok = new HashMap<>();
+        /**
+         * fix-redmaster-r27: materialized {@code internal/abi.Type} struct
+         * instance → its type token. Identity-keyed: distinct types may
+         * materialize value-equal abi.Type structs (same size/kind), so
+         * value equality would conflate them; identity is exact because
+         * each materialization registers its own instance. Per-run table
+         * (replaced by install), so no cross-run leakage. Lets the
+         * unsafe-reinterpretation layer recover a type's full TypeInfo
+         * from a bare abi.Type struct (for extended-type materialization
+         * of structType/sliceType/arrayType in UnsafeToPtrNode).
+         */
+        private final Map<graalgo.values.GoStruct, Long> abiTypeTokens =
+                new java.util.IdentityHashMap<>();
+
+        /** Records a materialized abi.Type struct's token (fix-redmaster-r27). */
+        public void noteAbiType(graalgo.values.GoStruct s, long tok) {
+            abiTypeTokens.put(s, tok);
+        }
+
+        /** The token for a materialized abi.Type struct, or -1 (fix-redmaster-r27). */
+        public long abiTypeTok(graalgo.values.GoStruct s) {
+            Long t = abiTypeTokens.get(s);
+            return t == null ? -1 : t;
+        }
         /** Token → canonical GoTypeDescriptor (for `any` boxing; memoized). */
         private final Map<Long, graalgo.values.GoTypeDescriptor> tokToDesc = new HashMap<>();
         /**

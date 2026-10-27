@@ -50,6 +50,7 @@ import graalgo.p3sync.nodes.SyncOpNode;
 import graalgo.p3unsafe.UnsafeAddNode;
 import graalgo.p3unsafe.UnsafeFromPtrNode;
 import graalgo.p3unsafe.UnsafeFromUintNode;
+import graalgo.p3unsafe.UnsafePtrAddBytesNode;
 import graalgo.p3unsafe.UnsafePtrAddNode;
 import graalgo.p3unsafe.UnsafeSliceDataNode;
 import graalgo.p3unsafe.UnsafeSliceNode;
@@ -439,6 +440,14 @@ public final class P3SyncMain {
             // (element-indexed pointer arithmetic).
             factory.registerExprKind("unsafeptradd",
                     (node, ctx) -> UnsafePtrAddNode.build(node, factory, ctx));
+            // fix-redmaster-r27: the "unsafeptraddbytes" wire node for the
+            // general byte-offset idiom unsafe.Pointer(uintptr(p) + x)
+            // (reflect's add(), field addresses, arrayAt with runtime
+            // sizes). NOTE: this block mirrors P3KindRegistrations (used
+            // by the test launchers) — a new wire kind must be registered
+            // in BOTH places or the product launcher rejects it.
+            factory.registerExprKind("unsafeptraddbytes",
+                    (node, ctx) -> UnsafePtrAddBytesNode.build(node, factory, ctx));
             UnsafeTable.install();
             // P3-M8 (wave 2, reflect): the "reflectop" wire node (single
             // kind dispatching on "op"). Public extension hook — no
