@@ -815,6 +815,19 @@ public final class LinknameIntrinsics {
             if (fields.opt("linkname") instanceof Json.Str) {
                 continue;
             }
+            // fix-redmaster-r29: bodyless stubs are consumers, never
+            // providers, for the same reason. A bodyless funcdecl builds
+            // an UnimplementedRootNode GoFunc; binding it here makes
+            // Linknames.hasSymbol true for its own symbol, so the stub's
+            // Fix-4 dispatch arm invokes itself forever (16_generics /
+            // 30_type_switch %T: StackOverflowError through
+            // UnimplementedRootNode -> dispatch -> UnimplementedRootNode)
+            // instead of taking the honest "unimplemented" panic. A
+            // symbol with a real Java intrinsic still resolves through
+            // the TARGETS arm; a symbol with neither keeps panicking.
+            if (fields.opt("unimplemented") instanceof Json.Bool ub && ub.value()) {
+                continue;
+            }
             int objId = fields.intValue("obj", "document.funcs.fields");
             GoFunc gf = functions.get(objId);
             if (gf == null) {
