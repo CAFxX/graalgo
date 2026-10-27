@@ -23,6 +23,46 @@ public final class GoPointerCell32 implements IntCell {
         this.ptr = ptr;
     }
 
+    /**
+     * Storage identity (fix-redmaster-r29): two views of the same Go
+     * storage are equal, even when built from distinct wrapper objects.
+     * {@link graalgo.runtime.sync.GoSemaphore} keys its waiter queues by
+     * the cell object, so without this a releaser holding a fresh view
+     * of {@code &wg.sema} never finds the waiter's queue and the waiter
+     * parks forever (26_sync_primitives deadlock: acquire enqueued under
+     * one view, release looked up another). Equality mirrors
+     * {@link GoPointer#sameStorageAs} exactly; the hash mirrors it per
+     * storage shape (cell → the cell's storage key, element → array
+     * identity + index, plain referent → referent identity, nil → 0).
+     * Cell kinds that sameStorageAs never equates (cell vs element vs
+     * plain) may share a hash — only equal objects must share one.
+     */
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof GoPointerCell32 c && ptr.sameStorageAs(c.ptr);
+    }
+
+    @Override
+    public int hashCode() {
+        if (ptr.isCellPointer()) {
+            graalgo.values.GoCell cell = ptr.cell();
+            if (cell instanceof graalgo.frontend.GoFieldCell f) {
+                return 31 * System.identityHashCode(f.ownerStruct()) + f.fieldIndex();
+            }
+            if (cell instanceof graalgo.frontend.GoArrayCell a) {
+                return 31 * System.identityHashCode(a.array()) + a.index();
+            }
+            return System.identityHashCode(cell);
+        }
+        if (ptr.isElemPointer()) {
+            return 31 * System.identityHashCode(ptr.elemArray()) + ptr.elemIndex();
+        }
+        if (ptr.isNil()) {
+            return 0;
+        }
+        return System.identityHashCode(ptr.referent());
+    }
+
     private int read() {
         Object r = ptr.referent();
         if (r instanceof Number n) {

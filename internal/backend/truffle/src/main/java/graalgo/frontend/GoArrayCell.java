@@ -26,6 +26,16 @@ public final class GoArrayCell implements GoCell {
         this.index = index;
     }
 
+    /** The backing array (storage identity, with {@link #index()}). */
+    public Object array() {
+        return array;
+    }
+
+    /** The absolute element index within {@link #array()}. */
+    public int index() {
+        return index;
+    }
+
     @Override
     public Object get() {
         return Boxing.arrayGet(array, elemKind, index);
