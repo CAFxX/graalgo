@@ -264,25 +264,33 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 return null;
             }
             ReflectTypes.TypeInfo ti = table.info(tok);
+            // fix-redmaster-r29: a boxType rtype struct is not itself an
+            // abi.Type struct — its Type field must be the materialized
+            // abi.Type struct, not the token-carrying rtype struct, or
+            // later reads of the extended struct's Type field (e.g. Str)
+            // would see a token Long where a struct belongs. Registered
+            // materialized structs keep their identity (aliasing).
+            GoStruct abiType = table.isNotedAbiType(gs) ? gs
+                    : graalgo.frontend.DerefNode.materializeAbiTypeForTok(tok);
             GoStruct e;
             switch (extShape) {
                 case STRUCT -> {
                     if (ti.kind != GoKind.STRUCT || ti.fields == null) {
                         return null;
                     }
-                    e = buildStructTypeE(gs, ti);
+                    e = buildStructTypeE(abiType, ti);
                 }
                 case SLICE -> {
                     if (ti.kind != GoKind.SLICE || ti.elem == null) {
                         return null;
                     }
-                    e = buildSliceTypeE(gs, ti);
+                    e = buildSliceTypeE(abiType, ti);
                 }
                 case ARRAY -> {
                     if (ti.kind != GoKind.ARRAY || ti.elem == null) {
                         return null;
                     }
-                    e = buildArrayTypeE(gs, ti);
+                    e = buildArrayTypeE(abiType, ti);
                 }
                 default -> {
                     return null;

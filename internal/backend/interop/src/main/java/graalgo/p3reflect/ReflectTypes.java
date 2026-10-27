@@ -196,8 +196,49 @@ public final class ReflectTypes {
 
         /** The token for a materialized abi.Type struct, or -1 (fix-redmaster-r27). */
         public long abiTypeTok(graalgo.values.GoStruct s) {
-            Long t = abiTypeTokens.get(s);
-            return t == null ? -1 : t;
+            // fix-redmaster-r29: resolve through wrapper structs. A type
+            // value reaches here in three shapes: (a) the materialized
+            // abi.Type struct itself (registered); (b) a boxType rtype
+            // struct whose single field IS the token; (c) a real rtype
+            // struct whose single field holds the materialized abi.Type
+            // struct (built by real reflect code, with a descriptor object
+            // distinct from the captured rtypeDescStruct — descriptor
+            // identity must NOT be assumed). Shape (c) failed before this
+            // fix: the outer struct was unregistered, extended-type
+            // materialization failed closed, and structType field reads
+            // misaligned into longs (NumField's len(tt.Fields) on a Long).
+            // Unwrapping is structural (single-field wrappers only) and
+            // bounded with a cycle guard; anything else fails closed.
+            graalgo.values.GoStruct cur = s;
+            java.util.Set<graalgo.values.GoStruct> seen =
+                    java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            for (int i = 0; i < 8 && cur != null && seen.add(cur); i++) {
+                Long t = abiTypeTokens.get(cur);
+                if (t != null) {
+                    return t;
+                }
+                graalgo.values.GoStructDescriptor d = cur.descriptor();
+                if (d.fields().size() == 1 && !d.field(0).inLongs()
+                        && d.field(0).kind() == graalgo.values.GoKind.STRUCT) {
+                    Object f0 = cur.getObject(0);
+                    if (f0 instanceof graalgo.values.GoStruct inner) {
+                        cur = inner;
+                        continue;
+                    }
+                    // boxType shape: the embedded abi.Type field holds the
+                    // token Long instead of a struct.
+                    if (f0 instanceof Long tok) {
+                        return tok;
+                    }
+                }
+                break;
+            }
+            return -1;
+        }
+
+        /** True iff {@code s} is a registered materialized abi.Type struct. */
+        public boolean isNotedAbiType(graalgo.values.GoStruct s) {
+            return abiTypeTokens.containsKey(s);
         }
         /** Token → canonical GoTypeDescriptor (for `any` boxing; memoized). */
         private final Map<Long, graalgo.values.GoTypeDescriptor> tokToDesc = new HashMap<>();
