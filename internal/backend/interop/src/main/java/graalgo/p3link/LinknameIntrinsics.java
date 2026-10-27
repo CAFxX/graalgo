@@ -819,6 +819,27 @@ public final class LinknameIntrinsics {
         Linknames.register("reflect.unsafe_New", args -> ReflectMem.unsafeNew(args[0]), 1);
         Linknames.register("reflect.typedmemmove",
                 args -> ReflectMem.typedmemmove(args[0], args[1], args[2]), 3);
+        // fix-redmaster-r29: runtime.getStaticuint64s (reflect's
+        // //go:linkname for (*structType).Field's Index slice). gc's
+        // runtime provides a read-only [256]uint64 array with identity
+        // values (staticuint64s[i] == i); Field(i) takes &arr[i] and
+        // builds a 1-element []int slice over it. The faithful
+        // implementation is the same shared static array here: callers
+        // get a pointer to it, and element-pointer + unsafe.Slice
+        // machinery (already general) builds the Index slice. A fresh
+        // array per call would also satisfy the common readers, but it
+        // would diverge from gc under Index mutation, which the shared
+        // array reproduces exactly.
+        Linknames.register("runtime.getStaticuint64s", args -> new GoPointer(STATIC_UINT64S), 0);
+    }
+
+    /** gc's staticuint64s: identity values, shared read-only (see above). */
+    private static final long[] STATIC_UINT64S = new long[256];
+
+    static {
+        for (int i = 0; i < STATIC_UINT64S.length; i++) {
+            STATIC_UINT64S[i] = i;
+        }
     }
 
     static void bindGoFuncs(Json.Object doc, NodeFactory.Program program) {
