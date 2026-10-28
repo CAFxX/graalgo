@@ -40,7 +40,15 @@ public final class DerefNode extends GoExprNode {
             // yields the cell itself — see FieldAddrNode) reads the
             // stored reference, e.g. LoadPointer(&x.v) in
             // (*atomic.Pointer[T]).Load.
-            return ar.get();
+            Object v = ar.get();
+            if (v != null) {
+                return v;
+            }
+            // fix-redmaster-r39: a zero cell holds Java null, which for
+            // an unsafe.Pointer word is the handle 0, not a missing
+            // value — fall through to the kind-based zero handling
+            // below instead of returning null into Boxing.toLong.
+            o = null;
         }
         if (o instanceof Long l) {
             // Long-carried value: decode per the node's kind.

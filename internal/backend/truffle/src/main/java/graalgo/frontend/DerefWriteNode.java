@@ -28,6 +28,18 @@ public final class DerefWriteNode extends GoStmtNode {
     @Override
     public void executeVoid(VirtualFrame frame) {
         Object o = ptr.executeObject(frame);
+        if (o instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
+            // fix-redmaster-r39: writing through &x.v of an
+            // atomic.Pointer/Value cell (FieldAddrNode yields the cell
+            // itself — the DerefNode read path already handles this
+            // shape) stores the boxed value in the cell, e.g.
+            // StorePointer(&x.v, v) in (*atomic.Pointer[T]).Store.
+            @SuppressWarnings("unchecked")
+            java.util.concurrent.atomic.AtomicReference<Object> cell =
+                    (java.util.concurrent.atomic.AtomicReference<Object>) ar;
+            cell.set(Boxing.copyForAssign(elemKind, Boxing.box(elemKind, value, frame)));
+            return;
+        }
         GoPointer p;
         if (o == null) {
             // Java null is the nil *T (e.g., var p *int).

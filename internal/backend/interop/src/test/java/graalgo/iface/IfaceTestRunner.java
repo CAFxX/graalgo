@@ -45,6 +45,10 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // fix-redmaster-r39: provenance-preserving byte derivation
+        // (UnsafeTable.derive) soundness — a derivation can only ever
+        // view its own base referent, never alias another live object.
+        TESTS.add(graalgo.p3unsafe.UnsafeDeriveTest.class);
     }
 
     private IfaceTestRunner() {}

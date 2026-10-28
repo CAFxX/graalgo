@@ -22,6 +22,7 @@ import graalgo.p3math.nodes.MathF64FromBitsNode;
 import graalgo.p3math.nodes.MathFmaNode;
 import graalgo.p3math.nodes.MathSqrtNode;
 import graalgo.p3sync.nodes.AtomicAddrNode;
+import graalgo.p3sync.nodes.AtomicPtrOpNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
@@ -34,6 +35,7 @@ import graalgo.p3time.nodes.TimeOpNode;
 import graalgo.p3time.nodes.TimeSleepNode;
 import graalgo.p3time.nodes.TimeTickNode;
 import graalgo.p3unsafe.UnsafeAddNode;
+import graalgo.p3unsafe.UnsafeDeriveNode;
 import graalgo.p3unsafe.UnsafeFromPtrNode;
 import graalgo.p3unsafe.UnsafeFromUintNode;
 import graalgo.p3unsafe.UnsafeSliceDataNode;
@@ -110,6 +112,11 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         // fix-linkname (Caddy/godebug lane): the atomicaddr wire node
         factory.registerExprKind("atomicaddr",
                 (node, ctx) -> AtomicAddrNode.build(node, ctx, factory));
+        // fix-redmaster-r39: the atomicptrop wire node (atomic.SwapPointer /
+        // CompareAndSwapPointer, incl. the unqualified calls inside
+        // sync/atomic's own Pointer[T] method bodies).
+        factory.registerExprKind("atomicptrop",
+                (node, ctx) -> AtomicPtrOpNode.build(node, ctx, factory));
         // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*" synctyp
         factory.registerExprKind("syncop", (node, ctx) -> {
             String synctyp = node.object("fields", "syncop")
@@ -211,6 +218,8 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
         factory.registerExprKind("unsafefromuint",
                 (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
+        factory.registerExprKind("unsafederive",
+                (node, ctx) -> UnsafeDeriveNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslice",
                 (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
         factory.registerExprKind("unsafeslicedata",

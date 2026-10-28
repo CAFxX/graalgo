@@ -8438,6 +8438,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 					if sel.Sel.Name == "LoadPointer" {
 						return e.exportAtomicLoadPointer(c)
 					}
+					// fix-redmaster-r39: the qualified Swap /
+					// CompareAndSwap pointer forms lower to
+					// "atomicptrop", like the unqualified calls
+					// inside sync/atomic.
+					if sel.Sel.Name == "SwapPointer" || sel.Sel.Name == "CompareAndSwapPointer" {
+						return e.exportAtomicPtrOp(c, sel.Sel.Name)
+					}
 					// fix-linkname (Caddy/godebug lane): package-level atomic
 					// word/bool ops (LoadUint64, StoreInt32, …). The address
 					// operand evaluates to a GoPointer; the "atomicaddr"
@@ -9240,10 +9247,59 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 	}), true, nil
 }
 
+// exportAtomicPtrOp lowers atomic.SwapPointer /
+// atomic.CompareAndSwapPointer (fix-redmaster-r39) to the "atomicptrop"
+// wire node: a handle-valued read-modify-write over the addressed
+// unsafe.Pointer word, served by the backend's AtomicPtrOpNode. The
+// typed wrappers (atomic.Pointer[T].Swap/CompareAndSwap) call these
+// bodyless assembly functions unqualified from inside sync/atomic, and
+// user code may call the qualified forms; both lower here. Scoped
+// divergence (the exportAtomicLoadPointer precedent): the op is atomic
+// on atomic-wrapper cells and lock-serialized on plain fields, with no
+// memory-ordering guarantee beyond that.
+func (e *exporter) exportAtomicPtrOp(c *ast.CallExpr, name string) (*Node, error) {
+	op := map[string]string{"SwapPointer": "swap", "CompareAndSwapPointer": "cas"}[name]
+	nargs := map[string]int{"SwapPointer": 2, "CompareAndSwapPointer": 3}[name]
+	if len(c.Args) != nargs {
+		return nil, fmt.Errorf("gofrontend: atomic.%s takes %d arguments, got %d", name, nargs, len(c.Args))
+	}
+	addr, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	args := make([]*Node, 0, nargs-1)
+	for _, a := range c.Args[1:] {
+		x, err := e.exportExpr(a)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, x)
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("atomicptrop", c, map[string]any{
+		"op": op, "addr": addr, "args": args, "type": typ,
+	}), nil
+}
+
 // exportAtomicStorePointerStmt lowers a bare-statement
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
 // of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
+// Both spellings lower: the package-qualified atomic.StorePointer and the
+// unqualified StorePointer called from inside sync/atomic itself (the
+// atomic.Pointer[T].Store body — fix-redmaster-r39).
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
+	if id, ok := unparen(c.Fun).(*ast.Ident); ok {
+		obj, ok := e.info.Uses[id].(*types.Func)
+		if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || obj.Name() != "StorePointer" {
+			return nil, false, nil
+		}
+		// Unqualified in-package form: fall through to the shared
+		// lowering below (the selector checks are skipped).
+		return e.lowerAtomicStorePointer(s, c)
+	}
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
 		return nil, false, nil
@@ -9262,6 +9318,12 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
 		return nil, false, nil
 	}
+	return e.lowerAtomicStorePointer(s, c)
+}
+
+// lowerAtomicStorePointer is the shared *addr = val lowering behind
+// exportAtomicStorePointerStmt (both call spellings).
+func (e *exporter) lowerAtomicStorePointer(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
 	if len(c.Args) != 2 {
 		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
 	}
@@ -9296,6 +9358,17 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if fn.Pkg() != nil && fn.Pkg().Path() == "sync/atomic" {
 		if n, handled, err := e.exportAtomicWordOp(c, fn.Name()); handled {
 			return n, err
+		}
+		// fix-redmaster-r39: the Pointer ops called unqualified from
+		// inside sync/atomic (the atomic.Pointer[T] method bodies in
+		// type.go) lower like their qualified forms — LoadPointer to a
+		// deref read, Swap/CompareAndSwapPointer to "atomicptrop".
+		// StorePointer is statement-only and handled in exportStmt.
+		switch fn.Name() {
+		case "LoadPointer":
+			return e.exportAtomicLoadPointer(c)
+		case "SwapPointer", "CompareAndSwapPointer":
+			return e.exportAtomicPtrOp(c, fn.Name())
 		}
 	}
 	// PKG-012 (fix-atomic-rtatomic): internal/runtime/atomic word ops

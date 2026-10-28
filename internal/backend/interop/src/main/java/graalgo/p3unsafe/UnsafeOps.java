@@ -42,13 +42,18 @@ import graalgo.values.UnsafeHandles;
  * with gc-exact {@code "runtime error: ..."} messages (fully differential);
  * shapes the handle model cannot represent panic with an
  * {@code "unsafe.<op>: ..."} message (intentional, documented divergence —
- * gc would silently reinterpret); D5 traps ({@link #addTrap},
- * {@link #fromUintTrap}) throw {@link UnsafeHandles.UnsafeEscapeException}.
+ * gc would silently reinterpret); the D5 trap
+ * ({@link #fromUintTrap}) throws {@link UnsafeHandles.UnsafeEscapeException}.
  * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> trap:
  * it yields the handle as an integer identity token (PKG-007; see
  * {@link graalgo.values.GoConvert#unsafePointerToUintptr}) — the token is
- * opaque and comparable but never materializes back into a handle, so the
- * traps above keep holding.
+ * opaque and comparable but never materializes back into a handle.
+ * fix-redmaster-r39 narrows D5 exactly by the provenance-proven class:
+ * a {@code uintptr} expression the frontend proves is one pointer-derived
+ * term plus integer terms reaches the referent through
+ * {@link UnsafeTable#derive} (the {@code "unsafederive"} node), and
+ * {@code unsafe.Add} derives from its live pointer operand the same way;
+ * every other integer still traps in {@link #fromUintTrap}.
  */
 public final class UnsafeOps {
     private UnsafeOps() {}
@@ -244,19 +249,11 @@ public final class UnsafeOps {
     }
 
     /**
-     * {@code unsafe.Add} always traps (D5/GG-0015): handles admit no byte
-     * arithmetic. Re-test trigger: a byte-addressed value model (no plan).
-     */
-    public static void addTrap() {
-        throw new UnsafeHandles.UnsafeEscapeException(
-                "unsafe.Add: pointer arithmetic on unsafe.Pointer traps "
-                        + "(D5: handles admit no byte arithmetic; "
-                        + "re-test: byte-addressed value model)");
-    }
-
-    /**
-     * {@code uintptr → unsafe.Pointer} always traps (D5): a handle can
-     * never be materialized from an integer.
+     * {@code uintptr → unsafe.Pointer} traps (D5) whenever the frontend
+     * could not prove the operand's provenance: a handle can never be
+     * materialized from an integer. Proven derivations never reach this
+     * method — they travel as the {@code "unsafederive"} node and resolve
+     * through {@link UnsafeTable#derive} (fix-redmaster-r39).
      */
     public static void fromUintTrap() {
         throw new UnsafeHandles.UnsafeEscapeException(

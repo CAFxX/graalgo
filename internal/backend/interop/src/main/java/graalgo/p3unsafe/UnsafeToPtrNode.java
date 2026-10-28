@@ -10,6 +10,7 @@ import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
+import graalgo.values.UnsafeHandles;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,6 +39,13 @@ import java.util.List;
  * names, offsets, and type-directed roles); the view itself is built
  * at runtime from the live interface words. Targets whose layout does
  * not fit keep the pre-view behavior exactly.
+ *
+ * <p>fix-redmaster-r39 (byte-derived pointers): a handle produced by
+ * {@link UnsafeTable#derive} resolves to an
+ * {@link UnsafeTable.ByteRef}; this node unwraps it via
+ * {@link UnsafeTable#resolveView} and converts the byte offset to an
+ * element index using the wire's {@code elemSize} — see
+ * {@link #derivedPointer}.
  */
 public final class UnsafeToPtrNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -48,42 +56,112 @@ public final class UnsafeToPtrNode extends GoExprNode {
     /** Field layout for the view, or null when no view applies. */
     private final List<AbiTypes.ViewField> viewLayout;
 
+    /**
+     * Byte size of the target element type {@code T}, emitted by the
+     * frontend from its go/types {@code Sizes} (the same oracle that folds
+     * the program's own {@code unsafe.Sizeof} constants), or {@code -1}
+     * when the wire carries none. Only consulted for byte-derived
+     * pointers (fix-redmaster-r39): the byte offset of an
+     * {@link UnsafeTable.ByteRef} is divided by this size to recover the
+     * element index.
+     */
+    private final long elemSize;
+
     private UnsafeToPtrNode(GoExprNode child, String targetQName,
-            List<AbiTypes.ViewField> viewLayout) {
+            List<AbiTypes.ViewField> viewLayout, long elemSize) {
         super(GoKind.POINTER);
         this.child = child;
         this.targetQName = targetQName;
         this.viewLayout = viewLayout;
+        this.elemSize = elemSize;
     }
 
     @Override
     public Object executeObject(VirtualFrame frame) {
         long handle = child.executeLong(frame);
-        Object resolved = UnsafeTable.current().resolve(handle);
+        UnsafeTable.ResolvedView view = UnsafeTable.current().resolveView(handle);
+        Object resolved = view.root();
+        if (view.byteOffset() != 0) {
+            return derivedPointer(resolved, view.byteOffset());
+        }
         if (viewLayout != null && targetQName != null
                 && resolved instanceof GoCell cell
                 && cell.get() instanceof GoInterface gi) {
-            GoStruct view = AbiTypes.buildInterfaceView(gi, targetQName, viewLayout);
-            if (view != null) {
-                return new GoPointer(view);
+            GoStruct viewStruct = AbiTypes.buildInterfaceView(gi, targetQName, viewLayout);
+            if (viewStruct != null) {
+                return new GoPointer(viewStruct);
             }
         }
         return UnsafeTable.pointerFor(resolved);
     }
 
     /**
+     * Resolves a byte-derived pointer (fix-redmaster-r39): the root must
+     * be array storage (an {@link UnsafeTable.ArrayRef} or a bare Java
+     * array), the byte offset must be an exact multiple of the target
+     * element size, and the resulting element index must lie in
+     * {@code [0, length]} (one-past-the-end may be formed, as in gc;
+     * dereferencing it fails loud through the element-pointer
+     * machinery). The result is the canonical element pointer — the same
+     * {@code GoPointer} shape {@code &arr[i]} produces — so reads and
+     * writes through it alias the array slot. Anything else (a non-array
+     * root, a misaligned offset, an out-of-range index, a missing
+     * element size) traps: D5 cannot reinterpret memory.
+     */
+    private Object derivedPointer(Object root, long byteOffset) {
+        Object array;
+        long baseIndex;
+        if (root instanceof UnsafeTable.ArrayRef ref) {
+            array = ref.array();
+            baseIndex = ref.offset();
+        } else if (root != null && root.getClass().isArray()) {
+            array = root;
+            baseIndex = 0;
+        } else {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe: byte-offset derivation from a non-array referent traps "
+                            + "(D5: the handle model cannot reinterpret memory)");
+        }
+        if (elemSize <= 0) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe: byte-derived pointer conversion lacks a target element size "
+                            + "(D5: cannot index the referent without it)");
+        }
+        if (byteOffset % elemSize != 0) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe: byte offset " + byteOffset + " is not a multiple of the target "
+                            + "element size " + elemSize + " (D5: misaligned derivation traps)");
+        }
+        long index = baseIndex + byteOffset / elemSize;
+        int length = UnsafeOps.arrayLength(array);
+        if (index < 0 || index > length) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe: byte-derived element index " + index + " out of range [0, "
+                            + length + "] (D5: derivation cannot leave its referent)");
+        }
+        return UnsafeTable.pointerFor(new UnsafeTable.ArrayRef(array, (int) index));
+    }
+
+    /**
      * Builds the node from the {@code "unsafetooptr"} wire node. Fields:
      * {@code x} (the handle operand), {@code type} (result type-table id —
-     * the {@code *T} type).
+     * the {@code *T} type), {@code elemSize} (optional; the byte size of
+     * {@code T} from the frontend's go/types Sizes).
      */
     public static GoExprNode build(Json.Object node, NodeFactory factory, NodeFactory.BuildCtx ctx) {
         Json.Object f = node.object("fields", "unsafetooptr");
         int typeId = UnsafeWire.requireTypeId(f, "unsafetooptr");
+        long elemSize = -1;
+        Json.Value es = f.opt("elemSize");
+        if (es instanceof Json.Num num) {
+            elemSize = num.asLong("unsafetooptr.fields.elemSize");
+        }
         ViewTarget target = captureViewTarget(ctx, typeId);
         GoExprNode n = new UnsafeToPtrNode(
                 UnsafeWire.child(f, "unsafetooptr", "x", factory, ctx),
                 target == null ? null : target.qname(),
-                target == null ? null : target.layout());
+                target == null ? null : target.layout(),
+                elemSize);
         n.setTypeId(typeId);
         return n;
     }

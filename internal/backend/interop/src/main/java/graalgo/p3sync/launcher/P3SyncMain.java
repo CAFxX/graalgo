@@ -43,10 +43,12 @@ import graalgo.rtstack.RuntimeFuncNameNode;
 import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3os.GoOs;
 import graalgo.p3sync.nodes.AtomicAddrNode;
+import graalgo.p3sync.nodes.AtomicPtrOpNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
 import graalgo.p3unsafe.UnsafeAddNode;
+import graalgo.p3unsafe.UnsafeDeriveNode;
 import graalgo.p3unsafe.UnsafeFromPtrNode;
 import graalgo.p3unsafe.UnsafeFromUintNode;
 import graalgo.p3unsafe.UnsafeSliceDataNode;
@@ -293,6 +295,11 @@ public final class P3SyncMain {
             // (package-level sync/atomic word ops).
             factory.registerExprKind("atomicaddr",
                     (node, ctx) -> AtomicAddrNode.build(node, ctx, factory));
+            // fix-redmaster-r39: the atomicptrop wire node
+            // (atomic.SwapPointer / CompareAndSwapPointer, incl. the
+            // unqualified calls inside sync/atomic's Pointer[T] bodies).
+            factory.registerExprKind("atomicptrop",
+                    (node, ctx) -> AtomicPtrOpNode.build(node, ctx, factory));
             // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*"
             // synctyp dispatches to AtomicOpNode (real result kinds);
             // the sync.* namespace keeps SyncOpNode.
@@ -421,6 +428,8 @@ public final class P3SyncMain {
                     (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
             factory.registerExprKind("unsafefromuint",
                     (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafederive",
+                    (node, ctx) -> UnsafeDeriveNode.build(node, factory, ctx));
             factory.registerExprKind("unsafeslice",
                     (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
             factory.registerExprKind("unsafeslicedata",

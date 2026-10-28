@@ -339,6 +339,32 @@ sites and the identity-bodied declaration instead of the round-trip
 body, plus the object-ID renumbering that follows from the removed
 nodes.
 
+fix-redmaster-r39 adds three wire-visible lowerings of the same kind.
+(1) A `uintptr -> unsafe.Pointer` conversion whose operand the
+exporter proves — from the go/types-annotated AST — to be exactly one
+`uintptr(P)` term (P `unsafe.Pointer`-typed, sign +1) plus pure
+integer terms emits an `unsafederive` node carrying the base pointer
+and the byte offset separately, instead of the D5 `unsafefromuint`
+trap; anything unproven (a stored uintptr, two-pointer arithmetic, a
+scaled pointer term) keeps the trap. The backend interns a
+(root referent, byte offset) view of the still-live base handle, so a
+derivation can only ever name storage of its own base object; the
+typed consumption site validates the offset against the element size,
+which (2) direct `unsafe.Pointer -> *T` conversions now carry as an
+`elemSize` field on `unsafetooptr`, from the same go/types `Sizes`
+oracle that folds the program's own `unsafe.Sizeof` constants.
+`unsafe.Add` derives through the same backend path. (3) The
+`sync/atomic` Pointer primitives (`LoadPointer` in expression
+position, `StorePointer` as a statement, `SwapPointer` /
+`CompareAndSwapPointer` as the new `atomicptrop` node) are
+intercepted for BOTH the package-qualified selector form and the
+unqualified form used inside `sync/atomic`'s own `Pointer[T]` method
+bodies — the bodies previously called the bodyless assembly
+declarations and panicked at runtime (the PKG-012 word-op
+interception had left the Pointer ops out). Goldens for programs
+transitively importing `unsafe` or `sync/atomic` carry the new nodes
+and renumbering.
+
 ## 9. Extending NodeFactory — WS D/E hook points
 
 `src/main/java/graalgo/frontend/NodeFactory.java` is structured for

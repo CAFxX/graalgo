@@ -12,11 +12,16 @@ import java.util.Map;
  * identity token (PKG-007): {@link GoConvert#unsafePointerToUintptr}
  * returns the handle itself, so the portable identity properties (nil → 0,
  * stability, distinctness, equality-as-identity) hold without exposing an
- * address. Arithmetic on handles and materializing a handle from an
- * integer ({@code uintptr → unsafe.Pointer}) <em>trap</em> — a handle can
- * never be fabricated from an integer, so the escaped token has no path
- * back to a referent. Handles are never reused after {@link #free}
- * (use-after-free fails loud, never silently aliases a new referent).
+ * address. Materializing a handle from an integer
+ * ({@code uintptr → unsafe.Pointer}) <em>traps</em> — a handle can never
+ * be fabricated from an integer, so the escaped token has no path back to
+ * a referent. The single exception is not an exception to that rule:
+ * derivations the frontend proves carry a live pointer's provenance
+ * (fix-redmaster-r39) never pass through an integer at all — the
+ * interop table derives a byte-offset view from the live base handle
+ * itself ({@code UnsafeTable.derive}). Handles are never reused after
+ * {@link #free} (use-after-free fails loud, never silently aliases a new
+ * referent).
  */
 public final class UnsafeHandles {
     /** Thrown when unsafe.Pointer arithmetic or an escaping conversion traps. */

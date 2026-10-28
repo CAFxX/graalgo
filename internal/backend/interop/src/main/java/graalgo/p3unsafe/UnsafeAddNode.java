@@ -8,8 +8,13 @@ import graalgo.values.GoKind;
 
 /**
  * {@code unsafe.Add(ptr, len)} (P3-M8): the {@code "unsafeadd"} wire node.
- * Always traps (D5/GG-0015): handles admit no byte arithmetic. Both
- * operands still evaluate, matching gc's argument evaluation order.
+ * The length is a byte count (gc: {@code Add} is
+ * {@code Pointer(uintptr(ptr) + uintptr(len))}). Since fix-redmaster-r39
+ * the result is {@link UnsafeTable#derive} of the live base handle by
+ * that many bytes — a view of the base's own referent that the typed
+ * consumption sites validate — instead of the former unconditional D5
+ * trap. Both operands still evaluate first, matching gc's argument
+ * evaluation order.
  */
 public final class UnsafeAddNode extends GoExprNode {
     @Child private GoExprNode ptrChild;
@@ -23,10 +28,9 @@ public final class UnsafeAddNode extends GoExprNode {
 
     @Override
     public long executeLong(VirtualFrame frame) {
-        ptrChild.executeLong(frame);
-        lenChild.executeLong(frame);
-        UnsafeOps.addTrap();
-        throw new AssertionError("unreachable");
+        long ptr = ptrChild.executeLong(frame);
+        long len = lenChild.executeLong(frame);
+        return UnsafeTable.current().derive(ptr, len);
     }
 
     /**

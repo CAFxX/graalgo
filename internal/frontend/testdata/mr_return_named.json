@@ -13670,6 +13670,7 @@
                         "len": 10
                       },
                       "fields": {
+                        "elemSize": 8,
                         "type": 184,
                         "x": {
                           "kind": "ident",
@@ -13841,6 +13842,7 @@
                             "len": 11
                           },
                           "fields": {
+                            "elemSize": 1,
                             "type": 185,
                             "x": {
                               "kind": "ident",
@@ -13921,6 +13923,7 @@
                             "len": 11
                           },
                           "fields": {
+                            "elemSize": 1,
                             "type": 187,
                             "x": {
                               "kind": "ident",
@@ -26902,6 +26905,7 @@
                         "len": 32
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 374,
                         "x": {
                           "kind": "unsafefromptr",
@@ -26956,7 +26960,7 @@
                   "type": null,
                   "values": [
                     {
-                      "kind": "call",
+                      "kind": "deref",
                       "pos": {
                         "file": 0,
                         "line": 30,
@@ -26965,69 +26969,52 @@
                         "len": 20
                       },
                       "fields": {
-                        "args": [
-                          {
-                            "kind": "addrof",
-                            "pos": {
-                              "file": 0,
-                              "line": 30,
-                              "col": 21,
-                              "off": 826,
-                              "len": 7
-                            },
-                            "fields": {
-                              "type": 377,
-                              "x": {
-                                "kind": "selector",
-                                "pos": {
-                                  "file": 0,
-                                  "line": 30,
-                                  "col": 22,
-                                  "off": 827,
-                                  "len": 6
-                                },
-                                "fields": {
-                                  "field": "typ",
-                                  "selpath": [
-                                    0
-                                  ],
-                                  "type": 30,
-                                  "x": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 30,
-                                      "col": 22,
-                                      "off": 827,
-                                      "len": 2
-                                    },
-                                    "fields": {
-                                      "name": "vp",
-                                      "obj": 387,
-                                      "type": 374
-                                    }
+                        "type": 30,
+                        "x": {
+                          "kind": "addrof",
+                          "pos": {
+                            "file": 0,
+                            "line": 30,
+                            "col": 21,
+                            "off": 826,
+                            "len": 7
+                          },
+                          "fields": {
+                            "type": 377,
+                            "x": {
+                              "kind": "selector",
+                              "pos": {
+                                "file": 0,
+                                "line": 30,
+                                "col": 22,
+                                "off": 827,
+                                "len": 6
+                              },
+                              "fields": {
+                                "field": "typ",
+                                "selpath": [
+                                  0
+                                ],
+                                "type": 30,
+                                "x": {
+                                  "kind": "ident",
+                                  "pos": {
+                                    "file": 0,
+                                    "line": 30,
+                                    "col": 22,
+                                    "off": 827,
+                                    "len": 2
+                                  },
+                                  "fields": {
+                                    "name": "vp",
+                                    "obj": 387,
+                                    "type": 374
                                   }
                                 }
                               }
                             }
                           }
-                        ],
-                        "fun": {
-                          "kind": "ident",
-                          "pos": {
-                            "file": 0,
-                            "line": 30,
-                            "col": 9,
-                            "off": 814,
-                            "len": 11
-                          },
-                          "fields": {
-                            "name": "LoadPointer",
-                            "obj": 32,
-                            "type": 64
-                          }
-                        },
-                        "type": 30
+                        }
                       }
                     }
                   ]
@@ -27234,7 +27221,7 @@
                   "type": null,
                   "values": [
                     {
-                      "kind": "call",
+                      "kind": "deref",
                       "pos": {
                         "file": 0,
                         "line": 35,
@@ -27243,69 +27230,52 @@
                         "len": 21
                       },
                       "fields": {
-                        "args": [
-                          {
-                            "kind": "addrof",
-                            "pos": {
-                              "file": 0,
-                              "line": 35,
-                              "col": 22,
-                              "off": 973,
-                              "len": 8
-                            },
-                            "fields": {
-                              "type": 379,
-                              "x": {
-                                "kind": "selector",
-                                "pos": {
-                                  "file": 0,
-                                  "line": 35,
-                                  "col": 23,
-                                  "off": 974,
-                                  "len": 7
-                                },
-                                "fields": {
-                                  "field": "data",
-                                  "selpath": [
-                                    1
-                                  ],
-                                  "type": 30,
-                                  "x": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 35,
-                                      "col": 23,
-                                      "off": 974,
-                                      "len": 2
-                                    },
-                                    "fields": {
-                                      "name": "vp",
-                                      "obj": 387,
-                                      "type": 374
-                                    }
+                        "type": 30,
+                        "x": {
+                          "kind": "addrof",
+                          "pos": {
+                            "file": 0,
+                            "line": 35,
+                            "col": 22,
+                            "off": 973,
+                            "len": 8
+                          },
+                          "fields": {
+                            "type": 379,
+                            "x": {
+                              "kind": "selector",
+                              "pos": {
+                                "file": 0,
+                                "line": 35,
+                                "col": 23,
+                                "off": 974,
+                                "len": 7
+                              },
+                              "fields": {
+                                "field": "data",
+                                "selpath": [
+                                  1
+                                ],
+                                "type": 30,
+                                "x": {
+                                  "kind": "ident",
+                                  "pos": {
+                                    "file": 0,
+                                    "line": 35,
+                                    "col": 23,
+                                    "off": 974,
+                                    "len": 2
+                                  },
+                                  "fields": {
+                                    "name": "vp",
+                                    "obj": 387,
+                                    "type": 374
                                   }
                                 }
                               }
                             }
                           }
-                        ],
-                        "fun": {
-                          "kind": "ident",
-                          "pos": {
-                            "file": 0,
-                            "line": 35,
-                            "col": 10,
-                            "off": 961,
-                            "len": 11
-                          },
-                          "fields": {
-                            "name": "LoadPointer",
-                            "obj": 32,
-                            "type": 64
-                          }
-                        },
-                        "type": 30
+                        }
                       }
                     }
                   ]
@@ -27340,6 +27310,7 @@
                         "len": 35
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 380,
                         "x": {
                           "kind": "unsafefromptr",
@@ -27749,6 +27720,7 @@
                         "len": 32
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 384,
                         "x": {
                           "kind": "unsafefromptr",
@@ -27812,6 +27784,7 @@
                         "len": 35
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 385,
                         "x": {
                           "kind": "unsafefromptr",
@@ -27900,7 +27873,7 @@
                             "type": null,
                             "values": [
                               {
-                                "kind": "call",
+                                "kind": "deref",
                                 "pos": {
                                   "file": 0,
                                   "line": 54,
@@ -27909,69 +27882,52 @@
                                   "len": 20
                                 },
                                 "fields": {
-                                  "args": [
-                                    {
-                                      "kind": "addrof",
-                                      "pos": {
-                                        "file": 0,
-                                        "line": 54,
-                                        "col": 22,
-                                        "off": 1513,
-                                        "len": 7
-                                      },
-                                      "fields": {
-                                        "type": 387,
-                                        "x": {
-                                          "kind": "selector",
-                                          "pos": {
-                                            "file": 0,
-                                            "line": 54,
-                                            "col": 23,
-                                            "off": 1514,
-                                            "len": 6
-                                          },
-                                          "fields": {
-                                            "field": "typ",
-                                            "selpath": [
-                                              0
-                                            ],
-                                            "type": 30,
-                                            "x": {
-                                              "kind": "ident",
-                                              "pos": {
-                                                "file": 0,
-                                                "line": 54,
-                                                "col": 23,
-                                                "off": 1514,
-                                                "len": 2
-                                              },
-                                              "fields": {
-                                                "name": "vp",
-                                                "obj": 393,
-                                                "type": 384
-                                              }
+                                  "type": 30,
+                                  "x": {
+                                    "kind": "addrof",
+                                    "pos": {
+                                      "file": 0,
+                                      "line": 54,
+                                      "col": 22,
+                                      "off": 1513,
+                                      "len": 7
+                                    },
+                                    "fields": {
+                                      "type": 387,
+                                      "x": {
+                                        "kind": "selector",
+                                        "pos": {
+                                          "file": 0,
+                                          "line": 54,
+                                          "col": 23,
+                                          "off": 1514,
+                                          "len": 6
+                                        },
+                                        "fields": {
+                                          "field": "typ",
+                                          "selpath": [
+                                            0
+                                          ],
+                                          "type": 30,
+                                          "x": {
+                                            "kind": "ident",
+                                            "pos": {
+                                              "file": 0,
+                                              "line": 54,
+                                              "col": 23,
+                                              "off": 1514,
+                                              "len": 2
+                                            },
+                                            "fields": {
+                                              "name": "vp",
+                                              "obj": 393,
+                                              "type": 384
                                             }
                                           }
                                         }
                                       }
                                     }
-                                  ],
-                                  "fun": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 54,
-                                      "col": 10,
-                                      "off": 1501,
-                                      "len": 11
-                                    },
-                                    "fields": {
-                                      "name": "LoadPointer",
-                                      "obj": 32,
-                                      "type": 64
-                                    }
-                                  },
-                                  "type": 30
+                                  }
                                 }
                               }
                             ]
@@ -28106,7 +28062,7 @@
                                           "op": "!",
                                           "type": 33,
                                           "x": {
-                                            "kind": "call",
+                                            "kind": "atomicptrop",
                                             "pos": {
                                               "file": 0,
                                               "line": 60,
@@ -28115,52 +28071,52 @@
                                               "len": 74
                                             },
                                             "fields": {
-                                              "args": [
-                                                {
-                                                  "kind": "addrof",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 60,
-                                                    "col": 30,
-                                                    "off": 1731,
-                                                    "len": 7
-                                                  },
-                                                  "fields": {
-                                                    "type": 388,
-                                                    "x": {
-                                                      "kind": "selector",
-                                                      "pos": {
-                                                        "file": 0,
-                                                        "line": 60,
-                                                        "col": 31,
-                                                        "off": 1732,
-                                                        "len": 6
-                                                      },
-                                                      "fields": {
-                                                        "field": "typ",
-                                                        "selpath": [
-                                                          0
-                                                        ],
-                                                        "type": 30,
-                                                        "x": {
-                                                          "kind": "ident",
-                                                          "pos": {
-                                                            "file": 0,
-                                                            "line": 60,
-                                                            "col": 31,
-                                                            "off": 1732,
-                                                            "len": 2
-                                                          },
-                                                          "fields": {
-                                                            "name": "vp",
-                                                            "obj": 393,
-                                                            "type": 384
-                                                          }
+                                              "addr": {
+                                                "kind": "addrof",
+                                                "pos": {
+                                                  "file": 0,
+                                                  "line": 60,
+                                                  "col": 30,
+                                                  "off": 1731,
+                                                  "len": 7
+                                                },
+                                                "fields": {
+                                                  "type": 388,
+                                                  "x": {
+                                                    "kind": "selector",
+                                                    "pos": {
+                                                      "file": 0,
+                                                      "line": 60,
+                                                      "col": 31,
+                                                      "off": 1732,
+                                                      "len": 6
+                                                    },
+                                                    "fields": {
+                                                      "field": "typ",
+                                                      "selpath": [
+                                                        0
+                                                      ],
+                                                      "type": 30,
+                                                      "x": {
+                                                        "kind": "ident",
+                                                        "pos": {
+                                                          "file": 0,
+                                                          "line": 60,
+                                                          "col": 31,
+                                                          "off": 1732,
+                                                          "len": 2
+                                                        },
+                                                        "fields": {
+                                                          "name": "vp",
+                                                          "obj": 393,
+                                                          "type": 384
                                                         }
                                                       }
                                                     }
                                                   }
-                                                },
+                                                }
+                                              },
+                                              "args": [
                                                 {
                                                   "kind": "nil",
                                                   "pos": {
@@ -28216,21 +28172,7 @@
                                                   }
                                                 }
                                               ],
-                                              "fun": {
-                                                "kind": "ident",
-                                                "pos": {
-                                                  "file": 0,
-                                                  "line": 60,
-                                                  "col": 8,
-                                                  "off": 1709,
-                                                  "len": 21
-                                                },
-                                                "fields": {
-                                                  "name": "CompareAndSwapPointer",
-                                                  "obj": 19,
-                                                  "type": 38
-                                                }
-                                              },
+                                              "op": "cas",
                                               "type": 33
                                             }
                                           }
@@ -28310,7 +28252,7 @@
                                     }
                                   },
                                   {
-                                    "kind": "exprstmt",
+                                    "kind": "assign",
                                     "pos": {
                                       "file": 0,
                                       "line": 65,
@@ -28319,18 +28261,19 @@
                                       "len": 32
                                     },
                                     "fields": {
-                                      "x": {
-                                        "kind": "call",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 65,
-                                          "col": 4,
-                                          "off": 1859,
-                                          "len": 32
-                                        },
-                                        "fields": {
-                                          "args": [
-                                            {
+                                      "lhs": [
+                                        {
+                                          "kind": "deref",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 65,
+                                            "col": 4,
+                                            "off": 1859,
+                                            "len": 32
+                                          },
+                                          "fields": {
+                                            "type": 30,
+                                            "x": {
                                               "kind": "addrof",
                                               "pos": {
                                                 "file": 0,
@@ -28374,62 +28317,49 @@
                                                   }
                                                 }
                                               }
-                                            },
-                                            {
-                                              "kind": "selector",
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "rhs": [
+                                        {
+                                          "kind": "selector",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 65,
+                                            "col": 27,
+                                            "off": 1882,
+                                            "len": 8
+                                          },
+                                          "fields": {
+                                            "field": "data",
+                                            "selpath": [
+                                              1
+                                            ],
+                                            "type": 30,
+                                            "x": {
+                                              "kind": "ident",
                                               "pos": {
                                                 "file": 0,
                                                 "line": 65,
                                                 "col": 27,
                                                 "off": 1882,
-                                                "len": 8
+                                                "len": 3
                                               },
                                               "fields": {
-                                                "field": "data",
-                                                "selpath": [
-                                                  1
-                                                ],
-                                                "type": 30,
-                                                "x": {
-                                                  "kind": "ident",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 65,
-                                                    "col": 27,
-                                                    "off": 1882,
-                                                    "len": 3
-                                                  },
-                                                  "fields": {
-                                                    "name": "vlp",
-                                                    "obj": 394,
-                                                    "type": 385
-                                                  }
-                                                }
+                                                "name": "vlp",
+                                                "obj": 394,
+                                                "type": 385
                                               }
                                             }
-                                          ],
-                                          "fun": {
-                                            "kind": "ident",
-                                            "pos": {
-                                              "file": 0,
-                                              "line": 65,
-                                              "col": 4,
-                                              "off": 1859,
-                                              "len": 12
-                                            },
-                                            "fields": {
-                                              "name": "StorePointer",
-                                              "obj": 36,
-                                              "type": 72
-                                            }
-                                          },
-                                          "type": null
+                                          }
                                         }
-                                      }
+                                      ],
+                                      "tok": "="
                                     }
                                   },
                                   {
-                                    "kind": "exprstmt",
+                                    "kind": "assign",
                                     "pos": {
                                       "file": 0,
                                       "line": 66,
@@ -28438,18 +28368,19 @@
                                       "len": 30
                                     },
                                     "fields": {
-                                      "x": {
-                                        "kind": "call",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 66,
-                                          "col": 4,
-                                          "off": 1895,
-                                          "len": 30
-                                        },
-                                        "fields": {
-                                          "args": [
-                                            {
+                                      "lhs": [
+                                        {
+                                          "kind": "deref",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 66,
+                                            "col": 4,
+                                            "off": 1895,
+                                            "len": 30
+                                          },
+                                          "fields": {
+                                            "type": 30,
+                                            "x": {
                                               "kind": "addrof",
                                               "pos": {
                                                 "file": 0,
@@ -28493,58 +28424,45 @@
                                                   }
                                                 }
                                               }
-                                            },
-                                            {
-                                              "kind": "selector",
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "rhs": [
+                                        {
+                                          "kind": "selector",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 66,
+                                            "col": 26,
+                                            "off": 1917,
+                                            "len": 7
+                                          },
+                                          "fields": {
+                                            "field": "typ",
+                                            "selpath": [
+                                              0
+                                            ],
+                                            "type": 30,
+                                            "x": {
+                                              "kind": "ident",
                                               "pos": {
                                                 "file": 0,
                                                 "line": 66,
                                                 "col": 26,
                                                 "off": 1917,
-                                                "len": 7
+                                                "len": 3
                                               },
                                               "fields": {
-                                                "field": "typ",
-                                                "selpath": [
-                                                  0
-                                                ],
-                                                "type": 30,
-                                                "x": {
-                                                  "kind": "ident",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 66,
-                                                    "col": 26,
-                                                    "off": 1917,
-                                                    "len": 3
-                                                  },
-                                                  "fields": {
-                                                    "name": "vlp",
-                                                    "obj": 394,
-                                                    "type": 385
-                                                  }
-                                                }
+                                                "name": "vlp",
+                                                "obj": 394,
+                                                "type": 385
                                               }
                                             }
-                                          ],
-                                          "fun": {
-                                            "kind": "ident",
-                                            "pos": {
-                                              "file": 0,
-                                              "line": 66,
-                                              "col": 4,
-                                              "off": 1895,
-                                              "len": 12
-                                            },
-                                            "fields": {
-                                              "name": "StorePointer",
-                                              "obj": 36,
-                                              "type": 72
-                                            }
-                                          },
-                                          "type": null
+                                          }
                                         }
-                                      }
+                                      ],
+                                      "tok": "="
                                     }
                                   },
                                   {
@@ -28866,7 +28784,7 @@
                           }
                         },
                         {
-                          "kind": "exprstmt",
+                          "kind": "assign",
                           "pos": {
                             "file": 0,
                             "line": 80,
@@ -28875,18 +28793,19 @@
                             "len": 32
                           },
                           "fields": {
-                            "x": {
-                              "kind": "call",
-                              "pos": {
-                                "file": 0,
-                                "line": 80,
-                                "col": 3,
-                                "off": 2325,
-                                "len": 32
-                              },
-                              "fields": {
-                                "args": [
-                                  {
+                            "lhs": [
+                              {
+                                "kind": "deref",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 80,
+                                  "col": 3,
+                                  "off": 2325,
+                                  "len": 32
+                                },
+                                "fields": {
+                                  "type": 30,
+                                  "x": {
                                     "kind": "addrof",
                                     "pos": {
                                       "file": 0,
@@ -28930,58 +28849,45 @@
                                         }
                                       }
                                     }
-                                  },
-                                  {
-                                    "kind": "selector",
+                                  }
+                                }
+                              }
+                            ],
+                            "rhs": [
+                              {
+                                "kind": "selector",
+                                "pos": {
+                                  "file": 0,
+                                  "line": 80,
+                                  "col": 26,
+                                  "off": 2348,
+                                  "len": 8
+                                },
+                                "fields": {
+                                  "field": "data",
+                                  "selpath": [
+                                    1
+                                  ],
+                                  "type": 30,
+                                  "x": {
+                                    "kind": "ident",
                                     "pos": {
                                       "file": 0,
                                       "line": 80,
                                       "col": 26,
                                       "off": 2348,
-                                      "len": 8
+                                      "len": 3
                                     },
                                     "fields": {
-                                      "field": "data",
-                                      "selpath": [
-                                        1
-                                      ],
-                                      "type": 30,
-                                      "x": {
-                                        "kind": "ident",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 80,
-                                          "col": 26,
-                                          "off": 2348,
-                                          "len": 3
-                                        },
-                                        "fields": {
-                                          "name": "vlp",
-                                          "obj": 394,
-                                          "type": 385
-                                        }
-                                      }
+                                      "name": "vlp",
+                                      "obj": 394,
+                                      "type": 385
                                     }
                                   }
-                                ],
-                                "fun": {
-                                  "kind": "ident",
-                                  "pos": {
-                                    "file": 0,
-                                    "line": 80,
-                                    "col": 3,
-                                    "off": 2325,
-                                    "len": 12
-                                  },
-                                  "fields": {
-                                    "name": "StorePointer",
-                                    "obj": 36,
-                                    "type": 72
-                                  }
-                                },
-                                "type": null
+                                }
                               }
-                            }
+                            ],
+                            "tok": "="
                           }
                         },
                         {
@@ -29224,6 +29130,7 @@
                         "len": 32
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 396,
                         "x": {
                           "kind": "unsafefromptr",
@@ -29287,6 +29194,7 @@
                         "len": 35
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 397,
                         "x": {
                           "kind": "unsafefromptr",
@@ -29375,7 +29283,7 @@
                             "type": null,
                             "values": [
                               {
-                                "kind": "call",
+                                "kind": "deref",
                                 "pos": {
                                   "file": 0,
                                   "line": 97,
@@ -29384,69 +29292,52 @@
                                   "len": 20
                                 },
                                 "fields": {
-                                  "args": [
-                                    {
-                                      "kind": "addrof",
-                                      "pos": {
-                                        "file": 0,
-                                        "line": 97,
-                                        "col": 22,
-                                        "off": 2846,
-                                        "len": 7
-                                      },
-                                      "fields": {
-                                        "type": 399,
-                                        "x": {
-                                          "kind": "selector",
-                                          "pos": {
-                                            "file": 0,
-                                            "line": 97,
-                                            "col": 23,
-                                            "off": 2847,
-                                            "len": 6
-                                          },
-                                          "fields": {
-                                            "field": "typ",
-                                            "selpath": [
-                                              0
-                                            ],
-                                            "type": 30,
-                                            "x": {
-                                              "kind": "ident",
-                                              "pos": {
-                                                "file": 0,
-                                                "line": 97,
-                                                "col": 23,
-                                                "off": 2847,
-                                                "len": 2
-                                              },
-                                              "fields": {
-                                                "name": "vp",
-                                                "obj": 399,
-                                                "type": 396
-                                              }
+                                  "type": 30,
+                                  "x": {
+                                    "kind": "addrof",
+                                    "pos": {
+                                      "file": 0,
+                                      "line": 97,
+                                      "col": 22,
+                                      "off": 2846,
+                                      "len": 7
+                                    },
+                                    "fields": {
+                                      "type": 399,
+                                      "x": {
+                                        "kind": "selector",
+                                        "pos": {
+                                          "file": 0,
+                                          "line": 97,
+                                          "col": 23,
+                                          "off": 2847,
+                                          "len": 6
+                                        },
+                                        "fields": {
+                                          "field": "typ",
+                                          "selpath": [
+                                            0
+                                          ],
+                                          "type": 30,
+                                          "x": {
+                                            "kind": "ident",
+                                            "pos": {
+                                              "file": 0,
+                                              "line": 97,
+                                              "col": 23,
+                                              "off": 2847,
+                                              "len": 2
+                                            },
+                                            "fields": {
+                                              "name": "vp",
+                                              "obj": 399,
+                                              "type": 396
                                             }
                                           }
                                         }
                                       }
                                     }
-                                  ],
-                                  "fun": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 97,
-                                      "col": 10,
-                                      "off": 2834,
-                                      "len": 11
-                                    },
-                                    "fields": {
-                                      "name": "LoadPointer",
-                                      "obj": 32,
-                                      "type": 64
-                                    }
-                                  },
-                                  "type": 30
+                                  }
                                 }
                               }
                             ]
@@ -29581,7 +29472,7 @@
                                           "op": "!",
                                           "type": 33,
                                           "x": {
-                                            "kind": "call",
+                                            "kind": "atomicptrop",
                                             "pos": {
                                               "file": 0,
                                               "line": 103,
@@ -29590,52 +29481,52 @@
                                               "len": 74
                                             },
                                             "fields": {
-                                              "args": [
-                                                {
-                                                  "kind": "addrof",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 103,
-                                                    "col": 30,
-                                                    "off": 3064,
-                                                    "len": 7
-                                                  },
-                                                  "fields": {
-                                                    "type": 400,
-                                                    "x": {
-                                                      "kind": "selector",
-                                                      "pos": {
-                                                        "file": 0,
-                                                        "line": 103,
-                                                        "col": 31,
-                                                        "off": 3065,
-                                                        "len": 6
-                                                      },
-                                                      "fields": {
-                                                        "field": "typ",
-                                                        "selpath": [
-                                                          0
-                                                        ],
-                                                        "type": 30,
-                                                        "x": {
-                                                          "kind": "ident",
-                                                          "pos": {
-                                                            "file": 0,
-                                                            "line": 103,
-                                                            "col": 31,
-                                                            "off": 3065,
-                                                            "len": 2
-                                                          },
-                                                          "fields": {
-                                                            "name": "vp",
-                                                            "obj": 399,
-                                                            "type": 396
-                                                          }
+                                              "addr": {
+                                                "kind": "addrof",
+                                                "pos": {
+                                                  "file": 0,
+                                                  "line": 103,
+                                                  "col": 30,
+                                                  "off": 3064,
+                                                  "len": 7
+                                                },
+                                                "fields": {
+                                                  "type": 400,
+                                                  "x": {
+                                                    "kind": "selector",
+                                                    "pos": {
+                                                      "file": 0,
+                                                      "line": 103,
+                                                      "col": 31,
+                                                      "off": 3065,
+                                                      "len": 6
+                                                    },
+                                                    "fields": {
+                                                      "field": "typ",
+                                                      "selpath": [
+                                                        0
+                                                      ],
+                                                      "type": 30,
+                                                      "x": {
+                                                        "kind": "ident",
+                                                        "pos": {
+                                                          "file": 0,
+                                                          "line": 103,
+                                                          "col": 31,
+                                                          "off": 3065,
+                                                          "len": 2
+                                                        },
+                                                        "fields": {
+                                                          "name": "vp",
+                                                          "obj": 399,
+                                                          "type": 396
                                                         }
                                                       }
                                                     }
                                                   }
-                                                },
+                                                }
+                                              },
+                                              "args": [
                                                 {
                                                   "kind": "nil",
                                                   "pos": {
@@ -29691,21 +29582,7 @@
                                                   }
                                                 }
                                               ],
-                                              "fun": {
-                                                "kind": "ident",
-                                                "pos": {
-                                                  "file": 0,
-                                                  "line": 103,
-                                                  "col": 8,
-                                                  "off": 3042,
-                                                  "len": 21
-                                                },
-                                                "fields": {
-                                                  "name": "CompareAndSwapPointer",
-                                                  "obj": 19,
-                                                  "type": 38
-                                                }
-                                              },
+                                              "op": "cas",
                                               "type": 33
                                             }
                                           }
@@ -29785,7 +29662,7 @@
                                     }
                                   },
                                   {
-                                    "kind": "exprstmt",
+                                    "kind": "assign",
                                     "pos": {
                                       "file": 0,
                                       "line": 108,
@@ -29794,18 +29671,19 @@
                                       "len": 31
                                     },
                                     "fields": {
-                                      "x": {
-                                        "kind": "call",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 108,
-                                          "col": 4,
-                                          "off": 3192,
-                                          "len": 31
-                                        },
-                                        "fields": {
-                                          "args": [
-                                            {
+                                      "lhs": [
+                                        {
+                                          "kind": "deref",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 108,
+                                            "col": 4,
+                                            "off": 3192,
+                                            "len": 31
+                                          },
+                                          "fields": {
+                                            "type": 30,
+                                            "x": {
                                               "kind": "addrof",
                                               "pos": {
                                                 "file": 0,
@@ -29849,62 +29727,49 @@
                                                   }
                                                 }
                                               }
-                                            },
-                                            {
-                                              "kind": "selector",
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "rhs": [
+                                        {
+                                          "kind": "selector",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 108,
+                                            "col": 27,
+                                            "off": 3215,
+                                            "len": 7
+                                          },
+                                          "fields": {
+                                            "field": "data",
+                                            "selpath": [
+                                              1
+                                            ],
+                                            "type": 30,
+                                            "x": {
+                                              "kind": "ident",
                                               "pos": {
                                                 "file": 0,
                                                 "line": 108,
                                                 "col": 27,
                                                 "off": 3215,
-                                                "len": 7
+                                                "len": 2
                                               },
                                               "fields": {
-                                                "field": "data",
-                                                "selpath": [
-                                                  1
-                                                ],
-                                                "type": 30,
-                                                "x": {
-                                                  "kind": "ident",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 108,
-                                                    "col": 27,
-                                                    "off": 3215,
-                                                    "len": 2
-                                                  },
-                                                  "fields": {
-                                                    "name": "np",
-                                                    "obj": 400,
-                                                    "type": 397
-                                                  }
-                                                }
+                                                "name": "np",
+                                                "obj": 400,
+                                                "type": 397
                                               }
                                             }
-                                          ],
-                                          "fun": {
-                                            "kind": "ident",
-                                            "pos": {
-                                              "file": 0,
-                                              "line": 108,
-                                              "col": 4,
-                                              "off": 3192,
-                                              "len": 12
-                                            },
-                                            "fields": {
-                                              "name": "StorePointer",
-                                              "obj": 36,
-                                              "type": 72
-                                            }
-                                          },
-                                          "type": null
+                                          }
                                         }
-                                      }
+                                      ],
+                                      "tok": "="
                                     }
                                   },
                                   {
-                                    "kind": "exprstmt",
+                                    "kind": "assign",
                                     "pos": {
                                       "file": 0,
                                       "line": 109,
@@ -29913,18 +29778,19 @@
                                       "len": 29
                                     },
                                     "fields": {
-                                      "x": {
-                                        "kind": "call",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 109,
-                                          "col": 4,
-                                          "off": 3227,
-                                          "len": 29
-                                        },
-                                        "fields": {
-                                          "args": [
-                                            {
+                                      "lhs": [
+                                        {
+                                          "kind": "deref",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 109,
+                                            "col": 4,
+                                            "off": 3227,
+                                            "len": 29
+                                          },
+                                          "fields": {
+                                            "type": 30,
+                                            "x": {
                                               "kind": "addrof",
                                               "pos": {
                                                 "file": 0,
@@ -29968,58 +29834,45 @@
                                                   }
                                                 }
                                               }
-                                            },
-                                            {
-                                              "kind": "selector",
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "rhs": [
+                                        {
+                                          "kind": "selector",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 109,
+                                            "col": 26,
+                                            "off": 3249,
+                                            "len": 6
+                                          },
+                                          "fields": {
+                                            "field": "typ",
+                                            "selpath": [
+                                              0
+                                            ],
+                                            "type": 30,
+                                            "x": {
+                                              "kind": "ident",
                                               "pos": {
                                                 "file": 0,
                                                 "line": 109,
                                                 "col": 26,
                                                 "off": 3249,
-                                                "len": 6
+                                                "len": 2
                                               },
                                               "fields": {
-                                                "field": "typ",
-                                                "selpath": [
-                                                  0
-                                                ],
-                                                "type": 30,
-                                                "x": {
-                                                  "kind": "ident",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 109,
-                                                    "col": 26,
-                                                    "off": 3249,
-                                                    "len": 2
-                                                  },
-                                                  "fields": {
-                                                    "name": "np",
-                                                    "obj": 400,
-                                                    "type": 397
-                                                  }
-                                                }
+                                                "name": "np",
+                                                "obj": 400,
+                                                "type": 397
                                               }
                                             }
-                                          ],
-                                          "fun": {
-                                            "kind": "ident",
-                                            "pos": {
-                                              "file": 0,
-                                              "line": 109,
-                                              "col": 4,
-                                              "off": 3227,
-                                              "len": 12
-                                            },
-                                            "fields": {
-                                              "name": "StorePointer",
-                                              "obj": 36,
-                                              "type": 72
-                                            }
-                                          },
-                                          "type": null
+                                          }
                                         }
-                                      }
+                                      ],
+                                      "tok": "="
                                     }
                                   },
                                   {
@@ -30383,6 +30236,7 @@
                                   "len": 35
                                 },
                                 "fields": {
+                                  "elemSize": 16,
                                   "type": 405,
                                   "x": {
                                     "kind": "unsafefromptr",
@@ -30540,7 +30394,7 @@
                                 }
                               },
                               {
-                                "kind": "call",
+                                "kind": "atomicptrop",
                                 "pos": {
                                   "file": 0,
                                   "line": 124,
@@ -30549,52 +30403,52 @@
                                   "len": 30
                                 },
                                 "fields": {
-                                  "args": [
-                                    {
-                                      "kind": "addrof",
-                                      "pos": {
-                                        "file": 0,
-                                        "line": 124,
-                                        "col": 41,
-                                        "off": 3740,
-                                        "len": 8
-                                      },
-                                      "fields": {
-                                        "type": 407,
-                                        "x": {
-                                          "kind": "selector",
-                                          "pos": {
-                                            "file": 0,
-                                            "line": 124,
-                                            "col": 42,
-                                            "off": 3741,
-                                            "len": 7
-                                          },
-                                          "fields": {
-                                            "field": "data",
-                                            "selpath": [
-                                              1
-                                            ],
-                                            "type": 30,
-                                            "x": {
-                                              "kind": "ident",
-                                              "pos": {
-                                                "file": 0,
-                                                "line": 124,
-                                                "col": 42,
-                                                "off": 3741,
-                                                "len": 2
-                                              },
-                                              "fields": {
-                                                "name": "vp",
-                                                "obj": 399,
-                                                "type": 396
-                                              }
+                                  "addr": {
+                                    "kind": "addrof",
+                                    "pos": {
+                                      "file": 0,
+                                      "line": 124,
+                                      "col": 41,
+                                      "off": 3740,
+                                      "len": 8
+                                    },
+                                    "fields": {
+                                      "type": 407,
+                                      "x": {
+                                        "kind": "selector",
+                                        "pos": {
+                                          "file": 0,
+                                          "line": 124,
+                                          "col": 42,
+                                          "off": 3741,
+                                          "len": 7
+                                        },
+                                        "fields": {
+                                          "field": "data",
+                                          "selpath": [
+                                            1
+                                          ],
+                                          "type": 30,
+                                          "x": {
+                                            "kind": "ident",
+                                            "pos": {
+                                              "file": 0,
+                                              "line": 124,
+                                              "col": 42,
+                                              "off": 3741,
+                                              "len": 2
+                                            },
+                                            "fields": {
+                                              "name": "vp",
+                                              "obj": 399,
+                                              "type": 396
                                             }
                                           }
                                         }
                                       }
-                                    },
+                                    }
+                                  },
+                                  "args": [
                                     {
                                       "kind": "selector",
                                       "pos": {
@@ -30628,21 +30482,7 @@
                                       }
                                     }
                                   ],
-                                  "fun": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 124,
-                                      "col": 29,
-                                      "off": 3728,
-                                      "len": 11
-                                    },
-                                    "fields": {
-                                      "name": "SwapPointer",
-                                      "obj": 15,
-                                      "type": 28
-                                    }
-                                  },
+                                  "op": "swap",
                                   "type": 30
                                 }
                               }
@@ -30923,6 +30763,7 @@
                         "len": 32
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 410,
                         "x": {
                           "kind": "unsafefromptr",
@@ -30986,6 +30827,7 @@
                         "len": 35
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 411,
                         "x": {
                           "kind": "unsafefromptr",
@@ -31062,6 +30904,7 @@
                         "len": 35
                       },
                       "fields": {
+                        "elemSize": 16,
                         "type": 413,
                         "x": {
                           "kind": "unsafefromptr",
@@ -31387,7 +31230,7 @@
                             "type": null,
                             "values": [
                               {
-                                "kind": "call",
+                                "kind": "deref",
                                 "pos": {
                                   "file": 0,
                                   "line": 145,
@@ -31396,69 +31239,52 @@
                                   "len": 20
                                 },
                                 "fields": {
-                                  "args": [
-                                    {
-                                      "kind": "addrof",
-                                      "pos": {
-                                        "file": 0,
-                                        "line": 145,
-                                        "col": 22,
-                                        "off": 4451,
-                                        "len": 7
-                                      },
-                                      "fields": {
-                                        "type": 415,
-                                        "x": {
-                                          "kind": "selector",
-                                          "pos": {
-                                            "file": 0,
-                                            "line": 145,
-                                            "col": 23,
-                                            "off": 4452,
-                                            "len": 6
-                                          },
-                                          "fields": {
-                                            "field": "typ",
-                                            "selpath": [
-                                              0
-                                            ],
-                                            "type": 30,
-                                            "x": {
-                                              "kind": "ident",
-                                              "pos": {
-                                                "file": 0,
-                                                "line": 145,
-                                                "col": 23,
-                                                "off": 4452,
-                                                "len": 2
-                                              },
-                                              "fields": {
-                                                "name": "vp",
-                                                "obj": 407,
-                                                "type": 410
-                                              }
+                                  "type": 30,
+                                  "x": {
+                                    "kind": "addrof",
+                                    "pos": {
+                                      "file": 0,
+                                      "line": 145,
+                                      "col": 22,
+                                      "off": 4451,
+                                      "len": 7
+                                    },
+                                    "fields": {
+                                      "type": 415,
+                                      "x": {
+                                        "kind": "selector",
+                                        "pos": {
+                                          "file": 0,
+                                          "line": 145,
+                                          "col": 23,
+                                          "off": 4452,
+                                          "len": 6
+                                        },
+                                        "fields": {
+                                          "field": "typ",
+                                          "selpath": [
+                                            0
+                                          ],
+                                          "type": 30,
+                                          "x": {
+                                            "kind": "ident",
+                                            "pos": {
+                                              "file": 0,
+                                              "line": 145,
+                                              "col": 23,
+                                              "off": 4452,
+                                              "len": 2
+                                            },
+                                            "fields": {
+                                              "name": "vp",
+                                              "obj": 407,
+                                              "type": 410
                                             }
                                           }
                                         }
                                       }
                                     }
-                                  ],
-                                  "fun": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 145,
-                                      "col": 10,
-                                      "off": 4439,
-                                      "len": 11
-                                    },
-                                    "fields": {
-                                      "name": "LoadPointer",
-                                      "obj": 32,
-                                      "type": 64
-                                    }
-                                  },
-                                  "type": 30
+                                  }
                                 }
                               }
                             ]
@@ -31692,7 +31518,7 @@
                                           "op": "!",
                                           "type": 33,
                                           "x": {
-                                            "kind": "call",
+                                            "kind": "atomicptrop",
                                             "pos": {
                                               "file": 0,
                                               "line": 154,
@@ -31701,52 +31527,52 @@
                                               "len": 74
                                             },
                                             "fields": {
-                                              "args": [
-                                                {
-                                                  "kind": "addrof",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 154,
-                                                    "col": 30,
-                                                    "off": 4710,
-                                                    "len": 7
-                                                  },
-                                                  "fields": {
-                                                    "type": 416,
-                                                    "x": {
-                                                      "kind": "selector",
-                                                      "pos": {
-                                                        "file": 0,
-                                                        "line": 154,
-                                                        "col": 31,
-                                                        "off": 4711,
-                                                        "len": 6
-                                                      },
-                                                      "fields": {
-                                                        "field": "typ",
-                                                        "selpath": [
-                                                          0
-                                                        ],
-                                                        "type": 30,
-                                                        "x": {
-                                                          "kind": "ident",
-                                                          "pos": {
-                                                            "file": 0,
-                                                            "line": 154,
-                                                            "col": 31,
-                                                            "off": 4711,
-                                                            "len": 2
-                                                          },
-                                                          "fields": {
-                                                            "name": "vp",
-                                                            "obj": 407,
-                                                            "type": 410
-                                                          }
+                                              "addr": {
+                                                "kind": "addrof",
+                                                "pos": {
+                                                  "file": 0,
+                                                  "line": 154,
+                                                  "col": 30,
+                                                  "off": 4710,
+                                                  "len": 7
+                                                },
+                                                "fields": {
+                                                  "type": 416,
+                                                  "x": {
+                                                    "kind": "selector",
+                                                    "pos": {
+                                                      "file": 0,
+                                                      "line": 154,
+                                                      "col": 31,
+                                                      "off": 4711,
+                                                      "len": 6
+                                                    },
+                                                    "fields": {
+                                                      "field": "typ",
+                                                      "selpath": [
+                                                        0
+                                                      ],
+                                                      "type": 30,
+                                                      "x": {
+                                                        "kind": "ident",
+                                                        "pos": {
+                                                          "file": 0,
+                                                          "line": 154,
+                                                          "col": 31,
+                                                          "off": 4711,
+                                                          "len": 2
+                                                        },
+                                                        "fields": {
+                                                          "name": "vp",
+                                                          "obj": 407,
+                                                          "type": 410
                                                         }
                                                       }
                                                     }
                                                   }
-                                                },
+                                                }
+                                              },
+                                              "args": [
                                                 {
                                                   "kind": "nil",
                                                   "pos": {
@@ -31802,21 +31628,7 @@
                                                   }
                                                 }
                                               ],
-                                              "fun": {
-                                                "kind": "ident",
-                                                "pos": {
-                                                  "file": 0,
-                                                  "line": 154,
-                                                  "col": 8,
-                                                  "off": 4688,
-                                                  "len": 21
-                                                },
-                                                "fields": {
-                                                  "name": "CompareAndSwapPointer",
-                                                  "obj": 19,
-                                                  "type": 38
-                                                }
-                                              },
+                                              "op": "cas",
                                               "type": 33
                                             }
                                           }
@@ -31896,7 +31708,7 @@
                                     }
                                   },
                                   {
-                                    "kind": "exprstmt",
+                                    "kind": "assign",
                                     "pos": {
                                       "file": 0,
                                       "line": 159,
@@ -31905,18 +31717,19 @@
                                       "len": 31
                                     },
                                     "fields": {
-                                      "x": {
-                                        "kind": "call",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 159,
-                                          "col": 4,
-                                          "off": 4838,
-                                          "len": 31
-                                        },
-                                        "fields": {
-                                          "args": [
-                                            {
+                                      "lhs": [
+                                        {
+                                          "kind": "deref",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 159,
+                                            "col": 4,
+                                            "off": 4838,
+                                            "len": 31
+                                          },
+                                          "fields": {
+                                            "type": 30,
+                                            "x": {
                                               "kind": "addrof",
                                               "pos": {
                                                 "file": 0,
@@ -31960,62 +31773,49 @@
                                                   }
                                                 }
                                               }
-                                            },
-                                            {
-                                              "kind": "selector",
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "rhs": [
+                                        {
+                                          "kind": "selector",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 159,
+                                            "col": 27,
+                                            "off": 4861,
+                                            "len": 7
+                                          },
+                                          "fields": {
+                                            "field": "data",
+                                            "selpath": [
+                                              1
+                                            ],
+                                            "type": 30,
+                                            "x": {
+                                              "kind": "ident",
                                               "pos": {
                                                 "file": 0,
                                                 "line": 159,
                                                 "col": 27,
                                                 "off": 4861,
-                                                "len": 7
+                                                "len": 2
                                               },
                                               "fields": {
-                                                "field": "data",
-                                                "selpath": [
-                                                  1
-                                                ],
-                                                "type": 30,
-                                                "x": {
-                                                  "kind": "ident",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 159,
-                                                    "col": 27,
-                                                    "off": 4861,
-                                                    "len": 2
-                                                  },
-                                                  "fields": {
-                                                    "name": "np",
-                                                    "obj": 408,
-                                                    "type": 411
-                                                  }
-                                                }
+                                                "name": "np",
+                                                "obj": 408,
+                                                "type": 411
                                               }
                                             }
-                                          ],
-                                          "fun": {
-                                            "kind": "ident",
-                                            "pos": {
-                                              "file": 0,
-                                              "line": 159,
-                                              "col": 4,
-                                              "off": 4838,
-                                              "len": 12
-                                            },
-                                            "fields": {
-                                              "name": "StorePointer",
-                                              "obj": 36,
-                                              "type": 72
-                                            }
-                                          },
-                                          "type": null
+                                          }
                                         }
-                                      }
+                                      ],
+                                      "tok": "="
                                     }
                                   },
                                   {
-                                    "kind": "exprstmt",
+                                    "kind": "assign",
                                     "pos": {
                                       "file": 0,
                                       "line": 160,
@@ -32024,18 +31824,19 @@
                                       "len": 29
                                     },
                                     "fields": {
-                                      "x": {
-                                        "kind": "call",
-                                        "pos": {
-                                          "file": 0,
-                                          "line": 160,
-                                          "col": 4,
-                                          "off": 4873,
-                                          "len": 29
-                                        },
-                                        "fields": {
-                                          "args": [
-                                            {
+                                      "lhs": [
+                                        {
+                                          "kind": "deref",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 160,
+                                            "col": 4,
+                                            "off": 4873,
+                                            "len": 29
+                                          },
+                                          "fields": {
+                                            "type": 30,
+                                            "x": {
                                               "kind": "addrof",
                                               "pos": {
                                                 "file": 0,
@@ -32079,58 +31880,45 @@
                                                   }
                                                 }
                                               }
-                                            },
-                                            {
-                                              "kind": "selector",
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "rhs": [
+                                        {
+                                          "kind": "selector",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 160,
+                                            "col": 26,
+                                            "off": 4895,
+                                            "len": 6
+                                          },
+                                          "fields": {
+                                            "field": "typ",
+                                            "selpath": [
+                                              0
+                                            ],
+                                            "type": 30,
+                                            "x": {
+                                              "kind": "ident",
                                               "pos": {
                                                 "file": 0,
                                                 "line": 160,
                                                 "col": 26,
                                                 "off": 4895,
-                                                "len": 6
+                                                "len": 2
                                               },
                                               "fields": {
-                                                "field": "typ",
-                                                "selpath": [
-                                                  0
-                                                ],
-                                                "type": 30,
-                                                "x": {
-                                                  "kind": "ident",
-                                                  "pos": {
-                                                    "file": 0,
-                                                    "line": 160,
-                                                    "col": 26,
-                                                    "off": 4895,
-                                                    "len": 2
-                                                  },
-                                                  "fields": {
-                                                    "name": "np",
-                                                    "obj": 408,
-                                                    "type": 411
-                                                  }
-                                                }
+                                                "name": "np",
+                                                "obj": 408,
+                                                "type": 411
                                               }
                                             }
-                                          ],
-                                          "fun": {
-                                            "kind": "ident",
-                                            "pos": {
-                                              "file": 0,
-                                              "line": 160,
-                                              "col": 4,
-                                              "off": 4873,
-                                              "len": 12
-                                            },
-                                            "fields": {
-                                              "name": "StorePointer",
-                                              "obj": 36,
-                                              "type": 72
-                                            }
-                                          },
-                                          "type": null
+                                          }
                                         }
-                                      }
+                                      ],
+                                      "tok": "="
                                     }
                                   },
                                   {
@@ -32487,7 +32275,7 @@
                             "type": null,
                             "values": [
                               {
-                                "kind": "call",
+                                "kind": "deref",
                                 "pos": {
                                   "file": 0,
                                   "line": 179,
@@ -32496,69 +32284,52 @@
                                   "len": 21
                                 },
                                 "fields": {
-                                  "args": [
-                                    {
-                                      "kind": "addrof",
-                                      "pos": {
-                                        "file": 0,
-                                        "line": 179,
-                                        "col": 23,
-                                        "off": 5586,
-                                        "len": 8
-                                      },
-                                      "fields": {
-                                        "type": 421,
-                                        "x": {
-                                          "kind": "selector",
-                                          "pos": {
-                                            "file": 0,
-                                            "line": 179,
-                                            "col": 24,
-                                            "off": 5587,
-                                            "len": 7
-                                          },
-                                          "fields": {
-                                            "field": "data",
-                                            "selpath": [
-                                              1
-                                            ],
-                                            "type": 30,
-                                            "x": {
-                                              "kind": "ident",
-                                              "pos": {
-                                                "file": 0,
-                                                "line": 179,
-                                                "col": 24,
-                                                "off": 5587,
-                                                "len": 2
-                                              },
-                                              "fields": {
-                                                "name": "vp",
-                                                "obj": 407,
-                                                "type": 410
-                                              }
+                                  "type": 30,
+                                  "x": {
+                                    "kind": "addrof",
+                                    "pos": {
+                                      "file": 0,
+                                      "line": 179,
+                                      "col": 23,
+                                      "off": 5586,
+                                      "len": 8
+                                    },
+                                    "fields": {
+                                      "type": 421,
+                                      "x": {
+                                        "kind": "selector",
+                                        "pos": {
+                                          "file": 0,
+                                          "line": 179,
+                                          "col": 24,
+                                          "off": 5587,
+                                          "len": 7
+                                        },
+                                        "fields": {
+                                          "field": "data",
+                                          "selpath": [
+                                            1
+                                          ],
+                                          "type": 30,
+                                          "x": {
+                                            "kind": "ident",
+                                            "pos": {
+                                              "file": 0,
+                                              "line": 179,
+                                              "col": 24,
+                                              "off": 5587,
+                                              "len": 2
+                                            },
+                                            "fields": {
+                                              "name": "vp",
+                                              "obj": 407,
+                                              "type": 410
                                             }
                                           }
                                         }
                                       }
                                     }
-                                  ],
-                                  "fun": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 179,
-                                      "col": 11,
-                                      "off": 5574,
-                                      "len": 11
-                                    },
-                                    "fields": {
-                                      "name": "LoadPointer",
-                                      "obj": 32,
-                                      "type": 64
-                                    }
-                                  },
-                                  "type": 30
+                                  }
                                 }
                               }
                             ]
@@ -32621,6 +32392,7 @@
                                       "len": 33
                                     },
                                     "fields": {
+                                      "elemSize": 16,
                                       "type": 423,
                                       "x": {
                                         "kind": "unsafefromptr",
@@ -32724,6 +32496,7 @@
                                       "len": 33
                                     },
                                     "fields": {
+                                      "elemSize": 16,
                                       "type": 425,
                                       "x": {
                                         "kind": "unsafefromptr",
@@ -32904,7 +32677,7 @@
                           "fields": {
                             "results": [
                               {
-                                "kind": "call",
+                                "kind": "atomicptrop",
                                 "pos": {
                                   "file": 0,
                                   "line": 186,
@@ -32913,52 +32686,52 @@
                                   "len": 46
                                 },
                                 "fields": {
-                                  "args": [
-                                    {
-                                      "kind": "addrof",
-                                      "pos": {
-                                        "file": 0,
-                                        "line": 186,
-                                        "col": 32,
-                                        "off": 5769,
-                                        "len": 8
-                                      },
-                                      "fields": {
-                                        "type": 426,
-                                        "x": {
-                                          "kind": "selector",
-                                          "pos": {
-                                            "file": 0,
-                                            "line": 186,
-                                            "col": 33,
-                                            "off": 5770,
-                                            "len": 7
-                                          },
-                                          "fields": {
-                                            "field": "data",
-                                            "selpath": [
-                                              1
-                                            ],
-                                            "type": 30,
-                                            "x": {
-                                              "kind": "ident",
-                                              "pos": {
-                                                "file": 0,
-                                                "line": 186,
-                                                "col": 33,
-                                                "off": 5770,
-                                                "len": 2
-                                              },
-                                              "fields": {
-                                                "name": "vp",
-                                                "obj": 407,
-                                                "type": 410
-                                              }
+                                  "addr": {
+                                    "kind": "addrof",
+                                    "pos": {
+                                      "file": 0,
+                                      "line": 186,
+                                      "col": 32,
+                                      "off": 5769,
+                                      "len": 8
+                                    },
+                                    "fields": {
+                                      "type": 426,
+                                      "x": {
+                                        "kind": "selector",
+                                        "pos": {
+                                          "file": 0,
+                                          "line": 186,
+                                          "col": 33,
+                                          "off": 5770,
+                                          "len": 7
+                                        },
+                                        "fields": {
+                                          "field": "data",
+                                          "selpath": [
+                                            1
+                                          ],
+                                          "type": 30,
+                                          "x": {
+                                            "kind": "ident",
+                                            "pos": {
+                                              "file": 0,
+                                              "line": 186,
+                                              "col": 33,
+                                              "off": 5770,
+                                              "len": 2
+                                            },
+                                            "fields": {
+                                              "name": "vp",
+                                              "obj": 407,
+                                              "type": 410
                                             }
                                           }
                                         }
                                       }
-                                    },
+                                    }
+                                  },
+                                  "args": [
                                     {
                                       "kind": "ident",
                                       "pos": {
@@ -33007,21 +32780,7 @@
                                       }
                                     }
                                   ],
-                                  "fun": {
-                                    "kind": "ident",
-                                    "pos": {
-                                      "file": 0,
-                                      "line": 186,
-                                      "col": 10,
-                                      "off": 5747,
-                                      "len": 21
-                                    },
-                                    "fields": {
-                                      "name": "CompareAndSwapPointer",
-                                      "obj": 19,
-                                      "type": 38
-                                    }
-                                  },
+                                  "op": "cas",
                                   "type": 33
                                 }
                               }

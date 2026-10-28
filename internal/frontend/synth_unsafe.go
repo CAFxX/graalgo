@@ -32,9 +32,13 @@
 //     go/types' own universe init); the synthetic package inserts the same
 //     objects, exactly as universe builtins are shared across packages.
 //   - `Pointer` conversions lower via exportUnsafeConversion: *T<->Pointer
-//     intern/resolve over the handle table; uintptr->Pointer traps (D5);
-//     Pointer->uintptr keeps the existing D5 ConvertNode trap.
-//   - unsafe.Add always traps: handles admit no byte arithmetic (D5/GG-0015).
+//     intern/resolve over the handle table; uintptr->Pointer traps (D5)
+//     unless the frontend proves the operand's provenance, in which case
+//     it lowers to the "unsafederive" node (fix-redmaster-r39, see
+//     unsafe_derive.go); Pointer->uintptr keeps the existing D5
+//     ConvertNode behavior (handle as identity token).
+//   - unsafe.Add derives from its live pointer operand by the byte
+//     length (fix-redmaster-r39; formerly the D5 trap).
 //   - DIV-US-1: unsafe.String copies the bytes into a fresh GoString.
 //     GoString is immutable (hashCode/equals read the internal array), so
 //     sharing the caller's array would corrupt map keys. Post-call writes
@@ -222,6 +226,15 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 			}), true, nil
 		}
 		if isUintptr(srcT) {
+			// fix-redmaster-r39: a provenance-proven operand (one
+			// pointer-derived additive term plus pure integer terms)
+			// lowers to the derive node; anything else keeps the D5
+			// trap. See unsafe_derive.go.
+			if n, handled, err := e.exportUintptrToPointer(c, to); err != nil {
+				return nil, true, err
+			} else if handled {
+				return n, true, nil
+			}
 			return e.node("unsafefromuint", c, map[string]any{
 				"x": x, "type": to,
 			}), true, nil
@@ -229,10 +242,18 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 		return nil, true, scopeErrorf("cannot convert %s to unsafe.Pointer in frontend/v1 scope (M8)", srcT)
 	case srcIsPtr && !dstIsPtr:
 		// unsafe.Pointer->*T: resolve.
-		if _, ok := types.Unalias(dstT).(*types.Pointer); ok {
-			return e.node("unsafetooptr", c, map[string]any{
+		if ptr, ok := types.Unalias(dstT).(*types.Pointer); ok {
+			fields := map[string]any{
 				"x": x, "type": to,
-			}), true, nil
+			}
+			// fix-redmaster-r39: the byte size of T from the same
+			// go/types Sizes oracle that folds unsafe.Sizeof, so a
+			// byte-derived pointer (unsafederive) can be indexed at
+			// the backend. Omitted when T has no fixed size.
+			if sz, ok := safeSizeof(e.sizes, ptr.Elem()); ok && sz > 0 {
+				fields["elemSize"] = sz
+			}
+			return e.node("unsafetooptr", c, fields), true, nil
 		}
 		// unsafe.Pointer->uintptr: NOT intercepted — the existing D5
 		// ConvertNode trap (GoConvert.unsafePointerToUintptr) owns it.

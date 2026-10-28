@@ -49,6 +49,13 @@ import java.util.Map;
  *   <li>{@code ==} semantics: {@code unsafe.Pointer} values are {@code long}
  *       handles ({@code GoKind.UNSAFE_POINTER}, D5); {@code ==} compares
  *       handle values. Interning is what makes this match gc.</li>
+ *   <li>{@link #derive(long, long)} (fix-redmaster-r39): byte-offset
+ *       derivation from a live handle, interned as a {@link ByteRef}
+ *       view of the base's root referent. This is the only path by which
+ *       {@code uintptr} arithmetic reaches a referent, and it is only
+ *       reachable from frontend-proven derivations and
+ *       {@code unsafe.Add} — a bare integer still cannot materialize a
+ *       handle (see {@code UnsafeOps.fromUintTrap}).</li>
  * </ul>
  *
  * <p>Referent shapes the table holds: Java typed arrays (whole-array
@@ -119,6 +126,80 @@ public final class UnsafeTable {
             return "ArrayRef{offset=" + offset + ", array=" + array.getClass().getSimpleName() + "}";
         }
     }
+
+    /**
+     * A byte-offset view of another referent (fix-redmaster-r39): the
+     * referent of a pointer derived by proven {@code uintptr} arithmetic
+     * ({@code unsafe.Pointer(uintptr(p) + byteOffset)}) or by
+     * {@code unsafe.Add}. The {@code base} is the root referent the
+     * derivation started from (never itself a {@code ByteRef} —
+     * {@link #derive} flattens), and {@code byteOffset} is the total byte
+     * offset from the root's start. The view is only ever interpreted by
+     * consumption sites that know the target element size
+     * ({@code UnsafeToPtrNode}): the byte offset must divide evenly by
+     * that size and land inside the root array, or the conversion traps.
+     * A {@code ByteRef} therefore can never name storage outside its root
+     * referent — the root is carried, never reconstructed from a number.
+     *
+     * <p>Equality: two views are equal iff they view the same root at the
+     * same byte offset. Root equality is identity, except for
+     * {@link ArrayRef} roots, whose own value equality (same array, same
+     * element offset) applies.
+     */
+    public static final class ByteRef {
+        private final Object base;
+        private final long byteOffset;
+
+        public ByteRef(Object base, long byteOffset) {
+            if (base == null) {
+                throw new IllegalArgumentException("ByteRef base must not be null");
+            }
+            if (base instanceof ByteRef) {
+                throw new IllegalArgumentException("ByteRef base must be a root referent, not a ByteRef");
+            }
+            this.base = base;
+            this.byteOffset = byteOffset;
+        }
+
+        /** The root referent this view is an offset into (never a ByteRef). */
+        public Object base() {
+            return base;
+        }
+
+        /** The total byte offset from the root's start. */
+        public long byteOffset() {
+            return byteOffset;
+        }
+
+        private static boolean baseEquals(Object a, Object b) {
+            return a == b || (a instanceof ArrayRef && a.equals(b));
+        }
+
+        private static int baseHash(Object a) {
+            return a instanceof ArrayRef ? a.hashCode() : System.identityHashCode(a);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof ByteRef other)) {
+                return false;
+            }
+            return byteOffset == other.byteOffset && baseEquals(base, other.base);
+        }
+
+        @Override
+        public int hashCode() {
+            return baseHash(base) * 31 + Long.hashCode(byteOffset);
+        }
+
+        @Override
+        public String toString() {
+            return "ByteRef{offset=" + byteOffset + ", base=" + base + "}";
+        }
+    }
+
+    /** A resolved handle fully unwrapped: its root referent plus the total byte offset of any {@link ByteRef} layers. */
+    public record ResolvedView(Object root, long byteOffset) {}
 
     private static volatile UnsafeTable current;
 
@@ -237,6 +318,64 @@ public final class UnsafeTable {
      */
     public Object resolve(long handle) {
         return handles.get(handle);
+    }
+
+    /**
+     * Resolves a handle and unwraps any {@link ByteRef} layers into a
+     * {@link ResolvedView}: the root referent plus the total byte offset.
+     * A handle that was never byte-derived yields offset {@code 0} and
+     * its plain referent as the root.
+     */
+    public ResolvedView resolveView(long handle) {
+        Object r = resolve(handle);
+        long offset = 0;
+        while (r instanceof ByteRef br) {
+            offset += br.byteOffset();
+            r = br.base();
+        }
+        return new ResolvedView(r, offset);
+    }
+
+    /**
+     * Derives a pointer from a live base handle by a byte offset
+     * (fix-redmaster-r39): the runtime half of the {@code "unsafederive"}
+     * wire node and of {@code unsafe.Add}. The base is a handle that is
+     * live <em>now</em> — provenance is carried by the handle itself,
+     * never reconstructed from an integer — so the result can only ever
+     * view the base's own referent:
+     *
+     * <ul>
+     *   <li>offset {@code 0} → the base handle unchanged (an exact
+     *       {@code unsafe.Pointer(uintptr(p))} round trip);</li>
+     *   <li>a nil base (handle {@code 0}) with a nonzero offset traps —
+     *       there is no referent to derive from;</li>
+     *   <li>otherwise the derived view {@link ByteRef} {@code (root,
+     *       totalOffset)} is interned by value equality, so the same
+     *       derivation always yields the same handle. Whether the view
+     *       names a valid element is decided at the consumption site,
+     *       which knows the element size (see {@code UnsafeToPtrNode}).</li>
+     * </ul>
+     */
+    public synchronized long derive(long baseHandle, long byteOffset) {
+        if (byteOffset == 0) {
+            return baseHandle;
+        }
+        Object r = resolve(baseHandle);
+        if (r == null) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe: byte derivation from a nil unsafe.Pointer traps "
+                            + "(D5: no referent to derive from)");
+        }
+        long total = byteOffset;
+        Object root = r;
+        while (root instanceof ByteRef br) {
+            total += br.byteOffset();
+            root = br.base();
+        }
+        if (total == 0) {
+            return root instanceof ArrayRef ref ? internEqual(ref) : intern(root);
+        }
+        return internEqual(new ByteRef(root, total));
     }
 
     /**
