@@ -429,6 +429,99 @@ func main() {
 	}
 }
 
+// TestD1IfaceMultiResultAssignFormUnlisted pins fix-redmaster-r34: an
+// N-target statement (:= and =) of an UNLISTED interface multi-result
+// call must desugar through the general user-interface classifier. The
+// assignment classifier previously lacked the fallback that
+// exportIfaceMethodCall already had, so fmt/scan.go's
+// r, size, err = s.rs.ReadRune() (io.RuneReader, not in
+// m8IfaceMultiResultMethods) reached the backend as a raw 3-lhs/1-rhs
+// assign and failed every fmt-importing program's build with
+// "lhs/rhs length mismatch". The test asserts the desugared shape, not
+// just export success: a raw multi-target node would export fine but
+// still fail the backend build, which is exactly what the old code did.
+func TestD1IfaceMultiResultAssignFormUnlisted(t *testing.T) {
+	const ifaceSrc = `
+type RR interface {
+	ReadRune() (rune, int, error)
+}
+
+type B struct{}
+
+func (B) ReadRune() (rune, int, error) { return 'x', 1, nil }
+`
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "define",
+			body: `
+	var rr RR = B{}
+	r, size, err := rr.ReadRune()
+	println(r, size, err == nil)
+`,
+		},
+		{
+			name: "assign",
+			body: `
+	var rr RR = B{}
+	var r rune
+	var size int
+	var err error
+	r, size, err = rr.ReadRune()
+	println(r, size, err == nil)
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package main\n" + ifaceSrc + "\nfunc main() {\n" + tc.body + "}\n"
+			doc := d1ExportIfaceProg(t, src)
+			// No raw multi-target node may survive: every assign in
+			// the doc must be balanced (the comma-ok 2-lhs/1-rhs
+			// shape is the only multi-target exception, and it is
+			// not present here).
+			for _, n := range findAllKind(doc, "assign") {
+				f := n["fields"].(map[string]any)
+				lhs, _ := f["lhs"].([]any)
+				rhs, _ := f["rhs"].([]any)
+				if len(lhs) != len(rhs) {
+					t.Fatalf("raw multi-target assign survived desugar: %d lhs / %d rhs", len(lhs), len(rhs))
+				}
+			}
+			// The desugared block: __p5mr_N := <ifacemethod ReadRune>,
+			// then three single-target extractions.
+			found := false
+			for _, b := range findAllKind(doc, "block") {
+				stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
+				if len(stmts) != 4 {
+					continue
+				}
+				s0, _ := stmts[0].(map[string]any)
+				if s0["kind"] != "vardecl" {
+					continue
+				}
+				vals, _ := s0["fields"].(map[string]any)["values"].([]any)
+				if len(vals) != 1 {
+					continue
+				}
+				v0, _ := vals[0].(map[string]any)
+				if v0["kind"] != "ifacemethod" {
+					continue
+				}
+				if v0["fields"].(map[string]any)["method"] != "ReadRune" {
+					continue
+				}
+				found = true
+			}
+			if !found {
+				t.Fatal("no desugared block __p5mr_N := rr.ReadRune(); <3 extractions> found")
+			}
+		})
+	}
+}
+
 func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
 	// P4 (WS D, general interface MR): user-defined multi-result
 	// interface methods now work via classifyUserIfaceMultiResultCall
