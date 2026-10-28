@@ -112,6 +112,43 @@ public final class AbiTypes {
      */
     private static final Map<GoStruct, Long> SHELL_TOKS = new IdentityHashMap<>();
 
+    // ------------------------------------------------------------------
+    // Name/type offset registries (fix-redmaster-r41).
+    //
+    // gc resolves reflect's nameOff/typeOff/textOff against moduledata
+    // ranges, falling back to the runtime reflectOffs map for pointers
+    // registered at run time (IDs allocated from -1 downward,
+    // deduplicated by pointer). graalgo has no moduledata; the same two
+    // namespaces are kept here:
+    //
+    //   - positive IDs minted by this class: NAME_OFFS maps an ID to a
+    //     type's encoded name (the ID is stored in abi.Type.Str), and
+    //     TYPE_OFFS maps an ID to a pointer type's shell pointer (the
+    //     ID is stored in abi.Type.PtrToThis);
+    //   - negative IDs (gc's scheme, from -1 downward) for pointers
+    //     reflect itself registers through addReflectOff:
+    //     REFLECT_OFFS maps an ID to the registered D5 pointer value.
+    //
+    // All three are per-run state, cleared with the shell memo when
+    // the installed table changes (see abiPointerForTok).
+    // ------------------------------------------------------------------
+
+    /** Compile-time name encodings by Str ID (positive, from 1). */
+    private static final Map<Integer, byte[]> NAME_OFFS = new HashMap<>();
+
+    /** Pointer-type shell pointers by PtrToThis ID (positive, from 1). */
+    private static final Map<Integer, Object> TYPE_OFFS = new HashMap<>();
+
+    /** Run-time registered pointers by addReflectOff ID (negative, from -1). */
+    private static final Map<Integer, Object> REFLECT_OFFS = new HashMap<>();
+
+    /** Reverse of {@link #REFLECT_OFFS} for gc's pointer dedup. */
+    private static final Map<Object, Integer> REFLECT_OFFS_INV = new HashMap<>();
+
+    private static int nextNameOff = 1;
+    private static int nextTypeOff = 1;
+    private static int nextReflectOff = -1;
+
     /**
      * The {@link ReflectTypes.Table} the memo above was built against
      * (r38). Tables are per-run installs: tokens are document-scoped, so
@@ -139,6 +176,13 @@ public final class AbiTypes {
         if (table != cachedTable) {
             ABI_PTRS.clear();
             SHELL_TOKS.clear();
+            NAME_OFFS.clear();
+            TYPE_OFFS.clear();
+            REFLECT_OFFS.clear();
+            REFLECT_OFFS_INV.clear();
+            nextNameOff = 1;
+            nextTypeOff = 1;
+            nextReflectOff = -1;
             cachedTable = table;
         }
         GoPointer existing = ABI_PTRS.get(tok);
@@ -151,8 +195,121 @@ public final class AbiTypes {
         GoPointer ptr = new GoPointer(shell);
         ABI_PTRS.put(tok, ptr);
         SHELL_TOKS.put(shell, tok);
-        fillAbiStruct(shell, desc, info);
+        fillAbiStruct(shell, desc, info, tok);
         return ptr;
+    }
+
+    /** The type token of a canonical abi shell; 0 when not minted here. */
+    public static long tokForShell(GoStruct shell) {
+        Long tok = SHELL_TOKS.get(shell);
+        return tok == null ? 0 : tok;
+    }
+
+    /**
+     * gc's {@code reflect_addReflectOff}: registers a pointer value and
+     * returns its offset ID (negative, from -1 downward; the same
+     * pointer value deduplicates to the same ID).
+     */
+    public static synchronized int addReflectOff(Object ptr) {
+        Integer existing = REFLECT_OFFS_INV.get(ptr);
+        if (existing != null) {
+            return existing;
+        }
+        int id = nextReflectOff--;
+        REFLECT_OFFS.put(id, ptr);
+        REFLECT_OFFS_INV.put(ptr, id);
+        return id;
+    }
+
+    /**
+     * The encoded name bytes for a {@code resolveNameOff} offset: a
+     * positive ID reads the compile-time registry, a negative ID the
+     * value reflect registered (which must be the name-bytes pointer it
+     * was given). Null when the offset is unknown.
+     */
+    public static synchronized Object nameOffPointer(int off) {
+        byte[] enc = NAME_OFFS.get(off);
+        if (enc != null) {
+            return new GoPointer(enc, 0);
+        }
+        return REFLECT_OFFS.get(off);
+    }
+
+    /**
+     * The pointer value for a {@code resolveTypeOff}/{@code
+     * resolveTextOff} offset: a positive ID reads the compile-time
+     * PtrToThis registry, a negative ID the run-time registry. Null
+     * when the offset is unknown.
+     */
+    public static synchronized Object typeOffPointer(int off) {
+        Object v = TYPE_OFFS.get(off);
+        if (v != null) {
+            return v;
+        }
+        return REFLECT_OFFS.get(off);
+    }
+
+    /**
+     * gc's PtrBytes for a type: how many leading bytes of a value
+     * contain pointers. Pointer-shaped kinds are one word; a string or
+     * slice contributes its data word; an interface both words; an
+     * aggregate extends to the end of its last pointer-containing
+     * element/field. The {@code visiting} set cuts named-type cycles
+     * (a struct naming itself through a pointer — the pointer kind
+     * itself terminates the recursion, so this is belt-and-braces).
+     */
+    private static long ptrBytes(ReflectTypes.TypeInfo info, Set<Long> visiting) {
+        switch (info.kind) {
+            case POINTER, MAP, CHAN, FUNC, UNSAFE_POINTER, STRING, SLICE -> {
+                return 8;
+            }
+            case INTERFACE -> {
+                return 16;
+            }
+            case ARRAY -> {
+                if (info.elem == null || !visiting.add(info.tok)) {
+                    return 0;
+                }
+                long elemPtr = ptrBytes(info.elem, visiting);
+                visiting.remove(info.tok);
+                if (elemPtr == 0 || info.arrayLen == 0) {
+                    return 0;
+                }
+                return (info.arrayLen - 1L) * info.elem.size + elemPtr;
+            }
+            case STRUCT -> {
+                if (info.fields == null || !visiting.add(info.tok)) {
+                    return 0;
+                }
+                long max = 0;
+                for (ReflectTypes.FieldInfo f : info.fields) {
+                    long fp = ptrBytes(f.type, visiting);
+                    if (fp > 0) {
+                        max = Math.max(max, f.offset + fp);
+                    }
+                }
+                visiting.remove(info.tok);
+                return max;
+            }
+            default -> {
+                return 0;
+            }
+        }
+    }
+
+    /** Registers a type's name encoding; returns its Str (nameOff) ID. */
+    private static synchronized int registerTypeName(String typeString, boolean exported) {
+        byte[] enc = encodeName(typeString, "", exported, false);
+        int id = nextNameOff++;
+        NAME_OFFS.put(id, enc);
+        return id;
+    }
+
+    /** Registers a pointer type's shell pointer; returns its PtrToThis ID. */
+    private static synchronized int registerPtrToThis(Object shellPtr) {
+        int id = nextTypeOff++;
+        TYPE_OFFS.put(id, shellPtr);
+        return id;
     }
 
     /** Descriptor name for a kind's abi struct (basic kinds use plain {@code Type}). */
@@ -172,27 +329,56 @@ public final class AbiTypes {
 
     /** Fills a memoized shell: the {@code Type} header plus kind-specific fields. */
     private static void fillAbiStruct(GoStruct shell, GoStructDescriptor desc,
-            ReflectTypes.TypeInfo info) {
+            ReflectTypes.TypeInfo info, long tok) {
         String structName = abiStructName(info.kind);
         if (!"internal/abi.Type".equals(structName)) {
             // Kind-specific structs embed Type: fill the nested header, then
             // the extension fields on the shell itself.
             GoStruct nested = GoStruct.zero(ReflectTypes.structDescriptorFor("internal/abi.Type"));
-            fillTypeFields(nested, info);
+            fillTypeFields(nested, info, tok);
             setObjectByName(desc, shell, "Type", nested);
             fillExtension(shell, desc, info);
         } else {
-            fillTypeFields(shell, info);
+            fillTypeFields(shell, info, tok);
         }
     }
 
     /** Fills the {@code internal/abi.Type} header fields (no arithmetic needed). */
-    private static void fillTypeFields(GoStruct s, ReflectTypes.TypeInfo info) {
+    private static void fillTypeFields(GoStruct s, ReflectTypes.TypeInfo info, long tok) {
         GoStructDescriptor desc = s.descriptor();
         setLongByName(desc, s, "Size_", info.size);
-        setLongByName(desc, s, "PtrBytes", 0);
+        // PtrBytes: the size of the value's pointer-containing prefix
+        // (internal/abi). (*rtype).Pointers() is PtrBytes != 0, and
+        // Value.pointer() panics when it is false — with 0 here, every
+        // pointer-shaped value (chan, map, func, string, slice,
+        // interface) died in Len/Cap/SetMapIndex-style paths with
+        // "can't call pointer on a non-pointer Value"
+        // (fix-redmaster-r41).
+        setLongByName(desc, s, "PtrBytes", ptrBytes(info, new HashSet<>()));
         setLongByName(desc, s, "Hash", stableHash(info));
-        setLongByName(desc, s, "TFlag", 0);
+        // tflagNamed (internal/abi: 1<<2) for named types — the guest's
+        // (*rtype).isNamed()/Name() read it. The ExtraStar storage
+        // trick is NOT reproduced: the registered name (below) is the
+        // exact String() form, so String() returns it verbatim and
+        // Name() derives the short name from it in guest code —
+        // observably identical to gc (fix-redmaster-r41).
+        // tflagDirectIface (1<<5) for the pointer-shaped kinds —
+        // (*rtype).IsDirectIface() reads it; reflect.New panics
+        // ("may not be allocated in heap") when a pointer type lacks
+        // it. This matches gc's data generation exactly:
+        // cmd/compile's reflectdata sets TFlagDirectIface and leaves
+        // the Kind_ byte at the plain kind ordinal — the Kind_ direct
+        // bit (abi.KindDirectIface) is a runtime-internal encoding
+        // with no guest-visible reader, and setting it here corrupts
+        // graalgo's interface handling (a methods-bearing struct
+        // printed via fmt died in an Elem() call on *error), so Kind_
+        // stays unmodified (fix-redmaster-r41, bisected).
+        boolean directIface = switch (info.kind) {
+            case POINTER, CHAN, FUNC, MAP, UNSAFE_POINTER -> true;
+            default -> false;
+        };
+        long tflag = (info.isNamed() ? (1 << 2) : 0) | (directIface ? (1 << 5) : 0);
+        setLongByName(desc, s, "TFlag", tflag);
         setLongByName(desc, s, "Align_", info.align);
         setLongByName(desc, s, "FieldAlign_", info.align);
         // kindOrdinal (not a GoKind switch): the wire basic name
@@ -201,8 +387,31 @@ public final class AbiTypes {
         setLongByName(desc, s, "Kind_", ReflectTypes.kindOrdinal(info));
         setObjectByName(desc, s, "Equal", comparable(info, new HashSet<>()) ? equalFunc() : null);
         setObjectByName(desc, s, "GCData", null);
-        setLongByName(desc, s, "Str", 0);
-        setLongByName(desc, s, "PtrToThis", 0);
+        // Str: the nameOff ID of the type's String() form, registered
+        // in NAME_OFFS so the guest's nameOff → resolveNameOff path
+        // materializes it. Previously 0, which made every guest
+        // Type.String()/Name() read an empty name — the visible half
+        // of the (?) 0xADDR family (the resolve helpers themselves
+        // were unimplemented stubs; see ReflectLinknames).
+        boolean exported = false;
+        if (info.isNamed()) {
+            String shortName = info.name.substring(info.name.lastIndexOf('.') + 1);
+            exported = !shortName.isEmpty()
+                    && Character.isUpperCase(shortName.charAt(0));
+        }
+        setLongByName(desc, s, "Str",
+                registerTypeName(ReflectTypes.typeString(tok), exported));
+        // PtrToThis: the typeOff ID of *T's shell when the table
+        // already carries *T (no synthesis — minting types from a
+        // field fill would recurse through ptrTo's always-synthesize
+        // path). Gives (*rtype).ptrTo() its fast path.
+        long ptrTok = ReflectTypes.existingPtrTo(tok);
+        if (ptrTok != 0) {
+            setLongByName(desc, s, "PtrToThis",
+                    registerPtrToThis(abiPointerForTok(ptrTok)));
+        } else {
+            setLongByName(desc, s, "PtrToThis", 0);
+        }
     }
 
     /** Fills the kind-specific extension fields of a non-{@code Type} abi struct. */

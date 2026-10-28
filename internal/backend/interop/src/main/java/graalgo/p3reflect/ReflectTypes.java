@@ -1682,6 +1682,19 @@ public final class ReflectTypes {
     }
 
     /** ptrTo: token for *T (synthesized structurally; method table empty). */
+    /**
+     * The token of {@code *T} if the table already carries one (no
+     * synthesis); 0 otherwise. Used where minting a new type would be a
+     * side effect (the abi shell's PtrToThis fast path,
+     * fix-redmaster-r41).
+     */
+    public static long existingPtrTo(long tok) {
+        Table table = table();
+        TypeInfo t = table.info(tok);
+        Long existing = table.keyToTok.get("ptr:" + structuralKey(t));
+        return existing == null ? 0 : existing;
+    }
+
     public static long ptrTo(long tok) {
         Table table = table();
         TypeInfo t = table.info(tok);

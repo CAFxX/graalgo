@@ -8,6 +8,7 @@ import com.oracle.truffle.api.source.SourceSection;
 
 import graalgo.runtime.Panic;
 import graalgo.safepoint.Safepoint;
+import graalgo.values.GoString;
 
 /**
  * Root node for a bodyless function without {@code //go:linkname}
@@ -43,7 +44,11 @@ public final class UnimplementedRootNode extends RootNode {
         Safepoint.poll();
         String msg = "unimplemented: " + pkgPath + "." + funcName
                 + " (assembly function not implemented in graalgo)";
-        Panic.throwPanic(msg, null, null, this);
+        // A GoString value, not a java.lang.String: PanicRendering only
+        // renders GoString/GoErrorValue panic values faithfully — a raw
+        // String degraded to "panic: (?) 0xADDR", hiding the message
+        // (fix-redmaster-r41).
+        Panic.throwPanic(GoString.fromUtf8(msg), null, null, this);
         throw new IllegalStateException("throwPanic returned");
     }
 

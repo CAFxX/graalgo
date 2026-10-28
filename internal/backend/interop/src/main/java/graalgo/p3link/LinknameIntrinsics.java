@@ -150,6 +150,22 @@ public final class LinknameIntrinsics {
         // uncontended Lock/Unlock never calls it, which is why the gap
         // stayed hidden until now).
         registerInternalSyncIntrinsics();
+        // fix-redmaster-r41: the runtime-provided reflect/reflectlite
+        // helper surface (unsafe_New, typedmemmove, resolveNameOff,
+        // ...). gc's runtime pushes these into reflect via
+        // //go:linkname; graalgo's backend implements them in
+        // ReflectLinknames with gc-faithful semantics.
+        registerReflectIntrinsics();
+    }
+
+    /**
+     * The runtime provider side of {@code reflect}'s and
+     * {@code internal/reflectlite}'s bodyless helper declarations
+     * (fix-redmaster-r41). See {@code ReflectLinknames} for the table
+     * and the D5 calling conventions.
+     */
+    private static void registerReflectIntrinsics() {
+        graalgo.p3reflect.ReflectLinknames.registerAll();
     }
 
     /**

@@ -16933,6 +16933,7 @@
         "len": 50
       },
       "fields": {
+        "linkname": "sync/atomic.SwapInt32",
         "name": "SwapInt32",
         "obj": 12,
         "params": [
@@ -16985,8 +16986,7 @@
             }
           }
         ],
-        "sig": 193,
-        "unimplemented": true
+        "sig": 193
       }
     },
     {
@@ -16999,6 +16999,7 @@
         "len": 54
       },
       "fields": {
+        "linkname": "sync/atomic.SwapUint32",
         "name": "SwapUint32",
         "obj": 13,
         "params": [
@@ -17051,8 +17052,7 @@
             }
           }
         ],
-        "sig": 194,
-        "unimplemented": true
+        "sig": 194
       }
     },
     {
@@ -17065,6 +17065,7 @@
         "len": 58
       },
       "fields": {
+        "linkname": "sync/atomic.SwapUintptr",
         "name": "SwapUintptr",
         "obj": 14,
         "params": [
@@ -17117,8 +17118,7 @@
             }
           }
         ],
-        "sig": 195,
-        "unimplemented": true
+        "sig": 195
       }
     },
     {
@@ -17131,6 +17131,7 @@
         "len": 79
       },
       "fields": {
+        "linkname": "sync/atomic.SwapPointer",
         "name": "SwapPointer",
         "obj": 15,
         "params": [
@@ -17183,8 +17184,7 @@
             }
           }
         ],
-        "sig": 196,
-        "unimplemented": true
+        "sig": 196
       }
     },
     {
@@ -17197,6 +17197,7 @@
         "len": 68
       },
       "fields": {
+        "linkname": "sync/atomic.CompareAndSwapInt32",
         "name": "CompareAndSwapInt32",
         "obj": 16,
         "params": [
@@ -17264,8 +17265,7 @@
             }
           }
         ],
-        "sig": 197,
-        "unimplemented": true
+        "sig": 197
       }
     },
     {
@@ -17278,6 +17278,7 @@
         "len": 71
       },
       "fields": {
+        "linkname": "sync/atomic.CompareAndSwapUint32",
         "name": "CompareAndSwapUint32",
         "obj": 17,
         "params": [
@@ -17345,8 +17346,7 @@
             }
           }
         ],
-        "sig": 198,
-        "unimplemented": true
+        "sig": 198
       }
     },
     {
@@ -17359,6 +17359,7 @@
         "len": 74
       },
       "fields": {
+        "linkname": "sync/atomic.CompareAndSwapUintptr",
         "name": "CompareAndSwapUintptr",
         "obj": 18,
         "params": [
@@ -17426,8 +17427,7 @@
             }
           }
         ],
-        "sig": 199,
-        "unimplemented": true
+        "sig": 199
       }
     },
     {
@@ -17440,6 +17440,7 @@
         "len": 88
       },
       "fields": {
+        "linkname": "sync/atomic.CompareAndSwapPointer",
         "name": "CompareAndSwapPointer",
         "obj": 19,
         "params": [
@@ -17507,8 +17508,7 @@
             }
           }
         ],
-        "sig": 200,
-        "unimplemented": true
+        "sig": 200
       }
     },
     {
@@ -17521,6 +17521,7 @@
         "len": 51
       },
       "fields": {
+        "linkname": "sync/atomic.AddInt32",
         "name": "AddInt32",
         "obj": 20,
         "params": [
@@ -17573,8 +17574,7 @@
             }
           }
         ],
-        "sig": 201,
-        "unimplemented": true
+        "sig": 201
       }
     },
     {
@@ -17587,6 +17587,7 @@
         "len": 55
       },
       "fields": {
+        "linkname": "sync/atomic.AddUint32",
         "name": "AddUint32",
         "obj": 21,
         "params": [
@@ -17639,8 +17640,7 @@
             }
           }
         ],
-        "sig": 202,
-        "unimplemented": true
+        "sig": 202
       }
     },
     {
@@ -17653,6 +17653,7 @@
         "len": 59
       },
       "fields": {
+        "linkname": "sync/atomic.AddUintptr",
         "name": "AddUintptr",
         "obj": 22,
         "params": [
@@ -17705,8 +17706,7 @@
             }
           }
         ],
-        "sig": 203,
-        "unimplemented": true
+        "sig": 203
       }
     },
     {
@@ -17719,6 +17719,7 @@
         "len": 50
       },
       "fields": {
+        "linkname": "sync/atomic.AndInt32",
         "name": "AndInt32",
         "obj": 23,
         "params": [
@@ -17771,8 +17772,7 @@
             }
           }
         ],
-        "sig": 204,
-        "unimplemented": true
+        "sig": 204
       }
     },
     {
@@ -17785,6 +17785,7 @@
         "len": 54
       },
       "fields": {
+        "linkname": "sync/atomic.AndUint32",
         "name": "AndUint32",
         "obj": 24,
         "params": [
@@ -17837,8 +17838,7 @@
             }
           }
         ],
-        "sig": 205,
-        "unimplemented": true
+        "sig": 205
       }
     },
     {
@@ -17851,6 +17851,7 @@
         "len": 58
       },
       "fields": {
+        "linkname": "sync/atomic.AndUintptr",
         "name": "AndUintptr",
         "obj": 25,
         "params": [
@@ -17903,8 +17904,7 @@
             }
           }
         ],
-        "sig": 206,
-        "unimplemented": true
+        "sig": 206
       }
     },
     {
@@ -17917,6 +17917,7 @@
         "len": 49
       },
       "fields": {
+        "linkname": "sync/atomic.OrInt32",
         "name": "OrInt32",
         "obj": 26,
         "params": [
@@ -17969,8 +17970,7 @@
             }
           }
         ],
-        "sig": 207,
-        "unimplemented": true
+        "sig": 207
       }
     },
     {
@@ -17983,6 +17983,7 @@
         "len": 53
       },
       "fields": {
+        "linkname": "sync/atomic.OrUint32",
         "name": "OrUint32",
         "obj": 27,
         "params": [
@@ -18035,8 +18036,7 @@
             }
           }
         ],
-        "sig": 208,
-        "unimplemented": true
+        "sig": 208
       }
     },
     {
@@ -18049,6 +18049,7 @@
         "len": 57
       },
       "fields": {
+        "linkname": "sync/atomic.OrUintptr",
         "name": "OrUintptr",
         "obj": 28,
         "params": [
@@ -18101,8 +18102,7 @@
             }
           }
         ],
-        "sig": 209,
-        "unimplemented": true
+        "sig": 209
       }
     },
     {
@@ -18115,6 +18115,7 @@
         "len": 39
       },
       "fields": {
+        "linkname": "sync/atomic.LoadInt32",
         "name": "LoadInt32",
         "obj": 29,
         "params": [
@@ -18152,8 +18153,7 @@
             }
           }
         ],
-        "sig": 210,
-        "unimplemented": true
+        "sig": 210
       }
     },
     {
@@ -18166,6 +18166,7 @@
         "len": 42
       },
       "fields": {
+        "linkname": "sync/atomic.LoadUint32",
         "name": "LoadUint32",
         "obj": 30,
         "params": [
@@ -18203,8 +18204,7 @@
             }
           }
         ],
-        "sig": 211,
-        "unimplemented": true
+        "sig": 211
       }
     },
     {
@@ -18217,6 +18217,7 @@
         "len": 45
       },
       "fields": {
+        "linkname": "sync/atomic.LoadUintptr",
         "name": "LoadUintptr",
         "obj": 31,
         "params": [
@@ -18254,8 +18255,7 @@
             }
           }
         ],
-        "sig": 212,
-        "unimplemented": true
+        "sig": 212
       }
     },
     {
@@ -18268,6 +18268,7 @@
         "len": 59
       },
       "fields": {
+        "linkname": "sync/atomic.LoadPointer",
         "name": "LoadPointer",
         "obj": 32,
         "params": [
@@ -18305,8 +18306,7 @@
             }
           }
         ],
-        "sig": 213,
-        "unimplemented": true
+        "sig": 213
       }
     },
     {
@@ -18319,6 +18319,7 @@
         "len": 39
       },
       "fields": {
+        "linkname": "sync/atomic.StoreInt32",
         "name": "StoreInt32",
         "obj": 33,
         "params": [
@@ -18354,8 +18355,7 @@
           }
         ],
         "pkgpath": "sync/atomic",
-        "sig": 214,
-        "unimplemented": true
+        "sig": 214
       }
     },
     {
@@ -18368,6 +18368,7 @@
         "len": 42
       },
       "fields": {
+        "linkname": "sync/atomic.StoreUint32",
         "name": "StoreUint32",
         "obj": 34,
         "params": [
@@ -18403,8 +18404,7 @@
           }
         ],
         "pkgpath": "sync/atomic",
-        "sig": 215,
-        "unimplemented": true
+        "sig": 215
       }
     },
     {
@@ -18417,6 +18417,7 @@
         "len": 45
       },
       "fields": {
+        "linkname": "sync/atomic.StoreUintptr",
         "name": "StoreUintptr",
         "obj": 35,
         "params": [
@@ -18452,8 +18453,7 @@
           }
         ],
         "pkgpath": "sync/atomic",
-        "sig": 216,
-        "unimplemented": true
+        "sig": 216
       }
     },
     {
@@ -18466,6 +18466,7 @@
         "len": 59
       },
       "fields": {
+        "linkname": "sync/atomic.StorePointer",
         "name": "StorePointer",
         "obj": 36,
         "params": [
@@ -18501,8 +18502,7 @@
           }
         ],
         "pkgpath": "sync/atomic",
-        "sig": 217,
-        "unimplemented": true
+        "sig": 217
       }
     },
     {
@@ -18515,6 +18515,7 @@
         "len": 50
       },
       "fields": {
+        "linkname": "sync/atomic.SwapInt64",
         "name": "SwapInt64",
         "obj": 37,
         "params": [
@@ -18567,8 +18568,7 @@
             }
           }
         ],
-        "sig": 218,
-        "unimplemented": true
+        "sig": 218
       }
     },
     {
@@ -18581,6 +18581,7 @@
         "len": 54
       },
       "fields": {
+        "linkname": "sync/atomic.SwapUint64",
         "name": "SwapUint64",
         "obj": 38,
         "params": [
@@ -18633,8 +18634,7 @@
             }
           }
         ],
-        "sig": 219,
-        "unimplemented": true
+        "sig": 219
       }
     },
     {
@@ -18647,6 +18647,7 @@
         "len": 68
       },
       "fields": {
+        "linkname": "sync/atomic.CompareAndSwapInt64",
         "name": "CompareAndSwapInt64",
         "obj": 39,
         "params": [
@@ -18714,8 +18715,7 @@
             }
           }
         ],
-        "sig": 220,
-        "unimplemented": true
+        "sig": 220
       }
     },
     {
@@ -18728,6 +18728,7 @@
         "len": 71
       },
       "fields": {
+        "linkname": "sync/atomic.CompareAndSwapUint64",
         "name": "CompareAndSwapUint64",
         "obj": 40,
         "params": [
@@ -18795,8 +18796,7 @@
             }
           }
         ],
-        "sig": 221,
-        "unimplemented": true
+        "sig": 221
       }
     },
     {
@@ -18809,6 +18809,7 @@
         "len": 51
       },
       "fields": {
+        "linkname": "sync/atomic.AddInt64",
         "name": "AddInt64",
         "obj": 41,
         "params": [
@@ -18861,8 +18862,7 @@
             }
           }
         ],
-        "sig": 222,
-        "unimplemented": true
+        "sig": 222
       }
     },
     {
@@ -18875,6 +18875,7 @@
         "len": 55
       },
       "fields": {
+        "linkname": "sync/atomic.AddUint64",
         "name": "AddUint64",
         "obj": 42,
         "params": [
@@ -18927,8 +18928,7 @@
             }
           }
         ],
-        "sig": 223,
-        "unimplemented": true
+        "sig": 223
       }
     },
     {
@@ -18941,6 +18941,7 @@
         "len": 50
       },
       "fields": {
+        "linkname": "sync/atomic.AndInt64",
         "name": "AndInt64",
         "obj": 43,
         "params": [
@@ -18993,8 +18994,7 @@
             }
           }
         ],
-        "sig": 224,
-        "unimplemented": true
+        "sig": 224
       }
     },
     {
@@ -19007,6 +19007,7 @@
         "len": 54
       },
       "fields": {
+        "linkname": "sync/atomic.AndUint64",
         "name": "AndUint64",
         "obj": 44,
         "params": [
@@ -19059,8 +19060,7 @@
             }
           }
         ],
-        "sig": 225,
-        "unimplemented": true
+        "sig": 225
       }
     },
     {
@@ -19073,6 +19073,7 @@
         "len": 49
       },
       "fields": {
+        "linkname": "sync/atomic.OrInt64",
         "name": "OrInt64",
         "obj": 45,
         "params": [
@@ -19125,8 +19126,7 @@
             }
           }
         ],
-        "sig": 226,
-        "unimplemented": true
+        "sig": 226
       }
     },
     {
@@ -19139,6 +19139,7 @@
         "len": 53
       },
       "fields": {
+        "linkname": "sync/atomic.OrUint64",
         "name": "OrUint64",
         "obj": 46,
         "params": [
@@ -19191,8 +19192,7 @@
             }
           }
         ],
-        "sig": 227,
-        "unimplemented": true
+        "sig": 227
       }
     },
     {
@@ -19205,6 +19205,7 @@
         "len": 39
       },
       "fields": {
+        "linkname": "sync/atomic.LoadInt64",
         "name": "LoadInt64",
         "obj": 47,
         "params": [
@@ -19242,8 +19243,7 @@
             }
           }
         ],
-        "sig": 228,
-        "unimplemented": true
+        "sig": 228
       }
     },
     {
@@ -19256,6 +19256,7 @@
         "len": 42
       },
       "fields": {
+        "linkname": "sync/atomic.LoadUint64",
         "name": "LoadUint64",
         "obj": 48,
         "params": [
@@ -19293,8 +19294,7 @@
             }
           }
         ],
-        "sig": 229,
-        "unimplemented": true
+        "sig": 229
       }
     },
     {
@@ -19307,6 +19307,7 @@
         "len": 39
       },
       "fields": {
+        "linkname": "sync/atomic.StoreInt64",
         "name": "StoreInt64",
         "obj": 49,
         "params": [
@@ -19342,8 +19343,7 @@
           }
         ],
         "pkgpath": "sync/atomic",
-        "sig": 230,
-        "unimplemented": true
+        "sig": 230
       }
     },
     {
@@ -19356,6 +19356,7 @@
         "len": 42
       },
       "fields": {
+        "linkname": "sync/atomic.StoreUint64",
         "name": "StoreUint64",
         "obj": 50,
         "params": [
@@ -19391,8 +19392,7 @@
           }
         ],
         "pkgpath": "sync/atomic",
-        "sig": 231,
-        "unimplemented": true
+        "sig": 231
       }
     },
     {

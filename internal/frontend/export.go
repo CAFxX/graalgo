@@ -6190,21 +6190,58 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 }
 
 // exportLinknameDecl emits a bodyless function (P3-M4, WS C, ADR-0004 D1)
-// as a funcdecl with no "body". A bodyless function carrying //go:linkname
-// gets the additive "linkname" field and the factory builds a
-// LinknameRootNode dispatching by symbol name. A bodyless function WITHOUT
-// the directive (typically an assembly implementation in a .s file that
-// graalgo does not process) gets the additive "unimplemented" field; the
-// factory builds a stub that panics if called. This is general: it applies
-// uniformly to all bodyless functions, preserving their type identity so
-// references and value positions work, while failing loudly (never
-// silently) if the unimplemented function is actually invoked.
+// as a funcdecl with no "body". A bodyless declaration is an external
+// symbol reference: in gc it is bound at link time, either by an
+// assembly body in the same package or by a //go:linkname push from
+// another package (the runtime pushes most of them, e.g.
+// //go:linkname reflect_unsafe_New reflect.unsafe_New). graalgo
+// processes no assembly and compiles no runtime package, so a bodyless
+// declaration's only possible providers are another compiled package
+// or the backend's Linknames registry. The declaration therefore
+// exports the additive "linkname" field carrying its symbol — the
+// directive's symbol when a //go:linkname directive is present,
+// otherwise gc's default symbol pkgPath + "." + name — and the factory
+// builds a LinknameRootNode dispatching by that symbol; the backend
+// fails fast, naming the symbol, when nothing provides it. That
+// fail-fast is the honest equivalent of gc's link error: the previous
+// classification ("unimplemented", a guest-panic stub) mislabelled
+// runtime-provided functions (reflect.unsafe_New, reflect.typedmemmove,
+// reflect.resolveNameOff, ...) as assembly and killed live calls with
+// a degraded panic: (?) 0xADDR (fix-redmaster-r41).
+//
+// Two refinements keep the default-symbol path honest:
+//   - A directive symbol may alias to a compiled provider (the Go->Go
+//     binding below); a DEFAULT symbol never does. Its provider in gc
+//     is the runtime, which graalgo's graph never compiles — and the
+//     same pkgPath.name string can also name a synthetic package's
+//     provider (the synthetic internal/runtime/atomic registers a
+//     generic Store under the real package's symbol), so aliasing a
+//     defaulted declaration could bind it to an unrelated template.
+//   - LinknameRootNode dispatch returns one value, so a multi-result
+//     declaration can only be served by an aliased provider. A
+//     multi-result DEFAULTED declaration (internal/cpu.cpuid is the
+//     shape) therefore keeps the stub form, with its pair synthesis,
+//     exactly as before this change.
+//
+// Scope: plain functions only. A bodyless METHOD without a directive
+// keeps the "unimplemented" stub: methods bind through method tables,
+// not the symbol table, and a method's default symbol would need its
+// receiver type, which the linkname namespace does not carry.
 func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	pkgPath := funcPkgPath(e, fi)
 	symbol, err := linknameDirective(fd, pkgPath)
 	if err != nil {
 		return nil, err
+	}
+	defaulted := false
+	if symbol == "" && fi.sig != nil && fi.sig.Recv() == nil && fi.obj != nil {
+		// No directive on a plain function: gc's default symbol. The
+		// runtime-provided surface (the sync lane's runtime_* decls,
+		// reflect's unsafe_New/typedmemmove/resolve*Off helpers, ...)
+		// all bind under this name.
+		symbol = pkgPath + "." + fi.obj.Name()
+		defaulted = true
 	}
 	// P3-M9 (RC-6): //go:linkname on methods is allowed (previously M4
 	// scope). The receiver is passed as the first arg; intrinsics that
@@ -6232,42 +6269,21 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	if len(results) > 0 {
 		fields["results"] = results
 	}
-	if symbol == "" {
-		// No //go:linkname: check if this is a runtime-provided function
-		// (Go pattern: package P declares `func runtime_X(...)`, and the
-		// runtime package provides it via //go:linkname). These are not
-		// assembly — they're intrinsics that the backend must implement.
-		// Emit as a linkname so the backend dispatches to the Java
-		// intrinsic instead of panicking on "unimplemented".
-		if fi.obj != nil && fi.obj.Name() != "" {
-			funcName := fi.obj.Name()
-			if len(funcName) > 8 && funcName[:8] == "runtime_" && pkgPath != "runtime" {
-				// Runtime-provided intrinsic: symbol is pkgpath.name
-				// (e.g., "sync.runtime_Semacquire"). The backend's
-				// Linknames.dispatch will fail fast if no intrinsic
-				// is registered for the symbol.
-				symbol = pkgPath + "." + funcName
-			}
-		}
-	}
-	if symbol == "" {
-		// No //go:linkname and not a runtime-provided intrinsic:
-		// assembly-implemented (or otherwise bodyless) function.
-		// Mark unimplemented; the backend panics if called. The
-		// multi-result WS D restriction does not apply: no body is built.
+	// markUnimplemented records the panic-stub form. A multi-result
+	// stub still needs a userMRFuncs entry so its callers get the pair
+	// transform and compile (ASM Phase 1: the stub panics if invoked,
+	// so the pair is never constructed at runtime — but callers like
+	// internal/cpu.doinit, which multi-assigns cpuid results, must
+	// type-check). General: any stubbed function with N>1 results gets
+	// it automatically.
+	markUnimplemented := func() error {
 		fields["unimplemented"] = true
-		// ASM Phase 1: a multi-result unimplemented function still
-		// needs a userMRFuncs entry so its callers get the pair
-		// transform and compile. The stub panics if invoked, so the
-		// pair is never constructed at runtime — but callers like
-		// internal/cpu.doinit (which multi-assigns cpuid results)
-		// must type-check. This is general: any bodyless function
-		// with N>1 results gets it automatically.
+		delete(fields, "linkname")
 		if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
 			if _, ok := e.userMRFuncs[fi.obj]; !ok {
 				pairType, fieldNames, err := e.synthesizeUserPairType(fi)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				e.userMRFuncs[fi.obj] = &userMRInfo{
 					pairType:   pairType,
@@ -6275,6 +6291,28 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 					origSig:    fi.sig,
 				}
 			}
+		}
+		return nil
+	}
+	if symbol == "" {
+		// Only bodyless methods reach here (plain functions got their
+		// default symbol above): no symbol to dispatch on, so the stub
+		// stands. The multi-result WS D restriction does not apply: no
+		// body is built.
+		if err := markUnimplemented(); err != nil {
+			return nil, err
+		}
+	} else if defaulted {
+		if len(results) > 1 {
+			// Dispatch cannot carry multiple results and a defaulted
+			// declaration never aliases (see the header comment), so
+			// there is no provider for this shape: the stub stands,
+			// with the pair synthesis its callers need.
+			if err := markUnimplemented(); err != nil {
+				return nil, err
+			}
+		} else {
+			fields["linkname"] = symbol
 		}
 	} else {
 		fields["linkname"] = symbol
@@ -6308,7 +6346,6 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		if len(results) > 1 && !hasProvider {
 			// No provider to alias to: mark unimplemented so the
 			// backend panics if called, instead of failing export.
-			// This matches the bodyless-no-linkname path above.
 			fields["unimplemented"] = true
 			delete(fields, "linkname")
 		}
@@ -9477,7 +9514,11 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if fi.isTemplate {
 		ii, ok := e.info.Instances[funIdent]
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: no instantiation recorded for call to generic function %s", fn.Name())
+			pkgPath := ""
+			if fn.Pkg() != nil {
+				pkgPath = fn.Pkg().Path()
+			}
+			return nil, fmt.Errorf("gofrontend: no instantiation recorded for call to generic function %s.%s (pos %v)", pkgPath, fn.Name(), c.Pos())
 		}
 		targs := typeList(ii.TypeArgs)
 		key := instKeyForFunc(fi, targs, e.subst)

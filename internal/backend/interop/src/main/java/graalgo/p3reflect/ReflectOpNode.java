@@ -497,7 +497,7 @@ public final class ReflectOpNode extends GoExprNode {
     }
 
     /** Zero D5 value for a token. */
-    private static Object zeroFor(long tok) {
+    static Object zeroFor(long tok) {
         TypeInfo t = ReflectTypes.table().info(tok);
         return switch (t.kind) {
             case BOOL -> Boolean.FALSE;
@@ -879,7 +879,7 @@ public final class ReflectOpNode extends GoExprNode {
      * into slice/array elements and struct fields works too (Copy into
      * []int elements hit "Set of INT64 through non-cell").
      */
-    private static void storeThroughRef(Object ref, GoKind kind, Object boxed) {
+    static void storeThroughRef(Object ref, GoKind kind, Object boxed) {
         if (ref instanceof ReflectRefs.FieldRef fr) {
             GoStruct s = (GoStruct) ReflectRefs.denotedValue(fr.base(), GoKind.STRUCT);
             ReflectValues.structFieldSet(s, fr.field(), kind, boxed);
@@ -940,7 +940,7 @@ public final class ReflectOpNode extends GoExprNode {
     }
 
     /** Copies one aggregate into another (for whole-value Set). */
-    private static void copyAggregate(TypeInfo t, Object dst, Object src) {
+    static void copyAggregate(TypeInfo t, Object dst, Object src) {
         switch (t.kind) {
             case STRUCT -> {
                 GoStruct ds = (GoStruct) dst;
