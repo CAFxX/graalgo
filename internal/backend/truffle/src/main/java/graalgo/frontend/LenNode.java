@@ -49,7 +49,8 @@ public final class LenNode extends GoExprNode {
             }
             // M7: len of a nil slice/map is 0 (Go spec, Length and capacity).
             case SLICE -> {
-                GoSlice s = (GoSlice) child.executeObject(frame);
+                Object operand = child.executeObject(frame);
+                GoSlice s = (GoSlice) operand;
                 yield s == null ? 0 : s.len();
             }
             case MAP -> {

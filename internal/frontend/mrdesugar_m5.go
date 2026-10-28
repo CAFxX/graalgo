@@ -195,10 +195,13 @@ var m5StaticMREntries = []m5StaticMREntry{
 	{"context", "Deadline", "", true},
 }
 
-func hasStaticMREntry(pkgPath, name, recvType string) bool {
-	// M5 functions (context.WithCancel etc., runtime.Caller,
-	// time.ParseDuration) have hand-written __-helpers and fail-fast
-	// bodies; the mechanical transform must not rewrite them.
+// hasM5StaticEntry reports whether the function is an M5-owned entry
+// (context.WithCancel, context.Deadline, runtime.Caller,
+// time.ParseDuration): hand-written __-helpers, fail-fast bodies, and
+// dedicated exporter machinery (mrWithCancel/mrDeadline/...). The
+// mechanical disk transform must never rewrite these, real body or
+// not — the exporter desugars their call sites itself.
+func hasM5StaticEntry(pkgPath, name, recvType string) bool {
 	for _, me := range m5StaticMREntries {
 		if me.pkgPath != pkgPath || me.name != name {
 			continue
@@ -212,6 +215,13 @@ func hasStaticMREntry(pkgPath, name, recvType string) bool {
 		if me.recvType == recvType {
 			return true
 		}
+	}
+	return false
+}
+
+func hasStaticMREntry(pkgPath, name, recvType string) bool {
+	if hasM5StaticEntry(pkgPath, name, recvType) {
+		return true
 	}
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
@@ -2854,6 +2864,19 @@ func (e *exporter) synthesizeIfacePairType(sig *types.Signature, nameHint string
 // of "the concrete implementation behind this multi-result method", used
 // by methodTableEntries to wire interface dispatch at the helper.
 func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName string, ok bool) {
+	// WS G (fix-redmaster-r40): a disk spec wins over the static
+	// tables. A disk spec exists only when the package was actually
+	// loaded from disk and transformed in this program, in which case
+	// its __-helper is built from the real body and takes the real
+	// receiver representation. The static entries name hand-written
+	// helpers in the package's synthetic twin, whose receiver shape
+	// does not match disk values (e.g. reflect's synthetic
+	// __reflectTFieldByName takes the synthetic rtype, not the disk
+	// *rtype) — mapping an itab to one would dispatch wrong even
+	// where the lookup succeeds.
+	if spec := lookupDiskMR(pkgPath, name, recvType); spec != nil && spec.helper != "" {
+		return spec.pkgPath, spec.helper, true
+	}
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
 			return mf.pkgPath, mf.helper, true
@@ -2913,6 +2936,24 @@ func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName
 // result types, or the dispatch would extract wrong fields: a mismatch
 // fails the export loudly (ok=false → the method stays out of the table
 // → dispatch fails fast with "missing method").
+// methodRecvBaseName returns the base type name of a method's
+// receiver ("rtype" for func (t *rtype) M), or "" when the method has
+// no named receiver type.
+func methodRecvBaseName(mobj *types.Func) string {
+	sig, ok := mobj.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return ""
+	}
+	rt := sig.Recv().Type()
+	if pt, ok := rt.(*types.Pointer); ok {
+		rt = pt.Elem()
+	}
+	if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+		return nt.Obj().Name()
+	}
+	return ""
+}
+
 func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool) {
 	if mobj == nil || mobj.Pkg() == nil {
 		return nil, false
@@ -3515,6 +3556,41 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 			return nil, nil, err
 		}
 		args = append(args, x)
+	}
+	// Variadic parity with the plain call path (fix-redmaster-r40): a
+	// non-spread variadic call must have its trailing arguments packed
+	// into the variadic slice before they reach the __-helper, exactly
+	// as exportCallArgsPacked does for a direct call. Without this the
+	// backend binds the first trailing element into the helper's slice
+	// parameter (observed: fmt.Fprintln(os.Stdout, 42) bound a=42, and
+	// doPrintln's range over `a` cast a Long to GoSlice). A spread call
+	// passes its slice through unchanged (packVariadicArgs gates on
+	// c.Ellipsis itself). With prependRecv, args[0] is the receiver —
+	// the helper's first parameter — so only the tail is packed.
+	funExpr := c.Fun
+	for {
+		if p, ok := funExpr.(*ast.ParenExpr); ok {
+			funExpr = p.X
+		} else {
+			break
+		}
+	}
+	if tv, ok := e.info.Types[funExpr]; ok && tv.Type != nil {
+		if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+			var err error
+			if plan.prependRecv && len(args) > 0 {
+				var tail []*Node
+				tail, err = e.packVariadicArgs(c, sig, args[1:])
+				if err == nil {
+					args = append([]*Node{args[0]}, tail...)
+				}
+			} else {
+				args, err = e.packVariadicArgs(c, sig, args)
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	return args, preStmts, nil
 }

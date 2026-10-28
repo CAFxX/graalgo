@@ -3490,9 +3490,17 @@ public final class NodeFactory {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
+        // Variadic signatures adapt too (fix-redmaster-r40): the
+        // exporter always emits a variadic call in packed or spread
+        // form, so the call's arguments align 1:1 with the signature's
+        // params and the last param — the variadic slice type itself —
+        // is never an interface, hence never boxed. The previous
+        // variadic bail-out skipped adaptation for the FIXED params
+        // too: fmt.Fprintln(os.Stdout, 42) passed the *os.File unboxed
+        // into the io.Writer parameter, and the later w.Write dispatch
+        // found no method table for the value's descriptor.
+        // (adaptArgsForInterfaceParams is bounded by the param count,
+        // so trailing elements of any unpacked form are untouched.)
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {

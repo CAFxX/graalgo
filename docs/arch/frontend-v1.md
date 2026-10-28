@@ -267,6 +267,12 @@ the extension:
   `methods` list on `named` type-table entries is populated since P3-M3
   (ADR-0003: one `{name, obj, recv}` per method via `types.NewMethodSet`);
   `pointer` entries carry the same field with the full `*T` method set.
+  A multi-result method (synthetic M5/M7 or disk MR transform) has no
+  direct `funcdecl`; its entry's `obj` names the pair-returning
+  `__`-helper funcdecl instead of the never-emitted stub, for disk
+  packages as for synthetic ones (fix-redmaster-r40) — the dispatcher
+  invokes the helper with the receiver as its first parameter and the
+  call yields the results pair.
   `struct` entries carry it too when the struct has embedded fields
   (PKG-036): an anonymous struct can promote methods via embedding
   (including embedded interfaces, e.g. `struct{ Reader io.Reader }`)

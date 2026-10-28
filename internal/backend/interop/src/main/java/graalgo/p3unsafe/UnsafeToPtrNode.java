@@ -2,9 +2,11 @@ package graalgo.p3unsafe;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.frontend.GoExprNode;
+import graalgo.frontend.GoFieldCell;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.p3reflect.AbiTypes;
+import graalgo.p3reflect.ReflectTypes;
 import graalgo.values.GoCell;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
@@ -46,6 +48,34 @@ import java.util.List;
  * {@link UnsafeTable#resolveView} and converts the byte offset to an
  * element index using the wire's {@code elemSize} — see
  * {@link #derivedPointer}.
+ *
+ * <p>fix-redmaster-r40 (header views): when the target struct's field
+ * layout fits the string/slice header shape (see
+ * {@link #captureHeaderTarget}) and the resolved referent is a string
+ * or slice value (or a cell holding one, or null), the node returns a
+ * pointer to the header struct materialized by {@link HeaderView}
+ * instead of a pointer to the value itself. Without this,
+ * {@code (*unsafeheader.String)(v.ptr).Len} — reflect's {@code Len}
+ * path for the String and Slice kinds — dereferenced the
+ * {@code GoString} itself and died casting it to {@code GoStruct}.
+ * Targets whose layout does not fit keep the pre-view behavior
+ * exactly.
+ *
+ * <p>fix-redmaster-r40 (prefix views): when the target is a named
+ * struct and the resolved referent is a struct of the target's
+ * embedded field-0 type (or a wrapper whose field 0 is the target
+ * type), the node returns a pointer to the prefix view built by
+ * {@link PrefixView} — gc's embedding-is-a-prefix reinterpretation,
+ * which reflect's {@code sliceType}/{@code structType} (embedding
+ * their {@code internal/abi} counterparts) rely on.
+ *
+ * <p>fix-redmaster-r40 (struct-field storage): when the referent is a
+ * struct and the handle's byte offset lands exactly on a direct field
+ * whose type is the conversion target, the conversion addresses that
+ * field's storage — see {@link #structFieldAt}. This is what
+ * reflect's {@code Value.Field} + typed dereference requires
+ * ({@code add(v.ptr, field.Offset)} followed by a conversion to the
+ * field's type).
  */
 public final class UnsafeToPtrNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -55,6 +85,21 @@ public final class UnsafeToPtrNode extends GoExprNode {
 
     /** Field layout for the view, or null when no view applies. */
     private final List<AbiTypes.ViewField> viewLayout;
+
+    /** Qualified name of the header-view target struct, or null when no header view applies. */
+    private final String headerQName;
+
+    /** Prefix-view target (target qname + field-0 embedded qname), or null. */
+    private final PrefixTarget prefixTarget;
+
+    /**
+     * Interface-unpack layout (fix-redmaster-r40): when the target
+     * {@code T} is an interface type, the field layout of the abi
+     * interface-word struct a guest may have stored at the referent
+     * ({@code EmptyInterface} for an empty target interface,
+     * {@code NonEmptyInterface} otherwise), or null.
+     */
+    private final List<AbiTypes.ViewField> ifaceLayout;
 
     /**
      * Byte size of the target element type {@code T}, emitted by the
@@ -67,30 +112,108 @@ public final class UnsafeToPtrNode extends GoExprNode {
      */
     private final long elemSize;
 
+    /**
+     * Wire type-table id of the target element type {@code T} (the
+     * {@code elem} of the {@code *T} entry), or -1 when the target is
+     * not a pointer entry. Used by {@link #structFieldAt} to match a
+     * conversion target against struct field layouts.
+     */
+    private final int targetElemWireId;
+
     private UnsafeToPtrNode(GoExprNode child, String targetQName,
-            List<AbiTypes.ViewField> viewLayout, long elemSize) {
+            List<AbiTypes.ViewField> viewLayout, String headerQName,
+            PrefixTarget prefixTarget, long elemSize, int targetElemWireId,
+            List<AbiTypes.ViewField> ifaceLayout) {
         super(GoKind.POINTER);
         this.child = child;
         this.targetQName = targetQName;
         this.viewLayout = viewLayout;
+        this.headerQName = headerQName;
+        this.prefixTarget = prefixTarget;
         this.elemSize = elemSize;
+        this.targetElemWireId = targetElemWireId;
+        this.ifaceLayout = ifaceLayout;
     }
+
+    /** A prefix-view target: the struct's qname plus its field-0 embedded struct qname. */
+    private record PrefixTarget(String qname, String embeddedQName) {}
 
     @Override
     public Object executeObject(VirtualFrame frame) {
         long handle = child.executeLong(frame);
         UnsafeTable.ResolvedView view = UnsafeTable.current().resolveView(handle);
         Object resolved = view.root();
+        // Set when a byte-offset field normalization produced a cell
+        // whose field type is NOT the conversion target: the cell may
+        // only be consumed by one of the views below (e.g. the header
+        // view over a string field); if no view fires, the conversion
+        // is a reinterpretation D5 forbids and traps like the
+        // array-derivation path would have.
+        boolean strictField = false;
         if (view.byteOffset() != 0) {
-            return derivedPointer(resolved, view.byteOffset());
+            // A byte offset into a struct referent that lands exactly
+            // on a direct field is that field's storage (reflect's
+            // Field machinery) — normalize to the field cell and let
+            // the view chain below convert it; anything else keeps
+            // the array-derivation semantics.
+            FieldHit hit = structFieldAt(resolved, view.byteOffset());
+            if (hit == null) {
+                return derivedPointer(resolved, view.byteOffset());
+            }
+            if (hit.fieldTok() != hit.targetTok()
+                    && headerQName == null && prefixTarget == null
+                    && viewLayout == null && ifaceLayout == null) {
+                return derivedPointer(resolved, view.byteOffset());
+            }
+            strictField = hit.fieldTok() != hit.targetTok();
+            resolved = hit.cell();
+        } else {
+            // Offset 0: a conversion whose target is a direct field's
+            // type (not the referent struct's own type) addresses that
+            // field's storage — gc's prefix identity for field 0.
+            FieldHit hit = structFieldAt(resolved, 0);
+            if (hit != null && hit.fieldTok() == hit.targetTok()) {
+                resolved = hit.cell();
+            }
+        }
+        if (headerQName != null) {
+            GoStruct header = buildHeaderView(resolved);
+            if (header != null) {
+                return new GoPointer(header);
+            }
+        }
+        if (prefixTarget != null) {
+            GoStruct prefixed = buildPrefixView(resolved);
+            if (prefixed != null) {
+                return new GoPointer(prefixed);
+            }
         }
         if (viewLayout != null && targetQName != null
-                && resolved instanceof GoCell cell
-                && cell.get() instanceof GoInterface gi) {
+                && storedValue(resolved) instanceof GoInterface gi) {
             GoStruct viewStruct = AbiTypes.buildInterfaceView(gi, targetQName, viewLayout);
             if (viewStruct != null) {
                 return new GoPointer(viewStruct);
             }
+        }
+        if (ifaceLayout != null
+                && storedValue(resolved) instanceof GoStruct gs) {
+            // Interface-word struct → interface value (the inverse
+            // view): guest code that manufactures an interface by
+            // writing an abi.EmptyInterface/NonEmptyInterface struct
+            // and dereferencing it as the interface type (reflect's
+            // packEface) must yield a real GoInterface, not the raw
+            // struct. The unpack is a snapshot (the r38 N3 class): a
+            // fresh cell holds the unpacked value, so writes through
+            // the converted pointer do not reach the original struct.
+            GoInterface gi = AbiTypes.unpackInterfaceView(gs, ifaceLayout);
+            if (gi != null) {
+                return UnsafeTable.pointerFor(new graalgo.values.GoBox(gi));
+            }
+        }
+        if (strictField) {
+            throw new UnsafeHandles.UnsafeEscapeException(
+                    "unsafe: byte-offset derivation from a non-array referent traps "
+                            + "(D5: the handle model cannot reinterpret memory)");
         }
         return UnsafeTable.pointerFor(resolved);
     }
@@ -142,6 +265,69 @@ public final class UnsafeToPtrNode extends GoExprNode {
         return UnsafeTable.pointerFor(new UnsafeTable.ArrayRef(array, (int) index));
     }
 
+    /** A struct-field storage hit: the field cell plus both type tokens. */
+    private record FieldHit(GoCell cell, long fieldTok, long targetTok) {}
+
+    /**
+     * Struct-field storage resolution (fix-redmaster-r40): when the
+     * referent is a struct value and {@code byteOffset} lands exactly
+     * on a DIRECT field of the referent's own layout, that field's
+     * storage is the addressed storage — return a field cell over it
+     * (with the field's and the target's type tokens for the caller's
+     * consumption checks), or null when no field boundary matches.
+     *
+     * <p>This is the consumption half of reflect's field machinery:
+     * {@code Value.Field} forms {@code add(v.ptr, field.Offset)} and
+     * {@code Value.Int}/{@code Len}/... convert the result onward
+     * ({@code (*int)(v.ptr)}, {@code (*unsafeheader.String)(v.ptr)}).
+     * In gc those addresses ARE the field's bytes; in the value model
+     * the field cell is the aliasing storage with exactly that
+     * identity, so reads and writes through the converted pointer hit
+     * the field. Offsets that land mid-field or between fields do not
+     * resolve here — the caller's array-derivation path traps them
+     * (D5 preserved). Matching is by layout facts only (the referent
+     * type's own field offsets from the reflect type table, plus a
+     * descriptor name cross-check) — never by type or field names.
+     * The target type must differ from the referent struct's own type
+     * (a same-type conversion is the identity, not a field access).
+     */
+    private FieldHit structFieldAt(Object referent, long byteOffset) {
+        Object root = referent;
+        if (root instanceof GoCell cell) {
+            root = cell.get();
+        }
+        if (!(root instanceof GoStruct gs) || targetElemWireId < 0) {
+            return null;
+        }
+        ReflectTypes.TypeInfo rootInfo;
+        long targetTok;
+        try {
+            rootInfo = ReflectTypes.infoForName(gs.descriptor().typeName());
+            targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (rootInfo == null || targetTok < 0
+                || rootInfo.tok == targetTok || rootInfo.fields == null
+                || rootInfo.kind != GoKind.STRUCT) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : rootInfo.fields) {
+            if (f.offset != byteOffset || f.type == null || f.index.length != 1) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                return null;
+            }
+            return new FieldHit(
+                    new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()),
+                    f.type.tok, targetTok);
+        }
+        return null;
+    }
+
     /**
      * Builds the node from the {@code "unsafetooptr"} wire node. Fields:
      * {@code x} (the handle operand), {@code type} (result type-table id —
@@ -157,17 +343,67 @@ public final class UnsafeToPtrNode extends GoExprNode {
             elemSize = num.asLong("unsafetooptr.fields.elemSize");
         }
         ViewTarget target = captureViewTarget(ctx, typeId);
+        String headerQName = captureHeaderTarget(ctx, typeId);
+        PrefixTarget prefixTarget = capturePrefixTarget(ctx, typeId);
+        int targetElemWireId = -1;
+        Json.Object typeEntry = ctx.types.entry(typeId, "unsafetooptr.fields.type");
+        if ("pointer".equals(typeEntry.string("kind", "unsafetooptr.fields.type"))) {
+            targetElemWireId = typeEntry.object("detail", "unsafetooptr.fields.type")
+                    .intValue("elem", "unsafetooptr.fields.type");
+        }
         GoExprNode n = new UnsafeToPtrNode(
                 UnsafeWire.child(f, "unsafetooptr", "x", factory, ctx),
                 target == null ? null : target.qname(),
                 target == null ? null : target.layout(),
-                elemSize);
+                headerQName,
+                prefixTarget,
+                elemSize,
+                targetElemWireId,
+                captureIfaceTarget(ctx, typeId));
         n.setTypeId(typeId);
         return n;
     }
 
     /** A viewable target: its qualified name plus its field layout. */
     private record ViewTarget(String qname, List<AbiTypes.ViewField> layout) {}
+
+    /**
+     * Captures the interface-unpack layout for a {@code *T} target
+     * whose {@code T} is an interface type (fix-redmaster-r40), or null.
+     * The layout is the abi interface-word struct shape for the target:
+     * {@code EmptyInterface} (Type word + Data word) when the interface
+     * has no methods, {@code NonEmptyInterface} (Itab word + Data word)
+     * otherwise — determined by the target interface's own method list
+     * from the wire, never by a type name.
+     */
+    private static List<AbiTypes.ViewField> captureIfaceTarget(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "unsafetooptr.fields.type";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            return null;
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        Json.Object e = ctx.types.entry(elemId, path);
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"interface".equals(e.string("kind", path))) {
+            return null;
+        }
+        Json.Array methods = e.object("detail", path).array("methods", path);
+        if (methods.size() == 0) {
+            return List.of(
+                    new AbiTypes.ViewField("Type", 0, AbiTypes.ViewRole.ABI_TYPE),
+                    new AbiTypes.ViewField("Data", 8, AbiTypes.ViewRole.DATA));
+        }
+        return List.of(
+                new AbiTypes.ViewField("Itab", 0, AbiTypes.ViewRole.ITAB),
+                new AbiTypes.ViewField("Data", 8, AbiTypes.ViewRole.DATA));
+    }
 
     /**
      * Captures the view layout for a {@code *T} target, or null when the
@@ -215,6 +451,214 @@ public final class UnsafeToPtrNode extends GoExprNode {
             layout.add(new AbiTypes.ViewField(fname, offset, role));
         }
         return new ViewTarget(qname, layout);
+    }
+
+    /**
+     * The value stored at the addressed storage (fix-redmaster-r40):
+     * a cell's current value, an array element's value (for
+     * {@code &arr[i]} referents — e.g. an interface value sitting in a
+     * variadic-args array, whose {@code EmptyInterface} reinterpretation
+     * in {@code unpackEface} the interface view must serve just like
+     * the cell case), or the referent itself.
+     */
+    private static Object storedValue(Object resolved) {
+        Object v = resolved;
+        if (v instanceof GoCell cell) {
+            v = cell.get();
+        }
+        if (v instanceof UnsafeTable.ArrayRef ref) {
+            v = java.lang.reflect.Array.get(ref.array(), ref.offset());
+            if (v instanceof GoCell cell) {
+                v = cell.get();
+            }
+        }
+        return v;
+    }
+
+    /**
+     * Builds the header view of {@code resolved} for this node's
+     * header target, or null when the referent is not a string/slice
+     * value (or the target's descriptor cannot be resolved) — the
+     * caller then falls back to the pre-view behavior exactly.
+     */
+    private GoStruct buildHeaderView(Object resolved) {
+        graalgo.values.GoStructDescriptor desc;
+        try {
+            desc = graalgo.p3reflect.ReflectTypes.structDescriptorFor(headerQName);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return HeaderView.build(resolved, desc);
+    }
+
+    /**
+     * Builds the prefix view of {@code resolved} for this node's
+     * prefix target, or null when no prefix reinterpretation applies
+     * (or the target's descriptor cannot be resolved) — the caller
+     * then falls back to the pre-view behavior exactly.
+     */
+    private GoStruct buildPrefixView(Object resolved) {
+        graalgo.values.GoStructDescriptor desc;
+        try {
+            desc = graalgo.p3reflect.ReflectTypes.structDescriptorFor(prefixTarget.qname());
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return PrefixView.viewFor(resolved, desc, prefixTarget.embeddedQName());
+    }
+
+    /**
+     * Captures the prefix-view target for a {@code *T} conversion: the
+     * target struct's qualified name plus the qualified name of its
+     * field-0 type when that type is a named struct (the embedding
+     * prefix candidate). Returns null when the target is not a named
+     * struct at all. The runtime match itself lives in
+     * {@link PrefixView} and is purely descriptor-name-directed.
+     */
+    private static PrefixTarget capturePrefixTarget(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "unsafetooptr.fields.type";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            return null;
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        Json.Object e = ctx.types.entry(elemId, path);
+        String qname = null;
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            qname = e.object("detail", path).string("name", path);
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"struct".equals(e.string("kind", path)) || qname == null) {
+            return null;
+        }
+        Json.Array fields = e.object("detail", path).array("fields", path);
+        if (fields.size() == 0 || !(fields.get(0) instanceof Json.Object f0)) {
+            return new PrefixTarget(qname, null);
+        }
+        int f0type = f0.intValue("type", path);
+        Json.Object fe = ctx.types.entry(f0type, path);
+        String embeddedQName = null;
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(fe.string("kind", path))) {
+                break;
+            }
+            embeddedQName = fe.object("detail", path).string("name", path);
+            int underlying = fe.object("detail", path).intValue("underlying", path);
+            fe = ctx.types.entry(underlying, path);
+        }
+        if (!"struct".equals(fe.string("kind", path))) {
+            embeddedQName = null;
+        }
+        return new PrefixTarget(qname, embeddedQName);
+    }
+
+    /**
+     * Captures the header-view target for a {@code *T} conversion, or
+     * null when {@code T} is not a header-shaped struct. The shape is
+     * classified by field TYPE alone (never by struct or field name):
+     * exactly 2 or 3 fields at word offsets 0, 8, (16), where field 0
+     * is a data word ({@code unsafe.Pointer}, {@code uintptr}, or any
+     * pointer type) and fields 1..2 are integer words (basic int/uint
+     * class). This is the layout of {@code unsafeheader.String} /
+     * {@code unsafeheader.Slice} and of {@code reflect.StringHeader} /
+     * {@code reflect.SliceHeader} — and of any user struct with the
+     * same shape, which gc likewise treats as raw header words.
+     * Interface-view targets ({@code EmptyInterface} and kin) do NOT
+     * fit: their second word is a data word, not an integer word, so
+     * the two captures are disjoint.
+     */
+    private static String captureHeaderTarget(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "unsafetooptr.fields.type";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            return null;
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        Json.Object e = ctx.types.entry(elemId, path);
+        String qname = null;
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            qname = e.object("detail", path).string("name", path);
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"struct".equals(e.string("kind", path)) || qname == null) {
+            return null;
+        }
+        Json.Array fields = e.object("detail", path).array("fields", path);
+        if (fields.size() < 2 || fields.size() > 3) {
+            return null;
+        }
+        for (int i = 0; i < fields.size(); i++) {
+            Json.Value fv = fields.get(i);
+            if (!(fv instanceof Json.Object fo)) {
+                return null;
+            }
+            long offset = fo.longInt("offset", path);
+            if (offset != 8L * i) {
+                return null;
+            }
+            int ftype = fo.intValue("type", path);
+            boolean fits = i == 0
+                    ? isDataWordField(ctx, ftype, path)
+                    : isIntWordField(ctx, ftype, path);
+            if (!fits) {
+                return null;
+            }
+        }
+        return qname;
+    }
+
+    /**
+     * Whether a wire type is a header data word: {@code unsafe.Pointer}
+     * (basic, pointer class), {@code uintptr} (basic, uint class), or
+     * any pointer type. Named wrappers are unwrapped first.
+     */
+    private static boolean isDataWordField(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        Json.Object e = ctx.types.entry(typeId, path);
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        String kind = e.string("kind", path);
+        if ("pointer".equals(kind)) {
+            return true;
+        }
+        if ("basic".equals(kind)) {
+            Json.Object d = e.object("detail", path);
+            return "pointer".equals(d.string("class", path))
+                    || "uintptr".equals(d.string("name", path));
+        }
+        return false;
+    }
+
+    /**
+     * Whether a wire type is a header integer word: a basic int/uint
+     * class type (named wrappers unwrapped first).
+     */
+    private static boolean isIntWordField(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        Json.Object e = ctx.types.entry(typeId, path);
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"basic".equals(e.string("kind", path))) {
+            return false;
+        }
+        String bclass = e.object("detail", path).string("class", path);
+        return "int".equals(bclass) || "uint".equals(bclass);
     }
 
     /** Classifies one target field as an interface word, or null if it is not one. */

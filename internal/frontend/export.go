@@ -10516,8 +10516,28 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		if !ok {
 			continue
 		}
-		fi, ok := e.funcByObj[mobj]
+		// fix-redmaster-r40: a disk multi-result method's stub IS in
+		// funcByObj (the disk transform keeps the stub under the
+		// method's identity), so the plain lookup would wire the
+		// method table to the panic stub — the backend then skips the
+		// entry with an "unknown function object id" warning and the
+		// method is unavailable to reflect and interface dispatch.
+		// When a disk spec with a helper exists for the method, map
+		// to the pair-returning helper first (the target the
+		// synthetic path reaches via the not-in-funcByObj fallback
+		// below, since synthetic stubs are skipped at import).
+		var fi *funcDeclInfo
 		helperMapped := false
+		if pkg := mobj.Pkg(); pkg != nil {
+			if spec := lookupDiskMR(pkg.Path(), mobj.Name(), methodRecvBaseName(mobj)); spec != nil && spec.helper != "" {
+				if hfi, hok := e.multiResultHelperFunc(mobj); hok {
+					fi, helperMapped, ok = hfi, true, true
+				}
+			}
+		}
+		if fi == nil {
+			fi, ok = e.funcByObj[mobj]
+		}
 		if !ok {
 			// P3-M8 (WS D): multi-result synthetic methods are skipped
 			// from funcByObj (v1 cannot emit multi-result funcdecls),

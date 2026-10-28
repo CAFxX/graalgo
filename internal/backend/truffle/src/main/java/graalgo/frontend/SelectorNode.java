@@ -58,10 +58,29 @@ public final class SelectorNode extends GoExprNode {
      * panics while walking the path are attributed to {@code site}.
      */
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site) {
-        for (int idx : selpath) {
+        return readFieldPath(o, selpath, derefResult, site, false);
+    }
+
+    /**
+     * Scalar-result overload (fix-redmaster-r40): when the compiled
+     * read's final step expects a longs-carried scalar (int / uint /
+     * float / bool), the final step additionally applies the
+     * prefix-mismatch descent in {@link #readFieldEmbedded}: a value
+     * whose runtime struct is a WIDER type than the static type the
+     * path was compiled against (an abi kind shell or {@code rtype},
+     * with the static type embedded at field 0) answers a scalar field
+     * read from its embedded prefix, exactly as gc's flat layout does
+     * (the prefix type's field sits at the same index inside the
+     * header at offset 0). Non-final steps and non-scalar reads keep
+     * the exact prior behavior.
+     */
+    public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site,
+            boolean scalarResult) {
+        for (int i = 0; i < selpath.length; i++) {
             o = deref(o, site);
             GoStruct s = (GoStruct) o;
-            o = readFieldEmbedded(s, idx);
+            o = readFieldEmbedded(s, selpath[i],
+                    scalarResult && i == selpath.length - 1);
         }
         return derefResult ? deref(o, site) : o;
     }
@@ -105,23 +124,49 @@ public final class SelectorNode extends GoExprNode {
      * so this also covers ordinary frontend structs.
      */
     private static Object readFieldEmbedded(GoStruct s, int idx) {
+        return readFieldEmbedded(s, idx, false);
+    }
+
+    /**
+     * Field read with embedding-prefix descent. The {@code scalarResult}
+     * variant (fix-redmaster-r40) adds one trigger to the r37/r38
+     * descent: the index is IN range for the wider runtime struct, but
+     * the field there is object-carried while the compiled read expects
+     * a longs-carried scalar — the direct field is the embedded prefix
+     * struct itself (or another wider-type field), not the scalar the
+     * static type has at this index. The read then descends into field
+     * 0 and retries the same index, but only when the prefix's own
+     * field at that index IS longs-carried (kind evidence from the live
+     * descriptor, so a coincidental object field never reinterprets).
+     * When no such prefix exists the direct read is preserved.
+     *
+     * <p>N2 position (r38 review): the descent still trusts field-0
+     * position, as does the whole prefix model — the frontend emits
+     * struct fields in declaration order and gc places an embedded
+     * value type at byte offset 0, so field 0 is the only possible
+     * prefix position; the guards here (struct-kind field 0 only, live
+     * descriptor coverage, and now scalar kind evidence for the new
+     * trigger) are the checks the model supports. A descriptor-level
+     * embedded flag does not exist in the wire format; adding one is a
+     * frontend change outside this lane's evidence.
+     */
+    private static Object readFieldEmbedded(GoStruct s, int idx, boolean scalarResult) {
         for (int depth = 0; depth < 32; depth++) {
             GoStructDescriptor desc = s.descriptor();
             if (idx < desc.fields().size()) {
+                if (scalarResult && !desc.field(idx).inLongs()) {
+                    GoStruct next = prefixCandidate(s, idx, true);
+                    if (next != null) {
+                        s = next;
+                        continue;
+                    }
+                }
                 if (desc.field(idx).inLongs()) {
                     return Long.valueOf(s.getLong(idx));
                 }
                 return s.getObject(idx);
             }
-            GoStruct next = null;
-            if (!desc.fields().isEmpty()
-                    && desc.field(0).kind() == GoKind.STRUCT) {
-                Object v = s.getObject(0);
-                if (v instanceof GoStruct gs
-                        && idx < gs.descriptor().fields().size()) {
-                    next = gs;
-                }
-            }
+            GoStruct next = prefixCandidate(s, idx, false);
             if (next == null) {
                 // No embedding descent (or the candidate field is null):
                 // preserve the original out-of-range failure.
@@ -130,6 +175,30 @@ public final class SelectorNode extends GoExprNode {
             s = next;
         }
         throw new IllegalStateException("embedding descent too deep");
+    }
+
+    /**
+     * The embedding-prefix candidate for {@code idx}: field 0's live
+     * struct value when field 0 is a value-embedded (struct-kind) field
+     * whose descriptor covers {@code idx} — and, when
+     * {@code needScalar}, whose field at {@code idx} is longs-carried.
+     * Null when there is no valid prefix.
+     */
+    private static GoStruct prefixCandidate(GoStruct s, int idx, boolean needScalar) {
+        GoStructDescriptor desc = s.descriptor();
+        if (desc.fields().isEmpty()
+                || desc.field(0).kind() != GoKind.STRUCT) {
+            return null;
+        }
+        Object v = s.getObject(0);
+        if (!(v instanceof GoStruct gs)
+                || idx >= gs.descriptor().fields().size()) {
+            return null;
+        }
+        if (needScalar && !gs.descriptor().field(idx).inLongs()) {
+            return null;
+        }
+        return gs;
     }
 
     static Object deref(Object o, Node site) {
@@ -159,7 +228,9 @@ public final class SelectorNode extends GoExprNode {
     private Object read(VirtualFrame frame) {
         // P3-M4 remediation (P1-2): site-carrying path — a nil pointer in
         // the selection chain panics at this selector's line.
-        Object o = readFieldPath(obj.executeObject(frame), selpath, false, this);
+        Object rawObj = obj.executeObject(frame);
+        Object o = readFieldPath(rawObj, selpath, false, this,
+                kind().isIntKind() || kind().isFloatKind() || kind() == GoKind.BOOL);
         if (o instanceof Long l) {
             // Longs-carried field: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());

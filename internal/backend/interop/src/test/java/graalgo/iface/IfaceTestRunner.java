@@ -49,6 +49,20 @@ public final class IfaceTestRunner {
         // (UnsafeTable.derive) soundness — a derivation can only ever
         // view its own base referent, never alias another live object.
         TESTS.add(graalgo.p3unsafe.UnsafeDeriveTest.class);
+        // fix-redmaster-r40: string/slice header views for
+        // unsafe.Pointer -> *Header reinterpretations (reflect Len).
+        TESTS.add(graalgo.p3unsafe.HeaderViewTest.class);
+        // fix-redmaster-r40: embedding prefix views for
+        // unsafe.Pointer -> *Wrapper reinterpretations (reflect's
+        // sliceType/structType over their abi shells).
+        TESTS.add(graalgo.p3unsafe.PrefixViewTest.class);
+        // fix-redmaster-r40: GoStruct.prefixParent first-store-wins
+        // (the canonical AbiTypes shell owns the link, transient
+        // wrappers must not steal it).
+        TESTS.add(graalgo.p3unsafe.PrefixParentTest.class);
+        // fix-redmaster-r40: AbiTypes abi.Name byte encoding
+        // (flags + LEB128 varints), decoded gc-style.
+        TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
     }
 
     private IfaceTestRunner() {}

@@ -15,6 +15,7 @@ import graalgo.values.GoStructDescriptor;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -102,6 +103,16 @@ public final class AbiTypes {
     private static final Map<Long, GoPointer> ABI_PTRS = new HashMap<>();
 
     /**
+     * Reverse of {@link #ABI_PTRS}: canonical abi shell → its type
+     * token (fix-redmaster-r40). Lets the interface-view inverse
+     * ({@link #unpackInterfaceView}) recover the dynamic type of an
+     * {@code EmptyInterface} struct value from its Type word. Shells
+     * not minted by {@link #abiPointerForTok} (dynamic types built by
+     * reflect's own constructors) are absent and do not unpack.
+     */
+    private static final Map<GoStruct, Long> SHELL_TOKS = new IdentityHashMap<>();
+
+    /**
      * The {@link ReflectTypes.Table} the memo above was built against
      * (r38). Tables are per-run installs: tokens are document-scoped, so
      * a token from a later run may denote a different type than the same
@@ -127,6 +138,7 @@ public final class AbiTypes {
         ReflectTypes.Table table = ReflectTypes.table();
         if (table != cachedTable) {
             ABI_PTRS.clear();
+            SHELL_TOKS.clear();
             cachedTable = table;
         }
         GoPointer existing = ABI_PTRS.get(tok);
@@ -138,6 +150,7 @@ public final class AbiTypes {
         GoStruct shell = GoStruct.zero(desc);
         GoPointer ptr = new GoPointer(shell);
         ABI_PTRS.put(tok, ptr);
+        SHELL_TOKS.put(shell, tok);
         fillAbiStruct(shell, desc, info);
         return ptr;
     }
@@ -235,14 +248,15 @@ public final class AbiTypes {
                 if (info.fields == null) {
                     throw new IllegalStateException("reflect: struct type without fields: " + info.name);
                 }
-                setObjectByName(desc, shell, "PkgPath", zeroName());
+                setObjectByName(desc, shell, "PkgPath", nameFor(info.pkgPath, "", true, false));
                 Object[] elems = new Object[info.fields.size()];
                 GoStructDescriptor fieldDesc =
                         ReflectTypes.structDescriptorFor("internal/abi.StructField");
                 for (int i = 0; i < info.fields.size(); i++) {
                     ReflectTypes.FieldInfo f = info.fields.get(i);
                     GoStruct sf = GoStruct.zero(fieldDesc);
-                    setObjectByName(fieldDesc, sf, "Name", zeroName());
+                    setObjectByName(fieldDesc, sf, "Name",
+                            nameFor(f.name, f.tag, f.isExported(), f.anonymous));
                     setObjectByName(fieldDesc, sf, "Typ", abiPointerForTok(f.type.tok));
                     setLongByName(fieldDesc, sf, "Offset", f.offset);
                     elems[i] = sf;
@@ -251,7 +265,7 @@ public final class AbiTypes {
                         new GoSlice(elems, 0, elems.length, elems.length));
             }
             case INTERFACE -> {
-                setObjectByName(desc, shell, "PkgPath", zeroName());
+                setObjectByName(desc, shell, "PkgPath", nameFor(info.pkgPath, "", true, false));
                 // Methods left empty (V1): the table carries only implkeys for
                 // interface methods, not the Imethod name/type pairs (see header).
                 setObjectByName(desc, shell, "Methods",
@@ -277,6 +291,82 @@ public final class AbiTypes {
     /** A zero {@code internal/abi.Name} (Bytes nil, so Name() reads empty). */
     private static GoStruct zeroName() {
         return GoStruct.zero(ReflectTypes.structDescriptorFor("internal/abi.Name"));
+    }
+
+    /**
+     * A real {@code internal/abi.Name} for a struct field or package
+     * path (fix-redmaster-r40): the {@code Bytes} word points at the
+     * gc name encoding ({@code abi.NewName}'s layout — a flags byte,
+     * a varint length, the name bytes, and an optional varint-length
+     * tag), materialized as an element pointer into a fresh byte
+     * array, so the compiled {@code Name} methods ({@code Name()},
+     * {@code IsExported()}, {@code Tag()}, {@code Embedded()}) work
+     * through the ordinary byte-pointer machinery (including the
+     * r39 provenance derivation behind {@code Name.DataChecked}).
+     * A null/empty name yields the zero Name. This replaces the V1
+     * zero-Name shells for struct fields: {@code reflect.Value.Field}
+     * calls {@code field.Name.IsExported()} unconditionally, and the
+     * zero Name's nil {@code Bytes} made every Field call on a struct
+     * value die with a nil dereference.
+     */
+    private static GoStruct nameFor(String name, String tag, boolean exported, boolean embedded) {
+        GoStructDescriptor nameDesc = ReflectTypes.structDescriptorFor("internal/abi.Name");
+        GoStruct s = GoStruct.zero(nameDesc);
+        if (name == null || name.isEmpty()) {
+            return s;
+        }
+        byte[] enc = encodeName(name, tag == null ? "" : tag, exported, embedded);
+        setObjectByName(nameDesc, s, "Bytes", new GoPointer(enc, 0));
+        return s;
+    }
+
+    /** The {@code abi.NewName} byte encoding (see {@link #nameFor}). */
+    private static byte[] encodeName(String name, String tag, boolean exported, boolean embedded) {
+        byte[] nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] tagBytes = tag.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] nameLen = writeVarint(nameBytes.length);
+        byte[] tagLen = writeVarint(tagBytes.length);
+        int bits = 0;
+        int total = 1 + nameLen.length + nameBytes.length;
+        if (exported) {
+            bits |= 1 << 0;
+        }
+        if (tagBytes.length > 0) {
+            bits |= 1 << 1;
+            total += tagLen.length + tagBytes.length;
+        }
+        if (embedded) {
+            bits |= 1 << 3;
+        }
+        byte[] out = new byte[total];
+        int p = 0;
+        out[p++] = (byte) bits;
+        System.arraycopy(nameLen, 0, out, p, nameLen.length);
+        p += nameLen.length;
+        System.arraycopy(nameBytes, 0, out, p, nameBytes.length);
+        p += nameBytes.length;
+        if (tagBytes.length > 0) {
+            System.arraycopy(tagLen, 0, out, p, tagLen.length);
+            p += tagLen.length;
+            System.arraycopy(tagBytes, 0, out, p, tagBytes.length);
+        }
+        return out;
+    }
+
+    /** Unsigned LEB128, as {@code abi.writeVarint} emits for name/tag lengths. */
+    private static byte[] writeVarint(int n) {
+        byte[] tmp = new byte[5];
+        int i = 0;
+        for (;;) {
+            byte b = (byte) (n & 0x7F);
+            n >>>= 7;
+            if (n == 0) {
+                tmp[i++] = b;
+                break;
+            }
+            tmp[i++] = (byte) (b | 0x80);
+        }
+        return java.util.Arrays.copyOf(tmp, i);
     }
 
     /** Stable non-zero hash for a type (the reflect surface never reads it). */
@@ -426,6 +516,113 @@ public final class AbiTypes {
             }
         }
         return view;
+    }
+
+    /**
+     * The inverse of {@link #buildInterfaceView} (fix-redmaster-r40):
+     * unpacks an interface-word struct value (an
+     * {@code abi.EmptyInterface} / {@code abi.NonEmptyInterface} built
+     * by guest code — reflect's {@code packEface} is the canonical
+     * producer) into the model's {@link GoInterface}, or {@code null}
+     * when the struct does not fit the layout or its Type word is not
+     * a canonical abi shell minted by {@link #abiPointerForTok} (the
+     * caller then falls back to the pre-unpack behavior).
+     *
+     * <p>The Type word of an empty-interface struct is a pointer to
+     * the canonical shell for the dynamic type, recovered through
+     * {@link #SHELL_TOKS}; for a non-empty-interface struct the Itab
+     * word's own {@code Type} field names the dynamic type the same
+     * way. The Data word is an unsafe-pointer handle (the exact
+     * inverse of {@link #dataHandleFor}), resolved through
+     * {@link ReflectRefs#denotedValue} with the dynamic type's kind —
+     * the same denoted-value read the reflect intrinsics use. A zero
+     * Type word with a zero Data word is the nil interface.
+     */
+    public static GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
+        Object typeWord = null;
+        Object itabWord = null;
+        long dataHandle = 0;
+        boolean sawData = false;
+        GoStructDescriptor desc = s.descriptor();
+        for (ViewField f : layout) {
+            int ordinal = fieldOrdinal(desc, f.name());
+            if (ordinal < 0) {
+                return null;
+            }
+            GoStructDescriptor.Field field = desc.field(ordinal);
+            switch (f.role()) {
+                case ABI_TYPE -> {
+                    if (f.offset() != 0 || field.inLongs()) {
+                        return null;
+                    }
+                    typeWord = s.getObject(ordinal);
+                }
+                case ITAB -> {
+                    if (f.offset() != 0 || field.inLongs()) {
+                        return null;
+                    }
+                    itabWord = s.getObject(ordinal);
+                }
+                case DATA -> {
+                    if (f.offset() != 8) {
+                        return null;
+                    }
+                    sawData = true;
+                    if (field.inLongs()) {
+                        dataHandle = s.getLong(ordinal);
+                    } else {
+                        Object w = s.getObject(ordinal);
+                        if (w == null) {
+                            dataHandle = 0;
+                        } else if (w instanceof Long l) {
+                            dataHandle = l;
+                        } else {
+                            return null;
+                        }
+                    }
+                }
+            }
+        }
+        if (!sawData) {
+            return null;
+        }
+        if (typeWord == null && itabWord == null) {
+            return dataHandle == 0 ? GoInterface.NIL : null;
+        }
+        // Recover the dynamic type token from the type word (for an
+        // itab word, through the itab's own Type field).
+        Object typePtr = typeWord;
+        if (typePtr == null) {
+            if (!(itabWord instanceof GoPointer ip) || ip.isNil()
+                    || !(ip.referent() instanceof GoStruct itab)) {
+                return null;
+            }
+            int ord = fieldOrdinal(itab.descriptor(), "Type");
+            if (ord < 0 || itab.descriptor().field(ord).inLongs()) {
+                return null;
+            }
+            typePtr = itab.getObject(ord);
+        }
+        if (!(typePtr instanceof GoPointer tp) || tp.isNil()
+                || !(tp.referent() instanceof GoStruct shell)) {
+            return null;
+        }
+        Long tok = SHELL_TOKS.get(shell);
+        if (tok == null) {
+            return null;
+        }
+        ReflectTypes.TypeInfo info;
+        Object descriptor;
+        try {
+            info = ReflectTypes.table().info(tok);
+            descriptor = ReflectTypes.descriptorForTok(tok);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        Object data = dataHandle == 0
+                ? null
+                : ReflectRefs.denotedValue(dataHandle, info.kind);
+        return new GoInterface(descriptor, data, itabWord);
     }
 
     /**

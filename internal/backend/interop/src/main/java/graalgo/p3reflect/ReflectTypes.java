@@ -230,6 +230,32 @@ public final class ReflectTypes {
         return t;
     }
 
+    /**
+     * The canonical type token for a wire type id, or -1 when the id
+     * has no token (fix-redmaster-r40: used by the unsafe consumption
+     * site to match a conversion target against struct field layouts).
+     * Wire ids are NOT unique per type — canonical sharing maps many
+     * ids to one token — so this goes through the table's complete
+     * wire-id → token registry, never through a TypeInfo's
+     * representative wire id.
+     */
+    public static long tokForWireId(int wireId) {
+        Long tok = table().wireIdToTok.get(wireId);
+        return tok == null ? -1 : tok;
+    }
+
+    /** The TypeInfo for a qualified type name, or null. */
+    public static TypeInfo infoForName(String qname) {
+        Table t = table();
+        for (int i = 1; i < t.byTok.size(); i++) {
+            TypeInfo info = t.byTok.get(i);
+            if (info != null && qname.equals(info.name)) {
+                return info;
+            }
+        }
+        return null;
+    }
+
     /** Token for a GoTypeDescriptor (via the patch-03 wireId registry). */
     public static long tokForDescriptor(Object descriptor) {
         Table table = table();

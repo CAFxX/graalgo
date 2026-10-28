@@ -17,6 +17,29 @@ public final class GoStruct {
     private final long[] longs;
     private final Object[] objects;
 
+    /**
+     * The struct value this value is the field-0 (prefix) storage of,
+     * or null (fix-redmaster-r40). In gc a value-embedded struct field
+     * at offset 0 shares its owner's address, so a pointer to the
+     * field is a pointer to the owner under another type; this link
+     * records that provenance when a struct becomes another struct's
+     * field-0 value (construction or {@link #setObject}), letting the
+     * unsafe prefix-reinterpretation view recover the true owner
+     * instead of fabricating a wrapper with the extension fields
+     * zeroed. Only field 0 is registered: it is the only field
+     * guaranteed to sit at byte offset 0. If the same value is stored
+     * at field 0 of several owners, the FIRST store wins
+     * (fix-redmaster-r40, reversing the earlier most-recent-store
+     * rule): the first owner is the canonical wider allocation — for
+     * abi type shells, the shell minted by the reflect machinery
+     * before any transient reinterpretation wrapper is fabricated
+     * around the same prefix — and prefix conversions must recover
+     * that canonical owner, not whichever wrapper touched the value
+     * last. A documented corner of the view mechanism in
+     * {@code graalgo.p3unsafe.PrefixView}.
+     */
+    private GoStruct prefixParent;
+
     public GoStruct(GoStructDescriptor descriptor, long[] longs, Object[] objects) {
         if (longs.length != descriptor.longsCount() || objects.length != descriptor.objectsCount()) {
             throw new IllegalArgumentException("carrier length mismatch for " + descriptor.typeName());
@@ -24,6 +47,25 @@ public final class GoStruct {
         this.descriptor = descriptor;
         this.longs = longs.clone();
         this.objects = objects.clone();
+        registerPrefixChild();
+    }
+
+    /** The field-0 prefix owner of this value, or null if none is known. */
+    public GoStruct prefixParent() {
+        return prefixParent;
+    }
+
+    /** Records this struct as the prefix owner of its field-0 struct value. */
+    private void registerPrefixChild() {
+        if (descriptor.fields().isEmpty()) {
+            return;
+        }
+        GoStructDescriptor.Field f0 = descriptor.field(0);
+        if (f0.kind() == GoKind.STRUCT && !f0.inLongs()
+                && objects[f0.index()] instanceof GoStruct child
+                && child.prefixParent == null) {
+            child.prefixParent = this;
+        }
     }
 
     /** The Go zero value for the described struct type. */
@@ -99,6 +141,10 @@ public final class GoStruct {
             throw new IllegalArgumentException("field " + f.name() + " is not an objects-carried field");
         }
         objects[f.index()] = value;
+        if (fieldIndex == 0 && f.kind() == GoKind.STRUCT && value instanceof GoStruct child
+                && child.prefixParent == null) {
+            child.prefixParent = this;
+        }
     }
 
     /** Shallow carrier copy (fields alias) — not Go assignment semantics. */

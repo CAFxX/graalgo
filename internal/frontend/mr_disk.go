@@ -108,12 +108,27 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				continue
 			}
 			// Skip functions served by the static Appendix-M tables
-			// (hand-written __-helpers with ad-hoc names).
+			// (hand-written __-helpers with ad-hoc names) — with two
+			// tiers (fix-redmaster-r40). M5-owned entries
+			// (context.WithCancel/Deadline, runtime.Caller,
+			// time.ParseDuration) always skip: dedicated exporter
+			// machinery desugars their call sites. The remaining
+			// tables name helpers in the package's synthetic twin,
+			// whose receiver representation differs from the disk
+			// package's own values; a disk package's real-bodied
+			// method (e.g. reflect's (*rtype).FieldByName) must
+			// still be transformed, or it is emitted nowhere: no
+			// funcdecl, no disk spec, and the method is missing
+			// from the type's method table, so any interface
+			// dispatch on the type fails when the itab is built.
+			// Bodyless declarations keep the skip; fail-fast bodies
+			// are skipped just below.
 			recvType := ""
 			if fd.Recv != nil && len(fd.Recv.List) > 0 {
 				recvType = recvBaseName(fd.Recv.List[0].Type)
 			}
-			if hasStaticMREntry(pkgPath, fd.Name.Name, recvType) {
+			if hasM5StaticEntry(pkgPath, fd.Name.Name, recvType) ||
+				(fd.Body == nil && hasStaticMREntry(pkgPath, fd.Name.Name, recvType)) {
 				newDecls = append(newDecls, decl)
 				continue
 			}
@@ -310,6 +325,10 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				helperCall := &ast.CallExpr{
 					Fun:  mrHelperFunForCall(inner.Fun, innerName),
 					Args: inner.Args,
+					// Preserve a variadic spread (f(xs...)): dropping
+					// Ellipsis makes the exporter pack the slice as a
+					// single element (fix-redmaster-r40).
+					Ellipsis: inner.Ellipsis,
 				}
 				hoisted = append(hoisted, &ast.GenDecl{
 					Tok: token.VAR,
@@ -548,6 +567,9 @@ func hoistNestedMRExpr(e ast.Expr, specByName map[string]*diskMRSpec, counter *i
 					helperCall := &ast.CallExpr{
 						Fun:  ast.NewIdent(spec.helper),
 						Args: inner.Args,
+						// Preserve a variadic spread (f(xs...)); see
+						// the hoist site above (fix-redmaster-r40).
+						Ellipsis: inner.Ellipsis,
 					}
 					*pre = append(*pre, &ast.AssignStmt{
 						Lhs: []ast.Expr{ast.NewIdent(tmpName)},
@@ -1933,6 +1955,11 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 				helperCall := &ast.CallExpr{
 					Fun:  helperFun,
 					Args: call.Args,
+					// Preserve a variadic spread (return F(os.Stdout,
+					// a...)): dropping Ellipsis makes the exporter
+					// pack the slice as a single element
+					// (fix-redmaster-r40).
+					Ellipsis: call.Ellipsis,
 				}
 				assign := &ast.AssignStmt{
 					Lhs: []ast.Expr{tmp},
