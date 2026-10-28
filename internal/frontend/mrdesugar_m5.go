@@ -1855,6 +1855,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// fix-redmaster-r35: the general user-interface
+				// fallback — the same terminal fallback
+				// exportIfaceMethodCall applies when emitting the
+				// dispatch node. Without it, an N-target assignment
+				// of an unlisted interface multi-result call (e.g.
+				// io.RuneReader.ReadRune in fmt/scan.go, reached via
+				// every fmt-importing program) falls through to a raw
+				// assign with 1 ifacemethod RHS, which the backend
+				// rejects with "lhs/rhs length mismatch" — failing
+				// the build of the whole closure. The classifier must
+				// accept exactly the calls the emitter can emit as
+				// pair nodes, or desugar and emitter disagree.
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
@@ -1864,6 +1879,14 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// fallback classifier.
 			if _, isTP := selection.Recv().(*types.TypeParam); isTP {
 				if plan := e.classifyIfaceFallbackMultiResultCall(selection); plan != nil {
+					return plan
+				}
+				// fix-redmaster-r35: same general fallback as the
+				// interface arm above, mirroring exportIfaceFallbackCall
+				// (which tries the user classifier after the fallback
+				// classifier). Returns nil while type parameters are
+				// unbound, so uninstantiated generic bodies are unaffected.
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
 			}
