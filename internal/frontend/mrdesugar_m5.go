@@ -415,19 +415,18 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
-	// P3-M8 (wave 2, reflect): multi-result members desugared via the
-	// single-result __-helpers. Select is package-level; the Value methods
-	// are on the Value struct; the Type methods are on rtype but usually
-	// called via the Type interface (the classify function retries with
-	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
-	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}, false},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}, false},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}, false},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}, true},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}, false},
+	// P3-M8 (wave 2, reflect): NOTE (fix-redmaster-r42) — the reflect
+	// rows that used to live here (Select, FieldByIndexErr, TryRecv,
+	// MethodByName, FieldByName, FieldByNameFunc, StructTag.Lookup via
+	// the __reflect* helpers + reflectTagPair etc. in reflect_m7) are
+	// DELETED, not moved: reflect now compiles from disk, so those
+	// calls take the normal disk MR path (method tables +
+	// __-helpers, e.g. __StructTag_Lookup), while the synth helpers
+	// were never emitted in disk-reflect programs (reflect_m7 is not
+	// imported) — any executed desugar call died in FuncConstNode
+	// with "unresolved function object (WS H)" (34_struct_reflect:
+	// Tag.Get → Lookup). Do NOT re-add reflect rows here without also
+	// emitting the helpers' bodies; the disk path is the implementation.
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.

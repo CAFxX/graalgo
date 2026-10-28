@@ -1940,8 +1940,6 @@ public final class NodeFactory {
             case "WaitGroup" -> new graalgo.runtime.sync.GoWaitGroup();
             case "Once" -> new graalgo.runtime.sync.GoOnce();
             case "Pool" -> new GoPool();
-            // fix-linkname: sync.Map.
-            case "Map" -> new graalgo.runtime.sync.GoSyncMap();
             // fix-linkname: sync/atomic wrapper cells (struct fields).
             case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" ->
                 new graalgo.runtime.sync.GoAtomicInt64();
@@ -1956,8 +1954,10 @@ public final class NodeFactory {
     /**
      * Whether the type-table id denotes one of the synthetic sync/atomic
      * primitive named types (resolving aliases). Returns the primitive
-     * name ("Mutex", ..., "Map", "atomic.Int64", ..., "atomic.Pointer",
-     * "atomic.Value") or null. Generic instantiations (e.g.
+     * name ("Pool", "atomic.Int64", ..., "atomic.Pointer",
+     * "atomic.Value") or null. sync.Map is deliberately NOT a primitive
+     * (see the PKG-053 comment below): its disk bodies read the m
+     * field. Generic instantiations (e.g.
      * {@code sync/atomic.Pointer[T]}) match by their base name.
      */
     private static String syncPrimitiveName(BuildCtx ctx, int typeId, String path) {
@@ -1984,13 +1984,22 @@ public final class NodeFactory {
             // end-to-end: their fields are either plain structs
             // (isync.Mutex) or atomic wrappers, which stay cells for
             // atomicity and are bridged by cell-transparent &x.v
-            // (FieldAddrNode). Pool and Map keep their Java objects:
-            // their real bodies need runtime support beyond struct
-            // layout (pool pinning, Go-== key semantics).
+            // (FieldAddrNode). Pool keeps its Java object: its real
+            // body needs runtime support beyond struct layout (pool
+            // pinning). Map does NOT keep its Java object
+            // (fix-redmaster-r42): go1.27's sync.Map is a thin wrapper
+            // over its m HashTrieMap field, and every Map method body
+            // reads that field — a GoSyncMap field has no fields, so
+            // any disk Map body touching one threw ClassCastException
+            // (reflect's structLookupCache.m.Load died reading field 1
+            // of a GoSyncMap). As a plain GoStruct the disk bodies work
+            // end-to-end; key semantics ride on the HashTrieMap
+            // machinery (keyHash/valEqual from the map type), not on
+            // the GoSyncMap wrapper, whose SyncOpNode Map ops have no
+            // live emitter since the mrSyncMap desugar's mapAnyBoolPair
+            // lookup went dead.
             switch (base) {
-                case "Pool",
-                     // fix-linkname: sync.Map.
-                     "Map":
+                case "Pool":
                     return base;
             }
         }
@@ -2032,9 +2041,16 @@ public final class NodeFactory {
         Object arr = Boxing.newArray(elemKind, len);
         Object elemZero = fieldZeroTemplate(ctx, elemKind, elemId, path);
         if (elemZero != null && arr instanceof Object[] oa) {
-            // Elements share the template; Boxing.freshZeroCopy gives each
-            // evaluation its own copy (fresh primitives for sync types).
-            Arrays.fill(oa, elemZero);
+            // fix-redmaster-r42: elements must NOT share the template
+            // instance — Arrays.fill put one sync/atomic cell object
+            // into every slot, so all elements of an array of
+            // atomic.Pointer (e.g. HashTrieMap's children array)
+            // aliased to a single word. Each slot gets its own copy
+            // (fresh primitives for sync types, deep copies for
+            // structs, recursive copies for nested arrays).
+            for (int i = 0; i < oa.length; i++) {
+                oa[i] = Boxing.freshZeroCopy(elemZero);
+            }
         }
         return arr;
     }

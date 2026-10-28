@@ -388,6 +388,38 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	return specs
 }
 
+// mrLinknameSymbol returns the backend symbol for a body-less
+// declaration carrying a //go:linkname or //go:linknamestd directive,
+// or ("", false) when there is none. A malformed directive also yields
+// ("", false): this transform cannot report errors, and the panic stub
+// is the safe fallback. linknamestd (gc's std-only linkname, no
+// explicit symbol) resolves under the package's default object symbol,
+// as for a single-field //go:linkname.
+func mrLinknameSymbol(fd *ast.FuncDecl, pkgPath string) (string, bool) {
+	if fd.Doc == nil {
+		return "", false
+	}
+	sym, err := linknameDirective(fd, pkgPath)
+	if err != nil {
+		return "", false
+	}
+	if sym != "" {
+		return sym, true
+	}
+	for _, c := range fd.Doc.List {
+		text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
+		if !strings.HasPrefix(text, "go:linknamestd ") {
+			continue
+		}
+		fields := strings.Fields(text[len("go:linknamestd "):])
+		if len(fields) != 1 || fields[0] != fd.Name.Name {
+			return "", false
+		}
+		return pkgPath + "." + fields[0], true
+	}
+	return "", false
+}
+
 // mrHelperFunForCall builds the __-helper call target for an original
 // multi-result call fun expression: __-prefixes the function name while
 // preserving package qualification (pkg.F -> pkg.__F) and explicit type
@@ -826,22 +858,41 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// bindings).
 	//
 	// Body-less declarations (e.g. //go:noescape assembly stubs like
-	// reflect's chanrecv): there is no body to rewrite. The __-helper
-	// gets a fail-fast panic body — the real implementation is a
-	// backend intrinsic. The pair type and stub are still generated so
-	// call sites desugar correctly.
+	// reflect's chanrecv): there is no body to rewrite. By default the
+	// __-helper gets a fail-fast panic body — the real implementation
+	// is a backend intrinsic. EXCEPTION (fix-redmaster-r42): a
+	// body-less declaration carrying a //go:linkname or //go:linknamestd
+	// directive is served by a backend intrinsic, so its __-helper must
+	// be linkname-bound, not a panic stub. That is possible for the
+	// helper even though it is not possible for the original
+	// multi-result declaration: the helper returns a single pair value,
+	// which LinknameRootNode dispatch can carry. The helper is therefore
+	// emitted body-less with a synthesized directive, and the exporter
+	// binds it through the existing bodyless→linkname path. Body-less
+	// declarations WITHOUT a directive, and generic ones (whose linkname
+	// binding is out of M4 scope), keep the panic body exactly as before.
 	var rewrittenBody *ast.BlockStmt
+	var helperDoc *ast.CommentGroup
 	if fd.Body == nil {
-		rewrittenBody = &ast.BlockStmt{
-			List: []ast.Stmt{
-				&ast.ExprStmt{
-					X: &ast.CallExpr{
-						Fun: ast.NewIdent("panic"),
-						Args: []ast.Expr{&ast.BasicLit{Kind: token.STRING,
-							Value: `"__` + helper + ` not implemented: no Go body (backend intrinsic)"`}},
+		if len(tparamNames) == 0 {
+			if sym, ok := mrLinknameSymbol(fd, pkgPath); ok {
+				helperDoc = &ast.CommentGroup{List: []*ast.Comment{
+					{Text: "//go:linkname " + helper + " " + sym},
+				}}
+			}
+		}
+		if helperDoc == nil {
+			rewrittenBody = &ast.BlockStmt{
+				List: []ast.Stmt{
+					&ast.ExprStmt{
+						X: &ast.CallExpr{
+							Fun: ast.NewIdent("panic"),
+							Args: []ast.Expr{&ast.BasicLit{Kind: token.STRING,
+								Value: `"__` + helper + ` not implemented: no Go body (backend intrinsic)"`}},
+						},
 					},
 				},
-			},
+			}
 		}
 	} else {
 		usedNames := usedNamedResults(fd)
@@ -890,8 +941,10 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 		if len(namedDecls) > 0 {
 			rewrittenBody.List = append(namedDecls, rewrittenBody.List...)
 		}
-	} // end else (fd.Body != nil); body-less case used panic body above
+	} // end else (fd.Body != nil); body-less case used panic body above,
+	// or a body-less linkname-bound helper when helperDoc is set
 	helperDecl := &ast.FuncDecl{
+		Doc:  helperDoc,
 		Name: ast.NewIdent(helper),
 		Type: &ast.FuncType{
 			TypeParams: tparams,

@@ -10,6 +10,8 @@ import graalgo.values.GoSlice;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 
+import java.util.List;
+
 /**
  * The runtime-provided half of {@code reflect} (and
  * {@code internal/reflectlite}): the bodyless helper declarations gc's
@@ -42,6 +44,27 @@ public final class ReflectLinknames {
 
     /** Registers the reflect + reflectlite runtime-helper tables. */
     public static void registerAll() {
+        // fix-redmaster-r42: reflect's //go:linknamestd
+        // compiledTypelinks, served through its linkname-bound
+        // __-helper (see mr_disk.go): the pair type is derived from
+        // the symbol by the MR pair rule (helper "__"+name, pair
+        // "__"+name+"Pair", qualified with the symbol's package).
+        // graalgo keeps no pre-compiled typelinks table, so both
+        // slices are empty: ArrayOf/ChanOf/MapOf/SliceOf then take
+        // their construct-fresh path, with canonicalization still
+        // holding through their lookup caches. The one observable gap
+        // this leaves is ArrayOf(n, T) identity against a statically
+        // compiled [n]T type (a fresh type is constructed instead of
+        // reusing the static one); direct typesByString callers
+        // likewise see no pre-compiled types.
+        Linknames.register("reflect.compiledTypelinks", args -> {
+            GoStructDescriptor pairDesc =
+                    ReflectTypes.structDescriptorFor("reflect.__compiledTypelinksPair");
+            GoStruct pair = GoStruct.zero(pairDesc);
+            pair.setObject(0, new GoSlice(new Object[0], 0, 0, 0));
+            pair.setObject(1, new GoSlice(new Object[0], 0, 0, 0));
+            return pair;
+        }, 0);
         for (String pkg : new String[]{"reflect", "internal/reflectlite"}) {
             boolean full = pkg.equals("reflect");
             Linknames.register(pkg + ".unsafe_New",
@@ -367,10 +390,50 @@ public final class ReflectLinknames {
     }
 
     /**
+     * Resolves a by-value copy of a canonical shell's {@code internal/abi.Type}
+     * header (fix-redmaster-r42) to its token via the copy's Str ID, with
+     * Kind_ and Size_ cross-checked against the candidate. Returns 0 when
+     * the copy names no minted shell or fails the cross-check — the caller
+     * then fails loudly rather than resolving to a wrong type.
+     */
+    private static long tokForHeaderCopy(GoStruct header) {
+        Long strId = headerLong(header, "Str");
+        Long kind = headerLong(header, "Kind_");
+        Long size = headerLong(header, "Size_");
+        if (strId == null || kind == null || size == null) {
+            return 0;
+        }
+        long tok = AbiTypes.tokForStrId(strId.intValue());
+        if (tok == 0) {
+            return 0;
+        }
+        ReflectTypes.TypeInfo info = ReflectTypes.table().info(tok);
+        if (ReflectTypes.kindOrdinal(info) != kind || info.size != size) {
+            return 0;
+        }
+        return tok;
+    }
+
+    /** The Long value of a header field, or null when absent/not longs-carried. */
+    private static Long headerLong(GoStruct header, String name) {
+        List<GoStructDescriptor.Field> fields = header.descriptor().fields();
+        for (int i = 0; i < fields.size(); i++) {
+            GoStructDescriptor.Field f = fields.get(i);
+            if (name.equals(f.name()) && f.inLongs()) {
+                return header.getLong(i);
+            }
+        }
+        return null;
+    }
+
+    /**
      * Recovers the type token denoted by a {@code *abi.Type} argument:
      * a shell pointer (GoPointer to the canonical shell, or a Long
-     * handle resolving to it) via {@link AbiTypes#tokForShell}, or the
-     * raw token itself (the shape stored in a Value's typ word).
+     * handle resolving to it) via {@link AbiTypes#tokForShell}, the raw
+     * token itself (the shape stored in a Value's typ word), or — for a
+     * header copy — the token its Str ID names (fix-redmaster-r42, see
+     * below). Anything else fails loudly: an unresolvable type argument
+     * is a guest-visible error, never a guess.
      */
     static long tokForTypeArg(Object arg, String symbol) {
         if (arg instanceof GoPointer p) {
@@ -379,6 +442,21 @@ public final class ReflectLinknames {
                 long tok = AbiTypes.tokForShell(shell);
                 if (tok != 0) {
                     return tok;
+                }
+                // Header copy (fix-redmaster-r42): guest code reinterprets
+                // a *abi.Type as a *rtype (reflect's toType), and the
+                // rtype's embedded t field is a by-value copy of the
+                // shell's header — same fields, different object, so the
+                // shell-identity lookup above misses. The copy's Str ID
+                // still names its shell's token (Str IDs are minted fresh
+                // per shell fill, never reused in a run); Kind_ and Size_
+                // are cross-checked so a fabricated or stale header does
+                // not silently resolve to the wrong type.
+                if ("internal/abi.Type".equals(shell.descriptor().typeName())) {
+                    long copyTok = tokForHeaderCopy(shell);
+                    if (copyTok != 0) {
+                        return copyTok;
+                    }
                 }
             }
             throw new IllegalStateException(symbol
@@ -432,12 +510,13 @@ public final class ReflectLinknames {
             // (UnsafeTable.ByteRef — the shape of &slice[i] after
             // unsafe.Pointer arithmetic, e.g. the source pointer of
             // packEfaceData's typedmemmove): read the element there.
-            // Offset-0 handles go through the ordinary reference
-            // machinery (cells, field/element refs, bare referents).
+            // Offset-0 handles go through the offset-0 loader below
+            // (cells, field/element refs, bare referents, plus the
+            // prefix descent for struct/array referents).
             graalgo.p3unsafe.UnsafeTable.ResolvedView view =
                     graalgo.p3unsafe.UnsafeTable.current().resolveView(h);
             if (view.byteOffset() == 0) {
-                return ReflectRefs.denotedValue(h, t.kind);
+                return loadOffsetZero(h, t, symbol);
             }
             return ReflectValues.arrayGet(arrayRoot(view, symbol), t.kind,
                     elementIndex(view, t, symbol));
@@ -449,6 +528,101 @@ public final class ReflectLinknames {
             return p.referent();
         }
         throw new IllegalStateException(symbol + ": cannot load through " + describe(ptr));
+    }
+
+    /**
+     * Loads a value of type {@code target} through an offset-0 handle
+     * (fix-redmaster-r42): the ordinary denoted value, plus offset-0
+     * prefix descent for struct/array referents. A handle denoting a
+     * struct read as a different type denotes that struct's first data
+     * field (gc: offset 0 is the first field's first byte, recursively);
+     * a handle denoting an array read as a different type denotes its
+     * element 0. This is the shape reflect's {@code Field} produces:
+     * {@code add(ptr, 0)} collapses to the base handle in
+     * {@code UnsafeTable.derive}, so the field provenance is only
+     * recoverable from the referent's shape — without the descent, a
+     * typedmemmove of a struct field's value loads the whole struct
+     * (the 47_reflect_funcof_structof {@code Interface()} CCE: an int
+     * interface bound to the {@code main.E} struct). A handle denoting
+     * the target type itself, and any non-container value (slices,
+     * strings, interfaces — whose offset 0 is a header word, not an
+     * element), loads unchanged. A container with no data at offset 0
+     * (empty struct/array) or an unidentifiable struct fails loudly
+     * rather than returning the container as the value.
+     */
+    private static Object loadOffsetZero(long handle, ReflectTypes.TypeInfo target, String symbol) {
+        Object v = ReflectRefs.denotedValue(handle, target.kind);
+        while (true) {
+            if (v instanceof GoStruct gs) {
+                ReflectTypes.TypeInfo info = ReflectTypes.infoForName(gs.descriptor().typeName());
+                if (info == null) {
+                    if (target.kind == GoKind.STRUCT) {
+                        return v;
+                    }
+                    throw new IllegalStateException(symbol
+                            + ": cannot load " + target.name + " at offset 0 of unnamed struct "
+                            + gs.descriptor().typeName());
+                }
+                if (info.tok == target.tok) {
+                    return v;
+                }
+                if (info.fields == null) {
+                    throw new IllegalStateException(symbol
+                            + ": cannot load " + target.name + " at offset 0 of struct "
+                            + info.name + " (no field layout)");
+                }
+                ReflectTypes.FieldInfo f = firstDataFieldAtZero(info);
+                if (f == null || f.type == null || f.index.length == 0) {
+                    throw new IllegalStateException(symbol
+                            + ": cannot load " + target.name + " at offset 0 of struct "
+                            + info.name + " (no data field at offset 0)");
+                }
+                v = ReflectValues.structFieldGet(gs, f.index[0], f.type.kind);
+            } else if (isArray(v)) {
+                if (target.kind == GoKind.ARRAY) {
+                    return v;
+                }
+                int len = java.lang.reflect.Array.getLength(v);
+                if (len == 0) {
+                    throw new IllegalStateException(symbol
+                            + ": cannot load " + target.name + " at offset 0 of empty array");
+                }
+                v = arrayElemAtZero(v, target, symbol);
+            } else {
+                return v;
+            }
+        }
+    }
+
+    /** The first field with data at byte offset 0 (skipping zero-sized fields). */
+    private static ReflectTypes.FieldInfo firstDataFieldAtZero(ReflectTypes.TypeInfo info) {
+        for (ReflectTypes.FieldInfo f : info.fields) {
+            if (f.offset == 0 && f.type != null && f.type.size > 0) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    /** Element 0 of a Java array, read as the target kind's carrier. */
+    private static Object arrayElemAtZero(Object array, ReflectTypes.TypeInfo target, String symbol) {
+        if (array instanceof Object[] oa) {
+            return oa[0];
+        }
+        GoKind k = target.kind;
+        boolean ok = (array instanceof byte[] && (k == GoKind.INT8 || k == GoKind.UINT8))
+                || (array instanceof short[] && (k == GoKind.INT16 || k == GoKind.UINT16))
+                || (array instanceof int[] && (k == GoKind.INT32 || k == GoKind.UINT32))
+                || (array instanceof long[] && (k == GoKind.INT64 || k == GoKind.UINT64))
+                || (array instanceof float[] && k == GoKind.FLOAT32)
+                || (array instanceof double[] && k == GoKind.FLOAT64)
+                || (array instanceof boolean[] && k == GoKind.BOOL);
+        if (!ok) {
+            throw new IllegalStateException(symbol
+                    + ": cannot load " + target.name + " at offset 0 of array "
+                    + array.getClass().getSimpleName());
+        }
+        return ReflectValues.arrayGet(array, k, 0);
     }
 
     /** The Java array at a resolved view's root (unwrapping ArrayRef/GoSlice). */

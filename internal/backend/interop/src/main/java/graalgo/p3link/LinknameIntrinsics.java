@@ -38,6 +38,11 @@ import graalgo.values.GoString;
  *         <li>{@code runtime.fastrand} → {@link Intrinsics#fastrand}
  *         <li>{@code runtime.fastrandn} → {@link Intrinsics#fastrandn}
  *         <li>{@code runtime.nanotime} → {@link Timers#nanotime}
+ *         <li>{@code runtime.rand} → {@link Intrinsics#fastrand64}
+ *             (fix-redmaster-r42: HashTrieMap.initSlow's hash seed)
+ *         <li>{@code runtime.getStaticuint64s} → fresh [256]uint64
+ *             identity array (fix-redmaster-r42: reflect's
+ *             structType.Field index optimization)
  *       </ul>
  *       Arguments arrive in D5 boxed form; each target adapts explicitly
  *       (documented per target below).
@@ -74,6 +79,37 @@ public final class LinknameIntrinsics {
         Linknames.register("runtime.fastrandn",
                 args -> Intrinsics.fastrandn(((Number) args[0]).intValue()), 1);
         Linknames.register("runtime.nanotime", args -> Timers.nanotime(), 0);
+        // fix-redmaster-r42: the two runtime helpers gc pushes into
+        // reflect/sync via //go:linkname that had no graalgo binding,
+        // so their first guest use died at the Linknames fail-fast.
+        // runtime.rand: HashTrieMap.initSlow's hash seed (internal/sync:
+        // ht.seed = uintptr(runtime_rand())); gc draws it from the
+        // per-m chacha8 state, so a host PRNG draw is semantically
+        // faithful — the seed is only ever hashed with, never observed.
+        Linknames.register("runtime.rand", args -> Intrinsics.fastrand64(), 0);
+        // runtime.getStaticuint64s: reflect's structType.Field(i)
+        // optimization for i < 256: a *[256]uint64 with element i == i
+        // that Field slices into the StructField.Index. gc's array is
+        // read-only data (the optimization exists precisely so
+        // misbehaving clients cannot affect other uses of reflect);
+        // a fresh array per call preserves that isolation exactly for
+        // all defined (read-only) uses, and contains UB writes instead
+        // of propagating them. Returned as a plain pointer to the array
+        // so the guest's (*staticuint64s)[i] dereference reads array
+        // storage, not a cell.
+        Linknames.register("runtime.getStaticuint64s", args -> {
+            long[] array = new long[256];
+            for (int i = 0; i < array.length; i++) {
+                array[i] = i;
+            }
+            return new graalgo.values.GoPointer(array);
+        }, 0);
+        // fix-redmaster-r42: the map-key hash for internal/abi.MapType
+        // shells (see MapKeyHash): gc generates one per key type and
+        // HashTrieMap calls it unconditionally, so a zero Hasher died
+        // on the first sync.Map operation. The seed is mixed in by the
+        // implementation; the hash values are never observable.
+        registerMapKeyHash();
         // Intrinsic → Go helper by symbol name. D5: name arrives as
         // GoString; the single any-typed argument passes through boxed.
         Linknames.register("graalgo.runtime.Linknames.callGo", args -> {
@@ -156,6 +192,19 @@ public final class LinknameIntrinsics {
         // //go:linkname; graalgo's backend implements them in
         // ReflectLinknames with gc-faithful semantics.
         registerReflectIntrinsics();
+    }
+
+    /**
+     * The map-key hash intrinsic for {@code internal/abi.MapType}
+     * shells (fix-redmaster-r42, see {@code MapKeyHash}): gc generates
+     * one hash function per key type; graalgo provides one shared
+     * type-agnostic implementation. D5: the key pointer arrives as a
+     * Long handle (or defensively a GoPointer), the seed as a Long;
+     * the result is a Long hash.
+     */
+    private static void registerMapKeyHash() {
+        Linknames.register(graalgo.p3reflect.MapKeyHash.SYMBOL, args ->
+                graalgo.p3reflect.MapKeyHash.hash(args[0], ((Number) args[1]).longValue()), 2);
     }
 
     /**

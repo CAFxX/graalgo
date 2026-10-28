@@ -172,6 +172,19 @@ public final class GoStruct {
                 v = gs.deepCopy();
             } else if (v != null && v.getClass().isArray()) {
                 v = deepCopyArray(v);
+            } else if (v instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
+                // fix-redmaster-r42: a struct copy's atomic word is
+                // independent (Go copies the word by value) — sharing
+                // the cell would let a Store through one copy be
+                // observed through the other. Value-preserving.
+                @SuppressWarnings("unchecked")
+                java.util.concurrent.atomic.AtomicReference<Object> nar =
+                        new java.util.concurrent.atomic.AtomicReference<>(ar.get());
+                v = nar;
+            } else if (v instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                v = new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
+            } else if (v instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
+                v = new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
             }
             objs[f.index()] = v;
         }
@@ -211,6 +224,24 @@ public final class GoStruct {
                     e = new graalgo.runtime.sync.GoOnce();
                 } else if (e instanceof graalgo.runtime.sync.GoPool) {
                     e = new graalgo.runtime.sync.GoPool();
+                } else if (e instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
+                    // fix-redmaster-r42: array elements of atomic
+                    // Pointer/Value type must not share one cell across
+                    // slots (or across copies) — Go assignment copies
+                    // the atomic word by value, giving each copy an
+                    // independent word holding the same current value.
+                    // The same holds for the int/uint atomic wrappers.
+                    // (sync.Map elements stay shared: copying a map
+                    // struct shares its underlying state in gc, so the
+                    // pass-through below is correct for them.)
+                    @SuppressWarnings("unchecked")
+                    java.util.concurrent.atomic.AtomicReference<Object> nar =
+                            new java.util.concurrent.atomic.AtomicReference<>(ar.get());
+                    e = nar;
+                } else if (e instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                    e = new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
+                } else if (e instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
+                    e = new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
                 } else if (e != null && e.getClass().isArray()) {
                     e = deepCopyArray(e);
                 }

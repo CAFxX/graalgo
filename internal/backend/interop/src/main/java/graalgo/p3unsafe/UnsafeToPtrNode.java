@@ -120,10 +120,21 @@ public final class UnsafeToPtrNode extends GoExprNode {
      */
     private final int targetElemWireId;
 
+    /** True when the target is a pointer to a pointer type
+     * ({@code **U}): the interface type-word rule below applies. */
+    private final boolean ptrToPtr;
+
+    /** Prefix-view target for a {@code **U} conversion (the {@code U}
+     * struct's qname plus its field-0 embedded qname), or null when
+     * {@code U} is not a named struct — the type-word cell then holds
+     * the raw shell pointer. */
+    private final PrefixTarget ptrToPtrTarget;
+
     private UnsafeToPtrNode(GoExprNode child, String targetQName,
             List<AbiTypes.ViewField> viewLayout, String headerQName,
             PrefixTarget prefixTarget, long elemSize, int targetElemWireId,
-            List<AbiTypes.ViewField> ifaceLayout) {
+            List<AbiTypes.ViewField> ifaceLayout, boolean ptrToPtr,
+            PrefixTarget ptrToPtrTarget) {
         super(GoKind.POINTER);
         this.child = child;
         this.targetQName = targetQName;
@@ -133,6 +144,8 @@ public final class UnsafeToPtrNode extends GoExprNode {
         this.elemSize = elemSize;
         this.targetElemWireId = targetElemWireId;
         this.ifaceLayout = ifaceLayout;
+        this.ptrToPtr = ptrToPtr;
+        this.ptrToPtrTarget = ptrToPtrTarget;
     }
 
     /** A prefix-view target: the struct's qname plus its field-0 embedded struct qname. */
@@ -215,6 +228,63 @@ public final class UnsafeToPtrNode extends GoExprNode {
                     "unsafe: byte-offset derivation from a non-array referent traps "
                             + "(D5: the handle model cannot reinterpret memory)");
         }
+        if (ptrToPtr && storedValue(resolved) instanceof GoInterface gi) {
+            // Interface type-word pointer (fix-redmaster-r42): in gc
+            // an interface value in memory is (type word, data word),
+            // so a pointer to an interface value reinterpreted as
+            // **U points at the TYPE word — reflect's ArrayOf/FuncOf
+            // prototype trick reads the dynamic type through it
+            // ((**arrayType)(unsafe.Pointer(&iarray)) derefs to the
+            // [1]T array type's rtype). The fallthrough below would
+            // yield a pointer to the interface storage instead, whose
+            // deref is the DATA word (the array value) — the observed
+            // Object[]-as-struct failure. Return a pointer to a fresh
+            // cell holding the dynamic type's shell pointer instead:
+            // one deref yields the type pointer, two yield the type
+            // struct (copied by assignment, so the canonical shell is
+            // never mutated). Writes through it are snapshot
+            // semantics (the r38 N3 class): they land in the fresh
+            // cell, not in the interface's type word — the read path
+            // is exact, and rewriting an interface's dynamic type
+            // through its header is deliberate unsafe abuse, not a
+            // shape real code relies on. A nil interface's type word
+            // is nil, so its cell holds null and dereferencing it
+            // panics with the usual nil dereference.
+            Object typePtr = null;
+            if (!gi.isNil()) {
+                long tok = ReflectTypes.tokForDescriptor(gi.descriptor());
+                typePtr = AbiTypes.abiPointerForTok(tok);
+                if (ptrToPtrTarget != null && typePtr instanceof GoPointer gp
+                        && gp.referent() instanceof GoStruct shell) {
+                    // The guest views the type through the target
+                    // wrapper, not through the bare abi shell:
+                    // reflect's sliceType/arrayType/etc. embed their
+                    // abi counterparts, so a *sliceType pointer must
+                    // address a 3-level wrapper (sliceType{SliceType{
+                    // Type}}), not the 2-level shell — otherwise the
+                    // guest's promoted-field paths (e.g. [0,0,3] for
+                    // slice.TFlag) walk off the shell's layout. The
+                    // prefix view builds exactly that wrapper (or
+                    // returns null when the shell already is the
+                    // target shape, in which case the raw pointer
+                    // stands). The wrapper shares the shell until
+                    // assignment copies it, as for every view.
+                    try {
+                        graalgo.values.GoStructDescriptor desc =
+                                ReflectTypes.structDescriptorFor(ptrToPtrTarget.qname());
+                        GoStruct wrapped = PrefixView.viewFor(shell, desc,
+                                ptrToPtrTarget.embeddedQName());
+                        if (wrapped != null) {
+                            typePtr = new GoPointer(wrapped);
+                        }
+                    } catch (RuntimeException e) {
+                        // Unresolvable target descriptor: keep the raw
+                        // shell pointer (the pre-view behavior).
+                    }
+                }
+            }
+            return UnsafeTable.pointerFor(new graalgo.values.GoBox(typePtr));
+        }
         return UnsafeTable.pointerFor(resolved);
     }
 
@@ -292,9 +362,21 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * (a same-type conversion is the identity, not a field access).
      */
     private FieldHit structFieldAt(Object referent, long byteOffset) {
+        // Unwrap storage cells to the stored value (fix-redmaster-r42):
+        // reflect-allocated storage arrives as a ReflectRefs.Cell (the
+        // unsafe_New handle's referent), not a GoCell — without this the
+        // field match below misses and the conversion falls back to a
+        // pointer to the cell object itself, so a typed dereference
+        // reads the cell instead of the field.
         Object root = referent;
-        if (root instanceof GoCell cell) {
-            root = cell.get();
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
         }
         if (!(root instanceof GoStruct gs) || targetElemWireId < 0) {
             return null;
@@ -346,10 +428,14 @@ public final class UnsafeToPtrNode extends GoExprNode {
         String headerQName = captureHeaderTarget(ctx, typeId);
         PrefixTarget prefixTarget = capturePrefixTarget(ctx, typeId);
         int targetElemWireId = -1;
+        boolean ptrToPtr = false;
+        PrefixTarget ptrToPtrTarget = capturePtrToPtrTarget(ctx, typeId);
         Json.Object typeEntry = ctx.types.entry(typeId, "unsafetooptr.fields.type");
         if ("pointer".equals(typeEntry.string("kind", "unsafetooptr.fields.type"))) {
             targetElemWireId = typeEntry.object("detail", "unsafetooptr.fields.type")
                     .intValue("elem", "unsafetooptr.fields.type");
+            Json.Object elemEntry = ctx.types.entry(targetElemWireId, "unsafetooptr.fields.type");
+            ptrToPtr = "pointer".equals(elemEntry.string("kind", "unsafetooptr.fields.type"));
         }
         GoExprNode n = new UnsafeToPtrNode(
                 UnsafeWire.child(f, "unsafetooptr", "x", factory, ctx),
@@ -359,7 +445,9 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 prefixTarget,
                 elemSize,
                 targetElemWireId,
-                captureIfaceTarget(ctx, typeId));
+                captureIfaceTarget(ctx, typeId),
+                ptrToPtr,
+                ptrToPtrTarget);
         n.setTypeId(typeId);
         return n;
     }
@@ -508,6 +596,31 @@ public final class UnsafeToPtrNode extends GoExprNode {
     }
 
     /**
+     * Captures the prefix-view target for a {@code **U} conversion:
+     * the same shape as {@link #capturePrefixTarget} one pointer level
+     * deeper — {@code U}'s qualified name plus its field-0 embedded
+     * type's qualified name. Returns null when the target is not a
+     * pointer to a pointer to a named struct (the type-word cell then
+     * holds the raw shell pointer, as before).
+     */
+    private static PrefixTarget capturePtrToPtrTarget(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "unsafetooptr.fields.type";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            return null;
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        Json.Object elemEntry = ctx.types.entry(elemId, path);
+        if (!"pointer".equals(elemEntry.string("kind", path))) {
+            return null;
+        }
+        int elemElemId = elemEntry.object("detail", path).intValue("elem", path);
+        // Reuse the *T capture on the elem-elem id: it walks the named
+        // chain and returns the struct qname + field-0 embedded qname.
+        return captureNamedPrefixTarget(ctx, elemElemId, path);
+    }
+
+    /**
      * Captures the prefix-view target for a {@code *T} conversion: the
      * target struct's qualified name plus the qualified name of its
      * field-0 type when that type is a named struct (the embedding
@@ -522,7 +635,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
             return null;
         }
         int elemId = entry.object("detail", path).intValue("elem", path);
-        Json.Object e = ctx.types.entry(elemId, path);
+        return captureNamedPrefixTarget(ctx, elemId, path);
+    }
+
+    /** The named-struct half of the prefix-target capture: walks the
+     * named chain to the underlying struct and reads its field-0
+     * embedded type's qualified name. */
+    private static PrefixTarget captureNamedPrefixTarget(NodeFactory.BuildCtx ctx, int namedId,
+            String path) {
+        Json.Object e = ctx.types.entry(namedId, path);
         String qname = null;
         for (int step = 0; step < 32; step++) {
             if (!"named".equals(e.string("kind", path))) {

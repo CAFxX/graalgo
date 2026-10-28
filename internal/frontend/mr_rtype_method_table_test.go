@@ -100,23 +100,29 @@ func (c *cancelCtx) Deadline() (Time, bool) { return Time{}, false }
 func TestDiskMRStaticEntryBodylessStillSkipped(t *testing.T) {
 	// Negative: a bodyless declaration with a static entry (a linkname
 	// shim shape) keeps the skip — there is no real body to transform
-	// and the static helper serves it.
+	// and the static helper serves it. The fixture uses a SURVIVING
+	// static entry (syscall.Accept): the reflect triple previously
+	// used here (rtype.FieldByName) lost its static entry when
+	// fix-redmaster-r42 deleted the stale reflect_m7 rows (reflect
+	// now compiles from disk, so those calls take the normal disk MR
+	// path), and a triple with no static entry no longer satisfies
+	// this test's precondition — all seven deleted positions have
+	// bodies in real disk reflect, so the deletion changes no real
+	// bodyless declaration's treatment.
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "type.go", `package reflect
+	f, err := parser.ParseFile(fset, "syscall.go", `package syscall
 
-type rtype struct{ x int }
+type Sockaddr struct{ x int }
 
-type StructField struct{ Name string }
-
-func (t *rtype) FieldByName(name string) (StructField, bool)
+func Accept(fd int, sa Sockaddr) (int, Sockaddr, error)
 `, 0)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	specs := transformDiskMultiResult("reflect", []*ast.File{f})
+	specs := transformDiskMultiResult("syscall", []*ast.File{f})
 	for _, s := range specs {
-		if s.name == "FieldByName" && s.recvType == "rtype" {
-			t.Fatal("bodyless static-entry method was transformed; want skip")
+		if s.name == "Accept" {
+			t.Fatal("bodyless static-entry function was transformed; want skip")
 		}
 	}
 }

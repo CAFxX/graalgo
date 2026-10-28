@@ -73,9 +73,11 @@ import java.util.Set;
  *   <li>{@code FuncType} In/Out trailing arrays, {@code StructField}
  *       names/tags, and {@code Name} strings need byte-offset reads
  *       ({@code Name.DataChecked}) that trap under D5.</li>
- *   <li>{@code Hash}/{@code PtrBytes}/{@code GCData} are placeholders
- *       (stable hash from the type name; 0/null): the reflect surface
- *       never reads them, and they are runtime/GC internals.</li>
+ *   <li>{@code Hash}/{@code PtrBytes} are placeholders (stable hash
+ *       from the type name; 0/null): the reflect surface never reads
+ *       them, and they are runtime/GC internals. {@code GCData} is
+ *       NOT a placeholder: it carries the computed GC pointer mask,
+ *       which reflect's emitGCMask reads via GcSlice.</li>
  *   <li>The interface view is a <em>read snapshot</em>: it reflects the
  *       interface's words at conversion time, and writes through the
  *       view pointer do not propagate back to the source interface
@@ -136,6 +138,20 @@ public final class AbiTypes {
     /** Compile-time name encodings by Str ID (positive, from 1). */
     private static final Map<Integer, byte[]> NAME_OFFS = new HashMap<>();
 
+    /**
+     * Reverse of the shell fill's Str registration (fix-redmaster-r42):
+     * the Str ID a canonical shell's {@code internal/abi.Type} header
+     * carries, back to that shell's type token. A header struct is
+     * copied by value whenever guest code reinterprets a {@code *abi.Type}
+     * as a {@code *rtype} (reflect's {@code toType}: the rtype's embedded
+     * {@code t} field is a copy, not the shell object), so the copy's Str
+     * ID is the only identity it retains — and it is sufficient: Str IDs
+     * are minted fresh per shell fill and never reused within a run, so a
+     * Str ID names exactly one token. Cleared with NAME_OFFS when the
+     * installed table changes.
+     */
+    private static final Map<Integer, Long> STR_ID_TO_TOK = new HashMap<>();
+
     /** Pointer-type shell pointers by PtrToThis ID (positive, from 1). */
     private static final Map<Integer, Object> TYPE_OFFS = new HashMap<>();
 
@@ -177,6 +193,7 @@ public final class AbiTypes {
             ABI_PTRS.clear();
             SHELL_TOKS.clear();
             NAME_OFFS.clear();
+            STR_ID_TO_TOK.clear();
             TYPE_OFFS.clear();
             REFLECT_OFFS.clear();
             REFLECT_OFFS_INV.clear();
@@ -202,6 +219,19 @@ public final class AbiTypes {
     /** The type token of a canonical abi shell; 0 when not minted here. */
     public static long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
+        return tok == null ? 0 : tok;
+    }
+
+    /**
+     * The type token a {@code internal/abi.Type} header copy denotes, by
+     * the Str ID it carries (fix-redmaster-r42); 0 when the ID names no
+     * shell minted in this run. The caller cross-checks the copy's Kind_
+     * and Size_ against the candidate before trusting the resolution, so
+     * a fabricated or stale header fails loudly instead of resolving to
+     * the wrong type.
+     */
+    public static synchronized long tokForStrId(int strId) {
+        Long tok = STR_ID_TO_TOK.get(strId);
         return tok == null ? 0 : tok;
     }
 
@@ -297,6 +327,66 @@ public final class AbiTypes {
         }
     }
 
+    /**
+     * gc's GC pointer mask for a type: one entry per word of the value,
+     * true iff the word contains a pointer. Mirrors {@link #ptrBytes}'s
+     * recursion shape (same visiting guard). Pointer-shaped kinds are
+     * one pointer word; a string or slice contributes its data word
+     * only (len/cap words are ints); an interface both words (type
+     * word + data word, as in gc's static mask); an array repeats its
+     * element mask; a struct ORs its fields' masks shifted by their
+     * word offsets. Basic kinds carry no pointers.
+     */
+    private static boolean[] gcMaskWords(ReflectTypes.TypeInfo info, Set<Long> visiting) {
+        int words = (int) (info.size / 8);
+        boolean[] mask = new boolean[Math.max(words, 0)];
+        switch (info.kind) {
+            case POINTER, MAP, CHAN, FUNC, UNSAFE_POINTER, STRING, SLICE -> {
+                if (mask.length > 0) {
+                    mask[0] = true;
+                }
+            }
+            case INTERFACE -> {
+                if (mask.length > 0) {
+                    mask[0] = true;
+                }
+                if (mask.length > 1) {
+                    mask[1] = true;
+                }
+            }
+            case ARRAY -> {
+                if (info.elem == null || !visiting.add(info.tok)) {
+                    return mask;
+                }
+                boolean[] em = gcMaskWords(info.elem, visiting);
+                visiting.remove(info.tok);
+                int elemWords = (int) (info.elem.size / 8);
+                for (int i = 0; i < info.arrayLen; i++) {
+                    for (int w = 0; w < em.length && i * elemWords + w < mask.length; w++) {
+                        mask[i * elemWords + w] |= em[w];
+                    }
+                }
+            }
+            case STRUCT -> {
+                if (info.fields == null || !visiting.add(info.tok)) {
+                    return mask;
+                }
+                for (ReflectTypes.FieldInfo f : info.fields) {
+                    boolean[] fm = gcMaskWords(f.type, visiting);
+                    int base = (int) (f.offset / 8);
+                    for (int w = 0; w < fm.length && base + w < mask.length; w++) {
+                        mask[base + w] |= fm[w];
+                    }
+                }
+                visiting.remove(info.tok);
+            }
+            default -> {
+                // No pointers.
+            }
+        }
+        return mask;
+    }
+
     /** Registers a type's name encoding; returns its Str (nameOff) ID. */
     private static synchronized int registerTypeName(String typeString, boolean exported) {
         byte[] enc = encodeName(typeString, "", exported, false);
@@ -386,7 +476,32 @@ public final class AbiTypes {
         // rune/int32, which GoKind conflates.
         setLongByName(desc, s, "Kind_", ReflectTypes.kindOrdinal(info));
         setObjectByName(desc, s, "Equal", comparable(info, new HashSet<>()) ? equalFunc() : null);
-        setObjectByName(desc, s, "GCData", null);
+        // GCData: the type's GC pointer mask, as a *byte pointer to
+        // ceil(ptrs/8) mask bytes (bit j set iff word j contains a
+        // pointer). gc's only in-stdlib reader is reflect's emitGCMask
+        // (ArrayOf's mask construction) via (*Type).GcSlice, which
+        // unsafe.Slice's the mask — a nil GCData with a nonzero length
+        // panics "ptr is nil and len is not zero". Types without
+        // pointers keep nil (gc: "No pointers → GCData = nil", and
+        // GcSlice(0, 0) tolerates a nil pointer). The mask is computed
+        // for every size, so no shell ever needs TFlagGCMaskOnDemand.
+        // The bytes live in a plain Java byte[] rooted by the shell
+        // field: guest code reads the mask, never mutates it.
+        long pb = ptrBytes(info, new HashSet<>());
+        if (pb == 0) {
+            setObjectByName(desc, s, "GCData", null);
+        } else {
+            boolean[] words = gcMaskWords(info, new HashSet<>());
+            int nbytes = (int) ((pb / 8 + 7) / 8);
+            byte[] mask = new byte[nbytes];
+            for (int w = 0; w < words.length && w / 8 < nbytes; w++) {
+                if (words[w]) {
+                    mask[w / 8] |= (byte) (1 << (w % 8));
+                }
+            }
+            setObjectByName(desc, s, "GCData",
+                    new graalgo.values.GoPointer(mask));
+        }
         // Str: the nameOff ID of the type's String() form, registered
         // in NAME_OFFS so the guest's nameOff → resolveNameOff path
         // materializes it. Previously 0, which made every guest
@@ -399,8 +514,11 @@ public final class AbiTypes {
             exported = !shortName.isEmpty()
                     && Character.isUpperCase(shortName.charAt(0));
         }
-        setLongByName(desc, s, "Str",
-                registerTypeName(ReflectTypes.typeString(tok), exported));
+        int strId = registerTypeName(ReflectTypes.typeString(tok), exported);
+        setLongByName(desc, s, "Str", strId);
+        // Record the Str ID → token identity (fix-redmaster-r42): the
+        // header copy in a guest-materialized rtype carries this ID.
+        STR_ID_TO_TOK.put(strId, tok);
         // PtrToThis: the typeOff ID of *T's shell when the table
         // already carries *T (no synthesis — minting types from a
         // field fill would recurse through ptrTo's always-synthesize
@@ -446,8 +564,15 @@ public final class AbiTypes {
                 requireNonNull(info.elem, info, "Elem");
                 setObjectByName(desc, shell, "Key", abiPointerForTok(info.key.tok));
                 setObjectByName(desc, shell, "Elem", abiPointerForTok(info.elem.tok));
-                // Group/Hasher/offsets/flags are runtime map internals, unused
-                // by the reflect surface; left zero (V1).
+                // fix-redmaster-r42: Hasher is NOT a reflect-surface
+                // nicety — internal/sync.HashTrieMap (sync.Map's engine)
+                // calls it unconditionally, and a zero Hasher died on
+                // the first Load/Store with a nil-func panic. gc
+                // generates one per key type; graalgo fills the shared
+                // type-agnostic hash (see MapKeyHash). Group/offsets/
+                // flags remain runtime map internals, unused by the
+                // reflect surface; left zero (V1).
+                setObjectByName(desc, shell, "Hasher", MapKeyHash.func());
             }
             case SLICE -> {
                 requireNonNull(info.elem, info, "Elem");
