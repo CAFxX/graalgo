@@ -205,6 +205,18 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         // P3-M8 (wave 2, reflect): the "reflectop" wire node.
         factory.registerExprKind("reflectop",
                 (node, ctx) -> graalgo.p3reflect.ReflectOpNode.build(node, ctx, factory));
+        // fix-redmaster-r35: the "abifuncpc" wire node for the
+        // internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsics
+        // (opaque stable func ids). The frontend has emitted this wire
+        // kind since real-reflect Phase 1 and the product launcher
+        // (P3SyncMain) registers it, but the shared ServiceLoader
+        // provider used by graalgo-run did not — so any program whose
+        // wire contains abifuncpc died in the snapshot-check path with
+        // "unsupported expression kind abifuncpc". This is the only
+        // kind in P3SyncMain's table missing here (verified by
+        // mechanical set-diff of both tables).
+        factory.registerExprKind("abifuncpc",
+                (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
         // P2-M1 (WS A): the go statement.
         factory.registerStmtKind("gostmt",
                 (node, ctx) -> GoStatementNode.build(node, ctx, factory));
