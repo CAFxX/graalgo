@@ -51,18 +51,10 @@ public final class UnsafeFromPtrNode extends GoExprNode {
         // P3-M10: intern storage identity, not the dereferenced value.
         // gp.referent() unwraps cell pointers to the cell's *content* —
         // the JVM-shared cached zero box for fresh new(T) — which made
-        // distinct allocations share one handle.
-        if (gp.isNil()) {
-            return 0;
-        }
-        if (gp.isCellPointer()) {
-            return UnsafeTable.current().intern(gp.cell());
-        }
-        if (gp.isElemPointer()) {
-            return UnsafeTable.current().internEqual(
-                    new UnsafeTable.ArrayRef(gp.elemArray(), gp.elemIndex()));
-        }
-        return UnsafeTable.current().intern(gp.referent());
+        // distinct allocations share one handle. The rule lives in
+        // UnsafeTable.handleForPointer (shared with the interface-view
+        // builder); this node keeps only the operand validation.
+        return UnsafeTable.handleForPointer(gp);
     }
 
     /**

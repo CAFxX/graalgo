@@ -8,6 +8,7 @@ import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 
 /**
  * Field selector {@code x.f} (M4, WS E).
@@ -60,13 +61,75 @@ public final class SelectorNode extends GoExprNode {
         for (int idx : selpath) {
             o = deref(o, site);
             GoStruct s = (GoStruct) o;
-            if (s.descriptor().field(idx).inLongs()) {
-                o = Long.valueOf(s.getLong(idx));
-            } else {
-                o = s.getObject(idx);
-            }
+            o = readFieldEmbedded(s, idx);
         }
         return derefResult ? deref(o, site) : o;
+    }
+
+    /**
+     * Reads field {@code idx} from struct {@code s}, with embedding-prefix
+     * descent (r37, tightened r38).
+     *
+     * <p>In gc, embedding is a prefix: a pointer to a struct embedding
+     * {@code T} reads as a pointer to {@code T}, so a method compiled
+     * for receiver type {@code T} (direct field indices into {@code T})
+     * runs unchanged on a value of a type embedding {@code T}. In
+     * graalgo's nested-struct model the embedding struct is a separate
+     * object, so a direct index into {@code T} is out of range for the
+     * embedding struct's descriptor — e.g. {@code abi.Type.Kind} (field
+     * 6 of {@code Type}) called on a {@code PtrType} value (fields
+     * {@code Type}, {@code Elem}) via a {@code *Type}-typed pointer,
+     * which is how every {@code reflect} {@code Kind}/{@code Elem} call
+     * reaches the abi structs. When the index is out of range, this
+     * descends into the first field (the embedding prefix) and reads
+     * from there; when no such field exists it preserves the original
+     * out-of-range failure. In-range reads are untouched, so there is
+     * no hot-path cost. Only the first field is descended into (r38
+     * tightening of r37's first-fitting-field rule): a valid gc
+     * reinterpretation cast requires the embedded type at byte offset 0,
+     * which is the first field in declaration order (modulo zero-size
+     * fields); descending into a later struct field would read a
+     * non-prefix field as the embedded type, which gc never does for
+     * a valid cast. Only value-embedded (struct-kind) fields are
+     * descended into; pointer-embedded fields keep the prior behavior.
+     *
+     * <p>The descent uses the live nested value's own descriptor, not
+     * the parent descriptor's {@code structDesc} metadata (r38 fix for
+     * r37's descent never firing): descriptors synthesized by
+     * {@code ReflectTypes.structDescriptorFor} — exactly the abi shells
+     * this descent exists for — are built with the legacy layout
+     * overload, which leaves every {@code structDesc} null, so a
+     * metadata-based descent could never fire on them (diagnosed:
+     * {@code PtrType} field 0 {@code Type:STRUCT:structDesc=null}).
+     * The nested value's descriptor is authoritative for that value,
+     * so this also covers ordinary frontend structs.
+     */
+    private static Object readFieldEmbedded(GoStruct s, int idx) {
+        for (int depth = 0; depth < 32; depth++) {
+            GoStructDescriptor desc = s.descriptor();
+            if (idx < desc.fields().size()) {
+                if (desc.field(idx).inLongs()) {
+                    return Long.valueOf(s.getLong(idx));
+                }
+                return s.getObject(idx);
+            }
+            GoStruct next = null;
+            if (!desc.fields().isEmpty()
+                    && desc.field(0).kind() == GoKind.STRUCT) {
+                Object v = s.getObject(0);
+                if (v instanceof GoStruct gs
+                        && idx < gs.descriptor().fields().size()) {
+                    next = gs;
+                }
+            }
+            if (next == null) {
+                // No embedding descent (or the candidate field is null):
+                // preserve the original out-of-range failure.
+                desc.field(idx);
+            }
+            s = next;
+        }
+        throw new IllegalStateException("embedding descent too deep");
     }
 
     static Object deref(Object o, Node site) {

@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 
@@ -169,11 +171,16 @@ public final class Main {
             // runtime->interop dependency (which would be circular: interop
             // needs the runtime module's classes); the interop classes are
             // on the runtime classpath (see internal/backend/graalgo-run).
+            List<WireKindRegistrar> registrars = new ArrayList<>();
             for (WireKindRegistrar registrar
                     : ServiceLoader.load(WireKindRegistrar.class)) {
+                registrars.add(registrar);
                 registrar.registerAll(factory);
             }
             program = factory.buildProgram(json);
+            for (WireKindRegistrar registrar : registrars) {
+                registrar.afterBuild(factory, program);
+            }
         } catch (FrontendException e) {
             // M9 acceptance: scope errors (program uses constructs outside
             // frontend/v1 scope) are the program's fault → EXIT_BUILD_FAILURE.

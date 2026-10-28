@@ -182,6 +182,29 @@ public final class UnsafeTable {
     }
 
     /**
+     * The handle for a {@code GoPointer} by storage identity (the
+     * {@code unsafefromptr} rule, shared with {@link UnsafeFromPtrNode}
+     * and with the interface-view builder in
+     * {@code graalgo.p3reflect.AbiTypes}): a cell pointer interns its
+     * cell, an element pointer interns an {@link ArrayRef}, a plain
+     * pointer interns its referent, a nil pointer is handle {@code 0}.
+     * Storage identity — never the dereferenced value — so distinct
+     * allocations sharing a zero value keep distinct handles (P3-M10).
+     */
+    public static long handleForPointer(GoPointer gp) {
+        if (gp == null || gp.isNil()) {
+            return 0;
+        }
+        if (gp.isCellPointer()) {
+            return current().intern(gp.cell());
+        }
+        if (gp.isElemPointer()) {
+            return current().internEqual(new ArrayRef(gp.elemArray(), gp.elemIndex()));
+        }
+        return current().intern(gp.referent());
+    }
+
+    /**
      * Wraps a resolved handle referent as the Go {@code *T} pointer the
      * unsafe builtins traffic in — the inverse of the storage-identity
      * interning in {@link UnsafeFromPtrNode}: {@code resolve(handle)} feeds

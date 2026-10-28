@@ -1734,6 +1734,76 @@ func (e *exporter) exportAbiFuncPCDecl(fi *funcDeclInfo) (*Node, error) {
 	return e.node("funcdecl", fd, fields), nil
 }
 
+// isAbiNoEscapeFunc reports whether fn is internal/abi.NoEscape: gc
+// compiles it down to nothing (escape.go: "It compiles down to
+// nothing"), so executing its body — uintptr(p) then
+// unsafe.Pointer(x ^ 0) — traps under D5, where a handle can never be
+// materialized from an integer. Real-reflect (r37): every abi.TypeOf
+// call goes through NoEscape, so without this the errors-init NPE fix
+// merely advances to a NoEscape trap.
+func isAbiNoEscapeFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && fn.Name() == "NoEscape"
+}
+
+// exportAbiNoEscapeCall lowers a call to abi.NoEscape into its single
+// argument, unchanged: gc emits no code for the call, so the call
+// expression is its argument. No wire node is needed (and none would
+// be correct: any node that round-trips through uintptr traps).
+func (e *exporter) exportAbiNoEscapeCall(c *ast.CallExpr) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 1 {
+		return nil, scopeErrorf("abi.NoEscape takes 1 argument")
+	}
+	return args[0], nil
+}
+
+// exportAbiNoEscapeDecl emits the declaration of internal/abi.NoEscape
+// as a funcdecl whose body returns its parameter unchanged:
+//
+//	func NoEscape(p unsafe.Pointer) unsafe.Pointer { return p }
+//
+// so value-position uses (calling the value) execute the same identity
+// as direct calls, matching gc semantics. Mirrors exportAbiFuncPCDecl
+// (same param/result plumbing, the intrinsic body replaced by the
+// parameter itself).
+func (e *exporter) exportAbiNoEscapeDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("abi.NoEscape must take exactly 1 parameter")
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	ident := e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid})
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{ident}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
 // exportTimeOp lowers (*time.Timer).Stop/Reset and (*time.Ticker).Stop/
 // Reset method calls (ADR-0005 D1) into the "timeop" wire node.
 func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {

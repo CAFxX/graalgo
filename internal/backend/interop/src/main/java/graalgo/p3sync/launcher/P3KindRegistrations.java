@@ -81,6 +81,26 @@ public final class P3KindRegistrations implements WireKindRegistrar {
     }
 
     /**
+     * Post-build installs for the main launcher (r37): the sync launcher
+     * installs these directly, but the {@code graalgo-run} path builds
+     * through this registrar, so without them real reflect fails there
+     * layer by layer — first the abi-type synthesis
+     * ({@code graalgo.p3reflect.AbiTypes}) has no type table (the
+     * errors-init NPE persists), then interface dispatch on synthesized
+     * types has no method table, then linkname calls have no symbol
+     * table. Post-build because each install needs the parsed document
+     * plus the function bindings. (UnsafeTable is already installed in
+     * {@link #registerAllStatic}, which also runs per build.)
+     */
+    @Override
+    public void afterBuild(NodeFactory factory, NodeFactory.Program program) {
+        graalgo.iface.IfaceMethodTable.install(
+                graalgo.iface.IfaceMethodTables.resolve(factory.document(), program.functions()));
+        graalgo.p3reflect.ReflectTypes.install(factory.document(), program.functions());
+        graalgo.p3link.LinknameIntrinsics.install(factory.document(), program);
+    }
+
+    /**
      * Static entry point for in-module callers. The {@link WireKindRegistrar}
      * instance method above delegates here.
      */

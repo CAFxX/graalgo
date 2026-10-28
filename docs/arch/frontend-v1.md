@@ -329,6 +329,16 @@ gzip-compressed as `<name>.json.gz` instead (PKG-059: `mr_return_named`'s
 `TestGolden` decompresses `.json.gz` transparently and `UPDATE_GOLDEN=1`
 re-writes the already-registered form.
 
+Wire-affecting lowering changes regenerate the goldens they touch in the
+same change: e.g. `internal/abi.NoEscape` is lowered to its single
+argument (gc compiles it down to nothing, so executing its
+`uintptr` round-trip body would trap under D5) — goldens for programs
+transitively importing `internal/abi` (via `internal/reflectlite`, e.g.
+`pkgvar_mrarg` through `errors`) therefore carry the collapsed call
+sites and the identity-bodied declaration instead of the round-trip
+body, plus the object-ID renumbering that follows from the removed
+nodes.
+
 ## 9. Extending NodeFactory — WS D/E hook points
 
 `src/main/java/graalgo/frontend/NodeFactory.java` is structured for

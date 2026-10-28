@@ -5951,6 +5951,14 @@ func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, err
 // export their receiver as params[0] (the wire "signature" matches).
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
+	// real-reflect (r37): internal/abi.NoEscape compiles down to nothing
+	// in gc; emit an identity body so value-position uses do not execute
+	// its uintptr round-trip (which traps under D5). See
+	// exportAbiNoEscapeDecl; call sites are intercepted directly (see
+	// exportAbiNoEscapeCall).
+	if fi.obj != nil && isAbiNoEscapeFunc(fi.obj) {
+		return e.exportAbiNoEscapeDecl(fi)
+	}
 	// WS G (P3-M9): skip disk-package multi-result stubs. The stub
 	// (original name, multi-result signature) exists for type-checking
 	// and method resolution; the desugar rewrites all calls to the
@@ -9332,6 +9340,13 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// exportAbiFuncPCDecl).
 	if isAbiFuncPCIntrinsicFunc(fn) {
 		return e.exportAbiFuncPCIntrinsic(c, fn.Name())
+	}
+	// real-reflect (r37): internal/abi.NoEscape compiles down to nothing
+	// in gc; its body round-trips through uintptr and traps under D5.
+	// Lower a call to its argument (see exportAbiNoEscapeCall); the
+	// declaration emits an identity body (see exportAbiNoEscapeDecl).
+	if isAbiNoEscapeFunc(fn) {
+		return e.exportAbiNoEscapeCall(c)
 	}
 	// real-nethttp: //go:linkname consumer stubs alias to their provider.
 	// A call to the stub lowers to a direct call to the provider funcdecl,

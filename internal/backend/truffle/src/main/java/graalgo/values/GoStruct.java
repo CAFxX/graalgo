@@ -44,6 +44,22 @@ public final class GoStruct {
                 // WS G: a complex field's zero value is (0+0i), not nil.
                 objects[f.index()] = f.kind() == GoKind.COMPLEX64
                         ? GoComplex32.ZERO : GoComplex64.ZERO;
+            } else if (!f.inLongs() && f.kind() == GoKind.STRUCT
+                    && f.structDesc() != null) {
+                // r38: a struct-typed field's zero value is a zero struct,
+                // never null. Previously this slot stayed null, so reading
+                // through a value-embedded field of a zero struct panicked
+                // with a nil dereference instead of yielding the zero value
+                // — e.g. make([]sync.poolLocal, n)[i].private, which is how
+                // every sync.Pool.Put/Get died (the poolLocal element's
+                // embedded poolLocalInternal was null). Recursion
+                // terminates: value-embedding cycles are illegal in Go,
+                // and descriptor construction already fails fast on cyclic
+                // type graphs; descriptors without nested metadata (the
+                // ReflectTypes-synthesized abi shells) keep the old null
+                // slot, since those shells are always filled explicitly
+                // by their builder.
+                objects[f.index()] = GoStruct.zero(f.structDesc());
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);

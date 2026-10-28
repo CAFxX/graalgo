@@ -18,4 +18,17 @@ public interface WireKindRegistrar {
      * @param factory the node factory to register with
      */
     void registerAll(NodeFactory factory);
+
+    /**
+     * Post-build hook, called by the launcher after {@link NodeFactory#buildProgram}
+     * returns, with the built program. Providers whose per-run installs need
+     * the parsed document or the function table (e.g. interop's reflect
+     * type table, which needs both) install there; installs that need
+     * neither stay in {@link #registerAll}. Default: no-op, so providers
+     * without post-build work need not change.
+     *
+     * @param factory the node factory (its parsed document is available)
+     * @param program the built program
+     */
+    default void afterBuild(NodeFactory factory, NodeFactory.Program program) {}
 }
