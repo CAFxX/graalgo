@@ -5,6 +5,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.GoCalls;
+import graalgo.runtime.sync.PinLock;
 import graalgo.values.GoFunc;
 import graalgo.jfr.JfrEvents;
 import graalgo.jfr.ParkReason;
@@ -307,6 +308,17 @@ public final class SchedulerCore {
     public void pollCurrentThread() {
         GoroutineHandle h = currentHandle.get();
         if (h == null) {
+            return;
+        }
+        // fix-redmaster-r43: never yield inside a pin section. In gc,
+        // pinning disables preemption, so a pinned goroutine is not
+        // migrated mid-section; here a quantum park inside a section
+        // would park while holding PinLock, stalling every other Pool
+        // operation (and risking a missed re-admission against the
+        // drainer). Pin sections are short and non-blocking, so the
+        // yield simply moves to the first poll after unpin — the
+        // deadline stays expired, so no quantum is lost.
+        if (PinLock.isHeldByCurrentThread()) {
             return;
         }
         if (System.nanoTime() >= h.quantumDeadlineNanos) {

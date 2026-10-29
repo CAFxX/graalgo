@@ -72,6 +72,48 @@ public final class PrefixView {
     private PrefixView() {}
 
     /**
+     * Canonical fabricated wrappers (fix-redmaster-r43). A Wrap view is
+     * a struct whose field 0 is the referent — and in gc the
+     * conversion it implements ({@code (*rtype)(unsafe.Pointer(t))},
+     * i.e. toRType) is a pointer reinterpretation: the same address
+     * yields the same pointer, so two conversions of one *abi.Type
+     * must yield views of one storage (TypeOf(0) == TypeOf(0), FuncOf
+     * cache hits returning toRType of the cached type, ...). The
+     * parent-return path already canonicalizes sequentially (the
+     * first Wrap links the referent to its wrapper via prefixParent,
+     * so later conversions return that wrapper); the cache makes
+     * Wrap itself idempotent — same (referent, target) always yields
+     * the same wrapper, including under concurrent conversion, where
+     * two threads could otherwise mint two wrappers before either
+     * links the parent. The wrapper's field 0 is the referent itself
+     * (live, shared), and its tail fields are zero — sharing one
+     * wrapper per (referent, target) is exactly gc's same-address
+     * semantics, not an approximation of it. The parent-return and
+     * unwrap paths already return canonical objects and bypass the
+     * cache. Guarded by a lock: concurrent Wrap of one referent must
+     * not mint two wrappers, one of which escapes uncached. Lifetime
+     * is the JVM (one guest program per launcher JVM; identity keys
+     * can never collide with a later run's objects while strongly
+     * held). Companion fix: {@link graalgo.values.GoEquality} now
+     * compares GoPointers by storage, without which even identical
+     * referents compared unequal through fresh GoPointer wrappers.
+     */
+    private static final java.util.Map<GoStruct, java.util.Map<String, GoStruct>> WRAP_CACHE =
+            new java.util.IdentityHashMap<>();
+
+    private static synchronized GoStruct cachedWrap(GoStruct prefix, GoStructDescriptor targetDesc) {
+        java.util.Map<String, GoStruct> byTarget =
+                WRAP_CACHE.computeIfAbsent(prefix, k -> new java.util.HashMap<>());
+        GoStruct w = byTarget.get(targetDesc.typeName());
+        if (w == null) {
+            w = GoStruct.zero(targetDesc);
+            w.setObject(0, prefix);
+            byTarget.put(targetDesc.typeName(), w);
+        }
+        return w;
+    }
+
+    /**
      * Builds the prefix view of {@code referent} for the target type
      * described by {@code targetDesc}, or {@code null} when no prefix
      * reinterpretation applies.
@@ -162,9 +204,7 @@ public final class PrefixView {
                             && parent.descriptor().typeName().equals(targetDesc.typeName())) {
                         return parent;
                     }
-                    GoStruct wrapper = GoStruct.zero(targetDesc);
-                    wrapper.setObject(0, w);
-                    return wrapper;
+                    return cachedWrap(w, targetDesc);
                 }
             }
         }
@@ -186,9 +226,7 @@ public final class PrefixView {
                     && parent.descriptor().typeName().equals(targetDesc.typeName())) {
                 return parent;
             }
-            GoStruct wrapper = GoStruct.zero(targetDesc);
-            wrapper.setObject(0, gs);
-            return wrapper;
+            return cachedWrap(gs, targetDesc);
         }
         // Unwrap: the referent's field 0 IS the target type.
         if (!gs.descriptor().fields().isEmpty()

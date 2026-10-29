@@ -256,6 +256,45 @@ public final class ReflectTypes {
         return null;
     }
 
+    /**
+     * The unnamed-struct TypeInfo whose structural rendering equals
+     * {@code structString}, or null (fix-redmaster-r43). Unnamed structs
+     * carry no name, so the name index ({@link #infoForName}) cannot
+     * find them — but their value descriptors are named by their
+     * structural rendering (structDescFor builds them from
+     * {@code typeString}), so a consumption site holding only a
+     * descriptor can recover the TypeInfo by rendering each struct
+     * candidate and comparing. A named type's rendering is its name,
+     * which can never equal a structural string (names are
+     * identifiers), so this cannot false-positive on named types.
+     * Same O(n) order as infoForName; the rendering cost is bounded
+     * by the candidate's field count, and unnamed structs cannot
+     * recurse (a struct cannot name itself without a name).
+     */
+    public static TypeInfo infoForStructString(String structString) {
+        Table t = table();
+        for (int i = 1; i < t.byTok.size(); i++) {
+            TypeInfo info = t.byTok.get(i);
+            if (info == null || info.kind != GoKind.STRUCT) {
+                continue;
+            }
+            // Unrenderable candidates (e.g. a generic template's
+            // struct with a type-parameter field, whose typeString
+            // throws) are skipped, not fatal: the scan is a lookup,
+            // and one unrenderable entry must not hide a match.
+            String rendered;
+            try {
+                rendered = typeString(info.tok);
+            } catch (RuntimeException e) {
+                continue;
+            }
+            if (structString.equals(rendered)) {
+                return info;
+            }
+        }
+        return null;
+    }
+
     /** Token for a GoTypeDescriptor (via the patch-03 wireId registry). */
     public static long tokForDescriptor(Object descriptor) {
         Table table = table();
@@ -1796,6 +1835,85 @@ public final class ReflectTypes {
         return newTok;
     }
 
+    /**
+     * dynamicTokForName: token for a named type that has no wire entry
+     * (fix-redmaster-r43). The caller is a descriptor that the frontend
+     * never compiled from source, so no wire id exists for it — the
+     * canonical case is {@code runtime.errorString}, whose descriptor
+     * the runtime's panic path synthesizes (Panic.throwPanic infers it
+     * for a descriptor-less GoErrorValue) and which fmt then consumes
+     * through reflect's interface-view conversion. Dedup is by NAME
+     * (infoForName): fresh descriptors for the same type share one
+     * token, and a name already claimed by a different kind fails
+     * loudly rather than aliasing across kinds. Fixed-size basic kinds
+     * only: the TypeInfo carries kind/size/align/name, which is
+     * everything the abi shell fill needs (fillTypeFields reads only
+     * those, plus a basic name for the kind ordinal — see below).
+     * Aggregate kinds fail loudly: a struct/array/slice/map/chan/func/
+     * interface/pointer type needs field/element metadata no bare
+     * descriptor carries, and inventing it would be a wrong type, not
+     * a dynamic one — that is the dynamic-reflect layer's work, not
+     * this primitive's. The basic name is the kind's wire spelling
+     * (kindOrdinal reads it for named types); without it, kindOrdinal
+     * falls through to the aggregate-kind switch and throws for
+     * STRING and the other basic kinds.
+     */
+    public static long dynamicTokForName(String qname, GoKind kind) {
+        Table table = table();
+        TypeInfo existing = infoForName(qname);
+        if (existing != null) {
+            if (existing.kind != kind) {
+                throw new IllegalStateException(
+                        "reflect: dynamic type " + qname + " already exists with kind "
+                                + existing.kind + ", not " + kind);
+            }
+            return existing.tok;
+        }
+        String key = "dynamic:" + qname;
+        Long dup = table.keyToTok.get(key);
+        if (dup != null) {
+            // Unreachable in practice (infoForName above scans the same
+            // byTok entries this key denotes), but never alias blindly:
+            // the kind check applies here too.
+            TypeInfo dupInfo = table.info(dup);
+            if (dupInfo.kind != kind) {
+                throw new IllegalStateException(
+                        "reflect: dynamic type " + qname + " already exists with kind "
+                                + dupInfo.kind + ", not " + kind);
+            }
+            return dup;
+        }
+        String basicName = switch (kind) {
+            case BOOL -> "bool";
+            case INT8 -> "int8";
+            case INT16 -> "int16";
+            case INT32 -> "int32";
+            case INT64 -> "int64";
+            case UINT8 -> "uint8";
+            case UINT16 -> "uint16";
+            case UINT32 -> "uint32";
+            case UINT64 -> "uint64";
+            case FLOAT32 -> "float32";
+            case FLOAT64 -> "float64";
+            case COMPLEX64 -> "complex64";
+            case COMPLEX128 -> "complex128";
+            case STRING -> "string";
+            case UNSAFE_POINTER -> "unsafe.Pointer";
+            default -> throw new IllegalStateException(
+                    "reflect: dynamic type " + qname + " has non-basic kind " + kind
+                            + " (no field/element metadata to synthesize from)");
+        };
+        int dot = qname.lastIndexOf('.');
+        String pkgPath = dot >= 0 ? qname.substring(0, dot) : "";
+        long newTok = table.byTok.size();
+        table.keyToTok.put(key, newTok);
+        TypeInfo info = new TypeInfo(newTok, kind, qname, pkgPath, basicSize(kind), basicAlign(kind),
+                null, null, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), basicName, -1);
+        table.byTok.add(info);
+        return newTok;
+    }
+
     /** funcOf: token for func(in...) out (synthesized; no methods). */
     public static long funcOf(long[] inToks, long[] outToks, boolean variadic) {
         Table table = table();
@@ -2002,6 +2120,54 @@ public final class ReflectTypes {
             }
         };
         return new GoFunc(root.getCallTarget(), null);
+    }
+
+    /**
+     * The method set of the type with this token, for reflect's
+     * Method/MethodByName/NumMethod (fix-redmaster-r43: real guest code
+     * reads them from the type's uncommon part, which shells do not
+     * carry — TFlag is 0 — so the frontend routes Type method calls
+     * here, to the table).
+     *
+     * <ul>
+     *   <li>Types whose table entry already carries methods (all static
+     *       types, including promoted and redispatch entries) use the
+     *       table as-is.</li>
+     *   <li>Struct types with an empty table entry (guest-built StructOf
+     *       products, whose synthesis carries fields but no methods)
+     *       compute the promoted set from their fields with the same
+     *       {@link #promoteMethods} machinery the structOf builder
+     *       uses, sorted by name (stable, so StructOf duplicates keep
+     *       field order and lookup finds the first).</li>
+     *   <li>Everything else (including pointer-to-dynamic-struct sets,
+     *       a known gap) yields empty, preserving today's behavior.</li>
+     * </ul>
+     *
+     * <p>Computed sets are cached per token: TypeInfos are immutable
+     * after construction, and promotion builds wrapper func types as a
+     * side effect that must not repeat per lookup.
+     */
+    private static final Map<Long, List<MethodInfo>> METHOD_SET_CACHE = new HashMap<>();
+
+    static List<MethodInfo> methodSetFor(long tok) {
+        TypeInfo t = table().info(tok);
+        if (!t.methods.isEmpty()) {
+            return t.methods;
+        }
+        if (t.kind != GoKind.STRUCT) {
+            return List.of();
+        }
+        synchronized (METHOD_SET_CACHE) {
+            List<MethodInfo> cached = METHOD_SET_CACHE.get(tok);
+            if (cached != null) {
+                return cached;
+            }
+            List<MethodInfo> promoted = new ArrayList<>(promoteMethods(table(), t, t.fields));
+            promoted.sort((a, b) -> a.name.compareTo(b.name));
+            List<MethodInfo> result = List.copyOf(promoted);
+            METHOD_SET_CACHE.put(tok, result);
+            return result;
+        }
     }
 
     /** Structural key of an already-built TypeInfo (for ptrTo). */
@@ -2237,6 +2403,19 @@ public final class ReflectTypes {
     public static graalgo.values.GoInterface boxType(long tok) {
         graalgo.values.GoStruct rt = new graalgo.values.GoStruct(
                 rtypeDescStruct, new long[0], new Object[]{tok});
-        return new graalgo.values.GoInterface(rtypeDesc, rt, null);
+        // fix-redmaster-r43: rtypeDesc comes from the patch-03
+        // registry, which only covers wire ids the frontend emitted
+        // descriptors for; ordinary reflect users never name
+        // reflect.rtype directly, so it is routinely null. A named
+        // descriptor for the qualified name is equivalent
+        // (descriptorForTok builds exactly this for named types, and
+        // the lazy itab path keys on the descriptor name), so fall
+        // back to it instead of crashing.
+        graalgo.values.GoTypeDescriptor desc = rtypeDesc;
+        if (desc == null) {
+            desc = graalgo.frontend.NodeFactory.namedDescriptorFor(
+                    "reflect.rtype", graalgo.values.GoKind.STRUCT);
+        }
+        return new graalgo.values.GoInterface(desc, rt, null);
     }
 }

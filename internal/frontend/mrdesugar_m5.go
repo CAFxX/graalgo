@@ -2089,12 +2089,12 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 //
 // Design: the field holds a function value. For the call to work, the
 // stored value must be pair-returning. This holds because:
-// - Synthetic packages declare pair-returning field types explicitly
-//   (e.g., nistCurve.generate)
-// - Disk/user packages: the field is assigned a function that has been
-//   pair-transformed (via userMRFuncs or the disk MR table), so the
-//   value is pair-returning even though the declared field type is
-//   multi-result.
+//   - Synthetic packages declare pair-returning field types explicitly
+//     (e.g., nistCurve.generate)
+//   - Disk/user packages: the field is assigned a function that has been
+//     pair-transformed (via userMRFuncs or the disk MR table), so the
+//     value is pair-returning even though the declared field type is
+//     multi-result.
 //
 // The desugar emits a regular "call" node (not "funcfieldcall") with the
 // pair type — the backend already handles selector-fun calls via
@@ -3463,12 +3463,26 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 	} else {
 		argExprs = c.Args
 	}
+	// fix-redmaster-r43: the helper's receiver is built as a NODE
+	// (mrHelperReceiverNode), not prepended as sel.X: a PROMOTED
+	// method's helper must receive the promoted receiver (e.g.
+	// &d.poolDequeue for d.popHead() on *poolChainElt), not the
+	// selector's base (d). Passing sel.X raw made the helper's body
+	// run against the outer struct, so its Load bound the outer
+	// receiver and &x.v indexed field 2 of a 2-field poolDequeue
+	// (snapshot 46). The node is prepended after the arg loop so
+	// variadic packing still sees args[0] as the receiver.
+	var recvNode *Node
 	if plan.prependRecv {
 		sel, ok := c.Fun.(*ast.SelectorExpr)
 		if !ok {
 			return nil, nil, fmt.Errorf("gofrontend: prependRecv call has non-selector fun %T", c.Fun)
 		}
-		argExprs = append([]ast.Expr{sel.X}, argExprs...)
+		var err error
+		recvNode, err = e.mrHelperReceiverNode(c, sel)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	args := make([]*Node, 0, len(argExprs))
 	var preStmts []*Node
@@ -3556,6 +3570,9 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 		}
 		args = append(args, x)
 	}
+	if plan.prependRecv {
+		args = append([]*Node{recvNode}, args...)
+	}
 	// Variadic parity with the plain call path (fix-redmaster-r40): a
 	// non-spread variadic call must have its trailing arguments packed
 	// into the variadic slice before they reach the __-helper, exactly
@@ -3598,6 +3615,181 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 // to a temp var. Per Go spec, g's results spread as f's arguments (g() must
 // be the sole argument; the type checker guarantees this for valid Go).
 // Returns the unpacked pair-field selector args and the pre-statements
+// mrHelperReceiverNode builds the helper-call receiver node for a
+// prependRecv plan: the method's receiver expression, with promotion
+// adaptation (fix-redmaster-r43). For a direct method the receiver is
+// sel.X unchanged. For a promoted method (the Selection's Index has
+// more than one entry — the adaptation path is Index minus its last
+// entry, the method's own index, exactly as resolvePromotedMethodCall
+// computes recvPath), the receiver is sel.X walked along the
+// embedded-field path (a "selector" wire node with selpath, mirroring
+// methodRefNode's GAP-6 adaptation), then adapted to the method's
+// declared receiver type: addrof when the method takes a pointer and
+// the walked field is a value, deref when the method takes a value and
+// the walked field is a pointer. Passing sel.X raw for a promoted
+// method made the helper run against the outer struct (snapshot 46:
+// __poolChain_popHead passed d instead of &d.poolDequeue, so the
+// helper's Load bound the outer receiver and &x.v indexed field 2 of
+// a 2-field poolDequeue). A selection that cannot be resolved, or a
+// generic (type-parameterized) promotion path, fails fast with a named
+// error rather than silently passing the unpromoted receiver.
+func (e *exporter) mrHelperReceiverNode(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node, error) {
+	base, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	selection, ok := e.info.Selections[sel]
+	if !ok || selection.Kind() != types.MethodVal {
+		return base, nil
+	}
+	idx := selection.Index()
+	if len(idx) <= 1 {
+		// Direct method: adapt the receiver expression to the
+		// method's declared receiver type, exactly as the promoted
+		// path does below. Previously the base was returned
+		// unchanged, so a value receiver expression passed to a
+		// pointer-receiver __-helper was bound by the backend as a
+		// per-call temporary copy: mutations and first-time
+		// initialization were lost (witness: sync.Map LoadOrStore
+		// on a fresh map stored nothing — the helper initialized
+		// and inserted into a discarded copy — while a map primed
+		// by Store kept working via the shared trie root pointer).
+		// Generic receivers keep the old behavior (unadapted).
+		fn, ok := selection.Obj().(*types.Func)
+		if !ok {
+			return base, nil
+		}
+		sig, ok := fn.Type().(*types.Signature)
+		if !ok || sig.Recv() == nil || mrTypeHasTypeParam(sig.Recv().Type()) {
+			return base, nil
+		}
+		baseType := e.info.TypeOf(sel.X)
+		if baseType == nil {
+			baseType = selection.Recv()
+		}
+		if baseType == nil || mrTypeHasTypeParam(baseType) {
+			return base, nil
+		}
+		return e.mrAdaptReceiver(base, baseType, sig.Recv().Type(), sel)
+	}
+	path := idx[:len(idx)-1]
+	recvType := selection.Recv()
+	if recvType == nil || mrTypeHasTypeParam(recvType) {
+		return nil, fmt.Errorf("gofrontend: promoted multi-result method %s has a generic receiver (unsupported)", sel.Sel.Name)
+	}
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: promoted selection %s is not a method", sel.Sel.Name)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil || mrTypeHasTypeParam(sig.Recv().Type()) {
+		return nil, fmt.Errorf("gofrontend: promoted multi-result method %s has a generic receiver (unsupported)", sel.Sel.Name)
+	}
+	adapted := embeddedFieldType(recvType, path)
+	if adapted == nil {
+		return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted method %s (exporter bug)", sel.Sel.Name)
+	}
+	tid, err := e.typeID(adapted)
+	if err != nil {
+		return nil, err
+	}
+	spath := make([]any, len(path))
+	for i, v := range path {
+		spath[i] = v
+	}
+	recv := e.node("selector", sel, map[string]any{
+		"x": base, "field": embeddedFieldName(recvType, path),
+		"selpath": spath, "type": tid,
+	})
+	methodRecv := sig.Recv().Type()
+	recv, err = e.mrAdaptReceiver(recv, adapted, methodRecv, sel)
+	if err != nil {
+		return nil, err
+	}
+	return recv, nil
+}
+
+// mrAdaptReceiver adapts a receiver node to the method's declared
+// receiver type: addrof when the method takes a pointer and the node
+// is a value, deref when the method takes a value and the node is a
+// pointer, unchanged otherwise. Alias types are unwrapped before the
+// pointer test. Callers guarantee concrete (type-param-free) types.
+func (e *exporter) mrAdaptReceiver(recv *Node, nodeType, methodRecv types.Type, sel *ast.SelectorExpr) (*Node, error) {
+	nodeType = types.Unalias(nodeType)
+	methodRecv = types.Unalias(methodRecv)
+	_, methodIsPtr := methodRecv.(*types.Pointer)
+	nodePtr, nodeIsPtr := nodeType.(*types.Pointer)
+	if methodIsPtr && !nodeIsPtr {
+		ptid, err := e.typeID(methodRecv)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("addrof", sel, map[string]any{"x": recv, "type": ptid}), nil
+	}
+	if !methodIsPtr && nodeIsPtr {
+		dtid, err := e.typeID(nodePtr.Elem())
+		if err != nil {
+			return nil, err
+		}
+		return e.node("deref", sel, map[string]any{"x": recv, "type": dtid}), nil
+	}
+	return recv, nil
+}
+
+// mrTypeHasTypeParam reports whether t mentions a *types.TypeParam
+// anywhere (used to keep the promoted-receiver adaptation concrete:
+// substituted generic receivers need resolveMethodCall's subst, which
+// this path does not carry).
+func mrTypeHasTypeParam(t types.Type) bool {
+	switch u := t.(type) {
+	case *types.TypeParam:
+		return true
+	case *types.Pointer:
+		return mrTypeHasTypeParam(u.Elem())
+	case *types.Named:
+		for i := 0; i < u.TypeArgs().Len(); i++ {
+			if mrTypeHasTypeParam(u.TypeArgs().At(i)) {
+				return true
+			}
+		}
+		return false
+	case *types.Alias:
+		return mrTypeHasTypeParam(types.Unalias(u))
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if mrTypeHasTypeParam(u.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	case *types.Slice:
+		return mrTypeHasTypeParam(u.Elem())
+	case *types.Array:
+		return mrTypeHasTypeParam(u.Elem())
+	case *types.Map:
+		return mrTypeHasTypeParam(u.Key()) || mrTypeHasTypeParam(u.Elem())
+	case *types.Chan:
+		return mrTypeHasTypeParam(u.Elem())
+	case *types.Signature:
+		if u.Recv() != nil && mrTypeHasTypeParam(u.Recv().Type()) {
+			return true
+		}
+		for i := 0; i < u.Params().Len(); i++ {
+			if mrTypeHasTypeParam(u.Params().At(i).Type()) {
+				return true
+			}
+		}
+		for i := 0; i < u.Results().Len(); i++ {
+			if mrTypeHasTypeParam(u.Results().At(i).Type()) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // (temp vardecl) that must execute before the outer call.
 // BUG-MODPROBE-010: used by exportCallArgs for the general call path;
 // mirrors the nested handling in multiResultHelperArgs.

@@ -16,6 +16,14 @@ package main
 // Red-green: before the fix, TestM7OverrideIfaceReflectMethod panics
 // with that message; after, it exports an ifacemethod node typed as the
 // reflect_m7 pair.
+//
+// fix-redmaster-r43: MethodByName on reflect.Type no longer exports
+// as ifacemethod. Guest MethodByName via ifacemethod dispatch always
+// returns false at runtime (shells carry no uncommon data), so real
+// Type.MethodByName calls are intercepted to the TypeInfo-based
+// reflectop path (typeMethodByName); FieldByName keeps the
+// ifacemethod desugar pinned below. The test still pins the M7
+// requirement (no exporter panic) plus the new division of labor.
 
 import (
 	"strings"
@@ -50,8 +58,12 @@ func main() {
 	}
 	doc := decodeExport(t, out)
 
-	// Both calls must desugar to ifacemethod nodes in main.
+	// FieldByName must desugar to an ifacemethod node in main (the
+	// M7 override); MethodByName on reflect.Type must desugar to
+	// a reflectop typeMethodByName node (the fix-redmaster-r43
+	// interception — guest dispatch always returns false).
 	methods := map[string]bool{}
+	ops := map[string]bool{}
 	for _, f := range doc["funcs"].([]any) {
 		fm, _ := f.(map[string]any)
 		fl, _ := fm["fields"].(map[string]any)
@@ -63,12 +75,17 @@ func main() {
 			method, _ := nf["method"].(string)
 			methods[method] = true
 		}
+		for _, n := range findAllKind(fm, "reflectop") {
+			nf := n["fields"].(map[string]any)
+			op, _ := nf["op"].(string)
+			ops[op] = true
+		}
 	}
 	if !methods["FieldByName"] {
 		t.Fatal("no ifacemethod node for FieldByName in main")
 	}
-	if !methods["MethodByName"] {
-		t.Fatal("no ifacemethod node for MethodByName in main")
+	if !ops["typeMethodByName"] {
+		t.Fatal("no reflectop typeMethodByName node for MethodByName in main")
 	}
 }
 

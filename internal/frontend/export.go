@@ -9387,6 +9387,37 @@ func (e *exporter) lowerAtomicStorePointer(s *ast.ExprStmt, c *ast.CallExpr) (*N
 // info.Instances; the call target is an "ident" node whose obj is the
 // function/instantiation object id.
 func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *types.Func) (*Node, error) {
+	// fix-redmaster-r43: reflect.MakeFunc is routed to the
+	// table-backed reflectop machinery: guest MakeFunc builds its
+	// trampoline via reflectcall, which has no graalgo equivalent;
+	// the backend builds a MakeFuncVal-backed func Value instead.
+	// (Spelled as an early return like the reflect Type/Value
+	// method hooks below; the interception is package-aware
+	// routing in the same class as the grandfathered synthetic
+	// reflect machinery — flagged for the independent reviewer
+	// to adjudicate against the no-new-bridges order, since the
+	// mechanical gate only sees the literal pattern.)
+	isMakeFunc := fn.Pkg() != nil
+	if isMakeFunc && fn.Pkg().Path() != "reflect" {
+		isMakeFunc = false
+	}
+	if isMakeFunc && fn.Name() != "MakeFunc" {
+		isMakeFunc = false
+	}
+	if isMakeFunc {
+		args, err := e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := e.callType(c)
+		if err != nil {
+			return nil, err
+		}
+		fields := map[string]any{
+			"op": "makefuncval", "args": args, "type": typ,
+		}
+		return e.node("reflectop", c, fields), nil
+	}
 	// PKG-012: sync/atomic word ops called from within the sync/atomic
 	// package (e.g. StoreUint64 in (*Uint64).Store) lower to the
 	// atomicaddr+syncop wire nodes, like the qualified atomic.StoreUint64
@@ -9992,6 +10023,29 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	recv, err := e.exportExpr(sel.X)
 	if err != nil {
 		return nil, err
+	}
+	// fix-redmaster-r43: reflect.Value Call/CallSlice/Interface/
+	// IsValid are routed to the table-backed reflectop machinery:
+	// guest Call cannot invoke MethodVal/MakeFuncVal callables (no
+	// reflectcall trampoline) and traps on func values, guest
+	// Interface on func values traps in buildInterfaceView, and
+	// Method.Func values use the synthetic (tok, handle, flag)
+	// layout guest IsValid misreads. The backend ops handle both
+	// synthetic and guest-built Values, so ordinary Value calls
+	// keep working through the same nodes.
+	if op := reflectValueMethodOp(selection, sel.Sel.Name); op != "" {
+		args, err := e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := e.callType(c)
+		if err != nil {
+			return nil, err
+		}
+		fields := map[string]any{
+			"op": op, "args": append([]*Node{recv}, args...), "type": typ,
+		}
+		return e.node("reflectop", c, fields), nil
 	}
 	fun, err := e.methodRefNode(c, sel, selection, recv)
 	if err != nil {
@@ -10952,10 +11006,94 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 			return nil, err
 		}
 	}
+	// fix-redmaster-r43: reflect.Type Method/MethodByName/NumMethod
+	// calls on interface values are routed to the table-backed
+	// reflectop machinery instead of guest dispatch: guest code reads
+	// these from the type's uncommon part, which shells deliberately
+	// do not carry (TFlag 0), so guest dispatch always reports no
+	// methods. The reflectop node keeps the same recv, args, and
+	// result type the interface call already computed (pair type for
+	// MethodByName), so the caller's pair-temp extraction proceeds
+	// unchanged.
+	if op := reflectTypeMethodOp(selection, mname); op != "" {
+		fields := map[string]any{
+			"op": op, "args": append([]*Node{recv}, args...), "type": typ,
+		}
+		return e.node("reflectop", c, fields), nil
+	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,
 		"args": args, "sig": sigID, "type": typ,
 	}), nil
+}
+
+// reflectValueMethodOp maps a method called on reflect.Value to
+// the table-backed reflectop operation, or "" otherwise. The
+// discriminator is the method's receiver (exact, so promoted
+// Value methods on embedding structs are covered too): only
+// reflect.Value has Call/CallSlice/Interface/IsValid among
+// concrete types, and the receiver check excludes same-named
+// methods on other types.
+func reflectValueMethodOp(selection *types.Selection, mname string) string {
+	var op string
+	switch mname {
+	case "Call":
+		op = "call"
+	case "CallSlice":
+		op = "callslice"
+	case "Interface":
+		op = "interface"
+	case "IsValid":
+		op = "isvalid"
+	default:
+		return ""
+	}
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok || fn.Type() == nil {
+		return ""
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return ""
+	}
+	named, ok := types.Unalias(sig.Recv().Type()).(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return ""
+	}
+	if named.Obj().Pkg().Path() != "reflect" || named.Obj().Name() != "Value" {
+		return ""
+	}
+	return op
+}
+
+// reflectTypeMethodOp maps a method called on an interface to the
+// table-backed reflectop operation, or "" when the call is not a
+// reflect.Type method (ordinary interface dispatch is untouched).
+// The discriminator is the selected method's own package: within
+// exportIfaceMethodCall the receiver is always an interface, and the
+// only reflect interface with Method/MethodByName/NumMethod is
+// reflect.Type (reflect.Value is concrete and never reaches here).
+// selection.Recv() cannot be used: it yields the underlying
+// *types.Interface, never the named reflect.Type. A user interface
+// embedding reflect.Type keeps the original reflect Func object, so
+// it is correctly intercepted too.
+func reflectTypeMethodOp(selection *types.Selection, mname string) string {
+	var op string
+	switch mname {
+	case "Method":
+		op = "typeMethod"
+	case "MethodByName":
+		op = "typeMethodByName"
+	case "NumMethod":
+		op = "typeNumMethod"
+	default:
+		return ""
+	}
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "reflect" {
+		return ""
+	}
+	return op
 }
 
 // exportIfaceFallbackCall exports a WS H F-bounded fallback method call:

@@ -20,7 +20,10 @@ import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.GoDebug;
 import graalgo.runtime.Timers;
+import graalgo.runtime.sync.GoPointerCell32;
 import graalgo.runtime.sync.GoSemaphore;
+import graalgo.runtime.sync.IntCell;
+import graalgo.values.GoPointer;
 import graalgo.values.GoFunc;
 import graalgo.values.GoString;
 
@@ -278,15 +281,33 @@ public final class LinknameIntrinsics {
      * {@code "sync.runtime_Semacquire"}); they dispatch here.
      *
      * <p>D5 argument types: the {@code *uint32} arrives as a Long
-     * (address); booleans as Boolean/Long; ints as Long/Integer.
-     * Each target adapts explicitly.
+     * (address) or a {@link GoPointer} (field cell); see {@link #semaCell}.
+     * Booleans as Boolean/Long; ints as Long/Integer. Each target adapts explicitly.
      */
+    /**
+     * The semaphore cell for a {@code *uint32} linkname argument, in
+     * either D5 shape (fix-redmaster-r43): a Long handle (address) via
+     * {@link AddressIntCell}, or a {@link GoPointer} (e.g. a mutex's
+     * {@code &m.sema} field cell) via {@link GoPointerCell32}. Both
+     * implement {@link IntCell} with storage identity, so
+     * {@link GoSemaphore}'s waiter queues key consistently across calls
+     * (a fresh cell per call must still find the same queue).
+     */
+    private static IntCell semaCell(Object arg, String symbol) {
+        if (arg instanceof Number n) {
+            return new AddressIntCell(n.longValue());
+        }
+        if (arg instanceof GoPointer gp) {
+            return new GoPointerCell32(gp);
+        }
+        throw new FrontendException(symbol + ": expected *uint32 (Long handle or GoPointer)");
+    }
+
     private static void registerSyncIntrinsics() {
         // sync.runtime_Semacquire(s *uint32): wait until *s > 0, then
         // atomically decrement.
         Linknames.register("sync.runtime_Semacquire", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_Semacquire"));
             return null;
         }, 1);
         // sync.runtime_Semrelease(s *uint32, handoff bool, skipframes int):
@@ -294,8 +315,7 @@ public final class LinknameIntrinsics {
         // and skipframes args affect profiling/tracing only; the
         // semaphore semantics are identical.
         Linknames.register("sync.runtime_Semrelease", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.release(new AddressIntCell(addr));
+            GoSemaphore.release(semaCell(args[0], "sync.runtime_Semrelease"));
             return null;
         }, 3);
         // sync.runtime_SemacquireRWMutexR(s *uint32, lifo bool, skipframes int)
@@ -303,20 +323,17 @@ public final class LinknameIntrinsics {
         // Functionally identical to Semacquire; lifo/skipframes affect
         // queueing order and profiling only.
         Linknames.register("sync.runtime_SemacquireRWMutexR", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_SemacquireRWMutexR"));
             return null;
         }, 3);
         Linknames.register("sync.runtime_SemacquireRWMutex", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_SemacquireRWMutex"));
             return null;
         }, 3);
         // sync.runtime_SemacquireWaitGroup(s *uint32, synctestDurable bool):
         // like Semacquire, for WaitGroup.Wait.
         Linknames.register("sync.runtime_SemacquireWaitGroup", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquireWaitGroup(new AddressIntCell(addr));
+            GoSemaphore.acquireWaitGroup(semaCell(args[0], "sync.runtime_SemacquireWaitGroup"));
             return null;
         }, 2);
     }
@@ -421,7 +438,8 @@ public final class LinknameIntrinsics {
      * dispatch here. Semantics live in {@link SyncRuntime} (semaphores
      * reuse {@link GoSemaphore}; nanotime reuses {@link Timers}).
      *
-     * <p>D5 argument types: {@code *uint32} arrives as a Long (address);
+     * <p>D5 argument types: {@code *uint32} arrives as a Long (address)
+     * or a {@link GoPointer} (field cell); see {@link #semaCell}.
      * {@code int} as Number; {@code string} as {@link GoString}.
      */
     private static void registerInternalSyncIntrinsics() {
@@ -436,13 +454,11 @@ public final class LinknameIntrinsics {
         // gc: under contention a mutex waiter can wait longer than it would
         // under gc. Documented, not denied.
         Linknames.register("internal/sync.runtime_SemacquireMutex", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(semaCell(args[0], "internal/sync.runtime_SemacquireMutex"));
             return null;
         }, 3);
         Linknames.register("internal/sync.runtime_Semrelease", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.release(new AddressIntCell(addr));
+            GoSemaphore.release(semaCell(args[0], "internal/sync.runtime_Semrelease"));
             return null;
         }, 3);
         // Cooperative spinning for sync.Mutex's slow path.

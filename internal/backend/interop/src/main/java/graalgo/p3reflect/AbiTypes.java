@@ -12,6 +12,7 @@ import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import graalgo.values.GoTypeDescriptor;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -813,7 +814,33 @@ public final class AbiTypes {
             return null;
         }
         GoStruct view = GoStruct.zero(desc);
-        long dynamicTok = ReflectTypes.tokForDescriptor(gi.descriptor());
+        // The dynamic type of the interface value is normally a wire
+        // type (tokForDescriptor resolves it). A descriptor the
+        // frontend never compiled — synthesized at run time, e.g.
+        // runtime.errorString for a recovered runtime-error panic —
+        // has no wire id; for that case only, register the type
+        // dynamically by its descriptor name + kind (fix-redmaster-r43:
+        // the shared dynamic-type primitive, here scoped to fixed-size
+        // basic kinds; aggregate descriptors still fail loudly, as
+        // before, via dynamicTokForName). Any other tokForDescriptor
+        // failure (e.g. a wire id with no token) is a different defect
+        // and still throws: only the no-wire-id message takes the
+        // fallback, so the fallback can never mask a broken wire entry.
+        long dynamicTok;
+        try {
+            dynamicTok = ReflectTypes.tokForDescriptor(gi.descriptor());
+        } catch (IllegalStateException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("reflect: descriptor has no wire id")) {
+                // GoInterface.descriptor() is Object-typed (the live
+                // descriptor here is always a GoTypeDescriptor: the
+                // no-wire-id failure came from tokForDescriptor's own
+                // cast of this same value).
+                GoTypeDescriptor dynDesc = (GoTypeDescriptor) gi.descriptor();
+                dynamicTok = ReflectTypes.dynamicTokForName(dynDesc.name(), dynDesc.kind());
+            } else {
+                throw e;
+            }
+        }
         GoPointer abiPtr = abiPointerForTok(dynamicTok);
         long dataHandle = dataHandleFor(gi.data());
         for (ViewField f : layout) {

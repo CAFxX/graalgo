@@ -31,6 +31,44 @@ public final class GoPointer {
         this.cell = null;
     }
 
+    /**
+     * fix-redmaster-r43: storage unwrap hook, registered by the
+     * reflect runtime (interop) for storage wrappers the values
+     * package cannot name (reflect.New cells). The frontend's
+     * offset-0 descent consults it to reach the value a cell
+     * holds; unset (pure-frontend tests) it is the identity.
+     * Set once at class-load of the wrapper's class; never cleared.
+     */
+    public static java.util.function.Function<Object, Object> storageUnwrapHook;
+
+    /** Applies {@link #storageUnwrapHook} if set, else returns o. */
+    public static Object unwrapStorage(Object o) {
+        return storageUnwrapHook == null ? o : storageUnwrapHook.apply(o);
+    }
+
+    /**
+     * fix-redmaster-r43: handle→referent resolve hook, registered
+     * by the unsafe runtime (interop) for intern handles the values
+     * package cannot resolve. The frontend's word-store branch
+     * consults it to land a handle-valued unsafe.Pointer store in
+     * a *T field. Unset (or unresolvable) it yields null and the
+     * caller falls back to its previous behavior. Set once at
+     * class-load of the unsafe table; never cleared.
+     */
+    public static java.util.function.Function<Long, Object> handleResolveHook;
+
+    /** Resolves an intern handle via {@link #handleResolveHook}, or null. */
+    public static Object resolveHandle(long handle) {
+        if (handleResolveHook == null) {
+            return null;
+        }
+        try {
+            return handleResolveHook.apply(handle);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Creates a pointer to the storage behind a {@link GoCell} (&x, &s.f). */
     public GoPointer(GoCell cell) {
         this.cell = cell;
@@ -106,6 +144,28 @@ public final class GoPointer {
         return cell;
     }
 
+    /**
+     * Canonical key for storage-identity hashing (fix-redmaster-r43):
+     * two pointers to the same storage yield equal keys — cell
+     * pointers via the cell's storage key, element pointers via
+     * (array, index), plain pointers via the referent object (whose
+     * identity IS the storage for shared referents) or, for a plain
+     * pointer to a cell, via that cell's storage key. Callers guard
+     * nil (null referent) before calling.
+     */
+    public Object storageKey() {
+        if (cell != null) {
+            return cell.storageKey();
+        }
+        if (isElemPtr) {
+            return new GoCell.StorageKey(elemArray, elemIndex);
+        }
+        if (referent instanceof GoCell gc) {
+            return gc.storageKey();
+        }
+        return referent;
+    }
+
     /** True iff this is an {@code &arr[i]} element pointer. */
     public boolean isElemPointer() {
         return isElemPtr;
@@ -119,6 +179,25 @@ public final class GoPointer {
     /** The index of an element pointer; undefined unless {@link #isElemPointer}. */
     public int elemIndex() {
         return elemIndex;
+    }
+
+    /**
+     * Hash consistent with {@link #sameStorageAs}, for pointer map keys
+     * and interface comparisons via {@link GoEquality}: nil is 0, cells
+     * hash by their storage identity, array elements by (array, index),
+     * plain pointers by their referent's identity.
+     */
+    public int storageHash() {
+        if (isNil()) {
+            return 0;
+        }
+        if (cell != null) {
+            return cell.storageHash();
+        }
+        if (isElemPtr) {
+            return 31 * System.identityHashCode(elemArray) + elemIndex;
+        }
+        return System.identityHashCode(referent);
     }
 
     /**

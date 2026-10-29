@@ -227,6 +227,22 @@ public final class UnsafeTable {
 
     private UnsafeTable() {}
 
+    static {
+        // fix-redmaster-r43: let the values package (which cannot
+        // name this class) resolve intern handles for the
+        // frontend's word-store branch. This class loads before
+        // any handle exists, so the hook is always set in time.
+        graalgo.values.GoPointer.handleResolveHook = UnsafeTable::resolveHandleStatic;
+    }
+
+    /** Hook implementation: the referent for a handle, or null. */
+    private static Object resolveHandleStatic(long handle) {
+        if (handle == 0) {
+            return null;
+        }
+        return current().resolve(handle);
+    }
+
     /**
      * Identity interning: the same referent object always yields the same
      * handle. {@code null} → {@code 0}. Bare scalar boxes are normalized

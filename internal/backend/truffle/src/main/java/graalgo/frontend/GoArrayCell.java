@@ -26,6 +26,16 @@ public final class GoArrayCell implements GoCell {
         this.index = index;
     }
 
+    /** The backing Java array (identity is part of storage identity). */
+    public Object array() {
+        return array;
+    }
+
+    /** The absolute element index within {@link #array()}. */
+    public int index() {
+        return index;
+    }
+
     @Override
     public Object get() {
         return Boxing.arrayGet(array, elemKind, index);
@@ -47,5 +57,15 @@ public final class GoArrayCell implements GoCell {
         // the same storage (a re-sliced or reassigned slice variable keeps
         // pointing into the original backing array, matching gc).
         return other instanceof GoArrayCell a && array == a.array && index == a.index;
+    }
+
+    @Override
+    public int storageHash() {
+        return 31 * System.identityHashCode(array) + index;
+    }
+
+    @Override
+    public Object storageKey() {
+        return new GoCell.StorageKey(array, index);
     }
 }

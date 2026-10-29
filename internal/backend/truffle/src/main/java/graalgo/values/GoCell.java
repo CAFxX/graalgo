@@ -24,6 +24,55 @@ public interface GoCell {
     /** The current value in canonical boxed form. */
     Object get();
 
+    /**
+     * Hash consistent with {@link #sameStorageAs}: cells addressing the
+     * same storage hash equal, so pointer map keys and interface
+     * comparisons agree. The default (object identity) suits cells
+     * whose storage identity IS object identity; field and element
+     * cells override with their (owner, index) identity.
+     */
+    default int storageHash() {
+        return System.identityHashCode(this);
+    }
+
+    /**
+     * Canonical key for storage-identity hashing (fix-redmaster-r43):
+     * two cells addressing the same storage yield equal keys;
+     * distinct storages yield unequal keys. The default
+     * ({@code this}) suits cells whose object identity IS their
+     * storage identity (GoBox); field and element cells override
+     * (fresh objects per {@code &} evaluation, same storage).
+     */
+    default Object storageKey() {
+        return this;
+    }
+
+    /**
+     * Identity-based (owner, index) storage key for field and
+     * element cells. Identity, not {@code equals}: a struct owner
+     * overrides {@code equals} structurally, but two equal structs
+     * are distinct storages and must key distinctly.
+     */
+    final class StorageKey {
+        private final Object owner;
+        private final int index;
+
+        public StorageKey(Object owner, int index) {
+            this.owner = owner;
+            this.index = index;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof StorageKey k && k.owner == owner && k.index == index;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * System.identityHashCode(owner) + index;
+        }
+    }
+
     /** Stores a canonical boxed value. */
     void set(Object value);
 

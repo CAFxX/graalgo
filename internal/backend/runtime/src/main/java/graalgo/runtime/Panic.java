@@ -2,6 +2,9 @@ package graalgo.runtime;
 
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.GoInterface;
+import graalgo.values.GoKind;
+import graalgo.values.GoString;
+import graalgo.values.GoTypeDescriptor;
 
 /**
  * Phase-2 same-FQN overlay of Phase-1 {@code graalgo.runtime.Panic}
@@ -21,8 +24,13 @@ import graalgo.values.GoInterface;
  * identical signature, so a future Phase-1 change to this class fails
  * the suite instead of silently desyncing the overlay.
  *
- * <p>Do NOT add other behavior here: this overlay exists solely for the
- * panicnil knob. (P2-M5 triage: EMULATED.)
+ * <p>Ported Phase-1 behavior (fix-redmaster-r43): the bug-019
+ * GoErrorValue-descriptor inference in {@link #throwPanic} (see its
+ * comment there). The "solely for the panicnil knob" restriction is
+ * superseded for this one port: the overlay shadows the Phase-1 class
+ * at runtime, so leaving bug-019 unported meant the live panic path
+ * lacked the descriptor inference the frozen class already had.
+ * No signatures change, so the drift guard is unaffected.
  */
 public final class Panic {
     private Panic() {}
@@ -96,6 +104,22 @@ public final class Panic {
             v = PanicNilError.INSTANCE;
             d = PanicNilError.descriptor();
         }
+        // fix-redmaster-r43: ported from the Phase-1 original (bug-019).
+        // A GoErrorValue (runtime panic like "comparing uncomparable
+        // type") thrown without a descriptor needs one for recover() to
+        // box it as a GoInterface. Infer gc's type name from the
+        // message: most runtime errors are runtime.errorString;
+        // interface conversion is *runtime.TypeAssertionError. Without
+        // this port the overlay (which shadows the Phase-1 class at
+        // runtime) returned the raw GoErrorValue from recover(), and
+        // downstream interface consumers failed (snapshot 48: bare
+        // empty-interface descriptor at buildInterfaceView).
+        if (v instanceof GoErrorValue gev && d == null) {
+            String typeName = gev.errorString().startsWith("interface conversion: ")
+                    ? "*runtime.TypeAssertionError"
+                    : "runtime.errorString";
+            d = new GoTypeDescriptor(typeName, GoKind.STRING, false);
+        }
         throw new PanicException(v, d, goTypeName, throwSite);
     }
 
@@ -113,6 +137,18 @@ public final class Panic {
      * <p>With {@link #isPanicNilOldBehavior()}, a recovered
      * {@code panic(nil)} yields nil (pre-1.21), indistinguishable from
      * "no panic" — exactly like gc.
+     *
+     * <p>fix-redmaster-r43: a string-kind runtime error's interface data
+     * IS its message string (gc: {@code errorString} is
+     * {@code type errorString string}). The panic carrier is a
+     * {@code GoErrorValue} wrapper, not the string: boxing the wrapper
+     * as the interface data makes every kind-STRING consumer read a
+     * non-string (fmt's {@code append([]byte, s...)} CCEs). Unwrap to
+     * the message GoString here, at the recover boxing site only — the
+     * uncaught path reads the PanicException directly and is
+     * untouched. Struct-kind runtime errors (boundsError) keep the
+     * wrapper as data: their field values are not recoverable from
+     * the carrier, so that path stays loud rather than fabricated.
      */
     public static Object recover() {
         GoroutineState s = GoroutineState.current();
@@ -125,7 +161,13 @@ public final class Panic {
         }
         p.markRecovered();
         if (p.descriptor() != null) {
-            return new GoInterface(p.descriptor(), p.goValue(), null);
+            Object data = p.goValue();
+            if (data instanceof GoErrorValue gev
+                    && p.descriptor() instanceof GoTypeDescriptor gd
+                    && gd.kind() == GoKind.STRING) {
+                data = GoString.fromUtf8(gev.errorString());
+            }
+            return new GoInterface(p.descriptor(), data, null);
         }
         return p.goValue();
     }

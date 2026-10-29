@@ -55,6 +55,14 @@ public final class GoEquality {
             // reach here (go/types rejects uncomparable key types).
             return sa.equals(sb);
         }
+        if (a instanceof GoPointer ga && b instanceof GoPointer gb) {
+            // Go == on pointers compares addressed storage, exactly
+            // like the BinaryOpNode POINTER branch; without this,
+            // pointer-valued interface data (notably *rtype values
+            // from toRType) compared unequal unless identical objects
+            // (fix-redmaster-r43: TypeOf(0) == TypeOf(0) was false).
+            return ga.sameStorageAs(gb);
+        }
         if (a instanceof GoInterface ia && b instanceof GoInterface ib) {
             // P3-M9 (tier-1d): interface map keys (e.g. unique's any-held
             // struct keys). Nil == nil; else same dynamic type (descriptor
@@ -173,6 +181,9 @@ public final class GoEquality {
         }
         if (key instanceof GoString s) {
             return s.hashCode();
+        }
+        if (key instanceof GoPointer gp) {
+            return gp.storageHash();
         }
         if (key instanceof GoStruct gs) {
             return gs.hashCode();

@@ -78,4 +78,14 @@ public final class GoFieldCell implements GoCell {
         // one, matching gc) and the same field index.
         return other instanceof GoFieldCell f && struct == f.struct && fieldIndex == f.fieldIndex;
     }
+
+    @Override
+    public int storageHash() {
+        return 31 * System.identityHashCode(struct) + fieldIndex;
+    }
+
+    @Override
+    public Object storageKey() {
+        return new GoCell.StorageKey(struct, fieldIndex);
+    }
 }

@@ -7,7 +7,6 @@ import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.frontend.FrontendException;
@@ -173,25 +172,51 @@ public final class SyncRuntime {
     // P pinning (sync/sync/atomic .runtime_procPin/.runtime_procUnpin).
     // ------------------------------------------------------------------
 
-    private static final AtomicInteger NEXT_PIN_ID = new AtomicInteger();
-
-    /** Dense per-thread id source; reduced mod GOMAXPROCS at each pin. */
-    private static final ThreadLocal<Integer> PIN_ID =
-            ThreadLocal.withInitial(NEXT_PIN_ID::getAndIncrement);
-
     /**
      * gc's {@code procPin}: pin to the current P and return its id in
      * {@code [0, GOMAXPROCS)}. The JVM has no preemption to disable and a
      * pin section cannot block, so this is pure id assignment.
+     *
+     * <p>fix-redmaster-r43: always 0, and pin sections serialize on
+     * PinLock — graalgo runs a single-P pool model. Per-thread or
+     * rotating ids were both tried and both fail snapshot 46, for
+     * opposite reasons: a fixed per-thread id strands every other
+     * chain's {@code private} slot (sync.Pool's getSlow steals only
+     * other chains' {@code shared} queues, never their privates, and
+     * the victim cache is indexed by the drainer's own pid, so GC-style
+     * victimization cannot rescue cross-pid privates either — section 6
+     * deterministically lost one value per foreign chain); a per-pin
+     * rotation breaks single-goroutine chain affinity (one goroutine's
+     * Put then Get land on different chains, so sections 1–5 returned
+     * other sections' leftovers instead of the just-Put value). With a
+     * single chain, every Put and every Get meet on the same chain, so
+     * drains are complete and single-goroutine phases keep gc's affinity
+     * exactly. The lock additionally closes poolDequeue.pushHead's
+     * inherent Load→store→Add race (two pushers loading the same
+     * headTail store to the same slot and one value is overwritten —
+     * the same race that makes gc itself pass section 6 only modally,
+     * 8/10 runs); with pin sections serialized, Load→Add is atomic and
+     * section 6 is deterministic. The lock cannot leak: pin sections
+     * contain no user code (Get unpins before calling New) and never
+     * block (pinSlow unpins before taking allPoolsMu), and every pin
+     * is matched by exactly one unpin on every path; the scheduler
+     * additionally suppresses quantum yields while the lock is held
+     * (pin disables preemption in gc), so a section never parks holding
+     * it. The costs are Pool
+     * sharding and cross-pool serialization — performance tradeoffs,
+     * not correctness ones, and the pid value is consumed only by Pool
+     * (sync/atomic's pin use ignores it). A future true-migration
+     * implementation can restore sharding; until then this is the model
+     * that matches gc's observable drain behavior deterministically.
      */
     public static int procPin() {
-        int gmp = Math.max(1, GoMaxProcsNode.current());
-        return Math.floorMod(PIN_ID.get(), gmp);
+        graalgo.runtime.sync.PinLock.LOCK.lock();
+        return 0;
     }
 
-    /** gc's {@code procUnpin}: re-enable preemption — a no-op on the JVM. */
+    /** gc's {@code procUnpin}: re-enable preemption — releases PinLock. */
     public static void procUnpin() {
-        // Nothing to unpin: see procPin.
+        graalgo.runtime.sync.PinLock.LOCK.unlock();
     }
 
     // ------------------------------------------------------------------

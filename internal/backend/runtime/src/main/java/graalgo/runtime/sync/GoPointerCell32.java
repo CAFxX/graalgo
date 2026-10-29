@@ -1,5 +1,6 @@
 package graalgo.runtime.sync;
 
+import graalgo.values.GoCell;
 import graalgo.values.GoPointer;
 
 /**
@@ -83,5 +84,46 @@ public final class GoPointerCell32 implements IntCell {
             ptr.setReferent(next);
             return next;
         }
+    }
+
+    /**
+     * Storage identity (fix-redmaster-r43): two cells address the same
+     * {@code *uint32} iff their pointers address the same storage
+     * ({@link GoPointer#sameStorageAs}). Required by {@code GoSemaphore},
+     * which keys waiter queues by the cell: a fresh cell per intrinsic
+     * call (e.g. every {@code &m.sema} evaluation allocates a new
+     * {@link graalgo.frontend.GoFieldCell}) must still find the same
+     * queue, or a waiter parks forever. The hash decomposes the
+     * storage the same way {@code sameStorageAs} compares it, so equal
+     * cells hash equally: field cells by (owner struct identity, field
+     * index), array cells by (backing array identity, index), element
+     * pointers by (array identity, index), other cells and referent
+     * pointers by object identity.
+     */
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof GoPointerCell32 other)) {
+            return false;
+        }
+        return ptr.sameStorageAs(other.ptr);
+    }
+
+    @Override
+    public int hashCode() {
+        GoCell c = ptr.cell();
+        if (c instanceof graalgo.frontend.GoFieldCell f) {
+            return System.identityHashCode(f.ownerStruct()) * 31 + f.fieldIndex();
+        }
+        if (c instanceof graalgo.frontend.GoArrayCell a) {
+            return System.identityHashCode(a.array()) * 31 + a.index();
+        }
+        if (c != null) {
+            return System.identityHashCode(c);
+        }
+        if (ptr.isElemPointer()) {
+            return System.identityHashCode(ptr.elemArray()) * 31 + ptr.elemIndex();
+        }
+        Object r = ptr.referent();
+        return r == null ? 0 : System.identityHashCode(r);
     }
 }

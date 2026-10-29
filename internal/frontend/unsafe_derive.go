@@ -47,6 +47,7 @@
 package main
 
 import (
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/token"
@@ -142,6 +143,98 @@ func flattenAdditive(x ast.Expr, sign int, terms *[]signedTerm) {
 	*terms = append(*terms, signedTerm{sign: sign, expr: x})
 }
 
+// valuePointerCall reports whether x is a call to reflect.Value.Pointer
+// (no arguments) and returns its receiver expression. Pointer() is the
+// second pointer-derived uintptr shape in the language: its contract
+// is "the Value's pointer as uintptr", so unsafe.Pointer(v.Pointer())
+// has exactly the same provenance as unsafe.Pointer(uintptr(P)) — the
+// Value's live pointer — and lowers to the same derive node. The
+// receiver's type must be reflect.Value (after unaliasing and one
+// pointer deref, matching the method call's own auto-deref); the
+// method-set lookup discriminates the method from any func-valued
+// field of the same name.
+func (e *exporter) valuePointerCall(x ast.Expr) (ast.Expr, bool) {
+	ce, ok := unparen(x).(*ast.CallExpr)
+	if !ok || len(ce.Args) != 0 {
+		return nil, false
+	}
+	sel, ok := unparen(ce.Fun).(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Pointer" {
+		return nil, false
+	}
+	if !isUintptr(e.info.TypeOf(ce)) {
+		return nil, false
+	}
+	recvT := e.info.TypeOf(sel.X)
+	if recvT == nil {
+		return nil, false
+	}
+	if p, ok := types.Unalias(recvT).(*types.Pointer); ok {
+		recvT = p.Elem()
+	}
+	named, ok := types.Unalias(recvT).(*types.Named)
+	if !ok {
+		return nil, false
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "reflect" || obj.Name() != "Value" {
+		return nil, false
+	}
+	if types.NewMethodSet(named).Lookup(nil, "Pointer") == nil {
+		return nil, false
+	}
+	return sel.X, true
+}
+
+// valueUnsafePointerCall builds a call node for recv.UnsafePointer(),
+// the pointer twin of recv.Pointer(). In gc's reflect/value.go the two
+// methods return the same pointer for every kind (Pointer is
+// uintptr(UnsafePointer) modulo the escapes no-op); only the
+// ValueError method string differs on panic paths, so a program that
+// recovers from unsafe.Pointer(v.Pointer()) on an invalid-kind Value
+// observes "reflect.Value.UnsafePointer" where gc says
+// "reflect.Value.Pointer". Success paths — including every use inside
+// reflect itself (FuncOf, StructOf, MakeFunc) — are bit-exact. The
+// call is built through the exporter's own methodref machinery, so
+// receiver adaptation (value/pointer, promotion) matches a source
+// call exactly.
+func (e *exporter) valueUnsafePointerCall(c *ast.CallExpr, recv ast.Expr) (*Node, error) {
+	recvNode, err := e.exportExpr(recv)
+	if err != nil {
+		return nil, err
+	}
+	recvT := e.info.TypeOf(recv)
+	if recvT == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for Value.Pointer receiver")
+	}
+	if p, ok := types.Unalias(recvT).(*types.Pointer); ok {
+		recvT = p.Elem()
+	}
+	named, ok := types.Unalias(recvT).(*types.Named)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: Value.Pointer receiver is not a named type")
+	}
+	selection := types.NewMethodSet(named).Lookup(nil, "UnsafePointer")
+	if selection == nil || selection.Kind() != types.MethodVal {
+		return nil, fmt.Errorf("gofrontend: reflect.Value has no UnsafePointer method")
+	}
+	sel := &ast.SelectorExpr{X: recv, Sel: ast.NewIdent("UnsafePointer")}
+	fun, err := e.methodRefNode(c, sel, selection, recvNode)
+	if err != nil {
+		return nil, err
+	}
+	if fun.Kind == "ifacemethod" {
+		return nil, fmt.Errorf("gofrontend: unexpected ifacemethod fallback for reflect.Value.UnsafePointer")
+	}
+	ptrID, err := e.typeID(types.Typ[types.UnsafePointer])
+	if err != nil {
+		return nil, err
+	}
+	return e.node("call", c, map[string]any{
+		"fun": fun, "args": []*Node{}, "type": ptrID,
+	}), nil
+}
+
 // exportUintptrToPointer attempts the provenance-proven lowering of a
 // uintptr -> unsafe.Pointer conversion call c (whose target type id is
 // to). handled=false means the shape is not provable and the caller must
@@ -151,14 +244,29 @@ func (e *exporter) exportUintptrToPointer(c *ast.CallExpr, to any) (*Node, bool,
 	flattenAdditive(c.Args[0], +1, &terms)
 
 	baseIdx := -1
-	var basePtrExpr ast.Expr
+	var baseNode *Node
 	for i, t := range terms {
+		var b *Node
+		isBase := false
 		if p, ok := e.uintptrConversionOfPointer(t.expr); ok {
+			n, err := e.exportExpr(p)
+			if err != nil {
+				return nil, false, err
+			}
+			b, isBase = n, true
+		} else if recv, ok := e.valuePointerCall(t.expr); ok {
+			n, err := e.valueUnsafePointerCall(c, recv)
+			if err != nil {
+				return nil, false, err
+			}
+			b, isBase = n, true
+		}
+		if isBase {
 			if baseIdx >= 0 || t.sign < 0 {
 				return nil, false, nil
 			}
 			baseIdx = i
-			basePtrExpr = p
+			baseNode = b
 		}
 	}
 	if baseIdx < 0 {
@@ -175,10 +283,6 @@ func (e *exporter) exportUintptrToPointer(c *ast.CallExpr, to any) (*Node, bool,
 		}
 	}
 
-	baseNode, err := e.exportExpr(basePtrExpr)
-	if err != nil {
-		return nil, false, err
-	}
 	offsetNode, err := e.exportDeriveOffset(c, terms, baseIdx)
 	if err != nil {
 		return nil, false, err

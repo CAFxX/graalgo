@@ -38,9 +38,10 @@ import graalgo.values.GoStructDescriptor;
  *   <li>scalars hash by their bits, strings by their bytes
  *       (FNV-1a 64), structs and arrays by combining their fields /
  *       elements, interfaces by (canonical descriptor, data hash);</li>
- *   <li>pointer keys hash by {@link UnsafeTable#handleForPointer},
- *       which canonicalizes storage identity — the same storage always
- *       yields the same handle, distinct storages distinct handles;</li>
+ *   <li>pointer keys hash by a storage-keyed 64-bit sequence
+ *       (see {@link #pointerHash}), which canonicalizes storage
+ *       identity — the same storage always yields the same hash,
+ *       distinct storages distinct hashes;</li>
  *   <li>the per-map seed is mixed in with a SplitMix64 finalizer, so
  *       distinct maps distribute independently, as in gc.</li>
  * </ul>
@@ -94,6 +95,28 @@ public final class MapKeyHash {
     public static long hash(Object keyPtr, long seed) {
         Object value = resolveKeyValue(keyPtr);
         return mix64(hash64(value, 0) ^ seed);
+    }
+
+    /**
+     * Storage-stable 64-bit hashes for pointer keys
+     * (fix-redmaster-r43): the same storage always yields the same
+     * sequence, distinct storages distinct sequences. Entries are
+     * never removed, matching intern. Concurrent: sync.Map is a
+     * concurrent structure, so the table is a ConcurrentHashMap and
+     * sequences come from an AtomicLong (computeIfAbsent may skip
+     * values under contention; uniqueness, not contiguity, matters).
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<Object, Long> POINTER_HASHES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicLong NEXT_POINTER_HASH =
+            new java.util.concurrent.atomic.AtomicLong(1);
+
+    private static long pointerHash(GoPointer gp) {
+        if (gp.isNil()) {
+            return 0;
+        }
+        return POINTER_HASHES.computeIfAbsent(gp.storageKey(),
+                k -> NEXT_POINTER_HASH.getAndIncrement());
     }
 
     /** Resolves the key value from the pointer addressing its storage. */
@@ -193,8 +216,17 @@ public final class MapKeyHash {
                     hash64(gi.data(), depth + 1));
         }
         if (v instanceof GoPointer gp) {
-            // Pointer keys: storage identity is the value.
-            return mix64(UnsafeTable.handleForPointer(gp));
+            // Pointer keys: storage identity is the value. The
+            // hash is a storage-keyed 64-bit sequence (stable
+            // across re-evaluations of the same storage, unique
+            // per storage) — NOT the intern handle, which differs
+            // per fresh cell object (so a sync.Map Load after
+            // Store on &s.X missed), and NOT a 32-bit storage
+            // hash, whose collisions would exhaust the trie's hash
+            // bits and panic. Entries are never removed, matching
+            // intern. Agrees with GoEquality's pointer ==, which
+            // is what entry lookup compares with.
+            return mix64(pointerHash(gp));
         }
         if (v instanceof GoChan chan) {
             // Channels are references: the object is the value.

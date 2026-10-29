@@ -272,13 +272,22 @@ public final class ReflectOpNode extends GoExprNode {
             case "tChanDir" -> (long) chanDirOrdinal(asTok(argv[0]));
             case "tLen" -> (long) ReflectTypes.table().info(asTok(argv[0])).arrayLen;
             case "tNumField" -> (long) ReflectTypes.table().info(asTok(argv[0])).fields.size();
-            case "tNumMethod" -> (long) ReflectTypes.table().info(asTok(argv[0])).methods.size();
+            case "tNumMethod" -> (long) ReflectTypes.methodSetFor(asTok(argv[0])).size();
             case "tNumIn" -> (long) ReflectTypes.table().info(asTok(argv[0])).ins.size();
             case "tNumOut" -> (long) ReflectTypes.table().info(asTok(argv[0])).outs.size();
             case "tIsVariadic" -> ReflectTypes.table().info(asTok(argv[0])).variadic;
             case "tComparable" -> comparable(asTok(argv[0]));
             case "tField" -> structField(asTok(argv[0]), asInt(argv[1]));
             case "tMethod" -> method(asTok(argv[0]), asInt(argv[1]));
+            // fix-redmaster-r43: real reflect.Type Method/MethodByName/
+            // NumMethod calls (routed here by the frontend, since guest
+            // code reads them from the uncommon part shells do not
+            // carry). The receiver arrives as a Type value, not a
+            // token; it is resolved with the same machinery as the
+            // constructor linknames.
+            case "typeNumMethod" -> (long) ReflectTypes.methodSetFor(resolveTypeValue(argv[0], "reflect.Type.Method")).size();
+            case "typeMethod" -> packMethod(ReflectTypes.methodSetFor(resolveTypeValue(argv[0], "reflect.Type.Method")).get(asInt(argv[1])));
+            case "typeMethodByName" -> methodByNamePair(resolveTypeValue(argv[0], "reflect.Type.Method"), asString(argv[1]));
             case "tElem" -> ReflectTypes.table().info(asTok(argv[0])).elem.tok;
             case "tKey" -> ReflectTypes.table().info(asTok(argv[0])).key.tok;
             case "tIn" -> ReflectTypes.table().info(asTok(argv[0])).ins.get(asInt(argv[1])).tok;
@@ -428,6 +437,8 @@ public final class ReflectOpNode extends GoExprNode {
             }
             case "call" -> reflectCall(asValue(argv[0]), asSlice(argv[1]), false);
             case "callslice" -> reflectCall(asValue(argv[0]), asSlice(argv[1]), true);
+            case "isvalid" -> valueIsValid(asValue(argv[0]));
+            case "makefuncval" -> makeFuncValue(argv[0], argv[1]);
             case "methodval" -> methodVal(asValue(argv[0]), asInt(argv[1]));
             case "makefunc" -> makeFunc(asTok(argv[0]), asValue(argv[1]));
             case "append" -> reflectAppend(asValue(argv[0]), asSlice(argv[1]));
@@ -591,6 +602,7 @@ public final class ReflectOpNode extends GoExprNode {
      * return a real interface value, like gc's valueInterface.
      */
     private static Object reflectInterface(GoStruct v) {
+        v = toSyntheticValue(v);
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
@@ -1234,8 +1246,113 @@ public final class ReflectOpNode extends GoExprNode {
     // Calls, methods, MakeFunc.
     // ------------------------------------------------------------------
 
+    /**
+     * Converts a guest-built (real-layout) Value to the synthetic
+     * (tok, handle, flag) shape the call/interface machinery reads,
+     * or returns the Value unchanged when it already is synthetic.
+     * The layouts are distinguished by the typ field: synthetic
+     * Values carry a token (Long); real Values carry an *rtype
+     * pointer. Real Values arise from guest code (New/Elem/Field/
+     * ValueOf); synthetic Values from Method.Func, Call results,
+     * and MakeFunc. The conversion resolves the type pointer with
+     * the constructor linknames' machinery and reads the denoted
+     * D5 value from the data pointer, translating only the RO/addr
+     * flag bits (gc bit positions to the runtime's).
+     */
+    private static GoStruct toSyntheticValue(GoStruct v) {
+        Object typObj = v.getObject(0);
+        if (typObj instanceof Long) {
+            return v;
+        }
+        long tok = resolveTypeValue(typObj, "reflect.Type.Method");
+        Object data = realData(v.getObject(1), tok);
+        long flag = 0;
+        long realFlag = v.getLong(2);
+        if ((realFlag & (1L << 5)) != 0) {
+            flag |= ReflectValues.FLAG_RO;
+        }
+        if ((realFlag & (1L << 7)) != 0) {
+            flag |= ReflectValues.FLAG_ADDR;
+        }
+        long handle = ReflectRefs.intern(data);
+        return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, handle, flag);
+    }
+
+    /**
+     * Reads the D5 value a real Value's data pointer denotes.
+     * Real Values carry guest-computed pointers: unsafe-derived
+     * field/element addresses surface as intern handles (Long) in
+     * this runtime's handle model. A bare denotedValue misreads
+     * offset-0-collapsed handles (a field at offset 0 shares its
+     * container's handle, so it would return the whole struct for
+     * an int field); loadOffsetZero descends offset-0 struct/array
+     * chains to the target kind, which is the correct read.
+     */
+    private static Object realData(Object ptrObj, long tok) {
+        Object x = ptrObj;
+        for (int i = 0; i < 8; i++) {
+            if (x instanceof Long h) {
+                return ReflectLinknames.loadOffsetZero(
+                        h, ReflectTypes.table().info(tok), "reflect.Value");
+            }
+            if (x instanceof ReflectRefs.Cell c) {
+                x = c.value;
+            } else if (x instanceof graalgo.values.GoCell gc) {
+                x = gc.get();
+            } else if (x instanceof graalgo.values.GoPointer gp) {
+                if (ReflectTypes.table().info(tok).kind == GoKind.POINTER) {
+                    return x;
+                }
+                x = gp.referent();
+            } else {
+                break;
+            }
+        }
+        return x;
+    }
+
+    /**
+     * Value.IsValid, dual-layout: synthetic Values are valid iff
+     * their type token is non-zero; real Values iff their flag word
+     * is non-zero (guest IsValid's definition). Both read the same
+     * Value struct layout (typ/ptr objects, flag longs).
+     */
+    private static boolean valueIsValid(GoStruct v) {
+        Object typObj = v.getObject(0);
+        if (typObj instanceof Long l) {
+            return l != 0;
+        }
+        return v.getLong(2) != 0;
+    }
+
+    /**
+     * reflect.MakeFunc (real call): builds a MakeFuncVal-backed func
+     * Value from a Type value and a plain closure func value. The
+     * closure is wrapped as the callback Value the existing
+     * {@code makeFunc} machinery expects (its handle is the
+     * callable; its type field is informational there). Distinct
+     * from the retired synthetic {@code makefunc} op, which took a
+     * token and an already-wrapped callback Value.
+     */
+    private static GoStruct makeFuncValue(Object typeArg, Object closureArg) {
+        long funcTok = resolveTypeValue(typeArg, "reflect.Type.Method");
+        Object closure = closureArg;
+        if (closure instanceof graalgo.values.GoPointer gp) {
+            closure = gp.referent();
+        }
+        if (!(closure instanceof graalgo.values.GoFunc)) {
+            throw new FrontendException("reflect: MakeFunc closure is not a func value: "
+                    + (closure == null ? "null" : closure.getClass().getName()));
+        }
+        long handle = ReflectRefs.intern(closure);
+        GoStruct callback = ReflectValues.pack(
+                ReflectTypes.valueDescriptor(), funcTok, handle, 0);
+        return makeFunc(funcTok, callback);
+    }
+
     /** __reflect_call / __reflect_callslice. */
     private static GoSlice reflectCall(GoStruct fn, GoSlice args, boolean sliceCall) {
+        fn = toSyntheticValue(fn);
         ReflectValues.ValueParts p = ReflectValues.parts(fn);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object callable = ReflectRefs.denotedValue(p.ptr(), t.kind);
@@ -1265,7 +1382,7 @@ public final class ReflectOpNode extends GoExprNode {
         List<Object> out = new ArrayList<>();
         int numIn = funcType.ins.size();
         for (int i = 0; i < n; i++) {
-            GoStruct v = (GoStruct) ((Object[]) arr)[off + i];
+            GoStruct v = toSyntheticValue((GoStruct) ((Object[]) arr)[off + i]);
             if (sliceCall && funcType.variadic && i == n - 1) {
                 // Spread the final slice argument.
                 Object d5slice = unboxValue(v);
@@ -1283,6 +1400,7 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** __reflect_methodval: bound method value. */
     private static GoStruct methodVal(GoStruct v, int i) {
+        v = toSyntheticValue(v);
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         ReflectTypes.MethodInfo mi = t.methods.get(i);
@@ -1728,8 +1846,11 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** __reflect_tMethod: packs a Method struct. */
     private static GoStruct method(long tok, int i) {
-        TypeInfo t = ReflectTypes.table().info(tok);
-        ReflectTypes.MethodInfo m = t.methods.get(i);
+        return packMethod(ReflectTypes.methodSetFor(tok).get(i));
+    }
+
+    /** Packs a Method struct from a resolved method-set entry. */
+    private static GoStruct packMethod(ReflectTypes.MethodInfo m) {
         GoStructDescriptor desc = ReflectTypes.methodDescriptor();
         long[] longs = new long[desc.longsCount()];
         Object[] objects = new Object[desc.objectsCount()];
@@ -1743,6 +1864,127 @@ public final class ReflectOpNode extends GoExprNode {
                 m.funcType.tok, handle, 0);
         setNamedField(desc, longs, objects, "Func", funcVal);
         setNamedField(desc, longs, objects, "Index", (long) m.index);
+        return new GoStruct(desc, longs, objects);
+    }
+
+    /**
+     * Resolves a reflect.Type value (interface holding *rtype) to its
+     * type token, with the constructor linknames' machinery.
+     *
+     * <p>A Type value points at its rtype struct, not at the header
+     * the linknames resolve: the rtype's memory starts with the
+     * abi.Type header (field {@code t}), so the value is unwrapped
+     * to that header first and resolved exactly as a toType pointer
+     * would be (shell, header copy, or dynamic synthesis).
+     */
+    static long resolveTypeValue(Object arg, String symbol) {
+        Object v = arg;
+        if (v instanceof graalgo.values.GoInterface gi) {
+            if (gi.isNil()) {
+                throw new FrontendException(symbol + ": nil Type");
+            }
+            v = gi.data();
+        }
+        // Walk rtype structs: each iteration reads the current
+        // struct's t field. A t field pointing at another rtype
+        // struct (prefix-view nesting, as for FuncOf products
+        // whose rtype view wraps a funcType view) continues the
+        // walk; a t field holding a header struct or a cell
+        // resolves directly. Pointer chains are unwrapped first
+        // (a view's t field may itself be reached through an
+        // intermediate pointer). Both walks are capped; exceeding
+        // either falls through to the original loud error below
+        // instead of hanging.
+        int depth = 0;
+        while (v instanceof graalgo.values.GoPointer gp) {
+            Object ref = gp.referent();
+            int chain = 0;
+            while (ref instanceof graalgo.values.GoPointer gpc && chain++ < 8) {
+                ref = gpc.referent();
+            }
+            if (ref instanceof GoStruct gs
+                    && "reflect.rtype".equals(gs.descriptor().typeName())) {
+                if (depth++ >= 8) {
+                    // Over-deep view nesting: resolve as a plain
+                    // pointer (loud failure below if unresolvable).
+                    return ReflectLinknames.tokForTypeArg(v, symbol);
+                }
+                GoStructDescriptor.Field tf = findField(gs.descriptor(), "t");
+                if (tf.inLongs()) {
+                    throw new FrontendException(
+                            "reflect: rtype header field is not object-carried");
+                }
+                Object header = gs.getObject(tf.index());
+                if (header instanceof graalgo.values.GoCell cell) {
+                    return ReflectLinknames.tokForTypeArg(
+                            new graalgo.values.GoPointer(cell), symbol);
+                }
+                if (header instanceof GoStruct hs) {
+                    return ReflectLinknames.tokForTypeArg(
+                            new graalgo.values.GoPointer(hs), symbol);
+                }
+                if (header instanceof graalgo.values.GoPointer hp) {
+                    v = hp;
+                    continue;
+                }
+                throw new FrontendException(symbol + ": rtype header has unexpected shape: "
+                        + (header == null ? "null" : header.getClass().getName()));
+            }
+            return ReflectLinknames.tokForTypeArg(v, symbol);
+        }
+        throw new FrontendException(symbol + ": expected Type value, got "
+                + (v == null ? "null" : v.getClass().getName()));
+    }
+
+    /**
+     * typeMethodByName: the (Method, bool) pair for a Type value and a
+     * name, packed with the disk interface pair descriptor so the
+     * caller's f1/f2 extraction proceeds unchanged. Lookup is a linear
+     * first-match over the name-sorted method set (StructOf products
+     * keep duplicate names; gc's binary search likewise finds the
+     * first).
+     */
+    private static GoStruct methodByNamePair(long tok, String name) {
+        java.util.List<ReflectTypes.MethodInfo> ms = ReflectTypes.methodSetFor(tok);
+        ReflectTypes.MethodInfo found = null;
+        for (ReflectTypes.MethodInfo m : ms) {
+            if (m.name.equals(name)) {
+                found = m;
+                break;
+            }
+        }
+        GoStructDescriptor pairDesc =
+                ReflectTypes.structDescriptorFor("reflect.__Type_MethodByNamePair");
+        long[] longs = new long[pairDesc.longsCount()];
+        Object[] objects = new Object[pairDesc.objectsCount()];
+        GoStruct methodStruct = found != null ? packMethod(found) : zeroMethod();
+        setNamedField(pairDesc, longs, objects, "f1", methodStruct);
+        GoStructDescriptor.Field f2 = findField(pairDesc, "f2");
+        if (f2.inLongs()) {
+            longs[f2.index()] = found != null ? 1L : 0L;
+        } else {
+            objects[f2.index()] = Boolean.valueOf(found != null);
+        }
+        return new GoStruct(pairDesc, longs, objects);
+    }
+
+    /**
+     * The zero Method (fix-redmaster-r43): a missing-name lookup
+     * returns (zero Method, false), and gc's zero Method is a
+     * proper struct — empty names, a nil Type interface, and a
+     * zero Func Value (whose IsValid is false) — not null fields,
+     * which made IsValid throw "expected Value, got null".
+     */
+    private static GoStruct zeroMethod() {
+        GoStructDescriptor desc = ReflectTypes.methodDescriptor();
+        long[] longs = new long[desc.longsCount()];
+        Object[] objects = new Object[desc.objectsCount()];
+        setNamedField(desc, longs, objects, "Name", GoString.fromUtf8(""));
+        setNamedField(desc, longs, objects, "PkgPath", GoString.fromUtf8(""));
+        setNamedField(desc, longs, objects, "Type", graalgo.values.GoInterface.NIL);
+        setNamedField(desc, longs, objects, "Func",
+                ReflectValues.zero(ReflectTypes.valueDescriptor()));
+        setNamedField(desc, longs, objects, "Index", 0L);
         return new GoStruct(desc, longs, objects);
     }
 

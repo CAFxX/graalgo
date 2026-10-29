@@ -457,6 +457,17 @@ public final class ReflectLinknames {
                     if (copyTok != 0) {
                         return copyTok;
                     }
+                    // Guest-constructed (dynamic) type: no shell, and
+                    // Str is a negative addReflectOff id, so the
+                    // header-copy path cannot resolve it. Synthesize a
+                    // token from the kind-extension struct reachable via
+                    // the prefix-parent chain (fix-redmaster-r43; 0
+                    // when no such link exists, and the original error
+                    // below is preserved for truly unknown types).
+                    long dynTok = synthesizeDynamicToken(shell);
+                    if (dynTok != 0) {
+                        return dynTok;
+                    }
                 }
             }
             throw new IllegalStateException(symbol
@@ -487,6 +498,382 @@ public final class ReflectLinknames {
         }
         throw new IllegalStateException(symbol + ": cannot recover a type from "
                 + describe(arg));
+    }
+
+    /**
+     * Dynamic type synthesis (fix-redmaster-r43).
+     *
+     * <p>Guest-constructed types ({@code StructOf}, {@code FuncOf},
+     * {@code ArrayOf}, {@code PtrTo}, ...) have no wire entry, no
+     * shell, and no token: their header's Str is a negative
+     * addReflectOff id naming name bytes the guest registered, not a
+     * shell. But the header is never alone — in gc a kind-extension
+     * type's memory STARTS with its header, and in this model the
+     * prefix-parent chain records exactly that: header →
+     * {@code internal/abi.StructType} (Fields, PkgPath) →
+     * {@code reflect.structType} → ..., or header →
+     * {@code internal/abi.FuncType} → the {@code initFuncTypes}
+     * struct value holding the args array, and so on for the other
+     * kind extensions. The extension link carries everything
+     * synthesis needs.
+     *
+     * <p>Returns 0 when no known extension link is found (the caller
+     * keeps its original loud failure — an interface dynamic type,
+     * or a header with no extension, is not synthesizable here).
+     * Throws when the link IS found but broken (malformed metadata,
+     * an unresolvable component type, a Kind_ mismatch, a synthesis
+     * cycle): a broken dynamic type is a real defect, never a silent
+     * fallback to the original error. Struct tokens are memoized by
+     * StructType object identity (the same guest type object always
+     * yields the same token; distinct objects get distinct tokens,
+     * matching gc's cache identity); the composite kinds delegate to
+     * the existing token families ({@code ptrTo}/{@code arrayOf}/
+     * {@code sliceOf}/{@code chanOf}/{@code mapOf}/{@code funcOf}),
+     * which canonicalize by structure themselves. The memo is per
+     * installed table (cleared when the table changes, like every
+     * other per-run table); a synthesis cycle — impossible through
+     * the guest constructors, whose component types pre-exist the
+     * type — fails loudly via the guard set.
+     *
+     * <p>Synthesized struct TypeInfos are deliberately UNNAMED
+     * (name ""): gc's StructOf types have no name; their String() is
+     * the structural rendering, which typeString reproduces from the
+     * fields. Field pkgPaths follow the guest rule exactly
+     * (structType.Field: unexported fields carry the struct type's
+     * PkgPath, exported fields carry none).
+     */
+    private static final java.util.Map<GoStruct, Long> DYN_STRUCT_TOKS =
+            new java.util.IdentityHashMap<>();
+    private static ReflectTypes.Table dynStructTable;
+    private static final ThreadLocal<java.util.IdentityHashMap<GoStruct, Boolean>> SYNTHESIZING =
+            ThreadLocal.withInitial(java.util.IdentityHashMap::new);
+
+    private static long synthesizeDynamicToken(GoStruct header) {
+        GoStruct ext = null;
+        String extName = null;
+        GoStruct cur = header.prefixParent();
+        for (int depth = 0; depth < 8 && cur != null; depth++) {
+            String tn = cur.descriptor().typeName();
+            switch (tn) {
+                case "internal/abi.StructType", "internal/abi.PtrType",
+                        "internal/abi.ArrayType", "internal/abi.SliceType",
+                        "internal/abi.ChanType", "internal/abi.MapType",
+                        "internal/abi.FuncType" -> {
+                    ext = cur;
+                    extName = tn;
+                }
+                default -> {
+                    // Not an extension link; keep walking (a structType
+                    // wrapper or uncommon struct may sit above it).
+                }
+            }
+            if (ext != null) {
+                break;
+            }
+            cur = cur.prefixParent();
+        }
+        if (ext == null) {
+            return 0;
+        }
+        java.util.IdentityHashMap<GoStruct, Boolean> guard = SYNTHESIZING.get();
+        if (guard.containsKey(ext)) {
+            throw new IllegalStateException(
+                    "reflect: cyclic dynamic type (already synthesizing " + extName + ")");
+        }
+        guard.put(ext, Boolean.TRUE);
+        try {
+            return switch (extName) {
+                case "internal/abi.StructType" -> synthesizeDynamicStruct(header, ext);
+                case "internal/abi.PtrType" -> ReflectTypes.ptrTo(
+                        tokForTypeArg(fieldObj(ext, "Elem"), "reflect: dynamic pointer element type"));
+                case "internal/abi.ArrayType" -> {
+                    long elemTok = tokForTypeArg(fieldObj(ext, "Elem"),
+                            "reflect: dynamic array element type");
+                    long len = fieldLong(ext, "Len");
+                    if (len < 0 || len > Integer.MAX_VALUE) {
+                        throw new IllegalStateException(
+                                "reflect: dynamic array length out of range: " + len);
+                    }
+                    yield ReflectTypes.arrayOf(elemTok, (int) len);
+                }
+                case "internal/abi.SliceType" -> ReflectTypes.sliceOf(
+                        tokForTypeArg(fieldObj(ext, "Elem"), "reflect: dynamic slice element type"));
+                case "internal/abi.ChanType" -> {
+                    long elemTok = tokForTypeArg(fieldObj(ext, "Elem"),
+                            "reflect: dynamic chan element type");
+                    long dir = fieldLong(ext, "Dir");
+                    // gc ChanDir: RecvDir=1, SendDir=2, BothDir=3; the
+                    // Java enum order is RECV, SEND, BOTH.
+                    int dirOrd = switch ((int) dir) {
+                        case 1 -> 0;
+                        case 2 -> 1;
+                        case 3 -> 2;
+                        default -> throw new IllegalStateException(
+                                "reflect: dynamic chan direction out of range: " + dir);
+                    };
+                    yield ReflectTypes.chanOf(elemTok, dirOrd);
+                }
+                case "internal/abi.MapType" -> ReflectTypes.mapOf(
+                        tokForTypeArg(fieldObj(ext, "Key"), "reflect: dynamic map key type"),
+                        tokForTypeArg(fieldObj(ext, "Elem"), "reflect: dynamic map element type"));
+                case "internal/abi.FuncType" -> synthesizeDynamicFunc(header, ext, ext.prefixParent());
+                default -> 0;
+            };
+        } finally {
+            guard.remove(ext);
+        }
+    }
+
+    private static long synthesizeDynamicStruct(GoStruct header, GoStruct structType) {
+        ReflectTypes.Table table = ReflectTypes.table();
+        if (table != dynStructTable) {
+            DYN_STRUCT_TOKS.clear();
+            dynStructTable = table;
+        }
+        Long memo = DYN_STRUCT_TOKS.get(structType);
+        if (memo != null) {
+            return memo;
+        }
+        long kind = fieldLong(header, "Kind_");
+        if (kind != 25) {
+            throw new IllegalStateException(
+                    "reflect: dynamic struct header has Kind_ " + kind + ", not Struct (25)");
+        }
+        long size = fieldLong(header, "Size_");
+        long align = fieldLong(header, "Align_");
+        Object fieldsObj = fieldObj(structType, "Fields");
+        if (!(fieldsObj instanceof GoSlice fieldsSlice)) {
+            throw new IllegalStateException(
+                    "reflect: dynamic structType Fields is not a slice: " + fieldsObj);
+        }
+        Object pkgPathObj = fieldObj(structType, "PkgPath");
+        String structPkgPath = "";
+        if (pkgPathObj instanceof GoStruct pkgPathName) {
+            structPkgPath = decodeAbiName(pkgPathName).name();
+        } else if (pkgPathObj != null) {
+            throw new IllegalStateException(
+                    "reflect: dynamic structType PkgPath is not a Name struct: " + pkgPathObj);
+        }
+        Object arrObj = fieldsSlice.array();
+        if (!(arrObj instanceof Object[] arr)) {
+            throw new IllegalStateException(
+                    "reflect: dynamic structType Fields backing is not Object[]: " + arrObj);
+        }
+        java.util.List<ReflectTypes.FieldInfo> fields = new java.util.ArrayList<>();
+        for (int i = 0; i < fieldsSlice.len(); i++) {
+            Object el = arr[fieldsSlice.offset() + i];
+            if (!(el instanceof GoStruct sf)
+                    || !"internal/abi.StructField".equals(sf.descriptor().typeName())) {
+                throw new IllegalStateException(
+                        "reflect: dynamic struct field " + i + " is not an abi.StructField: " + el);
+            }
+            Object nameObj = fieldObj(sf, "Name");
+            if (!(nameObj instanceof GoStruct nameStruct)) {
+                throw new IllegalStateException(
+                        "reflect: dynamic struct field " + i + " Name is not a Name struct");
+            }
+            NameParts np = decodeAbiName(nameStruct);
+            Object typObj = fieldObj(sf, "Typ");
+            long fieldTok = tokForTypeArg(typObj, "reflect: dynamic struct field type");
+            long offset = fieldLong(sf, "Offset");
+            String fpkg = np.exported() ? "" : structPkgPath;
+            fields.add(new ReflectTypes.FieldInfo(np.name(), fpkg,
+                    ReflectTypes.table().info(fieldTok), np.tag(), offset,
+                    new int[]{i}, np.embedded()));
+        }
+        long newTok = table.byTok.size();
+        ReflectTypes.TypeInfo info = new ReflectTypes.TypeInfo(newTok, GoKind.STRUCT,
+                "", "", size, (int) align,
+                null, null, 0, null, java.util.List.copyOf(fields), java.util.List.of(),
+                java.util.List.of(), java.util.List.of(), false, java.util.List.of(), "", -1);
+        table.byTok.add(info);
+        DYN_STRUCT_TOKS.put(structType, newTok);
+        return newTok;
+    }
+
+    /**
+     * Dynamic func-type synthesis (fix-redmaster-r43). A FuncOf
+     * product's ins/outs are NOT in the funcType struct itself: in gc
+     * the {@code [n]*rtype} args array directly follows the funcType
+     * in the {@code initFuncTypes} allocation, and in this model that
+     * allocation is the parent struct (the funcType struct is its
+     * field 0, so the parent is the funcType's prefix parent) whose
+     * {@code Args} field holds the array. InCount/OutCount come from
+     * the funcType struct (OutCount's top bit is the variadic flag);
+     * the token delegates to the {@code funcOf} family, which
+     * canonicalizes by (ins, outs, variadic) like gc's func cache.
+     */
+    private static long synthesizeDynamicFunc(GoStruct header, GoStruct funcType, GoStruct parent) {
+        long kind = fieldLong(header, "Kind_");
+        if (kind != 19) {
+            throw new IllegalStateException(
+                    "reflect: dynamic func header has Kind_ " + kind + ", not Func (19)");
+        }
+        long inCount = fieldLong(funcType, "InCount");
+        long outCountRaw = fieldLong(funcType, "OutCount");
+        boolean variadic = (outCountRaw & 0x8000) != 0;
+        long outCount = outCountRaw & 0x7FFF;
+        long n = inCount + outCount;
+        if (parent == null) {
+            throw new IllegalStateException(
+                    "reflect: dynamic func type has no initFunc parent (no Args array)");
+        }
+        Object argsObj = fieldObj(parent, "Args");
+        // The Args field is an ARRAY ([n]*rtype), stored as a raw
+        // Object[]; a GoSlice over it is accepted too (same elements).
+        Object[] arr;
+        int arrOff;
+        if (argsObj instanceof Object[] oa) {
+            arr = oa;
+            arrOff = 0;
+        } else if (argsObj instanceof GoSlice argsSlice) {
+            if (!(argsSlice.array() instanceof Object[] oa)) {
+                throw new IllegalStateException(
+                        "reflect: dynamic func Args backing is not Object[]: " + argsSlice.array());
+            }
+            arr = oa;
+            arrOff = argsSlice.offset();
+        } else {
+            throw new IllegalStateException(
+                    "reflect: dynamic func parent Args is neither array nor slice: " + argsObj);
+        }
+        if (arr.length - arrOff < n) {
+            throw new IllegalStateException(
+                    "reflect: dynamic func Args len " + (arr.length - arrOff) + " < " + n);
+        }
+        long[] inToks = new long[(int) inCount];
+        long[] outToks = new long[(int) outCount];
+        for (int i = 0; i < n; i++) {
+            Object el = arr[arrOff + i];
+            // fix-redmaster-r43: Args elements are *rtype Type
+            // values, not header pointers — resolve them through
+            // the Type-value walk (rtype t field), not the
+            // header-only tokForTypeArg (which cannot resolve an
+            // rtype view struct and failed loudly here).
+            long tok = ReflectOpNode.resolveTypeValue(el, "reflect: dynamic func arg type");
+            if (i < inCount) {
+                inToks[i] = tok;
+            } else {
+                outToks[(int) (i - inCount)] = tok;
+            }
+        }
+        return ReflectTypes.funcOf(inToks, outToks, variadic);
+    }
+
+    /** A struct field by name (ordinal lookup; fails loudly when absent). */
+    private static Object fieldObj(GoStruct s, String name) {
+        GoStructDescriptor d = s.descriptor();
+        for (int i = 0; i < d.fields().size(); i++) {
+            if (name.equals(d.field(i).name())) {
+                if (d.field(i).inLongs()) {
+                    throw new IllegalStateException(
+                            "reflect: field " + name + " of " + d.typeName() + " is longs-carried");
+                }
+                return s.getObject(i);
+            }
+        }
+        throw new IllegalStateException(
+                "reflect: no field " + name + " on " + d.typeName());
+    }
+
+    /** A longs-carried struct field by name (fails loudly when absent). */
+    private static long fieldLong(GoStruct s, String name) {
+        GoStructDescriptor d = s.descriptor();
+        for (int i = 0; i < d.fields().size(); i++) {
+            if (name.equals(d.field(i).name())) {
+                if (!d.field(i).inLongs()) {
+                    throw new IllegalStateException(
+                            "reflect: field " + name + " of " + d.typeName() + " is objects-carried");
+                }
+                return s.getLong(i);
+            }
+        }
+        throw new IllegalStateException(
+                "reflect: no field " + name + " on " + d.typeName());
+    }
+
+    /** Decoded {@code internal/abi.Name} bytes (see abi/type.go Name). */
+    private record NameParts(String name, String tag, boolean exported, boolean embedded) {}
+
+    /**
+     * Decodes an abi.Name struct's inline parts (fix-redmaster-r43).
+     * Encoding (internal/abi/type.go): byte 0 flags (bit 0 exported,
+     * bit 1 has-tag, bit 3 embedded), then a varint name length and
+     * the name bytes, then — when the tag bit is set — a varint tag
+     * length and the tag bytes. The Bytes pointer is an element
+     * pointer into a fresh byte[] in practice (newName's {@code &b[0]});
+     * a plain byte[] referent is accepted too. Truncation or an
+     * unhandled pointer shape fails loudly: a mis-decoded name would
+     * silently corrupt field identity. The pkgPath offset form (bit 2)
+     * is NOT decoded here — struct field pkgPaths come from the
+     * struct type's PkgPath Name, per the guest rule, never from the
+     * field Name's trailing offset.
+     */
+    private static NameParts decodeAbiName(GoStruct nameStruct) {
+        Object bytesObj = fieldObj(nameStruct, "Bytes");
+        if (bytesObj == null) {
+            return new NameParts("", "", true, false);
+        }
+        if (!(bytesObj instanceof GoPointer gp)) {
+            throw new IllegalStateException(
+                    "reflect: abi.Name Bytes is not a pointer: " + bytesObj);
+        }
+        byte[] bytes;
+        int base;
+        if (gp.isElemPointer() && gp.elemArray() instanceof byte[] ba) {
+            bytes = ba;
+            base = gp.elemIndex();
+        } else if (gp.isCellPointer() && gp.cell().get() instanceof byte[] ba) {
+            bytes = ba;
+            base = 0;
+        } else if (gp.referent() instanceof byte[] ba) {
+            bytes = ba;
+            base = 0;
+        } else {
+            throw new IllegalStateException(
+                    "reflect: abi.Name Bytes pointer shape not decodable: " + gp);
+        }
+        if (base < 0 || base >= bytes.length) {
+            throw new IllegalStateException("reflect: abi.Name Bytes base out of range");
+        }
+        int flags = bytes[base] & 0xFF;
+        boolean exported = (flags & 1) != 0;
+        boolean hasTag = (flags & 2) != 0;
+        boolean embedded = (flags & 8) != 0;
+        int[] nameVarint = readNameVarint(bytes, base + 1);
+        int nameLen = nameVarint[1];
+        int nameOff = base + 1 + nameVarint[0];
+        if (nameOff < 0 || nameOff + nameLen > bytes.length) {
+            throw new IllegalStateException("reflect: abi.Name name bytes truncated");
+        }
+        String name = new String(bytes, nameOff, nameLen, java.nio.charset.StandardCharsets.UTF_8);
+        String tag = "";
+        if (hasTag) {
+            int[] tagVarint = readNameVarint(bytes, nameOff + nameLen);
+            int tagLen = tagVarint[1];
+            int tagOff = nameOff + nameLen + tagVarint[0];
+            if (tagOff < 0 || tagOff + tagLen > bytes.length) {
+                throw new IllegalStateException("reflect: abi.Name tag bytes truncated");
+            }
+            tag = new String(bytes, tagOff, tagLen, java.nio.charset.StandardCharsets.UTF_8);
+        }
+        return new NameParts(name, tag, exported, embedded);
+    }
+
+    /** abi varint (7 bits per byte, little-endian groups; max 10 bytes). */
+    private static int[] readNameVarint(byte[] bytes, int off) {
+        int v = 0;
+        for (int i = 0; i < 10; i++) {
+            if (off + i >= bytes.length) {
+                throw new IllegalStateException("reflect: abi.Name varint truncated");
+            }
+            int x = bytes[off + i] & 0xFF;
+            v += (x & 0x7F) << (7 * i);
+            if ((x & 0x80) == 0) {
+                return new int[]{i + 1, v};
+            }
+        }
+        throw new IllegalStateException("reflect: abi.Name varint too long");
     }
 
     /** UnsafeTable resolve that yields null instead of throwing. */
@@ -550,7 +937,7 @@ public final class ReflectLinknames {
      * (empty struct/array) or an unidentifiable struct fails loudly
      * rather than returning the container as the value.
      */
-    private static Object loadOffsetZero(long handle, ReflectTypes.TypeInfo target, String symbol) {
+    static Object loadOffsetZero(long handle, ReflectTypes.TypeInfo target, String symbol) {
         Object v = ReflectRefs.denotedValue(handle, target.kind);
         while (true) {
             if (v instanceof GoStruct gs) {
@@ -559,9 +946,11 @@ public final class ReflectLinknames {
                     if (target.kind == GoKind.STRUCT) {
                         return v;
                     }
-                    throw new IllegalStateException(symbol
-                            + ": cannot load " + target.name + " at offset 0 of unnamed struct "
-                            + gs.descriptor().typeName());
+                    // Unnamed struct (guest-built StructOf products
+                    // have no name index): descend offset-0 fields
+                    // via the value descriptor instead of TypeInfo
+                    // field offsets.
+                    return loadOffsetZeroUnnamed(gs, target, symbol);
                 }
                 if (info.tok == target.tok) {
                     return v;
@@ -590,6 +979,50 @@ public final class ReflectLinknames {
                 v = arrayElemAtZero(v, target, symbol);
             } else {
                 return v;
+            }
+        }
+    }
+
+    /**
+     * Offset-0 descent for unnamed structs (see {@link #loadOffsetZero}):
+     * walks field 0 while it is a struct, then reads field 0 with the
+     * target kind's carrier decoding. A zero-sized struct at field 0
+     * (or any other shape that cannot yield the target kind) fails
+     * loudly rather than returning a wrong value.
+     */
+    private static Object loadOffsetZeroUnnamed(GoStruct gs, ReflectTypes.TypeInfo target, String symbol) {
+        Object cur = gs;
+        while (true) {
+            if (cur instanceof GoStruct s) {
+                graalgo.values.GoStructDescriptor d = s.descriptor();
+                if (d.fields().size() == 0) {
+                    throw new IllegalStateException(symbol
+                            + ": cannot load " + target.name + " at offset 0 of empty struct "
+                            + d.typeName());
+                }
+                graalgo.values.GoStructDescriptor.Field f0 = d.field(0);
+                if (f0.kind() == GoKind.STRUCT) {
+                    cur = ReflectValues.structFieldGet(s, 0, GoKind.STRUCT);
+                    continue;
+                }
+                if (f0.kind() == target.kind) {
+                    return ReflectValues.structFieldGet(s, 0, target.kind);
+                }
+                throw new IllegalStateException(symbol
+                        + ": cannot load " + target.name + " at offset 0 of unnamed struct "
+                        + d.typeName() + " (field 0 kind " + f0.kind() + ")");
+            } else if (isArray(cur)) {
+                if (target.kind == GoKind.ARRAY) {
+                    return cur;
+                }
+                int len = java.lang.reflect.Array.getLength(cur);
+                if (len == 0) {
+                    throw new IllegalStateException(symbol
+                            + ": cannot load " + target.name + " at offset 0 of empty array");
+                }
+                cur = arrayElemAtZero(cur, target, symbol);
+            } else {
+                return cur;
             }
         }
     }
@@ -712,6 +1145,18 @@ public final class ReflectLinknames {
             }
             Object ref = ReflectRefs.resolve(h);
             if (ref instanceof ReflectRefs.Cell c) {
+                // fix-redmaster-r43: a store through a collapsed
+                // handle (reflect Field's add(ptr, 0)) whose cell
+                // holds a struct lands in the struct's offset-0
+                // field chain (the mirror of loadOffsetZero's read
+                // descent), not by replacing the cell's struct —
+                // replacing it orphaned every other alias of the
+                // struct (47's ptr-embed Set). Best-effort: a
+                // non-matching shape keeps the replacing store.
+                if (!aggregate && c.value instanceof GoStruct gs
+                        && storeOffsetZeroField(gs, t.kind, value)) {
+                    return;
+                }
                 c.value = aggregate ? copyOfAggregate(t, value) : value;
                 return;
             }
@@ -744,12 +1189,57 @@ public final class ReflectLinknames {
             Object referent = p.referent();
             if (aggregate && (referent instanceof GoStruct || isArray(referent))) {
                 ReflectOpNode.copyAggregate(t, referent, value);
+            } else if (!aggregate && referent instanceof ReflectRefs.Cell c
+                    && c.value instanceof GoStruct gs
+                    && storeOffsetZeroField(gs, t.kind, value)) {
+                // Offset-0 field store through a collapsed cell
+                // pointer (mirror of the Cell-handle branch above).
+            } else if (!aggregate && referent instanceof GoStruct gs
+                    && storeOffsetZeroField(gs, t.kind, value)) {
+                // Offset-0 field store through a plain struct pointer.
             } else {
                 p.setReferent(aggregate ? copyOfAggregate(t, value) : value);
             }
             return;
         }
         throw new IllegalStateException(symbol + ": cannot store through " + describe(ptr));
+    }
+
+    /**
+     * Stores a non-aggregate value in the offset-0 field chain of
+     * struct gs (fix-redmaster-r43, the write mirror of
+     * {@link #loadOffsetZero}'s read descent): walks struct field 0s
+     * until the first non-struct field 0, which must have the stored
+     * kind. Returns false for a zero-sized struct field 0, a kind
+     * mismatch, or a chain deeper than 64 (caller keeps its previous
+     * behavior); never stores into a mismatched field.
+     */
+    private static boolean storeOffsetZeroField(GoStruct gs, GoKind kind, Object value) {
+        if (kind == GoKind.STRUCT) {
+            return false;
+        }
+        GoStruct cur = gs;
+        int depth = 0;
+        while (true) {
+            GoStructDescriptor d = cur.descriptor();
+            if (d.fields().size() == 0 || depth++ > 64) {
+                return false;
+            }
+            GoStructDescriptor.Field f0 = d.field(0);
+            if (f0.kind() == GoKind.STRUCT) {
+                Object next = cur.getObject(0);
+                if (!(next instanceof GoStruct ns)) {
+                    return false;
+                }
+                cur = ns;
+                continue;
+            }
+            if (f0.kind() == kind) {
+                ReflectValues.structFieldSet(cur, 0, kind, value);
+                return true;
+            }
+            return false;
+        }
     }
 
     /** A fresh aggregate holding a shallow copy of {@code value} (gc copy semantics). */

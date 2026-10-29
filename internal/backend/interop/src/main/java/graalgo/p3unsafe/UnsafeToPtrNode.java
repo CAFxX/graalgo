@@ -171,11 +171,19 @@ public final class UnsafeToPtrNode extends GoExprNode {
             // the array-derivation semantics.
             FieldHit hit = structFieldAt(resolved, view.byteOffset());
             if (hit == null) {
+                Object fieldPtr = continuedFieldPointer(resolved, view.byteOffset());
+                if (fieldPtr != null) {
+                    return fieldPtr;
+                }
                 return derivedPointer(resolved, view.byteOffset());
             }
             if (hit.fieldTok() != hit.targetTok()
                     && headerQName == null && prefixTarget == null
                     && viewLayout == null && ifaceLayout == null) {
+                Object fieldPtr = continuedFieldPointer(resolved, view.byteOffset());
+                if (fieldPtr != null) {
+                    return fieldPtr;
+                }
                 return derivedPointer(resolved, view.byteOffset());
             }
             strictField = hit.fieldTok() != hit.targetTok();
@@ -187,6 +195,14 @@ public final class UnsafeToPtrNode extends GoExprNode {
             FieldHit hit = structFieldAt(resolved, 0);
             if (hit != null && hit.fieldTok() == hit.targetTok()) {
                 resolved = hit.cell();
+            } else if (hit != null) {
+                // Field 0 is an array and the target is a pointer to
+                // its element type: the pointer addresses element 0
+                // (same rule as the nonzero-offset branch below).
+                Object fieldPtr = continuedFieldPointer(resolved, 0);
+                if (fieldPtr != null) {
+                    return fieldPtr;
+                }
             }
         }
         if (headerQName != null) {
@@ -302,13 +318,27 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * element size) traps: D5 cannot reinterpret memory.
      */
     private Object derivedPointer(Object root, long byteOffset) {
+        // Unwrap storage cells to the stored value (fix-redmaster-r43,
+        // mirrors structFieldAt's unwrap): addressable array storage
+        // arrives cell-wrapped (ValueOf(&a).Elem() then Index), and the
+        // array check below must see the array, not the cell.
+        Object unwrapped = root;
+        while (true) {
+            if (unwrapped instanceof GoCell cell) {
+                unwrapped = cell.get();
+            } else if (unwrapped instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                unwrapped = rc.value;
+            } else {
+                break;
+            }
+        }
         Object array;
         long baseIndex;
-        if (root instanceof UnsafeTable.ArrayRef ref) {
+        if (unwrapped instanceof UnsafeTable.ArrayRef ref) {
             array = ref.array();
             baseIndex = ref.offset();
-        } else if (root != null && root.getClass().isArray()) {
-            array = root;
+        } else if (unwrapped != null && unwrapped.getClass().isArray()) {
+            array = unwrapped;
             baseIndex = 0;
         } else {
             throw new UnsafeHandles.UnsafeEscapeException(
@@ -319,6 +349,84 @@ public final class UnsafeToPtrNode extends GoExprNode {
             throw new UnsafeHandles.UnsafeEscapeException(
                     "unsafe: byte-derived pointer conversion lacks a target element size "
                             + "(D5: cannot index the referent without it)");
+        }
+        // Nested-array walk (fix-redmaster-r43): the pre-r43 flat
+        // division (byteOffset / elemSize against the ROOT array) is
+        // only valid when the root's elements ARE the target type. For
+        // a nested array it miscomputes: byte 16 into a [2][2]int
+        // (root elements 16 bytes) divided by the int size (8) yields
+        // index 2 into a length-2 root — a bogus one-past-end element
+        // pointer that dies dereferencing, instead of outer[1][0].
+        // When the root's element size is derivable from its shape
+        // (primitive arrays and rectangular arrays thereof), walk down
+        // the levels: at each level divide by THAT level's element
+        // size, descending on the remainder while the level's elements
+        // are larger than the target; a level whose elements are the
+        // target type indexes flat (misalignment traps, as before).
+        // Shape-opaque roots (struct elements, empty arrays) keep the
+        // exact pre-r43 flat arithmetic, so their behavior is unchanged.
+        long rootElemSize = goArrayElemSize(array);
+        if (rootElemSize > 0) {
+            long offset = baseIndex * rootElemSize + byteOffset;
+            Object level = array;
+            while (true) {
+                long es = goArrayElemSize(level);
+                if (es <= 0) {
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: cannot resolve a nested-array byte offset "
+                                    + "through a shape-opaque level (D5)");
+                }
+                if (offset < 0) {
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: byte-derived element index out of range (D5)");
+                }
+                int len = java.lang.reflect.Array.getLength(level);
+                if (es == elemSize) {
+                    if (offset % es != 0) {
+                        throw new UnsafeHandles.UnsafeEscapeException(
+                                "unsafe: byte offset " + offset + " is not a multiple of the target "
+                                        + "element size " + es + " (D5: misaligned derivation traps)");
+                    }
+                    long index = offset / es;
+                    if (index < 0 || index > len) {
+                        throw new UnsafeHandles.UnsafeEscapeException(
+                                "unsafe: byte-derived element index " + index + " out of range [0, "
+                                        + len + "] (D5: derivation cannot leave its referent)");
+                    }
+                    return UnsafeTable.pointerFor(new UnsafeTable.ArrayRef(level, (int) index));
+                }
+                if (es < elemSize) {
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: byte-derived pointer conversion cannot descend into "
+                                    + "elements smaller than the target (D5)");
+                }
+                long index = offset / es;
+                long rem = offset % es;
+                if (index < 0 || index > len) {
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: byte-derived element index " + index + " out of range [0, "
+                                    + len + "] (D5: derivation cannot leave its referent)");
+                }
+                if (rem == 0) {
+                    // Element boundary: the element itself is the
+                    // addressed storage (a scalar deref of it peels
+                    // through DerefNode; an aggregate deref returns it).
+                    return UnsafeTable.pointerFor(new UnsafeTable.ArrayRef(level, (int) index));
+                }
+                if (index >= len) {
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: byte-derived element index " + index + " out of range [0, "
+                                    + len + "] (D5: derivation cannot leave its referent)");
+                }
+                Object next = java.lang.reflect.Array.get(level, (int) index);
+                if (next == null || !next.getClass().isArray()) {
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: byte-derived pointer conversion cannot descend into "
+                                    + "a non-array element (D5)");
+                }
+                level = next;
+                offset = rem;
+            }
         }
         if (byteOffset % elemSize != 0) {
             throw new UnsafeHandles.UnsafeEscapeException(
@@ -333,6 +441,68 @@ public final class UnsafeToPtrNode extends GoExprNode {
                             + length + "] (D5: derivation cannot leave its referent)");
         }
         return UnsafeTable.pointerFor(new UnsafeTable.ArrayRef(array, (int) index));
+    }
+
+    /**
+     * The Go byte size of one element of a Java array, derived from the
+     * array's shape alone (fix-redmaster-r43): primitive component
+     * types by width; nested arrays by rectangularity (every element
+     * has the first element's length — true of every Go array value).
+     * Returns -1 when the size is not shape-derivable (struct elements,
+     * empty arrays, null first element): callers then keep the
+     * pre-r43 flat arithmetic instead of guessing.
+     */
+    private static long goArrayElemSize(Object array) {
+        Class<?> comp = array.getClass().getComponentType();
+        if (comp == null) {
+            return -1;
+        }
+        if (comp == long.class || comp == double.class) {
+            return 8;
+        }
+        if (comp == int.class || comp == float.class) {
+            return 4;
+        }
+        if (comp == short.class || comp == char.class) {
+            return 2;
+        }
+        if (comp == byte.class || comp == boolean.class) {
+            return 1;
+        }
+        if (comp.isArray()) {
+            int len = java.lang.reflect.Array.getLength(array);
+            if (len == 0) {
+                return -1;
+            }
+            Object first = java.lang.reflect.Array.get(array, 0);
+            if (first == null || !first.getClass().isArray()) {
+                return -1;
+            }
+            long inner = goArrayElemSize(first);
+            if (inner <= 0) {
+                return -1;
+            }
+            return inner * java.lang.reflect.Array.getLength(first);
+        }
+        // Object[] (the shape nested Go arrays take: the component type
+        // is Object even when every element is itself an array): nest
+        // through the first element, as above.
+        if (comp == Object.class) {
+            int len = java.lang.reflect.Array.getLength(array);
+            if (len == 0) {
+                return -1;
+            }
+            Object first = java.lang.reflect.Array.get(array, 0);
+            if (first == null || !first.getClass().isArray()) {
+                return -1;
+            }
+            long inner = goArrayElemSize(first);
+            if (inner <= 0) {
+                return -1;
+            }
+            return inner * java.lang.reflect.Array.getLength(first);
+        }
+        return -1;
     }
 
     /** A struct-field storage hit: the field cell plus both type tokens. */
@@ -378,6 +548,7 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 break;
             }
         }
+
         if (!(root instanceof GoStruct gs) || targetElemWireId < 0) {
             return null;
         }
@@ -385,6 +556,13 @@ public final class UnsafeToPtrNode extends GoExprNode {
         long targetTok;
         try {
             rootInfo = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (rootInfo == null) {
+                // Unnamed structs (including guest-constructed ones):
+                // no name to index by, but the descriptor name IS the
+                // structural rendering — recover via typeString match
+                // (fix-redmaster-r43; see infoForStructString).
+                rootInfo = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
             targetTok = ReflectTypes.tokForWireId(targetElemWireId);
         } catch (RuntimeException e) {
             return null;
@@ -406,6 +584,269 @@ public final class UnsafeToPtrNode extends GoExprNode {
             return new FieldHit(
                     new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()),
                     f.type.tok, targetTok);
+        }
+        return null;
+    }
+
+    /**
+     * Pointer into an array field (fix-redmaster-r43). When the byte
+     * offset addresses a struct field whose type is an ARRAY and the
+     * conversion target is a pointer to that array's element type,
+     * the pointer denotes an array element, not the field as a whole:
+     * in gc an array and its first element share an address, and
+     * reflect's own code relies on it
+     * ({@code unsafe.Slice((**rtype)(unsafe.Pointer(o.Field(1).Addr().Pointer())), n)}
+     * in FuncOf, where field 1 is the {@code [n]*rtype} args array).
+     * Returns an element pointer ({@code GoPointer(array, index)},
+     * the same form {@code &arr[i]} produces, so downstream
+     * consumers — notably unsafe.Slice — see array storage) or null
+     * when the offset does not address such an element, in which case
+     * the caller keeps its existing loud derivation failure. The
+     * element index comes from the offset within the field divided
+     * by the target element size (the wire elemSize, which equals
+     * the array's element size because the element token matches);
+     * misaligned or out-of-range offsets are not elements and return
+     * null rather than building an invalid pointer.
+     */
+    private Object arrayElemPointer(Object referent, long byteOffset) {
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
+        }
+        if (!(root instanceof GoStruct gs) || targetElemWireId < 0 || elemSize <= 0) {
+            return null;
+        }
+        ReflectTypes.TypeInfo rootInfo;
+        long targetTok;
+        try {
+            rootInfo = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (rootInfo == null) {
+                rootInfo = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+            targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (rootInfo == null || targetTok < 0
+                || rootInfo.fields == null || rootInfo.kind != GoKind.STRUCT) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : rootInfo.fields) {
+            if (f.type == null || f.index.length != 1
+                    || f.type.kind != GoKind.ARRAY || f.type.elem == null
+                    || f.type.elem.tok != targetTok) {
+                continue;
+            }
+            if (byteOffset < f.offset) {
+                continue;
+            }
+            long rel = byteOffset - f.offset;
+            if (rel % elemSize != 0) {
+                continue;
+            }
+            long idx = rel / elemSize;
+            // One past the end is a valid POINTER (gc pointer
+            // arithmetic may form it; only dereference is UB, and
+            // that then fails loudly at the access): the empty-array
+            // case (FuncOf with no args: Args is [0]*rtype, and
+            // unsafe.Slice(ptr, 0) over it must succeed) has no
+            // element index at all, yet its storage address is
+            // well-defined. Beyond one past the end is not an
+            // address in the field and stays rejected.
+            if (idx < 0 || idx > f.type.arrayLen) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                return null;
+            }
+            Object arr = new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()).get();
+            long base = 0;
+            if (arr instanceof UnsafeTable.ArrayRef ref) {
+                arr = ref.array();
+                base = ref.offset();
+            }
+            while (arr instanceof GoCell cell) {
+                arr = cell.get();
+            }
+            if (arr == null || !arr.getClass().isArray()) {
+                return null;
+            }
+            long total = base + idx;
+            if (total < 0 || total > Integer.MAX_VALUE) {
+                return null;
+            }
+            return new GoPointer(arr, (int) total);
+        }
+        return null;
+    }
+
+    /**
+     * Pointer to an array field (fix-redmaster-r43). When the byte
+     * offset is exactly a struct field whose type is an ARRAY and the
+     * conversion target is a pointer to an ARRAY type with a
+     * compatible element type, the pointer denotes the field's array
+     * itself — not an element of it. This is gc's InSlice/OutSlice
+     * shape: {@code (*[1<<16]*Type)(ptr+uadd)[:n]} over a funcType
+     * struct, where the target array is deliberately oversized (the
+     * real bounds come from the slice expression, which reads the
+     * field array's own length) and the element types differ only by
+     * prefix identity ({@code *Type} vs {@code *rtype}: an rtype's
+     * memory starts with its abi.Type). Returns a plain
+     * {@code GoPointer} to the field's array (so a pointer-slice
+     * consumer's {@code referent()} sees the array) or null. Element
+     * compatibility is token equality, or — for pointer elements
+     * only — the field element's pointee struct having the target
+     * element's pointee struct as an offset-0 prefix (the direction
+     * matters: reading {@code *rtype} slots as {@code *Type} is a
+     * prefix view; the reverse would read past the smaller struct).
+     * Mid-field offsets are not array starts and return null; the
+     * caller keeps its loud derivation failure for those.
+     */
+    private Object arrayFieldPointer(Object referent, long byteOffset) {
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
+        }
+        if (!(root instanceof GoStruct gs) || targetElemWireId < 0) {
+            return null;
+        }
+        ReflectTypes.TypeInfo rootInfo;
+        long targetTok;
+        try {
+            rootInfo = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (rootInfo == null) {
+                rootInfo = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+            targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (rootInfo == null || targetTok < 0
+                || rootInfo.fields == null || rootInfo.kind != GoKind.STRUCT) {
+            return null;
+        }
+        ReflectTypes.TypeInfo targetInfo = ReflectTypes.table().info(targetTok);
+        if (targetInfo == null || targetInfo.kind != GoKind.ARRAY || targetInfo.elem == null) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : rootInfo.fields) {
+            if (f.type == null || f.index.length != 1
+                    || f.type.kind != GoKind.ARRAY || f.type.elem == null
+                    || byteOffset != f.offset) {
+                continue;
+            }
+            ReflectTypes.TypeInfo fieldElem = f.type.elem;
+            ReflectTypes.TypeInfo targetElem = targetInfo.elem;
+            boolean elemMatch = fieldElem.tok == targetElem.tok;
+            if (!elemMatch && fieldElem.kind == GoKind.POINTER && targetElem.kind == GoKind.POINTER
+                    && fieldElem.elem != null && targetElem.elem != null) {
+                // Pointee-prefix comparison (not pointer-token
+                // comparison): the field element's pointee struct
+                // must have the target element's pointee struct as
+                // an offset-0 prefix.
+                elemMatch = hasOffsetZeroPrefix(fieldElem.elem, targetElem.elem.tok, 4);
+            }
+            if (!elemMatch) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                return null;
+            }
+            Object arr = new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()).get();
+            if (arr instanceof UnsafeTable.ArrayRef ref) {
+                arr = ref.array();
+            }
+            while (arr instanceof GoCell cell) {
+                arr = cell.get();
+            }
+            if (arr == null || !arr.getClass().isArray()) {
+                return null;
+            }
+            return new GoPointer(arr);
+        }
+        return null;
+    }
+
+    /**
+     * Whether struct info {@code s} has the struct named by
+     * {@code prefixTok} as an offset-0 prefix: its field at offset 0
+     * is (transitively) that struct. This is the layout fact behind
+     * gc's prefix identity (an rtype's field 0 is its abi.Type, a
+     * structType's field 0 is its abi.StructType, and so on).
+     */
+    private static boolean hasOffsetZeroPrefix(ReflectTypes.TypeInfo s, long prefixTok, int depth) {
+        if (s == null || depth < 0) {
+            return false;
+        }
+        if (s.tok == prefixTok) {
+            return true;
+        }
+        if (s.kind != GoKind.STRUCT || s.fields == null) {
+            return false;
+        }
+        for (ReflectTypes.FieldInfo f : s.fields) {
+            if (f.offset == 0 && f.type != null) {
+                return hasOffsetZeroPrefix(f.type, prefixTok, depth - 1);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Field-pointer resolution across prefix parents (fix-redmaster-r43).
+     * A byte-offset derivation may start from a struct that is itself
+     * at offset 0 of a larger allocation — the canonical case is
+     * InSlice's {@code ptr+Sizeof(funcType)}: the funcType struct is
+     * field 0 of the initFunc allocation, so offset 56 past the
+     * funcType struct is the Args array field of the initFunc parent,
+     * not memory past the funcType struct. Prefix parents are always
+     * offset-0 containers (embedding chains and field-0 values alike),
+     * so the offset carries unchanged up the chain. Tries the
+     * element-pointer and array-pointer rules at each level, nearest
+     * first; returns null when no level resolves, leaving the caller's
+     * loud derivation failure intact.
+     */
+    private Object continuedFieldPointer(Object referent, long byteOffset) {
+        Object cur = referent;
+        while (true) {
+            if (cur instanceof GoCell cell) {
+                cur = cell.get();
+            } else if (cur instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                cur = rc.value;
+            } else {
+                break;
+            }
+        }
+        for (int depth = 0; depth < 8 && cur instanceof GoStruct gs; depth++) {
+            Object p = arrayElemPointer(cur, byteOffset);
+            if (p != null) {
+                return p;
+            }
+            p = arrayFieldPointer(cur, byteOffset);
+            if (p != null) {
+                return p;
+            }
+            GoStruct parent = gs.prefixParent();
+            if (parent == null || parent == gs) {
+                break;
+            }
+            cur = parent;
         }
         return null;
     }
