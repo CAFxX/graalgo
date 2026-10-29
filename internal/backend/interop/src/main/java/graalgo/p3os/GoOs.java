@@ -276,8 +276,103 @@ public final class GoOs {
         resetState(argv);
     }
 
+    // Declared BEFORE the static block below: the block calls resetState,
+    // which uses these, and static members initialize in textual order.
+    private static final DynamicStdin DYNAMIC_STDIN = new DynamicStdin();
+    private static final DynamicStdout DYNAMIC_STDOUT = new DynamicStdout();
+    private static final DynamicStderr DYNAMIC_STDERR = new DynamicStderr();
+
     static {
         resetState(new String[0]);
+    }
+
+    // Stdio rebinding (fix-redmaster-r44): the stdio channels must track
+    // the CURRENT System.in/out/err, not the streams live at init time.
+    // Channels.newChannel(stream) captures the stream object: a channel
+    // created during one program keeps writing to that program's stream
+    // forever. In a multi-program JVM (graalgo-run --batch, which rebinds
+    // System.out/err per entry to capture each entry's output) the first
+    // entry's guest-stdout channel therefore keeps receiving every later
+    // entry's fmt/os.Stdout output — output that is never read again,
+    // since the first entry's capture was already serialized. Symptom on
+    // r43 CI: every batch entry after the first in its job JVM reported
+    // exit 0 with EMPTY stdout; only programs that print on success
+    // (mergemul.go, strength.go) diverged, the rest print nothing on
+    // success so the loss was invisible. These delegating streams resolve
+    // System.in/out/err on every call, so the channels always follow the
+    // current streams. Single-program runs are unaffected (the delegates
+    // resolve to exactly the streams a direct capture would have bound).
+    // close() is a no-op: stdio handles never close the real streams
+    // (ChannelHandle.closeUnderlying is false for KIND_STDIO).
+    private static final class DynamicStdout extends java.io.OutputStream {
+        @Override
+        public void write(int b) {
+            System.out.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            System.out.write(b, off, len);
+        }
+
+        @Override
+        public void flush() {
+            System.out.flush();
+        }
+
+        @Override
+        public void close() {
+            // Never close the real stdout.
+        }
+    }
+
+    private static final class DynamicStderr extends java.io.OutputStream {
+        @Override
+        public void write(int b) {
+            System.err.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+            System.err.write(b, off, len);
+        }
+
+        @Override
+        public void flush() {
+            System.err.flush();
+        }
+
+        @Override
+        public void close() {
+            // Never close the real stderr.
+        }
+    }
+
+    private static final class DynamicStdin extends java.io.InputStream {
+        @Override
+        public int read() throws IOException {
+            return System.in.read();
+        }
+
+        @Override
+        public int read(byte[] b, int off, int len) throws IOException {
+            return System.in.read(b, off, len);
+        }
+
+        @Override
+        public int available() throws IOException {
+            return System.in.available();
+        }
+
+        @Override
+        public long skip(long n) throws IOException {
+            return System.in.skip(n);
+        }
+
+        @Override
+        public void close() {
+            // Never close the real stdin.
+        }
     }
 
     private static void resetState(String[] argv) {
@@ -288,12 +383,15 @@ public final class GoOs {
         ENV_CLEARED = false;
         ARGV = argv == null ? new String[0] : argv.clone();
         VCWD = Paths.get(System.getProperty("user.dir")).toAbsolutePath().normalize();
-        // Cookies 1/2/3: stdio, never closed underneath.
-        HANDLES.put(1L, new ChannelHandle(Channels.newChannel(System.in),
+        // Cookies 1/2/3: stdio, never closed underneath. The channels wrap
+        // the dynamic delegates above, NOT System.in/out/err directly, so
+        // a host that rebinds the standard streams (batch capture) is
+        // followed by every program in the JVM, not just the first.
+        HANDLES.put(1L, new ChannelHandle(Channels.newChannel(DYNAMIC_STDIN),
                 true, false, null, KIND_STDIO, false));
-        HANDLES.put(2L, new ChannelHandle(Channels.newChannel(System.out),
+        HANDLES.put(2L, new ChannelHandle(Channels.newChannel(DYNAMIC_STDOUT),
                 false, true, null, KIND_STDIO, false));
-        HANDLES.put(3L, new ChannelHandle(Channels.newChannel(System.err),
+        HANDLES.put(3L, new ChannelHandle(Channels.newChannel(DYNAMIC_STDERR),
                 false, true, null, KIND_STDIO, false));
         try {
             Class<?> uc = Class.forName("com.sun.security.auth.module.UnixSystem");

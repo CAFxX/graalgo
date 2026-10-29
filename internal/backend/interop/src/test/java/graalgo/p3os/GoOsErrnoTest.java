@@ -1,6 +1,8 @@
 package graalgo.p3os;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.NonReadableChannelException;
 import java.nio.charset.StandardCharsets;
@@ -540,6 +542,58 @@ public final class GoOsErrnoTest {
         checkEq(0, GoOs.close(2L), "close stdout cookie");
         checkEq(-GoOs.EBADF, GoOs.handleKind(2L), "stdout cookie gone");
         System.out.println("stdio-still-open");
+    }
+
+    // fix-redmaster-r44: stdio writes must follow System.out/err rebinds.
+    // Batch mode (graalgo-run --batch) rebinds the standard streams per
+    // entry to capture each entry's output, but the old channels captured
+    // the stream object at init time, so every entry after the first lost
+    // its fmt/os.Stdout output (exit 0, empty stdout — the r43 CI
+    // mergemul/strength divergence). This test mirrors the batch shape:
+    // init first (channels bound), then rebind, write, rebind, write.
+    // It FAILS on the old code (both writes land on the real stdout and
+    // both buffers stay empty) and passes on the dynamic delegates.
+    // NOTE: uses a byte[]-backed slice, not the shared bytesBuf helper:
+    // D5 stores []byte in byte[] backing arrays (goBuf casts to byte[]),
+    // while bytesBuf still builds int[]-backed slices.
+    private static GoSlice byteSlice(byte[] data) {
+        return new GoSlice(data.clone(), 0, data.length, data.length);
+    }
+
+    public void testStdioFollowsReboundStreams() {
+        GoOs.init(new String[0]);
+        PrintStream realOut = System.out;
+        PrintStream realErr = System.err;
+        try {
+            ByteArrayOutputStream first = new ByteArrayOutputStream();
+            ByteArrayOutputStream second = new ByteArrayOutputStream();
+            System.setOut(new PrintStream(first, true, StandardCharsets.UTF_8));
+            byte[] one = "one".getBytes(StandardCharsets.UTF_8);
+            checkEq(4, GoOs.write(2L, byteSlice(one)), "write stdout n+1");
+            System.setOut(new PrintStream(second, true, StandardCharsets.UTF_8));
+            byte[] two = "two".getBytes(StandardCharsets.UTF_8);
+            checkEq(4, GoOs.write(2L, byteSlice(two)), "write stdout after rebind n+1");
+            checkEq(0, "one".compareTo(first.toString(StandardCharsets.UTF_8)),
+                    "first capture");
+            checkEq(0, "two".compareTo(second.toString(StandardCharsets.UTF_8)),
+                    "second capture after rebind");
+
+            ByteArrayOutputStream errFirst = new ByteArrayOutputStream();
+            ByteArrayOutputStream errSecond = new ByteArrayOutputStream();
+            System.setErr(new PrintStream(errFirst, true, StandardCharsets.UTF_8));
+            byte[] e1 = "e1".getBytes(StandardCharsets.UTF_8);
+            checkEq(3, GoOs.write(3L, byteSlice(e1)), "write stderr n+1");
+            System.setErr(new PrintStream(errSecond, true, StandardCharsets.UTF_8));
+            byte[] e2 = "e2".getBytes(StandardCharsets.UTF_8);
+            checkEq(3, GoOs.write(3L, byteSlice(e2)), "write stderr after rebind n+1");
+            checkEq(0, "e1".compareTo(errFirst.toString(StandardCharsets.UTF_8)),
+                    "first stderr capture");
+            checkEq(0, "e2".compareTo(errSecond.toString(StandardCharsets.UTF_8)),
+                    "second stderr capture after rebind");
+        } finally {
+            System.setOut(realOut);
+            System.setErr(realErr);
+        }
     }
 
     public void testIdentity() {
