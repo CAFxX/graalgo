@@ -11,8 +11,19 @@ import (
 // TestSyntheticBytesM7 verifies the P3-M7 wave-1 synthetic bytes package:
 // a program importing "bytes" exports cleanly; the real-Go declarations
 // become funcdecls in the wire doc; the multi-result members (Cut,
-// Buffer.Read, Reader.Seek, ...) are skipped at export (WS D — call sites
-// fail fast with the named M7 scope error).
+// Buffer.Read, Reader.Seek, ...) are never emitted as raw multi-result
+// funcdecls. Members covered by a desugar table (Buffer.Read,
+// Reader.Read, Buffer.Write) are skipped (their __-helper carries the
+// body); the rest are pair-transformed via the general userMRFuncs
+// mechanism (Cut, CutPrefix, CutSuffix, CutLast first, then the
+// remaining members). Uncovered call sites fail fast with the WS D
+// scope error (see TestSyntheticBytesCutFailsFast).
+//
+// The absence check is scoped to pkgpath "bytes" AND to result count:
+// a bare-name walk false-positives on transitive imports (io.Read,
+// internal/race.Read, ...) that share the member names, and pair
+// transformation legitimately leaves single-result (pair) funcdecls
+// behind under the same names.
 func TestSyntheticBytesM7(t *testing.T) {
 	src := `package main
 
@@ -55,6 +66,10 @@ func main() {
 		t.Fatal(err)
 	}
 	names := map[string]bool{}
+	// bytesResults records, for each funcdecl name in pkgpath "bytes",
+	// the largest result count seen (0/1 = single-result or pair form;
+	// >1 = raw multi-result leak).
+	bytesResults := map[string]int{}
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
@@ -63,6 +78,15 @@ func main() {
 				if f, ok := v["fields"].(map[string]any); ok {
 					if n, ok := f["name"].(string); ok {
 						names[n] = true
+						if pp, _ := f["pkgpath"].(string); pp == "bytes" {
+							nr := 0
+							if rs, ok := f["results"].([]any); ok {
+								nr = len(rs)
+							}
+							if nr > bytesResults[n] {
+								bytesResults[n] = nr
+							}
+						}
 					}
 				}
 			}
@@ -88,21 +112,28 @@ func main() {
 			t.Errorf("wire doc missing funcdecl %q", want)
 		}
 	}
-	// Multi-result declarations are skipped at export (WS D).
+	// No bytes multi-result member may leak as a raw multi-result
+	// funcdecl: table-covered members are skipped (helpers carry the
+	// body) and the rest are pair-transformed (exactly 1 pair result).
 	// Note: Cut, CutPrefix, CutSuffix, CutLast now have real implementations
 	// and are pair-transformed via the general userMRFuncs mechanism.
-	for _, absent := range []string{
+	for _, name := range []string{
 		"Read", "Write", "ReadByte", "ReadRune", "ReadBytes", "ReadString",
 		"Peek", "WriteString", "WriteRune", "ReadFrom", "WriteTo", "Seek", "ReadAt",
 	} {
-		if names[absent] {
-			t.Errorf("wire doc must not contain multi-result funcdecl %q", absent)
+		if nr := bytesResults[name]; nr > 1 {
+			t.Errorf("wire doc contains raw multi-result bytes funcdecl %q (%d results)", name, nr)
 		}
 	}
 }
 
 // TestSyntheticBytesCutFailsFast verifies user calls to multi-result
-// bytes members fail with the named M7 scope error.
+// bytes members with no desugar-table entry fail fast with the honest
+// WS D scope error (naming the callee). Reader.Seek has no m7 table
+// entry and no pair-transform call path, so the call cannot be expressed
+// in v1 — the failure, not success, is the correct behavior; only the
+// error's attribution changed when bytes moved from the synthetic M7
+// fail-fast stubs to the generic classifier.
 // Note: Cut, CutPrefix, CutSuffix, CutLast now work via the general
 // userMRFuncs mechanism and are not in this test.
 // Note: Buffer.Read was retired from this test — its M7 fail-fast stub's
@@ -133,9 +164,9 @@ func main() {
 			}
 			_, err := ExportFile(p)
 			if err == nil {
-				t.Fatalf("ExportFile succeeded for %s call, want M7 scope error", c.want)
+				t.Fatalf("ExportFile succeeded for %s call, want WS D scope error", c.want)
 			}
-			if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "M7 scope") {
+			if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "WS D") {
 				t.Fatalf("unexpected error for %s call: %v", c.want, err)
 			}
 		})

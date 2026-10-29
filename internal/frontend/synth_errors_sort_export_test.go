@@ -11,9 +11,17 @@ import (
 // TestSyntheticErrorsSortM7 verifies the P3-M7 wave-1 synthetic packages:
 // a program importing "errors" and "sort" exports cleanly; the real-Go
 // declarations become funcdecls in the wire doc; the multi-result
-// sort.Find is skipped at export (WS D — call sites fail fast); the
-// fail-fast single-result members (errors.As, sort.Slice, ...) ARE
+// members (sort.Find, errors.AsType) are never emitted as raw
+// multi-result funcdecls — Find is pair-transformed via the generic MR
+// machinery, AsType desugars through its m7 table entry (__asTypePub)
+// with the stub skipped — and uncovered call sites fail fast (WS D);
+// the fail-fast single-result members (errors.As, sort.Slice, ...) ARE
 // exported (their panic bodies run if called).
+//
+// Like TestSyntheticBytesM7, the multi-result check is scoped to the
+// owning package AND to result count: bare names false-positive on
+// transitive imports, and pair transformation legitimately leaves
+// single-result (pair) funcdecls behind under the same names.
 func TestSyntheticErrorsSortM7(t *testing.T) {
 	src := `package main
 
@@ -65,6 +73,10 @@ func main() {
 		t.Fatal(err)
 	}
 	names := map[string]bool{}
+	// pkgResults records, per owning package and funcdecl name, the
+	// largest result count seen, so the multi-result check below can
+	// scope to the owning package.
+	pkgResults := map[string]map[string]int{}
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
@@ -73,6 +85,17 @@ func main() {
 				if f, ok := v["fields"].(map[string]any); ok {
 					if n, ok := f["name"].(string); ok {
 						names[n] = true
+						pp, _ := f["pkgpath"].(string)
+						nr := 0
+						if rs, ok := f["results"].([]any); ok {
+							nr = len(rs)
+						}
+						if pkgResults[pp] == nil {
+							pkgResults[pp] = map[string]int{}
+						}
+						if nr > pkgResults[pp][n] {
+							pkgResults[pp][n] = nr
+						}
 					}
 				}
 			}
@@ -104,16 +127,28 @@ func main() {
 			t.Errorf("wire doc missing fail-fast funcdecl %q", want)
 		}
 	}
-	// Multi-result declarations are skipped at export (WS D).
-	for _, absent := range []string{"Find", "AsType"} {
-		if names[absent] {
-			t.Errorf("wire doc must not contain multi-result funcdecl %q", absent)
+	// No multi-result member of errors/sort may leak as a raw
+	// multi-result funcdecl in its owning package: Find is
+	// pair-transformed (1 pair result) and AsType's stub is skipped.
+	for _, c := range []struct {
+		pkg, name string
+	}{
+		{"sort", "Find"},
+		{"errors", "AsType"},
+	} {
+		if nr := pkgResults[c.pkg][c.name]; nr > 1 {
+			t.Errorf("wire doc contains raw multi-result %s funcdecl %q (%d results)", c.pkg, c.name, nr)
 		}
 	}
 }
 
 // TestSyntheticSortFindFailsFast verifies a user call to sort.Find fails
-// with the named M7 scope error (multi-result calls need WS D).
+// fast with the honest WS D scope error (naming the callee). sort.Find
+// has no desugar-table entry and its generic-plus-closure shape has no
+// pair-transform call path, so the call cannot be expressed in v1 —
+// the failure, not success, is the correct behavior; only the error's
+// attribution changed when sort moved from the synthetic M7 fail-fast
+// stubs to the generic classifier.
 func TestSyntheticSortFindFailsFast(t *testing.T) {
 	src := `package main
 
@@ -131,9 +166,9 @@ func main() {
 	}
 	_, err := ExportFile(p)
 	if err == nil {
-		t.Fatal("ExportFile succeeded for sort.Find call, want M7 scope error")
+		t.Fatal("ExportFile succeeded for sort.Find call, want WS D scope error")
 	}
-	if !strings.Contains(err.Error(), "sort.Find") || !strings.Contains(err.Error(), "M7 scope") {
+	if !strings.Contains(err.Error(), "sort.Find") || !strings.Contains(err.Error(), "WS D") {
 		t.Fatalf("unexpected error for sort.Find call: %v", err)
 	}
 }

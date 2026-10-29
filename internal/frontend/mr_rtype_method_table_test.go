@@ -76,7 +76,7 @@ func TestDiskMRM5EntryRealBodyStillSkipped(t *testing.T) {
 	// skip even with a real body — dedicated exporter machinery
 	// (mrDeadline) desugars their call sites, and the mechanical
 	// transform must not rewrite them (guards
-	// TestDeadlineNotCallableM5's contract at the transform level).
+	// TestDeadlineCallableP4's contract at the transform level).
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "context.go", `package context
 

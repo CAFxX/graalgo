@@ -36,17 +36,16 @@ import (
 //	d := __p5mr_N.d
 //	err := __p5mr_N.err
 //
-// The sixth Appendix M operation, ctx.Deadline(), is NOT callable in M5:
+// The sixth Appendix M operation, ctx.Deadline(), was NOT callable in M5:
 // the afc0dfb amendment removed Deadline from the synthetic Context
 // interface (v1 cannot emit multi-result methods, WS D), so an
-// interface-typed call is a go/types type error that never reaches the
-// exporter (see TestDeadlineNotCallableM5). The mrDeadline
-// classification path below is retained defense-in-depth — it keeps the
-// __deadlineOf desugar wired for the day WS D lands and Deadline returns
-// to the interface (re-test trigger: add a 2-target ctx.Deadline()
-// corpus test then). It is currently unreachable from user code: the
-// synthetic interface omits Deadline, the concrete types are unexported,
-// and a user interface re-adding Deadline fails isDeadlineMethod.
+// interface-typed call was a go/types type error that never reached the
+// exporter. P4 restored Deadline to the interface (general interface
+// multi-result mechanism, 046afc86), so the mrDeadline classification
+// path below is now live: 2-target calls desugar through __deadlineOf
+// (see TestDeadlineCallableP4), and statement-position calls emit an
+// ifacemethod node via the D1 path. A user interface re-adding Deadline
+// still fails isDeadlineMethod.
 //
 // P3-M7 (wave 1) extends Appendix M to the encoding/* synthetic
 // packages (mrM7, m7MultiResultFuncs table below): their multi-result
@@ -66,15 +65,15 @@ import (
 // cross-package references — so there is no collision).
 
 // mrKind classifies the Appendix M operations: the 5 reachable ones
-// plus mrDeadline, retained defense-in-depth for WS D (see the package
-// header — currently unreachable from user code).
+// plus mrDeadline, live since P4 restored Deadline to the synthetic
+// Context interface (see the package header).
 type mrKind int
 
 const (
 	mrNone         mrKind = iota
 	mrWithCancel          // context.WithCancel / context.WithCancelCause
 	mrWithDeadline        // context.WithDeadline / context.WithTimeout
-	mrDeadline            // ctx.Deadline() (method) — retained, unreachable in M5
+	mrDeadline            // ctx.Deadline() (method) — live since P4
 	mrParseDur            // time.ParseDuration
 	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
 	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
@@ -4348,12 +4347,23 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 // buildDiskPackage, buildSyntheticPackage, and ExportFiles. Idempotent:
 // after expansion the RHS is a FuncLit, which never re-matches. Method
 // values keep their existing path (Selections non-nil skips them).
-func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
+//
+// removePkgSpecs controls the package-level `var x = pkg.F` removal:
+// pass true ONLY where the caller consumes the returned alias map
+// (buildDiskPackage wires it into the exporter's varFuncAliases, so call
+// sites through x desugar as the aliased Func). ExportFiles discards the
+// maps, so removing there would silently drop the variable with nothing
+// rewriting its uses — user package-level vars instead keep the PKG-035
+// path (emitted as globals whose initializer links to the pair info via
+// mrInfoForFuncValueInit). With removePkgSpecs=false the local
+// eta-expansions (:= and struct/map literal fields) still apply: those
+// rewrite the AST in place and need no map.
+func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package, removePkgSpecs bool) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
 	// Returns (var->FuncLit map, var->Func alias map).
 	// For package-level `var x = pkg.F` where F is multi-result, we record
-	// the alias (x -> F) and REMOVE the declaration (to avoid the v1
-	// value-position limitation). Call sites through x are rewritten to
-	// pkg.F directly (real-x509 lane).
+	// the alias (x -> F) and, when removePkgSpecs is true, REMOVE the
+	// declaration (to avoid the v1 value-position limitation). Call sites
+	// through x are rewritten to pkg.F directly (real-x509 lane).
 	varLits := make(map[*types.Var]*ast.FuncLit)
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
@@ -4411,6 +4421,11 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 		})
 		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
 		// (Simplified: just remove; call-site rewriting via alias map.)
+		// Skipped entirely when removePkgSpecs is false: the specs stay
+		// and the caller exports them through its own mechanism.
+		if !removePkgSpecs {
+			toRemove = nil
+		}
 		for _, vs := range toRemove {
 			// Find and remove from parent GenDecl.
 			for _, decl := range f.Decls {

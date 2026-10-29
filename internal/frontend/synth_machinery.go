@@ -876,7 +876,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
+	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg, true)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,

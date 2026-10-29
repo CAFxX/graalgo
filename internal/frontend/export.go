@@ -942,8 +942,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues(files, info, pkg)
+	// where F is multi-result. Package-level specs are KEPT here
+	// (removePkgSpecs=false): ExportFiles discards the alias map, so
+	// removing them would silently drop the variable; user package-level
+	// vars instead export as globals via the PKG-035 link. Only the
+	// in-place local eta-expansions (:=, literal fields) apply.
+	_, _ = etaExpandMRFuncValues(files, info, pkg, false)
 
 	e := &exporter{
 		fset:    fset,
@@ -11318,6 +11322,18 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 					return nil, err
 				}
 				return tid, nil
+			}
+			// No desugar plan covers this call: fail fast, naming the
+			// callee when known (the retired named M7 stubs carried
+			// attribution; the generic WS D error must not lose it —
+			// a bare "not supported" for a named call hides which
+			// call site needs the missing mechanism).
+			if fn := e.calledFunc(c); fn != nil && fn.Pkg() != nil {
+				name := fn.Pkg().Path() + "." + fn.Name()
+				if recv := methodRecvBaseName(fn); recv != "" {
+					name = fn.Pkg().Path() + "." + recv + "." + fn.Name()
+				}
+				return nil, scopeErrorf("multi-valued call result for %s is not supported in frontend/v1 scope (WS D)", name)
 			}
 			return nil, scopeErrorf("multi-valued call result is not supported in frontend/v1 scope (WS D)")
 		}

@@ -99,9 +99,9 @@ func main() {
 // `d := time.ParseDuration(s)` is a go/types type error before the
 // exporter runs; only type-valid non-2-target positions are tested here:
 // statement and multi-arg spread. `ctx.Deadline()` is not covered here —
-// post-afc0dfb the synthetic Context interface omits Deadline, so an
-// interface-typed call is a type error, never a scope error; see
-// TestDeadlineNotCallableM5.)
+// it is callable since P4 (general interface MR) and desugars through
+// the mrDeadline path instead of failing fast; see
+// TestDeadlineCallableP4.)
 func TestMultiResultFailFastKept(t *testing.T) {
 	progs := map[string]string{
 		"statement": `package main
@@ -135,36 +135,83 @@ func main() { time.ParseDuration("1s") }
 	}
 }
 
-// TestDeadlineNotCallableM5 verifies: GG-0017 — P3-M5 (afc0dfb
-// amendment, ADR-0005 Appendix M) `Context.Deadline()` is NOT callable
-// in M5. The synthetic Context interface deliberately omits Deadline
-// (v1 cannot emit multi-result methods, WS D), so a call on an
-// interface-typed value is a go/types type error — it never reaches the
-// exporter and never produces the M5 scope error. The exporter-side
-// `mrDeadline` desugar path is retained defense-in-depth for WS D (see
-// mrdesugar_m5.go); `__deadlineOf` remains for synthetic-internal use.
-func TestDeadlineNotCallableM5(t *testing.T) {
-	src := `package main
+// TestDeadlineCallableP4 verifies the P4 restoration of GG-0017 —
+// P3-M5 (afc0dfb amendment, ADR-0005 Appendix M) deliberately omitted
+// `Deadline` from the synthetic Context interface, so an interface-typed
+// call was a go/types type error. The general interface multi-result
+// mechanism (046afc86) removed that divergence: `Deadline()` is declared
+// on the synthetic Context interface again (gc 1.27.1 method set
+// identical), and call sites desugar through the live `mrDeadline`
+// path. Statement position emits an ifacemethod node (results discarded,
+// legal in gc); 2-target position lowers through a `__deadlineOf`
+// pair temp exactly like the other Appendix M operations.
+func TestDeadlineCallableP4(t *testing.T) {
+	// mainBody returns the main funcdecl's body node, so the checks
+	// below pin the user call site, not synthetic-internal nodes.
+	mainBody := func(doc map[string]any) map[string]any {
+		t.Helper()
+		for _, n := range findAllKind(doc, "funcdecl") {
+			if n["fields"].(map[string]any)["name"] == "main" {
+				body, _ := n["fields"].(map[string]any)["body"].(map[string]any)
+				return body
+			}
+		}
+		t.Fatal("no main funcdecl in wire doc")
+		return nil
+	}
+	stmtDoc := exportFuncValueProg(t, `package main
 import "context"
 func main() {
 	ctx := context.Background()
 	ctx.Deadline()
 }
-`
-	dir := t.TempDir()
-	p := filepath.Join(dir, "deadline.go")
-	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
-		t.Fatal(err)
+`)
+	foundIface := false
+	for _, n := range findAllKind(mainBody(stmtDoc), "ifacemethod") {
+		if n["fields"].(map[string]any)["method"] == "Deadline" {
+			foundIface = true
+		}
 	}
-	_, err := ExportFile(p)
-	if err == nil {
-		t.Fatal("expected type error for ctx.Deadline(), got success")
+	if !foundIface {
+		t.Fatal("statement-position ctx.Deadline() did not emit an ifacemethod node")
 	}
-	if strings.Contains(err.Error(), "not in M5 scope") {
-		t.Errorf("ctx.Deadline() must be a type error, not a scope error: %q", err)
+
+	twoDoc := exportFuncValueProg(t, `package main
+import "context"
+func main() {
+	ctx := context.Background()
+	d, ok := ctx.Deadline()
+	println(d.IsZero(), ok)
+}
+`)
+	foundPair := false
+	for _, n := range findAllKind(mainBody(twoDoc), "vardecl") {
+		names, _ := n["fields"].(map[string]any)["names"].([]any)
+		if len(names) != 1 {
+			continue
+		}
+		name, _ := names[0].(string)
+		if len(name) < 7 || name[:7] != "__p5mr_" {
+			continue
+		}
+		vals, _ := n["fields"].(map[string]any)["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		call, _ := vals[0].(map[string]any)
+		if call["kind"] != "call" {
+			continue
+		}
+		fun, _ := call["fields"].(map[string]any)["fun"].(map[string]any)
+		if fun == nil || fun["kind"] != "ident" {
+			continue
+		}
+		if fun["fields"].(map[string]any)["name"] == "__deadlineOf" {
+			foundPair = true
+		}
 	}
-	if !strings.Contains(err.Error(), "Deadline") {
-		t.Errorf("expected the type error to name Deadline, got %q", err)
+	if !foundPair {
+		t.Fatal("2-target ctx.Deadline() did not desugar through a __deadlineOf pair temp")
 	}
 }
 
@@ -173,9 +220,9 @@ func main() {
 // (WithCancel, WithCancelCause, WithDeadline, WithTimeout,
 // ParseDuration) in 2-target position lower to single-result helper
 // calls + extraction (no fail-fast), for both := and = forms.
-// (`ctx.Deadline()` is the 6th Appendix M operation but is not callable
-// in M5 — the synthetic Context interface omits it post-afc0dfb, so no
-// user call site can type-check; see TestDeadlineNotCallableM5.)
+// (`ctx.Deadline()` is the 6th Appendix M operation; it was not callable
+// in M5 but is callable since P4 via the mrDeadline path — see
+// TestDeadlineCallableP4 — so this test covers the other 5.)
 func TestMultiResultDesugarM5(t *testing.T) {
 	src := `package main
 

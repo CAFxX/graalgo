@@ -202,9 +202,15 @@ func TestEnccoreDesugarShapes(t *testing.T) {
 	}
 }
 
-// TestEnccoreFailFast verifies the named M7 scope errors: multi-result
+// TestEnccoreFailFast verifies honest fail-fast errors for multi-result
 // members in non-desugar positions, and the members that need
-// reflect/WS D (binary.Append, asn1.Unmarshal, MarshalWithParams).
+// reflect/WS D (binary.Append, asn1.Unmarshal, MarshalWithParams): the
+// call fails with the WS D scope error naming the callee. binary.Append
+// needs reflect over its generic data argument and asn1.Unmarshal stores
+// through the recipient pointer, which v1 cannot express — the failure,
+// not success, is the correct behavior; only the error's attribution
+// changed when these packages moved from the named M7 fail-fast stubs
+// to the generic classifier.
 // NOTE (P3-M8 D2): bare-statement position is a desugar position for
 // table entries now (see concrete_multiresult_bare_test.go) — the
 // hex.DecodeString / base64.Decode statement cases that used to live
@@ -216,14 +222,14 @@ func TestEnccoreFailFast(t *testing.T) {
 		want string // required substring of the error
 	}{
 		{
-			"binary.Append needs reflect (M7 multi-result fail-fast)",
+			"binary.Append needs reflect (WS D fail-fast)",
 			"package main\nimport \"encoding/binary\"\nfunc main() {\nbinary.Append(nil, binary.LittleEndian, uint16(1))\n}\n",
-			"M7",
+			"encoding/binary.Append",
 		},
 		{
 			"asn1.Unmarshal needs WS D pointer store",
 			"package main\nimport \"encoding/asn1\"\nfunc main() {\nvar x int\nasn1.Unmarshal([]byte{0x02, 0x01, 0x2a}, &x)\n}\n",
-			"M7",
+			"encoding/asn1.Unmarshal",
 		},
 		{
 			// P3-M8b: encoding.BinaryMarshaler.MarshalBinary via interface
@@ -262,8 +268,8 @@ func TestEnccoreFailFast(t *testing.T) {
 			}
 			continue
 		}
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: want error containing %q, got: %v", c.name, c.want, err)
+		if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "WS D") {
+			t.Errorf("%s: want WS D error containing %q, got: %v", c.name, c.want, err)
 		}
 	}
 }
