@@ -243,6 +243,13 @@ SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 # build temps and harness scratch dirs on the persistent disk (same pattern
 # as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
+# Snapshot harness parallelism: one JVM per job, each ~1.2GB RSS, with a
+# ~13s standalone run for a trivial program. A hardcoded -jobs 4 oversubscribes
+# small machines (2 CPUs: 4 JVMs push runs past the 60s timeout — 11/38
+# timedOut locally on this VM while jobs=1 is 0 drift), so size jobs to the
+# machine, capped at 4: CI runners have 4 vCPUs, so CI behavior is unchanged.
+# Override with `make snapshot-check SNAPSHOT_JOBS=N`.
+SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
 # The diffharness resolves the graalgo backend launcher as
 # ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
 # product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
@@ -257,7 +264,7 @@ snapshot: build
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
 	  -graalgo-commit $(shell git rev-parse HEAD) \
-	  -jobs 4 -timeout 60
+	  -jobs $(SNAPSHOT_JOBS) -timeout 60
 
 snapshot-check: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
@@ -266,7 +273,7 @@ snapshot-check: build
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
-	  -jobs 4 -timeout 60
+	  -jobs $(SNAPSHOT_JOBS) -timeout 60
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
 # Uses a persistent warm JVM: in-process compilation (~0.5s) and runs
