@@ -49,7 +49,7 @@ func main() {
 		fmt.Print(i, "=", s, " ")
 		total += i
 	}
-	fmt.Println() // 0=v0 1=v1 2=v2 3=v3
+	fmt.Println()      // 0=v0 1=v1 2=v2 3=v3
 	fmt.Println(total) // 0+1+2+3 = 6
 
 	// continue inside the loop body
