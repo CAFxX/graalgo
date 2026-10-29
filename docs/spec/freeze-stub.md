@@ -91,12 +91,15 @@ Conventions:
 | `public static void println(Arg[] args)` | `println` builtin → **stderr**. [T] |
 | `public record Arg(GoKind kind, Object value)` | Argument box. |
 
-### fmt stub — `graalgo.runtime.Fmt` (D4; replaceable-in-Phase-3)
+### fmt stub — `graalgo.runtime.Fmt` (D4; RETIRED by real-fmt2)
 
-The seven pure functions (D4). Real formatting logic held to the
-verb-conformance matrix (`corpus/fmt/matrix.tsv`, 122 rows differential
-vs gc); the *package* is a stub — resolved only via the frontend Phase-1
-import overlay, never linked as a real `fmt`.
+The seven pure functions (D4) below are RETIRED: real-fmt2 deleted the
+Java `Fmt` implementation (the real GOROOT `fmt` package is used
+instead), so this frozen surface no longer exists. The signatures are
+kept here as a retirement record only; the freeze gate no longer
+checks them (`FreezeSignatureTest` dropped the `Fmt` entries when the
+class was deleted). Verb-conformance coverage moved to the
+differential corpus (`20_fmt_formats` snapshot program).
 
 | Signature | Notes |
 |-----------|-------|
@@ -201,7 +204,7 @@ The builtins as Truffle expression nodes (WS G). The factory
 | `PrintNode(boolean, GoExprNode[])` | `print`/`println` | — (statement only) |
 | `PanicBuiltinNode(GoExprNode, GoTypeDescriptor, String, boolean)` | `panic` | — (statement only) |
 | `RecoverBuiltinNode()` | `recover` | INTERFACE |
-| `FmtCallNode(String, GoExprNode[], ...)` | `fmt.*` (D4) | STRING / INTERFACE |
+| `FmtCallNode(String, GoExprNode[], ...)` | `fmt.*` (D4; RETIRED by real-fmt2 — real GOROOT `fmt` is used) | STRING / INTERFACE |
 
 ### M5 runtime surface (frozen 2026-10-04, WS F)
 
