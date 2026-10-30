@@ -1388,8 +1388,11 @@ public final class ReflectOpNode extends GoExprNode {
                 Object d5slice = unboxValue(v);
                 GoSlice sl = (GoSlice) d5slice;
                 Object sarr = sl.array();
+                // Primitive-backed slices (int[]/byte[]/...) are not
+                // Object[]: read through Array.get, which boxes each
+                // element, instead of casting the backing array.
                 for (int j = 0; j < sl.len(); j++) {
-                    out.add(((Object[]) sarr)[sl.offset() + j]);
+                    out.add(java.lang.reflect.Array.get(sarr, sl.offset() + j));
                 }
             } else {
                 out.add(unboxValue(v));
