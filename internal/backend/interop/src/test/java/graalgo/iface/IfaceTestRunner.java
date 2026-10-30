@@ -66,6 +66,9 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // TLS remediation (P1-18, 2026-10-30): engine-error sentinels
+        // (null vs empty vs close) and the insecureArg plumbing.
+        TESTS.add(graalgo.p3tls.TlsRuntimeTest.class);
     }
 
     private IfaceTestRunner() {}

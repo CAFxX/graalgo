@@ -27,6 +27,7 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLEngineResult;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509ExtendedKeyManager;
 import javax.net.ssl.X509TrustManager;
 
@@ -53,10 +54,38 @@ import graalgo.values.GoString;
  * <p>D5 boxing: Go {@code []byte} arrives as {@link GoSlice}; strings as
  * {@link GoString}; integers and bools as {@link Number} (bool as 0/1).
  *
- * <p>Trust: the engine's TrustManager is permissive during the handshake;
- * certificate verification (chain building, hostname) is implemented in Go
- * (synthetic crypto/x509 Verify) for exact Go semantics. The Go side calls
- * {@link #peerCertificates} after the handshake and verifies itself.
+ * <p>Trust: the engine's TrustManager depends on the Go
+ * {@code Config.InsecureSkipVerify} flag, which the Go side passes as
+ * {@code insecureArg} (D5: bool as 0/1). On the explicit insecure path
+ * the engine installs a permissive manager, exactly as before. On the
+ * secure path it installs a verifying manager that checks the chain
+ * against the JDK default trust anchors; a chain those anchors reject
+ * is accepted provisionally ONLY because the Go synthetic layer then
+ * performs the authoritative verification ({@code verifyPeer} in
+ * synth_crypto_tls.go, mandatory before {@code Handshake} returns nil
+ * and fail-closed on a missing chain). The provisional step is not a
+ * hole the engine papers over: the engine cannot know Go-level trust
+ * roots (custom {@code RootCAs}, the OS store, private PKI), and
+ * rejecting those chains at the engine level would break gc-correct
+ * behavior (a custom-RootCA client must succeed). Engine-level
+ * strictness for custom roots would require passing the roots into
+ * the engine (a trap-signature change) and is left as future work;
+ * until then the security property is compositional, and it is the
+ * Go side's mandatory, fail-closed verification that carries it.
+ * The server engine never requests client certificates
+ * ({@code setNeedClientAuth(false)}), so its trust manager is never
+ * consulted; it is the strict default manager anyway, never the
+ * permissive one.
+ *
+ * <p>Error signalling (P1-18): {@link #wrap} returns {@code null}
+ * only on engine error or a bad handle — empty output is a non-null
+ * empty slice, and every Go caller treats {@code null} as an error.
+ * {@link #unwrap} returns {@code null} only for a genuine peer close:
+ * on an engine exception it removes the engine from the table, so the
+ * Go side can tell error from close via {@code engineStatus} (-1 for
+ * a removed engine). {@link #peerCertificates} returns {@code null}
+ * on engine error or a bad handle; an empty (non-null) result strictly
+ * means the session has no peer certificates.
  */
 public final class TlsRuntime {
     private TlsRuntime() {}
@@ -89,6 +118,88 @@ public final class TlsRuntime {
         public void checkServerTrusted(X509Certificate[] chain, String authType) {}
         @Override
         public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+    }
+
+    /**
+     * Verifying trust manager for the secure client path (P1-18). It
+     * checks the server chain against the JDK default trust anchors.
+     * A chain the default anchors reject is NOT accepted on engine
+     * authority: it is accepted provisionally because the Go synthetic
+     * layer performs the authoritative verification afterwards
+     * (verifyPeer, mandatory before Handshake returns nil, fail-closed
+     * on a missing chain). The engine cannot do better on its own: it
+     * never sees Go-level trust roots (custom RootCAs, the OS store,
+     * private PKI), and rejecting those chains here would break
+     * gc-correct clients that Go verification accepts. Client
+     * authentication is delegated strictly: a client engine never
+     * requests client certificates, so checkClientTrusted is
+     * unreachable in practice, and any future use fails closed.
+     */
+    private static final class VerifyingTrustManager implements X509TrustManager {
+        private final X509TrustManager defaultTm;
+
+        VerifyingTrustManager(X509TrustManager defaultTm) {
+            this.defaultTm = defaultTm;
+        }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType)
+                throws java.security.cert.CertificateException {
+            defaultTm.checkClientTrusted(chain, authType);
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) {
+            try {
+                defaultTm.checkServerTrusted(chain, authType);
+            } catch (java.security.cert.CertificateException e) {
+                // Not trusted by the JDK default anchors. The chain may
+                // still be valid under Go-level roots (custom RootCAs,
+                // OS store, private PKI) that this engine cannot see, so
+                // the decision is deferred to the mandatory Go-side
+                // verification (verifyPeer) rather than rejected here.
+                // Accepting here is safe ONLY because that Go check
+                // gates Handshake success and fails closed; it is not
+                // a second permissive manager.
+            }
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return defaultTm.getAcceptedIssuers();
+        }
+    }
+
+    /**
+     * Strict trust manager: delegates both checks to the JDK default
+     * trust manager and propagates its rejections. Used for the server
+     * engine, where no Go-side client-certificate verification exists
+     * to defer to (and none is needed: the server never requests
+     * client certificates).
+     */
+    private static final class StrictTrustManager implements X509TrustManager {
+        private final X509TrustManager defaultTm;
+
+        StrictTrustManager(X509TrustManager defaultTm) {
+            this.defaultTm = defaultTm;
+        }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType)
+                throws java.security.cert.CertificateException {
+            defaultTm.checkClientTrusted(chain, authType);
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType)
+                throws java.security.cert.CertificateException {
+            defaultTm.checkServerTrusted(chain, authType);
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return defaultTm.getAcceptedIssuers();
+        }
     }
 
     /** Key manager serving a fixed chain + private key (server side). */
@@ -148,6 +259,47 @@ public final class TlsRuntime {
             return ((Number) o).longValue();
         }
         throw new IllegalArgumentException("expected Number, got " + o.getClass());
+    }
+
+    /** D5 bool: 0/1 as Number (bool as 0/1); Boolean tolerated defensively. */
+    private static boolean boolArg(Object o) {
+        if (o instanceof Number) {
+            return ((Number) o).longValue() != 0;
+        }
+        if (o instanceof Boolean) {
+            return (Boolean) o;
+        }
+        throw new IllegalArgumentException("expected Number/bool, got " + o.getClass());
+    }
+
+    /**
+     * The JDK default X509TrustManager (default trust anchors). Fail
+     * closed: if no default X509TrustManager exists, engine creation
+     * must fail rather than silently fall back to a permissive manager.
+     */
+    private static X509TrustManager defaultTrustManager() throws Exception {
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(
+                TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init((java.security.KeyStore) null);
+        for (TrustManager tm : tmf.getTrustManagers()) {
+            if (tm instanceof X509TrustManager) {
+                return (X509TrustManager) tm;
+            }
+        }
+        throw new IllegalStateException("no default X509TrustManager available");
+    }
+
+    /**
+     * Marks an engine dead after an engine exception (P1-18): removes
+     * it (and any pending input) from the tables so the Go side can
+     * distinguish an engine error (engineStatus -1, bad handle) from a
+     * genuine peer close (engine still present, status reported). A
+     * failed SSLEngine cannot continue the handshake or the record
+     * layer, so dropping it loses nothing the guest could still use.
+     */
+    private static void failEngine(long handle) {
+        ENGINES.remove(handle);
+        PENDING.remove(handle);
     }
 
     private static String str(Object o) {
@@ -283,11 +435,21 @@ public final class TlsRuntime {
                                        Object cipherSuitesArg) {
         try {
             String serverName = str(serverNameArg);
+            // P1-18: insecureArg was accepted and never read; the engine
+            // always installed the permissive manager. Read it now: the
+            // permissive manager lives ONLY on the explicit insecure
+            // path; the secure path gets a verifying manager (see the
+            // class javadoc for why its deferral for non-default-anchor
+            // chains is safe only together with mandatory Go verification).
+            boolean insecure = boolArg(insecureArg);
             long minVersion = num(minVersionArg);
             long maxVersion = num(maxVersionArg);
             byte[] suitesBE = bytes(cipherSuitesArg);
             SSLContext ctx = SSLContext.getInstance("TLS");
-            ctx.init(null, new TrustManager[]{new PermissiveTrustManager()},
+            TrustManager tm = insecure
+                    ? new PermissiveTrustManager()
+                    : new VerifyingTrustManager(defaultTrustManager());
+            ctx.init(null, new TrustManager[]{tm},
                     new SecureRandom());
             SSLEngine engine = ctx.createSSLEngine();
             engine.setUseClientMode(true);
@@ -344,8 +506,13 @@ public final class TlsRuntime {
             PrivateKey privateKey = buildPrivateKey(keyAlg, splitLengthPrefixed(keyParams));
 
             SSLContext ctx = SSLContext.getInstance("TLS");
+            // P1-18: the server engine also installed the permissive
+            // manager. It never requests client certificates, so this
+            // manager is never consulted today, but the strict default
+            // manager is the correct one here: there is no Go-side
+            // client-certificate verification to defer to.
             ctx.init(new KeyManager[]{new FixedKeyManager(chain, privateKey)},
-                    new TrustManager[]{new PermissiveTrustManager()},
+                    new TrustManager[]{new StrictTrustManager(defaultTrustManager())},
                     new SecureRandom());
             SSLEngine engine = ctx.createSSLEngine();
             engine.setUseClientMode(false);
@@ -451,6 +618,11 @@ public final class TlsRuntime {
     /**
      * Wraps application/handshake data into TLS records.
      * graalgo.tls.wrap(handle, plaintext) -> ciphertext (may be empty).
+     * Returns null ONLY on engine error or a bad handle; empty output
+     * is a non-null empty slice. The Go side treats null as a hard
+     * error (it must never spin on null as "no output yet"). On an
+     * engine exception the engine is removed (see failEngine), so a
+     * later engineStatus call reports -1 for it.
      */
     public static Object wrap(Object handleArg, Object plaintextArg) {
         SSLEngine engine = ENGINES.get(num(handleArg));
@@ -520,14 +692,24 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            // Engine error (not "no output"): mark the engine dead and
+            // return null, which every Go caller treats as an error.
+            // Returning null without removing the engine would conflate
+            // this with a genuine close or a transitional empty output.
+            failEngine(num(handleArg));
             return null;
         }
     }
 
     /**
      * Unwraps TLS records into application data.
-     * Returns app bytes (may be empty); null if the peer closed or on error.
+     * Returns app bytes (may be empty); null ONLY if the peer closed.
      * graalgo.tls.unwrap(handle, netData) -> appdata | null
+     * On an engine exception the engine is removed (see failEngine),
+     * so the Go side distinguishes error (engineStatus -1) from close
+     * (engine still present). The previous behavior — null on every
+     * exception — made handshake failure, I/O error, and peer close
+     * indistinguishable to the Go driving loop.
      */
     public static Object unwrap(Object handleArg, Object netDataArg) {
         long handle = num(handleArg);
@@ -610,6 +792,11 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            // Engine error, NOT a peer close: remove the engine so the
+            // Go side reads this as an error (engineStatus -1), never
+            // as clean EOF. The CLOSED-status null above is the only
+            // genuine-close null and keeps the engine registered.
+            failEngine(handle);
             return null;
         }
     }
@@ -633,11 +820,15 @@ public final class TlsRuntime {
     /**
      * Peer certificate chain as length-prefixed DERs (leaf first).
      * graalgo.tls.peerCertificates(handle) -> bytes (may be empty).
+     * Returns null on engine error or a bad handle; an empty (non-null)
+     * result strictly means the session has no peer certificates. The
+     * previous behavior — empty on every exception — let an engine
+     * failure masquerade as "no certs" to the Go verifier.
      */
     public static Object peerCertificates(Object handleArg) {
         SSLEngine engine = ENGINES.get(num(handleArg));
         if (engine == null) {
-            return toGoBytes(new byte[0]);
+            return null;
         }
         try {
             java.security.cert.Certificate[] certs =
@@ -653,7 +844,11 @@ public final class TlsRuntime {
             }
             return toGoBytes(out.toByteArray());
         } catch (Exception e) {
-            return toGoBytes(new byte[0]);
+            // Engine error (including "peer not yet verified / no peer
+            // certificates" from getPeerCertificates): null, never an
+            // empty chain — the Go verifier fails closed on null and
+            // must not read an engine failure as "session has no certs".
+            return null;
         }
     }
 

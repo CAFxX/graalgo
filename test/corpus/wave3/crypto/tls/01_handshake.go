@@ -95,7 +95,7 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string) {
+func runServer(port string, ready chan<- string, clientPrinted <-chan bool) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -111,6 +111,16 @@ func runServer(port string, ready chan<- string) {
 	if err := tlsConn.Handshake(); err != nil {
 		panic("server handshake: " + err.Error())
 	}
+	// Test-only print ordering (P2-27): the product path must NOT sleep
+	// to order prints. The server's handshake completes before the
+	// client's slower verification, so without synchronisation the
+	// server would print first while gc prints the client first. The
+	// server therefore waits here — in the test program, not in
+	// crypto/tls — until the client has printed its handshake lines.
+	// In standalone-server mode the caller passes an already-closed
+	// channel, so the wait returns immediately (an untyped nil channel
+	// argument is not used: the frontend cannot decode it).
+	<-clientPrinted
 	cs := tlsConn.ConnectionState()
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
@@ -125,7 +135,7 @@ func runServer(port string, ready chan<- string) {
 	fmt.Println("server: echo-ok")
 }
 
-func runClient(port string) {
+func runClient(port string, printed chan<- bool) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -135,6 +145,12 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	// Signal the server (in-process mode only) that the client's
+	// handshake lines have printed, so it may print its own (P2-27).
+	// Always closed, even in standalone-client mode where nobody
+	// waits on it — passing nil instead would require the frontend
+	// to decode an untyped nil channel argument.
+	close(printed)
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -161,12 +177,16 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready)
+		// Already-closed ordering channel: the server's wait returns
+		// immediately in standalone mode (see runServer).
+		ordered := make(chan bool)
+		close(ordered)
+		go runServer(port, ready, ordered)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port)
+		runClient(port, make(chan bool))
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,8 +197,12 @@ func main() {
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(ephemPort, ready)
+		// Test-only ordering channel (P2-27): closed by the client
+		// after its handshake lines print; the server waits on it
+		// before printing its own handshake line.
+		printed := make(chan bool)
+		go runServer(ephemPort, ready, printed)
 		<-ready
-		runClient(ephemPort)
+		runClient(ephemPort, printed)
 	}
 }
