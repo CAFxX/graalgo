@@ -7,6 +7,7 @@ package main
 // runtime.Callers`, the internal/bisect build failure) and pass after.
 
 import (
+	"go/token"
 	"go/types"
 	"strings"
 	"testing"
@@ -542,5 +543,58 @@ func main() {
 	}
 	if n := strings.Count(out, `"kind": "runtimegosched"`); n != 2 {
 		t.Errorf("exported JSON has %d runtimegosched nodes, want 2 (defer + go)", n)
+	}
+}
+
+// TestRuntimeFuncNameMethodValueFailsAtExport (L11, R1-13): a direct
+// fn.Name() call lowers to the runtimefuncname intrinsic (see
+// TestRuntimeFuncExport), but the bound method value `fn.Name` has no
+// lowering: it must fail at export time with a named scope error —
+// never a runtime panic marker, and never an exporter crash (before
+// this fix, methodValueNode dereferenced the marker's nil funcdecl).
+func TestRuntimeFuncNameMethodValueFailsAtExport(t *testing.T) {
+	src := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	_ = n
+	fn := runtime.FuncForPC(pcs[0])
+	if fn == nil {
+		return
+	}
+	nf := fn.Name
+	_ = nf
+}
+`
+	_, err := ExportFile(writeSyncProg(t, src))
+	if err == nil {
+		t.Fatalf("ExportFile with fn.Name method value: expected export-time scope error, got nil")
+	}
+	if !strings.Contains(err.Error(), "method value") || !strings.Contains(err.Error(), "direct intrinsic call") {
+		t.Errorf("ExportFile error = %v, want a method-value/direct-intrinsic scope error", err)
+	}
+}
+
+// TestIsStdlibRuntimeFuncByPath (L11, R1-14): the runtime interception
+// predicate keys on import path, never package name. A package merely
+// named runtime at another path must not qualify; only path "runtime"
+// does. (An export-level test with a fake runtime package is not
+// possible in this harness: ExportFile type-checks via the overlay /
+// fail importer, so non-stdlib imports cannot resolve here.)
+func TestIsStdlibRuntimeFuncByPath(t *testing.T) {
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)
+	stdlib := types.NewFunc(token.NoPos, types.NewPackage("runtime", "runtime"), "SetFinalizer", sig)
+	other := types.NewFunc(token.NoPos, types.NewPackage("example.com/foo/runtime", "runtime"), "SetFinalizer", sig)
+	if !isStdlibRuntimeFunc(stdlib) {
+		t.Errorf("isStdlibRuntimeFunc(stdlib runtime.SetFinalizer) = false, want true")
+	}
+	if isStdlibRuntimeFunc(other) {
+		t.Errorf("isStdlibRuntimeFunc(example.com/foo/runtime.SetFinalizer) = true, want false (name match must not qualify)")
+	}
+	if isStdlibRuntimeFunc(nil) {
+		t.Errorf("isStdlibRuntimeFunc(nil) = true, want false")
 	}
 }

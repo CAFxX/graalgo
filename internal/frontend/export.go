@@ -648,6 +648,16 @@ func runtimeStackMethod(selection *types.Selection) (string, bool) {
 	return "", false
 }
 
+// isStdlibRuntimeFunc reports whether fn belongs to the standard library
+// "runtime" package, identified by import path — never by package name
+// (L11, R1-14: a third-party or module-local package merely *named*
+// runtime, at another import path, must never be intercepted as stdlib
+// runtime). All runtime interceptions (Goexit, Gosched, SetFinalizer/
+// KeepAlive/GC, NumCPU, GOMAXPROCS) gate on this predicate.
+func isStdlibRuntimeFunc(fn *types.Func) bool {
+	return fn != nil && fn.Pkg() != nil && fn.Pkg().Path() == "runtime"
+}
+
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
@@ -4712,10 +4722,13 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
+	// intrinsicCallOnly marks a synthetic method whose ONLY lowering is
+	// the intrinsic direct-call path (e.g. (*runtime.Func).Name via the
+	// runtimefuncname wire node in exportCall's runtimeStackMethod
+	// branch). It has no methodref/methodvalue lowering: methodRefNode
+	// and methodValueNode must fail at export time (scope error) rather
+	// than emitting anything that panics at runtime.
+	intrinsicCallOnly bool
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4757,11 +4770,15 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	rn := derefNamed(selection.Recv())
 	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
 	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
+	// methodIndex, and its only lowering is the runtimefuncname
+	// intrinsic for direct calls (exportCall's runtimeStackMethod
+	// branch, which runs before exportMethodCall). Return a marker
+	// methodCall; methodRefNode/methodValueNode fail at export time
+	// for the methodref/methodvalue shapes, which have no lowering —
+	// never a runtime panic marker (review L11, R1-13).
 	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
 		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
+		return &methodCall{intrinsicCallOnly: true}, nil
 	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
@@ -6897,7 +6914,7 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || !isStdlibRuntimeFunc(obj) {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8516,11 +8533,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
-		// local named runtime is not. The structural obj.Pkg().Name()
-		// check below stays as the second gate.
+		// local named runtime is not. The structural obj.Pkg().Path()
+		// check below stays as the second gate (L11, R1-14: a
+		// third-party package merely *named* runtime must not be
+		// intercepted; only import path "runtime" qualifies).
 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || !isStdlibRuntimeFunc(obj) {
 					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
 				}
 				if len(c.Args) != 0 {
@@ -8541,7 +8560,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
 		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && isStdlibRuntimeFunc(obj) {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
@@ -9807,16 +9826,11 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
+	// L11 (R1-13): an intrinsic-call-only method has no methodref
+	// lowering. Fail at export time (WS D scope error) — never emit a
+	// call that panics at runtime for a program that type-checked.
+	if mc.intrinsicCallOnly {
+		return nil, scopeErrorf("method %s cannot be used as a method reference in frontend/v1 scope (WS D): it lowers only as a direct intrinsic call", sel.Sel.Name)
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
@@ -9962,6 +9976,12 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 			return nil, scopeErrorf("method value %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
 		}
 		return nil, err
+	}
+	// L11 (R1-13): an intrinsic-call-only method has no methodvalue
+	// lowering either (and no funcdecl to bind: mc.decl is nil, so
+	// falling through would nil-deref below). Fail at export time.
+	if mc.intrinsicCallOnly {
+		return nil, scopeErrorf("method value %s is not supported in frontend/v1 scope (WS D): it lowers only as a direct intrinsic call", sel.Sel.Name)
 	}
 	// The ifacemethod fallback is call-only: a method value on a type
 	// parameter would need itab dispatch deferred to call time, which is
