@@ -154,14 +154,33 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	// A subtest's Skip/Fatal ends only that subtest (go test
+	// semantics): recover the shim's skip/fatal sentinels here so the
+	// parent keeps running. Any other panic re-panics to the per-test
+	// recover, which fails the parent. The Skip/Fatal helpers already
+	// set sub.skipped/sub.failed before panicking; set them again so
+	// the recorded result does not depend on that ordering.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s := toString(r)
+				if len(s) >= 17 && s[:17] == "graalgo test skip" {
+					sub.skipped = true
+				} else if len(s) >= 18 && s[:18] == "graalgo test fatal" {
+					sub.failed = true
+				} else {
+					panic(r)
+				}
+			}
+		}()
+		f(sub)
+	}()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
 	}
-	if sub.skipped {
-		t.skipped = true
-	}
+	// Do NOT propagate sub.skipped to the parent: in go test a parent
+	// whose subtests skip still passes (the subtest alone is SKIP).
 	// Subtest result lines are buffered on the parent and flushed after
 	// the parent's own result line, matching go test's ordering. In
 	// non-verbose mode only failures are shown.
@@ -1412,11 +1431,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t}()\n")
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			if verbose {
-				body.WriteString("\t\tif tt.skipped {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
-				body.WriteString("\t\t} else if tt.failed {\n")
+				// Failure dominates skip, as in go test: a test that
+				// records an error and then skips still FAILs.
+				body.WriteString("\t\tif tt.failed {\n")
 				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
 				body.WriteString("\t\t\tfailed++\n")
+				body.WriteString("\t\t} else if tt.skipped {\n")
+				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
 				body.WriteString("\t\t} else {\n")
 				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", t))
 				body.WriteString("\t\t}\n")

@@ -54,7 +54,7 @@ var _ = cmp.Compare(1, 2)
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src22})
@@ -126,7 +126,7 @@ package p
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src})
@@ -138,7 +138,7 @@ var _ = x509.OIDFromInts([]uint64{1, 2})
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src2})

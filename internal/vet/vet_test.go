@@ -7,6 +7,51 @@ import (
 	"testing"
 )
 
+// TestTypeCheckFailureSurfaced is the regression test for P1-12
+// (review 2026-10-30): a package that fails go/types checking must not
+// yield a clean vet run. Before the fix, Run discarded the conf.Check
+// error, so such a file produced zero diagnostics and the caller
+// printed "vet: no issues found" — a false clean on partial type
+// information.
+func TestTypeCheckFailureSurfaced(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "unresolvable import",
+			src: `package p
+
+import "example.com/nonexistent/pkg"
+
+var _ = pkg.X
+`,
+		},
+		{
+			name: "undefined identifier",
+			src: `package p
+
+func f() {
+	_ = undefinedIdent
+}
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "bad.go")
+			if err := os.WriteFile(path, []byte(tc.src), 0644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Run([]string{path})
+			if err == nil {
+				t.Errorf("Run returned nil error for %s; a clean verdict must be impossible when type checking fails", tc.name)
+			}
+		})
+	}
+}
+
 func TestAnalyzers(t *testing.T) {
 	src := `package main
 

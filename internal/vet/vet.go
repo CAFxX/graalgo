@@ -43,9 +43,11 @@ func Analyzers() []*Analyzer {
 }
 
 // Run analyzes the named Go source files and returns sorted diagnostics.
-// It parses with comments (for directive checks) and type-checks on a
-// best-effort basis: if type checking fails, analyzers still run on the
-// AST with whatever type info was gathered.
+// If type checking fails, analyzers still run on the AST with whatever
+// type info was gathered (best-effort diagnostics), but the type-check
+// error is returned alongside them: callers must never treat such a run
+// as clean, since diagnostics computed from partial type information
+// may miss real issues.
 func Run(paths []string) ([]Diagnostic, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
@@ -72,17 +74,27 @@ func Run(paths []string) ([]Diagnostic, error) {
 		Scopes:     make(map[ast.Node]*types.Scope),
 	}
 	conf := types.Config{
-		Importer:                 importer.Default(),
+		Importer: importer.Default(),
+		// Like go vet: import "C" must type-check so cgo files can be
+		// analyzed (the cgocall analyzer exists for exactly those
+		// files); without this every cgo file would report a spurious
+		// type-check failure.
+		FakeImportC:              true,
 		IgnoreFuncBodies:         false,
 		DisableUnusedImportCheck: true,
 	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
-	// Type errors are tolerated: analyzers use best-effort info.
+	pkg, typeErr := conf.Check("vetpkg", fset, files, info)
+	// Analyzers still run on partial info, but the failure is surfaced:
+	// a caller that ignored it could report "no issues found" for a
+	// package vet never actually checked.
 
 	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
 	var out []Diagnostic
 	for _, a := range analyzers {
 		out = append(out, a.Run(pass)...)
+	}
+	if typeErr != nil {
+		return SortDiagnostics(out), fmt.Errorf("vet: type checking failed: %w", typeErr)
 	}
 	return SortDiagnostics(out), nil
 }

@@ -272,12 +272,15 @@ func cmdVet(root string, args []string) int {
 	}
 	// Run the analyzers over all files as one package.
 	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
-	}
 	for _, d := range ds {
 		fmt.Printf("%s: %s\n", d.Pos, d.Message)
+	}
+	if err != nil {
+		// Type checking failed, so the diagnostics above (if any) were
+		// computed from partial type information: never report a clean
+		// verdict for such a run.
+		fmt.Fprintf(os.Stderr, "graalgo vet: %v (results may be incomplete)\n", err)
+		return 1
 	}
 	if len(ds) > 0 {
 		return 1
