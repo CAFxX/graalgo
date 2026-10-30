@@ -248,6 +248,13 @@ SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 # small machines (2 CPUs: 4 JVMs push runs past the 60s timeout — 11/38
 # timedOut locally on this VM while jobs=1 is 0 drift), so size jobs to the
 # machine, capped at 4: CI runners have 4 vCPUs, so CI behavior is unchanged.
+# Jobs sizing alone leaves too little timeout margin: at jobs=2 on this 2-CPU
+# VM, contended runs measure ~42s (vs ~14s standalone), leaving only 1.4x
+# headroom under a 60s per-run timeout — ordinary third-party load trips
+# false timeouts (2/38 in the r50 run, both programs correct standalone).
+# The per-run timeout is therefore 120s (same as the harness build-step
+# timeout): a hang detector needs headroom well above contended latency,
+# and a true hang still fails fast relative to the ~20min suite.
 # Override with `make snapshot-check SNAPSHOT_JOBS=N`.
 SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
 # The diffharness resolves the graalgo backend launcher as
@@ -264,7 +271,7 @@ snapshot: build
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
 	  -graalgo-commit $(shell git rev-parse HEAD) \
-	  -jobs $(SNAPSHOT_JOBS) -timeout 60
+	  -jobs $(SNAPSHOT_JOBS) -timeout 120
 
 snapshot-check: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
@@ -273,7 +280,7 @@ snapshot-check: build
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
-	  -jobs $(SNAPSHOT_JOBS) -timeout 60
+	  -jobs $(SNAPSHOT_JOBS) -timeout 120
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
 # Uses a persistent warm JVM: in-process compilation (~0.5s) and runs
