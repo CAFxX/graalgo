@@ -104,9 +104,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-p3frontend-gated test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-ci test-regression
+all: generate build snapshot-check check test-v2 test-ci test-regression test-p3frontend-gated
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -165,20 +165,55 @@ test-regression: generate build graalgo
 # internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
 # and `go test` in the p3frontend module. Needs the gofrontend binary
 # (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
-# the <repo>/internal/frontend/gofrontend fallback (export.go).
+# the <repo>/internal/frontend/gofrontend fallback (export.go). The
+# differential tests (TestTwoPackageDifferential,
+# TestEmbeddedFieldRebinding) also need the backend classes (built by
+# `build`): graalgoRun() execs internal/backend/graalgo-run directly.
 #
-# NOT in `all` yet: 4 pre-existing failures need owner fixes first
-# (all fail on master too, never ran in CI):
-#   TestSyncExportDir, TestSyncScopeErrorParity — real-sync exporter
-#     semantics (sync lowering / M2 scope errors); route to the sync
-#     owner or review-d2-vettest (sync test infra).
-#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner points at the removed phases/phase2 tree;
-#     rewire graalgoRun() to internal/backend/graalgo-run; route to
-#     review-t2-testinfra (test infra) or the backend owner.
-# Add test-p3frontend to `all` once those are green.
-test-p3frontend: generate
+# test-p3frontend is the FULL suite and is still red on 4 known failures
+# (all fail on master too, never ran in CI). The gated subset below is
+# what runs in `all`, so the passing tests gate per-push CI while the
+# failures stay visible here, owned, and re-triaged — never silently
+# deleted. The 4 (P1-11-style expiry discipline: owner + re-triage
+# trigger each; the gate fails loudly if an excluded name disappears
+# from the test list, and prints the excluded count on every run):
+#   TestSyncExportDir, TestSyncScopeErrorParity — STALE M2 PINS, not
+#     exporter bugs: the exporter no longer emits syncnew/syncop nodes
+#     for user sync calls (it emits plain methodref calls) and no
+#     longer rejects TryLock/RLocker/embedded-Once with "not in M2
+#     scope" (the full sync surface is accepted). Rewriting these
+#     expectations blesses the new sync representation, so it belongs
+#     to the sync owner (or review-d2-vettest), not this gate lane.
+#     Re-triage trigger: any change to sync lowering/representation.
+#   TestDeterministic, TestSyntheticBootstrapRetained — EXPORTER
+#     NONDETERMINISM, flaky (TestDeterministic fails 2/4 standalone
+#     runs): two ExportDir calls on identical input differ by ~422
+#     bytes confined to the doc's types-table entry order — the frozen
+#     exporter's type emission iterates a map somewhere (see
+#     internal/frontend/export.go doc.Types = e.types). Fixing that is
+#     frozen-exporter surgery with its own review, not a gate-lane edit.
+#     Re-triage trigger: any change to exporter type emission.
+# Fixed in the gating lane (2026-10-30, review-p3frontend-gate): the
+# differential rewire to internal/backend/graalgo-run, and the drift
+# mirrors (errors reflectlite import, strings iter import + landed
+# SplitSeq, strconv strconvError type, context restored Deadline).
+test-p3frontend: generate build
 	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
+
+# Gated p3frontend subset: every top-level test EXCEPT the known
+# failures above. New tests join the gate automatically (they appear in
+# `go test -list`); a newly failing test fails the gate loudly.
+P3FRONTEND_KNOWN_FAILURES := TestSyncExportDir TestSyncScopeErrorParity TestDeterministic TestSyntheticBootstrapRetained
+test-p3frontend-gated: generate build
+	cd internal/frontend/p3frontend && $(GO) vet ./... && \
+	all_tests="$$($(GO) test -list '.*' ./... | grep -E '^(Test|Example)[^/]*$$')" && \
+	for t in $(P3FRONTEND_KNOWN_FAILURES); do \
+		echo "$$all_tests" | grep -qx "$$t" || { echo "p3frontend gate: stale exclusion $$t (not in test list)"; exit 1; }; \
+	done && \
+	run_tests="$$(echo "$$all_tests" | grep -v -F -x $(foreach t,$(P3FRONTEND_KNOWN_FAILURES),-e $(t)))" && \
+	test -n "$$run_tests" || { echo "p3frontend gate: empty gated set"; exit 1; } && \
+	echo "p3frontend gate: gating $$(echo "$$run_tests" | wc -l) tests, excluding $(words $(P3FRONTEND_KNOWN_FAILURES)): $(P3FRONTEND_KNOWN_FAILURES)" && \
+	$(GO) test -run "^$$(echo "$$run_tests" | paste -sd'|' -)$$" ./...
 
 # Frontend v2 module tests: the [internal/frontend/v2](internal/frontend/v2)
 # module (own go.mod) — parser, checker, emitter, and the Go→Java binary

@@ -22,7 +22,8 @@ import (
 // mirrors: tests compare the mirror against this package — not against
 // itself — so a phase-1-side change fails fast instead of silently
 // diverging. (Generalizes phase1SyntheticContextPackage in
-// timecontext_test.go; errors/sort import nothing.)
+// timecontext_test.go; sort imports nothing, errors imports
+// internal/reflectlite — see errorsTestImporter.)
 func phase1SyntheticPackageForTest(t *testing.T, srcFile, constName, path string, imp types.Importer) *types.Package {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -74,19 +75,35 @@ func phase1SyntheticPackageForTest(t *testing.T, srcFile, constName, path string
 }
 
 // rejectImports is a types.Importer for self-contained synthetic sources
-// (errors, sort): any import is a test failure.
+// (sort): any import is a test failure.
 type rejectImports struct{}
 
 func (rejectImports) Import(path string) (*types.Package, error) {
 	return nil, fmt.Errorf("unexpected synthetic import %q", path)
 }
 
+// errorsTestImporter resolves the one import the phase-1 synthetic errors
+// source legitimately carries — internal/reflectlite, which the real
+// errors package's As implementation uses — from the toolchain's export
+// data, and rejects everything else. (errors is no longer self-contained,
+// so it cannot use rejectImports.)
+func errorsTestImporter() types.Importer {
+	return importerFunc(func(path string) (*types.Package, error) {
+		if path == "internal/reflectlite" {
+			return importer.Default().Import(path)
+		}
+		return nil, fmt.Errorf("unexpected synthetic import %q", path)
+	})
+}
+
 // syntheticStdImporter returns a types.Importer resolving the synthetic
 // "errors" and "io" packages for drift tests whose phase-1 sources import
 // them (P3-M8: bytes/strings import io; io itself imports errors and the
-// real sync). The importer is self-referential (declared with var, not
-// :=, so the closure sees it). Shared by bytes_test.go and
-// strings_test.go — one place to extend when the import graph grows.
+// real sync), plus real-stdlib packages the phase-1 sources import
+// directly (iter: strings uses range-over-func iterators). The importer
+// is self-referential (declared with var, not :=, so the closure sees
+// it). Shared by bytes_test.go and strings_test.go — one place to extend
+// when the import graph grows.
 func syntheticStdImporter(t *testing.T) types.Importer {
 	t.Helper()
 	errorsPkg := syntheticErrorsPackage()
@@ -109,6 +126,12 @@ func syntheticStdImporter(t *testing.T) types.Importer {
 			// frontend; real sync is a superset and the drift comparison
 			// never observes it (every sync use is unexported).
 			return importer.Default().Import("sync")
+		}
+		if path == "iter" {
+			// Real stdlib package, imported directly by the phase-1
+			// strings source; the drift comparison never observes it
+			// beyond type-checking.
+			return importer.Default().Import("iter")
 		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", path)
 	})
@@ -166,7 +189,7 @@ func TestErrorsSyntheticSignatures(t *testing.T) {
 	}
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../synth_errors.go", "syntheticErrorsSource",
-		"errors", rejectImports{})
+		"errors", errorsTestImporter())
 
 	// Full exported-scope drift check (names + rendered types).
 	assertScopeMatchesPhase1(t, "errors", mirror, phase1)

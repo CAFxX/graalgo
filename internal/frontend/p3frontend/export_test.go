@@ -13,14 +13,19 @@ import (
 	"time"
 )
 
-// repoRoot returns the graalgo repo root (four levels above this file's dir).
+// repoRoot returns the graalgo repo root: this file lives in
+// <root>/internal/frontend/p3frontend, so the root is three levels
+// above this file's dir (frontend, internal, root). Note filepath.Dir
+// already strips the file name — four ".." segments overshoot into the
+// worktree parent, which is how the old phases/phase2 path silently
+// pointed outside the repo.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..")
+	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
 
 type cmdResult struct {
@@ -85,13 +90,18 @@ func goTool(t *testing.T) string {
 	return p
 }
 
-// graalgoRun executes the merged single-file program with the Phase-2
-// launcher (make -s run ARGS="--gmp=1 <file>"); -s keeps make's own echo
-// out of stdout so it stays byte-comparable with gc's.
+// graalgoRun runs a merged single-file program under the current backend
+// launcher (internal/backend/graalgo-run), which execs
+// graalgo.launcher.Main on the file. The old phases/phase2 `make run`
+// entry point no longer exists; the new launcher takes the file directly
+// and has no --gmp flag (its Main rejects unknown flags), so no scheduler
+// width is passed — the differential programs here are single-goroutine,
+// so scheduler width cannot change their stdout or exit code. Requires
+// `make build` at the repo root first (the launcher never builds).
 func graalgoRun(t *testing.T, mergedPath string) cmdResult {
 	t.Helper()
-	phase2 := filepath.Join(repoRoot(t), "phases", "phase2")
-	return runCommand(t, phase2, "make", "-s", "run", "ARGS=--gmp=1 "+mergedPath)
+	launcher := filepath.Join(repoRoot(t), "internal", "backend", "graalgo-run")
+	return runCommand(t, ".", launcher, mergedPath)
 }
 
 // normalizeDoc unmarshals a frontend/v1 document and normalizes the

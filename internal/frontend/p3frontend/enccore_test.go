@@ -149,6 +149,13 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 			// never observes it (every sync use is unexported).
 			return importer.Default().Import("sync")
 		}
+		if p == "internal/reflectlite" {
+			// The phase-1 synthetic errors source (pulled in via the
+			// "errors" arm above) imports internal/reflectlite for its
+			// As implementation; resolve it from the toolchain's export
+			// data like the other real-stdlib arms.
+			return importer.Default().Import(p)
+		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", p)
 	})
 	return phase1SyntheticPackageForTest(t,

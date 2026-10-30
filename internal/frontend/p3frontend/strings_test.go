@@ -15,7 +15,10 @@ import (
 // package against the phase-1 source: ~50 functions plus Builder,
 // Replacer, Reader with all methods.
 func TestStringsSyntheticSignatures(t *testing.T) {
-	mirror := syntheticStringsPackage()
+	mirror, err := syntheticStringsPackage()
+	if err != nil {
+		t.Fatalf("syntheticStringsPackage: %v", err)
+	}
 	if mirror.Name() != "strings" || mirror.Path() != "strings" {
 		t.Fatalf("package name/path = %s/%s, want strings/strings",
 			mirror.Name(), mirror.Path())
@@ -88,14 +91,17 @@ func TestStringsOmissionSet(t *testing.T) {
 		// Need io.Writer (io wave).
 		"WriteString": "io.Writer parameter (Replacer.WriteString)",
 		"WriteTo":     "io.Writer parameter (Reader.WriteTo)",
-		// Need iter.Seq (iter wave).
+		// Need iter.Seq (iter wave). SplitSeq LANDED in the phase-1
+		// source and is mirrored, so it is no longer omitted.
 		"Lines":         "iter.Seq result",
-		"SplitSeq":      "iter.Seq result",
 		"SplitAfterSeq": "iter.Seq result",
 		"FieldsSeq":     "iter.Seq result",
 		"FieldsFuncSeq": "iter.Seq result",
 	}
-	mirror := syntheticStringsPackage()
+	mirror, err := syntheticStringsPackage()
+	if err != nil {
+		t.Fatalf("syntheticStringsPackage: %v", err)
+	}
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../synth_strings.go", "syntheticStringsSource",
 		"strings", syntheticStdImporter(t))

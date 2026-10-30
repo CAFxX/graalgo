@@ -278,13 +278,10 @@ func TestContextSyntheticSignatures(t *testing.T) {
 				want.Name(), sigString(wantSig), sigString(gotSig))
 		}
 	}
-	// Deadline must be absent from the mirror (afc0dfb): v1 cannot emit
-	// multi-result methods, so the synthetic interface omits it.
-	for i := 0; i < mirrorIface.NumMethods(); i++ {
-		if mirrorIface.Method(i).Name() == "Deadline" {
-			t.Fatal("mirror Context must not declare Deadline (afc0dfb)")
-		}
-	}
+	// Deadline must be PRESENT in the mirror: P4 (046afc86) restored it
+	// to the phase-1 interface via the general multi-result mechanism,
+	// removing the P3-M5 (afc0dfb) deliberate divergence. The loop above
+	// already fails if the mirror lacks it or its signature drifts.
 
 	// CancelFunc and CancelCauseFunc.
 	for _, name := range []string{"CancelFunc", "CancelCauseFunc"} {

@@ -313,11 +313,18 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 		return types.NewParam(token.NoPos, pkg, name, t)
 	}
 
-	// Context interface. Matches the phase-1 synthetic exactly: Deadline
-	// is OMITTED (afc0dfb — v1 cannot emit multi-result methods, WS D),
-	// and Done() returns <-chan struct{} (receive-only, as in the
-	// synthetic source).
+	// Context interface. Matches the phase-1 synthetic exactly. Deadline
+	// was OMITTED in P3-M5 (afc0dfb — v1 could not emit multi-result
+	// methods) but RESTORED in P4 (046afc86 — the general interface
+	// multi-result mechanism), which removed that deliberate divergence;
+	// the mirror restores it too. Done() returns <-chan struct{}
+	// (receive-only, as in the synthetic source).
 	ctxMethods := []*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Deadline",
+			types.NewSignatureType(nil, nil, nil, nil,
+				types.NewTuple(
+					newParam("deadline", timeType),
+					newParam("ok", boolT)), false)),
 		types.NewFunc(token.NoPos, pkg, "Done",
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(

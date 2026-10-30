@@ -14,17 +14,22 @@ package p3frontend
 // Deliberate omissions (inexpressible in the synthetic source; documented
 // in the phase-1 header): ToUpperSpecial/ToLowerSpecial/ToTitleSpecial
 // (need unicode.SpecialCase), Replacer.WriteString and Reader.WriteTo
-// (need io.Writer), Lines/SplitSeq/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
-// (need iter.Seq). Title is present with exact gc signature and a
-// fail-fast body (deprecated; needs unicode tables).
+// (need io.Writer), Lines/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
+// (need iter.Seq). SplitSeq LANDED in the phase-1 source (its iter import
+// is now available) and is mirrored below. Title is present with exact
+// gc signature and a fail-fast body (deprecated; needs unicode tables).
 
 import (
+	"fmt"
 	"go/token"
 	"go/types"
 )
 
-// syntheticStringsPackage mirrors the P3-M7 synthetic "strings".
-func syntheticStringsPackage() *types.Package {
+// syntheticStringsPackage mirrors the P3-M7 synthetic "strings". It
+// returns an error only if the iter.Seq[string] instantiation for
+// SplitSeq fails to build (a construction bug, never input-dependent);
+// callers propagate it as an import error.
+func syntheticStringsPackage() (*types.Package, error) {
 	pkg := types.NewPackage("strings", "strings")
 	intT := types.Typ[types.Int]
 	int64T := types.Typ[types.Int64]
@@ -186,6 +191,31 @@ func syntheticStringsPackage() *types.Package {
 		[]*types.Var{newParam("s", stringT), newParam("sep", stringT), newParam("n", intT)},
 		[]*types.Var{newParam("", strSlice)}, false)
 
+	// SplitSeq(s, sep string) iter.Seq[string]. The mirror is
+	// constructor-only (it cannot import the real iter package), so
+	// iter.Seq[V any] = func(yield func(V) bool) is redeclared here
+	// and instantiated at string; the drift test pins the rendered
+	// signature against the phase-1 source.
+	iterPkg := types.NewPackage("iter", "iter")
+	anyT := types.Universe.Lookup("any").Type()
+	vParam := types.NewTypeParam(types.NewTypeName(token.NoPos, iterPkg, "V", nil), anyT)
+	yieldFn := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "", vParam)),
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "", boolT)), false)
+	seqSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "yield", yieldFn)), nil, false)
+	seqName := types.NewTypeName(token.NoPos, iterPkg, "Seq", nil)
+	seqNamed := types.NewNamed(seqName, seqSig, nil)
+	seqNamed.SetTypeParams([]*types.TypeParam{vParam})
+	iterPkg.Scope().Insert(seqName)
+	iterSeqString, err := types.Instantiate(nil, seqNamed, []types.Type{stringT}, true)
+	if err != nil {
+		return nil, fmt.Errorf("instantiating iter.Seq[string]: %w", err)
+	}
+	insertFunc("SplitSeq",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("", iterSeqString)}, false)
+
 	// Case mapping.
 	for _, name := range []string{"ToUpper", "ToLower", "ToTitle", "Title", "TrimSpace", "Clone"} {
 		insertFunc(name, str, strRes, false)
@@ -307,5 +337,5 @@ func syntheticStringsPackage() *types.Package {
 	addReaderMethod("UnreadRune", nil, []*types.Var{newParam("", errorT)})
 	insertFunc("NewReader", str, []*types.Var{newParam("", readerPtr)}, false)
 
-	return pkg
+	return pkg, nil
 }
