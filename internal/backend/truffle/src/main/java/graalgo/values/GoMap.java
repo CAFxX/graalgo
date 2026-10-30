@@ -9,6 +9,35 @@ package graalgo.values;
  * comma-ok form arrives with WS D). Tombstones keep probe chains intact
  * across deletes; the table doubles when occupancy (including tombstones)
  * exceeds 70%.
+ *
+ * <p>Concurrency (review P0-2, 2026-10-30): every method is synchronized
+ * on the map instance. Goroutines are real virtual threads, so one map
+ * value can be read and written from several goroutines at once; without
+ * the monitor, interleaved {@code put}/{@code resize} pairs corrupt probe
+ * chains, lose entries, and publish torn array generations (a resizing
+ * thread's not-yet-published key slot can even surface as a null key to
+ * another thread's rehash). The monitor gives both atomicity and
+ * visibility: all fields ({@code keys}, {@code values}, {@code states},
+ * {@code mask}, {@code size}, {@code tombstones}) are only ever touched
+ * under it, and the private helpers are synchronized as well so no future
+ * caller can enter the table without holding it. {@code put}'s recursive
+ * re-entry through {@code resize} is safe: monitors reenter on the same
+ * thread.
+ *
+ * <p>Deliberate divergence from gc, in the permissive direction: gc fails
+ * a program with concurrent map writes loudly ({@code fatal error:
+ * concurrent map writes}); a synchronized GoMap instead produces the
+ * correct result. The alternative — a concurrent-write detector — was
+ * rejected: detection is windowed (non-overlapping writes escape it and
+ * would still corrupt), and gc's fatal is unrecoverable while graalgo's
+ * panic machinery is recoverable, so a detector could not reproduce the
+ * fatal's semantics without a new unrecoverable-fatal mechanism. Guarding
+ * is also what {@code sync.Map} already assumes: {@code GoSyncMap}
+ * synchronizes its own methods and delegates here, and nested locking on
+ * the two distinct monitors composes without deadlock (GoMap never calls
+ * back into guest code or another lock while holding its monitor —
+ * {@link GoEquality} is pure). Single-threaded programs pay one
+ * uncontended monitor enter/exit per operation.
  */
 public final class GoMap {
     private static final byte EMPTY = 0;
@@ -38,18 +67,18 @@ public final class GoMap {
         mask = n - 1;
     }
 
-    public int size() {
+    public synchronized int size() {
         return size;
     }
 
     /** Returns the value for {@code key}, or {@code null} if absent. */
-    public Object get(Object key) {
+    public synchronized Object get(Object key) {
         int i = findSlot(key);
         return i >= 0 ? values[i] : null;
     }
 
     /** Inserts or replaces {@code key → value}. */
-    public void put(Object key, Object value) {
+    public synchronized void put(Object key, Object value) {
         if (key == null) {
             throw new IllegalArgumentException("Go map keys are never null in Phase 1 (WS D refines)");
         }
@@ -88,7 +117,7 @@ public final class GoMap {
     }
 
     /** Removes {@code key}; no-op if absent. */
-    public void delete(Object key) {
+    public synchronized void delete(Object key) {
         int i = findSlot(key);
         if (i >= 0) {
             keys[i] = null;
@@ -100,7 +129,7 @@ public final class GoMap {
     }
 
     /** Removes all entries (the {@code clear} builtin). */
-    public void clear() {
+    public synchronized void clear() {
         java.util.Arrays.fill(keys, null);
         java.util.Arrays.fill(values, null);
         java.util.Arrays.fill(states, EMPTY);
@@ -109,7 +138,7 @@ public final class GoMap {
     }
 
     /** True when {@code key} is present (even with a null value). */
-    public boolean containsKey(Object key) {
+    public synchronized boolean containsKey(Object key) {
         return findSlot(key) >= 0;
     }
 
@@ -120,7 +149,7 @@ public final class GoMap {
      * entry removed during iteration is not produced); entries created
      * mid-iteration are never produced (the spec permits skipping them).
      */
-    public Object[] keysSnapshot() {
+    public synchronized Object[] keysSnapshot() {
         Object[] out = new Object[size];
         int j = 0;
         for (int i = 0; i < keys.length; i++) {
@@ -132,7 +161,7 @@ public final class GoMap {
     }
 
     /** Slot index holding {@code key}, or -1. */
-    private int findSlot(Object key) {
+    private synchronized int findSlot(Object key) {
         int h = GoEquality.hash(key) & mask;
         for (int probe = 0; probe < keys.length; probe++) {
             int i = (h + probe) & mask;
@@ -147,7 +176,7 @@ public final class GoMap {
         return -1;
     }
 
-    private void resize(int n) {
+    private synchronized void resize(int n) {
         Object[] oldKeys = keys;
         Object[] oldValues = values;
         byte[] oldStates = states;
