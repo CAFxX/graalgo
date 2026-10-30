@@ -93,11 +93,12 @@ func isTestingT(fn *types.Func) bool {
 }
 
 type printfVerb struct {
-	text      string
-	verb      rune
-	indexed   bool
-	argIndex  int
-	starWidth bool
+	text          string
+	verb          rune
+	indexed       bool
+	argIndex      int
+	starWidth     bool
+	starPrecision bool
 }
 
 // checkPrintfFormat validates args against the format string verbs.
@@ -117,6 +118,31 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 			}
 			continue
 		}
+		// Star arguments come BEFORE the value argument in the
+		// argument list, so they must be consumed (and type-checked)
+		// before the value is checked. Previously the value was
+		// checked against the first star argument and the stars were
+		// skipped afterwards, misaligning every following verb.
+		starMissing := false
+		for _, star := range []bool{v.starWidth, v.starPrecision} {
+			if !star {
+				continue
+			}
+			if argIdx >= len(args) {
+				out = append(out, Diagnostic{pos,
+					"missing argument for " + v.text})
+				starMissing = true
+				break
+			}
+			if msg := checkStarArg(pass, args[argIdx]); msg != "" {
+				out = append(out, Diagnostic{pass.position(args[argIdx]),
+					v.text + ": " + msg})
+			}
+			argIdx++
+		}
+		if starMissing {
+			continue
+		}
 		if argIdx >= len(args) {
 			out = append(out, Diagnostic{pos,
 				"missing argument for " + v.text})
@@ -127,9 +153,6 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 				v.text + ": " + msg})
 		}
 		argIdx++
-		if v.starWidth {
-			argIdx++
-		}
 	}
 	return out
 }
@@ -174,6 +197,7 @@ func parsePrintfVerbs(format string) []printfVerb {
 		if i < len(format) && format[i] == '.' {
 			i++
 			if i < len(format) && format[i] == '*' {
+				v.starPrecision = true
 				i++
 			} else {
 				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
@@ -222,6 +246,11 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		if t.String() == "[]byte" || t.String() == "[]uint8" {
 			break
 		}
+		// fmt renders String() / Error() results for %s and %q,
+		// so Stringer and error values are legal here.
+		if implementsStringMethod(t, "String") || implementsStringMethod(t, "Error") {
+			break
+		}
 		return "expects string or []byte"
 	case 'v':
 		// %v accepts anything.
@@ -237,6 +266,35 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		// Anything goes.
 	}
 	return ""
+}
+
+// checkStarArg validates a width/precision '*' argument; "" means OK.
+// A star argument must be an integer (any integer kind, named or not).
+func checkStarArg(pass *Pass, arg ast.Expr) string {
+	tv, ok := pass.Info.Types[arg]
+	if !ok || tv.Type == nil {
+		return ""
+	}
+	if basic, isBasic := tv.Type.Underlying().(*types.Basic); isBasic && isIntKind(basic.Kind()) {
+		return ""
+	}
+	return "expects integer"
+}
+
+// implementsStringMethod reports whether t's method set contains a method
+// named name with no parameters and a single string result — i.e. the
+// String() or Error() method of fmt.Stringer / error.
+func implementsStringMethod(t types.Type, name string) bool {
+	sel := types.NewMethodSet(t).Lookup(nil, name)
+	if sel == nil {
+		return false
+	}
+	sig, ok := sel.Type().(*types.Signature)
+	if !ok || sig.Params().Len() != 0 || sig.Results().Len() != 1 {
+		return false
+	}
+	basic, isBasic := sig.Results().At(0).Type().Underlying().(*types.Basic)
+	return isBasic && basic.Kind() == types.String
 }
 
 func isIntKind(k types.BasicKind) bool {
