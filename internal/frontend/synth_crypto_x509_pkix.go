@@ -2,6 +2,7 @@
 //
 // Real-Go sources: adapted from gc go1.27.1 ($GOROOT/src/crypto/x509/pkix/pkix.go).
 // Provides the PKIX types needed by crypto/x509.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptox509pkix for this package's root cause and retires-when trigger (crypto/x509/pkix).
 package main
 
 // syntheticCryptoX509PkixSource is the P3-M9 synthetic `crypto/x509/pkix` package.

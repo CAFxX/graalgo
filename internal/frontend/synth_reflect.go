@@ -1,3 +1,7 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#iter for this package's root cause and retires-when trigger (iter).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#reflect_m7 for this package's root cause and retires-when trigger (reflect_m7).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#reflect-retired for this package's root cause and retires-when trigger (reflect (retired)).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#internalreflectlite-retired for this package's root cause and retires-when trigger (internal/reflectlite (retired)).
 package main
 
 import (
@@ -14,7 +18,7 @@ import (
 //   - isReflectIntrinsicFunc: call-site predicate
 //   - exportReflectIntrinsic: emits the "reflectop" wire node
 //
-// The GoRType runtime table lives in phases/phase3 (p3reflect package);
+// The GoRType runtime table lives in ../backend/interop/src/main/java/graalgo/p3reflect/ (p3reflect package);
 // the wire "reflectop" node carries {"op","args","type","pkgpath"} and the
 // Java ReflectOpNode dispatches on op. Shared-file edits (synth_machinery.go
 // registration, mrdesugar_m5.go entries) are staged patches, not applied.
@@ -29,7 +33,7 @@ const syntheticReflectSource = `
 //
 // Architecture: the wire type table already carries everything reflect
 // needs (field offsets/tags, method tables, signatures). The runtime
-// GoRType table (phases/phase3/.../p3reflect, built from the wire table,
+// GoRType table (../backend/interop/src/main/java/graalgo/p3reflect/, built from the wire table,
 // canonical per GoTypeDescriptor) backs the __reflect_* intrinsics —
 // each a small wire-node op mapped to an existing Java capability
 // (GoCalls.invoke, ChanOps, Intrinsics.map*, the wire table). The

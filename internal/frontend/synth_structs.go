@@ -20,6 +20,7 @@
 // unsafe, and unsafe.Offsetof on such structs is out of v1 scope). If a
 // future milestone needs the layout effect, that is a backend feature with
 // this file's re-test trigger, not a silent gap.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#structs for this package's root cause and retires-when trigger (structs).
 package main
 
 // syntheticStructsSource is the P3-M9 synthetic `structs` package: exact gc

@@ -53,6 +53,7 @@
 // //go:build !compiler_bootstrap / compiler_bootstrap) is resolved by the
 // GG-0023 "carry the linux files" rule: indexByte uses the bootstrap loop
 // (bytealg_bootstrap.go), which is the correct non-asm implementation.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#strconv for this package's root cause and retires-when trigger (strconv).
 package main
 
 // syntheticStrconvSource is the P3-M7 synthetic `strconv` package.

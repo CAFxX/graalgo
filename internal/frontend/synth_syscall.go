@@ -24,6 +24,7 @@
 // helpers live in single-result __-helpers returning pair structs, and
 // 2/3-target call sites desugar via Appendix M (staged mrdesugar_m5.go
 // entries). Every other position fails fast (WS D).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#syscall for this package's root cause and retires-when trigger (syscall).
 package main
 
 // syntheticSyscallSource is the P3-M8 synthetic `syscall` package.

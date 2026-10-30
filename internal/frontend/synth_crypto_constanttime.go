@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptointernalconstanttime for this package's root cause and retires-when trigger (crypto/internal/constanttime).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/internal/constanttime' package.

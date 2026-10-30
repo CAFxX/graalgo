@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#flag for this package's root cause and retires-when trigger (flag).
 package main
 
 // P3-M9: synthetic flag package.

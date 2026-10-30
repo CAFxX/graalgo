@@ -28,6 +28,7 @@
 //
 // Out-of-scope members: exact gc signature + panic("not in M7 scope").
 // The sources use only frontend/v1-supported constructs (no generics).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#math for this package's root cause and retires-when trigger (math).
 package main
 
 // syntheticMathSource is the P3-M7 synthetic `math` package. Exact gc

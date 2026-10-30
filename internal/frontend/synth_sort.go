@@ -27,6 +27,7 @@
 // because multi-result calls need WS D. `reverse` delegates explicitly
 // instead of embedding Interface (unobservable through the public API;
 // avoids embedded-interface export risk).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#sort for this package's root cause and retires-when trigger (sort).
 package main
 
 // syntheticSortSource is the P3-M7 synthetic `sort` package.

@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptox509 for this package's root cause and retires-when trigger (crypto/x509).
 package main
 
 // P3-M9: synthetic 'crypto/x509' package.
@@ -6,7 +7,7 @@ package main
 // certificate handling (java.security.cert) where semantics match, rather
 // than reimplementing in Go. Certificate parsing delegates to
 // CertificateFactory via graalgo.x509.* intrinsics (see
-// phases/phase3/src/main/java/graalgo/p3x509/GoX509.java).
+// ../backend/interop/src/main/java/graalgo/p3x509/GoX509.java).
 // Certificate creation (CreateCertificate) stays in Go (no standard JDK API).
 //
 // The Certificate struct carries an unexported javaCert field holding the

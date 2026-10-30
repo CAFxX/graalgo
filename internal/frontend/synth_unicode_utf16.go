@@ -8,6 +8,7 @@
 //
 // Verbatim copy of gc go1.27.1 unicode/utf16/utf16.go.
 // Self-contained, no imports.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#unicodeutf16 for this package's root cause and retires-when trigger (unicode/utf16).
 package main
 
 // syntheticUnicodeUtf16Source is the P3-M9 synthetic `unicode/utf16` package.

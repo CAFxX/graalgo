@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#golangorgxcryptocryptobyteasn1 for this package's root cause and retires-when trigger (golang.org/x/crypto/cryptobyte/asn1).
 package main
 
 // P3-M9 tier-5: synthetic 'golang.org/x/crypto/cryptobyte/asn1' package.

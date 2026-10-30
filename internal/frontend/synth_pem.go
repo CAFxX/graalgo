@@ -35,6 +35,7 @@
 // signature and implement it over the synthetic core. This omission is
 // deliberate and loud — never silent (the p3frontend drift test asserts
 // the omission list).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingpem for this package's root cause and retires-when trigger (encoding/pem).
 package main
 
 // syntheticPemSource is the P3-M7 synthetic `encoding/pem` package:

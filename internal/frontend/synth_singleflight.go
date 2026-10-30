@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#internalsingleflight for this package's root cause and retires-when trigger (internal/singleflight).
 package main
 
 // P3-M9 (tier-4: net): synthetic `internal/singleflight` package.

@@ -43,6 +43,7 @@
 // pointer, which v1 cannot express (WS D) — every call site fails fast
 // with the named M7 scope error. Any other call position fails fast
 // with the named M7 scope error.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingasn1 for this package's root cause and retires-when trigger (encoding/asn1).
 package main
 
 // syntheticAsn1Source is the P3-M7 synthetic `encoding/asn1` package:

@@ -1,3 +1,4 @@
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#io (row for io; this file mirrors its signatures).
 package p3frontend
 
 // P3-M10 (self-attack FINDING-5 follow-up): p3frontend mirror of the

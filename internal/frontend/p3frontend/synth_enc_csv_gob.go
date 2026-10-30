@@ -1,3 +1,5 @@
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingcsv (row for encoding/csv; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodinggob (row for encoding/gob; this file mirrors its signatures).
 package p3frontend
 
 // P3-M7 (wave 1): p3frontend mirrors of the phase-1 synthetic

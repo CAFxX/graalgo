@@ -1,3 +1,11 @@
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingbase32 (row for encoding/base32; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingbase64 (row for encoding/base64; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodinghex (row for encoding/hex; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingbinary (row for encoding/binary; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingascii85 (row for encoding/ascii85; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingpem (row for encoding/pem; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encodingasn1 (row for encoding/asn1; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#encoding (row for encoding; this file mirrors its signatures).
 package p3frontend
 
 // P3-M7 (wave 1): p3frontend mirrors of the phase-1 synthetic encoding/*

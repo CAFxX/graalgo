@@ -31,6 +31,7 @@
 // signatures and implement the streaming encoder/decoder over the
 // synthetic Encode/Decode core. This omission is deliberate and loud —
 // never silent (the p3frontend drift test asserts the omission list).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingascii85 for this package's root cause and retires-when trigger (encoding/ascii85).
 package main
 
 // syntheticAscii85Source is the P3-M7 synthetic `encoding/ascii85`

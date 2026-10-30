@@ -15,11 +15,12 @@
 // interface stub. Everything else in io/fs (Glob, ReadFile, WalkDir,
 // ReadDirFS, StatFS, Sub, ...) is OUT of M8 scope: it rides on the
 // synthetic os package once that lands (re-test trigger recorded in
-// phases/phase3/hidden_files/m8-analysis/os.md §6.8).
+// ../../docs/arch/phase3-analysis/m8-analysis/os.md §6).
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no
 // unsafe). All functions are single-result, so no Appendix-M desugar
 // entries are needed for this package.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#iofs for this package's root cause and retires-when trigger (io/fs).
 package main
 
 // syntheticIoFsSource is the P3-M8 synthetic `io/fs` core package:

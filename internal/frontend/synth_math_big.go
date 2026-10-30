@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#mathbig for this package's root cause and retires-when trigger (math/big).
 package main
 
 const syntheticMathBigSource = (

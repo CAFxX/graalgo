@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptointernalrand for this package's root cause and retires-when trigger (crypto/internal/rand).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/internal/rand' package.

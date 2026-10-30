@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptoelliptic for this package's root cause and retires-when trigger (crypto/elliptic).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/elliptic' package.

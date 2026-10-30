@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#hashcrc32 for this package's root cause and retires-when trigger (hash/crc32).
 package main
 
 // P3-M9 (wave 3): synthetic `hash/crc32` package.

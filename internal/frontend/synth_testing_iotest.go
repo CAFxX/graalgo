@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#testingiotest for this package's root cause and retires-when trigger (testing/iotest).
 package main
 
 // P3-M9: synthetic testing/iotest package.

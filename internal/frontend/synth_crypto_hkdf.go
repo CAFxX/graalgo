@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptohkdf for this package's root cause and retires-when trigger (crypto/hkdf).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/hkdf' package.

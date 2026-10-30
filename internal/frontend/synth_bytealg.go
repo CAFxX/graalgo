@@ -32,6 +32,8 @@
 //       internal/cpu records, for assembly use) are omitted: there is no
 //       assembly consumer in the synthetic tree. Re-test trigger: a
 //       synthetic internal/cpu landing.
+//
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#internalbytealg for this package's root cause and retires-when trigger (internal/bytealg).
 package main
 
 // syntheticBytealgSource is the P3-M9 synthetic `internal/bytealg`

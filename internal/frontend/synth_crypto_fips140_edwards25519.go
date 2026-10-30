@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptointernalfips140edwards25519 for this package's root cause and retires-when trigger (crypto/internal/fips140/edwards25519).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/internal/fips140/edwards25519' package.

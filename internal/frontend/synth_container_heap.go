@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#containerheap for this package's root cause and retires-when trigger (container/heap).
 package main
 
 // P3-M9 (wave 3): synthetic `container/heap` package.

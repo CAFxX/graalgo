@@ -8,6 +8,7 @@
 //
 // Verbatim copy of gc go1.27.1 unicode/utf8/utf8.go.
 // Self-contained, no imports.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#unicodeutf8 for this package's root cause and retires-when trigger (unicode/utf8).
 package main
 
 // syntheticUnicodeUtf8Source is the P3-M9 synthetic `unicode/utf8` package.

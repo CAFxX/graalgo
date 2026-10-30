@@ -47,6 +47,7 @@
 //   - Fail-fast (loud, with re-test triggers): Add; Pointer<->uintptr;
 //     over-long Slice len and carrier-mismatched referents panic with
 //     gc-exact messages at runtime.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#unsafe-dedicated-stub for this package's root cause and retires-when trigger (unsafe (dedicated stub)).
 package main
 
 import (

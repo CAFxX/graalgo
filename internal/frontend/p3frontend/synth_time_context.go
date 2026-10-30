@@ -1,3 +1,5 @@
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#time (row for time; this file mirrors its signatures).
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#context (row for context; this file mirrors its signatures).
 package p3frontend
 
 // P3-M5 (WS E, ADR-0005): p3frontend mirrors of the phase-1 synthetic

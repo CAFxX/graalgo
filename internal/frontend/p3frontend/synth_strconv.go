@@ -1,3 +1,4 @@
+// Retirement mirror: see ../../../docs/arch/synth-retirement-tracker.md#strconv (row for strconv; this file mirrors its signatures).
 package p3frontend
 
 // P3-M7 (wave 1): p3frontend mirror of the phase-1 synthetic "strconv"

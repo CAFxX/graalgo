@@ -1,10 +1,11 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#net for this package's root cause and retires-when trigger (net).
 package main
 
 // P3-M9 (tier-4: net): synthetic `net` package.
 //
 // Real-Go sources: curated from gc go1.27.1 ($GOROOT/src/net/*.go).
 // The socket path is wired to the netpoller runtime traps per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md.
+// ../../docs/arch/phase3-analysis/m9-tmp/net-fork-contract.md.
 //
 // Contents:
 //   - Addr types (IP, IPAddr, TCPAddr, UDPAddr, IPNet) + ParseIP/ParseCIDR/
@@ -846,7 +847,7 @@ func (p *pipeAddr) String() string { return "pipe" }
 // ---------------------------------------------------------------------------
 // Socket address types + Dial/Listen (P3-M9 tier-4: loopback TCP/UDP).
 // Wired to the graalgo.net.* traps + internal/poll per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md.
+// ../../docs/arch/phase3-analysis/m9-tmp/net-fork-contract.md.
 // ---------------------------------------------------------------------------
 
 // Listener is a generic network listener for stream-oriented protocols.

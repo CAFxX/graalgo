@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#testing for this package's root cause and retires-when trigger (testing).
 package main
 
 // P3-M9: synthetic testing package.

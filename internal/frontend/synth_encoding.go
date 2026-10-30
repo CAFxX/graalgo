@@ -8,6 +8,7 @@
 // six marshaling interfaces, no code, no vars, no funcs. The synthetic
 // mirrors that exactly — there is nothing to implement and nothing to
 // fail fast on.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encoding for this package's root cause and retires-when trigger (encoding).
 package main
 
 // syntheticEncodingSource is the P3-M7 synthetic `encoding` package:

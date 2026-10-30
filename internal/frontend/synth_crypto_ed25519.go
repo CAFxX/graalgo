@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptoed25519 for this package's root cause and retires-when trigger (crypto/ed25519).
 package main
 
 // P3-M9 tier-5: synthetic 'crypto/ed25519' package.

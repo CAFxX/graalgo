@@ -29,6 +29,7 @@
 //   D3. The mutex is *sync.Mutex (pointer), not a value field — the P3-M2
 //       surface forbids value sync.Mutex in synthetic sources (synth_io.go
 //       deviation D1/D2).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#unique for this package's root cause and retires-when trigger (unique).
 package main
 
 // syntheticUniqueSource is the P3-M9 synthetic `unique` package: exact gc

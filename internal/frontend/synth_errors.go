@@ -16,6 +16,7 @@
 // __reflect_* intrinsics it needs — valueof, typeof, tKind, tElem,
 // tImplements, tAssignableTo, elem, set, isnil — are implemented in
 // p3reflect), exactly as the real errors package uses internal/reflectlite.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#errors for this package's root cause and retires-when trigger (errors).
 package main
 
 // syntheticErrorsSource is the P3-M7 synthetic `errors` package: exact

@@ -10,17 +10,17 @@
 // exportSyntheticPackages.
 //
 // Exact gc 1.27.1 public API signatures (linux/amd64) for the full
-// file/dir/stat/path/env/argv/identity surface (os.md §5, classes
-// (a)+(b)). The fail-fast surface (os.md §6) keeps exact signatures with
+// file/dir/stat/path/env/argv/identity surface (../../docs/arch/phase3-analysis/m8-analysis/os.md §5, classes
+// (a)+(b)). The fail-fast surface (../../docs/arch/phase3-analysis/m8-analysis/os.md §6) keeps exact signatures with
 // fail-fast bodies; each names its re-test trigger.
 //
 // Binding model (R1, ADR-0004): ~40 //go:linkname intrinsics under the
-// FROZEN symbol namespace graalgo.os.<name> (os.md §2.4 — the os worker
+// FROZEN symbol namespace graalgo.os.<name> (../../docs/arch/phase3-analysis/m8-analysis/os.md §2.4 — the os worker
 // owns this table), bound by graalgo.p3os.GoOs (NEW Java file) via host
 // JVM APIs. No real syscalls; no JNI/JNA. os does NOT route through
 // synthetic syscall for I/O (R2: direct binding).
 //
-// Conventions (os.md §2.3, documented once here and in GoOs javadoc):
+// Conventions (../../docs/arch/phase3-analysis/m8-analysis/os.md §2.3, documented once here and in GoOs javadoc):
 //   - Every int64-returning intrinsic returns negative = -errno (Linux
 //     errno number), non-negative = value.
 //   - read/write/readAt/writeAt/readlink/hostname return n+1 for n >= 0
@@ -85,6 +85,7 @@
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no
 // unsafe beyond the blank import required by //go:linkname).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#os for this package's root cause and retires-when trigger (os).
 package main
 
 // syntheticOsSource is the P3-M8 synthetic `os` package, assembled from
@@ -270,7 +271,7 @@ const (
 	SEEK_END int = 2
 )
 
-// Handle kinds cached in File.kind (os.md §2.2).
+// Handle kinds cached in File.kind (../../docs/arch/phase3-analysis/m8-analysis/os.md §2.2).
 const (
 	kindRegular int64 = 1
 	kindDir     int64 = 2
@@ -489,7 +490,7 @@ func newLinkError(op, oldname, newname string, negErrno int64) error {
 var errNegativeOffset = errors.New("negative offset")
 
 // errSetuidBits is the descriptive error for chmod/open modes carrying
-// setuid/setgid/sticky bits (os.md §6.3): the JVM has no numeric chmod(2);
+// setuid/setgid/sticky bits (../../docs/arch/phase3-analysis/m8-analysis/os.md §6.3): the JVM has no numeric chmod(2);
 // masking silently is forbidden. Re-test: Panama FFI numeric-chmod.
 var errSetuidBits = errors.New("setuid/setgid/sticky bits not supported (need real chmod(2); re-test: Panama FFI)")
 

@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#internalbyteorder for this package's root cause and retires-when trigger (internal/byteorder).
 package main
 
 const syntheticByteorderSource = (

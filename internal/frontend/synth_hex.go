@@ -37,6 +37,7 @@
 // the synthetic Encode/Decode core. This omission is deliberate and
 // loud — never silent (the p3frontend drift test asserts the omission
 // list).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodinghex for this package's root cause and retires-when trigger (encoding/hex).
 package main
 
 // syntheticHexSource is the P3-M7 synthetic `encoding/hex` package:

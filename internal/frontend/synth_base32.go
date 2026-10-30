@@ -31,6 +31,7 @@
 // The constructors are real; the streaming Read/Write/Close methods fail
 // fast with the named M8/WS-D error (re-test when WS D lands multi-result
 // calls). The p3frontend drift test pins the declared surface.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingbase32 for this package's root cause and retires-when trigger (encoding/base32).
 package main
 
 // syntheticBase32Source is the P3-M7 synthetic `encoding/base32`

@@ -8,6 +8,7 @@
 //
 // Verbatim copy of gc go1.27.1 cmp/cmp.go (self-contained,
 // no imports). No intrinsics needed.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cmp for this package's root cause and retires-when trigger (cmp).
 package main
 
 // syntheticCmpSource is the P3-M9 synthetic `cmp` package.

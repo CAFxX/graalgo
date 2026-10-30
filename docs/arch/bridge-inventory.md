@@ -19,11 +19,15 @@ deliverable until the design lands.
 
 ## Phased removal order
 
-- **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+- **Phase 1 — in flight (2026-10-15, narrowed 2026-10-30).** Retire the
+  highest-value synthetic packages via root-cause fixes. Three of the
+  original four are done and moved to Retired below: `fmt` (worktrees
+  `real-fmt2`, `real-fmt-rebase`), `reflect` (worktree `real-reflect2`),
+  `net/http` (worktree `real-nethttp`). Still outstanding — the only
+  Phase-1 packages left: `crypto/x509` (worktree `real-x509`) and `net`
+  (the `real-nethttp` worktree's `net` part is still synthetic). B-1 is
+  retired; B-5 is narrowed (see below) and retires with `crypto/x509`;
+  the reflect name-keyed predicates in B-3 retired with `reflect`.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -109,11 +113,12 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 140 `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
-  `synth_*.go` mirrors under
+- **What:** 140 `synth_*.go` files in [internal/frontend/](../../internal/frontend/)
+  (130 import paths registered in `syntheticSources`; the remainder are
+  the overlay machinery, tests, a fragment, and unregistered/reference
+  sources — see the per-package record) plus 12 `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
   sources.
@@ -123,30 +128,42 @@ deliverable until the design lands.
 - **Root-cause fix:** per-package: fix the compiler/runtime cause that
   forces the synthetic (the 2026-10-15 directive: only packages that
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
-  verifiable reason), then delete the `synth_*.go`. The `p3frontend`
+  verifiable reason), then delete the `synth_*.go`. The per-package
+  record — root cause and retires-when trigger for every synthetic
+  package — is the [synthetic retirement tracker](synth-retirement-tracker.md);
+  every `synth_*.go` file header links to its row there. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
-  `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
-  general disk mechanism"), `real-nethttp` (`net`/`net/http`),
-  `real-reflect2` (`reflect`).
-- **Phase:** 1 (the four in-flight packages) → 2 (remainder).
+  decision. In flight: `real-x509` (`crypto/x509`, "remove synthetic
+  crypto/x509, route via general disk mechanism") and the `net` part of
+  `real-nethttp`; `fmt`, `reflect`, and `net/http` are retired (see
+  Retired below).
+- **Phase:** 1 (the two in-flight packages) → 2 (remainder).
 
-### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
+### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + SEC1/PKCS#1 DER walking
 
 - **What:**
   [GoX509.java](../../internal/backend/interop/src/main/java/graalgo/p3x509/GoX509.java):
-  hand-rolled `scalarMultiply`/`ecAdd`/`ecDouble` and byte
+  hand-rolled `scalarMultiply`/`ecAdd`/`ecDouble` (EC arithmetic) and byte
   pattern-matching DER helpers (`extractBitString`, `skipLength`,
-  `derLength`, `parsePkcs1Integers`, `extractSec1PrivateKey`, …) instead of
-  delegating to JDK crypto (`java.security`).
+  `derLength`, `parsePkcs1Integers`, `extractSec1PrivateKey`,
+  `extractSec1CurveOid`, …) used for SPKI bit-string extraction and
+  SEC1/PKCS#1 private-key parsing, instead of delegating to JDK crypto
+  (`java.security`).
+- **Already delegated (not part of this bridge):** certificate parsing
+  via `CertificateFactory.generateCertificate`, field extraction via
+  `X509Certificate` accessors, and PKCS#8 private keys via `KeyFactory`
+  + `PKCS8EncodedKeySpec` (RSA, EC, Ed25519). Only the SEC1/PKCS#1 DER
+  walking and the EC arithmetic above remain hand-rolled.
 - **Why:** expedience during the TLS bring-up; the directive (prefer JDK
-  delegation when semantically compatible) was not applied.
-- **Root-cause fix:** delegate to the JDK (e.g. derive SEC1 public points
-  via `KeyAgreement("ECDH")`, parse with `CertificateFactory`) or document
-  specifically why the JDK cannot cover a case, with differential tests vs
-  gc `x509.ParseECPrivateKey` over P-224/256/384/521. In flight: worktree
-  `real-x509` (coordinate — it retires synthetic `crypto/x509`, the Go-side
-  counterpart).
+  delegation when semantically compatible) was not applied to the
+  remaining cases.
+- **Root-cause fix:** delegate the remaining cases to the JDK where an
+  API covers them (e.g. SEC1 public points via `KeyAgreement("ECDH")`,
+  PKCS#1 via `RSAPrivateCrtKeySpec`, SEC1 private keys by PKCS#8
+  wrapping) or document specifically why the JDK cannot cover a case,
+  with differential tests vs gc `x509.ParseECPrivateKey` over
+  P-224/256/384/521. In flight: worktree `real-x509` (coordinate — it
+  retires synthetic `crypto/x509`, the Go-side counterpart).
 - **Phase:** 1.
 
 ### B-6. `unsafe.Add` always traps (bridge by omission)
@@ -240,6 +257,22 @@ code, per [AGENTS.md](../../AGENTS.md) §7).
   `FmtCallNode.java`, `FmtHandleMethods.java`, `FmtMethodDispatch.java` plus
   tests) deleted. `fmt.Append`/`Appendf`/`Appendln` verified working from
   the real package.
+- **2026-10-16 — synthetic `reflect` + `internal/reflectlite`.**
+  Real `reflect` now compiles from GOROOT via the disk importer
+  (`d2804a52`, real-reflect2 lane); the `reflect` and
+  `internal/reflectlite` registrations are commented out in
+  `synth_machinery.go` as RETIRED. The `synth_reflect.go` source remains
+  on disk only as the `reflect_m7` desugar helper and the `iter`
+  declarations (see the [synthetic retirement tracker](synth-retirement-tracker.md)).
+  Phase-1 membership for `reflect` is closed; the reflect name-keyed
+  predicates in B-3 retired with it.
+- **2026-10-16 — synthetic `net/http` + `net/http/httptest`.**
+  Real `net/http` now compiles from GOROOT via the general disk overlay
+  (`cc0a78f4`, real-nethttp lane); the synthetic sources are retired
+  ("Real net/http compiles from GOROOT via the general disk overlay" in
+  `synth_machinery.go`). Phase-1 membership for `net/http` is closed;
+  `net` itself remains synthetic and is the remaining `real-nethttp`
+  work.
 - **2026-10-15 — stale `# BRIDGE` self-labels in module Makefiles.** The
   comments in
   [internal/backend/interop/Makefile](../../internal/backend/interop/Makefile)

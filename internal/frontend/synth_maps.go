@@ -8,6 +8,7 @@
 //
 // maps/maps.go + maps/iter.go. The linkname'd clone is replaced
 // by a pure-Go Clone (see new_bodies.py). Imports synthetic "iter".
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#maps for this package's root cause and retires-when trigger (maps).
 package main
 
 // syntheticMapsSource is the P3-M9 synthetic `maps` package.

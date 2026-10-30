@@ -35,6 +35,8 @@
 // The sources use only frontend/v1-supported constructs (no generics):
 // they must keep passing `go vet`-level type-check AND the exporter's
 // scope rules.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#time for this package's root cause and retires-when trigger (time).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#context for this package's root cause and retires-when trigger (context).
 package main
 
 // syntheticTimeSource is the P3-M5 synthetic `time` package (ADR-0005

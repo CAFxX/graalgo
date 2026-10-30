@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#mathrand-reference-stub for this package's root cause and retires-when trigger (math/rand (reference stub)).
 package main
 
 const syntheticMathRandSource = (

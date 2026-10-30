@@ -29,6 +29,7 @@
 // desugars N-target call sites to them (Appendix M pattern,
 // mrdesugar_m7.go). Any other call position fails fast with the named
 // M7 scope error.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingbase64 for this package's root cause and retires-when trigger (encoding/base64).
 package main
 
 // syntheticBase64Source is the P3-M7 synthetic `encoding/base64`

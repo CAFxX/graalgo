@@ -42,6 +42,7 @@
 // signatures and implement them over the synthetic core. This omission
 // is deliberate and loud — never silent (the p3frontend drift test
 // asserts the omission list).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingbinary for this package's root cause and retires-when trigger (encoding/binary).
 package main
 
 // syntheticBinarySource is the P3-M7 synthetic `encoding/binary`

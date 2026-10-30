@@ -11,6 +11,7 @@
 //
 // Synthetic-only (not in the user import allow-list).
 
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#internalgraalgofmtstate for this package's root cause and retires-when trigger (internal/graalgo/fmtstate).
 package main
 
 // syntheticFmtstateSource is the P3-M9 synthetic `internal/graalgo/fmtstate` package.

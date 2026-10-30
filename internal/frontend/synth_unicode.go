@@ -9,6 +9,7 @@
 // unicode/tables.go + letter.go + graphic.go + digit.go +
 // casetables.go, concatenated (package vars are dependency-ordered
 // by the exporter). Self-contained, no imports.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#unicode for this package's root cause and retires-when trigger (unicode).
 package main
 
 // syntheticUnicodeSource is the P3-M9 synthetic `unicode` package.

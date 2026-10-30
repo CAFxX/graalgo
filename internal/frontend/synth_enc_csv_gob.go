@@ -41,6 +41,8 @@
 // The sources use only frontend/v1-supported constructs (no generics, no
 // multi-result calls — every internal helper is single-result; the parse
 // loops are restructured around outcome structs).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingcsv for this package's root cause and retires-when trigger (encoding/csv).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodinggob for this package's root cause and retires-when trigger (encoding/gob).
 package main
 
 // syntheticCsvSource is the P3-M7 synthetic `encoding/csv` package: the

@@ -21,6 +21,7 @@
 // entries). Walk/WalkDir are single-result and emitted directly; they
 // call os.Lstat/os.ReadDir/os.Open (concrete, already desugared) and
 // fs.FileInfoToDirEntry.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#pathfilepath-unregistered for this package's root cause and retires-when trigger (path/filepath (unregistered)).
 package main
 
 // syntheticFilepathSource is the P3-M9 synthetic `path/filepath` package.

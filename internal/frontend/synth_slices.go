@@ -12,6 +12,7 @@
 // length); unsafe-based overlaps/startIdx -> v-snapshot
 // Insert/Replace (pointer-to-uintptr conversion is the D5
 // fail-fast trap under graalgo); imports synthetic "cmp" and "iter".
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#slices for this package's root cause and retires-when trigger (slices).
 package main
 
 // syntheticSlicesSource is the P3-M9 synthetic `slices` package.

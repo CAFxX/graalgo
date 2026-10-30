@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#hashmaphash for this package's root cause and retires-when trigger (hash/maphash).
 package main
 
 // P3-M9 (wave 3): synthetic `hash/maphash` package.

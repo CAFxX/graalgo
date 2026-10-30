@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#neturl for this package's root cause and retires-when trigger (net/url).
 package main
 
 // P3-M9 (tier-4: net): synthetic `net/url` package.

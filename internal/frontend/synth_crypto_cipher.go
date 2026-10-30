@@ -1,8 +1,9 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptocipher for this package's root cause and retires-when trigger (crypto/cipher).
 package main
 
 // P3-M8 (wave 2): synthetic `cipher` package.
 // Software implementation only (no intrinsification).
-// See phases/phase3/hidden_files/m8-analysis/crypto.md.
+// See ../../docs/arch/phase3-analysis/m8-analysis/crypto.md.
 const syntheticCipherSource = `package cipher
 
 import (

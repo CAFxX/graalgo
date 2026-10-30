@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-`gofrontend` type-checks one single-file Go program with the vendored `go/*`
+`gofrontend` type-checks all files of one Go package with the vendored `go/*`
 packages and emits a single JSON document: the AST with per-expression type
 references into a serialized type table (from `go/types`), source positions on
 every node, and package metadata. `NodeFactory` parses the document and builds
@@ -134,7 +134,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `paren` | `x`, `type`: type id |
 | `convert` | `to`: type id, `from`: source type id (M7; needed for string<->slice to get the element kind), `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
 | `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` — string spread *and* slice spread since `007b42f`; only `append` carries it, and only for `...` calls) |
-| `fmtcall` | `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). Only the seven D4 symbols resolve; any other `fmt.X` is a scope error naming Phase 3. |
+| `fmtcall` | RETIRED 2026-10-16 with real `fmt` (see the [bridge inventory](bridge-inventory.md) Retired section): the D4 `fmt` stub, its Phase-1 import overlay, and `exportFmtCall`/`fmtOverlayFuncs` are deleted. The row is kept so pre-retirement documents remain readable: `func` was one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`, `args` the argument expressions, `type` the type id or null. The exporter no longer emits `fmtcall` nodes — calls to the real `fmt` package (compiled from GOROOT via the disk importer, §7) are plain `call` nodes. A document containing `fmtcall` is a pre-retirement artifact. |
 | `if` | `init`: stmt node or null, `cond`: expr node, `then`: block node, `else`: stmt node or null (block or `if` for else-if) |
 | `for` | `init`: stmt node or null, `cond`: expr node or null, `post`: stmt node or null, `body`: block node |
 | `range` | `key`, `value`: object ids or null (absent/blank), `define`: bool, `x`: expr node, `body`: block node |
@@ -241,13 +241,21 @@ The exporter fails fast — non-zero exit, message on stderr, no JSON on
 stdout — outside this scope. Every rejection names the workstream that owns
 the extension:
 
-- one input file; **no imports** except `fmt` via the Phase-1 import
-  overlay (WS G) and `runtime` for `runtime.Goexit` only (M5, WS F):
-  the overlay synthesizes a `fmt` package exposing only
-  the seven D4 symbols (`Print`, `Printf`, `Println`, `Sprint`, `Sprintf`,
-  `Sprintln`, `Errorf`) with exact variadic signatures; any other `fmt.X`
-  is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
-  `fmtcall` wire nodes.
+- one package, one or more input files (all files are parsed and
+  type-checked together as a single package; positions index into the
+  input file list). Imports pass the single frontend/v1 import gate
+  (`importAdmitted` in `export.go`, WS G): admitted are (1) the packages
+  with dedicated synthetic constructors — `runtime` and `unsafe`
+  (`fmt` used to be a third; it now resolves from disk like any real
+  package, and the `fmtcall` node for its stub is retired, §6);
+  (2) any package with a synthetic source in `syntheticSources`
+  (synthetic `internal/*` packages follow Go's internal-visibility rule);
+  (3) non-synthetic `internal/*` packages visible from the importing
+  package under Go's internal-visibility rule, resolved from disk; and
+  (4) disk-importable third-party packages (module cache/GOPATH) through
+  the general import overlay. Every admitted import resolves through the
+  overlay importer. Any other import is a scope error ("imports are not
+  supported in frontend/v1 scope (WS G import overlay)").
 - package-level declarations: `func main` plus any number of named
   functions, generic or not (M6, WS H); package-level `const` (references
   fold through go/types, iota included) and `var` (M7 — initialized in
@@ -408,7 +416,7 @@ Deliberate M2 stand-ins, each replaced by its owning workstream:
 
 ## 10. Worked example
 
-`frontend/testdata/straight01.go`:
+[`internal/frontend/testdata/straight01.go`](../../internal/frontend/testdata/straight01.go):
 ```go
 package main
 
@@ -419,8 +427,15 @@ func main() {
 	z = z
 }
 ```
-exports to `frontend/testdata/straight01.json` (checked in; golden test).
-`frontend/javatest/` replays it: `NodeFactoryTest` builds the program from
-the JSON, executes it on the Truffle runtime, and asserts `z == 42`,
+exports to [`internal/frontend/testdata/straight01.json`](../../internal/frontend/testdata/straight01.json) (checked in; golden test).
+[`internal/frontend/javatest/`](../../internal/frontend/javatest/) replays
+it: [`NodeFactoryTest.java`](../../internal/frontend/javatest/NodeFactoryTest.java)
+builds the program from its own golden pair —
+[`golden_straight01.go`](../../internal/frontend/javatest/golden_straight01.go)
+(source-identical to `testdata/straight01.go`) and
+[`golden_straight01.json`](../../internal/frontend/javatest/golden_straight01.json)
+(an older v0.1.0-format document, distinct from the current v0.7.0
+`testdata/straight01.json` output) —
+executes it on the Truffle runtime, and asserts `z == 42`,
 including a position cross-check (`SourceSection` char index/length vs the
 exporter's `off`/`len`) and gc-oracle value checks for `straight02`.

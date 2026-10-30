@@ -19,6 +19,8 @@
 //   - graalgo.tls.handshake, graalgo.tls.wrap, graalgo.tls.unwrap
 //   - graalgo.tls.newEngine (client/server SSLEngine creation)
 //   - Certificate parsing uses java.security.cert.CertificateFactory
+//
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#cryptotls for this package's root cause and retires-when trigger (crypto/tls).
 package main
 
 // syntheticCryptoTlsSource is the P3-M9 synthetic `crypto/tls` package.

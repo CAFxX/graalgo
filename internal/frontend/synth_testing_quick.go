@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#testingquick for this package's root cause and retires-when trigger (testing/quick).
 package main
 
 // P3-M9: synthetic testing/quick package.

@@ -10,7 +10,7 @@
 // type/object tables) via exportSyntheticPackages.
 //
 // SCOPE (honest subset — the full rationale is in
-// phases/phase3/hidden_files/m7-enc-xml/redgreen.md and the source's own
+// ../../docs/arch/phase3-analysis/m7-enc-xml/redgreen.md and the source's own
 // M7 notes):
 //   - IN: the token stream — Decoder.Token/RawToken (desugared; see
 //     mrdesugar_m5.go mrXmlToken), the full XML grammar (byte-exact vs
@@ -40,6 +40,7 @@
 // replaced by the chunkless Reader cursor, bytes/strconv/strings/unicode
 // by small inlined helpers, and the unicode name tables by compressed
 // [lo,hi,stride] triples (all gc strides preserved).
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingxml for this package's root cause and retires-when trigger (encoding/xml).
 package main
 
 // syntheticXmlSource is the P3-M7 synthetic `encoding/xml` package.

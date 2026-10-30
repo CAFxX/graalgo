@@ -1,3 +1,4 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#hashadler32 for this package's root cause and retires-when trigger (hash/adler32).
 package main
 
 // P3-M9 (wave 3): synthetic `hash/adler32` package.

@@ -1,4 +1,5 @@
 // P3-M7 (wave 1): synthetic `encoding/json` package.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#encodingjson for this package's root cause and retires-when trigger (encoding/json).
 package main
 
 // syntheticJsonSource is the P3-M7 synthetic `encoding/json` package.

@@ -1,10 +1,11 @@
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#internalpoll for this package's root cause and retires-when trigger (internal/poll).
 package main
 
 // P3-M9 (tier-4: net): synthetic `internal/poll` package.
 //
 // Real-Go source: adapted from gc go1.27.1
 // ($GOROOT/src/internal/poll/fd_poll_runtime.go + errno_unix.go), per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md:
+// ../../docs/arch/phase3-analysis/m9-tmp/net-fork-contract.md:
 //
 //   - fd_poll_runtime.go logic kept unmodified; only the declaration block
 //     is replaced with the single-result //go:linkname declarations (the

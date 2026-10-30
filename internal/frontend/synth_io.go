@@ -80,6 +80,7 @@
 // pair-returning __-helper (DESIGN.md §3); the ifacemethod node yields
 // the pair and field extraction proceeds exactly like the concrete
 // Appendix M desugar.
+// Retirement: see ../../docs/arch/synth-retirement-tracker.md#io for this package's root cause and retires-when trigger (io).
 package main
 
 // syntheticIoSource is the P3-M8 synthetic `io` package: exact gc 1.27.1
