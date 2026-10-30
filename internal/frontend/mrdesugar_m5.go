@@ -1036,6 +1036,8 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/x509", "ParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKeyPair", []string{"v0", "v1"}},
 	{"crypto/x509", "ParseECPrivateKey", "", "__mrParseECPrivateKey", "", "__mrParseECPrivateKeyPair", []string{"v0", "v1"}},
 	{"crypto/x509", "Verify", "Certificate", "__mrVerify", "", "__mrVerifyPair", []string{"v0", "v1"}},
+	// review21-tlsverify: crypto/x509.SystemCertPool (JDK trust store).
+	{"crypto/x509", "SystemCertPool", "", "__mrSystemCertPool", "", "__mrSystemCertPoolPair", []string{"v0", "v1"}},
 	{"crypto/x509", "parsePrivateKeyDescriptor", "", "__mrParsePrivateKeyDescriptor", "", "__mrParsePrivateKeyDescriptorPair", []string{"v0", "v1"}},
 	{"crypto/x509", "hashFromSigAlg", "", "__mrHashFromSigAlg", "", "__mrHashFromSigAlgPair", []string{"v0", "v1"}},
 	// P3-M9 (x509/TLS lane): crypto/tls multi-result functions.

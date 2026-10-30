@@ -57,6 +57,44 @@ public final class GoX509 {
     }
 
     /**
+     * System trust anchors (JDK default trust store) as length-prefixed DER
+     * certs, same encoding as the tls chainDER.
+     * graalgo.x509.systemRootCAs() -> bytes
+     * Backs the synthetic crypto/x509 SystemCertPool (review21-tlsverify):
+     * gc semantics say nil VerifyOptions.Roots means the system roots, so
+     * the Go side needs a real anchor source instead of an empty pool.
+     * Throws loudly if the default store cannot be read; an empty store
+     * yields zero DERs, and the Go side then reports the system pool as
+     * unavailable — never a silent accept.
+     */
+    public static Object systemRootCAs() {
+        try {
+            javax.net.ssl.TrustManagerFactory tmf =
+                    javax.net.ssl.TrustManagerFactory.getInstance(
+                            javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((java.security.KeyStore) null);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            for (javax.net.ssl.TrustManager tm : tmf.getTrustManagers()) {
+                if (tm instanceof javax.net.ssl.X509TrustManager) {
+                    javax.net.ssl.X509TrustManager xtm =
+                            (javax.net.ssl.X509TrustManager) tm;
+                    for (X509Certificate c : xtm.getAcceptedIssuers()) {
+                        byte[] der = c.getEncoded();
+                        out.write((der.length >>> 24) & 0xFF);
+                        out.write((der.length >>> 16) & 0xFF);
+                        out.write((der.length >>> 8) & 0xFF);
+                        out.write(der.length & 0xFF);
+                        out.write(der, 0, der.length);
+                    }
+                }
+            }
+            return toGoBytes(out.toByteArray());
+        } catch (Exception e) {
+            throw new IllegalStateException("GoX509.systemRootCAs failed", e);
+        }
+    }
+
+    /**
      * Unwraps a Go {@code any} holding an X509Certificate. The Go side passes
      * the parse result as {@code any}, which arrives as a GoInterface wrapper;
      * the raw X509Certificate is in its data slot.

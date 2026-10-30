@@ -121,6 +121,9 @@ func graalgoX509ExtKeyUsage(cert any) string
 //go:linkname graalgoX509ParsePkcs1 graalgo.x509.parsePkcs1
 func graalgoX509ParsePkcs1(der []byte) string
 
+//go:linkname graalgoX509SystemRootCAs graalgo.x509.systemRootCAs
+func graalgoX509SystemRootCAs() []byte
+
 // SignatureAlgorithm identifies the signature algorithm.
 type SignatureAlgorithm int
 
@@ -471,6 +474,56 @@ type CertPool struct {
 // NewCertPool returns a new, empty CertPool.
 func NewCertPool() *CertPool {
 	return &CertPool{}
+}
+
+// cachedSystemCertPool is the JDK default trust store as a CertPool, built
+// once on first use. Callers always receive a Clone, so no caller can mutate
+// the cached anchors (gc SystemCertPool copy semantics).
+var cachedSystemCertPool *CertPool
+
+type __mrSystemCertPoolPair struct {
+	v0 *CertPool
+	v1 error
+}
+
+func __mrSystemCertPool() __mrSystemCertPoolPair {
+	return systemCertPoolImpl()
+}
+
+func SystemCertPool() (*CertPool, error) {
+	panic("crypto/x509: SystemCertPool: multi-result desugar")
+}
+
+// systemCertPoolImpl builds the system pool from the JDK default trust
+// store (graalgo.x509.systemRootCAs, length-prefixed DERs). An empty store
+// is an error, never an empty pool: an empty pool would make every
+// nil-Roots verification fail with a misleading UnknownAuthorityError
+// instead of reporting that the system roots are unavailable.
+func systemCertPoolImpl() __mrSystemCertPoolPair {
+	if cachedSystemCertPool != nil {
+		return __mrSystemCertPoolPair{cachedSystemCertPool.Clone(), nil}
+	}
+	pool := NewCertPool()
+	buf := graalgoX509SystemRootCAs()
+	pos := 0
+	for pos+4 <= len(buf) {
+		n := int(buf[pos])<<24 | int(buf[pos+1])<<16 | int(buf[pos+2])<<8 | int(buf[pos+3])
+		pos += 4
+		if n < 0 || pos+n > len(buf) {
+			break
+		}
+		__tmpC := __mrParseCertificate(buf[pos : pos+n])
+		pos += n
+		if __tmpC.v1 != nil {
+			continue
+		}
+		pool.AddCert(__tmpC.v0)
+	}
+	if len(pool.certs) == 0 {
+		return __mrSystemCertPoolPair{nil, errors.New("crypto/x509: system root pool is not available")}
+	}
+	cachedSystemCertPool = pool
+	return __mrSystemCertPoolPair{pool.Clone(), nil}
 }
 
 // AddCert adds a certificate to the pool.
@@ -1193,7 +1246,15 @@ func (c *Certificate) verify(opts VerifyOptions) __mrVerifyPair {
 	}
 	roots := opts.Roots
 	if roots == nil {
-		roots = NewCertPool()
+		// gc semantics: nil Roots means the system roots, not an empty
+		// pool. Previously this substituted an empty pool, so every
+		// default verification (VerifyOptions{} and every TLS client
+		// without explicit RootCAs) failed with UnknownAuthorityError.
+		__tmpSys := __mrSystemCertPool()
+		if __tmpSys.v1 != nil {
+			return __mrVerifyPair{nil, __tmpSys.v1}
+		}
+		roots = __tmpSys.v0
 	}
 	intermediates := opts.Intermediates
 	if intermediates == nil {

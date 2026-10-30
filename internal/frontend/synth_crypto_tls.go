@@ -318,6 +318,14 @@ type Conn struct {
 	isClient     bool
 	// handshakeComplete tracks whether doHandshake finished.
 	handshakeComplete bool
+	// verifiedChains holds the chains leaf.Verify returned for the peer
+	// (client side), populated by verifyPeer for ConnectionState.
+	verifiedChains [][]*x509.Certificate
+	// buildErr records a Server() construction failure (no usable
+	// certificate material): Handshake returns it instead of a generic
+	// nil-engine error, so a misconfigured server fails loudly with
+	// the configuration reason.
+	buildErr error
 }
 
 // Client creates a TLS client over conn. The handshake runs on Handshake().
@@ -343,12 +351,29 @@ func Server(conn net.Conn, config *Config) *Conn {
 	}
 	c := &Conn{conn: conn, config: config, isClient: false}
 	if len(config.Certificates) == 0 {
+		// Fail loudly at Handshake time instead of returning a
+		// handle-0 Conn with no recorded reason (while listenImpl
+		// loud-errors on the same config). The empty-config message
+		// matches gc exactly ("tls: no certificates configured").
+		// GetCertificate / GetConfigForClient cannot be honoured by
+		// this trap design (SNI selection would have to run inside
+		// the JDK engine before the handshake, and the engine is
+		// built here with a fixed chain): a callback-only config
+		// records that as its failure reason rather than silently
+		// degrading to no certificate. That is a known divergence
+		// from gc, recorded here, not a claim that SNI works.
+		if config.GetCertificate == nil && config.GetConfigForClient == nil {
+			c.buildErr = errors.New("tls: no certificates configured")
+		} else {
+			c.buildErr = errors.New("tls: GetCertificate/GetConfigForClient not supported by graalgo")
+		}
 		return c
 	}
 	cert := &config.Certificates[0]
 	__tmpKC := keyComponents(cert.PrivateKey)
 	keyAlg, keyParams, err := __tmpKC.v0, __tmpKC.v1, __tmpKC.v2
 	if err != nil {
+		c.buildErr = err
 		return c
 	}
 	c.engineHandle = newServerEngineTrap(
@@ -721,6 +746,9 @@ func (c *Conn) NetConn() net.Conn {
 }
 
 func (c *Conn) Handshake() error {
+	if c.buildErr != nil {
+		return c.buildErr
+	}
 	if c.engineHandle == 0 {
 		return errors.New("tls: nil engine")
 	}
@@ -738,6 +766,17 @@ func (c *Conn) Handshake() error {
 			c.handshakeComplete = true
 			if err := c.verifyPeer(); err != nil {
 				return err
+			}
+			// gc runs VerifyConnection after the handshake,
+			// regardless of whether chain verification was skipped
+			// (InsecureSkipVerify) or is a server-side no-op here:
+			// a post-handshake check that never runs is a silently
+			// dropped contract, so it runs on every successful
+			// engine handshake.
+			if c.config != nil && c.config.VerifyConnection != nil {
+				if err := c.config.VerifyConnection(c.ConnectionState()); err != nil {
+					return err
+				}
 			}
 			// P3-M9 (x509): the in-process handshake test prints
 			// "handshake-ok" right after Handshake() returns. The client's
@@ -799,31 +838,83 @@ func (c *Conn) Handshake() error {
 	}
 }
 
-// verifyPeer verifies the peer certificate chain after the handshake
-// (client side, unless InsecureSkipVerify), using x509.Verify.
+// verifyPeer verifies the peer certificate chain after the handshake,
+// using x509.Verify, and runs the Config callbacks gc runs at this
+// point in the handshake (review21-tlsverify):
+//   - Client side: chain verification against RootCAs, or the system
+//     roots when RootCAs is nil (gc semantics: opts.Roots is left nil
+//     and x509.verify substitutes SystemCertPool — previously an empty
+//     pool was substituted, so default clients always failed).
+//     Intermediates come from the peer chain (peerDERs[1:]); previously
+//     they were dropped, so any leaf→intermediate→root chain failed.
+//     KeyUsages is ExtKeyUsageServerAuth: previously unset, and
+//     x509.verifyChain only checks EKU when KeyUsages is non-empty, so
+//     a clientAuth/code-signing-only cert was accepted as a server cert.
+//   - VerifyPeerCertificate runs after chain verification, and also
+//     when InsecureSkipVerify skips chain verification (gc calls it in
+//     both cases, with nil verifiedChains when verification was
+//     skipped), so certificate/SPKI pinning works with InsecureSkipVerify.
+//   - Server side: chain verification itself belongs to the
+//     review-tls-clientauth lane (P0-1, client-auth modes); this lane
+//     only adds the VerifyPeerCertificate callback invocation for a
+//     presented client chain, with nil verifiedChains until that lane's
+//     verification stores its chains (rebase follow-up).
 func (c *Conn) verifyPeer() error {
+	var verifiedChains [][]*x509.Certificate
 	if !c.isClient {
-		return nil
-	}
-	if c.config != nil && c.config.InsecureSkipVerify {
-		return nil
+		if c.config == nil || c.config.VerifyPeerCertificate == nil {
+			return nil
+		}
+		peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
+		if len(peerDERs) == 0 {
+			return nil
+		}
+		return c.config.VerifyPeerCertificate(peerDERs, verifiedChains)
 	}
 	peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
 	if len(peerDERs) == 0 {
 		return errors.New("tls: no peer certificates")
 	}
-	leaf, err := x509.ParseCertificate(peerDERs[0])
-	if err != nil {
-		return err
+	if c.config == nil || !c.config.InsecureSkipVerify {
+		leaf, err := x509.ParseCertificate(peerDERs[0])
+		if err != nil {
+			return err
+		}
+		serverName := ""
+		if c.config != nil {
+			serverName = c.config.ServerName
+		}
+		opts := x509.VerifyOptions{
+			DNSName:   serverName,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		}
+		if c.config != nil && c.config.RootCAs != nil {
+			opts.Roots = c.config.RootCAs
+		}
+		// nil Roots is left nil on purpose: x509.verify substitutes
+		// the system roots (gc semantics).
+		if len(peerDERs) > 1 {
+			intermediates := x509.NewCertPool()
+			for _, der := range peerDERs[1:] {
+				cert, err := x509.ParseCertificate(der)
+				if err != nil {
+					return fmt.Errorf("tls: failed to parse peer intermediate certificate: %w", err)
+				}
+				intermediates.AddCert(cert)
+			}
+			opts.Intermediates = intermediates
+		}
+		chains, err := leaf.Verify(opts)
+		if err != nil {
+			return fmt.Errorf("tls: failed to verify certificate: %w", err)
+		}
+		verifiedChains = chains
+		c.verifiedChains = chains
 	}
-	opts := x509.VerifyOptions{
-		DNSName: c.config.ServerName,
-	}
-	if c.config != nil && c.config.RootCAs != nil {
-		opts.Roots = c.config.RootCAs
-	}
-	if _, err := leaf.Verify(opts); err != nil {
-		return fmt.Errorf("tls: failed to verify certificate: %w", err)
+	if c.config != nil && c.config.VerifyPeerCertificate != nil {
+		if err := c.config.VerifyPeerCertificate(peerDERs, verifiedChains); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -856,6 +947,16 @@ func (c *Conn) ConnectionState() ConnectionState {
 			cs.PeerCertificates = append(cs.PeerCertificates, cert)
 		}
 	}
+	// Verified chains, populated by verifyPeer (client side). Server-side
+	// chains stay nil until the review-tls-clientauth lane's server
+	// verification stores them (rebase follow-up).
+	cs.VerifiedChains = c.verifiedChains
+	// NegotiatedProtocol, DidResume and TLSUnique stay at their zero
+	// values, truthfully: NextProtos are never threaded to the engine,
+	// so no ALPN negotiation ever happens ("" is the true value);
+	// sessions are never resumed (a fresh SSLContext per engine, no
+	// session cache), so DidResume=false is true; and TLSUnique has
+	// no JDK SSLEngine API — populating it needs a design, not a value.
 	return cs
 }
 
