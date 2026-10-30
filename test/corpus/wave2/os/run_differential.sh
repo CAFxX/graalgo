@@ -17,20 +17,37 @@
 #     the pinned "not in M8 scope" message on stderr (checked).
 set -u
 
-PIPE="$HOME/workspace/graalgo-m8-pipe"
-OSDIR="$PIPE/phases/phase3/corpus/wave2/os"
-export TMPDIR="$PIPE/phases/phase3/hidden_files/m8-tmp/os"
+# Repo root: this script lives at test/corpus/wave2/os/ in the checkout.
+# (No stale-worktree default: the old graalgo-m8-pipe default pointed at
+# a worktree that no longer exists.)
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GR="${GR:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
+OSDIR="$SCRIPT_DIR"
+# Tmp discipline: NEVER /tmp. TMPDIR reaches the JVM as java.io.tmpdir
+# through the launcher wrapper.
+export TMPDIR="${TMPDIR:-$GR/.out/wave2-os-tmp}"
 export GOCACHE="$HOME/workspace/.gocache-m8-os"
 mkdir -p "$TMPDIR" "$GOCACHE"
-GO="$HOME/tools/go/bin/go"
-RUN="${GRAALGO_RUN:-$PIPE/phases/phase3/out/graalgo-sync-run}"
+GO="${GO:-$HOME/tools/go/bin/go}"
+RUN="${GRAALGO_RUN:-$GR/internal/backend/graalgo-sync-run}"
 
 pass=0; fail=0; failed_cases=()
 
 if [[ ! -x "$RUN" ]]; then
     echo "FAIL: graalgo launcher not found: $RUN"
-    echo "  build phase3 first (make main), or set GRAALGO_RUN"
+    echo "  build the backend first (make build), or set GRAALGO_RUN"
     exit 1
+fi
+# The wrapper never builds: keep the launcher check above meaningful by
+# building here when the backend classes are missing (and gofrontend
+# when missing — the launcher resolves it via ToolPaths' walk-up).
+if [[ ! -d "$GR/internal/backend/interop/out/classes" ]]; then
+    echo "== building backend java modules =="
+    make -C "$GR" build >/dev/null || { echo "backend build failed"; exit 1; }
+fi
+if [[ ! -x "$GR/internal/frontend/gofrontend" ]]; then
+    echo "== building gofrontend =="
+    make -C "$GR" generate >/dev/null || { echo "gofrontend build failed"; exit 1; }
 fi
 
 # normalize <file>: expected divergences for 04.

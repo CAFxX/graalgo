@@ -6,21 +6,27 @@
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
 # p3frontend/DESIGN.md §7).
 set -uo pipefail
-cd "$(dirname "$0")"
+# Resolve the script's own directory BEFORE any cd: BASH_SOURCE[0] is
+# relative to the caller's cwd, so it must be absolutised first.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P1="$GR/phases/phase1"
-P2="$GR/phases/phase2"
-export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+# Repo root: this script lives at test/corpus/atomic/ in the checkout.
+GR="${GR:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+# gofrontend is a gitignored build output (internal/frontend/gofrontend);
+# the product launcher resolves it via ToolPaths' walk-up.
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    make -C "$GR" generate > /dev/null || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# Product launcher (P3SyncMain) via its wrapper: classpath order lives
+# in the wrapper, not here.
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

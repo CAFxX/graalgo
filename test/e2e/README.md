@@ -18,7 +18,9 @@ This directory holds end-to-end proofs: real published Go modules compiled
 
 ## Status
 
-`run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
-before it runs again — see the driver-hardening lane.
+`run_module.sh` invokes [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
+(the phase-1 launcher; it takes no `--gmp` flag, so there is a single
+graalgo leg per case) and builds the backend (`make build`, plus `make
+generate` for gofrontend when missing) before running. Panic cases compare
+the full normalised stderr via the traceback corpus's `normalize.py`, not
+just the first line.

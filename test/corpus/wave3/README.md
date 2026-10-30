@@ -15,9 +15,10 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   `hash/adler32/`, `hash/crc32/`, `hash/crc64/`, `hash/fnv/`,
   `hash/maphash/`.
 - `run_wave3.sh` — the shared runner (a `../wave1/run_wave.sh`
-  derivative with wave-3 tmp paths: `TMPDIR=$P3/hidden_files/m9-tmp/wave3`,
-  `GOCACHE=$HOME/workspace/.gocache-m9-wave3`). Usage:
-  `GR=~/workspace/graalgo-m9 ./run_wave3.sh [pkg|all]`.
+  derivative with wave-3 tmp paths: `TMPDIR=<repo>/.out/wave3-tmp` by
+  default, `GOCACHE=$HOME/workspace/.gocache-m9-wave3`). Usage:
+  `./run_wave3.sh [pkg|all]` (repo root defaults to the checkout
+  containing the script; override with `GR=`).
 - Per-package `run_differential.sh`: thin wrapper
   `exec "$(dirname "$0")/../run_wave3.sh" <pkg>`.
 - Per-package `README.md`: scope boundary + retest trigger.
@@ -60,7 +61,8 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   tool restriction), so these are `.scopelimited` + `nogc`. `internal/bytealg`
   has a synthetic adapter (`synth_bytealg.go`, portable real-Go impls,
   synthetic-only like `internal/reflectlite`); its correctness evidence is
-  the tier1d harness (`phases/phase3/hidden_files/m9-tmp/tier1d-harness/`),
+  the (now-removed) tier-1d harness, whose role the shared wave-3 runner
+  above now covers for the corpus programs it can run,
   which runs the corpus program (self-checking against `bytes`/`strings`)
   under gc against the extracted synthetic source. `internal/cpu`,
   `internal/godebug`, `internal/bisect` have no adapter: cpu needs cpuid

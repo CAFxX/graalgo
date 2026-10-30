@@ -2,8 +2,9 @@ package main
 
 // exec.go — backend execution for the M8 fuzzer.
 //
-// Two backends: stock gc (~/tools/go) and graalgo-run (phases/phase1).
-// Each run captures build success, exit code, stdout, stderr.
+// Two backends: stock gc (~/tools/go) and graalgo-run
+// (internal/backend/graalgo-run). Each run captures build success, exit
+// code, stdout, stderr.
 
 import (
 	"bytes"
@@ -15,7 +16,17 @@ import (
 )
 
 var goBin = os.ExpandEnv("$HOME/tools/go/bin/go")
-var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/phases/phase1/graalgo-run")
+
+// graalgoRun is the product-backend launcher wrapper. GRAALGO_RUN
+// overrides it (worktree testing); otherwise the canonical checkout's
+// wrapper is used. The wrapper never builds: run `make build` (and
+// `make generate` for gofrontend) at the repo root first.
+var graalgoRun = func() string {
+	if v := os.Getenv("GRAALGO_RUN"); v != "" {
+		return v
+	}
+	return os.ExpandEnv("$HOME/workspace/graalgo/internal/backend/graalgo-run")
+}()
 
 type runResult struct {
 	buildOK   bool

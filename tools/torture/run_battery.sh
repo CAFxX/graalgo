@@ -1,17 +1,40 @@
 #!/bin/bash
 # P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path.
 #
-# Runs every leg, archives logs to hidden_files/torture/logs/, prints a
-# summary. Exit 0 iff every leg passes. A single failing leg is a bug to
-# fix; systematic divergence across legs is the kill trigger (PLAN.md §7).
+# Runs every leg, archives logs to .out/torture/logs/ (never
+# hidden_files/, banned by the repo no-debris rule), prints a summary.
+# Exit 0 iff every leg passes. A single failing leg is a bug to fix;
+# systematic divergence across legs is the kill trigger (PLAN.md §7).
+#
+# TortureBattery is a test class of the runtime module
+# (internal/backend/runtime/src/test/java/.../TortureBattery.java); this
+# script runs it from the runtime module's test-classes, which the
+# runtime Makefile's `torture` target builds first (`make test`).
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 
+REPO="$(pwd)"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
-OUTDIR="hidden_files/torture/logs"
+# Classpath mirrors the runtime module's TEST_CP: runtime test-classes
+# first, then runtime classes (same-FQN replacements shadow the truffle
+# stubs), then truffle, then interop, then the Truffle jars.
+CP="$REPO/internal/backend/runtime/out/test-classes:$REPO/internal/backend/runtime/out/classes:$REPO/internal/backend/truffle/out/classes:$REPO/internal/backend/interop/out/classes:$(echo "$REPO"/internal/backend/truffle/lib/*.jar | tr ' ' ':')"
+if [ ! -d "$REPO/internal/backend/runtime/out/test-classes" ]; then
+    echo "FAIL: runtime test-classes not built; run 'make -C internal/backend/runtime test' at the repo root first" >&2
+    exit 1
+fi
+if [ ! -d "$REPO/internal/backend/runtime/out/classes" ]; then
+    echo "FAIL: runtime classes not built; run 'make build' at the repo root first" >&2
+    exit 1
+fi
+OUTDIR="${OUTDIR:-$REPO/.out/torture/logs}"
 mkdir -p "$OUTDIR"
 JAVA="$GRAALVM_HOME/bin/java"
+# SchedMain/TortureBattery resolve gofrontend via ToolPaths' walk-up;
+# pin the checkout build when present.
+if [ -x "$REPO/internal/frontend/gofrontend" ]; then
+    export GRAALGO_GOFRONTEND="$REPO/internal/frontend/gofrontend"
+fi
 
 # leg <logname> <JFLAGS> -- <LEG> [leg args...]
 leg() {

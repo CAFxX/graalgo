@@ -6,7 +6,7 @@
 # (harness/run_batch.py) in time-bounded batches until HOURS elapse, then
 # minimizes any divergences (harness/triage.py) and archives the findings.
 # Minimized divergences become permanent regressions per SPEC §5.4 (filed
-# under phases/phase3/fuzzing/findings/ with a minimized reproducer).
+# under tools/fuzz-soak/findings/ with a minimized reproducer).
 #
 # This is the OVERNIGHT slot. The CONTINUOUS adversarial track reserves the
 # same interface: `run_soak.sh --seeds A:B` runs one bounded batch (used by
@@ -31,6 +31,12 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 export GR="${GR:-$REPO_ROOT}"
 export GO_BIN_DIR="${GO_BIN_DIR:-$HOME/tools/go/bin}"
 export JAVA_BIN="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+# The harness launches via internal/backend/graalgo-sync-run, which
+# resolves its JVM from GRAALVM_HOME (default $HOME/tools/graalvm-jdk-25);
+# map a JAVA_BIN override onto it so a caller-set java keeps working.
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    export GRAALVM_HOME="$(cd -- "$(dirname -- "$JAVA_BIN")/.." && pwd)"
+fi
 export PATH="$GO_BIN_DIR:$PATH"
 JOBS="${JOBS:-4}"
 BATCH="${BATCH:-50}"
@@ -58,8 +64,16 @@ DEADLINE=$((START_TS + ${HOURS:-0} * 3600))
 
 run_batch() {
   local seeds="$1" batchdir="$2"
+  # Tee to batch.log so the overnight loop can tell a build failure
+  # (run_batch.py prints exactly "BUILD FAILED") from a batch that ran
+  # but diverged; pipefail keeps run_batch.py's exit code as the result.
+  # The dir MUST be created first: tee opens the log before
+  # run_batch.py's own makedirs runs, so without this the log never
+  # exists and the build-failure detector below sees nothing.
+  mkdir -p "$batchdir"
   python3 "$HERE/harness/run_batch.py" \
-    --seeds "$seeds" --out "$batchdir" --jobs "$JOBS" --gmp 1
+    --seeds "$seeds" --out "$batchdir" --jobs "$JOBS" --gmp 1 \
+    2>&1 | tee "$batchdir/batch.log"
 }
 
 minimize_findings() {
@@ -107,12 +121,37 @@ fi
 [ -n "$HOURS" ] || { echo "need --hours or --seeds" >&2; exit 2; }
 
 # Overnight soak: batches of BATCH seeds until the deadline.
+# A broken build used to retry batch after batch until the deadline,
+# burning the whole slot producing nothing (and the final report then
+# showed diverged_total: 0, which reads as clean). Abort instead after
+# MAX_CONSECUTIVE_BUILD_FAILURES consecutive batches whose run_batch.py
+# reported BUILD FAILED; a batch that ran (even with divergences) resets
+# the counter. The abort exits non-zero so the slot is red, not clean.
+MAX_CONSECUTIVE_BUILD_FAILURES="${MAX_CONSECUTIVE_BUILD_FAILURES:-3}"
+consecutive_build_failures=0
 seed=0
 batch=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
-  if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
-    echo "batch $batch failed; continuing with next batch"
+  batch_rc=0
+  run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch" || batch_rc=$?
+  if [ "$batch_rc" -ne 0 ]; then
+    echo "batch $batch failed (see $OUT/batch-$batch/batch.log)"
+  fi
+  # A missing log on a failed batch counts as a build failure too: the
+  # only way run_batch.py fails without a log is before it could run
+  # anything (e.g. the tee target vanishing), and silently resetting
+  # the counter there would reintroduce retry-to-deadline.
+  if grep -q "^BUILD FAILED" "$OUT/batch-$batch/batch.log" 2>/dev/null \
+      || { [ "$batch_rc" -ne 0 ] && [ ! -f "$OUT/batch-$batch/batch.log" ]; }; then
+    consecutive_build_failures=$((consecutive_build_failures + 1))
+    echo "batch $batch failed at build ($consecutive_build_failures consecutive)"
+    if [ "$consecutive_build_failures" -ge "$MAX_CONSECUTIVE_BUILD_FAILURES" ]; then
+      echo "ABORTING soak: $MAX_CONSECUTIVE_BUILD_FAILURES consecutive build failures; fix the build instead of burning the slot"
+      exit 1
+    fi
+  else
+    consecutive_build_failures=0
   fi
   minimize_findings "$OUT/batch-$batch" || true
   seed=$((seed + BATCH))

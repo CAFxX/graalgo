@@ -87,7 +87,7 @@ time after M7 remediation completes.
 stdout, exit codes, and (for panic programs) the first stderr line.
 Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
 cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
-`corpus/wave1/run_wave.sh` (same phases, same comparisons), except the
+`corpus/wave1/run_wave.sh` (same backend, same comparisons), except the
 repo root resolves from the script's own path instead of a hardcoded
 default.
 
@@ -115,11 +115,12 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-2 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/<pkg>
+export TMPDIR=<repo>/.out/wave2-tmp
 export GOCACHE=$HOME/workspace/.gocache-m8-<pkg>
 ```
 
 `run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
 `TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m8-tmp/<pkg>` and its
-own `.gocache-m8-<pkg>`; never share a scratch dir with another worker.
+runner is sufficient. The runner defaults `TMPDIR` to `<repo>/.out/wave2-tmp`
+when unset. Each package gets its own `.gocache-m8-<pkg>`; never share a
+scratch dir with another worker.

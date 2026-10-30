@@ -9,15 +9,40 @@
 #
 # Channel-heavy cells are Java-level (TortureBattery F1); Go channel ops
 # are WS E/F (not in Go source scope).
+#
+# NOTE (post-restructure): the Go corpus this matrix ran
+# (gmp_compute.go, gmp_mixed.go) was never committed on this branch, so
+# the matrix cannot run until that corpus lands at tools/torture/corpus/.
+# The script fails fast and loudly in that case instead of running
+# against a stale classpath and printing a bogus RESULT line; the
+# runtime Makefile's `gmp-matrix` target invokes this script, so a loud
+# failure there is the correct signal until the corpus is restored.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 
+REPO="$(pwd)"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-GO="$HOME/tools/go/bin/go"
-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
-CORPUS="hidden_files/torture/corpus"
-OUTDIR="hidden_files/torture/gmp-matrix"
+GO="${GO:-$HOME/tools/go/bin/go}"
+# Classpath mirrors the runtime module's RUN_CP: runtime classes first
+# (same-FQN replacements shadow the truffle stubs), then truffle, then
+# interop, then the Truffle jars. SchedMain lives in the runtime module.
+CP="$REPO/internal/backend/runtime/out/classes:$REPO/internal/backend/truffle/out/classes:$REPO/internal/backend/interop/out/classes:$(echo "$REPO"/internal/backend/truffle/lib/*.jar | tr ' ' ':')"
+CORPUS="$REPO/tools/torture/corpus"
+OUTDIR="${OUTDIR:-$REPO/.out/torture/gmp-matrix}"
 mkdir -p "$OUTDIR"
+if [ ! -d "$REPO/internal/backend/runtime/out/classes" ]; then
+    echo "FAIL: runtime classes not built; run 'make build' at the repo root first" >&2
+    exit 1
+fi
+if [ ! -d "$CORPUS" ]; then
+    echo "FAIL: torture Go corpus missing: $CORPUS (gmp_compute.go, gmp_mixed.go were never committed on this branch)" >&2
+    exit 1
+fi
+# SchedMain resolves gofrontend via ToolPaths' walk-up; pin the
+# checkout build when present.
+if [ -x "$REPO/internal/frontend/gofrontend" ]; then
+    export GRAALGO_GOFRONTEND="$REPO/internal/frontend/gofrontend"
+fi
 
 NPROC=$(nproc)
 PASS=0

@@ -7,7 +7,7 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in phases/phase2/GODEBUG.md)
+#                documented in docs/arch/phases/phase2/GODEBUG.md)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)
@@ -17,16 +17,23 @@
 # Exit 0 iff every knob diffs as expected. Writes REPORT.md on success.
 set -u
 
-P2="$(cd "$(dirname "$0")/../../phases/phase2" && pwd)"
-GRAALGO="$P2"
-GO="$HOME/tools/go/bin/go"
+# Repo root: this script lives at tools/godebug-diff/ in the checkout.
+REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+GO="${GO:-$HOME/tools/go/bin/go}"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 JAVA="$GRAALVM_HOME/bin/java"
-CORPUS="$P2/corpus/godebug"
+CORPUS="$REPO/test/corpus/phase2/godebug"
+# Tmp discipline: never write to /tmp (512M tmpfs on the VM).
+export TMPDIR="${TMPDIR:-$REPO/.out/godebug-diff-tmp}"
+mkdir -p "$TMPDIR"
 WORK="$(mktemp -d)"
 KEEP="${1:-}"
 
-CP="$P2/out/classes:$P2/../phase1/out/classes:$(echo $P2/../phase1/lib/*.jar | tr ' ' ':')"
+# SchedMain (graalgo.sched.launcher.SchedMain) lives in the runtime
+# module. Classpath order mirrors the runtime module's RUN_CP: runtime
+# classes first (same-FQN replacements shadow the truffle stubs), then
+# truffle, then interop, then the Truffle jars.
+CP="$REPO/internal/backend/runtime/out/classes:$REPO/internal/backend/truffle/out/classes:$REPO/internal/backend/interop/out/classes:$(echo "$REPO"/internal/backend/truffle/lib/*.jar | tr ' ' ':')"
 JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
 
 pass=0
@@ -64,8 +71,16 @@ check() { # $1=knob $2=ok(0/1) $3=detail
     fi
 }
 
-echo "== building phase2 =="
-make -C "$P2" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$REPO" build >/dev/null 2>&1 || { echo "build failed"; exit 1; }
+# gofrontend is a gitignored build output (internal/frontend/gofrontend);
+# SchedMain resolves it via ToolPaths' walk-up. Building it here keeps
+# this script self-contained from a clean checkout.
+if [ ! -x "$REPO/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    make -C "$REPO" generate >/dev/null 2>&1 || { echo "gofrontend build failed"; exit 1; }
+fi
+export GRAALGO_GOFRONTEND="$REPO/internal/frontend/gofrontend"
 
 # --- schedtrace ---
 # Strengthened comparator: requires >=3 lines with STRICTLY INCREASING
@@ -149,7 +164,9 @@ echo "== $pass passed, $fail failed =="
     echo "# godebug-diff report"
     echo ""
     echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "Probes: $CORPUS (db02_panicnil.go, db03_alloc.go, db04_spin.go)"
+    # Report the corpus relative to the repo root: $CORPUS is absolute,
+    # and an absolute worktree path must never land in the tracked report.
+    echo "Probes: test/corpus/phase2/godebug (db02_panicnil.go, db03_alloc.go, db04_spin.go)"
     echo "Backends: stock gc go1.27.1 ($GO run) vs graalgo SchedMain"
     echo ""
     echo '```'

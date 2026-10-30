@@ -3,30 +3,37 @@
 # runs under stock gc 1.27.1 and under graalgo. Compares stdout bytes
 # (programs print with %x / %.17g to catch single-bit differences).
 #
-# GR defaults to $HOME/workspace/graalgo (the integrated tree); override
-# with GRAALGO_HOME for worktree testing.
+# GR defaults to the checkout containing this script; override with GR
+# for worktree testing. (Note: the old GRAALGO_HOME override name is
+# retired — GRAALVM_HOME now means the JDK home for the launcher wrapper.)
 set -uo pipefail
-cd "$(dirname "$0")"
+# Resolve the script's own directory BEFORE any cd: BASH_SOURCE[0] is
+# relative to the caller's cwd, so it must be absolutised first.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
-export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
+# Repo root: this script lives at test/corpus/wave1/math/ in the checkout.
+GR="${GR:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+# Tmp discipline: never write to /tmp. TMPDIR reaches the JVM as
+# java.io.tmpdir through the wrapper (P3-M7R2: a full /tmp silently
+# yields empty output with exit 0 — methodology review finding).
+export TMPDIR="${TMPDIR:-$GR/.out/wave1-math-tmp}"
 export GOCACHE="$HOME/workspace/.gocache-m7-math"
 mkdir -p "$TMPDIR"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+# gofrontend is a gitignored build output (internal/frontend/gofrontend);
+# the product launcher resolves it via ToolPaths' walk-up.
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    make -C "$GR" generate > /dev/null || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# Product launcher (P3SyncMain) via its wrapper: classpath order lives
+# in the wrapper, not here.
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

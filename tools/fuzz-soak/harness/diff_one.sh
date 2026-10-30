@@ -8,18 +8,33 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: this script lives at tools/fuzz-soak/harness/ in the checkout.
+GR="${GR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+# graalgo-sync-run resolves its JVM from GRAALVM_HOME (default
+# $HOME/tools/graalvm-jdk-25); a JAVA_BIN override maps onto it so a
+# caller-set java keeps working.
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    export GRAALVM_HOME="$(cd -- "$(dirname -- "$JAVA_BIN")/.." && pwd)"
+fi
+# Tmp discipline: never write to /tmp. run_soak.sh presets FUZZ_TMPDIR
+# to its --out dir; otherwise default under the repo's .out/ scratch root.
+export TMPDIR="${FUZZ_TMPDIR:-$GR/.out/fuzz-soak-tmp}"
+mkdir -p "$TMPDIR"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+GRAALGO_SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
+
+# The wrapper never builds: fail fast (as HARNESS_ERROR, not CRASH) when
+# the backend classes are missing instead of misclassifying a JVM
+# classpath failure as a graalgo crash. run_batch.py builds first, so
+# this only fires for standalone diff_one.sh runs.
+if [ ! -d "$GR/internal/backend/interop/out/classes" ]; then
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "backend classes not built; run make build at the repo root"}\n' "$base"
+    exit 0
+fi
 
 # 1. gc build
 if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
@@ -31,10 +46,10 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (120s timeout; JVM startup dominates) via the product
+# launcher wrapper (P3SyncMain; classpath order lives in the wrapper).
+# TMPDIR reaches the JVM as java.io.tmpdir through the wrapper.
+timeout 120 "$GRAALGO_SYNC_RUN" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 

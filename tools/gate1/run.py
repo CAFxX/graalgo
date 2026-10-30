@@ -46,9 +46,11 @@ def main():
             i += 1
 
     if graalgo_run is None:
-        # Default: phase1 graalgo-run in this repo (HERE=tools/gate1)
+        # Default: backend graalgo-run wrapper in this repo
+        # (HERE=tools/gate1). Only a fallback: make gate1[-pilot] passes
+        # --graalgo-run explicitly. Verdict logic untouched.
         repo = os.path.abspath(os.path.join(HERE, "..", ".."))
-        graalgo_run = os.path.join(repo, "phases", "phase1", "graalgo-run")
+        graalgo_run = os.path.join(repo, "internal", "backend", "graalgo-run")
 
     workdir = outdir or tempfile.mkdtemp(prefix=f"gate1-{pkg}-")
     os.makedirs(workdir, exist_ok=True)

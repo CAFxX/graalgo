@@ -29,20 +29,30 @@
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
 # only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m7-int run_wave.sh strings
+# The repo root defaults to the checkout containing this script but can be
+# overridden:
+#   GR=~/workspace/graalgo run_wave.sh strings
 set -uo pipefail
-cd "$(dirname "$0")"
+# Resolve the script's own directory BEFORE any cd: BASH_SOURCE[0] is
+# relative to the caller's cwd, so it must be absolutised first (a
+# post-cd resolution would break relative-path invocation from elsewhere).
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
-GR="${GR:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: this script lives at test/corpus/wave1/ in the checkout.
+GR="${GR:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+# graalgo-sync-run resolves its JVM from GRAALVM_HOME (default
+# $HOME/tools/graalvm-jdk-25); a JAVA_BIN override maps onto it so a
+# caller-set java keeps working.
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    export GRAALVM_HOME="$(cd -- "$(dirname -- "$JAVA_BIN")/.." && pwd)"
+fi
 
-# Tmp discipline (corpus/wave1/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
+# Tmp discipline (corpus/wave1/README.md): never write to /tmp. A caller
+# (e.g. tools/run_stdlib_gate.sh) may preset TMPDIR; otherwise default
+# under the repo's .out/ scratch root.
+export TMPDIR="${TMPDIR:-$GR/.out/wave1-tmp}"
 export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
 mkdir -p "$TMPDIR"
 
@@ -60,15 +70,23 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+# gofrontend is a gitignored build output (internal/frontend/gofrontend);
+# the product launcher resolves it via ToolPaths' walk-up. Building it
+# here keeps this runner self-contained from a clean checkout (same as
+# the old phase-3 build step did for the Java modules).
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    make -C "$GR" generate > /dev/null || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# Product launcher (P3SyncMain) via its wrapper: classpath order is
+# load-bearing (interop before runtime before truffle) and lives in the
+# wrapper, not here. TMPDIR reaches the JVM as java.io.tmpdir through
+# the wrapper (a full /tmp silently yields empty output with exit 0 —
+# methodology review finding, P3-M7R2).
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -85,8 +103,8 @@ build_gc() {
     if [ -f "$base.synthetic" ]; then
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
-        gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+        gopath="$(python3 "$SCRIPT_DIR/extract_synth_ref.py" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
