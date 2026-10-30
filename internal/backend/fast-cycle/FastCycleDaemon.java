@@ -256,6 +256,11 @@ public class FastCycleDaemon {
                 }
             }
 
+            if (methodName != null && methods.isEmpty()) {
+                ps.println("no such test method: " + cls.getSimpleName() + "." + methodName);
+                failed = 1;
+            }
+
             for (java.lang.reflect.Method m : methods) {
                 run++;
                 try {
