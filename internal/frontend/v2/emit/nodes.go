@@ -8,7 +8,6 @@ package emit
 import (
 	"fmt"
 	"go/ast"
-	"go/constant"
 	"go/token"
 	"go/types"
 )
@@ -33,10 +32,47 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 	sig := e.typeID(fn.Type())
 
+	// The method receiver is part of the declaration's identity: two
+	// same-named methods on different types must not emit identically,
+	// and the backend must be able to tell a method from a function.
+	// fn.Type() is the signature; its Recv is nil for plain functions.
+	var recv any
+	sigType, _ := fn.Type().(*types.Signature)
+	if sigType != nil && sigType.Recv() != nil {
+		rv := sigType.Recv()
+		recv = map[string]any{
+			"name": rv.Name(),
+			"obj":  e.declareObject(rv),
+			"type": e.typeID(rv.Type()),
+		}
+	}
+
 	params := []any{}
 	if fd.Type.Params != nil {
+		// Positional index into the signature's parameter list. A field
+		// with no names is one unnamed parameter (func f(int, string)),
+		// not zero parameters: the old loop over field.Names dropped
+		// those entirely while the signature still carried them.
+		// (Go forbids mixing named and unnamed parameters, so the
+		// positional index stays aligned across fields.)
+		idx := 0
 		for _, field := range fd.Type.Params.List {
+			if len(field.Names) == 0 {
+				if sigType == nil || idx >= sigType.Params().Len() {
+					return nil, fmt.Errorf("emit: no signature parameter at index %d for func %s", idx, fd.Name.Name)
+				}
+				pobj := sigType.Params().At(idx)
+				idx++
+				pid := e.declareParam(pobj)
+				params = append(params, e.node("param", field, map[string]any{
+					"name": "",
+					"obj":  pid,
+					"type": e.typeID(pobj.Type()),
+				}))
+				continue
+			}
 			for _, name := range field.Names {
+				idx++
 				pobj := e.info.Info.Defs[name]
 				if pobj == nil {
 					continue
@@ -67,6 +103,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	fields := map[string]any{
 		"name":    fn.Name(),
 		"sig":     sig,
+		"recv":    recv,
 		"params":  params,
 		"body":    body,
 		"pkgpath": pkgpath,
@@ -284,18 +321,17 @@ func (e *Emitter) emitFor(st *ast.ForStmt) (map[string]any, error) {
 
 func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	var key, value any
+	var err error
 	if st.Key != nil {
-		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
-			}
+		key, err = e.emitRangeVar(st.Key)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if st.Value != nil {
-		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
-			}
+		value, err = e.emitRangeVar(st.Value)
+		if err != nil {
+			return nil, err
 		}
 	}
 	x, err := e.emitExpr(st.X)
@@ -313,6 +349,30 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 		"x":      x,
 		"body":   body,
 	}), nil
+}
+
+// emitRangeVar emits one side of a range clause. Identifier targets keep
+// the historical shape (the declared/used object id, nil for blank).
+// Non-identifier targets (field selectors, index expressions, ...) are
+// emitted as general expressions: the old code left them nil while still
+// emitting the body, silently dropping the assignment target. An
+// identifier with no object in either Defs or Uses is an error, not a
+// silent nil.
+func (e *Emitter) emitRangeVar(x ast.Expr) (any, error) {
+	if id, ok := x.(*ast.Ident); ok {
+		if id.Name == "_" {
+			return nil, nil
+		}
+		obj := e.info.Info.Defs[id]
+		if obj == nil {
+			obj = e.info.Info.Uses[id]
+		}
+		if obj == nil {
+			return nil, fmt.Errorf("emit: unresolved range var %s", id.Name)
+		}
+		return e.declareObject(obj), nil
+	}
+	return e.emitExpr(x)
 }
 
 func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
@@ -502,7 +562,6 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
 	}
-	_ = constant.MakeInt64(0)
 	return e.node("basiclit", l, fields), nil
 }
 
@@ -549,28 +608,46 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 			}
 		}
 	}
+	// No "ellipsis" field: a valid Ellipsis returns an error above, so
+	// the field would always be false on every successfully emitted call.
 	return e.node("call", c, map[string]any{
-		"fun":      fun,
-		"args":     args,
-		"builtin":  builtin,
-		"type":     e.exprType(c),
-		"ellipsis": c.Ellipsis.IsValid(),
+		"fun":     fun,
+		"args":    args,
+		"builtin": builtin,
+		"type":    e.exprType(c),
 	}), nil
 }
 
 func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	// Method call or field access — go/types Selection tells us.
 	if sel, ok := e.info.Info.Selections[s]; ok {
-		// Method or field selection.
+		// Emit the Selection itself, not just the name: the index is
+		// the promotion path (len > 1 means a promoted field/method),
+		// the kind distinguishes a method from a field, and the object
+		// identifies which declaration was selected. Dropping all three
+		// (the old `_ = sel`) made promoted selections indistinguishable
+		// from direct ones.
 		x, err := e.emitExpr(s.X)
 		if err != nil {
 			return nil, err
 		}
-		_ = sel
+		index := []any{}
+		for _, i := range sel.Index() {
+			index = append(index, i)
+		}
+		var recv any
+		if rt := sel.Recv(); rt != nil {
+			recv = e.typeID(rt)
+		}
 		return e.node("selector", s, map[string]any{
-			"x":    x,
-			"sel":  s.Sel.Name,
-			"type": e.exprType(s),
+			"x":            x,
+			"sel":          s.Sel.Name,
+			"sel_index":    index,
+			"sel_kind":     selectionKindName(sel.Kind()),
+			"sel_obj":      e.declareObject(sel.Obj()),
+			"sel_recv":     recv,
+			"sel_indirect": sel.Indirect(),
+			"type":         e.exprType(s),
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
@@ -596,6 +673,21 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 		}
 	}
 	return nil, fmt.Errorf("emit: unresolved selector %v", s)
+}
+
+// selectionKindName renders a go/types SelectionKind. go/types defines
+// no String method for it, so the mapping lives here, in one place.
+func selectionKindName(k types.SelectionKind) string {
+	switch k {
+	case types.FieldVal:
+		return "field"
+	case types.MethodVal:
+		return "method"
+	case types.MethodExpr:
+		return "method_expr"
+	default:
+		return "unknown"
+	}
 }
 
 // exprType returns the type-table id for an expression's type.

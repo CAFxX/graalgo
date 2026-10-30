@@ -217,11 +217,24 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any 
 			"param": isParam,
 		}
 	case *types.Func:
-		return map[string]any{
+		// A method's object entry must carry its receiver, or a method
+		// and a same-named function are indistinguishable here (the
+		// signature type now also carries Recv; this mirrors it on the
+		// object entry itself).
+		fields := map[string]any{
 			"kind": "func",
 			"name": o.Name(),
 			"type": typ,
 		}
+		if sig, ok := o.Type().(*types.Signature); ok && sig.Recv() != nil {
+			rv := sig.Recv()
+			fields["recv"] = map[string]any{
+				"name": rv.Name(),
+				"obj":  e.declareObject(rv),
+				"type": e.typeID(rv.Type()),
+			}
+		}
+		return fields
 	default:
 		return map[string]any{
 			"kind": "var",
@@ -309,21 +322,46 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"type": e.typeID(r.Type()),
 			})
 		}
+		// The receiver is not a parameter in go/types, so it needs its
+		// own slot: without it, a method signature encodes exactly like
+		// a function signature and the backend cannot build a method
+		// table. Nil for plain functions.
+		var recv any
+		if rv := tt.Recv(); rv != nil {
+			recv = map[string]any{
+				"name": rv.Name(),
+				"type": e.typeID(rv.Type()),
+			}
+		}
 		return map[string]any{
 			"kind": "signature",
 			"detail": map[string]any{
 				"params":   params,
 				"results":  results,
 				"variadic": tt.Variadic(),
+				"recv":     recv,
 			},
 		}
 	case *types.Named:
+		// Methods were emitted as an empty list: a named type carried
+		// no method set at all, so the backend could not build a method
+		// table from the type. Emit the explicitly declared methods
+		// (name + signature type id); promoted methods are not listed
+		// here — they surface via selector indices on use sites.
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			methods = append(methods, map[string]any{
+				"name": m.Name(),
+				"type": e.typeID(m.Type()),
+			})
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
 				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				"methods":    methods,
 			},
 		}
 	case *types.Struct:
@@ -343,11 +381,21 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{"fields": fields},
 		}
 	case *types.Interface:
+		// Same empty-methods gap as Named: an interface with no method
+		// list is indistinguishable from an empty interface.
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			methods = append(methods, map[string]any{
+				"name": m.Name(),
+				"type": e.typeID(m.Type()),
+			})
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
+				"methods":  methods,
 				"embedded": []any{},
 			},
 		}
