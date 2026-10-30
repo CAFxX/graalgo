@@ -16,7 +16,11 @@ import graalgo.values.GoString;
  *
  * <p>graalgo does not implement synctest bubbles (consistent with the
  * existing {@code runtime_SemacquireWaitGroup} handling, which ignores
- * the synctest-durability flag). Every intrinsic below is therefore the
+ * the synctest-durability flag). This gap is tracked in
+ * {@code docs/arch/limitations.md} ("synctest bubbles") and its
+ * contract is pinned by {@code SynctestContractTest}; the design for
+ * real bubbles is {@code docs/arch/synctest-bubble-design.md}.
+ * Every intrinsic below is therefore the
  * honest no-bubble answer:
  * <ul>
  *   <li>{@code IsInBubble} → false: no goroutine is ever in a bubble.

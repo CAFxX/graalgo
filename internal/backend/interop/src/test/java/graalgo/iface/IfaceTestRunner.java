@@ -43,6 +43,11 @@ public final class IfaceTestRunner {
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
         // isolation — identity-keyed, never structural.
         TESTS.add(graalgo.p3link.CondIsolationTest.class);
+        // Codebase review 2026-10-30, finding R1-8 (lane L08): the
+        // synctest panic contract — Run/inBubble fail loud, no fake
+        // bubble — pinned until real bubbles land (see
+        // docs/arch/synctest-bubble-design.md).
+        TESTS.add(graalgo.p3link.SynctestContractTest.class);
         // PKG-051 (2026-10-16): the runtime MemStats-family wire kinds
         // (runtimereadmemstats/runtimegoroot/runtimeversion/runtimestack) —
         // backend intrinsics with real JVM-telemetry semantics.
