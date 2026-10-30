@@ -520,6 +520,9 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}, false},
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}, false},
+	// L13 (review 2026-10-30, R1-18): path.Match (Appendix M; the real
+	// implementation is __pathMatch in synth_path.go).
+	{"path", "Match", "", "__pathMatch", "pathMatchPair", []string{"matched", "err"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).
 	{"compress/flate", "findMatch", "compressor", "__flateCompressorfindMatch", "__flateCompressorfindMatchPair", []string{"length", "offset", "ok"}, false},
 	{"compress/flate", "tryBetterMatchAtEnd", "compressor", "__flateCompressortryBetterMatchAtEnd", "__flateCompressortryBetterMatchAtEndPair", []string{"newLen", "newOff"}, false},

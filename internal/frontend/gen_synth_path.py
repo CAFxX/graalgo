@@ -43,10 +43,18 @@ HEADER = '''// P3-M9 (tier1c): synthetic `path` package.
 //     Retest trigger: internal/bytealg lands in the overlay.
 //   - DEVIATION 2 (documented): Split (2-result) via Appendix M
 //     (__pathSplit helper + pathSplitPair + desugar entry).
-//   - SCOPE-LIMITED (documented): Match, scanChunk, matchChunk, getEsc
-//     (pattern matching) are DROPPED. They involve 3-result functions
-//     and utf8.DecodeRuneInString; the full port awaits unicode/utf8
-//     in the overlay. Retest trigger: unicode/utf8 lands (tier1a).
+//   - DEVIATION 3 (documented): Match (2-result) via Appendix M
+//     (__pathMatch helper + pathMatchPair + desugar entry). Its helpers
+//     are 3-result in gc, so they are pair-transformed in place, mirroring
+//     the io/fs port (fsMatch/fsScanChunk/fsMatchChunk/fsGetEsc in
+//     synth_iofs.go): scanChunk -> __pathScanChunk, matchChunk ->
+//     __pathMatchChunk, getEsc -> __pathGetEsc, each returning a pair
+//     struct; every call site is rewritten to a pair-field assignment.
+//     This became possible when unicode/utf8 landed in the overlay
+//     (tier1a): matchChunk/getEsc call utf8.DecodeRuneInString, exactly
+//     as regexp/syntax, archive/zip, and mime already do.
+//   - DEVIATION 4 (documented): bytealg.IndexByteString(s, '/') in Match
+//     -> strings.IndexByte(s, '/'), same substitution as Deviation 1.
 //     ErrBadPattern IS ported (from match.go): it is a dependency-free
 //     exported var (errors.New only) that consumers of the pattern API
 //     reference directly (e.g. io/fs's Glob reports path.ErrBadPattern;
@@ -63,6 +71,7 @@ const syntheticPathSource = `package path
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---- Deviation 2: Appendix M for Split ----
@@ -76,6 +85,30 @@ func __pathSplit(path string) pathSplitPair {
 	return pathSplitPair{dir: path[:i+1], file: path[i+1:]}
 }
 
+// ---- Deviation 3: Appendix M pair types for Match ----
+type pathMatchPair struct {
+	matched bool
+	err     error
+}
+
+type pathScanChunkPair struct {
+	star  bool
+	chunk string
+	rest  string
+}
+
+type pathMatchChunkPair struct {
+	rest string
+	ok   bool
+	err  error
+}
+
+type pathGetEscPair struct {
+	r      rune
+	nchunk string
+	err    error
+}
+
 '''
 
 def strip_imports(src):
@@ -86,17 +119,202 @@ def strip_imports(src):
 def strip_package(src):
     return re.sub(r"^package path\n", "", src, count=1, flags=re.M)
 
+def _rep_once(text, old, new):
+    assert text.count(old) == 1, "expected exactly one occurrence of %r" % old
+    return text.replace(old, new)
+
+
+def transform_match(msrc):
+    """Pair-transform gc match.go for frontend/v1 (Appendix M).
+
+    Mirrors the io/fs port (fsMatch/fsScanChunk/fsMatchChunk/fsGetEsc in
+    synth_iofs.go): 3-result helpers become single-result __-helpers
+    returning pair structs, and every call site is rewritten to a
+    pair-field assignment. Match itself becomes __pathMatch returning
+    pathMatchPair; the exported Match is a fail-fast stub served by the
+    desugar entry in mrdesugar_m5.go (same shape as Split).
+    utf8.DecodeRuneInString calls are kept verbatim: unicode/utf8 is in
+    the overlay, and regexp/syntax, archive/zip, and mime already call
+    it from synthetic sources. Every replacement asserts its count so a
+    gc wording change fails the generator instead of silently shipping
+    a half-transformed function.
+    """
+    body = strip_package(msrc)
+    body = strip_imports(body)
+    body = body.replace("bytealg.IndexByteString", "strings.IndexByte")
+    body = body.replace("`", "'")
+    # ErrBadPattern is emitted separately (see main); drop it here so
+    # the package does not declare it twice.
+    body = _rep_once(
+        body,
+        "// ErrBadPattern indicates a pattern was malformed.\n"
+        "var ErrBadPattern = errors.New(\"syntax error in pattern\")\n",
+        "",
+    )
+    # ---- scanChunk -> __pathScanChunk ----
+    body = _rep_once(
+        body,
+        "func scanChunk(pattern string) (star bool, chunk, rest string) {",
+        "func __pathScanChunk(pattern string) pathScanChunkPair {\n\tvar star bool",
+    )
+    body = _rep_once(
+        body,
+        "return star, pattern[:i], pattern[i:]",
+        "return pathScanChunkPair{star: star, chunk: pattern[:i], rest: pattern[i:]}",
+    )
+    body = _rep_once(
+        body,
+        'return star, pattern, ""',
+        'return pathScanChunkPair{star: star, chunk: pattern, rest: ""}',
+    )
+    # ---- matchChunk -> __pathMatchChunk ----
+    body = _rep_once(
+        body,
+        "func matchChunk(chunk, s string) (rest string, ok bool, err error) {",
+        "func __pathMatchChunk(chunk, s string) pathMatchChunkPair {",
+    )
+    # Named results are gone; err needs a plain declaration.
+    body = _rep_once(body, "\tfailed := false\n",
+                     "\tfailed := false\n\tvar err error\n")
+    body = _rep_once(
+        body,
+        "\t\t\t\tif lo, chunk, err = getEsc(chunk); err != nil {\n"
+        "\t\t\t\t\treturn \"\", false, err\n"
+        "\t\t\t\t}",
+        "\t\t\t\t__gep := __pathGetEsc(chunk)\n"
+        "\t\t\t\tlo, chunk, err = __gep.r, __gep.nchunk, __gep.err\n"
+        "\t\t\t\tif err != nil {\n"
+        "\t\t\t\t\treturn pathMatchChunkPair{rest: \"\", ok: false, err: err}\n"
+        "\t\t\t\t}",
+    )
+    body = _rep_once(
+        body,
+        "\t\t\t\t\tif hi, chunk, err = getEsc(chunk[1:]); err != nil {\n"
+        "\t\t\t\t\t\treturn \"\", false, err\n"
+        "\t\t\t\t\t}",
+        "\t\t\t\t\t__gep2 := __pathGetEsc(chunk[1:])\n"
+        "\t\t\t\t\thi, chunk, err = __gep2.r, __gep2.nchunk, __gep2.err\n"
+        "\t\t\t\t\tif err != nil {\n"
+        "\t\t\t\t\t\treturn pathMatchChunkPair{rest: \"\", ok: false, err: err}\n"
+        "\t\t\t\t\t}",
+    )
+    body = _rep_once(
+        body,
+        'return "", false, ErrBadPattern',
+        'return pathMatchChunkPair{rest: "", ok: false, err: ErrBadPattern}',
+    )
+    body = _rep_once(
+        body,
+        'return "", false, nil',
+        'return pathMatchChunkPair{rest: "", ok: false, err: nil}',
+    )
+    body = _rep_once(
+        body,
+        "return s, true, nil",
+        "return pathMatchChunkPair{rest: s, ok: true, err: nil}",
+    )
+    # ---- getEsc -> __pathGetEsc (named results + bare returns) ----
+    gm = re.search(
+        r"(?ms)^func getEsc\(chunk string\) \(r rune, nchunk string, err error\) \{.*?^\}\n",
+        body,
+    )
+    assert gm, "getEsc function not found in match.go"
+    ge = gm.group(0)
+    ge = _rep_once(
+        ge,
+        "func getEsc(chunk string) (r rune, nchunk string, err error) {",
+        "func __pathGetEsc(chunk string) pathGetEscPair {",
+    )
+    ge = _rep_once(
+        ge,
+        "func __pathGetEsc(chunk string) pathGetEscPair {\n",
+        "func __pathGetEsc(chunk string) pathGetEscPair {\n"
+        "\tvar r rune\n\tvar nchunk string\n\tvar err error\n",
+    )
+    ge, n_bare = re.subn(
+        r"(?m)^(\t+)return$",
+        r"\1return pathGetEscPair{r: r, nchunk: nchunk, err: err}",
+        ge,
+    )
+    assert n_bare == 3, "getEsc: expected 3 bare returns, got %d" % n_bare
+    body = body[: gm.start()] + ge + body[gm.end():]
+    # ---- Match -> __pathMatch ----
+    body = _rep_once(
+        body,
+        "func Match(pattern, name string) (matched bool, err error) {",
+        "func __pathMatch(pattern, name string) pathMatchPair {",
+    )
+    body = _rep_once(
+        body,
+        "\t\tstar, chunk, pattern = scanChunk(pattern)",
+        "\t\t__scp := __pathScanChunk(pattern)\n"
+        "\t\tstar, chunk, pattern = __scp.star, __scp.chunk, __scp.rest",
+    )
+    body = _rep_once(
+        body,
+        "\t\tt, ok, err := matchChunk(chunk, name)",
+        "\t\t__mcp := __pathMatchChunk(chunk, name)\n"
+        "\t\tt, ok, err := __mcp.rest, __mcp.ok, __mcp.err",
+    )
+    body = _rep_once(
+        body,
+        "\t\t\t\tt, ok, err := matchChunk(chunk, name[i+1:])",
+        "\t\t\t\t__mcpStar := __pathMatchChunk(chunk, name[i+1:])\n"
+        "\t\t\t\tt, ok, err := __mcpStar.rest, __mcpStar.ok, __mcpStar.err",
+    )
+    body = _rep_once(
+        body,
+        "\t\t\t_, chunk, pattern = scanChunk(pattern)",
+        "\t\t\t__scp2 := __pathScanChunk(pattern)\n"
+        "\t\t\t_, chunk, pattern = __scp2.star, __scp2.chunk, __scp2.rest",
+    )
+    body = _rep_once(
+        body,
+        "\t\t\tif _, _, err := matchChunk(chunk, \"\"); err != nil {\n"
+        "\t\t\t\treturn false, err\n"
+        "\t\t\t}",
+        "\t\t\tif __mcpVal := __pathMatchChunk(chunk, \"\"); __mcpVal.err != nil {\n"
+        "\t\t\t\treturn pathMatchPair{matched: false, err: __mcpVal.err}\n"
+        "\t\t\t}",
+    )
+    assert body.count("return false, err") == 2, \
+        "Match: expected 2 remaining 'return false, err', got %d" % body.count("return false, err")
+    body = body.replace(
+        "return false, err",
+        "return pathMatchPair{matched: false, err: err}",
+    )
+    body = _rep_once(
+        body,
+        "return false, nil",
+        "return pathMatchPair{matched: false, err: nil}",
+    )
+    body = _rep_once(
+        body,
+        "return len(name) == 0, nil",
+        "return pathMatchPair{matched: len(name) == 0, err: nil}",
+    )
+    body = _rep_once(
+        body,
+        "return strings.IndexByte(name, '/') < 0, nil",
+        "return pathMatchPair{matched: strings.IndexByte(name, '/') < 0, err: nil}",
+    )
+    # No untransformed helper call or multi-result return may survive.
+    for leftover in ("scanChunk(", "matchChunk(", "getEsc(", "func Match(",
+                     'return "", false', "return s, true", "return false",
+                     "return len(name)"):
+        assert leftover not in body, "transform_match: leftover %r" % leftover
+    return body
+
+
 def main():
     parts = [HEADER]
-    # ErrBadPattern (from match.go): match.go is otherwise scope-limited
-    # (Match/scanChunk/matchChunk/getEsc dropped — see header), but
-    # ErrBadPattern is a dependency-free exported var (errors.New only)
-    # that consumers of the pattern API reference directly (e.g. io/fs's
-    # Glob reports path.ErrBadPattern). A synthetic package must expose
-    # every referenced exported declaration, so it is ported verbatim;
-    # extracted mechanically so upstream wording changes flow through.
-    # PKG-029: without it, any path.ErrBadPattern reference fails
-    # type-checking with "undefined: path.ErrBadPattern".
+    # ErrBadPattern (from match.go): a dependency-free exported var
+    # (errors.New only) that consumers of the pattern API reference
+    # directly (e.g. io/fs's Glob reports path.ErrBadPattern). A synthetic
+    # package must expose every referenced exported declaration, so it is
+    # ported verbatim; extracted mechanically so upstream wording changes
+    # flow through. PKG-029: without it, any path.ErrBadPattern reference
+    # fails type-checking with "undefined: path.ErrBadPattern".
     with open(f"{GOROOT}/match.go") as f:
         msrc = f.read()
     m = re.search(r"(?m)^// ErrBadPattern indicates.*\nvar ErrBadPattern = .*\n", msrc)
@@ -105,7 +323,9 @@ def main():
     # embedded in a raw-string const.
     decl = m.group(0).replace("`", "'")
     parts.append("// ---- ErrBadPattern, ported from match.go ----\n" + decl + "\n")
-    # Only path.go (match.go is otherwise scope-limited).
+    match_body = transform_match(msrc)
+    # path.go plus the pair-transformed match.go (Match ported, see
+    # transform_match; the exported Match stub is appended below).
     with open(f"{GOROOT}/path.go") as f:
         src = f.read()
     src = strip_package(src)
@@ -136,6 +356,22 @@ def main():
         "\t// P3-M9: Split -> __pathSplit (no multi-result calls in synthetic).\n\treturn Clean(__pathSplit(path).dir)",
     )
     parts.append(src.rstrip() + "\n\n")
+    parts.append(match_body.rstrip() + "\n\n")
+    # Exported Match: exact gc signature for type-checking; 2-target
+    # call sites desugar to __pathMatch via the Appendix-M table in
+    # mrdesugar_m5.go; every other position fails fast (same shape as
+    # the Split stub above).
+    MATCH_STUB = (
+        "// Match reports whether name matches the shell file name pattern.\n"
+        "// The pattern syntax is documented on __pathMatch (gc match.go).\n"
+        "//\n"
+        "// (Appendix M: 2-target call sites desugar to __pathMatch; every other\n"
+        "// position fails fast. Body never runs.)\n"
+        "func Match(pattern, name string) (matched bool, err error) {\n"
+        "\tpanic(\"path: Match: multi-result position needs the Appendix-M desugar (see mrdesugar_m5.go); re-test when WS D lands\")\n"
+        "}\n"
+    )
+    parts.append(MATCH_STUB + "\n")
     out = "".join(parts)
     # The Split stub sits immediately before Dir's doc comment (not in gc's
     # Split position between Clean and Join).

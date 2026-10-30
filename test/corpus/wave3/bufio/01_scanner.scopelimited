@@ -1,2 +1,2 @@
-reason: bufio synthetic requires 2-result utf8 helpers (DecodeRune) which are not emittable in frontend/v1 (WS D); package fails to type-check
-retest: frontend/v1 supports 2-result function definitions, or utf8 helpers are converted to pair-returning
+reason: Scanner.Scan dispatches only the default split (nil = ScanLines) via its __-helper; any non-nil SplitFunc — a custom function or an explicitly passed builtin (ScanWords here) — panics at Scan time because frontend/v1 cannot call through a 3-result function value held in a struct field (WS D)
+retest: frontend/v1 supports multi-result function-value calls (WS D); then Scan dispatches s.split and this program passes

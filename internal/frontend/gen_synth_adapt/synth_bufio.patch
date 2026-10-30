@@ -244,11 +244,11 @@
  		if s.end > s.start || s.err != nil {
 -			advance, token, err := s.split(s.buf[s.start:s.end], s.err != nil)
 +			// WS D: v1 cannot call through a 3-result SplitFunc value.
-+			// The default split (ScanLines) is dispatched directly via
-+			// its __-helper; a custom SplitFunc fails fast (re-test
-+			// when WS D lands multi-result calls).
++			// Only nil (the default ScanLines) is dispatched, via its
++			// __-helper; any non-nil SplitFunc — custom or builtin —
++			// fails fast here (re-test: WS D multi-result calls).
 +			if s.split != nil {
-+				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope (WS D)")
++				panic("bufio.Scanner: SplitFunc value is not supported in frontend/v1 scope (WS D)")
 +			}
 +			__sp := __bufioScanLines(s.buf[s.start:s.end], s.err != nil)
 +			advance, token, err := __sp.advance, __sp.token, __sp.err

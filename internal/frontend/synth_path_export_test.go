@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,4 +43,73 @@ func main() {
 	if _, err := ExportFile(p); err != nil {
 		t.Fatalf("ExportFile: %v", err)
 	}
+}
+
+// TestSyntheticPathMatchDesugarWiring pins the L13 (review 2026-10-30,
+// R1-18) Appendix-M wiring for path.Match: exactly one m7 table entry
+// for ("path", "Match", "") with helper __pathMatch, pair pathMatchPair,
+// fields [matched err] in result order, plus the shared
+// synthetic-package checks (Match exists with 2 results, __pathMatch
+// exists with matching params, pair struct fields match the result
+// types). It fails on the pre-L13 tree (no Match at all in the
+// synthetic package: "undefined: path.Match") and on any wiring typo.
+func TestSyntheticPathMatchDesugarWiring(t *testing.T) {
+	checkM7DesugarWiring(t, m7StrconvJsonExpect{
+		pkgPath:    "path",
+		name:       "Match",
+		recvType:   "",
+		helper:     "__pathMatch",
+		pairType:   "pathMatchPair",
+		pairFields: []string{"matched", "err"},
+	})
+}
+
+// TestSyntheticPathMatchExports verifies a user program calling
+// path.Match in 2-target form exports cleanly through the frontend —
+// the pre-L13 tree fails type-checking here with
+// "undefined: path.Match". The calls exercise the star, character-class,
+// unicode, and bad-pattern paths of __pathMatch (whose values are pinned
+// against gc by the L13 differential, not here: the frontend has no
+// evaluator, so this test pins acceptance + desugar wiring, while the
+// differential pins semantics).
+func TestSyntheticPathMatchExports(t *testing.T) {
+	src := `package main
+
+import "path"
+
+func main() {
+	ok, err := path.Match("*.txt", "a.txt")
+	println(ok, err == nil)
+	ok, err = path.Match("a/*/c", "a/b/c")
+	println(ok, err == nil)
+	ok, err = path.Match("[a-z]*", "éx")
+	println(ok, err == nil)
+	ok, err = path.Match("[", "a")
+	println(ok, err == path.ErrBadPattern)
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "synpathmatch.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	if !containsPathMatchCall(out) {
+		t.Fatalf("exported doc has no desugared __pathMatch call site")
+	}
+}
+
+// containsPathMatchCall reports whether the exported doc contains a
+// desugared call site for path.Match. The name "__pathMatch" occurs
+// once for the helper's own funcdecl; every additional occurrence is a
+// call site the Appendix-M desugar rewrote from path.Match. (A tree
+// where the desugar never fired references "Match", not "__pathMatch",
+// so the count stays 1.) The count is deliberately a lower bound, not
+// exact: it pins that desugar fired at least once without overfitting
+// the wire encoding.
+func containsPathMatchCall(out string) bool {
+	return strings.Count(out, `"name": "__pathMatch"`) >= 2
 }

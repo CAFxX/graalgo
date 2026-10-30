@@ -12,10 +12,18 @@
 //     Retest trigger: internal/bytealg lands in the overlay.
 //   - DEVIATION 2 (documented): Split (2-result) via Appendix M
 //     (__pathSplit helper + pathSplitPair + desugar entry).
-//   - SCOPE-LIMITED (documented): Match, scanChunk, matchChunk, getEsc
-//     (pattern matching) are DROPPED. They involve 3-result functions
-//     and utf8.DecodeRuneInString; the full port awaits unicode/utf8
-//     in the overlay. Retest trigger: unicode/utf8 lands (tier1a).
+//   - DEVIATION 3 (documented): Match (2-result) via Appendix M
+//     (__pathMatch helper + pathMatchPair + desugar entry). Its helpers
+//     are 3-result in gc, so they are pair-transformed in place, mirroring
+//     the io/fs port (fsMatch/fsScanChunk/fsMatchChunk/fsGetEsc in
+//     synth_iofs.go): scanChunk -> __pathScanChunk, matchChunk ->
+//     __pathMatchChunk, getEsc -> __pathGetEsc, each returning a pair
+//     struct; every call site is rewritten to a pair-field assignment.
+//     This became possible when unicode/utf8 landed in the overlay
+//     (tier1a): matchChunk/getEsc call utf8.DecodeRuneInString, exactly
+//     as regexp/syntax, archive/zip, and mime already do.
+//   - DEVIATION 4 (documented): bytealg.IndexByteString(s, '/') in Match
+//     -> strings.IndexByte(s, '/'), same substitution as Deviation 1.
 //     ErrBadPattern IS ported (from match.go): it is a dependency-free
 //     exported var (errors.New only) that consumers of the pattern API
 //     reference directly (e.g. io/fs's Glob reports path.ErrBadPattern;
@@ -32,6 +40,7 @@ const syntheticPathSource = `package path
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---- Deviation 2: Appendix M for Split ----
@@ -43,6 +52,30 @@ type pathSplitPair struct {
 func __pathSplit(path string) pathSplitPair {
 	i := strings.LastIndexByte(path, '/')
 	return pathSplitPair{dir: path[:i+1], file: path[i+1:]}
+}
+
+// ---- Deviation 3: Appendix M pair types for Match ----
+type pathMatchPair struct {
+	matched bool
+	err     error
+}
+
+type pathScanChunkPair struct {
+	star  bool
+	chunk string
+	rest  string
+}
+
+type pathMatchChunkPair struct {
+	rest string
+	ok   bool
+	err  error
+}
+
+type pathGetEscPair struct {
+	r      rune
+	nchunk string
+	err    error
 }
 
 // ---- ErrBadPattern, ported from match.go ----
@@ -279,5 +312,238 @@ func Split(path string) (dir, file string) {
 func Dir(path string) string {
 	// P3-M9: Split -> __pathSplit (no multi-result calls in synthetic).
 	return Clean(__pathSplit(path).dir)
+}
+
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+
+
+
+// Match reports whether name matches the shell pattern.
+// The pattern syntax is:
+//
+//	pattern:
+//		{ term }
+//	term:
+//		'*'         matches any sequence of non-/ characters
+//		'?'         matches any single non-/ character
+//		'[' [ '^' ] { character-range } ']'
+//		            character class (must be non-empty)
+//		c           matches character c (c != '*', '?', '\\', '[')
+//		'\\' c      matches character c
+//
+//	character-range:
+//		c           matches character c (c != '\\', '-', ']')
+//		'\\' c      matches character c
+//		lo '-' hi   matches character c for lo <= c <= hi
+//
+// Match requires pattern to match all of name, not just a substring.
+// The only possible returned error is [ErrBadPattern], when pattern
+// is malformed.
+func __pathMatch(pattern, name string) pathMatchPair {
+Pattern:
+	for len(pattern) > 0 {
+		var star bool
+		var chunk string
+		__scp := __pathScanChunk(pattern)
+		star, chunk, pattern = __scp.star, __scp.chunk, __scp.rest
+		if star && chunk == "" {
+			// Trailing * matches rest of string unless it has a /.
+			return pathMatchPair{matched: strings.IndexByte(name, '/') < 0, err: nil}
+		}
+		// Look for match at current position.
+		__mcp := __pathMatchChunk(chunk, name)
+		t, ok, err := __mcp.rest, __mcp.ok, __mcp.err
+		// if we're the last chunk, make sure we've exhausted the name
+		// otherwise we'll give a false result even if we could still match
+		// using the star
+		if ok && (len(t) == 0 || len(pattern) > 0) {
+			name = t
+			continue
+		}
+		if err != nil {
+			return pathMatchPair{matched: false, err: err}
+		}
+		if star {
+			// Look for match skipping i+1 bytes.
+			// Cannot skip /.
+			for i := 0; i < len(name) && name[i] != '/'; i++ {
+				__mcpStar := __pathMatchChunk(chunk, name[i+1:])
+				t, ok, err := __mcpStar.rest, __mcpStar.ok, __mcpStar.err
+				if ok {
+					// if we're the last chunk, make sure we exhausted the name
+					if len(pattern) == 0 && len(t) > 0 {
+						continue
+					}
+					name = t
+					continue Pattern
+				}
+				if err != nil {
+					return pathMatchPair{matched: false, err: err}
+				}
+			}
+		}
+		// Before returning false with no error,
+		// check that the remainder of the pattern is syntactically valid.
+		for len(pattern) > 0 {
+			__scp2 := __pathScanChunk(pattern)
+			_, chunk, pattern = __scp2.star, __scp2.chunk, __scp2.rest
+			if __mcpVal := __pathMatchChunk(chunk, ""); __mcpVal.err != nil {
+				return pathMatchPair{matched: false, err: __mcpVal.err}
+			}
+		}
+		return pathMatchPair{matched: false, err: nil}
+	}
+	return pathMatchPair{matched: len(name) == 0, err: nil}
+}
+
+// scanChunk gets the next segment of pattern, which is a non-star string
+// possibly preceded by a star.
+func __pathScanChunk(pattern string) pathScanChunkPair {
+	var star bool
+	for len(pattern) > 0 && pattern[0] == '*' {
+		pattern = pattern[1:]
+		star = true
+	}
+	inrange := false
+	for i := 0; i < len(pattern); i++ {
+		switch pattern[i] {
+		case '\\':
+			// error check handled in matchChunk: bad pattern.
+			if i+1 < len(pattern) {
+				i++
+			}
+		case '[':
+			inrange = true
+		case ']':
+			inrange = false
+		case '*':
+			if !inrange {
+				return pathScanChunkPair{star: star, chunk: pattern[:i], rest: pattern[i:]}
+			}
+		}
+	}
+	return pathScanChunkPair{star: star, chunk: pattern, rest: ""}
+}
+
+// matchChunk checks whether chunk matches the beginning of s.
+// If so, it returns the remainder of s (after the match).
+// Chunk is all single-character operators: literals, char classes, and ?.
+func __pathMatchChunk(chunk, s string) pathMatchChunkPair {
+	// failed records whether the match has failed.
+	// After the match fails, the loop continues on processing chunk,
+	// checking that the pattern is well-formed but no longer reading s.
+	failed := false
+	var err error
+	for len(chunk) > 0 {
+		failed = failed || len(s) == 0
+		switch chunk[0] {
+		case '[':
+			// character class
+			var r rune
+			if !failed {
+				var n int
+				r, n = utf8.DecodeRuneInString(s)
+				s = s[n:]
+			}
+			chunk = chunk[1:]
+			// possibly negated
+			negated := false
+			if len(chunk) > 0 && chunk[0] == '^' {
+				negated = true
+				chunk = chunk[1:]
+			}
+			// parse all ranges
+			match := false
+			nrange := 0
+			for {
+				if len(chunk) > 0 && chunk[0] == ']' && nrange > 0 {
+					chunk = chunk[1:]
+					break
+				}
+				var lo, hi rune
+				__gep := __pathGetEsc(chunk)
+				lo, chunk, err = __gep.r, __gep.nchunk, __gep.err
+				if err != nil {
+					return pathMatchChunkPair{rest: "", ok: false, err: err}
+				}
+				hi = lo
+				if chunk[0] == '-' {
+					__gep2 := __pathGetEsc(chunk[1:])
+					hi, chunk, err = __gep2.r, __gep2.nchunk, __gep2.err
+					if err != nil {
+						return pathMatchChunkPair{rest: "", ok: false, err: err}
+					}
+				}
+				match = match || lo <= r && r <= hi
+				nrange++
+			}
+			failed = failed || match == negated
+
+		case '?':
+			if !failed {
+				failed = s[0] == '/'
+				_, n := utf8.DecodeRuneInString(s)
+				s = s[n:]
+			}
+			chunk = chunk[1:]
+
+		case '\\':
+			chunk = chunk[1:]
+			if len(chunk) == 0 {
+				return pathMatchChunkPair{rest: "", ok: false, err: ErrBadPattern}
+			}
+			fallthrough
+
+		default:
+			if !failed {
+				failed = chunk[0] != s[0]
+				s = s[1:]
+			}
+			chunk = chunk[1:]
+		}
+	}
+	if failed {
+		return pathMatchChunkPair{rest: "", ok: false, err: nil}
+	}
+	return pathMatchChunkPair{rest: s, ok: true, err: nil}
+}
+
+// getEsc gets a possibly-escaped character from chunk, for a character class.
+func __pathGetEsc(chunk string) pathGetEscPair {
+	var r rune
+	var nchunk string
+	var err error
+	if len(chunk) == 0 || chunk[0] == '-' || chunk[0] == ']' {
+		err = ErrBadPattern
+		return pathGetEscPair{r: r, nchunk: nchunk, err: err}
+	}
+	if chunk[0] == '\\' {
+		chunk = chunk[1:]
+		if len(chunk) == 0 {
+			err = ErrBadPattern
+			return pathGetEscPair{r: r, nchunk: nchunk, err: err}
+		}
+	}
+	r, n := utf8.DecodeRuneInString(chunk)
+	if r == utf8.RuneError && n == 1 {
+		err = ErrBadPattern
+	}
+	nchunk = chunk[n:]
+	if len(nchunk) == 0 {
+		err = ErrBadPattern
+	}
+	return pathGetEscPair{r: r, nchunk: nchunk, err: err}
+}
+
+// Match reports whether name matches the shell file name pattern.
+// The pattern syntax is documented on __pathMatch (gc match.go).
+//
+// (Appendix M: 2-target call sites desugar to __pathMatch; every other
+// position fails fast. Body never runs.)
+func Match(pattern, name string) (matched bool, err error) {
+	panic("path: Match: multi-result position needs the Appendix-M desugar (see mrdesugar_m5.go); re-test when WS D lands")
 }
 `
