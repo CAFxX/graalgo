@@ -64,12 +64,18 @@ def main():
 
     # 2. Synthesize
     driver_path = os.path.join(workdir, "driver.go")
+    # A reused --out dir may hold a previous run's driver; remove it first
+    # so a failed synthesize can never masquerade as a fresh driver.
+    if os.path.exists(driver_path):
+        os.remove(driver_path)
     rc, out, err = run_cmd([sys.executable, os.path.join(HERE, "synthesize.py"),
                             disc_path, "--out", driver_path,
                             "--shim", os.path.join(HERE, "shim", "shim.go")])
     print(out, file=sys.stderr)
     if err:
         print(err, file=sys.stderr)
+    if rc != 0:
+        sys.exit(f"synthesize failed (rc={rc}): {err[-500:] if err else ''}")
     if not os.path.exists(driver_path):
         sys.exit("synthesize produced no driver")
 
@@ -114,7 +120,12 @@ def main():
     print(f"gc:     rc={rc_gc} {gc_sum}")
     print(f"graalgo: rc={rc_gr} {gr_sum}")
 
-    verdict = "PASS"
+    # PASS must be earned: it requires both legs to exit 0 AND at least one
+    # parsed test result agreeing. Any other combination is SKIP, DIVERGE,
+    # or ERROR — never PASS. In particular, both legs failing (e.g. a broken
+    # driver, or dual timeouts with rc=-1) used to fall through here with
+    # two empty result dicts, zero divergences, and a PASS verdict.
+    verdict = "ERROR"
     divergences = []
     if rc_gc != 0 and rc_gr == 0:
         # gc itself failed (e.g. unsupported test helper) — harness issue, not graalgo
@@ -125,6 +136,18 @@ def main():
         verdict = "DIVERGE"
         print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
         print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif rc_gc != 0 and rc_gr != 0:
+        # Both legs failed: no evidence about graalgo at all. This is not
+        # a divergence (gc did not pass) and certainly not a pass.
+        verdict = "ERROR"
+        print(f"ERROR: both drivers failed (gc rc={rc_gc}, graalgo rc={rc_gr}); no comparison possible")
+        print(f"gc stderr tail: {err_gc[-500:]}")
+        print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif not gc_res and not gr_res:
+        # Both legs exited 0 but produced no parseable test results:
+        # nothing was actually compared, so nothing passed.
+        verdict = "ERROR"
+        print("ERROR: both drivers exited 0 but produced no parsed test results; no comparison possible")
     else:
         for name in sorted(set(gc_res) | set(gr_res)):
             g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
@@ -135,6 +158,7 @@ def main():
             for name, g, r in divergences:
                 print(f"  DIVERGE {name}: gc={g} graalgo={r}")
         else:
+            verdict = "PASS"
             print(f"  {len(gc_res)} tests agree")
 
     print(f"VERDICT {pkg}: {verdict}")
