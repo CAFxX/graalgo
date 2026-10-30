@@ -520,9 +520,20 @@ func (t Time) Unix() int64 {
 	if t.IsZero() {
 		return -62135596800
 	}
-	return t.unixnano / 1e9
+	// Floored division, like gc: pre-epoch times with a nonzero
+	// nanosecond remainder round toward -inf (Unix(-1, 1) == -1, not 0).
+	return timeFloorDiv(t.unixnano, 1e9)
 }
-func (t Time) UnixNano() int64 { return t.unixnano }
+func (t Time) UnixNano() int64 {
+	if t.IsZero() {
+		// gc's UnixNano for the zero instant is the wrapped product
+		// -62135596800*1e9 (== zeroInstantNano); the Go zero value
+		// stores unixnano == 0, so it needs the same special case
+		// as Unix().
+		return zeroInstantNano
+	}
+	return t.unixnano
+}
 
 func (t Time) Round(d Duration) Time {
 	if d <= 0 {
@@ -551,9 +562,72 @@ func (t Time) Truncate(d Duration) Time {
 	return Time{unixnano: t.unixnano - t.unixnano%dd, isSet: t.isSet}
 }
 
-// Format renders t per the Go reference layout (M9: civil-date
-// implementation; synthetic Time is UTC-only).
-func (t Time) Format(layout string) string {
+// timeCivil is the UTC civil decomposition of a Time: the single
+// implementation shared by Format and the Date/Year/Month/Day/Weekday/
+// Clock/Hour/Minute/Second/Nanosecond/YearDay accessors (R0-2), so the
+// accessors can never drift from Format.
+type timeCivil struct {
+	year    int64
+	month   int64 // 1..12
+	day     int64 // 1..31
+	weekday int64 // 0 = Sunday
+	hour    int64
+	min     int64
+	sec     int64
+	nsec    int64
+	yearday int64 // 1..366
+	days    int64 // days since 1970-01-01 (UTC)
+}
+
+// timeIsLeapYear reports whether y is a leap year (proleptic Gregorian).
+func timeIsLeapYear(y int64) bool {
+	return y%4 == 0 && (y%100 != 0 || y%400 == 0)
+}
+
+// timeDaysInMonth returns the number of days in month m of year y
+// (m 1-based; 0 for an out-of-range month).
+func timeDaysInMonth(y, m int64) int64 {
+	switch m {
+	case 1, 3, 5, 7, 8, 10, 12:
+		return 31
+	case 4, 6, 9, 11:
+		return 30
+	case 2:
+		if timeIsLeapYear(y) {
+			return 29
+		}
+		return 28
+	}
+	return 0
+}
+
+// timeMonthDayFromYearDay converts a 1-based day-of-year into its
+// month/day in year y (caller validates the range first).
+func timeMonthDayFromYearDay(y, yday int64) timeCivil {
+	month := int64(1)
+	day := yday
+	for month < 12 {
+		dim := timeDaysInMonth(y, month)
+		if day <= dim {
+			break
+		}
+		day -= dim
+		month++
+	}
+	return timeCivil{month: month, day: day}
+}
+
+// timeDecompose splits t into UTC civil fields. The zero instant (the
+// Go zero value, or Date(1, January, 1, ...) — both spellings) is
+// special-cased: its unixnano is 0 (!isSet) or the wrapped
+// zero-instant marker, neither of which decomposes to year 1 by
+// arithmetic, so it maps to 0001-01-01 00:00:00 UTC (Monday, yearday 1),
+// exactly like gc. (Before this fix, Format rendered the zero value as
+// 1970-01-01; the accessors and Format now agree on 0001-01-01.)
+func timeDecompose(t Time) timeCivil {
+	if t.IsZero() {
+		return timeCivil{year: 1, month: 1, day: 1, weekday: 1, yearday: 1, days: -719162}
+	}
 	// Split unixnano into days + time-of-day (UTC).
 	sec := t.unixnano / 1e9
 	nsec := t.unixnano % 1e9
@@ -593,6 +667,33 @@ func (t Time) Format(layout string) string {
 	hour := secsOfDay / 3600
 	min := (secsOfDay % 3600) / 60
 	sec2 := secsOfDay % 60
+	// Weekday: 1970-01-01 was a Thursday (weekday 4).
+	weekday := (days + 4) % 7
+	if weekday < 0 {
+		weekday += 7
+	}
+	// Yearday: days elapsed in the year before this month, plus day.
+	yearday := d
+	for mm := int64(1); mm < m; mm++ {
+		yearday += timeDaysInMonth(y, mm)
+	}
+	return timeCivil{year: y, month: m, day: d, weekday: weekday, hour: hour, min: min, sec: sec2, nsec: nsec, yearday: yearday, days: days}
+}
+
+// Format renders t per the Go reference layout (M9: civil-date
+// implementation; synthetic Time is UTC-only).
+func (t Time) Format(layout string) string {
+	// Civil decomposition is shared with the calendar accessors
+	// (timeDecompose); Format renders UTC, as before.
+	c := timeDecompose(t)
+	y := c.year
+	m := c.month
+	d := c.day
+	days := c.days
+	hour := c.hour
+	min := c.min
+	sec2 := c.sec
+	nsec := c.nsec
 
 	var b []byte
 	i := 0
@@ -874,36 +975,60 @@ func itoa4(y int64) []byte {
 func hasPrefix(s, p string) bool {
 	return len(s) >= len(p) && s[:len(p)] == p
 }
-func (t Time) GoString() string { panic("time.Time.GoString: not in M5 scope") }
+// Calendar decomposition (R0-2): the Date() constructor already stored
+// the instant as unixnano; these accessors decompose it through
+// timeDecompose, so a Date() result round-trips instead of panicking.
+// The synthetic Time is UTC-only (the same documented divergence class
+// as Local-as-UTC): In returns t for any non-nil location, Location
+// returns UTC, Zone returns ("UTC", 0). AddDate normalizes through the
+// Date() constructor, exactly like gc (Jan 31 + 1 month = Mar 2/3).
+func (t Time) GoString() string {
+	c := timeDecompose(t)
+	return "time.Date(" + timeIntString(c.year) + ", time." + monthName(c.month) + ", " + timeIntString(c.day) + ", " + timeIntString(c.hour) + ", " + timeIntString(c.min) + ", " + timeIntString(c.sec) + ", " + timeIntString(c.nsec) + ", time.UTC)"
+}
 func (t Time) AddDate(years int, months int, days int) Time {
-	panic("time.Time.AddDate: not in M5 scope")
+	c := timeDecompose(t)
+	return Date(int(c.year)+years, Month(c.month)+Month(months), int(c.day)+days, int(c.hour), int(c.min), int(c.sec), int(c.nsec), UTC)
 }
 func (t Time) Date() (year int, month Month, day int) {
-	panic("time.Time.Date: not in M5 scope")
+	c := timeDecompose(t)
+	return int(c.year), Month(c.month), int(c.day)
 }
-func (t Time) Year() int          { panic("time.Time.Year: not in M5 scope") }
-func (t Time) Month() Month       { panic("time.Time.Month: not in M5 scope") }
-func (t Time) Day() int           { panic("time.Time.Day: not in M5 scope") }
-func (t Time) Weekday() Weekday   { panic("time.Time.Weekday: not in M5 scope") }
+func (t Time) Year() int        { return int(timeDecompose(t).year) }
+func (t Time) Month() Month     { return Month(timeDecompose(t).month) }
+func (t Time) Day() int         { return int(timeDecompose(t).day) }
+func (t Time) Weekday() Weekday { return Weekday(timeDecompose(t).weekday) }
 func (t Time) Clock() (int, int, int) {
-	panic("time.Time.Clock: not in M5 scope")
+	c := timeDecompose(t)
+	return int(c.hour), int(c.min), int(c.sec)
 }
-func (t Time) Hour() int        { panic("time.Time.Hour: not in M5 scope") }
-func (t Time) Minute() int      { panic("time.Time.Minute: not in M5 scope") }
-func (t Time) Second() int      { panic("time.Time.Second: not in M5 scope") }
-func (t Time) Nanosecond() int  { panic("time.Time.Nanosecond: not in M5 scope") }
-func (t Time) YearDay() int     { panic("time.Time.YearDay: not in M5 scope") }
-func (t Time) UTC() Time        { return t }
-func (t Time) Local() Time      { return t }
+func (t Time) Hour() int       { return int(timeDecompose(t).hour) }
+func (t Time) Minute() int     { return int(timeDecompose(t).min) }
+func (t Time) Second() int     { return int(timeDecompose(t).sec) }
+func (t Time) Nanosecond() int { return int(timeDecompose(t).nsec) }
+func (t Time) YearDay() int    { return int(timeDecompose(t).yearday) }
+func (t Time) UTC() Time       { return t }
+func (t Time) Local() Time     { return t }
 func (t Time) In(loc *Location) Time {
-	panic("time.Time.In: not in M5 scope")
+	if loc == nil {
+		panic("time: missing Location in call to Time.In")
+	}
+	return t
 }
-func (t Time) Location() *Location { panic("time.Time.Location: not in M5 scope") }
-func (t Time) Zone() (string, int) {
-	panic("time.Time.Zone: not in M5 scope")
+func (t Time) Location() *Location { return UTC }
+func (t Time) Zone() (string, int) { return "UTC", 0 }
+func (t Time) UnixMilli() int64 {
+	if t.IsZero() {
+		return -62135596800000
+	}
+	return timeFloorDiv(t.unixnano, 1e6)
 }
-func (t Time) UnixMilli() int64 { return t.unixnano / 1e6 }
-func (t Time) UnixMicro() int64 { return t.unixnano / 1e3 }
+func (t Time) UnixMicro() int64 {
+	if t.IsZero() {
+		return -62135596800000000
+	}
+	return timeFloorDiv(t.unixnano, 1e3)
+}
 
 // Location exists so *Location-typed signatures type-check. Local is
 // accepted as UTC (ADR-0005: documented divergence until P3-M7).
@@ -921,8 +1046,1049 @@ func (l *Location) String() string {
 	return l.name
 }
 
+// timeParseQuote quotes s the way gc's ParseError does: '"' and '\'
+// escaped, other bytes below 0x20 or at/above 0x7f as \xNN.
+func timeParseQuote(s string) string {
+	b := make([]byte, 0, len(s)+2)
+	b = append(b, '"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' {
+			b = append(b, '\\', '"')
+		} else if c == '\\' {
+			b = append(b, '\\', '\\')
+		} else if c < 0x20 || c >= 0x7f {
+			b = append(b, '\\', 'x')
+			b = append(b, "0123456789abcdef"[c>>4], "0123456789abcdef"[c&0xf])
+		} else {
+			b = append(b, c)
+		}
+	}
+	b = append(b, '"')
+	return string(b)
+}
+
+// timeLayoutError is gc's time.ParseError for the synthetic parser:
+// mismatch errors carry the full layout ("as" form); range and
+// extra-text errors do not.
+type timeLayoutError struct {
+	layout string
+	value  string
+	elem   string
+	rest   string
+	msg    string
+}
+
+func (e *timeLayoutError) Error() string {
+	if e.elem != "" {
+		return "parsing time " + timeParseQuote(e.value) + " as " + timeParseQuote(e.layout) + ": cannot parse " + timeParseQuote(e.rest) + " as " + timeParseQuote(e.elem)
+	}
+	return "parsing time " + timeParseQuote(e.value) + ": " + e.msg
+}
+
+func timeParseMismatch(layout, value, rest, elem string) error {
+	return &timeLayoutError{layout: layout, value: value, elem: elem, rest: rest}
+}
+
+func timeParseRangeErr(value, msg string) error {
+	return &timeLayoutError{value: value, msg: msg}
+}
+
+func timeParseExtraErr(value, rest string) error {
+	return &timeLayoutError{value: value, msg: "extra text: " + timeParseQuote(rest)}
+}
+
+// timeParsedNum is the single-result carrier for the numeric parsers
+// (synthetic sources avoid multi-result helpers, cf. __parseDuration).
+type timeParsedNum struct {
+	v    int64
+	rest string
+	ok   bool
+}
+
+// timeParseFixedNum parses exactly n digits (gc getnum, fixed width).
+func timeParseFixedNum(value string, n int) timeParsedNum {
+	if len(value) < n {
+		return timeParsedNum{}
+	}
+	var v int64
+	for i := 0; i < n; i++ {
+		c := value[i]
+		if c < '0' || c > '9' {
+			return timeParsedNum{}
+		}
+		v = v*10 + int64(c-'0')
+	}
+	return timeParsedNum{v: v, rest: value[n:], ok: true}
+}
+
+// timeParseVarNum parses 1..maxDigits digits (gc getnum, variable width).
+func timeParseVarNum(value string, maxDigits int) timeParsedNum {
+	var v int64
+	i := 0
+	for i < len(value) && i < maxDigits {
+		c := value[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		v = v*10 + int64(c-'0')
+		i++
+	}
+	if i == 0 {
+		return timeParsedNum{}
+	}
+	return timeParsedNum{v: v, rest: value[i:], ok: true}
+}
+
+func timeLowerByte(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
+}
+
+// timeMatchFold reports whether value starts with name, case-insensitively
+// (name is already lowercase).
+func timeMatchFold(value, name string) bool {
+	if len(value) < len(name) {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if timeLowerByte(value[i]) != name[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// timeNameMatch is the single-result carrier for the name parsers.
+type timeNameMatch struct {
+	v    int64
+	rest string
+	ok   bool
+}
+
+func timeParseMonthAbbrev(value string) timeNameMatch {
+	if len(value) < 3 {
+		return timeNameMatch{}
+	}
+	abbr := string([]byte{timeLowerByte(value[0]), timeLowerByte(value[1]), timeLowerByte(value[2])})
+	switch abbr {
+	case "jan":
+		return timeNameMatch{v: 1, rest: value[3:], ok: true}
+	case "feb":
+		return timeNameMatch{v: 2, rest: value[3:], ok: true}
+	case "mar":
+		return timeNameMatch{v: 3, rest: value[3:], ok: true}
+	case "apr":
+		return timeNameMatch{v: 4, rest: value[3:], ok: true}
+	case "may":
+		return timeNameMatch{v: 5, rest: value[3:], ok: true}
+	case "jun":
+		return timeNameMatch{v: 6, rest: value[3:], ok: true}
+	case "jul":
+		return timeNameMatch{v: 7, rest: value[3:], ok: true}
+	case "aug":
+		return timeNameMatch{v: 8, rest: value[3:], ok: true}
+	case "sep":
+		return timeNameMatch{v: 9, rest: value[3:], ok: true}
+	case "oct":
+		return timeNameMatch{v: 10, rest: value[3:], ok: true}
+	case "nov":
+		return timeNameMatch{v: 11, rest: value[3:], ok: true}
+	case "dec":
+		return timeNameMatch{v: 12, rest: value[3:], ok: true}
+	}
+	return timeNameMatch{}
+}
+
+func timeParseMonthLong(value string) timeNameMatch {
+	if timeMatchFold(value, "january") {
+		return timeNameMatch{v: 1, rest: value[7:], ok: true}
+	}
+	if timeMatchFold(value, "february") {
+		return timeNameMatch{v: 2, rest: value[8:], ok: true}
+	}
+	if timeMatchFold(value, "march") {
+		return timeNameMatch{v: 3, rest: value[5:], ok: true}
+	}
+	if timeMatchFold(value, "april") {
+		return timeNameMatch{v: 4, rest: value[5:], ok: true}
+	}
+	if timeMatchFold(value, "may") {
+		return timeNameMatch{v: 5, rest: value[3:], ok: true}
+	}
+	if timeMatchFold(value, "june") {
+		return timeNameMatch{v: 6, rest: value[4:], ok: true}
+	}
+	if timeMatchFold(value, "july") {
+		return timeNameMatch{v: 7, rest: value[4:], ok: true}
+	}
+	if timeMatchFold(value, "august") {
+		return timeNameMatch{v: 8, rest: value[6:], ok: true}
+	}
+	if timeMatchFold(value, "september") {
+		return timeNameMatch{v: 9, rest: value[9:], ok: true}
+	}
+	if timeMatchFold(value, "october") {
+		return timeNameMatch{v: 10, rest: value[7:], ok: true}
+	}
+	if timeMatchFold(value, "november") {
+		return timeNameMatch{v: 11, rest: value[8:], ok: true}
+	}
+	if timeMatchFold(value, "december") {
+		return timeNameMatch{v: 12, rest: value[8:], ok: true}
+	}
+	return timeNameMatch{}
+}
+
+func timeParseWeekdayAbbrev(value string) timeNameMatch {
+	if len(value) < 3 {
+		return timeNameMatch{}
+	}
+	abbr := string([]byte{timeLowerByte(value[0]), timeLowerByte(value[1]), timeLowerByte(value[2])})
+	switch abbr {
+	case "sun":
+		return timeNameMatch{v: 0, rest: value[3:], ok: true}
+	case "mon":
+		return timeNameMatch{v: 1, rest: value[3:], ok: true}
+	case "tue":
+		return timeNameMatch{v: 2, rest: value[3:], ok: true}
+	case "wed":
+		return timeNameMatch{v: 3, rest: value[3:], ok: true}
+	case "thu":
+		return timeNameMatch{v: 4, rest: value[3:], ok: true}
+	case "fri":
+		return timeNameMatch{v: 5, rest: value[3:], ok: true}
+	case "sat":
+		return timeNameMatch{v: 6, rest: value[3:], ok: true}
+	}
+	return timeNameMatch{}
+}
+
+func timeParseWeekdayLong(value string) timeNameMatch {
+	if timeMatchFold(value, "sunday") {
+		return timeNameMatch{v: 0, rest: value[6:], ok: true}
+	}
+	if timeMatchFold(value, "monday") {
+		return timeNameMatch{v: 1, rest: value[6:], ok: true}
+	}
+	if timeMatchFold(value, "tuesday") {
+		return timeNameMatch{v: 2, rest: value[7:], ok: true}
+	}
+	if timeMatchFold(value, "wednesday") {
+		return timeNameMatch{v: 3, rest: value[9:], ok: true}
+	}
+	if timeMatchFold(value, "thursday") {
+		return timeNameMatch{v: 4, rest: value[8:], ok: true}
+	}
+	if timeMatchFold(value, "friday") {
+		return timeNameMatch{v: 5, rest: value[6:], ok: true}
+	}
+	if timeMatchFold(value, "saturday") {
+		return timeNameMatch{v: 6, rest: value[8:], ok: true}
+	}
+	return timeNameMatch{}
+}
+
+// timeParsedFrac is the single-result carrier for the fraction parsers.
+type timeParsedFrac struct {
+	nsec int64
+	rest string
+	ok   bool
+}
+
+// timeParseFixedFrac parses a fixed-width fraction: separator ('.' or
+// ',') plus exactly digits digits. ok == false means mismatch.
+func timeParseFixedFrac(value string, digits int) timeParsedFrac {
+	if len(value) < 1+digits {
+		return timeParsedFrac{}
+	}
+	sep := value[0]
+	if sep != '.' && sep != ',' {
+		return timeParsedFrac{}
+	}
+	var v int64
+	for i := 0; i < digits; i++ {
+		c := value[1+i]
+		if c < '0' || c > '9' {
+			return timeParsedFrac{}
+		}
+		if i < 9 {
+			v = v*10 + int64(c-'0')
+		}
+	}
+	if digits <= 9 {
+		mult := int64(1)
+		for k := 0; k < 9-digits; k++ {
+			mult *= 10
+		}
+		v *= mult
+	}
+	return timeParsedFrac{nsec: v, rest: value[1+digits:], ok: true}
+}
+
+// timeParseVarFrac parses a variable-width fraction: separator plus one
+// or more digits, truncated to 9 digits. ok == false means "no fraction
+// present" (no separator, or no digit after it): the caller skips the
+// layout fraction element and leaves value untouched, like gc.
+func timeParseVarFrac(value string) timeParsedFrac {
+	if len(value) < 2 {
+		return timeParsedFrac{rest: value}
+	}
+	sep := value[0]
+	if sep != '.' && sep != ',' {
+		return timeParsedFrac{rest: value}
+	}
+	c := value[1]
+	if c < '0' || c > '9' {
+		return timeParsedFrac{rest: value}
+	}
+	var v int64
+	ndigits := 0
+	i := 1
+	for i < len(value) {
+		c = value[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		if ndigits < 9 {
+			v = v*10 + int64(c-'0')
+		}
+		ndigits++
+		i++
+	}
+	if ndigits <= 9 {
+		mult := int64(1)
+		for k := 0; k < 9-ndigits; k++ {
+			mult *= 10
+		}
+		v *= mult
+	}
+	return timeParsedFrac{nsec: v, rest: value[i:], ok: true}
+}
+
+// timeParsedZone is the single-result carrier for the zone-offset parser.
+type timeParsedZone struct {
+	offset int64
+	hour   int64
+	sec    int64
+	hasSec bool
+	rest   string
+	ok     bool
+}
+
+// timeParseZoneOffset parses a zone offset of the given shape after an
+// optional 'Z' (zForm only). shape is one of "07", "0700", "070000",
+// "07:00", "07:00:00". Minutes are not range-checked, like gc; hour and
+// seconds are validated by the caller.
+func timeParseZoneOffset(value string, zForm bool, shape string) timeParsedZone {
+	if zForm && len(value) > 0 && value[0] == 'Z' {
+		return timeParsedZone{rest: value[1:], ok: true}
+	}
+	if len(value) == 0 {
+		return timeParsedZone{}
+	}
+	sign := value[0]
+	if sign != '+' && sign != '-' {
+		return timeParsedZone{}
+	}
+	rest := value[1:]
+	var hh, mm, ss int64
+	hasSec := false
+	switch shape {
+	case "07":
+		num := timeParseFixedNum(rest, 2)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		hh = num.v
+		rest = num.rest
+	case "0700":
+		num := timeParseFixedNum(rest, 4)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		hh = num.v / 100
+		mm = num.v % 100
+		rest = num.rest
+	case "070000":
+		num := timeParseFixedNum(rest, 6)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		hh = num.v / 10000
+		mm = (num.v / 100) % 100
+		ss = num.v % 100
+		hasSec = true
+		rest = num.rest
+	case "07:00":
+		num := timeParseFixedNum(rest, 2)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		hh = num.v
+		rest = num.rest
+		if len(rest) == 0 || rest[0] != ':' {
+			return timeParsedZone{}
+		}
+		num = timeParseFixedNum(rest[1:], 2)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		mm = num.v
+		rest = num.rest
+	case "07:00:00":
+		num := timeParseFixedNum(rest, 2)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		hh = num.v
+		rest = num.rest
+		if len(rest) == 0 || rest[0] != ':' {
+			return timeParsedZone{}
+		}
+		num = timeParseFixedNum(rest[1:], 2)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		mm = num.v
+		rest = num.rest
+		if len(rest) == 0 || rest[0] != ':' {
+			return timeParsedZone{}
+		}
+		num = timeParseFixedNum(rest[1:], 2)
+		if !num.ok {
+			return timeParsedZone{}
+		}
+		ss = num.v
+		hasSec = true
+		rest = num.rest
+	default:
+		return timeParsedZone{}
+	}
+	offset := hh*3600 + mm*60 + ss
+	if sign == '-' {
+		offset = -offset
+	}
+	return timeParsedZone{offset: offset, hour: hh, sec: ss, hasSec: hasSec, rest: rest, ok: true}
+}
+
+// timeParseTokenAt reports the layout token starting at layout[0]
+// (longest match wins), or "" when layout[0] does not start a token.
+func timeParseTokenAt(layout string) string {
+	if layout == "" {
+		return ""
+	}
+	switch layout[0] {
+	case 'J':
+		if hasPrefix(layout, "January") {
+			return "January"
+		}
+		if hasPrefix(layout, "Jan") {
+			return "Jan"
+		}
+	case 'M':
+		if hasPrefix(layout, "Monday") {
+			return "Monday"
+		}
+		if hasPrefix(layout, "Mon") {
+			return "Mon"
+		}
+		if hasPrefix(layout, "MST") {
+			return "MST"
+		}
+	case '2':
+		if hasPrefix(layout, "2006") {
+			return "2006"
+		}
+		return "2"
+	case '0':
+		if hasPrefix(layout, "002") {
+			return "002"
+		}
+		if hasPrefix(layout, "01") {
+			return "01"
+		}
+		if hasPrefix(layout, "02") {
+			return "02"
+		}
+		if hasPrefix(layout, "03") {
+			return "03"
+		}
+		if hasPrefix(layout, "04") {
+			return "04"
+		}
+		if hasPrefix(layout, "05") {
+			return "05"
+		}
+		if hasPrefix(layout, "06") {
+			return "06"
+		}
+	case '1':
+		if hasPrefix(layout, "15") {
+			return "15"
+		}
+		return "1"
+	case '3':
+		if hasPrefix(layout, "03") {
+			return "03"
+		}
+		return "3"
+	case '4':
+		if hasPrefix(layout, "04") {
+			return "04"
+		}
+		return "4"
+	case '5':
+		if hasPrefix(layout, "05") {
+			return "05"
+		}
+		return "5"
+	case 'P':
+		if hasPrefix(layout, "PM") {
+			return "PM"
+		}
+	case 'p':
+		if hasPrefix(layout, "pm") {
+			return "pm"
+		}
+	case 'Z':
+		if hasPrefix(layout, "Z07:00:00") {
+			return "Z07:00:00"
+		}
+		if hasPrefix(layout, "Z07:00") {
+			return "Z07:00"
+		}
+		if hasPrefix(layout, "Z0700") {
+			return "Z0700"
+		}
+		if hasPrefix(layout, "Z07") {
+			return "Z07"
+		}
+	case '-':
+		if hasPrefix(layout, "-07:00:00") {
+			return "-07:00:00"
+		}
+		if hasPrefix(layout, "-07:00") {
+			return "-07:00"
+		}
+		if hasPrefix(layout, "-070000") {
+			return "-070000"
+		}
+		if hasPrefix(layout, "-0700") {
+			return "-0700"
+		}
+		if hasPrefix(layout, "-07") {
+			return "-07"
+		}
+	case '_':
+		if hasPrefix(layout, "__2") {
+			return "__2"
+		}
+		if hasPrefix(layout, "_2") {
+			return "_2"
+		}
+	case '.', ',':
+		if len(layout) > 1 && (layout[1] == '0' || layout[1] == '9') {
+			i := 1
+			for i < len(layout) && (layout[i] == '0' || layout[i] == '9') {
+				i++
+			}
+			return layout[:i]
+		}
+	}
+	return ""
+}
+
+// timeParseChunk is the single-result carrier for timeParseNext.
+type timeParseChunk struct {
+	lit string
+	tok string
+}
+
+// timeParseNext splits layout into the literal prefix before the next
+// token and that token ("" when no token remains).
+func timeParseNext(layout string) timeParseChunk {
+	for i := 0; i < len(layout); i++ {
+		if tok := timeParseTokenAt(layout[i:]); tok != "" {
+			return timeParseChunk{lit: layout[:i], tok: tok}
+		}
+	}
+	return timeParseChunk{lit: layout}
+}
+
+// timeParseAutoFracOK reports whether a fractional second in value may
+// be consumed right after a seconds element: only when the layout is
+// exhausted, or the next layout element is a non-fraction token. When
+// the next element IS a fraction element, that element parses it
+// instead (a fixed-width fraction must see the digits to reject a
+// short fraction, rather than having them auto-consumed).
+func timeParseAutoFracOK(layout string) bool {
+	if layout == "" {
+		return true
+	}
+	chunk := timeParseNext(layout)
+	if chunk.tok == "" {
+		return false
+	}
+	if chunk.tok[0] == '.' || chunk.tok[0] == ',' {
+		return false
+	}
+	return true
+}
+
+// Parse parses a formatted string and returns the time value it
+// represents (gc 1.27.1 semantics for the standard layout elements).
+// UTC-only model, like the rest of the synthetic package: a parsed zone
+// offset shifts the instant (wall clock minus offset) but the zone
+// itself is not retained — decomposition always reads UTC, and Zone()
+// returns ("UTC", 0). A zone abbreviation (MST element) parses exactly
+// three uppercase letters with offset 0, like gc's unknown-abbreviation
+// rule; the name is discarded.
 func Parse(layout, value string) (Time, error) {
-	panic("time.Parse: not in M5 scope")
+	origLayout := layout
+	origValue := value
+	year := int64(0)
+	month := int64(1)
+	day := int64(1)
+	hour := int64(0)
+	min := int64(0)
+	sec := int64(0)
+	nsec := int64(0)
+	pmSet := false
+	pm := false
+	hourIs12 := false
+	monthSet := false
+	daySet := false
+	yday := int64(0)
+	ydaySet := false
+	zoneOffset := int64(0)
+	zoneHour := int64(0)
+	zoneSec := int64(0)
+	zoneHasSec := false
+	for layout != "" {
+		chunk := timeParseNext(layout)
+		if chunk.lit != "" {
+			if !hasPrefix(value, chunk.lit) {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, chunk.lit)
+			}
+			value = value[len(chunk.lit):]
+			layout = layout[len(chunk.lit):]
+		}
+		if chunk.tok == "" {
+			break
+		}
+		tok := chunk.tok
+		layout = layout[len(tok):]
+		switch tok {
+		case "2006":
+			num := timeParseFixedNum(value, 4)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			year = num.v
+			value = num.rest
+		case "06":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			if num.v >= 69 {
+				year = 1900 + num.v
+			} else {
+				year = 2000 + num.v
+			}
+			value = num.rest
+		case "01":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			month = num.v
+			monthSet = true
+			value = num.rest
+			// gc checks the month range immediately, so a bad month
+			// beats any later token failure (e.g. "2006-13" / "2024-13").
+			if month < 1 || month > 12 {
+				return Time{}, timeParseRangeErr(origValue, "month out of range")
+			}
+		case "1":
+			num := timeParseVarNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			month = num.v
+			monthSet = true
+			value = num.rest
+			if month < 1 || month > 12 {
+				return Time{}, timeParseRangeErr(origValue, "month out of range")
+			}
+		case "02":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			day = num.v
+			daySet = true
+			value = num.rest
+		case "2":
+			num := timeParseVarNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			day = num.v
+			daySet = true
+			value = num.rest
+		case "_2":
+			v := value
+			if len(v) > 0 && v[0] == ' ' {
+				v = v[1:]
+			}
+			num := timeParseVarNum(v, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			day = num.v
+			daySet = true
+			value = num.rest
+		case "002":
+			num := timeParseFixedNum(value, 3)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			yday = num.v
+			ydaySet = true
+			value = num.rest
+		case "__2":
+			v := value
+			spaces := 0
+			for spaces < 2 && len(v) > 0 && v[0] == ' ' {
+				v = v[1:]
+				spaces++
+			}
+			num := timeParseVarNum(v, 3)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			yday = num.v
+			ydaySet = true
+			value = num.rest
+		case "15":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			hour = num.v
+			hourIs12 = false
+			value = num.rest
+			// Hour range is checked immediately, pre-PM-adjustment
+			// (a 12-hour hour is 0..12 even with PM: "3:04PM" /
+			// "13:45PM" is an hour error, and "25:x" beats the
+			// later minute mismatch).
+			if hour < 0 || hour > 23 {
+				return Time{}, timeParseRangeErr(origValue, "hour out of range")
+			}
+		case "03":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			hour = num.v
+			hourIs12 = true
+			value = num.rest
+			if hour < 0 || hour > 12 {
+				return Time{}, timeParseRangeErr(origValue, "hour out of range")
+			}
+		case "3":
+			num := timeParseVarNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			hour = num.v
+			hourIs12 = true
+			value = num.rest
+			if hour < 0 || hour > 12 {
+				return Time{}, timeParseRangeErr(origValue, "hour out of range")
+			}
+		case "04":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			min = num.v
+			value = num.rest
+			if min < 0 || min > 59 {
+				return Time{}, timeParseRangeErr(origValue, "minute out of range")
+			}
+		case "4":
+			num := timeParseVarNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			min = num.v
+			value = num.rest
+			if min < 0 || min > 59 {
+				return Time{}, timeParseRangeErr(origValue, "minute out of range")
+			}
+		case "05":
+			num := timeParseFixedNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			sec = num.v
+			value = num.rest
+			if sec < 0 || sec > 59 {
+				return Time{}, timeParseRangeErr(origValue, "second out of range")
+			}
+			if timeParseAutoFracOK(layout) {
+				fr := timeParseVarFrac(value)
+				if fr.ok {
+					nsec = fr.nsec
+					value = fr.rest
+				}
+			}
+		case "5":
+			num := timeParseVarNum(value, 2)
+			if !num.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			sec = num.v
+			value = num.rest
+			if sec < 0 || sec > 59 {
+				return Time{}, timeParseRangeErr(origValue, "second out of range")
+			}
+			if timeParseAutoFracOK(layout) {
+				fr := timeParseVarFrac(value)
+				if fr.ok {
+					nsec = fr.nsec
+					value = fr.rest
+				}
+			}
+		case "PM":
+			if hasPrefix(value, "PM") {
+				pm = true
+				pmSet = true
+				value = value[2:]
+			} else if hasPrefix(value, "AM") {
+				pm = false
+				pmSet = true
+				value = value[2:]
+			} else {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+		case "pm":
+			if hasPrefix(value, "pm") {
+				pm = true
+				pmSet = true
+				value = value[2:]
+			} else if hasPrefix(value, "am") {
+				pm = false
+				pmSet = true
+				value = value[2:]
+			} else {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+		case "Monday":
+			nm := timeParseWeekdayLong(value)
+			if !nm.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			value = nm.rest
+		case "Mon":
+			nm := timeParseWeekdayAbbrev(value)
+			if !nm.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			value = nm.rest
+		case "January":
+			nm := timeParseMonthLong(value)
+			if !nm.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			month = nm.v
+			monthSet = true
+			value = nm.rest
+		case "Jan":
+			nm := timeParseMonthAbbrev(value)
+			if !nm.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			month = nm.v
+			monthSet = true
+			value = nm.rest
+		case "MST":
+			if len(value) < 3 || value[0] < 'A' || value[0] > 'Z' || value[1] < 'A' || value[1] > 'Z' || value[2] < 'A' || value[2] > 'Z' {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = 0
+			zoneHour = 0
+			zoneSec = 0
+			zoneHasSec = false
+			value = value[3:]
+		case "Z07:00:00":
+			zn := timeParseZoneOffset(value, true, "07:00:00")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "Z07:00":
+			zn := timeParseZoneOffset(value, true, "07:00")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "Z0700":
+			zn := timeParseZoneOffset(value, true, "0700")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "Z07":
+			zn := timeParseZoneOffset(value, true, "07")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "-07:00:00":
+			zn := timeParseZoneOffset(value, false, "07:00:00")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "-07:00":
+			zn := timeParseZoneOffset(value, false, "07:00")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "-070000":
+			zn := timeParseZoneOffset(value, false, "070000")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "-0700":
+			zn := timeParseZoneOffset(value, false, "0700")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		case "-07":
+			zn := timeParseZoneOffset(value, false, "07")
+			if !zn.ok {
+				return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+			}
+			zoneOffset = zn.offset
+			zoneHour = zn.hour
+			zoneSec = zn.sec
+			zoneHasSec = zn.hasSec
+			value = zn.rest
+		default:
+			// Fractional-second element (separator + '0'/'9' run).
+			run := tok[1:]
+			if len(run) > 0 && run[0] == '0' {
+				fr := timeParseFixedFrac(value, len(run))
+				if !fr.ok {
+					return Time{}, timeParseMismatch(origLayout, origValue, value, tok)
+				}
+				nsec = fr.nsec
+				value = fr.rest
+			} else {
+				fr := timeParseVarFrac(value)
+				if fr.ok {
+					nsec = fr.nsec
+					value = fr.rest
+				}
+			}
+		}
+		// Zone offset ranges are checked immediately too, so a bad
+		// offset beats any later token failure or extra text
+		// ("+25x" reports the offset hour, not extra text). This
+		// runs after every element; non-zone elements leave the
+		// last zone's values untouched, and a bad zone already
+		// returned on its own iteration.
+		if zoneHour > 24 {
+			return Time{}, timeParseRangeErr(origValue, "time zone offset hour out of range")
+		}
+		if zoneHasSec && zoneSec > 59 {
+			return Time{}, timeParseRangeErr(origValue, "time zone offset second out of range")
+		}
+	}
+	if value != "" {
+		return Time{}, timeParseExtraErr(origValue, value)
+	}
+	// 12-hour adjustment, after all elements are parsed: the hour
+	// range was already checked pre-adjustment (0..12), so the
+	// adjusted hour is always 0..23 here. A 24-hour hour is never
+	// adjusted, even with a PM element ("15:04PM" / "13:45PM" == 13:45).
+	if hourIs12 && pmSet {
+		if pm && hour < 12 {
+			hour += 12
+		} else if !pm && hour == 12 {
+			hour = 0
+		}
+	}
+	// Remaining validation, in gc's order: day-of-year range/match,
+	// then day. (Month, hour, minute, second, and zone offset ranges
+	// were already checked immediately, during the loop; extra text
+	// was checked just above, so it beats day-of-year/day errors.)
+	if ydaySet {
+		maxYday := int64(365)
+		if timeIsLeapYear(year) {
+			maxYday = 366
+		}
+		if yday < 1 || yday > maxYday {
+			return Time{}, timeParseRangeErr(origValue, "day-of-year out of range")
+		}
+		md := timeMonthDayFromYearDay(year, yday)
+		if monthSet && month != md.month {
+			return Time{}, timeParseRangeErr(origValue, "day-of-year does not match month")
+		}
+		if daySet && day != md.day {
+			return Time{}, timeParseRangeErr(origValue, "day-of-year does not match day")
+		}
+		month = md.month
+		day = md.day
+	} else {
+		if day < 1 || day > timeDaysInMonth(year, month) {
+			return Time{}, timeParseRangeErr(origValue, "day out of range")
+		}
+	}
+	base := Date(int(year), Month(month), int(day), int(hour), int(min), int(sec), int(nsec), UTC)
+	return Time{unixnano: base.unixnano - zoneOffset*1e9, isSet: true}, nil
 }
 
 func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time {
