@@ -3833,13 +3833,21 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		}
 		tmpTid = resTid
 	} else if plan.kind == mrFuncField {
-		// Function field call (e.g., c.generate(r)): build the
-		// funcfieldcall node directly (mirrors desugarFuncFieldCall).
-		sel, ok := inner.Fun.(*ast.SelectorExpr)
-		if !ok {
+		// Function field call (e.g., c.generate(r)) in value position
+		// (return statement, call argument, ...). Emit the same regular
+		// "call" node as desugarFuncFieldCall does for statement position:
+		// the backend never implemented a "funcfieldcall" expression kind
+		// (building the AST fails with "unsupported expression kind"),
+		// while its buildCall already handles selector-fun calls through
+		// FuncValueCallNode. Emitting a dedicated node here would leave
+		// every program importing a package with a value-position
+		// func-field call unbuildable — crypto/tls's own
+		// ConnectionState.ExportKeyingMaterial (return cs.ekm(...)) is
+		// the instance that surfaced this (review-tls-clientauth lane).
+		if _, ok := inner.Fun.(*ast.SelectorExpr); !ok {
 			return nil, nil, fmt.Errorf("gofrontend: funcfieldcall expects SelectorExpr, got %T", inner.Fun)
 		}
-		recvNode, err := e.exportExpr(sel.X)
+		funNode, err := e.exportExpr(inner.Fun)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3851,12 +3859,10 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		if err != nil {
 			return nil, nil, err
 		}
-		callNode = e.node("funcfieldcall", inner, map[string]any{
-			"recv":       recvNode,
-			"field":      sel.Sel.Name,
-			"args":       args,
-			"pairType":   pairTid,
-			"pairFields": plan.pairFields,
+		callNode = e.node("call", inner, map[string]any{
+			"fun":  funNode,
+			"args": args,
+			"type": pairTid,
 		})
 		e.chanSeq++
 		tmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
