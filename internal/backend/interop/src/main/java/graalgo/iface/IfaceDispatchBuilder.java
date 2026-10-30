@@ -123,8 +123,18 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
 
     /**
      * Replica of the factory's private {@code signatureParamTypeIds}: the
-     * callee's parameter type ids, or null when the signature is absent,
-     * unreadable, or variadic (no adaptation — the methodref precedent).
+     * callee's parameter type ids, or null when the signature is absent
+     * or unreadable. Variadic signatures adapt too (the factory's
+     * fix-redmaster-r40, mirrored here for the ifacemethod replica):
+     * the exporter packs variadic interface calls
+     * ({@code exportCallArgsPacked}), so the wire args align 1:1 with
+     * the signature's params and the last param — the variadic slice
+     * type itself — is never an interface, hence never boxed. The
+     * previous variadic bail-out skipped adaptation for the FIXED
+     * params too: an interface method such as {@code Emit(w io.Writer,
+     * parts ...string)} passed {@code w} unboxed into the interface
+     * parameter, and the callee's later dispatch on {@code w} found no
+     * method table for the value's descriptor (R1-11).
      */
     private static List<Integer> signatureParamTypeIds(NodeFactory.BuildCtx ctx,
             Json.Object f, String path) {
@@ -141,9 +151,9 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
+        // No variadic bail-out: see the method javadoc. With the packed
+        // form the wire args align 1:1 with params, and the slice-typed
+        // last param is never an interface type, so it is never boxed.
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {

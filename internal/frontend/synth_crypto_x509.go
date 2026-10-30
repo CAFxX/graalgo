@@ -956,6 +956,8 @@ func splitColon(s string) []string {
 // parsePrivateKeyDescriptor decodes the graalgo.x509.parsePrivateKey output
 // ("FMT:ALG:hex:..." with FMT PKCS8/PKCS1/SEC1, ALG RSA/EC/Ed25519) into a
 // crypto.PrivateKey. wantFmt restricts the accepted format ("" = any).
+// A failure descriptor ("ERROR:<kind>") becomes a descriptive error
+// instead of the generic one (R1-12).
 // __mrParsePrivateKeyDescriptorPair is the pair type for parsePrivateKeyDescriptor.
 type __mrParsePrivateKeyDescriptorPair struct {
 	v0 any
@@ -966,8 +968,43 @@ func parsePrivateKeyDescriptor(desc, wantFmt string) (any, error) {
 	panic("crypto/x509: parsePrivateKeyDescriptor: multi-result desugar")
 }
 
+// parsePrivateKeyErrorKind maps a Java ERROR:<kind> descriptor to the
+// human-readable detail for the x509 error, or "" when the kind is the
+// generic unparseable bucket (which keeps the previous error text).
+func parsePrivateKeyErrorKind(kind string) string {
+	switch kind {
+	case "empty-input":
+		return "empty input"
+	case "malformed-pkcs8":
+		return "malformed PKCS#8 private key"
+	case "malformed-pkcs1":
+		return "malformed PKCS#1 private key"
+	case "malformed-sec1":
+		return "malformed SEC1 private key"
+	case "missing-curve-parameters":
+		return "missing elliptic curve parameters"
+	case "unsupported-algorithm":
+		return "unsupported private key algorithm"
+	case "unsupported-curve":
+		return "unsupported elliptic curve"
+	case "invalid-key":
+		return "invalid private key"
+	}
+	return ""
+}
+
 func __mrParsePrivateKeyDescriptor(desc, wantFmt string) __mrParsePrivateKeyDescriptorPair {
 	parts := splitColon(desc)
+	// R1-12: the Java parser reports failures as ERROR:<kind>, never
+	// as bare "". Surface the kind instead of collapsing every failure
+	// into one indistinguishable error; the unparseable bucket keeps
+	// the previous generic text.
+	if len(parts) >= 2 && parts[0] == "ERROR" {
+		if detail := parsePrivateKeyErrorKind(parts[1]); detail != "" {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key: " + detail)}
+		}
+		return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
+	}
 	if len(parts) < 2 {
 		return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 	}

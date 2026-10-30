@@ -17,6 +17,10 @@ public final class IfaceTestRunner {
 
     static {
         TESTS.add(IfaceDispatchNodeTest.class);
+        // L10 (R1-11): variadic interface dispatch adapts fixed params.
+        TESTS.add(graalgo.frontend.IfaceDispatchBuilderTest.class);
+        // L10 (R1-12): SEC1/PKCS#1/PKCS#8 private-key parsing.
+        TESTS.add(graalgo.p3x509.GoX509Test.class);
         TESTS.add(IfaceMethodTablesTest.class);
         TESTS.add(graalgo.frontend.DescriptorNamesTest.class);
         TESTS.add(LinknameTest.class);

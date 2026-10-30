@@ -2,7 +2,6 @@ package graalgo.p3x509;
 
 import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
-import java.security.AlgorithmParameters;
 import java.security.KeyFactory;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
@@ -10,7 +9,6 @@ import java.security.cert.X509Certificate;
 import java.security.interfaces.ECPrivateKey;
 import java.security.interfaces.EdECPrivateKey;
 import java.security.interfaces.RSAPrivateCrtKey;
-import java.security.spec.ECGenParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -624,31 +622,162 @@ public final class GoX509 {
      * Parses a private key (PKCS#8, PKCS#1 or SEC1 EC) and returns a
      * colon-separated descriptor {@code FMT:ALG:hex:hex:...} where FMT is
      * PKCS8, PKCS1 or SEC1 and ALG is RSA, EC or Ed25519. RSA components:
-     * n, e, d, p, q. EC components: curveName, x, y, d (SEC1) or
-     * curveName, d (PKCS#8; x,y derived). Ed25519: seed. Empty string on
-     * failure. Backs {@code graalgo.x509.parsePrivateKey}.
+     * n, e, d, p, q. EC components: curveName, d (x, y are derived
+     * Go-side via {@code ScalarBaseMult}, the same path PKCS#8 EC keys
+     * already used). Ed25519: seed. Backs
+     * {@code graalgo.x509.parsePrivateKey}.
+     *
+     * <p>Failure is distinguishable, never bare {@code ""} (R1-12):
+     * {@code ERROR:&lt;kind&gt;} where kind is one of {@code empty-input},
+     * {@code unparseable}, {@code malformed-pkcs8}, {@code malformed-pkcs1},
+     * {@code malformed-sec1}, {@code missing-curve-parameters},
+     * {@code unsupported-algorithm}, {@code unsupported-curve} or
+     * {@code invalid-key}. The Go side (synth_crypto_x509.go) turns
+     * {@code ERROR:*} into a descriptive {@code x509} error; inputs
+     * matching no known format stay {@code unparseable} and keep the
+     * previous generic Go error text. The three format attempts return
+     * either a descriptor, {@code null} (not this format), or an
+     * {@code ERROR:*} sentinel (this format, invalid) — the formats are
+     * disjoint by their second SEQUENCE child (SEQUENCE for PKCS#8,
+     * INTEGER for PKCS#1, OCTET STRING for SEC1), so the first format
+     * that positively identifies the input wins and later attempts never
+     * relabel its failure.
      */
     public static Object parsePrivateKey(Object derArg) {
         byte[] der = toBytes(derArg);
         try {
-            // Try PKCS#8 with each known algorithm.
+            if (der.length == 0) {
+                return toGoString("ERROR:empty-input");
+            }
+            // PKCS#8 first: the JDK attempts run before the
+            // algorithm-OID sniff, so a valid key is never mislabeled;
+            // only when every JDK attempt fails does the sniff decide
+            // whether the input was PKCS#8-shaped (malformed /
+            // unsupported) or some other format entirely.
             String parsed = tryPkcs8(der);
-            String fmt = "PKCS8";
-            if (parsed == null) {
-                parsed = tryPkcs1(der);
-                fmt = "PKCS1";
+            if (parsed != null) {
+                if (parsed.startsWith("ERROR:")) {
+                    return toGoString(parsed);
+                }
+                return toGoString("PKCS8:" + parsed);
             }
-            if (parsed == null) {
-                parsed = trySec1(der);
-                fmt = "SEC1";
+            String pkcs8Error = pkcs8ErrorKind(der);
+            if (pkcs8Error != null) {
+                return toGoString("ERROR:" + pkcs8Error);
             }
-            if (parsed == null) {
-                return toGoString("");
+            parsed = tryPkcs1(der);
+            if (parsed != null) {
+                if (parsed.startsWith("ERROR:")) {
+                    return toGoString(parsed);
+                }
+                return toGoString("PKCS1:" + parsed);
             }
-            return toGoString(fmt + ":" + parsed);
+            parsed = trySec1(der);
+            if (parsed != null) {
+                if (parsed.startsWith("ERROR:")) {
+                    return toGoString(parsed);
+                }
+                return toGoString("SEC1:" + parsed);
+            }
+            return toGoString("ERROR:unparseable");
         } catch (Exception e) {
-            return toGoString("");
+            return toGoString("ERROR:unparseable");
         }
+    }
+
+    /**
+     * PKCS#8 format sniff: walks the top SEQUENCE expecting
+     * {@code INTEGER version, SEQUENCE { OID algorithm, ... }}. Returns
+     * null when the input is not PKCS#8-shaped (the other formats try
+     * next), {@code malformed-pkcs8} when the shape holds but the JDK
+     * rejects every known algorithm for it, or
+     * {@code unsupported-algorithm} when the algorithm OID is present
+     * but unknown. Only called when the JDK attempts have already
+     * failed, so a non-null result means the input really is PKCS#8.
+     */
+    private static String pkcs8ErrorKind(byte[] der) {
+        DerElem seq = readElem(der, 0, der.length);
+        if (seq == null || seq.tag != 0x30) {
+            return null;
+        }
+        DerElem version = readElem(der, seq.content, seq.end);
+        if (version == null || version.tag != 0x02) {
+            return null;
+        }
+        DerElem alg = readElem(der, version.end, seq.end);
+        if (alg == null || alg.tag != 0x30) {
+            return null;
+        }
+        DerElem oid = readElem(der, alg.content, alg.end);
+        if (oid == null || oid.tag != 0x06) {
+            return "malformed-pkcs8";
+        }
+        String algOid = decodeOid(copyOfRange(der, oid.content, oid.end));
+        if (algOid == null) {
+            return "malformed-pkcs8";
+        }
+        if ("1.2.840.113549.1.1.1".equals(algOid)
+                || "1.2.840.10045.2.1".equals(algOid)
+                || "1.3.101.112".equals(algOid)) {
+            return "malformed-pkcs8";
+        }
+        return "unsupported-algorithm";
+    }
+
+    /** One DER TLV element, bounds-checked against {@code limit}. */
+    private static final class DerElem {
+        final int tag;
+        final int content;
+        final int len;
+        final int end;
+
+        DerElem(int tag, int content, int len, int end) {
+            this.tag = tag;
+            this.content = content;
+            this.len = len;
+            this.end = end;
+        }
+    }
+
+    /**
+     * Reads one DER TLV element at {@code pos}, requiring its content to
+     * lie within {@code limit}. Returns null on any structural defect:
+     * truncated tag/length, indefinite or over-long length form, or
+     * content running past {@code limit}. Lengths accumulate in a long
+     * so a 4-byte length can never wrap negative past the bounds check.
+     */
+    private static DerElem readElem(byte[] der, int pos, int limit) {
+        if (pos < 0 || pos + 2 > limit || pos + 2 > der.length) {
+            return null;
+        }
+        int tag = der[pos] & 0xFF;
+        int lb = der[pos + 1] & 0xFF;
+        int content;
+        long len;
+        if ((lb & 0x80) == 0) {
+            content = pos + 2;
+            len = lb;
+        } else {
+            int num = lb & 0x7F;
+            if (num == 0 || num > 4 || pos + 2 + num > limit) {
+                return null;
+            }
+            content = pos + 2 + num;
+            len = 0;
+            for (int i = 0; i < num; i++) {
+                len = (len << 8) | (der[pos + 2 + i] & 0xFF);
+            }
+        }
+        if (len > limit - content) {
+            return null;
+        }
+        return new DerElem(tag, content, (int) len, (int) (content + len));
+    }
+
+    private static byte[] copyOfRange(byte[] der, int from, int to) {
+        byte[] out = new byte[to - from];
+        System.arraycopy(der, from, out, 0, out.length);
+        return out;
     }
 
     private static String tryPkcs8(byte[] der) {
@@ -672,7 +801,9 @@ public final class GoX509 {
             int fieldSize = key.getParams().getCurve().getField().getFieldSize();
             String curveName = ecCurveName(fieldSize);
             if (curveName == null) {
-                return null;
+                // The JDK parsed a PKCS#8 EC key on a curve graalgo does
+                // not name: positively identified, unsupported.
+                return "ERROR:unsupported-curve";
             }
             return "EC:" + curveName + ":"
                     + toHex(stripLeadingZero(key.getS().toByteArray()));
@@ -693,160 +824,114 @@ public final class GoX509 {
         return null;
     }
 
+    /**
+     * PKCS#1 RSAPrivateKey: SEQUENCE { version, n, e, d, p, q, dp, dq,
+     * qinv }. Returns the descriptor, null when the input is not an
+     * integer SEQUENCE (another format's turn), or
+     * {@code ERROR:malformed-pkcs1} when it is an integer SEQUENCE of
+     * the wrong arity — at least two INTEGERs must have been read so a
+     * PKCS#8/SEC1 input (whose walk breaks at the second child) is
+     * never mislabeled.
+     */
     private static String tryPkcs1(byte[] der) {
-        // PKCS#1 RSAPrivateKey: SEQUENCE { version, n, e, d, p, q, dp, dq, qinv }
         try {
-            List<byte[]> ints = parsePkcs1Integers(der);
-            if (ints.size() != 9) {
+            if (der.length < 2 || der[0] != 0x30) {
                 return null;
             }
-            return "RSA:" + toHex(ints.get(1)) + ":" + toHex(ints.get(2)) + ":"
-                    + toHex(ints.get(3)) + ":" + toHex(ints.get(4)) + ":"
-                    + toHex(ints.get(5));
+            List<byte[]> ints = parsePkcs1Integers(der);
+            if (ints.size() == 9) {
+                return "RSA:" + toHex(ints.get(1)) + ":" + toHex(ints.get(2)) + ":"
+                        + toHex(ints.get(3)) + ":" + toHex(ints.get(4)) + ":"
+                        + toHex(ints.get(5));
+            }
+            if (ints.size() >= 2) {
+                return "ERROR:malformed-pkcs1";
+            }
+            return null;
         } catch (Exception ignored) {
             return null;
         }
     }
 
+    /**
+     * SEC1 ECPrivateKey, parsed with a real DER walk (R1-12) — never by
+     * scanning for tag bytes: the old scanners took the first
+     * {@code 0x04}/{@code 0xA0}/{@code 0x06} anywhere in the input, so a
+     * stray byte inside an earlier value (or inside the public key)
+     * silently selected the wrong private key or curve. Returns the
+     * 3-part descriptor {@code EC:curveName:d} (x, y are derived Go-side
+     * via {@code ScalarBaseMult}), null when the input is not a SEC1
+     * SEQUENCE, or an {@code ERROR:*} sentinel when it is SEC1-shaped
+     * but invalid.
+     *
+     * <p>No scalar multiplication happens here at all: the previous
+     * textbook double-and-add (secret-dependent branch per bit, plus a
+     * {@code modInverse} that throws on 0 and was swallowed to
+     * {@code ""}) is deleted. The Go side already derives x, y from d
+     * for PKCS#8 EC keys; SEC1 now uses that same path, so no
+     * private-key arithmetic remains in this class.
+     */
     private static String trySec1(byte[] der) {
-        // SEC1 ECPrivateKey: SEQUENCE { version, privateKey OCTET STRING,
-        //   [0] parameters, [1] publicKey }. Extract d and the curve OID.
         try {
-            byte[] d = extractSec1PrivateKey(der);
-            String oid = extractSec1CurveOid(der);
-            if (d == null || oid == null) {
+            DerElem seq = readElem(der, 0, der.length);
+            if (seq == null || seq.tag != 0x30) {
                 return null;
+            }
+            DerElem version = readElem(der, seq.content, seq.end);
+            if (version == null || version.tag != 0x02 || version.len < 1) {
+                return null;
+            }
+            DerElem priv = readElem(der, version.end, seq.end);
+            if (priv == null || priv.tag != 0x04) {
+                return null;
+            }
+            if (priv.len < 1 || priv.len > 66) {
+                return "ERROR:malformed-sec1";
+            }
+            byte[] d = copyOfRange(der, priv.content, priv.end);
+            int pos = priv.end;
+            String oid = null;
+            if (pos < seq.end && (der[pos] & 0xFF) == 0xA0) {
+                DerElem params = readElem(der, pos, seq.end);
+                if (params == null) {
+                    return "ERROR:malformed-sec1";
+                }
+                DerElem oidElem = readElem(der, params.content, params.end);
+                if (oidElem == null || oidElem.tag != 0x06 || oidElem.end != params.end) {
+                    return "ERROR:malformed-sec1";
+                }
+                oid = decodeOid(copyOfRange(der, oidElem.content, oidElem.end));
+                if (oid == null) {
+                    return "ERROR:malformed-sec1";
+                }
+                pos = params.end;
+            }
+            if (pos < seq.end && (der[pos] & 0xFF) == 0xA1) {
+                DerElem pub = readElem(der, pos, seq.end);
+                if (pub == null) {
+                    return "ERROR:malformed-sec1";
+                }
+                pos = pub.end;
+            }
+            if (pos != seq.end) {
+                return "ERROR:malformed-sec1";
+            }
+            if (oid == null) {
+                return "ERROR:missing-curve-parameters";
             }
             String curveName = ecCurveNameByOid(oid);
             if (curveName == null) {
-                return null;
+                return "ERROR:unsupported-curve";
             }
-            // Derive x,y from d via scalar multiplication using the JDK.
-            java.security.spec.ECParameterSpec spec = ecSpecForName(curveName);
-            if (spec == null) {
-                return null;
+            if (new BigInteger(1, d).signum() == 0) {
+                return "ERROR:invalid-key";
             }
-            BigInteger s = new BigInteger(1, d);
-            java.security.spec.ECPoint w = scalarMultiply(spec, s);
-            if (w == null) {
-                return null;
-            }
-            return "EC:" + curveName + ":" + toHex(toFixed(w.getAffineX(), spec))
-                    + ":" + toHex(toFixed(w.getAffineY(), spec)) + ":" + toHex(d);
+            return "EC:" + curveName + ":" + toHex(d);
         } catch (Exception ignored) {
             return null;
         }
     }
 
-    private static byte[] toFixed(BigInteger v, java.security.spec.ECParameterSpec spec) {
-        int size = (spec.getCurve().getField().getFieldSize() + 7) / 8;
-        byte[] raw = stripLeadingZero(v.toByteArray());
-        if (raw.length == size) {
-            return raw;
-        }
-        byte[] out = new byte[size];
-        System.arraycopy(raw, 0, out, size - raw.length,
-                Math.min(raw.length, size));
-        return out;
-    }
-
-    private static java.security.spec.ECParameterSpec ecSpecForName(String name) {
-        try {
-            AlgorithmParameters p = AlgorithmParameters.getInstance("EC");
-            p.init(new ECGenParameterSpec(name));
-            return p.getParameterSpec(
-                    java.security.spec.ECParameterSpec.class);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static java.security.spec.ECPoint scalarMultiply(
-            java.security.spec.ECParameterSpec spec, BigInteger s) {
-        // Double-and-add on the curve.
-        java.security.spec.EllipticCurve curve = spec.getCurve();
-        java.security.spec.ECPoint g = spec.getGenerator();
-        java.security.spec.ECPoint result = java.security.spec.ECPoint.POINT_INFINITY;
-        java.security.spec.ECPoint addend = g;
-        BigInteger k = s.mod(spec.getOrder());
-        while (k.signum() > 0) {
-            if (k.testBit(0)) {
-                result = ecAdd(curve, result, addend);
-            }
-            addend = ecDouble(curve, addend);
-            k = k.shiftRight(1);
-        }
-        return result;
-    }
-
-    private static java.security.spec.ECPoint ecAdd(
-            java.security.spec.EllipticCurve curve,
-            java.security.spec.ECPoint p, java.security.spec.ECPoint q) {
-        if (p.equals(java.security.spec.ECPoint.POINT_INFINITY)) {
-            return q;
-        }
-        if (q.equals(java.security.spec.ECPoint.POINT_INFINITY)) {
-            return p;
-        }
-        BigInteger prime = ((java.security.spec.ECFieldFp) curve.getField()).getP();
-        BigInteger a = curve.getA();
-        BigInteger x1 = p.getAffineX(), y1 = p.getAffineY();
-        BigInteger x2 = q.getAffineX(), y2 = q.getAffineY();
-        BigInteger lambda;
-        if (x1.equals(x2)) {
-            if (!y1.equals(y2)) {
-                return java.security.spec.ECPoint.POINT_INFINITY;
-            }
-            // Doubling.
-            lambda = x1.multiply(x1).multiply(BigInteger.valueOf(3)).add(a)
-                    .multiply(y1.shiftLeft(1).modInverse(prime)).mod(prime);
-        } else {
-            lambda = y2.subtract(y1).multiply(x2.subtract(x1).modInverse(prime))
-                    .mod(prime);
-        }
-        BigInteger x3 = lambda.multiply(lambda).subtract(x1).subtract(x2).mod(prime);
-        BigInteger y3 = lambda.multiply(x1.subtract(x3)).subtract(y1).mod(prime);
-        return new java.security.spec.ECPoint(x3, y3);
-    }
-
-    private static java.security.spec.ECPoint ecDouble(
-            java.security.spec.EllipticCurve curve, java.security.spec.ECPoint p) {
-        return ecAdd(curve, p, p);
-    }
-
-    private static byte[] extractSec1PrivateKey(byte[] der) {
-        // Find the first OCTET STRING (tag 0x04) after the version INTEGER.
-        for (int i = 0; i < der.length - 2; i++) {
-            if ((der[i] & 0xFF) == 0x04) {
-                int len = der[i + 1] & 0xFF;
-                if (len > 0 && len <= 66 && i + 2 + len <= der.length) {
-                    byte[] d = new byte[len];
-                    System.arraycopy(der, i + 2, d, 0, len);
-                    return d;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static String extractSec1CurveOid(byte[] der) {
-        // [0] EXPLICIT parameters containing an OID (tag 0x06).
-        for (int i = 0; i < der.length - 2; i++) {
-            if ((der[i] & 0xFF) == 0xA0) {
-                for (int j = i + 1; j < der.length - 2; j++) {
-                    if ((der[j] & 0xFF) == 0x06) {
-                        int len = der[j + 1] & 0xFF;
-                        if (len > 0 && j + 2 + len <= der.length) {
-                            byte[] oid = new byte[len];
-                            System.arraycopy(der, j + 2, oid, 0, len);
-                            return decodeOid(oid);
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
 
     private static String ecCurveNameByOid(String oid) {
         if ("1.2.840.10045.3.1.7".equals(oid)) {
