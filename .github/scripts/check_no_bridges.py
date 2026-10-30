@@ -12,13 +12,47 @@ Fails if the diff introduces new bridges:
 Existing bridges are grandfathered (they're in the removal queue — see
 docs/arch/bridge-inventory.md). This check only looks at ADDED lines in the diff.
 
-Diff sources, in order:
-  1. origin/master...HEAD  (PR / feature branch)
-  2. git diff HEAD         (uncommitted working-tree changes)
-  3. git diff --cached     (staged changes)
+Diff sources (2026-10-30, P1-10 fix):
+  Live channels, UNIONED — every one of them is inspected, never just
+  the first non-empty one (the pre-fix bug: on a branch with a non-empty
+  origin/master...HEAD diff, uncommitted and staged bridges were never
+  seen, although the old docstring presented the order as fallbacks):
+  1. origin/master...HEAD  (committed PR / feature-branch changes)
+  2. git diff HEAD         (uncommitted changes to TRACKED files, staged
+                            and unstaged)
+  2b. untracked files      (git status --porcelain: a brand-new file that
+                            has never been added is invisible to every
+                            git diff above — a new synth_*.go or panic
+                            stub sitting untracked was a second silent
+                            skip of the same class as the P1-10 bug, so
+                            untracked .go/.java files are rendered as
+                            synthetic /dev/null diffs and unioned in;
+                            gitignored files are excluded by git itself)
+  3. git diff --cached     (staged changes; a subset of 2 in practice,
+                            kept so a staged-only change is inspected
+                            even if a future git changes 2's semantics)
+  Fallback, used ONLY when all three live channels are empty:
   4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
                            checkout lands exactly on origin/master, so 1-3 are
                            all empty; inspect what the push itself introduced)
+
+  Source 4 is deliberately NOT unioned into every run: it is not a live
+  channel, it is the already-landed tip commit. Unioning it always would
+  re-litigate landed work on every local/PR run and could fail an
+  unrelated change for a bridge the tip commit already carried past the
+  gate (or predating it). The union-over-live-channels choice, rather
+  than "fail loudly when sources differ", is forced by the channels'
+  construction: 1, 2 and 3 are disjoint by design (committed vs
+  uncommitted changes) and normally ALL differ, so failing on difference
+  would make the gate unusable exactly in the branch-plus-dirty-tree
+  case it must cover. Overlapping content (e.g. a staged line also
+  present via 2) is deduplicated in the reported errors.
+
+Panic-stub detection is multi-line as well as single-line: a
+panic(fmt.Sprintf(\\n"not implemented...")) spans added lines, and the
+old per-line regexes could not see across the newline. Java is covered
+too: throw new UnsupportedOperationException("not implemented|...").
+See check_no_bridges() section 3.
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
@@ -65,29 +99,137 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
-    """Get the diff of added lines, plus a label naming the diff source.
+def untracked_diffs():
+    """Synthetic diffs for untracked .go/.java files, or "" if none.
 
-    Returns ("", "") when no diff could be determined — the caller must
-    treat that as a loud failure, never a vacuous pass.
+    git diff never shows untracked files, so without this a new bridge
+    file that has not been `git add`ed yet is invisible to the gate.
+    Each file is rendered as a new-file diff (--- /dev/null) so the
+    existing new-file / added-line checks apply unchanged. Only .go and
+    .java files are rendered: those are the only extensions any check
+    inspects, and rendering build outputs or notes would be noise.
+    Returns "" when git status fails or no such file exists.
     """
-    # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
-    candidates = [
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "-z", "--untracked-files=normal", "--", "."],
+            capture_output=True, text=True, timeout=30)
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    parts = []
+    for entry in result.stdout.split("\0"):
+        if not entry.startswith("?? "):
+            continue
+        path = entry[3:]
+        if not (path.endswith(".go") or path.endswith(".java")):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        lines = content.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        parts.append("diff --git a/%s b/%s\n" % (path, path))
+        parts.append("new file mode 100644\n")
+        parts.append("--- /dev/null\n")
+        parts.append("+++ b/%s\n" % path)
+        parts.append("@@ -0,0 +1,%d @@\n" % len(lines))
+        parts.extend("+" + line + "\n" for line in lines)
+    return "".join(parts)
+
+
+def get_diffs():
+    """Get every available diff source as (label, text) pairs.
+
+    Live channels (origin/master...HEAD, working tree, staged) are all
+    returned when non-empty. The HEAD~1...HEAD fallback is returned only
+    when every live channel is empty or unavailable — see the module
+    docstring for why it is not unioned into every run. A source whose
+    git command errors (e.g. origin/master does not exist in this clone)
+    is unavailable, not empty; it contributes nothing, and the remaining
+    sources are still inspected.
+
+    Returns [] when no diff could be determined — the caller must treat
+    that as a loud failure, never a vacuous pass.
+    """
+    live = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
-        ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
+        ("working tree", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
-        ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
     ]
-    for name, cmd in candidates:
+    found = []
+    for name, cmd in live:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         except Exception:
             continue
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout, name
-    return "", ""
+            found.append((name, result.stdout))
+    untracked = untracked_diffs()
+    if untracked:
+        found.append(("untracked", untracked))
+    if found:
+        return found
+    # Fallback: direct master push with a clean tree. A shallow checkout
+    # (no HEAD~1) yields nothing here — that is a failure, not a skip.
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD~1...HEAD", "--", "."],
+            capture_output=True, text=True, timeout=30)
+    except Exception:
+        return []
+    if result.returncode == 0 and result.stdout.strip():
+        return [("HEAD~1...HEAD (master push)", result.stdout)]
+    return []
+
+
+def get_diff():
+    """Get the union of all available diffs, plus a label naming the sources.
+
+    Returns ("", "") when no diff could be determined — the caller must
+    treat that as a loud failure, never a vacuous pass.
+    """
+    found = get_diffs()
+    if not found:
+        return "", ""
+    parts = []
+    for _name, text in found:
+        parts.append(text if text.endswith("\n") else text + "\n")
+    label = " + ".join(name for name, _text in found)
+    return "\n".join(parts), label
+
+
+def added_line_runs(diff):
+    """Maximal runs of consecutive added lines, as (file, [line, ...]).
+
+    A run is broken by any non-added diff line (context, removal, hunk
+    header, file header). This is what multi-line detection runs over:
+    a newly added multi-line call appears in a diff as one consecutive
+    run of added lines, so joining a run reconstructs the call. Joining
+    all added lines of a file instead would splice unrelated hunks
+    together and invent calls that do not exist.
+    """
+    runs = []
+    current_file = None
+    current_run = None
+    for line in diff.split("\n"):
+        if line.startswith("+++ b/"):
+            current_file = line[6:]
+            current_run = None
+        elif line.startswith("+") and not line.startswith("+++"):
+            if current_file is None:
+                continue
+            if current_run is None or current_run[0] != current_file:
+                current_run = (current_file, [])
+                runs.append(current_run)
+            current_run[1].append(line[1:])
+        else:
+            current_run = None
+    return [(fname, lines) for fname, lines in runs if lines]
 
 def check_no_bridges(diff):
     errors = []
@@ -142,17 +284,28 @@ def check_no_bridges(diff):
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 
-    # 3. New panic stubs. The old regex only caught literal "not implemented"/
-    #    "unsupported"/"todo" messages; fail-fast stubs also hide behind bare
-    #    panic(), panic(""), panic("unreachable"), and composed messages like
-    #    panic(fmt.Sprintf("... not implemented")). Fail loud on all of them —
-    #    a human decides whether an added panic is a legitimate invariant.
+    # 3. New panic stubs (Go) and not-implemented throws (Java). The old
+    #    regex only caught literal "not implemented"/"unsupported"/"todo"
+    #    messages; fail-fast stubs also hide behind bare panic(),
+    #    panic(""), panic("unreachable"), and composed messages like
+    #    panic(fmt.Sprintf("... not implemented")). Fail loud on all of
+    #    them — a human decides whether an added panic is a legitimate
+    #    invariant. P1-10: the per-line check alone misses multi-line
+    #    calls (panic(fmt.Sprintf(\n"not implemented..."))) and all Java
+    #    throws, so the same patterns are also run over each run of
+    #    consecutive added lines with DOTALL; a multi-line hit is only
+    #    reported when the match itself spans a newline, so single-line
+    #    stubs are reported exactly once, by the per-line check.
+    stub_keywords = (r"not implemented|unimplemented|not supported|unsupported|"
+                     r"todo|FIXME|unreachable|NYI|not yet|tbd")
     panic_stub_res = [
         r'panic\s*\(\s*\)',            # bare panic() — nothing to go on
         r'panic\s*\(\s*""\s*\)',       # panic("") — nothing to go on
-        r'panic\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd)',
+        r'panic\s*\(\s*"(' + stub_keywords + r')',
         # Stub keyword anywhere in the first string arg of a composed panic.
-        r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet)',
+        r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(' + stub_keywords + r')',
+        # Raw-string literal: panic(`not implemented ...`).
+        r'panic\s*\(\s*`[^`]*(' + stub_keywords + r')',
     ]
     for fname, line in added_lines:
         if not fname or not fname.endswith(".go"):
@@ -161,6 +314,50 @@ def check_no_bridges(diff):
             if re.search(pat, line, re.I):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
+    # Multi-line Go panics: same patterns over each added-line run.
+    for fname, lines in added_line_runs(diff):
+        if not fname.endswith(".go"):
+            continue
+        run_text = "\n".join(lines)
+        for pat in panic_stub_res:
+            for m in re.finditer(pat, run_text, re.I | re.S):
+                if "\n" in m.group(0):
+                    first = lines[0].strip()[:80]
+                    errors.append(f"PANIC STUB (multi-line) in {fname}: {first}")
+                    break
+            else:
+                continue
+            break
+    # Java not-implemented throws: the exact analogue of a Go panic stub.
+    # A bare or empty-message UnsupportedOperationException is a stub just
+    # like bare panic(); a keyword message (or a String.format/MessageFormat
+    # composed one) is a stub even when the throw spans lines.
+    java_throw_res = [
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*\)',
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*""\s*\)',
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*"(' + stub_keywords + r')',
+        r'throw\s+new\s+UnsupportedOperationException\s*\(\s*(?:String\.format|MessageFormat\.format)\s*\(\s*"[^"]*(' + stub_keywords + r')',
+    ]
+    for fname, line in added_lines:
+        if not fname or not fname.endswith(".java"):
+            continue
+        for pat in java_throw_res:
+            if re.search(pat, line, re.I):
+                errors.append(f"UNSUPPORTED OPERATION STUB in {fname}: {line.strip()[:80]}")
+                break
+    for fname, lines in added_line_runs(diff):
+        if not fname.endswith(".java"):
+            continue
+        run_text = "\n".join(lines)
+        for pat in java_throw_res:
+            for m in re.finditer(pat, run_text, re.I | re.S):
+                if "\n" in m.group(0):
+                    first = lines[0].strip()[:80]
+                    errors.append(f"UNSUPPORTED OPERATION STUB (multi-line) in {fname}: {first}")
+                    break
+            else:
+                continue
+            break
 
     # 4. New wire node kinds for stdlib
     for fname, line in added_lines:
@@ -191,7 +388,17 @@ def check_no_bridges(diff):
                     continue
                 errors.append(f"SYNTHETIC REGISTRATION in {fname}: {line.strip()[:80]}")
 
-    return errors
+    # The unioned diff can legitimately contain the same added line twice
+    # (e.g. a staged line via both the working-tree and staged sources, or
+    # a branch-tip line via both the branch and fallback sources). Report
+    # each distinct error once, in first-seen order.
+    seen = set()
+    deduped = []
+    for e in errors:
+        if e not in seen:
+            seen.add(e)
+            deduped.append(e)
+    return deduped
 
 def main():
     diff, source = get_diff()
@@ -202,8 +409,9 @@ def main():
         # exactly the false-green hole this check exists to close.
         print("NO-BRIDGES CHECK FAILED:")
         print("  could not determine any diff to inspect (no PR diff, no")
-        print("  working-tree changes, and HEAD~1 is unavailable — is this a")
-        print("  shallow checkout? CI must use fetch-depth: 0).")
+        print("  working-tree, staged, or untracked changes, and HEAD~1 is")
+        print("  unavailable — is this a shallow checkout?")
+        print("  CI must use fetch-depth: 0).")
         print("  Refusing to pass vacuously.")
         return 1
 
