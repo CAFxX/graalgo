@@ -830,16 +830,20 @@ public final class LinknameIntrinsics {
     /**
      * Registers the {@code graalgo.http.client.do} intrinsic implemented
      * by {@link GoHttp} (P3-M9 tier-5, java.net.http.HttpClient
-     * delegation; the synthetic net/http Transport.RoundTrip drives it).
+     * delegation; the synthetic net/http Transport.RoundTrip used to
+     * drive it before that package was retired 2026-10-16 — the
+     * intrinsic currently has no live Go caller).
      * D5 argument types: method and URL arrive as GoString, headers as
-     * GoSlice of GoString (flat k/v pairs), body as GoSlice of bytes
-     * (see {@link GoHttp#clientDo} for the calling convention); returns
-     * the documented GoSlice triple (status Long, header pairs, body
-     * bytes) which the Go side reads as []interface{}.
+     * GoSlice of GoString (flat k/v pairs), body as GoSlice of bytes,
+     * options as GoSlice of bytes (four int64 BE fields: total timeout,
+     * connect timeout, redirect policy, max requests — see
+     * {@link GoHttp} for the full wire format); returns the documented
+     * GoSlice encoding (status, header pairs, body, plus a trailing
+     * error block on transport/policy errors).
      */
     private static void registerHttpIntrinsics() {
         Linknames.register("graalgo.http.client.do",
-                args -> GoHttp.clientDo(args[0], args[1], args[2], args[3]), 4);
+                args -> GoHttp.clientDo(args[0], args[1], args[2], args[3], args[4]), 5);
     }
 
     /**
