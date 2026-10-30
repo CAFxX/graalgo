@@ -218,7 +218,27 @@ func bitSizeError(fn, str string, bitSize int) *NumError {
     with open(out, "w") as f:
         f.write("\n".join(parts))
 
+    # Coverage sidecar for run.py (P1-5): run.py compares the synthesised
+    # count against discover.json's total_tests and surfaces the skip
+    # list in verdict.txt. Without this, a package with 90% of its tests
+    # skipped would still read as PASS.
+    total_tests = disc.get("total_tests")
+    if total_tests is None:
+        total_tests = sum(len(f.get("tests", [])) for f in disc.get("files", []))
+    sidecar = {
+        "package": pkg,
+        "total_tests": total_tests,
+        "synthesized_tests": len(all_tests),
+        "skip_ratio": ((total_tests - len(all_tests)) / total_tests
+                       if total_tests > 0 else 0.0),
+        "skipped": [{"file": name, "reason": reason} for name, reason in skipped],
+    }
+    with open(out + ".synth.json", "w") as f:
+        json.dump(sidecar, f, indent=2)
+
     print(f"synthesized {len(all_tests)} tests from {pkg}", file=sys.stderr)
+    print(f"coverage: {len(all_tests)}/{total_tests} tests synthesised "
+          f"(skip_ratio={sidecar['skip_ratio']:.3f})", file=sys.stderr)
     for name, reason in skipped:
         print(f"  SKIP file {name}: {reason}", file=sys.stderr)
 

@@ -199,13 +199,18 @@ test-v2:
 #   make gate1 PKG=foo — single package trial
 GATE1_PKGS ?= strconv errors sort strings bytes
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@fail=0; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
-	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || fail=1; \
+	done; \
+	if [ "$$fail" -ne 0 ]; then \
+		echo "Gate 1 pilot FAILED. See tools/gate1/.tmp/*/verdict.txt"; \
+		exit 1; \
+	fi; \
+	echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build
 	@test -n "$(PKG)" || (echo "usage: make gate1 PKG=<pkg>"; exit 1)
