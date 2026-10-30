@@ -7,8 +7,9 @@
 // Value model:
 //   - rand.go, pcg.go, chacha8.go, exp.go, normal.go, zipf.go are
 //     gc 1.27.1's implementations ported verbatim (bit-exact by
-//     construction for fixed seeds; ChaCha8 verified byte-identical
-//     vs gc, modulo the Deviation 2 adaptations below).
+//     construction for fixed seeds; ChaCha8 byte-identity vs gc is
+//     not yet JVM-verified — a tracked JVM-differential item, not
+//     claimed here — modulo the Deviation 2 adaptations below).
 //   - DEVIATION 1 (documented): //go:linkname runtime_rand runtime.rand
 //     -> composed from two runtime.fastrand linkname calls (runtime.rand
 //     is not in the linkname table). Values differ from gc's

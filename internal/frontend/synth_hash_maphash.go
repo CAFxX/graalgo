@@ -22,7 +22,10 @@ package main
 // named types and composite kinds (structs, arrays, interface-held
 // values) hash through a structural reflect walk (hashReflectValue in
 // the source below) instead of the runtime typehash, which has no
-// synthetic equivalent (review 2026-10-30 P1-15).
+// synthetic equivalent (review 2026-10-30 P1-15). Interface-held
+// slices, maps, and funcs panic with gc's "hash of unhashable type"
+// message (veto 2026-10-30 F1); -0.0 and +0.0 hash equally, as under
+// gc (veto 2026-10-30 F2).
 //
 // KAT: differential vs gc on the wave-3 hash/maphash corpus
 // (structural properties only, per the divergence note above).
@@ -410,7 +413,8 @@ func writeTagged(h *Hash, tag byte, v uint64) {
 // gc-identical (see the VALUE DIVERGENCE note); only the structural
 // properties are pinned: equal values hash equally, distinct values
 // hash distinctly with overwhelming probability, and hashing a
-// comparable value never panics.
+// comparable value panics only where gc panics: an interface-held
+// slice, map, or func (hash of unhashable type; see hashReflectValue).
 func WriteComparable[T comparable](h *Hash, x T) {
 	switch v := any(x).(type) {
 	case bool:
@@ -442,15 +446,43 @@ func WriteComparable[T comparable](h *Hash, x T) {
 	case uintptr:
 		writeTagged(h, 'p', uint64(v))
 	case float32:
-		writeTagged(h, 'f', uint64(math.Float32bits(v)))
+		// -0.0 == +0.0 in Go, so equal values must hash equally: a
+		// zero normalizes to +0 bits (gc hashes them equal; veto
+		// 2026-10-30 F2). The same normalization applies to every
+		// float/complex arm below, fast path and reflect alike.
+		bits := math.Float32bits(v)
+		if v == 0 {
+			bits = 0
+		}
+		writeTagged(h, 'f', uint64(bits))
 	case float64:
-		writeTagged(h, 'd', math.Float64bits(v))
+		bits := math.Float64bits(v)
+		if v == 0 {
+			bits = 0
+		}
+		writeTagged(h, 'd', bits)
 	case complex64:
-		writeTagged(h, 'g', uint64(math.Float32bits(real(v))))
-		writeTagged(h, 'G', uint64(math.Float32bits(imag(v))))
+		rbits := math.Float32bits(real(v))
+		if real(v) == 0 {
+			rbits = 0
+		}
+		ibits := math.Float32bits(imag(v))
+		if imag(v) == 0 {
+			ibits = 0
+		}
+		writeTagged(h, 'g', uint64(rbits))
+		writeTagged(h, 'G', uint64(ibits))
 	case complex128:
-		writeTagged(h, 'h', math.Float64bits(real(v)))
-		writeTagged(h, 'H', math.Float64bits(imag(v)))
+		rbits := math.Float64bits(real(v))
+		if real(v) == 0 {
+			rbits = 0
+		}
+		ibits := math.Float64bits(imag(v))
+		if imag(v) == 0 {
+			ibits = 0
+		}
+		writeTagged(h, 'h', rbits)
+		writeTagged(h, 'H', ibits)
 	case string:
 		h.WriteByte('t')
 		h.WriteString(v)
@@ -469,11 +501,15 @@ func WriteComparable[T comparable](h *Hash, x T) {
 // name), so values of different shapes cannot collide by mere
 // concatenation — e.g. [2]string{"a", ""} differs from {"", "a"}, and
 // struct{a, b any}{int(0), struct{}{}} differs from
-// struct{a, b any}{struct{}{}, int(0)}. Pointers, channels, funcs,
-// maps, and unsafe pointers hash by identity (their Pointer value),
-// never by following the referent, so cyclic values terminate and
-// pointer identity (not pointee equality) is what is hashed, matching
-// the role of a hash function. Only kind-level accessors are used
+// struct{a, b any}{struct{}{}, int(0)}. Pointers, channels, and
+// unsafe pointers hash by identity (their Pointer value), never by
+// following the referent, so pointer identity (not pointee equality)
+// is what is hashed, matching the role of a hash function. Slices,
+// maps, and funcs PANIC with gc's message ("hash of unhashable type
+// %s"): gc refuses to hash them, and identity-hashing them would
+// silently accept what gc rejects — while structurally recursing into
+// a slice would loop forever on a cyclic interface-held value (a
+// fatal stack overflow, not even a panic). Only kind-level accessors are used
 // (Bool, Int, Uint, Float, Complex, String, Len, Index, Field, Elem,
 // Pointer, Type); Interface() is never called, so unexported struct
 // fields hash without panicking. Values differ from gc's memhash by
@@ -495,17 +531,42 @@ func hashReflectValue(h *Hash, v reflect.Value) {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		writeTagged(h, 'u', v.Uint())
 	case reflect.Float32:
-		writeTagged(h, 'f', uint64(math.Float32bits(float32(v.Float()))))
+		// -0.0 == +0.0: normalize zero to +0 bits (see WriteComparable).
+		bits := math.Float32bits(float32(v.Float()))
+		if v.Float() == 0 {
+			bits = 0
+		}
+		writeTagged(h, 'f', uint64(bits))
 	case reflect.Float64:
-		writeTagged(h, 'd', math.Float64bits(v.Float()))
+		bits := math.Float64bits(v.Float())
+		if v.Float() == 0 {
+			bits = 0
+		}
+		writeTagged(h, 'd', bits)
 	case reflect.Complex64:
 		c := v.Complex()
-		writeTagged(h, 'g', uint64(math.Float32bits(float32(real(c)))))
-		writeTagged(h, 'G', uint64(math.Float32bits(float32(imag(c)))))
+		rbits := math.Float32bits(float32(real(c)))
+		if real(c) == 0 {
+			rbits = 0
+		}
+		ibits := math.Float32bits(float32(imag(c)))
+		if imag(c) == 0 {
+			ibits = 0
+		}
+		writeTagged(h, 'g', uint64(rbits))
+		writeTagged(h, 'G', uint64(ibits))
 	case reflect.Complex128:
 		c := v.Complex()
-		writeTagged(h, 'h', math.Float64bits(real(c)))
-		writeTagged(h, 'H', math.Float64bits(imag(c)))
+		rbits := math.Float64bits(real(c))
+		if real(c) == 0 {
+			rbits = 0
+		}
+		ibits := math.Float64bits(imag(c))
+		if imag(c) == 0 {
+			ibits = 0
+		}
+		writeTagged(h, 'h', rbits)
+		writeTagged(h, 'H', ibits)
 	case reflect.String:
 		s := v.String()
 		writeTagged(h, 'L', uint64(len(s)))
@@ -521,11 +582,13 @@ func hashReflectValue(h *Hash, v reflect.Value) {
 		for i := 0; i < v.Len(); i++ {
 			hashReflectValue(h, v.Index(i))
 		}
-	case reflect.Slice:
-		writeTagged(h, 's', uint64(v.Len()))
-		for i := 0; i < v.Len(); i++ {
-			hashReflectValue(h, v.Index(i))
-		}
+	case reflect.Slice, reflect.Map, reflect.Func:
+		// gc panics for unhashable kinds (veto 2026-10-30 F1). This
+		// arm is reachable only for interface-held values (a
+		// comparable top-level value cannot itself be a slice, map,
+		// or func, and a struct/array holding one is not
+		// comparable) — exactly the values gc refuses to hash.
+		panic("hash of unhashable type " + v.Type().String())
 	case reflect.Interface:
 		if v.IsNil() {
 			writeTagged(h, 'n', 0)
@@ -535,7 +598,7 @@ func hashReflectValue(h *Hash, v reflect.Value) {
 		writeTagged(h, 'T', uint64(len(tn)))
 		h.WriteString(tn)
 		hashReflectValue(h, v.Elem())
-	case reflect.Pointer, reflect.Chan, reflect.Func, reflect.Map, reflect.UnsafePointer:
+	case reflect.Pointer, reflect.Chan, reflect.UnsafePointer:
 		writeTagged(h, 'P', uint64(v.Pointer()))
 	default:
 		writeTagged(h, 'x', uint64(v.Kind()))

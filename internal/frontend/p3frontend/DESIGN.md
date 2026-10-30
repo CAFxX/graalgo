@@ -249,6 +249,17 @@ therefore run their dep's init, as under gc. The old
 frontend-traps lane (review P1-17); `TestInitRejected` became
 `TestInitAccepted`.
 
+Tracked corner, NOT a solved property (veto 2026-10-30 F6): the
+flattened model runs all package-level variable initializers before
+all init functions, while gc interleaves them per dependency —
+dep vars, then dep inits, then main vars, then main inits. A main
+package variable whose initializer observes a dependency init's side
+effect therefore sees the pre-init value under flattening where gc
+gives it the post-init value. This var/init interleaving corner
+across package boundaries stays a tracked item until the exporter
+models gc's per-package init ordering; it is disclosed here, not
+claimed as handled.
+
 One standing caveat, unchanged from §2.3: the relative
 initialization order of side-effecting initializers in
 mutually-unconstrained packages follows import-path sort, which

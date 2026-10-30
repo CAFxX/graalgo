@@ -246,3 +246,33 @@ func main() {
 		t.Errorf("unsafetooptr conversion missing elemSize field")
 	}
 }
+
+// Veto 2026-10-30 F3: a channel receive is an effect, not a pure term.
+// A receive term BEFORE the base would execute after the base under
+// the derive node's base-first evaluation while gc evaluates the
+// additive tree left-to-right — the exact silent reordering P1-16 was
+// about, for a receive term. Such shapes must fall back to the loud
+// unsafefromuint trap, never lower to unsafederive. On the
+// pre-clearance code the receive classified pure and this shape
+// lowered, so this test fails there.
+func TestUnsafeDeriveChanRecvBeforeBaseTraps(t *testing.T) {
+	src := `package main
+
+import "unsafe"
+
+func main() {
+	ch := make(chan uintptr, 1)
+	ch <- 16
+	arr := [4]int64{}
+	p := unsafe.Pointer(<-ch + uintptr(unsafe.Pointer(&arr[0])))
+	_ = p
+}
+`
+	out := exportUnsafeProg(t, src)
+	if strings.Contains(out, `"unsafederive"`) {
+		t.Errorf("receive term before base must not lower to unsafederive (evaluation order would swap)")
+	}
+	if !strings.Contains(out, `"unsafefromuint"`) {
+		t.Errorf("receive term before base should keep the unsafefromuint trap node")
+	}
+}

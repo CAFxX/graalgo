@@ -167,7 +167,8 @@ func flattenAdditive(x ast.Expr, sign int, terms *[]signedTerm) {
 // dereference, type assertions, and closure creation (the body does not
 // run); unsafe.Sizeof is pure (it is not evaluated at runtime).
 // Impure: every other call (function/method calls may print, mutate, or
-// block), and every unrecognised form. Map/slice index reads are pure:
+// block), channel receives (<-ch block and observe channel state), and
+// every unrecognised form. Map/slice index reads are pure:
 // they neither mutate nor block. A nil-pointer dereference or a failing
 // bounds check inside an otherwise-pure term can still panic — that is a
 // panic-ordering caveat, not a side-effect reordering: the terms this
@@ -180,6 +181,14 @@ func (e *exporter) isSideEffectFreeExpr(x ast.Expr) bool {
 	case *ast.ParenExpr:
 		return e.isSideEffectFreeExpr(t.X)
 	case *ast.UnaryExpr:
+		// Channel receive (<-ch) blocks and observes channel state,
+		// so it is an effect, never pure — classifying it pure would
+		// let a receive term preceding the base lower to unsafederive
+		// and silently reorder the receive after the base (veto
+		// 2026-10-30 F3, the P1-16 shape for a receive term).
+		if t.Op == token.ARROW {
+			return false
+		}
 		return e.isSideEffectFreeExpr(t.X)
 	case *ast.StarExpr:
 		return e.isSideEffectFreeExpr(t.X)
