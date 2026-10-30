@@ -135,6 +135,7 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	bash tools/check-no-phase-paths.sh
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

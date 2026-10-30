@@ -9,14 +9,17 @@ WORKDIR="$2"
 GMP="${3:-1}"
 
 GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+INTEROP="$GR/internal/backend/interop"
+RUNTIME="$GR/internal/backend/runtime"
+TRUFFLE="$GR/internal/backend/truffle"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+# Scratch under the per-run workdir (never under the repo tree:
+# hidden_files/ was removed 2026-10-14 per docs/REPO_STRUCTURE.md).
+export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR/fuzz-tmp}"
+mkdir -p "$TMPDIR"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+CP="$INTEROP/out/classes:$RUNTIME/out/classes:$TRUFFLE/out/classes:$(ls "$TRUFFLE"/lib/*.jar | tr '\n' ':')"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"

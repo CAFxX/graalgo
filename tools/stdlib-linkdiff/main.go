@@ -101,7 +101,7 @@ func defaultGoroot(stderr io.Writer) (string, error) {
 	// in sync): the vendored tree for the pinned version when present,
 	// else the live toolchain -- announced loudly, never silently.
 	if graalgo := defaultGraalgo(); graalgo != "" {
-		pinPath := filepath.Join(graalgo, "phases", "phase3", "stdlib-fork", "pinned-version.txt")
+		pinPath := filepath.Join(graalgo, "tools", "stdlib-fork", "pinned-version.txt")
 		if data, err := os.ReadFile(pinPath); err == nil {
 			if ver := strings.TrimSpace(string(data)); ver != "" {
 				if home, herr := os.UserHomeDir(); herr == nil {
@@ -137,7 +137,7 @@ func defaultGoroot(stderr io.Writer) (string, error) {
 // records a different Go version than the pin (twin of
 // tools/stdlib-excl's crossCheckPin -- keep in sync).
 func linkdiffCrossCheckPin(graalgo, ver string) error {
-	data, err := os.ReadFile(filepath.Join(graalgo, "phases", "phase3", "stdlib-fork", "vendor-manifest.json"))
+	data, err := os.ReadFile(filepath.Join(graalgo, "tools", "stdlib-fork", "vendor-manifest.json"))
 	if err != nil {
 		return fmt.Errorf("stdlib tree: cannot read vendor manifest: %w", err)
 	}

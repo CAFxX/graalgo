@@ -27,7 +27,7 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("validate: cannot locate repo root: %w", err)
 		}
-		*listPath = filepath.Join(root, "phases", "phase3", "stdlib-fork", "exclusions.yaml")
+		*listPath = filepath.Join(root, "tools", "stdlib-fork", "exclusions.yaml")
 	}
 	var err error
 	*listPath, err = filepath.Abs(*listPath)

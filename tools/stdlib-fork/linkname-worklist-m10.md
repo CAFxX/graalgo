@@ -13,8 +13,8 @@ Trial reports: [linkname-trial-go1.27.1.json](linkname-trial-go1.27.1.json)
 > (`TestLocalNamePackageScope`, `TestSyntheticParseErrorsSurfaced`).
 > Regenerate with the committed tool when convenient:
 > `stdlib-linkdiff --graalgo <root> --json
-> phases/phase3/stdlib-fork/linkname-trial-go1.27.1-m10.json --md
-> phases/phase3/stdlib-fork/linkname-trial-go1.27.1-m10.md`
+> tools/stdlib-fork/linkname-trial-go1.27.1-m10.json --md
+> tools/stdlib-fork/linkname-trial-go1.27.1-m10.md`
 > (the `--goroot` default resolves the vendored tree via the pin).
 
 ## 1. Verdict — skip-list growth assessment (SPEC §3.6)

@@ -22,19 +22,19 @@ shift
 GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
 GO="${GO:-$HOME/tools/go/bin/go}"
 JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
+INTEROP="$GR/internal/backend/interop"; RUNTIME="$GR/internal/backend/runtime"; TRUFFLE="$GR/internal/backend/truffle"
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+CP="$INTEROP/out/classes:$RUNTIME/out/classes:$TRUFFLE/out/classes:$(ls "$TRUFFLE"/lib/*.jar | tr '\n' ':')"
 GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
     -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
     graalgo.p3sync.launcher.P3SyncMain )
 # gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
+if [ -x "$GR/internal/frontend/gofrontend" ]; then
+    export GRAALGO_GOFRONTEND="$GR/internal/frontend/gofrontend"
 fi
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
