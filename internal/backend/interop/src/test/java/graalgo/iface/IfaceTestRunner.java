@@ -35,6 +35,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // review-tls-clientauth (P0-1): TLS server client-auth validation
+        // plus the system-roots trap (end-to-end modes: 02_clientauth.go).
+        TESTS.add(graalgo.p3tls.TlsRuntimeTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         // (fix-redmaster-r52: the FmtStateItabTest registration is removed
         // — the test class itself was deleted by the real-fmt2 removal

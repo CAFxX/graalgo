@@ -318,6 +318,13 @@ type Conn struct {
 	isClient     bool
 	// handshakeComplete tracks whether doHandshake finished.
 	handshakeComplete bool
+	// handshakeErr records the first Handshake failure. A failed handshake
+	// stays failed: re-driving the engine after it reports FINISHED would
+	// attempt TLS renegotiation (unsupported in TLS 1.3, and the peer has
+	// already completed, so a re-drive can strand the server waiting for a
+	// flight that never comes). Previously a failed peer verification left
+	// handshakeComplete set, so a second Handshake() returned nil.
+	handshakeErr error
 }
 
 // Client creates a TLS client over conn. The handshake runs on Handshake().
@@ -326,12 +333,40 @@ func Client(conn net.Conn, config *Config) *Conn {
 		config = &Config{}
 	}
 	c := &Conn{conn: conn, config: config, isClient: true}
+	// Present Certificates[0] when configured (review-tls-clientauth,
+	// P0-1: previously the client engine never received a certificate, so
+	// a client could never present one and server client-auth modes were
+	// untestable end to end). Unusable key material leaves the engine
+	// handle at 0, so Handshake fails loudly with "nil engine" instead of
+	// silently presenting nothing. GetClientCertificate is not honoured:
+	// the callback would have to run mid-handshake inside the JDK engine,
+	// which this trap design cannot do; that gap is recorded, not claimed.
+	var chainDER []byte
+	var keyAlg string
+	var keyParams []byte
+	if len(config.Certificates) > 0 {
+		cert := &config.Certificates[0]
+		__tmpKC := keyComponents(cert.PrivateKey)
+		// Plain assignment, not := : keyAlg/keyParams are the outer
+		// variables the trap call below reads; := here would shadow
+		// them with block-scoped copies and the certificate would
+		// silently never reach the engine.
+		var err error
+		keyAlg, keyParams, err = __tmpKC.v0, __tmpKC.v1, __tmpKC.v2
+		if err != nil {
+			return c
+		}
+		chainDER = encodeLengthPrefixed(cert.Certificate)
+	}
 	c.engineHandle = newClientEngineTrap(
 		config.ServerName,
 		config.InsecureSkipVerify,
 		int64(config.MinVersion),
 		int64(config.MaxVersion),
 		encodeCipherSuites(config.CipherSuites),
+		chainDER,
+		keyAlg,
+		keyParams,
 	)
 	return c
 }
@@ -358,15 +393,24 @@ func Server(conn net.Conn, config *Config) *Conn {
 		int64(config.MinVersion),
 		int64(config.MaxVersion),
 		encodeCipherSuites(config.CipherSuites),
+		// Review-tls-clientauth, P0-1: thread ClientAuth through, so the
+		// engine enforces certificate presence per mode (need/want).
+		// ClientCAs stays Go-side: x509.CertPool's certificate list is
+		// unexported, so it cannot be encoded here without a new exported
+		// x509 API; verification against it happens in verifyPeer below.
+		int64(config.ClientAuth),
 	)
 	return c
 }
 
 //go:linkname newClientEngineTrap graalgo.tls.newClientEngine
-func newClientEngineTrap(serverName string, insecureSkipVerify bool, minVersion, maxVersion int64, cipherSuites []byte) int64
+func newClientEngineTrap(serverName string, insecureSkipVerify bool, minVersion, maxVersion int64, cipherSuites []byte, chainDER []byte, keyAlg string, keyParams []byte) int64
 
 //go:linkname newServerEngineTrap graalgo.tls.newServerEngine
-func newServerEngineTrap(chainDER []byte, keyAlg string, keyParams []byte, minVersion, maxVersion int64, cipherSuites []byte) int64
+func newServerEngineTrap(chainDER []byte, keyAlg string, keyParams []byte, minVersion, maxVersion int64, cipherSuites []byte, clientAuth int64) int64
+
+//go:linkname systemRootCAsTrap graalgo.tls.systemRootCAs
+func systemRootCAsTrap() []byte
 
 // encodeCipherSuites encodes []uint16 as big-endian bytes.
 func encodeCipherSuites(suites []uint16) []byte {
@@ -727,18 +771,27 @@ func (c *Conn) Handshake() error {
 	if c.handshakeComplete {
 		return nil
 	}
+	if c.handshakeErr != nil {
+		return c.handshakeErr
+	}
 	if rc := beginHandshakeTrap(c.engineHandle); rc != 0 {
-		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
+		c.handshakeErr = fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
+		return c.handshakeErr
 	}
 	tmp := make([]byte, 1<<14)
 	for {
 		st := engineStatusTrap(c.engineHandle)
 		switch st {
 		case engineFinished:
-			c.handshakeComplete = true
+			// Review-tls-clientauth, P0-1: handshakeComplete is set
+			// only AFTER verifyPeer succeeds. Previously it was set
+			// before verification, so a failed verification still left
+			// the flag set and a second Handshake() returned nil.
 			if err := c.verifyPeer(); err != nil {
-				return err
+				c.handshakeErr = err
+				return c.handshakeErr
 			}
+			c.handshakeComplete = true
 			// P3-M9 (x509): the in-process handshake test prints
 			// "handshake-ok" right after Handshake() returns. The client's
 			// verifyPeer (x509 chain building under Truffle) is slower
@@ -765,7 +818,8 @@ func (c *Conn) Handshake() error {
 			}
 			if len(out) > 0 {
 				if err := writeAll(c.conn, out); err != nil {
-					return err
+					c.handshakeErr = err
+					return c.handshakeErr
 				}
 			} else {
 				// P3-M9 (x509): the engine can report NEED_WRAP while a
@@ -785,7 +839,8 @@ func (c *Conn) Handshake() error {
 			}
 			n, err := c.conn.Read(tmp)
 			if err != nil {
-				return err
+				c.handshakeErr = err
+				return c.handshakeErr
 			}
 			if n == 0 {
 				continue
@@ -794,38 +849,111 @@ func (c *Conn) Handshake() error {
 		case engineNeedTask:
 			runTasksTrap(c.engineHandle)
 		default:
-			return fmt.Errorf("tls: handshake failed (status %d)", st)
+			c.handshakeErr = fmt.Errorf("tls: handshake failed (status %d)", st)
+			return c.handshakeErr
 		}
 	}
 }
 
-// verifyPeer verifies the peer certificate chain after the handshake
-// (client side, unless InsecureSkipVerify), using x509.Verify.
+// verifyPeer verifies the peer certificate chain after the handshake,
+// using x509.Verify. Client side (unless InsecureSkipVerify): the server
+// chain, against RootCAs. Server side (review-tls-clientauth, P0-1): the
+// client chain, but only for the ClientAuth modes that require
+// verification. Presence for the Require* modes is already enforced by the
+// SSLEngine (needClientAuth); NoClientCert, RequestClientCert and
+// RequireAnyClientCert deliberately do not verify, matching gc. ClientCAs
+// == nil means the system roots (gc semantics): the synthetic x509 package
+// has no SystemCertPool, so they come from the JDK default trust store via
+// systemRootCAsTrap (cached by systemRootPool). An empty system store makes
+// verification fail here — loud, never a silent accept.
 func (c *Conn) verifyPeer() error {
-	if !c.isClient {
+	if c.isClient {
+		if c.config != nil && c.config.InsecureSkipVerify {
+			return nil
+		}
+		peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
+		if len(peerDERs) == 0 {
+			return errors.New("tls: no peer certificates")
+		}
+		leaf, err := x509.ParseCertificate(peerDERs[0])
+		if err != nil {
+			return err
+		}
+		opts := x509.VerifyOptions{
+			DNSName: c.config.ServerName,
+		}
+		if c.config != nil && c.config.RootCAs != nil {
+			opts.Roots = c.config.RootCAs
+		}
+		if _, err := leaf.Verify(opts); err != nil {
+			return fmt.Errorf("tls: failed to verify certificate: %w", err)
+		}
 		return nil
 	}
-	if c.config != nil && c.config.InsecureSkipVerify {
+	mode := NoClientCert
+	if c.config != nil {
+		mode = c.config.ClientAuth
+	}
+	switch mode {
+	case NoClientCert, RequestClientCert, RequireAnyClientCert:
 		return nil
+	case VerifyClientCertIfGiven, RequireAndVerifyClientCert:
+		peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
+		if len(peerDERs) == 0 {
+			if mode == VerifyClientCertIfGiven {
+				return nil
+			}
+			return errors.New("tls: client did not provide a certificate")
+		}
+		leaf, err := x509.ParseCertificate(peerDERs[0])
+		if err != nil {
+			return err
+		}
+		var roots *x509.CertPool
+		if c.config != nil {
+			roots = c.config.ClientCAs
+		}
+		if roots == nil {
+			roots = systemRootPool()
+		}
+		opts := x509.VerifyOptions{
+			Roots:     roots,
+			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		if len(peerDERs) > 1 {
+			intermediates := x509.NewCertPool()
+			for _, der := range peerDERs[1:] {
+				if cert, err := x509.ParseCertificate(der); err == nil {
+					intermediates.AddCert(cert)
+				}
+			}
+			opts.Intermediates = intermediates
+		}
+		if _, err := leaf.Verify(opts); err != nil {
+			return fmt.Errorf("tls: failed to verify certificate: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("tls: unknown ClientAuth type %d", int(mode))
 	}
-	peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
-	if len(peerDERs) == 0 {
-		return errors.New("tls: no peer certificates")
+}
+
+// cachedSystemRoots is the JDK default trust store as a CertPool, built
+// once on first use by a verify-mode server with ClientCAs == nil.
+var cachedSystemRoots *x509.CertPool
+
+func systemRootPool() *x509.CertPool {
+	if cachedSystemRoots != nil {
+		return cachedSystemRoots
 	}
-	leaf, err := x509.ParseCertificate(peerDERs[0])
-	if err != nil {
-		return err
+	pool := x509.NewCertPool()
+	for _, der := range decodeLengthPrefixed(systemRootCAsTrap()) {
+		if cert, err := x509.ParseCertificate(der); err == nil {
+			pool.AddCert(cert)
+		}
 	}
-	opts := x509.VerifyOptions{
-		DNSName: c.config.ServerName,
-	}
-	if c.config != nil && c.config.RootCAs != nil {
-		opts.Roots = c.config.RootCAs
-	}
-	if _, err := leaf.Verify(opts); err != nil {
-		return fmt.Errorf("tls: failed to verify certificate: %w", err)
-	}
-	return nil
+	cachedSystemRoots = pool
+	return pool
 }
 
 func writeAll(conn net.Conn, b []byte) error {

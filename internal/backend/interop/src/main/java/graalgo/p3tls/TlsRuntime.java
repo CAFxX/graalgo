@@ -53,10 +53,28 @@ import graalgo.values.GoString;
  * <p>D5 boxing: Go {@code []byte} arrives as {@link GoSlice}; strings as
  * {@link GoString}; integers and bools as {@link Number} (bool as 0/1).
  *
- * <p>Trust: the engine's TrustManager is permissive during the handshake;
- * certificate verification (chain building, hostname) is implemented in Go
- * (synthetic crypto/x509 Verify) for exact Go semantics. The Go side calls
- * {@link #peerCertificates} after the handshake and verifies itself.
+ * <p>Trust: the engine's TrustManager is permissive during the handshake on
+ * both sides; certificate verification (chain building, hostname, client
+ * authentication) is implemented in Go (synthetic crypto/x509 Verify) for
+ * exact Go semantics. The Go side calls {@link #peerCertificates} after the
+ * handshake and verifies itself. The server engine's want/need flags (see
+ * {@link #newServerEngine}) enforce certificate <em>presence</em> per
+ * ClientAuth; they never substitute for verification.
+ *
+ * <p>Trap wire format (review-tls-clientauth, P0-1): the graalgo.tls.*
+ * traps take plain positional arguments in declaration order — the same
+ * convention as every other trap in this family. ClientCAs deliberately
+ * does <em>not</em> cross the trap: x509.CertPool's certificate list is
+ * unexported, so the tls synthetic package cannot encode it without a new
+ * exported x509 API (stdlib API pollution visible to guest code) or Java
+ * introspection of guest values. ClientCAs therefore stays Go-side and the
+ * server verifies with the same x509.Verify path as the client side.
+ * A verify-mode server config with ClientCAs == nil means the system roots
+ * (gc semantics); the synthetic x509 package has no SystemCertPool, so the
+ * Go side fetches them from the JDK default trust store via
+ * {@link #systemRootCAs} (cached, length-prefixed DERs, same encoding as
+ * chainDER). If that yields no anchors, verification fails at handshake —
+ * never a silent accept.
  */
 public final class TlsRuntime {
     private TlsRuntime() {}
@@ -91,7 +109,8 @@ public final class TlsRuntime {
         public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
     }
 
-    /** Key manager serving a fixed chain + private key (server side). */
+    /** Key manager serving a fixed chain + private key (server side, and
+     * client side when the client presents a certificate). */
     private static final class FixedKeyManager extends X509ExtendedKeyManager {
         private final X509Certificate[] chain;
         private final PrivateKey key;
@@ -119,7 +138,19 @@ public final class TlsRuntime {
         @Override
         public String chooseClientAlias(String[] keyType, java.security.Principal[] issuers,
                                         Socket socket) {
-            return null;
+            // Review-tls-clientauth (P0-1): previously null, so a client
+            // engine could never present a certificate even if one was
+            // configured — client-auth modes were untestable end to end.
+            return "graalgo";
+        }
+
+        @Override
+        public String chooseEngineClientAlias(String[] keyType, java.security.Principal[] issuers,
+                                              SSLEngine engine) {
+            // SSLEngine (not SSLSocket) drives the handshake — without
+            // this override the engine gets no alias, mirroring
+            // chooseEngineServerAlias above.
+            return "graalgo";
         }
 
         @Override
@@ -139,7 +170,7 @@ public final class TlsRuntime {
 
         @Override
         public String[] getClientAliases(String keyType, java.security.Principal[] issuers) {
-            return new String[0];
+            return new String[]{"graalgo"};
         }
     }
 
@@ -276,18 +307,42 @@ public final class TlsRuntime {
     /**
      * Creates a client-side SSLEngine. Returns engine handle.
      * graalgo.tls.newClientEngine(serverName, insecureSkipVerify,
-     *     minVersion, maxVersion, cipherSuites) -> handle
+     *     minVersion, maxVersion, cipherSuites,
+     *     chainDER, keyAlg, keyParams) -> handle
+     * chainDER/keyAlg/keyParams: the client certificate to present, in the
+     * same length-prefixed encoding as newServerEngine; all empty when the
+     * client presents no certificate (review-tls-clientauth, P0-1: without
+     * these the client could never present a certificate, so server
+     * client-auth modes were untestable end to end). A non-empty chain
+     * with unusable key material fails loudly here, never silently
+     * degrading to no certificate.
      */
     public static long newClientEngine(Object serverNameArg, Object insecureArg,
                                        Object minVersionArg, Object maxVersionArg,
-                                       Object cipherSuitesArg) {
+                                       Object cipherSuitesArg, Object chainDERArg,
+                                       Object keyAlgArg, Object keyParamsArg) {
         try {
             String serverName = str(serverNameArg);
             long minVersion = num(minVersionArg);
             long maxVersion = num(maxVersionArg);
             byte[] suitesBE = bytes(cipherSuitesArg);
+            byte[] chainDER = bytes(chainDERArg);
+            KeyManager[] keyManagers = null;
+            if (chainDER.length > 0) {
+                String keyAlg = str(keyAlgArg);
+                byte[] keyParams = bytes(keyParamsArg);
+                List<byte[]> certDERs = splitLengthPrefixed(chainDER);
+                CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                X509Certificate[] chain = new X509Certificate[certDERs.size()];
+                for (int i = 0; i < certDERs.size(); i++) {
+                    chain[i] = (X509Certificate) cf.generateCertificate(
+                            new java.io.ByteArrayInputStream(certDERs.get(i)));
+                }
+                PrivateKey privateKey = buildPrivateKey(keyAlg, splitLengthPrefixed(keyParams));
+                keyManagers = new KeyManager[]{new FixedKeyManager(chain, privateKey)};
+            }
             SSLContext ctx = SSLContext.getInstance("TLS");
-            ctx.init(null, new TrustManager[]{new PermissiveTrustManager()},
+            ctx.init(keyManagers, new TrustManager[]{new PermissiveTrustManager()},
                     new SecureRandom());
             SSLEngine engine = ctx.createSSLEngine();
             engine.setUseClientMode(true);
@@ -318,15 +373,40 @@ public final class TlsRuntime {
     /**
      * Creates a server-side SSLEngine. Returns engine handle.
      * graalgo.tls.newServerEngine(chainDER, keyAlg, keyParams,
-     *     minVersion, maxVersion, cipherSuites) -> handle
+     *     minVersion, maxVersion, cipherSuites, clientAuth) -> handle
      * chainDER: length-prefixed DER certs (leaf first).
      * keyParams: length-prefixed components:
      *   RSA: n, e, d, p, q | ECDSA: curveName, x, y, d | Ed25519: seed
+     * clientAuth: Go ClientAuthType iota value (review-tls-clientauth, P0-1;
+     * previously this argument did not exist and the engine hardcoded
+     * setNeedClientAuth(false), silently accepting unauthenticated clients
+     * for every mode):
+     *   0 NoClientCert, 1 RequestClientCert, 2 RequireAnyClientCert,
+     *   3 VerifyClientCertIfGiven, 4 RequireAndVerifyClientCert.
+     * The engine enforces presence only (need/want); chain verification
+     * against ClientCAs (or the system roots when nil) is done Go-side by
+     * the synthetic tls package's verifyPeer, for exact Go semantics.
+     * An out-of-range clientAuth fails loudly (IllegalArgumentException,
+     * validated before any key parsing so the failure is observable
+     * independent of key material).
      */
     public static long newServerEngine(Object chainDERArg, Object keyAlgArg,
                                        Object keyParamsArg, Object minVersionArg,
-                                       Object maxVersionArg, Object cipherSuitesArg) {
+                                       Object maxVersionArg, Object cipherSuitesArg,
+                                       Object clientAuthArg) {
         try {
+            long clientAuth = num(clientAuthArg);
+            boolean wantClientAuth;
+            boolean needClientAuth;
+            switch ((int) clientAuth) {
+                case 0: wantClientAuth = false; needClientAuth = false; break;
+                case 1: wantClientAuth = true; needClientAuth = false; break;
+                case 2: wantClientAuth = false; needClientAuth = true; break;
+                case 3: wantClientAuth = true; needClientAuth = false; break;
+                case 4: wantClientAuth = false; needClientAuth = true; break;
+                default:
+                    throw new IllegalArgumentException("unsupported clientAuth: " + clientAuth);
+            }
             byte[] chainDER = bytes(chainDERArg);
             String keyAlg = str(keyAlgArg);
             byte[] keyParams = bytes(keyParamsArg);
@@ -349,7 +429,11 @@ public final class TlsRuntime {
                     new SecureRandom());
             SSLEngine engine = ctx.createSSLEngine();
             engine.setUseClientMode(false);
-            engine.setNeedClientAuth(false);
+            if (needClientAuth) {
+                engine.setNeedClientAuth(true);
+            } else {
+                engine.setWantClientAuth(wantClientAuth);
+            }
             engine.setEnabledProtocols(enabledProtocols(minVersion, maxVersion));
             String[] suites = enabledCipherSuites(suitesBE);
             if (suites != null) {
@@ -360,6 +444,41 @@ public final class TlsRuntime {
             return id;
         } catch (Exception e) {
             throw new IllegalStateException("TlsRuntime.newServerEngine failed", e);
+        }
+    }
+
+    /**
+     * System trust anchors (JDK default trust store) as length-prefixed DER
+     * certs, same encoding as chainDER.
+     * graalgo.tls.systemRootCAs() -> bytes
+     * Used by the Go side when a verify-mode server config has ClientCAs
+     * == nil (gc semantics: system roots). Throws loudly if the default
+     * store cannot be read; an empty store yields zero DERs, and Go-side
+     * verification then fails at handshake — never a silent accept.
+     */
+    public static Object systemRootCAs() {
+        try {
+            javax.net.ssl.TrustManagerFactory tmf =
+                    javax.net.ssl.TrustManagerFactory.getInstance(
+                            javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((java.security.KeyStore) null);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            for (TrustManager tm : tmf.getTrustManagers()) {
+                if (tm instanceof X509TrustManager) {
+                    X509TrustManager xtm = (X509TrustManager) tm;
+                    for (X509Certificate c : xtm.getAcceptedIssuers()) {
+                        byte[] der = c.getEncoded();
+                        out.write((der.length >>> 24) & 0xFF);
+                        out.write((der.length >>> 16) & 0xFF);
+                        out.write((der.length >>> 8) & 0xFF);
+                        out.write(der.length & 0xFF);
+                        out.write(der, 0, der.length);
+                    }
+                }
+            }
+            return toGoBytes(out.toByteArray());
+        } catch (Exception e) {
+            throw new IllegalStateException("TlsRuntime.systemRootCAs failed", e);
         }
     }
 
