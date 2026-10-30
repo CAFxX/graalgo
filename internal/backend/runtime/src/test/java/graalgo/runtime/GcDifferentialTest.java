@@ -38,7 +38,8 @@ public final class GcDifferentialTest {
     /** Programs with graalgo-specific (non-gc-differential) assertions. */
     private static final List<String> NON_DIFFERENTIAL = List.of(
             "gc06_finalizer_panic",
-            "gc07_finalizer_gated");
+            "gc07_finalizer_gated",
+            "gc09_deadlock_select");
 
     /** Stdout + stderr + exit code from a subprocess run. */
     private static final class ProcessResult {

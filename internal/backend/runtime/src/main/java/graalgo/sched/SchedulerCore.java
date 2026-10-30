@@ -558,7 +558,7 @@ public final class SchedulerCore {
     /**
      * Brackets a park whose wakeup can arrive from outside the
      * scheduler's goroutine set (currently only netpoll readiness:
-     * {@code GoNetpoll.pollWaitRaw} parks here). Call immediately
+     * the p3net poll wait parks here). Call immediately
      * before {@link #parkCurrent} and in a {@code finally} right after
      * it returns. While the count is non-zero, deadlock detection
      * abstains: an external event may still wake the waiter.
