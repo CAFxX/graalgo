@@ -35,6 +35,16 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // review-backend-tests (P1-7, 2026-10-30): crypto handle
+        // lifecycle, socket lifecycle, HTTP client semantics, X.509
+        // parsing/fields. The gc-divergence probes for GoHttp live in
+        // GoHttpGcDivergenceTest and are NOT registered: they fail on
+        // current code by design and belong to the review-gohttp (P1-6)
+        // lane (see that class's javadoc).
+        TESTS.add(graalgo.p3crypto.GoCryptoTest.class);
+        TESTS.add(graalgo.p3net.GoNetTest.class);
+        TESTS.add(graalgo.p3net.GoHttpTest.class);
+        TESTS.add(graalgo.p3x509.GoX509Test.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         // (fix-redmaster-r52: the FmtStateItabTest registration is removed
         // — the test class itself was deleted by the real-fmt2 removal
