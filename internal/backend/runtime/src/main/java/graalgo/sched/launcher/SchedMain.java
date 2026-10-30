@@ -5,6 +5,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ServiceLoader;
 
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -12,6 +15,7 @@ import com.oracle.truffle.api.source.Source;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
+import graalgo.frontend.WireKindRegistrar;
 import graalgo.sched.SchedulerCore;
 import graalgo.sched.nodes.GoStatementNode;
 
@@ -23,7 +27,11 @@ import graalgo.sched.nodes.GoStatementNode;
  * (P2-D1): a {@link SchedulerCore} is installed, the drainer started,
  * {@code main} spawned as the first goroutine, and the launcher thread
  * blocks until quiescence. The {@code "gostmt"} wire kind is registered
- * on the factory via the public {@code registerStmtKind} hook.
+ * on the factory via the public {@code registerStmtKind} hook (as the
+ * fallback when no provider is discovered), and the Phase-3 wire kinds
+ * via the discovered {@link WireKindRegistrar} providers, exactly as
+ * {@code graalgo.launcher.Main} does (see the fix-redmaster-r52 note at
+ * the factory construction site).
  *
  * <p>Exit codes match Phase 1: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
@@ -127,11 +135,39 @@ public final class SchedMain {
         final NodeFactory.Program program;
         try {
             NodeFactory factory = new NodeFactory(source);
-            // P2-M1 (WS A): the go statement. No Phase-1 NodeFactory
-            // change needed — public extension hook.
-            factory.registerStmtKind("gostmt",
-                    (node, ctx) -> GoStatementNode.build(node, ctx, factory));
+            // fix-redmaster-r52: Phase-3 wire kinds (ifacemethod, syncop,
+            // ...) must be registered here exactly as in
+            // graalgo.launcher.Main: real stdlib packages emit them, and
+            // SchedMain is the launcher the differential/subprocess tests
+            // run through. Without this, any program touching fmt/runtime
+            // interfaces dies with "unsupported expression kind
+            // ifacemethod". Discovered via ServiceLoader — the same
+            // circular-dependency break as Main (runtime must not compile
+            // against interop); the interop classes are on the runtime
+            // test/product classpath.
+            //
+            // One-kind-one-registration: the provider table already
+            // registers "gostmt" (P2-M1, same GoStatementNode builder), and
+            // NodeFactory rejects duplicates. So the launcher's own
+            // gostmt registration is only the fallback for a classpath
+            // with no provider discovered (bare runtime classes) — never
+            // registered alongside a provider.
+            List<WireKindRegistrar> registrars = new ArrayList<>();
+            for (WireKindRegistrar registrar
+                    : ServiceLoader.load(WireKindRegistrar.class)) {
+                registrars.add(registrar);
+                registrar.registerAll(factory);
+            }
+            if (registrars.isEmpty()) {
+                // P2-M1 (WS A): the go statement. No Phase-1 NodeFactory
+                // change needed — public extension hook.
+                factory.registerStmtKind("gostmt",
+                        (node, ctx) -> GoStatementNode.build(node, ctx, factory));
+            }
             program = factory.buildProgram(json);
+            for (WireKindRegistrar registrar : registrars) {
+                registrar.afterBuild(factory, program);
+            }
         } catch (FrontendException e) {
             System.err.println("graalgo-run: internal error building AST: " + e.getMessage());
             return EXIT_INPUT_ERROR;
