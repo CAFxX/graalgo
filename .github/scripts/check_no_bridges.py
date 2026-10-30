@@ -20,13 +20,18 @@ Diff sources (2026-10-30, P1-10 fix):
   1. origin/master...HEAD  (committed PR / feature-branch changes)
   2. git diff HEAD         (uncommitted changes to TRACKED files, staged
                             and unstaged)
-  2b. untracked files      (git status --porcelain: a brand-new file that
-                            has never been added is invisible to every
-                            git diff above — a new synth_*.go or panic
-                            stub sitting untracked was a second silent
-                            skip of the same class as the P1-10 bug, so
-                            untracked .go/.java files are rendered as
-                            synthetic /dev/null diffs and unioned in;
+  2b. untracked files      (git status --porcelain --untracked-files=all:
+                            a brand-new file that has never been added is
+                            invisible to every git diff above — a new
+                            synth_*.go or panic stub sitting untracked was
+                            a second silent skip of the same class as the
+                            P1-10 bug, so untracked .go/.java files are
+                            rendered as synthetic /dev/null diffs and
+                            unioned in; --untracked-files=all lists every
+                            file individually, including files inside a
+                            brand-new directory (normal collapses such a
+                            directory to one `?? sub/` entry the extension
+                            filter skips — veto finding B1, 2026-10-30);
                             gitignored files are excluded by git itself)
   3. git diff --cached     (staged changes; a subset of 2 in practice,
                             kept so a staged-only change is inspected
@@ -53,6 +58,7 @@ panic(fmt.Sprintf(\\n"not implemented...")) spans added lines, and the
 old per-line regexes could not see across the newline. Java is covered
 too: throw new UnsupportedOperationException("not implemented|...").
 See check_no_bridges() section 3.
+Known limitation: a stub whose opening line is pre-existing (a context line in the diff) with only its argument line added is not detected — the gate inspects added lines only.
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
@@ -108,11 +114,16 @@ def untracked_diffs():
     existing new-file / added-line checks apply unchanged. Only .go and
     .java files are rendered: those are the only extensions any check
     inspects, and rendering build outputs or notes would be noise.
+    --untracked-files=all is required (not normal): normal collapses a
+    brand-new directory to a single `?? sub/` entry, which the extension
+    filter below skips, so files inside it were invisible (veto finding
+    B1, 2026-10-30). With all, git lists every file individually, while
+    gitignored files stay excluded by git itself.
     Returns "" when git status fails or no such file exists.
     """
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain", "-z", "--untracked-files=normal", "--", "."],
+            ["git", "status", "--porcelain", "-z", "--untracked-files=all", "--", "."],
             capture_output=True, text=True, timeout=30)
     except Exception:
         return ""

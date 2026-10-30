@@ -13,10 +13,12 @@ Coverage contract (P1-10 remediation, 2026-10-30):
       ADJUDICATED_REGISTRATIONS) still pass.
 Plus positive controls for the pre-existing checks, the never-vacuous
 contract, the master-push fallback, and error deduplication across
-overlapping union sources. Every test is written to fail on the pre-fix
-script: (a) fails because get_diff returned only the first source, (b)
-fails because panic detection was per-line, (c) fails because no Java
-pattern existed.
+overlapping union sources. The new-behaviour tests fail on the pre-fix
+script (9 of 18, measured 2026-10-30): the union tests fail because
+get_diff returned only the first source, the multi-line tests fail
+because panic detection was per-line, the Java tests fail because no
+Java pattern existed, and the new-subdirectory test fails because
+--untracked-files=normal collapsed the directory to one `?? sub/` entry.
 """
 
 import importlib.util
@@ -247,6 +249,37 @@ class TestGetDiffUnion(unittest.TestCase):
             self.assertIn("untracked", label)
             errs = GATE.check_no_bridges(diff)
             self.assertTrue(any("PANIC STUB" in e and "work.go" in e
+                                for e in errs), errs)
+        finally:
+            import shutil
+            shutil.rmtree(repo, ignore_errors=True)
+
+    def test_untracked_file_in_new_subdirectory_both_inspected(self):
+        # Veto finding B1 (2026-10-30): with --untracked-files=normal,
+        # git status collapses a brand-new directory to a single
+        # `?? sub/` entry, which the .go/.java extension filter skips —
+        # so sub/new.go was invisible to the gate. With
+        # --untracked-files=all, git lists the file individually.
+        repo = make_repo(n_commits=1)
+        try:
+            base = subprocess.run(
+                ["git", "-C", repo, "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True).stdout.strip()
+            git(repo, "update-ref", "refs/remotes/origin/master", base)
+            with open(os.path.join(repo, "branch.go"), "w") as f:
+                f.write("package branch\n")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "branch change")
+            # Untracked new bridge file inside a brand-new directory.
+            os.mkdir(os.path.join(repo, "sub"))
+            with open(os.path.join(repo, "sub", "new.go"), "w") as f:
+                f.write('package sub\nfunc f() { panic("not implemented") }\n')
+            diff, label = self.run_in(repo, GATE.get_diff)
+            self.assertIn("branch.go", diff)
+            self.assertIn("sub/new.go", diff)
+            self.assertIn("untracked", label)
+            errs = GATE.check_no_bridges(diff)
+            self.assertTrue(any("PANIC STUB" in e and "sub/new.go" in e
                                 for e in errs), errs)
         finally:
             import shutil
