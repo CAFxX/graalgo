@@ -109,3 +109,33 @@ func TestApplyExclusions(t *testing.T) {
 		t.Fatalf("skipped = %+v", skipped)
 	}
 }
+
+func TestApplyExclusions_PreservesOwnerAndRetriage(t *testing.T) {
+	// The skipped record feeds snapshot records and reports: dropping
+	// owner/retriage here used to strip ownership metadata silently.
+	progs := []Program{{Name: "a"}, {Name: "b"}}
+	want := Exclusion{Program: "b", Reason: "flaky: test", Owner: "backend/scheduler", Retriage: "re-probe on scheduler change"}
+	cfg := &Config{Exclusions: []Exclusion{want}}
+	_, skipped := ApplyExclusions(progs, cfg)
+	if len(skipped) != 1 || skipped[0] != want {
+		t.Fatalf("skipped = %+v, want %+v", skipped, want)
+	}
+}
+
+func TestLoadConfig_RejectsOwnerlessExclusion(t *testing.T) {
+	for _, body := range []string{
+		`{"backends":[{"name":"x","build":["go"],"run":["x"]}],"exclusions":[{"program":"b","reason":"flaky"}]}`,
+		`{"backends":[{"name":"x","build":["go"],"run":["x"]}],"exclusions":[{"program":"b","reason":"flaky","owner":"backend/scheduler"}]}`,
+	} {
+		path := filepath.Join(t.TempDir(), "t.json")
+		os.WriteFile(path, []byte(body), 0o644)
+		if _, err := LoadConfig(path); err == nil {
+			t.Fatalf("expected error for exclusion without owner+retriage: %s", body)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "ok.json")
+	os.WriteFile(path, []byte(`{"backends":[{"name":"x","build":["go"],"run":["x"]}],"exclusions":[{"program":"b","reason":"flaky","owner":"backend/scheduler","retriage":"re-probe on scheduler change"}]}`), 0o644)
+	if _, err := LoadConfig(path); err != nil {
+		t.Fatalf("owned exclusion rejected: %v", err)
+	}
+}

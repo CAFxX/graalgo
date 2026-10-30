@@ -353,8 +353,8 @@ func cmdSnapshotRecord(args []string) error {
 	if err := writeJSON(sf.out, snap); err != nil {
 		return err
 	}
-	fmt.Printf("record: wrote %d programs (+%d excluded) to %s [toolchain=%s backend=%s commit=%s]\n",
-		len(snap.Programs), len(snap.Excluded), sf.out, snap.Toolchain, snap.Backend, snap.GraalgoCommit)
+	fmt.Printf("record: wrote %d programs (+%d excluded of %d corpus) to %s [toolchain=%s backend=%s commit=%s]\n",
+		len(snap.Programs), len(snap.Excluded), len(snap.Programs)+len(snap.Excluded), sf.out, snap.Toolchain, snap.Backend, snap.GraalgoCommit)
 	return nil
 }
 
@@ -384,9 +384,11 @@ func cmdSnapshotCheck(args []string) error {
 		return err
 	}
 	// Coverage gate: the exclusion list is part of the baseline. A program
-	// silently leaving (or joining) the snapshot is drift.
+	// silently leaving (or joining) the snapshot is drift, and so is any
+	// change to an exclusion's reason, owner, or retriage trigger: the
+	// metadata is what keeps an exclusion owned instead of forgotten.
 	if d := diffExclusions(snap.Excluded, skipped); d != "" {
-		return fmt.Errorf("exclusion list drift: %s (re-record the snapshot if deliberate)", d)
+		return fmt.Errorf("exclusion list drift: %s (update the snapshot's excluded list deliberately in the same change, or re-record)", d)
 	}
 	want := map[string]SnapshotEntry{}
 	for _, e := range snap.Programs {
@@ -438,8 +440,20 @@ func cmdSnapshotCheck(args []string) error {
 			fmt.Printf("DRIFT %-28s recorded program missing from corpus\n", e.Name)
 		}
 	}
-	fmt.Printf("check: %d programs, %d drifted [snapshot toolchain=%s backend=%s commit=%s recorded=%s]\n",
-		len(live), drifted, snap.Toolchain, snap.Backend, snap.GraalgoCommit, snap.RecordedAt)
+	// The excluded count is printed alongside the drift count, on purpose:
+	// "0 drifted" must never read as "all programs green" when part of the
+	// corpus is not gated at all. The names are listed so the hole is
+	// visible in the per-push log, not just in a JSON file.
+	excludedNames := make([]string, len(skipped))
+	for i, e := range skipped {
+		excludedNames[i] = e.Program
+	}
+	sort.Strings(excludedNames)
+	fmt.Printf("check: %d programs, %d drifted, %d excluded of %d corpus [snapshot toolchain=%s backend=%s commit=%s recorded=%s]\n",
+		len(live), drifted, len(skipped), len(live)+len(skipped)+len(missing), snap.Toolchain, snap.Backend, snap.GraalgoCommit, snap.RecordedAt)
+	if len(excludedNames) > 0 {
+		fmt.Printf("excluded (NOT gated by this check): %s\n", strings.Join(excludedNames, ", "))
+	}
 	if drifted > 0 {
 		return fmt.Errorf("%d programs drifted from the snapshot", drifted)
 	}
@@ -448,8 +462,12 @@ func cmdSnapshotCheck(args []string) error {
 
 // diffExclusions reports a difference between the snapshot's recorded
 // exclusion list and the config's current one, order-insensitively.
+// The key covers program, reason, owner, and retriage trigger: ownership
+// metadata is part of the baseline, not decoration.
 func diffExclusions(want, got []harness.Exclusion) string {
-	key := func(e harness.Exclusion) string { return e.Program + "\x00" + e.Reason }
+	key := func(e harness.Exclusion) string {
+		return strings.Join([]string{e.Program, e.Reason, e.Owner, e.Retriage}, "\x00")
+	}
 	wm, gm := map[string]bool{}, map[string]bool{}
 	for _, e := range want {
 		wm[key(e)] = true

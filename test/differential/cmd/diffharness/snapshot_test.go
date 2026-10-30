@@ -98,3 +98,23 @@ func TestDiffExclusions_DetectsDrift(t *testing.T) {
 		t.Fatal("changed exclusion reason not detected")
 	}
 }
+
+func TestDiffExclusions_DetectsOwnerAndRetriageDrift(t *testing.T) {
+	// Ownership metadata is part of the baseline: silently dropping an
+	// owner or changing a re-triage trigger must fail the check, and an
+	// identical full entry must pass (positive + negative coverage).
+	base := harness.Exclusion{Program: "x", Reason: "flaky", Owner: "backend/scheduler", Retriage: "re-probe on scheduler change"}
+	if d := diffExclusions([]harness.Exclusion{base}, []harness.Exclusion{base}); d != "" {
+		t.Fatalf("identical full exclusion reported as drift: %s", d)
+	}
+	noOwner := base
+	noOwner.Owner = ""
+	if d := diffExclusions([]harness.Exclusion{base}, []harness.Exclusion{noOwner}); d == "" {
+		t.Fatal("dropped exclusion owner not detected")
+	}
+	newTrigger := base
+	newTrigger.Retriage = "re-probe at next re-record"
+	if d := diffExclusions([]harness.Exclusion{base}, []harness.Exclusion{newTrigger}); d == "" {
+		t.Fatal("changed retriage trigger not detected")
+	}
+}

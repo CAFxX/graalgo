@@ -43,7 +43,7 @@ Top-level metadata:
 | `recordedAt` | RFC3339 UTC timestamp |
 | `corpus` | Repo-relative corpus label (e.g. `"test/differential/corpus"`) |
 | `normalizer` | Normalization rule-set id (`"harness.Normalize+backend.stderrFilters/v1"`) |
-| `excluded` | Config exclusion list at record time (coverage is part of the baseline) |
+| `excluded` | Config exclusion list at record time (coverage is part of the baseline). Each entry carries `program`, `reason`, `owner` (component area owning retirement of the exclusion), and `retriage` (the trigger forcing a re-probe). `snapshot check` treats any change to any of those four fields as exclusion-list drift, and prints the excluded count and program names alongside the drift count, so "0 drifted" never reads as "all programs green" |
 | `programs` | Per-program entries, sorted by name |
 
 Per-program entry:

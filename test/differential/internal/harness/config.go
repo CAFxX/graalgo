@@ -68,9 +68,21 @@ func (b *Backend) FilterStderr(s string) string {
 // FEASIBILITY.md §7(2): the exclusion list may only grow through review,
 // never silently. Reason codes: nondeterministic-output, backend-specific,
 // flaky, other:<free text>.
+//
+// Owner names the component area that owns retiring the exclusion (a
+// component path, not a person: people rotate, the component does not).
+// Retriage names the trigger that forces a re-probe of the exclusion —
+// typically the fix or feature that would retire it, or the next snapshot
+// re-record if no such trigger exists. Both are REQUIRED: an exclusion
+// without an owner and a re-triage trigger is an unowned coverage hole,
+// and LoadConfig rejects it. The snapshot's recorded exclusion list
+// carries the same fields, and snapshot check treats any owner/retriage
+// change as exclusion-list drift, so metadata cannot rot silently.
 type Exclusion struct {
-	Program string `json:"program"`
-	Reason  string `json:"reason"`
+	Program  string `json:"program"`
+	Reason   string `json:"reason"`
+	Owner    string `json:"owner"`
+	Retriage string `json:"retriage"`
 }
 
 // Config is the on-disk harness configuration.
@@ -95,6 +107,14 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.TimeoutSec <= 0 {
 		c.TimeoutSec = 15
+	}
+	for _, e := range c.Exclusions {
+		if e.Program == "" {
+			return nil, fmt.Errorf("exclusion with empty program")
+		}
+		if e.Owner == "" || e.Retriage == "" {
+			return nil, fmt.Errorf("exclusion %q lacks owner or retriage trigger (both required)", e.Program)
+		}
 	}
 	seen := map[string]bool{}
 	for i := range c.Backends {

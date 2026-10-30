@@ -47,11 +47,18 @@ func DiscoverCorpus(root string) ([]Program, error) {
 }
 
 // ApplyExclusions drops excluded programs, returning the kept set and a
-// record of what was skipped (for the report).
+// record of what was skipped (for the report). The skipped record carries
+// the config's full exclusion entry — owner and retriage trigger included —
+// not just program+reason: reconstructing it from the reason alone used to
+// silently drop the ownership metadata on every report and snapshot record.
 func ApplyExclusions(progs []Program, cfg *Config) (kept []Program, skipped []Exclusion) {
+	byProgram := map[string]Exclusion{}
+	for _, e := range cfg.Exclusions {
+		byProgram[e.Program] = e
+	}
 	for _, p := range progs {
-		if reason, ok := cfg.Excluded(p.Name); ok {
-			skipped = append(skipped, Exclusion{Program: p.Name, Reason: reason})
+		if e, ok := byProgram[p.Name]; ok {
+			skipped = append(skipped, e)
 			continue
 		}
 		kept = append(kept, p)

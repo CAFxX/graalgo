@@ -4,47 +4,69 @@
   "excluded": [
     {
       "program": "10_closures",
-      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
+      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)",
+      "owner": "frontend/v1",
+      "retriage": "re-probe when frontend supports calls through index expressions (ops[0](5))"
     },
     {
       "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
+      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed",
+      "owner": "backend/scheduler",
+      "retriage": "re-probe on any scheduler change; if still flaky, standalone P0 scheduler lane"
     },
     {
       "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
+      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain",
+      "owner": "backend/generics",
+      "retriage": "re-probe when P3SyncMain supports union type constraints (~int|~int64)"
     },
     {
       "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
+      "reason": "backend-specific: errors.As needs reflect (not in scope)",
+      "owner": "synth-stdlib/errors",
+      "retriage": "re-probe when errors.As no longer needs reflect, or reflect support lands"
     },
     {
       "program": "19_sort",
-      "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
+      "reason": "backend-specific: sort.Slice needs reflect (not in scope)",
+      "owner": "synth-stdlib/sort",
+      "retriage": "re-probe when sort.Slice no longer needs reflect, or reflect support lands"
     },
     {
       "program": "27_panic_trace",
-      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
+      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap",
+      "owner": "backend/panic-trace",
+      "retriage": "re-probe when panic trace format matches gc (qualified vs unqualified function names)"
     },
     {
       "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
+      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope",
+      "owner": "synth-stdlib/os",
+      "retriage": "re-probe when synthetic os covers os.Exit and os.Stderr"
     },
     {
       "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
+      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings",
+      "owner": "synth-stdlib/strings",
+      "retriage": "re-probe when synthetic strings covers strings.Builder.WriteString/WriteRune"
     },
     {
       "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
+      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)",
+      "owner": "frontend/named-results",
+      "retriage": "re-probe when the named-result assignment frontend bug is fixed"
     },
     {
       "program": "40_method_values",
-      "reason": "backend-specific: method values not in scope"
+      "reason": "backend-specific: method values not in scope",
+      "owner": "frontend/method-values",
+      "retriage": "re-probe when method values / method expressions are supported"
     },
     {
       "program": "42_json",
-      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope",
+      "owner": "synth-stdlib/json",
+      "retriage": "re-probe when synthetic json covers encoding/json.Marshal/Unmarshal"
     }
   ],
   "format": "graalgo-behavior-snapshot/v1",
