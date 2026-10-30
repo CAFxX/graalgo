@@ -83,6 +83,31 @@ public final class Drainer {
         inbox.offer(token);
     }
 
+    /**
+     * Drainer-side half of the deadlock condition (R1-22), read
+     * atomically under the drainer lock by
+     * {@link SchedulerCore#checkDeadlock}: every live goroutine is
+     * parked (including {@code mainId}), none is in flight or in
+     * blocking I/O, no UNPARK is stashed, and no lane or inbox token
+     * is unprocessed. The timer-heap and external-waiter halves live
+     * in the caller; a wakeup in flight from those sources is covered
+     * there, not here.
+     */
+    boolean isAllParked(int live, long mainId) {
+        synchronized (lock) {
+            return live > 0
+                    && inflight == 0
+                    && parked.size() == live
+                    && parked.containsKey(mainId)
+                    && inIo.isEmpty()
+                    && unparkPending.isEmpty()
+                    && wakeFifo.isEmpty()
+                    && initFifo.isEmpty()
+                    && runFifo.isEmpty()
+                    && inbox.isEmpty();
+        }
+    }
+
     /** Highest in-flight count observed; for tests and stats. */
     public int maxInflightObserved() {
         synchronized (lock) {
@@ -112,6 +137,17 @@ public final class Drainer {
                     route(token);
                     admit();
                     checkInvariants();
+                    // R1-22: only PARKED / EXIT / IO_ENTER can move the
+                    // scheduler INTO the all-parked state; every other
+                    // token moves it out (or leaves it runnable). The
+                    // check itself is cheap (a few field reads plus the
+                    // timer-heap pending/firing read) and runs off the
+                    // guest fast path.
+                    if (token.kind == ResumeToken.Kind.PARKED
+                            || token.kind == ResumeToken.Kind.EXIT
+                            || token.kind == ResumeToken.Kind.IO_ENTER) {
+                        sched.checkDeadlock();
+                    }
                 }
             } catch (Throwable t) {
                 // Fail LOUD, never silent: a violated invariant (or any

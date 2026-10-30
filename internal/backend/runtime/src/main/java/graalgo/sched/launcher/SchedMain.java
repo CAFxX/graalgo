@@ -189,7 +189,11 @@ public final class SchedMain {
         sched.start();
         final int[] exitCode = {EXIT_OK};
         try {
-            sched.spawn(() -> {
+            // R1-22: the deadlock detector needs to know which
+            // goroutine is main (a main-finished + others-parked state
+            // is the await-all hang, not a deadlock — see
+            // SchedulerCore.checkDeadlock).
+            sched.noteMain(sched.spawn(() -> {
                 VirtualFrame frame = Truffle.getRuntime()
                         .createVirtualFrame(new Object[0], program.descriptor());
                 try {
@@ -204,7 +208,7 @@ public final class SchedMain {
                             "fatal error: all goroutines are asleep - deadlock!");
                     exitCode[0] = EXIT_PANIC;
                 }
-            });
+            }));
             sched.awaitQuiescence();
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
@@ -212,6 +216,9 @@ public final class SchedMain {
             return EXIT_INPUT_ERROR;
         } finally {
             SchedulerCore.install(prev);
+        }
+        if (sched.deadlocked()) {
+            return EXIT_PANIC; // fatal line already printed by the detector (gc: exit 2)
         }
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)

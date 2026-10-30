@@ -484,6 +484,158 @@ public final class SchedulerCoreTest {
     }
 
     /**
+     * R1-21: a Java Error escaping a goroutine body is recorded as a
+     * crash (launcher exits 1), exactly like a RuntimeException.
+     * Red-green: fails on the pre-fix catch list (which ends at
+     * RuntimeException) — the AssertionError escapes the vthread, the
+     * finally still decrements the live count, and crashed() stays
+     * false, i.e. the launcher would exit 0 for a silently dead
+     * goroutine. Passes with the general Error catch.
+     */
+    public void testSpawnedErrorRecorded() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new AssertionError("synthetic assertion failure");
+            });
+            sched.spawn(() -> {
+                throw new Error("synthetic generic error");
+            });
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "Error recorded as crash (R1-21)");
+            assertTrue(!sched.panicked(), "Error is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    // ---------- deadlock detection (R1-22) ----------
+
+    /**
+     * R1-22 positive control: main and a worker both parked with no
+     * runnable work, timer, I/O, or external waiter outstanding.
+     * awaitQuiescence must return promptly (via the detector, not via
+     * completion — both goroutines stay parked) with deadlocked()
+     * true. Red-green: on code without the detector, the await never
+     * returns and the join below times out instead of hanging the
+     * suite. The await runs on a helper thread for exactly that
+     * reason; the parked vthreads are daemon and die with the JVM.
+     */
+    public void testDeadlockDetectedWhenAllParked() throws Exception {
+        SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            GoroutineHandle mainH = sched.spawn(() -> sched.parkCurrent(null));
+            sched.spawn(() -> sched.parkCurrent(null));
+            sched.noteMain(mainH);
+            Thread waiter = Thread.ofPlatform().daemon(true).start(() -> {
+                try {
+                    sched.awaitQuiescence();
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            waiter.join(10_000);
+            assertTrue(!waiter.isAlive(),
+                    "awaitQuiescence returned: deadlock detected, not hung");
+            assertTrue(sched.deadlocked(), "all-parked state reported deadlocked");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * R1-22 negative control (timers): main parked, worker arms a
+     * sleep timer for main and exits. While the timer is pending the
+     * detector must abstain; when it fires, main resumes and the
+     * program completes normally with deadlocked() false.
+     */
+    public void testNoDeadlockWhenTimerPending() throws Exception {
+        SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            GoroutineHandle mainH = sched.spawn(() -> sched.parkCurrent(null));
+            sched.spawn(() -> {
+                sched.timerHeap().addSleep(
+                        System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100), mainH);
+            });
+            sched.noteMain(mainH);
+            sched.awaitQuiescence();
+            assertTrue(!sched.deadlocked(),
+                    "pending timer vetoed detection; normal completion");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * R1-22 negative control (external waiters): main and a worker
+     * both parked, but the worker is inside a
+     * noteExternalWaitEnter/Exit bracket (the netpoll shape — its
+     * wakeup can come from the poller thread). The detector must
+     * abstain until the test thread wakes both goroutines, which
+     * then complete normally with deadlocked() false.
+     */
+    public void testNoDeadlockWhenExternalWaiterParked() throws Exception {
+        SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            GoroutineHandle mainH = sched.spawn(() -> sched.parkCurrent(null));
+            GoroutineHandle workerH = sched.spawn(() -> {
+                sched.noteExternalWaitEnter();
+                try {
+                    sched.parkCurrent(null);
+                } finally {
+                    sched.noteExternalWaitExit();
+                }
+            });
+            sched.noteMain(mainH);
+            Thread.sleep(300);
+            assertTrue(!sched.deadlocked(),
+                    "external waiter vetoed detection while parked");
+            sched.unpark(workerH);
+            sched.unpark(mainH);
+            sched.awaitQuiescence();
+            assertTrue(!sched.deadlocked(), "woken waiters completed normally");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * R1-22 negative control (main finished): main returns while a
+     * worker stays parked forever. This is the pre-existing await-all
+     * hang, NOT a deadlock verdict — gc would exit when main returns,
+     * but graalgo's launcher awaits all goroutines, so the detector
+     * must not fire here (firing would turn a hang into a wrong
+     * exit-2). The worker is woken at the end so the test completes.
+     */
+    public void testNoDeadlockWhenMainReturned() throws Exception {
+        SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            GoroutineHandle mainH = sched.spawn(() -> {
+            });
+            GoroutineHandle workerH = sched.spawn(() -> sched.parkCurrent(null));
+            sched.noteMain(mainH);
+            Thread.sleep(300);
+            assertTrue(!sched.deadlocked(),
+                    "main-finished + worker-parked is not a deadlock");
+            sched.unpark(workerH);
+            sched.awaitQuiescence();
+            assertTrue(!sched.deadlocked(), "no deadlock after cleanup");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Voluntary yield via the quantum-park mechanism.
      * Reviewer2 P1-2: yieldCurrent() had zero coverage. With cap=1 and
      * quantum disabled, a goroutine that never yields would starve the

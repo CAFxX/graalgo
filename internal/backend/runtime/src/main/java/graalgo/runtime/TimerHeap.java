@@ -92,6 +92,16 @@ public final class TimerHeap {
     private final AtomicLong idGen = new AtomicLong(1);
     private final AtomicLong seqGen = new AtomicLong(1);
     private Thread timerThread;
+    /**
+     * R1-22: a fire is in progress (guarded by {@code lock}). Set
+     * before an entry is popped from the heap and cleared only after
+     * its wakeup (unpark / channel send / callback) completes. Without
+     * it, the deadlock detector could observe "no pending timers" in
+     * the window where the entry is already removed but its UNPARK is
+     * not yet offered — and falsely declare a deadlock the timer was
+     * about to break.
+     */
+    private boolean firing;
 
     public TimerHeap(SchedulerCore sched) {
         if (sched == null) {
@@ -311,6 +321,19 @@ public final class TimerHeap {
         }
     }
 
+    /**
+     * R1-22: true iff a timer could still wake something — a pending
+     * entry exists, or a fire is in progress (see {@code firing}).
+     * Read by the deadlock detector as a single atomic predicate
+     * under the heap lock, so "no pending and no firing" means no
+     * timer wakeup is possible or in flight.
+     */
+    public boolean hasPendingOrFiring() {
+        synchronized (lock) {
+            return !byId.isEmpty() || firing;
+        }
+    }
+
     private void timerLoop() {
         for (;;) {
             final Entry e;
@@ -342,6 +365,12 @@ public final class TimerHeap {
                 }
                 e = heap.poll();
                 byId.remove(e.id);
+                // R1-22: mark the fire before dropping the heap lock
+                // (or before firing the channel entry): from here until
+                // the wakeup completes, hasPendingOrFiring() must stay
+                // true, or the deadlock detector could fire in the
+                // pop-then-unpark window.
+                firing = true;
                 if (e.chan != null) {
                     // P0-3/P0-4: the staleness check, the send, and the
                     // ticker re-arm are atomic w.r.t. stopChan/resetChan:
@@ -353,11 +382,21 @@ public final class TimerHeap {
                     // our trySend never blocks). Lock order throughout is
                     // heap → owner → chan (leaf); trySend/unpark never
                     // block and never acquire heap/owner locks.
-                    fireChanLocked(e);
+                    try {
+                        fireChanLocked(e);
+                    } finally {
+                        firing = false;
+                    }
                     continue;
                 }
             }
-            fireNonChan(e);
+            try {
+                fireNonChan(e);
+            } finally {
+                synchronized (lock) {
+                    firing = false;
+                }
+            }
         }
     }
 

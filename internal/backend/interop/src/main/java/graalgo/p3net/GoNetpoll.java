@@ -646,7 +646,18 @@ public final class GoNetpoll {
         // drainer's WAKE lane (unpark). The result CAS above/below is the
         // single linearization point: exactly one of withdraw / wakeup
         // wins, so the result is always set on resume.
-        sched.parkCurrent(() -> {}, ParkReason.NETPOLL);
+        // R1-22: this waiter's wakeup comes from the poller thread
+        // (readiness) as well as goroutines (close/deadline), so the
+        // park must veto deadlock detection for its whole duration —
+        // otherwise a program blocked only in netpoll would be falsely
+        // reported deadlocked. The bracket covers every park: between
+        // parks the goroutine is in flight, which vetoes anyway.
+        sched.noteExternalWaitEnter();
+        try {
+            sched.parkCurrent(() -> {}, ParkReason.NETPOLL);
+        } finally {
+            sched.noteExternalWaitExit();
+        }
         Integer res = w.result.get();
         slot(pd, mode).compareAndSet(w, null);
         pd.lastDone = w;

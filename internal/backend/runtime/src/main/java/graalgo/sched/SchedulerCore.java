@@ -90,6 +90,29 @@ public final class SchedulerCore {
     private final ThreadLocal<GoroutineHandle> currentHandle = new ThreadLocal<>();
     private final AtomicInteger liveGoroutines = new AtomicInteger();
     /**
+     * Deadlock detection (review R1-22; see {@link #checkDeadlock}).
+     * The launcher's main goroutine, once known: the detector only
+     * fires while main is still parked. After main returns, gc exits
+     * the process; graalgo's launcher instead awaits all goroutines
+     * (documented Phase-2 semantics), so a main-finished + others-parked
+     * state must NOT be reported as a deadlock — it is the pre-existing
+     * await-all hang, not a new verdict. Until {@link #noteMain} is
+     * called the detector stays disabled (safe default for embedders).
+     */
+    private volatile GoroutineHandle mainHandle;
+    /**
+     * Goroutines parked in waits whose wakeup comes from outside the
+     * scheduler's goroutine set (netpoll readiness via
+     * {@code graalgo.p3net.GoNetpoll}, bracketed by
+     * {@link #noteExternalWaitEnter}/{@link #noteExternalWaitExit}).
+     * Any such waiter vetoes deadlock detection: a network packet can
+     * still wake it. Timer waits need no counter — the timer heap's
+     * pending/firing state is the veto (see {@link #checkDeadlock}).
+     */
+    private final AtomicInteger externalWaiters = new AtomicInteger();
+    /** Set once by {@link #checkDeadlock}; read by the launcher. */
+    private volatile boolean deadlocked;
+    /**
      * Quiescence monitor (reviewer2 P0). A one-shot CountDownLatch cannot
      * work here: the live count hits zero transiently mid-spawn-stream
      * (early trivial goroutines drain before later spawns are issued),
@@ -358,8 +381,13 @@ public final class SchedulerCore {
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
      * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * {@code RuntimeException}s, stack overflows, and any other Java
+     * {@code Error} are recorded loudly (the launcher exits 1).
+     * The general {@code Error} catch is load-bearing: without it an
+     * {@code AssertionError}/{@code OutOfMemoryError}/other {@code Error}
+     * escapes the vthread, the {@code finally} still decrements the live
+     * count, and the launcher sees neither panic nor crash — exit 0 for
+     * a silently dead goroutine (review R1-21).
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
@@ -393,6 +421,13 @@ public final class SchedulerCore {
                     recordCrash("internal error", e);
                 }
             } catch (RuntimeException e) {
+                recordCrash("internal error", e);
+            } catch (Error e) {
+                // R1-21: any other Error (AssertionError, OutOfMemoryError,
+                // ...) is an internal failure too. Swallowed after
+                // recording, like RuntimeException: the goroutine still
+                // dies (the finally below runs), but the launcher now
+                // sees crashed() and exits non-zero instead of 0.
                 recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.
@@ -503,6 +538,140 @@ public final class SchedulerCore {
     }
 
     /**
+     * Records the launcher's main goroutine. The deadlock detector
+     * requires it (see the {@code mainHandle} field): call once, with
+     * the handle {@link #spawn} returned for main, before awaiting
+     * quiescence. Re-checks for deadlock immediately, covering the
+     * race where every goroutine parked before this call.
+     */
+    public void noteMain(GoroutineHandle main) {
+        if (main == null) {
+            throw new IllegalArgumentException("main handle must not be null");
+        }
+        if (mainHandle != null && mainHandle != main) {
+            throw new IllegalStateException("main handle already recorded");
+        }
+        mainHandle = main;
+        checkDeadlock();
+    }
+
+    /**
+     * Brackets a park whose wakeup can arrive from outside the
+     * scheduler's goroutine set (currently only netpoll readiness:
+     * {@code GoNetpoll.pollWaitRaw} parks here). Call immediately
+     * before {@link #parkCurrent} and in a {@code finally} right after
+     * it returns. While the count is non-zero, deadlock detection
+     * abstains: an external event may still wake the waiter.
+     */
+    public void noteExternalWaitEnter() {
+        externalWaiters.incrementAndGet();
+    }
+
+    /** Paired with {@link #noteExternalWaitEnter}; see its contract. */
+    public void noteExternalWaitExit() {
+        externalWaiters.decrementAndGet();
+    }
+
+    /** True if {@link #checkDeadlock} has fired (fatal deadlock). */
+    public boolean deadlocked() {
+        return deadlocked;
+    }
+
+    /**
+     * All-goroutines-parked deadlock detection (review R1-22, gc
+     * parity: {@code fatal error: all goroutines are asleep -
+     * deadlock!}, exit 2).
+     *
+     * <p>Called by the drainer after every transition that can move
+     * the scheduler INTO the all-parked state (PARKED, EXIT,
+     * IO_ENTER tokens) and by {@link #noteMain}. Fires only when the
+     * scheduler can PROVE no wakeup is possible:
+     * <ul>
+     *   <li>at least one goroutine is live, and every live goroutine
+     *       is in the drainer's parked set — including main (a
+     *       main-finished state is not a deadlock, see
+     *       {@code mainHandle});
+     *   <li>no goroutine is in flight (admitted, running, or
+     *       quantum/yield-parked — quantum parks re-enter through
+     *       the run lane, so they are runnable work, not sleep);
+     *   <li>no drainer lane or inbox token is unprocessed, no UNPARK
+     *       is stashed, and no goroutine is in blocking I/O
+     *       ({@code ioEnter} without {@code ioExit});
+     *   <li>no timer is pending and no timer fire is in progress
+     *       (a pending timer will wake its sleeper, run its callback,
+     *       or deliver to its channel; the firing flag closes the
+     *       pop-then-unpark race, where the entry is already gone
+     *       from the heap but the UNPARK is not yet offered);
+     *   <li>no externally-woken waiter exists
+     *       ({@link #noteExternalWaitEnter}).
+     * </ul>
+     *
+     * <p>Why this cannot false-positive on a legitimately waiting
+     * program: every wakeup source in this codebase is one of (a) a
+     * live goroutine (channel/mutex/cond/waitgroup/select sends and
+     * unlocks all require a scheduler handle, so a non-goroutine thread
+     * cannot perform them — a Cleaner-thread finalizer invoking Go
+     * code fail-fasts in {@code currentGoroutine()} before it could
+     * unpark anyone), (b) the timer thread (vetoed by pending/firing),
+     * (c) the netpoll poller thread (vetoed by the external-waiter
+     * count), or (d) the drainer itself (vetoed by lane/inbox
+     * emptiness). A goroutine blocked in a real syscall without
+     * {@code ioEnter} stays in flight (veto); with {@code ioEnter} it
+     * is in the in-I/O set (veto) — both conservative, matching gc,
+     * which never declares deadlock over a syscall-blocked goroutine.
+     * Goroutines blocked on JVM monitors/sleeps outside the scheduler
+     * protocol likewise stay in flight and veto (a missed detection,
+     * never a false positive).
+     *
+     * <p>Precondition (shared with {@link #awaitQuiescence}): no
+     * outside thread spawns concurrently with detection. Spawns from
+     * inside goroutines are safe: the spawning goroutine is in flight
+     * for the whole spawn call, so the in-flight veto covers any
+     * check overlapping it. The launcher spawns main before
+     * {@link #noteMain}, so production has no outside spawner during
+     * detection; a test harness that spawns from the test thread
+     * after calling {@code noteMain} could observe a false positive
+     * and must not do so.
+     *
+     * <p>Known limitation (conservative miss, not a false positive):
+     * a pending timer whose fire cannot actually wake anyone (e.g. a
+     * ticker nobody receives from) still vetoes, so such programs
+     * keep hanging instead of being reported. Refining the veto to
+     * sleep/callback timers only is future work.
+     *
+     * <p>On firing, prints gc's fatal line once and releases
+     * {@link #awaitQuiescence} (the parked goroutines never resume,
+     * so without the release the launcher would hang). The launcher
+     * maps {@link #deadlocked()} to exit 2. Lock order: drainer lock
+     * (held by the drainer caller) → timer-heap lock; no path takes
+     * them in the reverse order (the timer thread never touches the
+     * drainer lock — it only offers to the inbox queue).
+     */
+    void checkDeadlock() {
+        if (deadlocked) {
+            return;
+        }
+        GoroutineHandle main = mainHandle;
+        if (main == null) {
+            return;
+        }
+        if (externalWaiters.get() != 0) {
+            return;
+        }
+        if (timerHeap.hasPendingOrFiring()) {
+            return;
+        }
+        if (!drainer.isAllParked(liveGoroutines.get(), main.id)) {
+            return;
+        }
+        deadlocked = true;
+        System.err.println("fatal error: all goroutines are asleep - deadlock!");
+        synchronized (quiescenceLock) {
+            quiescenceLock.notifyAll();
+        }
+    }
+
+    /**
      * The M10 self-attack's stack-overflow cascade: Truffle's exception
      * profiler can blow the exhausted stack while handling a
      * StackOverflowError, masking it as a class-init failure.
@@ -564,7 +733,9 @@ public final class SchedulerCore {
     }
 
     /**
-     * Blocks until every spawned goroutine has finished.
+     * Blocks until every spawned goroutine has finished, or until
+     * {@link #checkDeadlock} fires (then returns early with
+     * {@link #deadlocked()} true; the launcher maps that to exit 2).
      *
      * <p><strong>No-concurrent-spawn contract:</strong> {@code spawn()}
      * must not be called concurrently with this method from another
@@ -577,7 +748,7 @@ public final class SchedulerCore {
      */
     public void awaitQuiescence() throws InterruptedException {
         synchronized (quiescenceLock) {
-            while (liveGoroutines.get() != 0) {
+            while (liveGoroutines.get() != 0 && !deadlocked) {
                 quiescenceLock.wait();
             }
         }

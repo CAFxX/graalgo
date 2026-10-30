@@ -181,6 +181,26 @@ public final class GcDifferentialTest {
     }
 
     /**
+     * gc09 (R1-22): `select {}` with nothing else outstanding is a
+     * fatal deadlock, not a hang. SchedMain must exit 2 with gc's
+     * fatal line on stderr and empty stdout. Red-green: without the
+     * detector the subprocess never exits and the 300s waitFor
+     * times out; with it, the run ends in milliseconds.
+     */
+    public void testGc09DeadlockSelect() throws Exception {
+        ProcessResult r = runGoFull("gc09_deadlock_select");
+        assertEquals("", r.stdout, "gc09 stdout");
+        if (r.exitCode != 2) {
+            throw new AssertionError("gc09: expected exit code 2, got " + r.exitCode
+                    + "\nstdout:\n" + r.stdout + "\nstderr:\n" + r.stderr);
+        }
+        if (!r.stderr.contains("fatal error: all goroutines are asleep - deadlock!")) {
+            throw new AssertionError(
+                    "gc09: expected fatal deadlock line on stderr, got:\n" + r.stderr);
+        }
+    }
+
+    /**
      * gc06: a finalizer that dereferences its nil argument must be LOUD.
      * (DIV-M4-1: not silent.) stdout must be "survived"; stderr must contain
      * the "graalgo: finalizer panicked:" diagnostic. No .expected file —
