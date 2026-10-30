@@ -138,13 +138,14 @@ public final class SchedMain {
             // fix-redmaster-r52: Phase-3 wire kinds (ifacemethod, syncop,
             // ...) must be registered here exactly as in
             // graalgo.launcher.Main: real stdlib packages emit them, and
-            // SchedMain is the launcher the differential/subprocess tests
-            // run through. Without this, any program touching fmt/runtime
-            // interfaces dies with "unsupported expression kind
-            // ifacemethod". Discovered via ServiceLoader — the same
-            // circular-dependency break as Main (runtime must not compile
-            // against interop); the interop classes are on the runtime
-            // test/product classpath.
+            // SchedMain is the launcher the runtime subprocess tests run
+            // through (the snapshot diffharness instead uses
+            // graalgo-sync-run/P3SyncMain). Without this, any program
+            // touching fmt/runtime interfaces dies with "unsupported
+            // expression kind ifacemethod". Discovered via ServiceLoader
+            // — the same circular-dependency break as Main (runtime must
+            // not compile against interop); the interop classes are on
+            // the runtime test/product classpath.
             //
             // One-kind-one-registration: the provider table already
             // registers "gostmt" (P2-M1, same GoStatementNode builder), and

@@ -33,7 +33,8 @@ public final class GcDifferentialTest {
             "gc02_finalizer_remove",
             "gc03_keepalive",
             "gc04_gc_hint",
-            "gc05_finalizer_replace");
+            "gc05_finalizer_replace",
+            "gc08_iface_method_dispatch");
     /** Programs with graalgo-specific (non-gc-differential) assertions. */
     private static final List<String> NON_DIFFERENTIAL = List.of(
             "gc06_finalizer_panic",
@@ -162,6 +163,21 @@ public final class GcDifferentialTest {
     public void testGc05FinalizerReplace() throws Exception {
         assertEquals(expected("gc05_finalizer_replace"), runGo("gc05_finalizer_replace"),
                 "gc05_finalizer_replace");
+    }
+
+    /**
+     * gc08 (fix-redmaster-r53, review-redmaster-r52 N1): an interface
+     * method call through SchedMain. The call emits the "ifacemethod"
+     * wire kind, which only the Phase-3 provider table registered by
+     * the r52 ServiceLoader block provides; removing that block makes
+     * this test fail at AST build time ("unsupported expression kind
+     * ifacemethod") instead of regressing silently. The snapshot
+     * corpus cannot pin this: it runs through P3SyncMain, not
+     * SchedMain.
+     */
+    public void testGc08IfaceMethodDispatch() throws Exception {
+        assertEquals(expected("gc08_iface_method_dispatch"), runGo("gc08_iface_method_dispatch"),
+                "gc08_iface_method_dispatch");
     }
 
     /**

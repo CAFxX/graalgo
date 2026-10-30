@@ -117,6 +117,29 @@ public final class ReflectLinknames {
                         args[1], (int) num(args[2]));
                 return null;
             }, 3);
+            // fix-redmaster-r53: reflect.Value.Clear's map branch calls
+            // mapclear(t, m) (gc runtime/map.go's reflect_mapclear,
+            // linked as reflect.mapclear). Until now no implementation
+            // was registered, so the first map Clear through real
+            // reflect died binding the symbol — masked until r53 fixed
+            // the map Kind read, which had panicked earlier with
+            // ValueError{Invalid} instead of reaching the map branch.
+            // gc: clearing a nil map is a no-op, so null / null-handle
+            // map words clear to nothing instead of failing the
+            // "not a map" check in asMap.
+            Linknames.register("reflect.mapclear", args -> {
+                tokForTypeArg(args[0], "reflect.mapclear");
+                Object ptr = args[1];
+                if (ptr == null) {
+                    return null;
+                }
+                if (ptr instanceof Number n
+                        && ReflectRefs.denotedValue(n.longValue(), GoKind.MAP) == null) {
+                    return null;
+                }
+                asMap(ptr, "reflect.mapclear").clear();
+                return null;
+            }, 2);
             Linknames.register("reflect.typedslicecopy", args -> typedSliceCopy(
                     tokForTypeArg(args[0], "reflect.typedslicecopy"),
                     (GoStruct) args[1], (GoStruct) args[2]), 3);
@@ -1320,6 +1343,16 @@ public final class ReflectLinknames {
      * {array, offset} for a pointer denoting an array's storage: an
      * element pointer into the array, a plain pointer to it, or a
      * handle resolving to it (directly or through a cell).
+     *
+     * <p>fix-redmaster-r53: a slice header's Data word is an
+     * {@code ArrayRef} handle (array + offset, minted by
+     * {@code UnsafeOps.sliceData} for the header view), not a direct
+     * array handle — so a {@code typedarrayclear} over a reflect
+     * slice value (whose Data word comes from that view) died here
+     * with "pointer does not denote an array". An {@code ArrayRef}
+     * resolves to its backing array at its offset, in both the
+     * GoPointer and the handle shapes, exactly as the byte-offset
+     * view helpers ({@code arrayRoot}) already unwrap it.
      */
     private static Object[] arrayBacking(Object ptr, String symbol) {
         if (ptr instanceof GoPointer p) {
@@ -1333,6 +1366,9 @@ public final class ReflectLinknames {
             if (ref instanceof GoSlice sl) {
                 return new Object[]{sl.array(), sl.offset()};
             }
+            if (ref instanceof graalgo.p3unsafe.UnsafeTable.ArrayRef ar) {
+                return new Object[]{ar.array(), ar.offset()};
+            }
         }
         if (ptr instanceof Number n) {
             Object ref = ReflectRefs.resolve(n.longValue());
@@ -1342,6 +1378,9 @@ public final class ReflectLinknames {
             }
             if (v instanceof GoSlice sl) {
                 return new Object[]{sl.array(), sl.offset()};
+            }
+            if (v instanceof graalgo.p3unsafe.UnsafeTable.ArrayRef ar) {
+                return new Object[]{ar.array(), ar.offset()};
             }
         }
         throw new IllegalStateException(symbol + ": pointer does not denote an array: "

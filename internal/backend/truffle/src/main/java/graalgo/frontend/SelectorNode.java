@@ -86,6 +86,29 @@ public final class SelectorNode extends GoExprNode {
     }
 
     /**
+     * Kind-aware overload (fix-redmaster-r53): the final step's read
+     * uses the kind-aware embedding descent, so a {@code *Type}-typed
+     * read on a wider kind shell (notably {@code MapType}) finds the
+     * prefix header's field instead of the shell's same-carrier
+     * colliding field. Non-final steps keep the legacy behavior:
+     * they navigate promotion paths on the value's own type.
+     * Other callers keep using the boolean overload unchanged.
+     */
+    public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site,
+            GoKind expectedKind) {
+        for (int i = 0; i < selpath.length; i++) {
+            o = deref(o, site);
+            GoStruct s = (GoStruct) o;
+            if (i == selpath.length - 1) {
+                o = readFieldEmbedded(s, selpath[i], expectedKind);
+            } else {
+                o = readFieldEmbedded(s, selpath[i], false);
+            }
+        }
+        return derefResult ? deref(o, site) : o;
+    }
+
+    /**
      * Reads field {@code idx} from struct {@code s}, with embedding-prefix
      * descent (r37, tightened r38).
      *
@@ -125,6 +148,94 @@ public final class SelectorNode extends GoExprNode {
      */
     private static Object readFieldEmbedded(GoStruct s, int idx) {
         return readFieldEmbedded(s, idx, false);
+    }
+
+    /**
+     * Field read with embedding-prefix descent keyed on the compiled
+     * read's expected kind (fix-redmaster-r53).
+     *
+     * <p>The r37/r38 descent fires only when the index is out of range
+     * for the runtime struct, and the r40 scalar trigger only when the
+     * in-range field's carrier differs from the expected scalar
+     * carrier. Both miss the case where the runtime struct is WIDER
+     * than the static type and the colliding field has the SAME
+     * carrier but a DIFFERENT kind: {@code internal/abi.MapType} has
+     * 13 fields while {@code internal/abi.Type} has 11, so a
+     * {@code *Type}-compiled read of {@code Kind_} (field 6, UINT8)
+     * lands in range on {@code MapType.KeysOff} (field 6, UINT64, left
+     * zero by the shell fill) and silently returns 0 instead of the
+     * map kind 21. Every other abi kind shell is narrower than
+     * {@code Type} (2–4 fields), so the out-of-range descent saved
+     * them and this defect hid until a map value reached
+     * {@code reflect.ValueOf} (whose flag kind bits come from
+     * {@code t.Kind()}): every map {@code Value} came out invalid,
+     * {@code Value.Clear} on a map panicked, and the test binary's
+     * panic path then died in {@code reflect.typedarrayclear}.
+     *
+     * <p>The trigger is therefore kind equality, not just carrier
+     * equality: when the in-range field's kind differs from the
+     * expected kind and the embedding prefix's field at the same index
+     * DOES carry the expected kind, the read descends into the prefix
+     * (exactly as gc's flat layout does for a prefix cast). When the
+     * prefix does not match either, the direct read is preserved, so
+     * legitimate reads on the wider type itself (whose field kind
+     * always equals the compiled kind) are untouched. Struct-kind
+     * reads are the known blind spot of this trigger (a prefix struct
+     * and a struct field share the kind), but the abi header surface
+     * — the only prefix-cast surface — has no struct fields, so the
+     * hole cannot fire there; closing it needs static-descriptor
+     * plumbing, which is out of scope for this lane.
+     */
+    private static Object readFieldEmbedded(GoStruct s, int idx, GoKind expected) {
+        for (int depth = 0; depth < 32; depth++) {
+            GoStructDescriptor desc = s.descriptor();
+            if (idx < desc.fields().size()) {
+                GoStructDescriptor.Field direct = desc.field(idx);
+                if (expected != null && direct.kind() != expected) {
+                    GoStruct next = prefixCandidateKind(s, idx, expected);
+                    if (next != null) {
+                        s = next;
+                        continue;
+                    }
+                    // No matching prefix: preserve the direct read.
+                }
+                if (direct.inLongs()) {
+                    return Long.valueOf(s.getLong(idx));
+                }
+                return s.getObject(idx);
+            }
+            GoStruct next = prefixCandidate(s, idx, false);
+            if (next == null) {
+                // No embedding descent (or the candidate field is null):
+                // preserve the original out-of-range failure.
+                desc.field(idx);
+            }
+            s = next;
+        }
+        throw new IllegalStateException("embedding descent too deep");
+    }
+
+    /**
+     * The embedding-prefix candidate for {@code idx} whose field at
+     * {@code idx} carries exactly {@code expected}: field 0's live
+     * struct value when field 0 is a value-embedded (struct-kind)
+     * field covering {@code idx}. Null when there is no such prefix.
+     */
+    private static GoStruct prefixCandidateKind(GoStruct s, int idx, GoKind expected) {
+        GoStructDescriptor desc = s.descriptor();
+        if (desc.fields().isEmpty()
+                || desc.field(0).kind() != GoKind.STRUCT) {
+            return null;
+        }
+        Object v = s.getObject(0);
+        if (!(v instanceof GoStruct gs)
+                || idx >= gs.descriptor().fields().size()) {
+            return null;
+        }
+        if (gs.descriptor().field(idx).kind() != expected) {
+            return null;
+        }
+        return gs;
     }
 
     /**
@@ -229,8 +340,10 @@ public final class SelectorNode extends GoExprNode {
         // P3-M4 remediation (P1-2): site-carrying path — a nil pointer in
         // the selection chain panics at this selector's line.
         Object rawObj = obj.executeObject(frame);
-        Object o = readFieldPath(rawObj, selpath, false, this,
-                kind().isIntKind() || kind().isFloatKind() || kind() == GoKind.BOOL);
+        // fix-redmaster-r53: pass the compiled field kind so the
+        // final step's embedding descent is kind-aware (a *Type-typed
+        // Kind_ read on a MapType shell must not land on KeysOff).
+        Object o = readFieldPath(rawObj, selpath, false, this, kind());
         if (o instanceof Long l) {
             // Longs-carried field: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
