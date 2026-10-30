@@ -35,6 +35,12 @@ const (
 	asmComplex
 )
 
+// asmUnknown is returned by asmKindForType for underlying types it does
+// not model (e.g. a type parameter's union constraint). It must never
+// be a panic: a vet run must survive unmodeled input, reporting at
+// most a mismatch diagnostic if assembly references such a variable.
+const asmUnknown asmKind = -1
+
 // asmArch describes assembly parameters for an architecture.
 type asmArch struct {
 	name      string
@@ -411,7 +417,10 @@ func asmKindForType(t types.Type, size int) asmKind {
 	case *types.Slice:
 		return asmSlice
 	}
-	panic("unreachable")
+	// Unmodeled underlying type (e.g. *types.Union from a type
+	// parameter constraint): report the sentinel, never panic — the
+	// caller degrades to a mismatch diagnostic at most.
+	return asmUnknown
 }
 
 // component is an assembly-addressable component of a composite type,

@@ -43,6 +43,11 @@ func Analyzers() []*Analyzer {
 }
 
 // Run analyzes the named Go source files and returns sorted diagnostics.
+// All files must belong to a single package: they are type-checked
+// together as one package, and several analyzers key on package identity
+// (e.g. composites' "own package" test). Callers vetting several
+// directories must call Run once per directory, never once over the
+// merged file list.
 // It parses with comments (for directive checks) and type-checks on a
 // best-effort basis: if type checking fails, analyzers still run on the
 // AST with whatever type info was gathered.

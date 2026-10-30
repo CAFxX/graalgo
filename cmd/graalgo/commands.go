@@ -254,7 +254,15 @@ func cmdBuild(root string, args []string) int {
 //
 // Runs the frontend translation check (--check) over the named packages,
 // then runs the static analyzers in internal/vet and reports diagnostics
-// in the same style as `go vet`.
+// in the same style as `go vet`: diagnostics and the "no issues found"
+// line go to stderr, and the exit code is 1 when any package fails the
+// check or produces a diagnostic.
+//
+// Each directory is vetted as its own package, like `go vet`: the
+// frontend check compiles a package's files together as one unit (the
+// same contract as cmdRun), and the analyzers type-check their input
+// as one package, so files from different directories must never be
+// merged into a single pseudo-package.
 func cmdVet(root string, args []string) int {
 	files, err := resolveFiles(args)
 	if err != nil {
@@ -262,28 +270,50 @@ func cmdVet(root string, args []string) int {
 		return 1
 	}
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	anyDiagnostics := false
+	for _, group := range groupVetFiles(files) {
+		// The frontend compiles all of the package's files together.
+		if code := graalgoRun(root, append([]string{"--check"}, group...)); code != 0 {
 			failed = true
+			continue
+		}
+		ds, err := vet.Run(group)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			failed = true
+			continue
+		}
+		for _, d := range ds {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", d.Pos, d.Message)
+		}
+		if len(ds) > 0 {
+			anyDiagnostics = true
 		}
 	}
-	if failed {
+	if failed || anyDiagnostics {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
-	}
-	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
-	}
-	if len(ds) > 0 {
-		return 1
-	}
-	fmt.Println("vet: no issues found")
+	fmt.Fprintf(os.Stderr, "vet: no issues found\n")
 	return 0
+}
+
+// groupVetFiles groups resolved files by directory, preserving
+// first-seen directory order. Each group is one package for vetting:
+// files within a group are checked and analyzed together, files across
+// groups never are.
+func groupVetFiles(files []string) [][]string {
+	var groups [][]string
+	index := make(map[string]int)
+	for _, f := range files {
+		dir := filepath.Dir(f)
+		if i, ok := index[dir]; ok {
+			groups[i] = append(groups[i], f)
+			continue
+		}
+		index[dir] = len(groups)
+		groups = append(groups, []string{f})
+	}
+	return groups
 }
 
 // cmdFmt implements `graalgo fmt [packages]`.
