@@ -123,6 +123,54 @@ func main() {
 	}
 }
 
+// TestRuntimeFuncNameMethodValueFailsAtBuild (P1-3, review-funcname):
+// (*runtime.Func).Name has no methodref-able implementation — only the
+// direct call lowers to the "runtimefuncname" wire node. A method value
+// must therefore fail at BUILD time with a scope error. Before the fix
+// this crashed the exporter with a nil-pointer dereference (the marker
+// methodCall carries a nil decl), and the old methodRefNode path emitted
+// a runtime panic instead — both are compile-then-die surfaces, never
+// a clean build error.
+func TestRuntimeFuncNameMethodValueFailsAtBuild(t *testing.T) {
+	for _, body := range []string{
+		"f := fn.Name\n\t_ = f()",
+		"sink(fn.Name)",
+	} {
+		src := "package main\n\nimport \"runtime\"\n\nfunc sink(f func() string) { _, _ = f, f() }\n\nfunc main() {\n\tvar pcs [8]uintptr\n\tn := runtime.Callers(1, pcs[:])\n\tfn := runtime.FuncForPC(pcs[0])\n\t_, _ = n, fn\n\t" + body + "\n}\n"
+		_, err := ExportFile(writeSyncProg(t, src))
+		if err == nil {
+			t.Errorf("%q: expected build-time scope error, got success", body)
+			continue
+		}
+		if !strings.Contains(err.Error(), "method value") || !strings.Contains(err.Error(), "not supported") {
+			t.Errorf("%q: error %q is not the method-value scope error", body, err)
+		}
+	}
+}
+
+// TestRuntimeFuncNameCallShapesStillWork (P1-3, review-funcname): the
+// direct call, deferred call, and zero-arg go statement all lower to
+// the "runtimefuncname" wire node (backed by the backend's existing
+// PC-to-function table) — the scope error above applies only to the
+// method-value/methodref shapes, never to a real call.
+func TestRuntimeFuncNameCallShapesStillWork(t *testing.T) {
+	for _, body := range []string{
+		"_ = fn.Name()",
+		"defer fn.Name()",
+		"go fn.Name()",
+	} {
+		src := "package main\n\nimport \"runtime\"\n\nfunc main() {\n\tvar pcs [8]uintptr\n\tn := runtime.Callers(1, pcs[:])\n\tfn := runtime.FuncForPC(pcs[0])\n\t_, _ = n, fn\n\t" + body + "\n}\n"
+		out, err := ExportFile(writeSyncProg(t, src))
+		if err != nil {
+			t.Errorf("%q: unexpected export error: %v", body, err)
+			continue
+		}
+		if !strings.Contains(out, `"kind": "runtimefuncname"`) {
+			t.Errorf("%q: exported JSON missing \"kind\": \"runtimefuncname\"", body)
+		}
+	}
+}
+
 // TestRuntimeStackFailFast: the multi-result members (Caller, Next,
 // FileLine) outside an N-target assignment fail fast and loud: a bare
 // statement reaches the exporter's named multi-result scope error, and a

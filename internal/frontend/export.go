@@ -4712,10 +4712,14 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
+	// noMethodRef, when non-empty, marks a synthetic method with no
+	// methodref-able implementation (e.g. (*runtime.Func).Name, whose
+	// only lowering is the direct-call "runtimefuncname" wire node).
+	// It holds the build-time error message. Consumers MUST fail at
+	// build time with it (P1-3, review-funcname): never emit a runtime
+	// panic for it — a program that passes `graalgo build` must not die
+	// in production on a documented stdlib API.
+	noMethodRef string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4757,11 +4761,17 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	rn := derefNamed(selection.Recv())
 	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
 	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
+	// methodIndex: it has no funcdecl to bind a methodref/methodvalue
+	// to. Return a marker methodCall; consumers fail at build time
+	// (P1-3, review-funcname). Direct calls never reach here:
+	// exportCall intercepts runtime stack methods into the
+	// "runtimefuncname" wire node, backed by the backend's existing
+	// PC-to-function table (StackTrace interning + GoFuncInfo), so
+	// fn.Name() works end to end; only the methodref/methodvalue
+	// shapes are out of scope, and they must fail loudly at build.
 	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
 		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
+		return &methodCall{noMethodRef: "runtime.Func.Name is not available via a method reference in frontend/v1 scope (WS H); direct calls fn.Name() are supported via the runtimefuncname wire node"}, nil
 	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
@@ -9807,16 +9817,15 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
+	// P1-3 (review-funcname): synthetic method with no methodref-able
+	// implementation (noMethodRef). Fail at BUILD time with a scope
+	// error — never emit a runtime panic: a program that passes
+	// `graalgo build` must not die in production on a documented stdlib
+	// API. Direct fn.Name() calls never reach here (exportCall
+	// intercepts them into the "runtimefuncname" wire node); this
+	// branch is the backstop for any other methodref route.
+	if mc.noMethodRef != "" {
+		return nil, scopeErrorf("%s", mc.noMethodRef)
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
@@ -9962,6 +9971,16 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 			return nil, scopeErrorf("method value %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
 		}
 		return nil, err
+	}
+	// P1-3 (review-funcname): a synthetic method with no methodref-able
+	// implementation (noMethodRef) has a nil decl: dereferencing it
+	// below used to crash the exporter with a nil-pointer panic, and
+	// the old methodRefNode path emitted a runtime panic instead.
+	// Fail at build time with a scope error, like the iface-fallback
+	// method value below. Direct calls fn.Name() are unaffected (they
+	// lower to the "runtimefuncname" wire node, not through here).
+	if mc.noMethodRef != "" {
+		return nil, scopeErrorf("method value runtime.Func.Name is not supported in frontend/v1 scope (WS H); direct calls fn.Name() are supported via the runtimefuncname wire node")
 	}
 	// The ifacemethod fallback is call-only: a method value on a type
 	// parameter would need itab dispatch deferred to call time, which is
