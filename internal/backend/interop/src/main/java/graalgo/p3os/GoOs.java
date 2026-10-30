@@ -100,7 +100,12 @@ import graalgo.values.GoString;
  * restored to default and one native write is re-driven, so the kernel
  * delivers a real SIGPIPE — the process dies like gc (exit 141). If the
  * signal path is unavailable, {@code -EPIPE} is returned and the
- * SIGPIPE corpus program fails loudly instead of drifting.
+ * SIGPIPE corpus program fails loudly instead of drifting. Stdio is
+ * special (N-P1-10): its channels delegate to PrintStreams, which
+ * swallow IOExceptions, so {@code write} detects stdio failure via
+ * {@code checkError()} after the write and delivers SIGPIPE with a
+ * self-pipe probe write instead of a channel re-drive (which the
+ * PrintStream would swallow again).
  *
  * <p>State is reset by {@link #init(String[])}, called once per program
  * run by the launcher (staged P3SyncMain patch) <em>before</em> Go
@@ -801,7 +806,8 @@ public final class GoOs {
 
     /** graalgo.os.write — exactly one channel write (R2); EPIPE → R7. */
     public static long write(Object hArg, Object bArg) {
-        ChannelHandle ch = channelHandle(num(hArg));
+        long cookie = num(hArg);
+        ChannelHandle ch = channelHandle(cookie);
         if (ch == null) {
             return -EBADF;
         }
@@ -815,6 +821,17 @@ public final class GoOs {
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
         try {
             int n = wch.write(bb);
+            if (ch.kind == KIND_STDIO && stdioError(cookie)) {
+                // N-P1-10: the stdio channels delegate to System.out/err
+                // PrintStreams, which swallow IOExceptions — the channel
+                // write above "succeeded" even when the pipe is closed.
+                // The swallowed failure is visible only via checkError
+                // (which flushes, so buffered bytes actually reach the
+                // kernel first). Treat it as EPIPE and run the SIGPIPE
+                // dance; if the process survives, surface -EPIPE.
+                onEpipeStdio();
+                return -EPIPE;
+            }
             return (long) n + 1;
         } catch (IOException e) {
             if (errno(e) == EPIPE) {
@@ -822,14 +839,58 @@ public final class GoOs {
                 // fds get EPIPE as an error. Match: SIGPIPE dance only
                 // for stdio handles, error return otherwise.
                 if (ch.kind == KIND_STDIO) {
-                    onEpipe(wch, bb);
+                    onEpipeStdio();
                     // Still alive: the signal path was unavailable — loud
                     // fallback (R7): surface EPIPE; the SIGPIPE corpus
                     // program then fails loudly instead of drifting.
+                } else {
+                    onEpipe(wch, bb);
                 }
                 return -EPIPE;
             }
             return -errno(e);
+        }
+    }
+
+    /**
+     * Whether the current stdio PrintStream for {@code cookie} (2 =
+     * stdout, 3 = stderr) reports an error. Package-visible for the
+     * unit test. {@code checkError()} flushes first, which is what
+     * makes a broken pipe visible at all: without the flush, small
+     * writes sit in the PrintStream's buffer and no failure has
+     * happened yet. Flushing per intrinsic write also matches gc,
+     * whose os.Stdout writes are unbuffered syscalls, not buffered
+     * stream writes.
+     *
+     * <p>Known limit, documented rather than hidden: a PrintStream's
+     * error flag is sticky and its errno is erased — once set, later
+     * writes report EPIPE too, and a non-EPIPE failure (e.g. a full
+     * disk) is indistinguishable from a broken pipe. For a closed
+     * pipe the sticky report is correct (the pipe stays closed); for
+     * any other PrintStream failure the alternative — reporting
+     * success, the N-P1-10 bug — is strictly worse.
+     */
+    static boolean stdioError(long cookie) {
+        java.io.PrintStream ps = cookie == 2L ? System.out
+                : cookie == 3L ? System.err : null;
+        return ps != null && ps.checkError();
+    }
+
+    /**
+     * Restores the JVM's SIGPIPE disposition to the default (the JVM
+     * starts with SIGPIPE ignored). Returns false if the signal API
+     * is unavailable.
+     */
+    private static boolean restoreSigpipeDefault() {
+        try {
+            Class<?> sigCls = Class.forName("sun.misc.Signal");
+            Class<?> handlerCls = Class.forName("sun.misc.SignalHandler");
+            Object sigPipe = sigCls.getConstructor(String.class).newInstance("PIPE");
+            Object sigDfl = handlerCls.getField("SIG_DFL").get(null);
+            sigCls.getMethod("handle", sigCls, handlerCls).invoke(null, sigPipe, sigDfl);
+            return true;
+        } catch (Throwable t) {
+            return false; // signal path unavailable — caller returns EPIPE
         }
     }
 
@@ -842,20 +903,53 @@ public final class GoOs {
      * {@code -EPIPE}.
      */
     private static void onEpipe(WritableByteChannel ch, ByteBuffer bb) {
-        try {
-            Class<?> sigCls = Class.forName("sun.misc.Signal");
-            Class<?> handlerCls = Class.forName("sun.misc.SignalHandler");
-            Object sigPipe = sigCls.getConstructor(String.class).newInstance("PIPE");
-            Object sigDfl = handlerCls.getField("SIG_DFL").get(null);
-            sigCls.getMethod("handle", sigCls, handlerCls).invoke(null, sigPipe, sigDfl);
-        } catch (Throwable t) {
-            return; // signal path unavailable — caller returns EPIPE
+        if (!restoreSigpipeDefault()) {
+            return;
         }
         try {
             ch.write(bb);
         } catch (IOException retry) {
             // The retry should have died via SIGPIPE; if it threw
             // instead, fall through to the EPIPE return.
+        }
+    }
+
+    /**
+     * EPIPE path for stdio handles (N-P1-10). The generic {@link #onEpipe}
+     * re-drive cannot work here: re-driving the stdio channel writes
+     * through the same swallowing PrintStream, so the kernel never sees
+     * a write and no SIGPIPE is ever delivered — and the original
+     * buffer may already be consumed, so a re-drive could write zero
+     * bytes, which never generates SIGPIPE even on a real pipe.
+     * Instead, after restoring the default disposition, write one byte
+     * to a freshly created pipe whose read end is already closed: the
+     * kernel delivers SIGPIPE to this process for that write, whatever
+     * the guest's stdout destination is, and no byte is written to any
+     * real output (so batch capture and real fds are untouched). If
+     * the process survives (signal blocked, pipe unavailable), the
+     * caller surfaces {@code -EPIPE} as the loud fallback.
+     */
+    private static void onEpipeStdio() {
+        if (!restoreSigpipeDefault()) {
+            return;
+        }
+        Pipe probe = null;
+        try {
+            probe = Pipe.open();
+            probe.source().close();
+            probe.sink().write(ByteBuffer.wrap(new byte[] {0}));
+            // Survived: the write threw or returned instead of dying.
+        } catch (Throwable ignored) {
+            // SIGPIPE blocked/unavailable, or the pipe itself failed:
+            // fall through to the caller's -EPIPE return.
+        } finally {
+            if (probe != null) {
+                try {
+                    probe.sink().close();
+                } catch (IOException ignored) {
+                    // Best effort; the process is about to report EPIPE.
+                }
+            }
         }
     }
 

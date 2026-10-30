@@ -596,6 +596,97 @@ public final class GoOsErrnoTest {
         }
     }
 
+    // N-P1-10: stdio failure detection. A PrintStream over a stream
+    // that throws on write/flush (the broken-pipe shape: the kernel
+    // write fails, PrintStream swallows it) must be reported by
+    // stdioError, while a healthy capture stream must not. This tests
+    // the detection mechanism only, not the death dance: calling
+    // GoOs.write here would run onEpipeStdio in this JVM and kill the
+    // test runner (see testStdioBrokenPipeDiesWithSigpipe, which puts
+    // the whole path, death included, in a child JVM).
+    private static final class FailingOutputStream extends java.io.OutputStream {
+        @Override
+        public void write(int b) throws IOException {
+            throw new IOException("Broken pipe");
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            throw new IOException("Broken pipe");
+        }
+
+        @Override
+        public void flush() throws IOException {
+            throw new IOException("Broken pipe");
+        }
+    }
+
+    public void testStdioErrorDetection() {
+        GoOs.init(new String[0]);
+        PrintStream realOut = System.out;
+        PrintStream realErr = System.err;
+        try {
+            System.setOut(new PrintStream(new FailingOutputStream(), true,
+                    StandardCharsets.UTF_8));
+            check(GoOs.stdioError(2L), "failing stdout must report error");
+            System.setErr(new PrintStream(new FailingOutputStream(), true,
+                    StandardCharsets.UTF_8));
+            check(GoOs.stdioError(3L), "failing stderr must report error");
+            check(!GoOs.stdioError(1L), "stdin cookie has no PrintStream");
+            check(!GoOs.stdioError(99L), "unknown cookie has no PrintStream");
+
+            ByteArrayOutputStream ok = new ByteArrayOutputStream();
+            System.setOut(new PrintStream(ok, true, StandardCharsets.UTF_8));
+            check(!GoOs.stdioError(2L), "healthy stdout must not report error");
+            System.setErr(new PrintStream(ok, true, StandardCharsets.UTF_8));
+            check(!GoOs.stdioError(3L), "healthy stderr must not report error");
+        } finally {
+            System.setOut(realOut);
+            System.setErr(realErr);
+        }
+    }
+
+    // N-P1-10, child entry point for testStdioBrokenPipeDiesWithSigpipe:
+    // never invoked by the test runner (it only calls test* methods).
+    // Sleeps so the parent can close the read end of this JVM's stdout
+    // pipe, then writes to stdout through GoOs. Before the fix the
+    // PrintStream swallowed the broken-pipe failure and this exited 0
+    // (or 42/43 below); with the fix the SIGPIPE dance kills it (141).
+    public static void main(String[] args) throws Exception {
+        if (args.length == 0 || !args[0].equals("stdio-epipe-child")) {
+            return;
+        }
+        Thread.sleep(800);
+        GoOs.init(new String[0]);
+        long r = GoOs.write(2L, byteSlice("hello-broken-pipe\n".getBytes(StandardCharsets.UTF_8)));
+        System.err.println("CHILD-SURVIVED r=" + r);
+        System.exit(r == -GoOs.EPIPE ? 42 : 43);
+    }
+
+    // N-P1-10, end to end in a child JVM: the child's stdout is a pipe
+    // whose read end the parent closes before the child writes, so the
+    // child's stdout write hits a broken pipe exactly like
+    // `program | head -c 0`. gc dies with SIGPIPE (exit 141); before
+    // this fix graalgo exited 0 having "written" successfully.
+    public void testStdioBrokenPipeDiesWithSigpipe() throws Exception {
+        String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        ProcessBuilder pb = new ProcessBuilder(javaBin, "-cp",
+                System.getProperty("java.class.path"),
+                GoOsErrnoTest.class.getName(), "stdio-epipe-child");
+        pb.redirectError(ProcessBuilder.Redirect.INHERIT);
+        pb.redirectInput(ProcessBuilder.Redirect.PIPE);
+        pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
+        Process child = pb.start();
+        // Close the child's stdin and, critically, the read end of its
+        // stdout pipe: from here on the child writes to a broken pipe.
+        child.getOutputStream().close();
+        child.getInputStream().close();
+        boolean finished = child.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
+        check(finished, "stdio-epipe child did not exit in 30s");
+        int exit = child.exitValue();
+        checkEq(141, exit, "broken-pipe stdout write must die with SIGPIPE (141)");
+    }
+
     public void testIdentity() {
         GoOs.init(new String[0]);
         check(GoOs.getpid() > 0, "getpid");
