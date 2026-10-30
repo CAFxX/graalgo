@@ -1,15 +1,21 @@
 package graalgo.p3net;
 
-import com.oracle.truffle.api.dsl.Cached;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
+import java.io.InterruptedIOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
+import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import javax.net.ssl.SSLException;
 
 /**
  * P3-M9 (tier-5: net/http): Java-delegated HTTP client.
@@ -41,7 +47,7 @@ public final class GoHttp {
      * @param headers flat [k, v, k, v, ...] header pairs (GoSlice of GoString)
      * @param body request body bytes (may be null/empty)
      * @return GoSlice of bytes encoding the response:
-     *         int64 BE status, int64 BE headerCount,
+     *         <p>Success: int64 BE status, int64 BE headerCount,
      *         per header: int64 BE keyLen, key UTF-8 bytes,
      *                     int64 BE valLen, val UTF-8 bytes,
      *         int64 BE bodyLen, body bytes.
@@ -50,6 +56,31 @@ public final class GoHttp {
      *         .([]interface{}) assertions need descriptor-identical
      *         GoInterface elements which Java cannot mint; a concrete
      *         []byte needs no boxing at all.
+     *         <p>Transport error (review R1-5 fix): the old encoding
+     *         collapsed every failure to 24 zero bytes (status 0,
+     *         headerCount 0, bodyLen 0), destroying the error kind and
+     *         message and clearing the thread's interrupt flag on
+     *         interruption. The error frame is instead:
+     *         int64 BE status (= 0, preserving the legacy "error" signal),
+     *         int64 BE headerCount (= -1, a sentinel no success frame
+     *         can carry, so an error frame is unambiguous),
+     *         int64 BE kindLen, kind UTF-8 bytes (one of
+     *         {@code interrupted}, {@code timeout}, {@code connect},
+     *         {@code dns}, {@code tls}, {@code invalid}, {@code io},
+     *         {@code unknown} — see {@link #classifyError}),
+     *         int64 BE messageLen, message UTF-8 bytes (the failure's
+     *         message, capped; may name the request URL, as gc's
+     *         {@code *url.Error} does). There is no body section.
+     *         A reader MUST treat headerCount == -1 as an error frame
+     *         and surface kind + message; it must never treat the frame
+     *         as an empty response. {@link #decodeError} is the
+     *         canonical Java-side parser for this format (used by the
+     *         tests); a Go-side reader must follow the same layout.
+     *         <p>Interruption: if the failure is (or wraps) an
+     *         interruption, the thread's interrupt flag is restored
+     *         before returning, because
+     *         {@code HttpClient.send} clears it when throwing
+     *         {@code InterruptedException}.
      */
     public static Object clientDo(Object method, Object urlStr, Object headers, Object body) {
         String m = toJavaString(method);
@@ -110,11 +141,177 @@ public final class GoHttp {
             byte[] enc = out.toByteArray();
             return goByteSlice(enc);
         } catch (Exception e) {
-            // Transport error: status 0, no headers, empty body. The Go
-            // side converts status 0 into an error.
-            return goByteSlice(new byte[24]);
-            // status=0, headerCount=0, bodyLen=0 (all zeros already).
+            return goByteSlice(encodeError(e));
         }
+    }
+
+    /**
+     * Decoded transport-error frame, or {@code null} when {@code enc} is
+     * not an error frame (a success frame, or anything else).
+     *
+     * @throws IllegalArgumentException if the frame carries the error
+     *         sentinel but is truncated or malformed — a corrupt error
+     *         frame must fail loud, never decode as an empty error.
+     */
+    static ErrorInfo decodeError(byte[] enc) {
+        if (enc == null || enc.length < 16) {
+            return null;
+        }
+        int p = 0;
+        long status = readI64(enc, p);
+        p += 8;
+        long headerCount = readI64(enc, p);
+        p += 8;
+        if (status != 0 || headerCount != -1) {
+            return null;
+        }
+        String kind = readString(enc, p);
+        p += 8 + utf8Len(enc, p);
+        String message = readString(enc, p);
+        p += 8 + utf8Len(enc, p);
+        if (p != enc.length) {
+            throw new IllegalArgumentException(
+                    "GoHttp error frame has trailing bytes: " + enc.length + " vs " + p);
+        }
+        return new ErrorInfo(kind, message);
+    }
+
+    /** A decoded error frame: the failure kind and message. */
+    record ErrorInfo(String kind, String message) {}
+
+    /**
+     * Encodes a transport failure as an error frame (see the
+     * {@link #clientDo} javadoc). Restores the thread's interrupt flag
+     * when the failure is an interruption.
+     */
+    static byte[] encodeError(Exception e) {
+        if (isInterrupted(e)) {
+            Thread.currentThread().interrupt();
+        }
+        String kind = classifyError(e);
+        String message = errorMessage(e);
+        byte[] kb = kind.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] mb = message.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        writeI64(out, 0);
+        writeI64(out, -1);
+        writeI64(out, kb.length);
+        out.write(kb, 0, kb.length);
+        writeI64(out, mb.length);
+        out.write(mb, 0, mb.length);
+        return out.toByteArray();
+    }
+
+    /**
+     * Classifies a transport failure from its cause chain, by exception
+     * type, never by message text, so it does not depend on JDK wording
+     * or locale. Priority is by specificity across the WHOLE chain, not
+     * by position in it: {@code HttpClient.send} often wraps the
+     * specific failure (e.g. a {@code ConnectException}) in a generic
+     * {@code IOException}, so a first-match walk would report the
+     * wrapper ("io") and lose the cause. The most specific kind found
+     * anywhere in the chain wins, in this order: interrupted, connect
+     * timeout, timeout, tls, dns, connect, invalid, io. A connect
+     * timeout ({@code HttpConnectTimeoutException}, a subclass of
+     * {@code HttpTimeoutException}) is a {@code connect} failure, not a
+     * generic {@code timeout}.
+     */
+    static String classifyError(Throwable e) {
+        int best = Integer.MAX_VALUE;
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            int p = priorityOf(t);
+            if (p < best) {
+                best = p;
+            }
+        }
+        return switch (best) {
+            case 1 -> "interrupted";
+            case 2 -> "connect";
+            case 3 -> "timeout";
+            case 4 -> "tls";
+            case 5 -> "dns";
+            case 6 -> "connect";
+            case 7 -> "invalid";
+            case 8 -> "io";
+            default -> "unknown";
+        };
+    }
+
+    /** Specificity rank for {@link #classifyError}; MAX_VALUE = unclassifiable. */
+    private static int priorityOf(Throwable t) {
+        if (t instanceof InterruptedException || t instanceof InterruptedIOException) {
+            return 1;
+        }
+        if (t instanceof HttpConnectTimeoutException) {
+            return 2;
+        }
+        if (t instanceof HttpTimeoutException || t instanceof SocketTimeoutException) {
+            return 3;
+        }
+        if (t instanceof SSLException) {
+            return 4;
+        }
+        if (t instanceof UnknownHostException) {
+            return 5;
+        }
+        if (t instanceof ConnectException) {
+            return 6;
+        }
+        if (t instanceof IllegalArgumentException) {
+            return 7;
+        }
+        if (t instanceof java.io.IOException) {
+            return 8;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private static boolean isInterrupted(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof InterruptedException || t instanceof InterruptedIOException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * First non-empty message in the cause chain, else the exception's
+     * class name. Capped at 4096 characters so a pathological message
+     * cannot bloat the wire frame.
+     */
+    private static String errorMessage(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && !m.isEmpty()) {
+                return m.length() > 4096 ? m.substring(0, 4096) : m;
+            }
+        }
+        return e.getClass().getSimpleName();
+    }
+
+    private static long readI64(byte[] enc, int p) {
+        if (p + 8 > enc.length) {
+            throw new IllegalArgumentException("GoHttp error frame truncated at offset " + p);
+        }
+        long v = 0;
+        for (int i = 0; i < 8; i++) {
+            v = (v << 8) | (enc[p + i] & 0xFFL);
+        }
+        return v;
+    }
+
+    private static long utf8Len(byte[] enc, int p) {
+        long len = readI64(enc, p);
+        if (len < 0 || p + 8 + len > enc.length) {
+            throw new IllegalArgumentException("GoHttp error frame has bad length at offset " + p);
+        }
+        return len;
+    }
+
+    private static String readString(byte[] enc, int p) {
+        long len = utf8Len(enc, p);
+        return new String(enc, p + 8, (int) len, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     private static void writeI64(java.io.ByteArrayOutputStream out, long v) {

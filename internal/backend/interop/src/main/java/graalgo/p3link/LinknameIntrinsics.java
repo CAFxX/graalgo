@@ -834,8 +834,10 @@ public final class LinknameIntrinsics {
      * D5 argument types: method and URL arrive as GoString, headers as
      * GoSlice of GoString (flat k/v pairs), body as GoSlice of bytes
      * (see {@link GoHttp#clientDo} for the calling convention); returns
-     * the documented GoSlice triple (status Long, header pairs, body
-     * bytes) which the Go side reads as []interface{}.
+     * a []byte wire frame — the success layout, or, on transport
+     * failure, an error frame (status 0, headerCount -1, kind +
+     * message) as documented on {@link GoHttp#clientDo}. A reader must
+     * treat the error frame as an error, never as an empty response.
      */
     private static void registerHttpIntrinsics() {
         Linknames.register("graalgo.http.client.do",

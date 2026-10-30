@@ -122,50 +122,89 @@ public final class RtMemStatsTest {
         double frac = Double.longBitsToDouble(get(ms, desc, "GCCPUFraction"));
         assertTrue(frac >= 0.0 && frac <= 1.0,
                 "GCCPUFraction must be in [0,1], got " + frac);
-        // Zero-equivalent fields the JVM cannot observe must stay zero.
-        assertEq(0, get(ms, desc, "Lookups"), "Lookups must be 0");
-        assertEq(0, get(ms, desc, "HeapReleased"), "HeapReleased must be 0");
-        assertEq(0, get(ms, desc, "HeapObjects"), "HeapObjects must be 0");
+        // Unmeasured-sentinel fields (see testMallocsFreesAreUnmeasuredZero):
+        // 0 means "not measured", never a counted value.
+        assertEq(0, get(ms, desc, "Lookups"), "Lookups must be 0 (unmeasured)");
+        assertEq(0, get(ms, desc, "HeapReleased"), "HeapReleased must be 0 (unmeasured)");
+        assertEq(0, get(ms, desc, "HeapObjects"), "HeapObjects must be 0 (unmeasured)");
     }
 
     /**
-     * Pins the documented DIV-M4-11 deviation: {@code TotalAlloc} is live
-     * heap-used, NOT the cumulative counter gc defines. Fails if the fill
-     * ever reports 0, a cumulative counter, or a monotonic max-seen
-     * accumulator for this field — any of which would silently change the
-     * documented semantics.
+     * Review R1-6 fix: {@code TotalAlloc} is a monotonic cumulative
+     * counter now, not live heap. Two consecutive fills must never
+     * decrease, and (unlike live heap) a fill after a GC cannot report
+     * less than a fill before it. This test would fail on the old
+     * live-heap implementation whenever GC reclaimed heap between fills;
+     * it cannot pass by reporting a constant, because the growth test
+     * below requires a real increase after allocation.
      */
-    public void testTotalAllocIsLiveHeapUsed() {
+    public void testTotalAllocIsMonotonic() {
         GoStructDescriptor desc = buildMemStatsDescriptor();
         GoStruct ms = GoStruct.zero(desc);
         RtMemStats.fillMemStats(ms);
-
-        long totalAlloc = get(ms, desc, "TotalAlloc");
-        long heapAlloc = get(ms, desc, "HeapAlloc");
-        long alloc = get(ms, desc, "Alloc");
-        assertEq(heapAlloc, totalAlloc,
-                "TotalAlloc must equal live HeapAlloc (documented DIV-M4-11 deviation)");
-        assertEq(alloc, totalAlloc,
-                "TotalAlloc must equal live Alloc (documented DIV-M4-11 deviation)");
+        long first = get(ms, desc, "TotalAlloc");
+        assertTrue(first > 0,
+                "TotalAlloc must be positive once allocation accounting is available, got " + first);
+        System.gc();
+        RtMemStats.fillMemStats(ms);
+        long second = get(ms, desc, "TotalAlloc");
+        assertTrue(second >= first,
+                "TotalAlloc must never decrease (gc would break monotonicity): first="
+                        + first + " second=" + second);
     }
 
     /**
-     * Pins the documented DIV-M4-11 deviation: {@code Mallocs}/
-     * {@code Frees} are always 0 — the JVM exposes no allocation counters.
-     * Consequence: {@code testing.AllocsPerRun} always returns 0 on this
-     * backend, so allocation-count assertions are vacuous here. Fails if
-     * the fill ever reports non-zero counts (or drops the fields), which
-     * would silently change the documented semantics.
+     * Review R1-6 fix: allocating a retained 8 MiB slice plus discarded
+     * garbage between two fills must grow {@code TotalAlloc} by a
+     * clearly measurable amount (threshold 4 MiB, half the retained
+     * allocation, so JVM-internal noise cannot fake it and the retained
+     * allocation alone cannot miss it). A live-heap implementation
+     * would fail this whenever the garbage is collected before the
+     * second fill; a constant implementation would fail it outright.
      */
-    public void testMallocsFreesAreAlwaysZero() {
+    public void testTotalAllocGrowsWithAllocation() {
+        GoStructDescriptor desc = buildMemStatsDescriptor();
+        GoStruct ms = GoStruct.zero(desc);
+        RtMemStats.fillMemStats(ms);
+        long before = get(ms, desc, "TotalAlloc");
+        byte[] retained = new byte[8 * 1024 * 1024];
+        for (int i = 0; i < retained.length; i += 4096) {
+            retained[i] = 1;
+        }
+        for (int i = 0; i < 200; i++) {
+            byte[] garbage = new byte[64 * 1024];
+            garbage[0] = (byte) i;
+        }
+        RtMemStats.fillMemStats(ms);
+        long after = get(ms, desc, "TotalAlloc");
+        assertTrue(after - before >= 4L * 1024 * 1024,
+                "TotalAlloc must grow by >= 4 MiB after allocating 8 MiB + garbage: before="
+                        + before + " after=" + after);
+        assertTrue(retained.length == 8 * 1024 * 1024, "retained array must stay live");
+    }
+
+    /**
+     * Pins the documented DIV-M4-11 sentinel contract (review R1-6,
+     * counts half): {@code Mallocs}/{@code Frees} are 0 because they
+     * are UNMEASURED on the JVM, not because nothing was allocated.
+     * This test's meaning is the opposite of the old
+     * testMallocsFreesAreAlwaysZero pin: it fails if the fill ever
+     * reports non-zero counts, because a non-zero count here would
+     * either be fabricated or would require DIV-M4-11 and this test to
+     * be rewritten for the new measured semantics first. Any
+     * {@code testing.AllocsPerRun}-style delta over these fields is
+     * meaningless on this backend (see the once-per-process warning
+     * from {@code RtMemStats.warnCountsUnmeasured}).
+     */
+    public void testMallocsFreesAreUnmeasuredZero() {
         GoStructDescriptor desc = buildMemStatsDescriptor();
         GoStruct ms = GoStruct.zero(desc);
         RtMemStats.fillMemStats(ms);
 
         assertEq(0, get(ms, desc, "Mallocs"),
-                "Mallocs must be 0 always (documented DIV-M4-11 deviation)");
+                "Mallocs must be 0 (unmeasured sentinel, not a count)");
         assertEq(0, get(ms, desc, "Frees"),
-                "Frees must be 0 always (documented DIV-M4-11 deviation)");
+                "Frees must be 0 (unmeasured sentinel, not a count)");
     }
 
     /** Reads a longs-carried field by name (fail loud on layout drift). */
