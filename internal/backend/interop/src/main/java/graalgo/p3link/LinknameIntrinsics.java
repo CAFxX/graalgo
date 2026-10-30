@@ -793,7 +793,7 @@ public final class LinknameIntrinsics {
     }
 
     /**
-     * Registers the 11 {@code graalgo.tls.*} intrinsics implemented by
+     * Registers the 12 {@code graalgo.tls.*} intrinsics implemented by
      * {@link TlsRuntime} (P3-M9 tier-5, SSLEngine delegation). The Go side
      * (synth_crypto_tls.go) drives the handshake state machine; these traps
      * only implement the cryptographic operations. Engine handles are longs
@@ -803,10 +803,10 @@ public final class LinknameIntrinsics {
     private static void registerTlsIntrinsics() {
         Linknames.register("graalgo.tls.newClientEngine",
                 args -> TlsRuntime.newClientEngine(args[0], args[1], args[2],
-                        args[3], args[4]), 5);
+                        args[3], args[4], args[5]), 6);
         Linknames.register("graalgo.tls.newServerEngine",
                 args -> TlsRuntime.newServerEngine(args[0], args[1], args[2],
-                        args[3], args[4], args[5]), 6);
+                        args[3], args[4], args[5], args[6], args[7]), 8);
         Linknames.register("graalgo.tls.beginHandshake",
                 args -> TlsRuntime.beginHandshake(args[0]), 1);
         Linknames.register("graalgo.tls.engineStatus",
@@ -823,6 +823,8 @@ public final class LinknameIntrinsics {
                 args -> TlsRuntime.peerCertificates(args[0]), 1);
         Linknames.register("graalgo.tls.connectionState",
                 args -> TlsRuntime.connectionState(args[0]), 1);
+        Linknames.register("graalgo.tls.negotiatedProtocol",
+                args -> TlsRuntime.negotiatedProtocol(args[0]), 1);
         Linknames.register("graalgo.tls.close",
                 args -> { TlsRuntime.close(args[0]); return null; }, 1);
     }

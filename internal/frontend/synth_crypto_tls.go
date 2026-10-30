@@ -332,6 +332,7 @@ func Client(conn net.Conn, config *Config) *Conn {
 		int64(config.MinVersion),
 		int64(config.MaxVersion),
 		encodeCipherSuites(config.CipherSuites),
+		encodeNextProtos(config.NextProtos),
 	)
 	return c
 }
@@ -358,15 +359,17 @@ func Server(conn net.Conn, config *Config) *Conn {
 		int64(config.MinVersion),
 		int64(config.MaxVersion),
 		encodeCipherSuites(config.CipherSuites),
+		encodeNextProtos(config.NextProtos),
+		int64(config.ClientAuth),
 	)
 	return c
 }
 
 //go:linkname newClientEngineTrap graalgo.tls.newClientEngine
-func newClientEngineTrap(serverName string, insecureSkipVerify bool, minVersion, maxVersion int64, cipherSuites []byte) int64
+func newClientEngineTrap(serverName string, insecureSkipVerify bool, minVersion, maxVersion int64, cipherSuites []byte, nextProtos []byte) int64
 
 //go:linkname newServerEngineTrap graalgo.tls.newServerEngine
-func newServerEngineTrap(chainDER []byte, keyAlg string, keyParams []byte, minVersion, maxVersion int64, cipherSuites []byte) int64
+func newServerEngineTrap(chainDER []byte, keyAlg string, keyParams []byte, minVersion, maxVersion int64, cipherSuites []byte, nextProtos []byte, clientAuth int64) int64
 
 // encodeCipherSuites encodes []uint16 as big-endian bytes.
 func encodeCipherSuites(suites []uint16) []byte {
@@ -374,6 +377,19 @@ func encodeCipherSuites(suites []uint16) []byte {
 	for i, s := range suites {
 		out[2*i] = byte(s >> 8)
 		out[2*i+1] = byte(s)
+	}
+	return out
+}
+
+// encodeNextProtos encodes []string as uint32-BE length + data items
+// (the same framing as encodeLengthPrefixed, for strings), so the Java
+// side can recover the ALPN protocol list without a new wire type.
+func encodeNextProtos(protos []string) []byte {
+	out := make([]byte, 0)
+	for _, p := range protos {
+		n := len(p)
+		out = append(out, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+		out = append(out, p...)
 	}
 	return out
 }
@@ -710,6 +726,9 @@ func peerCertificatesTrap(engineHandle int64) []byte
 //go:linkname connectionStateTrap graalgo.tls.connectionState
 func connectionStateTrap(engineHandle int64) int64
 
+//go:linkname negotiatedProtocolTrap graalgo.tls.negotiatedProtocol
+func negotiatedProtocolTrap(engineHandle int64) []byte
+
 // Handshake performs the TLS handshake, driving the Java SSLEngine state
 // machine: shuttling handshake records between the engine and the raw
 // net.Conn until the engine reports FINISHED. Afterwards (client side,
@@ -737,6 +756,9 @@ func (c *Conn) Handshake() error {
 		case engineFinished:
 			c.handshakeComplete = true
 			if err := c.verifyPeer(); err != nil {
+				return err
+			}
+			if err := c.verifyClientCert(); err != nil {
 				return err
 			}
 			// P3-M9 (x509): the in-process handshake test prints
@@ -828,6 +850,63 @@ func (c *Conn) verifyPeer() error {
 	return nil
 }
 
+// verifyClientCert verifies the client certificate chain after the handshake
+// (server side), per Config.ClientAuth, using x509.Verify with ClientCAs.
+// Go semantics (crypto/tls Config.ClientAuth):
+//   - NoClientCert / RequestClientCert: no verification (a presented
+//     certificate is accepted as-is and reported in PeerCertificates).
+//   - RequireAnyClientCert: a certificate must be presented, but it is
+//     not verified. Presence is normally enforced by the engine's
+//     needClientAuth flag; this check covers engines that completed
+//     without one anyway.
+//   - VerifyClientCertIfGiven: a presented certificate must verify.
+//   - RequireAndVerifyClientCert: a certificate must be presented and
+//     must verify.
+// A nil ClientCAs pool leaves Roots unset, exactly as the client-side
+// verifyPeer path leaves Roots unset for a nil RootCAs pool.
+func (c *Conn) verifyClientCert() error {
+	if c.isClient {
+		return nil
+	}
+	auth := NoClientCert
+	if c.config != nil {
+		auth = c.config.ClientAuth
+	}
+	peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
+	if len(peerDERs) == 0 {
+		if auth == RequireAnyClientCert || auth == RequireAndVerifyClientCert {
+			return errors.New("tls: client certificate required but none provided")
+		}
+		return nil
+	}
+	if auth != VerifyClientCertIfGiven && auth != RequireAndVerifyClientCert {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(peerDERs[0])
+	if err != nil {
+		return err
+	}
+	opts := x509.VerifyOptions{
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	if c.config != nil && c.config.ClientCAs != nil {
+		opts.Roots = c.config.ClientCAs
+	}
+	if len(peerDERs) > 1 {
+		intermediates := x509.NewCertPool()
+		for _, der := range peerDERs[1:] {
+			if cert, err := x509.ParseCertificate(der); err == nil {
+				intermediates.AddCert(cert)
+			}
+		}
+		opts.Intermediates = intermediates
+	}
+	if _, err := leaf.Verify(opts); err != nil {
+		return fmt.Errorf("tls: failed to verify client certificate: %w", err)
+	}
+	return nil
+}
+
 func writeAll(conn net.Conn, b []byte) error {
 	for len(b) > 0 {
 		n, err := conn.Write(b)
@@ -849,6 +928,21 @@ func (c *Conn) ConnectionState() ConnectionState {
 	}
 	if c.config != nil {
 		cs.ServerName = c.config.ServerName
+	}
+	// Negotiated ALPN protocol, as reported by the engine. IsMutual
+	// reports whether the negotiated protocol is in this side's
+	// NextProtos list (the engine only ever negotiates a protocol the
+	// local side offered / accepted, so this is true whenever a
+	// protocol was negotiated from a non-empty list).
+	negotiated := string(negotiatedProtocolTrap(c.engineHandle))
+	cs.NegotiatedProtocol = negotiated
+	if negotiated != "" && c.config != nil {
+		for _, p := range c.config.NextProtos {
+			if p == negotiated {
+				cs.NegotiatedProtocolIsMutual = true
+				break
+			}
+		}
 	}
 	// Peer certificates.
 	for _, der := range decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle)) {

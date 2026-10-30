@@ -274,18 +274,182 @@ public final class TlsRuntime {
     }
 
     /**
+     * Whether {@code s} is an IPv4 literal: four decimal octets, each
+     * 0-255. An octet with a leading zero (other than "0" itself) is
+     * not counted: Go's net.ParseIP rejects leading zeros, so such a
+     * name takes the SNI path, where SNIHostName accepts it.
+     */
+    private static boolean isIpv4Literal(String s) {
+        String[] parts = s.split("\\.", -1);
+        if (parts.length != 4) {
+            return false;
+        }
+        for (String p : parts) {
+            if (p.isEmpty() || p.length() > 3) {
+                return false;
+            }
+            if (p.length() > 1 && p.charAt(0) == '0') {
+                return false;
+            }
+            int v = 0;
+            for (int i = 0; i < p.length(); i++) {
+                char c = p.charAt(i);
+                if (c < '0' || c > '9') {
+                    return false;
+                }
+                v = v * 10 + (c - '0');
+            }
+            if (v > 255) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isHex(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                    || (c >= 'A' && c <= 'F'))) {
+                return false;
+            }
+        }
+        return s.length() > 0;
+    }
+
+    /**
+     * Whether {@code s} is an IPv6 literal: at most one "::"
+     * compression, groups of 1-4 hex digits, with an optional embedded
+     * trailing IPv4 literal (counting as two groups). Purely lexical:
+     * no DNS is consulted, so a hostname can never be mistaken for a
+     * literal here. A ':' can never appear in a DNS name, so a string
+     * containing ':' that fails this check still cannot take the SNI
+     * path successfully — SNIHostName rejects it and the caller
+     * proceeds without SNI.
+     */
+    private static boolean isIpv6Literal(String s) {
+        if (s.indexOf('%') >= 0) {
+            return false;
+        }
+        int dc = s.indexOf("::");
+        if (dc >= 0 && s.indexOf("::", dc + 2) >= 0) {
+            return false;
+        }
+        String head;
+        String tail;
+        if (dc >= 0) {
+            head = s.substring(0, dc);
+            tail = s.substring(dc + 2);
+        } else {
+            head = s;
+            tail = "";
+        }
+        // Collect groups in order so an embedded IPv4 tail is
+        // recognized wherever the address ends (compressed or not).
+        List<String> parts = new ArrayList<>();
+        for (String side : new String[]{head, tail}) {
+            if (side.isEmpty()) {
+                continue;
+            }
+            String[] sp = side.split(":", -1);
+            for (String p : sp) {
+                if (p.isEmpty()) {
+                    return false;
+                }
+                parts.add(p);
+            }
+        }
+        int groups = 0;
+        for (int i = 0; i < parts.size(); i++) {
+            String p = parts.get(i);
+            boolean last = i == parts.size() - 1;
+            if (last && p.indexOf('.') >= 0) {
+                if (!isIpv4Literal(p)) {
+                    return false;
+                }
+                groups += 2;
+            } else {
+                if (p.length() > 4 || !isHex(p)) {
+                    return false;
+                }
+                groups++;
+            }
+        }
+        // "::" must compress at least one group, so the explicit count
+        // must be below 8; without compression it must be exactly 8
+        // (an embedded IPv4 tail already counts as two groups).
+        return dc >= 0 ? groups < 8 : groups == 8;
+    }
+
+    /**
+     * Whether {@code s} is an IP literal (v4 or v6). SNI (RFC 6066)
+     * forbids IP literals and SNIHostName rejects them; Go likewise
+     * sends no SNI for IP servers and verifies the certificate
+     * against IP SANs instead.
+     */
+    private static boolean isIpLiteral(String s) {
+        return isIpv4Literal(s) || isIpv6Literal(s);
+    }
+
+    /**
+     * Decodes length-prefixed protocol names (the Go side's
+     * encodeNextProtos framing, same as encodeLengthPrefixed) to a
+     * String array. Empty entries are dropped: the JDK rejects empty
+     * application protocols.
+     */
+    private static String[] decodeNextProtos(byte[] buf) {
+        List<byte[]> items = splitLengthPrefixed(buf);
+        List<String> protos = new ArrayList<>();
+        for (byte[] item : items) {
+            if (item.length == 0) {
+                continue;
+            }
+            protos.add(new String(item, java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return protos.toArray(new String[0]);
+    }
+
+    /**
+     * Maps a Go crypto/tls ClientAuthType value to SSLEngine
+     * want/need flags. Mirrors Go's server handshake: a certificate
+     * is requested for every mode except NoClientCert (0); presence
+     * is required for RequireAnyClientCert (2) and
+     * RequireAndVerifyClientCert (4); chain verification is a Go-side
+     * post-handshake step (synth_crypto_tls.go verifyClientCert),
+     * never the permissive trust manager. Out-of-range values behave
+     * like Go: requested, neither required nor verified.
+     */
+    private static void applyClientAuth(SSLEngine engine, long clientAuth) {
+        if (clientAuth == 0) {
+            return;
+        }
+        if (clientAuth == 2 || clientAuth == 4) {
+            engine.setNeedClientAuth(true);
+        } else {
+            engine.setWantClientAuth(true);
+        }
+    }
+
+    /**
      * Creates a client-side SSLEngine. Returns engine handle.
      * graalgo.tls.newClientEngine(serverName, insecureSkipVerify,
-     *     minVersion, maxVersion, cipherSuites) -> handle
+     *     minVersion, maxVersion, cipherSuites, nextProtos) -> handle
+     * nextProtos: length-prefixed ALPN protocol names (may be empty).
+     * SNI is omitted when serverName is an IP literal (Go sends no
+     * SNI for IP servers) or is not a usable SNI hostname (e.g.
+     * underscore names, which SNIHostName rejects): engine creation
+     * must not fail for such names — the handshake proceeds and the
+     * Go side verifies the certificate itself.
      */
     public static long newClientEngine(Object serverNameArg, Object insecureArg,
                                        Object minVersionArg, Object maxVersionArg,
-                                       Object cipherSuitesArg) {
+                                       Object cipherSuitesArg, Object nextProtosArg) {
         try {
             String serverName = str(serverNameArg);
             long minVersion = num(minVersionArg);
             long maxVersion = num(maxVersionArg);
             byte[] suitesBE = bytes(cipherSuitesArg);
+            String[] nextProtos = decodeNextProtos(bytes(nextProtosArg));
             SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(null, new TrustManager[]{new PermissiveTrustManager()},
                     new SecureRandom());
@@ -296,15 +460,27 @@ public final class TlsRuntime {
             if (suites != null) {
                 engine.setEnabledCipherSuites(suites);
             }
-            if (!serverName.isEmpty()) {
-                // SNI (used by real servers; harmless for our tests).
-                javax.net.ssl.SNIHostName sni =
-                        new javax.net.ssl.SNIHostName(serverName);
-                java.util.List<javax.net.ssl.SNIServerName> snis =
-                        new ArrayList<>();
-                snis.add(sni);
-                javax.net.ssl.SSLParameters params = engine.getSSLParameters();
-                params.setServerNames(snis);
+            javax.net.ssl.SSLParameters params = engine.getSSLParameters();
+            boolean paramsDirty = false;
+            if (!serverName.isEmpty() && !isIpLiteral(serverName)) {
+                try {
+                    // SNI (used by real servers; harmless for our tests).
+                    java.util.List<javax.net.ssl.SNIServerName> snis =
+                            new ArrayList<>();
+                    snis.add(new javax.net.ssl.SNIHostName(serverName));
+                    params.setServerNames(snis);
+                    paramsDirty = true;
+                } catch (IllegalArgumentException ignored) {
+                    // Not a usable SNI hostname (e.g. underscore names,
+                    // which SNIHostName rejects): proceed without SNI
+                    // rather than failing engine creation.
+                }
+            }
+            if (nextProtos.length > 0) {
+                params.setApplicationProtocols(nextProtos);
+                paramsDirty = true;
+            }
+            if (paramsDirty) {
                 engine.setSSLParameters(params);
             }
             long id = NEXT_ENGINE_ID.getAndIncrement();
@@ -318,14 +494,20 @@ public final class TlsRuntime {
     /**
      * Creates a server-side SSLEngine. Returns engine handle.
      * graalgo.tls.newServerEngine(chainDER, keyAlg, keyParams,
-     *     minVersion, maxVersion, cipherSuites) -> handle
+     *     minVersion, maxVersion, cipherSuites, nextProtos,
+     *     clientAuth) -> handle
      * chainDER: length-prefixed DER certs (leaf first).
      * keyParams: length-prefixed components:
      *   RSA: n, e, d, p, q | ECDSA: curveName, x, y, d | Ed25519: seed
+     * nextProtos: length-prefixed ALPN protocol names (may be empty).
+     * clientAuth: Go crypto/tls ClientAuthType value, applied via
+     * {@link #applyClientAuth} (want/need flags only — chain
+     * verification is Go-side, never the permissive trust manager).
      */
     public static long newServerEngine(Object chainDERArg, Object keyAlgArg,
                                        Object keyParamsArg, Object minVersionArg,
-                                       Object maxVersionArg, Object cipherSuitesArg) {
+                                       Object maxVersionArg, Object cipherSuitesArg,
+                                       Object nextProtosArg, Object clientAuthArg) {
         try {
             byte[] chainDER = bytes(chainDERArg);
             String keyAlg = str(keyAlgArg);
@@ -333,6 +515,8 @@ public final class TlsRuntime {
             long minVersion = num(minVersionArg);
             long maxVersion = num(maxVersionArg);
             byte[] suitesBE = bytes(cipherSuitesArg);
+            String[] nextProtos = decodeNextProtos(bytes(nextProtosArg));
+            long clientAuth = num(clientAuthArg);
 
             List<byte[]> certDERs = splitLengthPrefixed(chainDER);
             CertificateFactory cf = CertificateFactory.getInstance("X.509");
@@ -349,17 +533,43 @@ public final class TlsRuntime {
                     new SecureRandom());
             SSLEngine engine = ctx.createSSLEngine();
             engine.setUseClientMode(false);
-            engine.setNeedClientAuth(false);
+            applyClientAuth(engine, clientAuth);
             engine.setEnabledProtocols(enabledProtocols(minVersion, maxVersion));
             String[] suites = enabledCipherSuites(suitesBE);
             if (suites != null) {
                 engine.setEnabledCipherSuites(suites);
+            }
+            if (nextProtos.length > 0) {
+                javax.net.ssl.SSLParameters params = engine.getSSLParameters();
+                params.setApplicationProtocols(nextProtos);
+                engine.setSSLParameters(params);
             }
             long id = NEXT_ENGINE_ID.getAndIncrement();
             ENGINES.put(id, engine);
             return id;
         } catch (Exception e) {
             throw new IllegalStateException("TlsRuntime.newServerEngine failed", e);
+        }
+    }
+
+    /**
+     * The ALPN protocol negotiated for this engine (empty if none was
+     * negotiated or the handshake has not completed).
+     * graalgo.tls.negotiatedProtocol(handle) -> bytes (may be empty).
+     */
+    public static Object negotiatedProtocol(Object handleArg) {
+        SSLEngine engine = ENGINES.get(num(handleArg));
+        if (engine == null) {
+            return toGoBytes(new byte[0]);
+        }
+        try {
+            String proto = engine.getApplicationProtocol();
+            if (proto == null) {
+                return toGoBytes(new byte[0]);
+            }
+            return toGoBytes(proto.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return toGoBytes(new byte[0]);
         }
     }
 
