@@ -19,8 +19,10 @@ package main
 //
 // The generic surface (Hasher, ComparableHasher, Comparable,
 // WriteComparable) is implemented for basic kinds via a type switch;
-// composite kinds fail fast with a clear panic (hashing them needs the
-// runtime typehash, which has no synthetic equivalent).
+// named types and composite kinds (structs, arrays, interface-held
+// values) hash through a structural reflect walk (hashReflectValue in
+// the source below) instead of the runtime typehash, which has no
+// synthetic equivalent (review 2026-10-30 P1-15).
 //
 // KAT: differential vs gc on the wave-3 hash/maphash corpus
 // (structural properties only, per the divergence note above).
@@ -30,6 +32,7 @@ import (
 	"crypto/rand"
 	"hash"
 	"math"
+	"reflect"
 )
 
 // Copyright 2019 The Go Authors. All rights reserved.
@@ -397,9 +400,17 @@ func writeTagged(h *Hash, tag byte, v uint64) {
 }
 
 // WriteComparable hashes x, writing the hash to h. Basic kinds
-// (bool, all int/uint widths, uintptr, floats, complex, string) are
-// supported; any other comparable kind fails fast: hashing it would
-// need the runtime typehash, which has no synthetic equivalent.
+// (bool, all int/uint widths, uintptr, floats, complex, string) take
+// the fast path above with fixed tags. Every other comparable value —
+// named basic types (whose dynamic type never matches a case above),
+// structs, arrays, and interface-held values — hashes through
+// hashReflectValue below, so WriteComparable no longer panics for a
+// comparable type: the runtime typehash is replaced by a structural
+// reflect walk (review 2026-10-30 P1-15). Hash values remain NOT
+// gc-identical (see the VALUE DIVERGENCE note); only the structural
+// properties are pinned: equal values hash equally, distinct values
+// hash distinctly with overwhelming probability, and hashing a
+// comparable value never panics.
 func WriteComparable[T comparable](h *Hash, x T) {
 	switch v := any(x).(type) {
 	case bool:
@@ -444,7 +455,90 @@ func WriteComparable[T comparable](h *Hash, x T) {
 		h.WriteByte('t')
 		h.WriteString(v)
 	default:
-		panic("maphash: WriteComparable: unsupported type (needs runtime typehash)")
+		// Named types and composite kinds (structs, arrays,
+		// interface-held values) land here: the type switch above
+		// matches exact dynamic types only. Hash them structurally
+		// instead of panicking (review 2026-10-30 P1-15).
+		hashReflectValue(h, reflect.ValueOf(x))
+	}
+}
+
+// hashReflectValue hashes v structurally, as the replacement for the
+// runtime typehash gc uses. The encoding is self-delimiting (kind
+// tags, lengths, field counts, and, for interfaces, the dynamic type
+// name), so values of different shapes cannot collide by mere
+// concatenation — e.g. [2]string{"a", ""} differs from {"", "a"}, and
+// struct{a, b any}{int(0), struct{}{}} differs from
+// struct{a, b any}{struct{}{}, int(0)}. Pointers, channels, funcs,
+// maps, and unsafe pointers hash by identity (their Pointer value),
+// never by following the referent, so cyclic values terminate and
+// pointer identity (not pointee equality) is what is hashed, matching
+// the role of a hash function. Only kind-level accessors are used
+// (Bool, Int, Uint, Float, Complex, String, Len, Index, Field, Elem,
+// Pointer, Type); Interface() is never called, so unexported struct
+// fields hash without panicking. Values differ from gc's memhash by
+// design (see VALUE DIVERGENCE); equality of equal values is exact.
+func hashReflectValue(h *Hash, v reflect.Value) {
+	if !v.IsValid() {
+		writeTagged(h, 'z', 0)
+		return
+	}
+	switch v.Kind() {
+	case reflect.Bool:
+		if v.Bool() {
+			writeTagged(h, 'b', 1)
+		} else {
+			writeTagged(h, 'b', 0)
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		writeTagged(h, 'i', uint64(v.Int()))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		writeTagged(h, 'u', v.Uint())
+	case reflect.Float32:
+		writeTagged(h, 'f', uint64(math.Float32bits(float32(v.Float()))))
+	case reflect.Float64:
+		writeTagged(h, 'd', math.Float64bits(v.Float()))
+	case reflect.Complex64:
+		c := v.Complex()
+		writeTagged(h, 'g', uint64(math.Float32bits(float32(real(c)))))
+		writeTagged(h, 'G', uint64(math.Float32bits(float32(imag(c)))))
+	case reflect.Complex128:
+		c := v.Complex()
+		writeTagged(h, 'h', math.Float64bits(real(c)))
+		writeTagged(h, 'H', math.Float64bits(imag(c)))
+	case reflect.String:
+		s := v.String()
+		writeTagged(h, 'L', uint64(len(s)))
+		h.WriteString(s)
+	case reflect.Struct:
+		writeTagged(h, 'S', uint64(v.NumField()))
+		for i := 0; i < v.NumField(); i++ {
+			writeTagged(h, 'F', uint64(i))
+			hashReflectValue(h, v.Field(i))
+		}
+	case reflect.Array:
+		writeTagged(h, 'A', uint64(v.Len()))
+		for i := 0; i < v.Len(); i++ {
+			hashReflectValue(h, v.Index(i))
+		}
+	case reflect.Slice:
+		writeTagged(h, 's', uint64(v.Len()))
+		for i := 0; i < v.Len(); i++ {
+			hashReflectValue(h, v.Index(i))
+		}
+	case reflect.Interface:
+		if v.IsNil() {
+			writeTagged(h, 'n', 0)
+			return
+		}
+		tn := v.Elem().Type().String()
+		writeTagged(h, 'T', uint64(len(tn)))
+		h.WriteString(tn)
+		hashReflectValue(h, v.Elem())
+	case reflect.Pointer, reflect.Chan, reflect.Func, reflect.Map, reflect.UnsafePointer:
+		writeTagged(h, 'P', uint64(v.Pointer()))
+	default:
+		writeTagged(h, 'x', uint64(v.Kind()))
 	}
 }
 `

@@ -422,35 +422,53 @@ func TestGofrontendErrorPrefix(t *testing.T) {
 	}
 }
 
-// TestInitRejected verifies methodology P1-3: func init() in the main
-// package or in a flattened dependency is a fail-fast scope error ("not
-// supported in M1"), never a silent divergence (the frozen exporter
-// type-checks init functions but the runtime never executes them).
-func TestInitRejected(t *testing.T) {
+// TestInitAccepted verifies review 2026-10-30 P1-17: func init() in the
+// main package or in a flattened dependency is accepted by MergeDir.
+// The old rejection rested on the 2026-10-06 probe ("the runtime never
+// executes init"), which the v1 globals-init machinery has since made
+// stale: dep inits survive flattening unrenamed (go/types keeps init
+// out of package scope) and the exporter emits them as globals calls
+// in merged declaration order, deps before main. The merged source
+// must therefore keep both init functions, dep first.
+func TestInitAccepted(t *testing.T) {
 	t.Run("main", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFiles(t, dir, map[string]string{
-			"main.go": "package main\n\nfunc init() {}\n\nfunc main() {}\n",
+			"main.go": "package main\n\nvar v int\n\nfunc init() { v = 7 }\n\nfunc main() { _ = v }\n",
 		})
-		_, err := MergeDir(dir)
-		if err == nil || !strings.Contains(err.Error(), "not supported in M1") {
-			t.Fatalf("expected init scope error, got: %v", err)
+		merged, err := MergeDir(dir)
+		if err != nil {
+			t.Fatalf("main init should be accepted, got: %v", err)
 		}
-		t.Logf("main init rejected: %v", err)
+		if !strings.Contains(merged, "func init()") {
+			t.Fatalf("merged source lost main init:\n%s", merged)
+		}
+		t.Logf("main init accepted")
 	})
 
 	t.Run("dep", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFiles(t, dir, map[string]string{
 			"go.mod":     "module example.com/initdep\n\ngo 1.27\n",
-			"main.go":    "package main\n\nimport _ \"example.com/initdep/dep\"\n\nfunc main() {}\n",
-			"dep/dep.go": "package dep\n\nfunc init() {}\n",
+			"main.go":    "package main\n\nimport _ \"example.com/initdep/dep\"\n\nvar v int\n\nfunc init() { v = 2 }\n\nfunc main() { _ = v }\n",
+			"dep/dep.go": "package dep\n\nvar D int\n\nfunc init() { D = 1 }\n",
 		})
-		_, err := MergeDir(dir)
-		if err == nil || !strings.Contains(err.Error(), "not supported in M1") {
-			t.Fatalf("expected init scope error, got: %v", err)
+		merged, err := MergeDir(dir)
+		if err != nil {
+			t.Fatalf("dep init should be accepted, got: %v", err)
 		}
-		t.Logf("dep init rejected: %v", err)
+		depIdx := strings.Index(merged, "D = 1")
+		mainIdx := strings.Index(merged, "v = 2")
+		if depIdx < 0 || mainIdx < 0 {
+			t.Fatalf("merged source lost an init body:\n%s", merged)
+		}
+		if depIdx > mainIdx {
+			t.Fatalf("dep init must precede main init in merged source:\n%s", merged)
+		}
+		if strings.Count(merged, "func init()") < 2 {
+			t.Fatalf("merged source must keep both init functions:\n%s", merged)
+		}
+		t.Logf("dep init accepted, dep before main")
 	})
 }
 

@@ -150,6 +150,83 @@ func main() {
 	}
 }
 
+// Review 2026-10-30 P1-16: the derive node evaluates the base first,
+// then the offset, while gc evaluates the additive tree left-to-right.
+// A possibly-effecting offset term BEFORE the base would therefore
+// execute in the wrong order — such shapes must fall back to the loud
+// unsafefromuint trap, never lower to unsafederive.
+func TestUnsafeDeriveEffectBeforeBaseTraps(t *testing.T) {
+	src := `package main
+
+import "unsafe"
+
+var counter int
+
+func off() uintptr {
+	counter++
+	return 16
+}
+
+func main() {
+	arr := [4]int64{}
+	p := unsafe.Pointer(off() + uintptr(unsafe.Pointer(&arr[0])))
+	_ = p
+}
+`
+	out := exportUnsafeProg(t, src)
+	if strings.Contains(out, `"unsafederive"`) {
+		t.Errorf("effecting offset before base must not lower to unsafederive (evaluation order would swap)")
+	}
+	if !strings.Contains(out, `"unsafefromuint"`) {
+		t.Errorf("effecting offset before base should keep the unsafefromuint trap node")
+	}
+}
+
+// Review 2026-10-30 P1-16: a pure offset term before the base cannot
+// observe the base-first evaluation, so it still lowers.
+func TestUnsafeDerivePureBeforeBaseLowers(t *testing.T) {
+	src := `package main
+
+import "unsafe"
+
+func main() {
+	arr := [4]int64{}
+	p := unsafe.Pointer(16 + uintptr(unsafe.Pointer(&arr[0])))
+	_ = p
+}
+`
+	out := exportUnsafeProg(t, src)
+	if !strings.Contains(out, `"unsafederive"`) {
+		t.Errorf("pure offset before base should still lower to unsafederive")
+	}
+}
+
+// Review 2026-10-30 P1-16: a possibly-effecting offset term AFTER the
+// base keeps gc order (base first, then the offset), so it still lowers.
+func TestUnsafeDeriveEffectAfterBaseLowers(t *testing.T) {
+	src := `package main
+
+import "unsafe"
+
+var counter int
+
+func off() uintptr {
+	counter++
+	return 16
+}
+
+func main() {
+	arr := [4]int64{}
+	p := unsafe.Pointer(uintptr(unsafe.Pointer(&arr[0])) + off())
+	_ = p
+}
+`
+	out := exportUnsafeProg(t, src)
+	if !strings.Contains(out, `"unsafederive"`) {
+		t.Errorf("effecting offset after base should still lower to unsafederive (order preserved)")
+	}
+}
+
 // Positive (wire field): a direct unsafe.Pointer -> *T conversion
 // carries the element size from go/types Sizes so the backend can
 // validate derived pointers against element boundaries.

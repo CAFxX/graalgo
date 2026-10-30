@@ -50,13 +50,18 @@ func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*Pa
 
 	// Scope checks first (fail fast, before any rewriting).
 	allRefs := append(append([]*PackageRef{}, deps...), mainRef)
-	for _, ref := range allRefs {
-		for _, f := range imp.Files(ref.ImportPath) {
-			if err := rejectInitFunc(ref, f); err != nil {
-				return "", err
-			}
-		}
-	}
+	// Review 2026-10-30 P1-17: func init() is NOT rejected anymore.
+	// The 2026-10-06 probe behind the old rejection predates the v1
+	// globals-init machinery: the exporter now emits every package
+	// init() as a side-effect-only globals entry that the factory
+	// executes in sequence before main (pinned by
+	// TestV1InitExportedAsGlobalCall in the frontend module), and dep
+	// init functions survive flattening unrenamed — go/types keeps
+	// init out of package scope, so it never enters the rename map —
+	// becoming ordinary package-main init functions in the merged file,
+	// in dep-before-main declaration order (gc's package-init order
+	// for the flattened model). A blank-imported dep's init therefore
+	// runs, as under gc.
 	for _, dep := range deps {
 		if dep.PkgName == "main" {
 			return "", fmt.Errorf("p3frontend: dependency %q declares package main", dep.ImportPath)
@@ -184,18 +189,6 @@ func retainedComments(f *ast.File) []*ast.CommentGroup {
 		}
 	}
 	return out
-}
-
-// rejectInitFunc fails fast on func init: the frozen exporter type-checks
-// init functions but the runtime never executes them (probed 2026-10-06),
-// so letting one through would be a silent gc divergence.
-func rejectInitFunc(ref *PackageRef, f *ast.File) error {
-	for _, decl := range f.Decls {
-		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "init" {
-			return fmt.Errorf("p3frontend: package %q: func init() is not supported in M1 (frontend/v1 exports init functions but the runtime never executes them)", ref.ImportPath)
-		}
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------

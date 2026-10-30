@@ -164,8 +164,9 @@ rewrite **shadowing-correct**:
   colliding local type of the same name.
 
 Import specs for flattened packages are dropped (blank imports
-`import _ "x"` are flattened for side effects, then dropped; the M1
-`init()` rule in §4 makes this honest). `runtime`/`fmt` specs are kept and
+`import _ "x"` are flattened for side effects, then dropped; dep
+`init()` functions run via the §4 mechanism, so blank imports behave
+as under gc). `runtime`/`fmt` specs are kept and
 deduplicated.
 
 The merged file is one `*ast.File`: `package main`, the kept imports
@@ -192,11 +193,10 @@ ExportDir(dir):
      (a dep named "main", or a main dir not named "main", is a scope error).
   2. LoadClosure(dir) → dependency-ordered local packages.
   3. Type-check every package with p3Importer (records Info).
-  4. Reject any `func init()` in any package — see §4.
-  5. Flatten → merged source bytes (already gofmt'd).
-  6. Write to <tmpdir>/p3merged.go (fixed basename → deterministic
+  4. Flatten → merged source bytes (already gofmt'd).
+  5. Write to <tmpdir>/p3merged.go (fixed basename → deterministic
      `package.files`; the tmpdir itself never enters the document).
-  7. Return frontend.ExportFile(tmpfile).
+  6. Return frontend.ExportFile(tmpfile).
 ```
 
 `MergeDir(dir) (string, error)` exposes steps 1–5 for tests that need the
@@ -218,24 +218,41 @@ merged source (differential runs).
    which a modified exporter would not be without re-running the whole
    Phase-1 suite.
 
-## 4. Empirical finding: `func init()` is accepted but never executed
+## 4. `func init()` runs (2026-10-30 correction of the 2026-10-06 finding)
 
-Probed 2026-10-06 with the frozen toolchain: `gofrontend` type-checks
-`package main` with `func init()` (exit 0; `init` appears as an ordinary
-`funcdecl` in the document), but `graalgo-run` prints `INIT DID NOT RUN`
-where stock gc 1.27.1 prints `INIT RAN` (probe: `/tmp/initprobe2.go`;
-evidence in `hidden_files/m1/`). The launcher only looks up a funcdecl
-named `main`; nothing invokes `init`. This is a **silent gc divergence**,
-so M1 fails fast instead of flattening through it:
+Probed 2026-10-06 with the then-frozen toolchain: `gofrontend`
+type-checked `package main` with `func init()` (exit 0; `init` appears
+as an ordinary `funcdecl` in the document), but `graalgo-run` printed
+`INIT DID NOT RUN` where stock gc 1.27.1 prints `INIT RAN` (probe:
+`/tmp/initprobe2.go`; evidence in `hidden_files/m1/`). The launcher
+only looked up a funcdecl named `main`; nothing invoked `init`.
 
-- Any `func init()` in the main package or any flattened dependency is a
-  scope error: `p3frontend: package "…": func init() is not supported in
-  M1 (frontend/v1 exports init functions but the runtime never executes
-  them)`.
-- Consequently blank imports are supported only for their (non-init)
-  global-initializer side effects; a blank-imported package containing
-  `init` hits the same error. This is the documented M1 limitation —
-  a clear scope error, never a silent gap.
+That finding is STALE. The v1 exporter gained globals-init machinery
+after the probe (M7): `exportPackageVars` emits every package-level
+`func init()` as a side-effect-only globals entry (a void call node,
+`Obj == -1`), and the truffle factory (`NodeFactory.buildGlobalInits`
+/ `buildProgram`) executes the globals sequence in order before
+main's first statement — pinned by
+`TestV1InitExportedAsGlobalCall` in the frontend module. The v1
+runtime therefore DOES execute init functions today, for the main
+package document.
+
+For the flattened model this is exactly what is needed, with no extra
+machinery: go/types keeps `init` out of package scope, so a dep's
+`init` never enters the rename map and survives flattening as an
+ordinary `func init()` in the merged package-main file; the exporter
+then emits one globals call per init in merged declaration order
+(deps before main, files sorted within each package), which is gc's
+package-initialization order for the flattened model. Blank imports
+therefore run their dep's init, as under gc. The old
+`rejectInitFunc` scope error was removed by the 2026-10-30
+frontend-traps lane (review P1-17); `TestInitRejected` became
+`TestInitAccepted`.
+
+One standing caveat, unchanged from §2.3: the relative
+initialization order of side-effecting initializers in
+mutually-unconstrained packages follows import-path sort, which
+matches gc's OBSERVED behavior, not a spec guarantee.
 
 ## 5. GOROOT vs vendoring (M1 note)
 
@@ -255,7 +272,7 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 | flattened dep named `main` | `p3frontend: dependency "…" declares package main` |
 | unresolvable import | `p3frontend: cannot resolve import "…" (not stdlib, not in module "…")` |
 | compiling a stdlib package | `p3frontend: import "strings": stdlib package compilation lands in the P3-M7+ waves` |
-| `func init()` anywhere | `p3frontend: package "…": func init() not supported in M1 …` |
+| `func init()` anywhere | accepted: dep inits survive flattening unrenamed and run via the v1 globals-init sequence, deps before main (see §4) |
 | multiple `//go:build` lines | `p3frontend: …: multiple //go:build lines` (mirrors go/build) |
 
 ## 7. Testing
@@ -288,8 +305,9 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 - `TestGofrontendErrorPrefix`: exit-2 stderr surfaces with the frozen
   binary's duplicate `gofrontend: ` wrapper prefix collapsed.
 - `TestDeterministic`: `ExportDir` twice → byte-identical.
-- `TestInitRejected`: `func init()` in main and in a dep → the named
-  "not supported in M1" scope error (never a silent divergence).
+- `TestInitAccepted`: `func init()` in main and in a dep → `MergeDir`
+  succeeds; the merged source keeps both init functions, dep before
+  main, so the v1 globals-init sequence runs them in gc order.
 - `TestStdlibScopeError`: `import "strings"` resolves via `ResolveImport`
   (proving the GOROOT mapping) then fails fast with the "P3-M7+ waves"
   scope error.

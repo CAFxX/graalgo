@@ -17,14 +17,16 @@
 #     All other chacha8rand logic (State, Next, Init, Refill, Reseed,
 #     Marshal, Unmarshal) is verbatim.
 #  3. Exported multi-result methods are not emittable and are dropped:
-#     ChaCha8.Read/AppendBinary/MarshalBinary, PCG.AppendBinary/
+#     ChaCha8.AppendBinary/MarshalBinary, PCG.AppendBinary/
 #     MarshalBinary, and the 4-result GetNormalDistributionParameters /
 #     GetExponentialDistributionParameters (not used by v2 itself).
 #     Unexported multi-result helpers (pcg.next, cutPrefix,
 #     readUint8LengthPrefixed) become single-result pair-struct
 #     functions with rewritten call sites; 2-target bits.* calls inside
 #     the ported sources are rewritten to the __bits* helpers.
-#     Retest trigger: frontend supports multi-result method emission.
+#     Retest trigger for the remaining dropped methods: frontend
+#     supports multi-result method emission for BinaryMarshaler shapes
+#     (ChaCha8.Read was restored on that machinery 2026-10-30).
 #  4. rand.go / pcg.go / exp.go / normal.go / zipf.go carried verbatim
 #     (pcg.go imports the synthetic internal/byteorder, vendored by the
 #     mathbig worker).//go:linkname runtime_rand runtime.rand -> composed from two
@@ -72,31 +74,6 @@ GOROOT = os.path.join(_graalgo_goroot(), "src", "math", "rand", "v2")
 
 CHACHA = os.path.join(_graalgo_goroot(), "src", "internal", "chacha8rand")
 
-# P3-M9 (tier-5b): minimal ChaCha8 stub for crypto/ecdsa signLegacy, appended
-# verbatim to the generated file (the full ChaCha8 was dropped per Deviation 2
-# in the header; signLegacy only serves non-standard curves).
-CHACHA8_POSTLUDE = '''\
-// P3-M9 (tier-5b): minimal ChaCha8 for crypto/ecdsa signLegacy.
-// The full ChaCha8 was dropped (see Deviation 2 header). signLegacy is
-// only used for non-standard curves; standard curves (P-256/384/521)
-// use signFIPS. This fail-fasts honestly if called.
-
-// ChaCha8 is a ChaCha8-based random number generator (stub).
-type ChaCha8 struct {
-\tseed [32]byte
-}
-
-// NewChaCha8 returns a new ChaCha8 (stub: fail-fast on use).
-func NewChaCha8(seed [32]byte) *ChaCha8 {
-\treturn &ChaCha8{seed: seed}
-}
-
-// Read fail-fasts: ChaCha8 not vendored.
-func (c *ChaCha8) Read(p []byte) (n int, err error) {
-\tpanic("math/rand/v2: ChaCha8.Read not implemented (P3-M9 tier-5b scope-limit: non-standard ECDSA curves); re-test when ChaCha8 lands")
-}
-'''
-
 HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 //
 // REAL Go source, embedded as text and type-checked on demand with the
@@ -104,9 +81,10 @@ HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 // ADR-0007 D5).
 //
 // Value model:
-//   - rand.go, pcg.go, exp.go, normal.go, zipf.go are gc 1.27.1's
-//     implementations ported verbatim (bit-exact by construction for
-//     fixed seeds; ChaCha8 verified byte-identical vs gc).
+//   - rand.go, pcg.go, chacha8.go, exp.go, normal.go, zipf.go are
+//     gc 1.27.1's implementations ported verbatim (bit-exact by
+//     construction for fixed seeds; ChaCha8 verified byte-identical
+//     vs gc, modulo the Deviation 2 adaptations below).
 //   - DEVIATION 1 (documented): //go:linkname runtime_rand runtime.rand
 //     -> composed from two runtime.fastrand linkname calls (runtime.rand
 //     is not in the linkname table). Values differ from gc's
@@ -123,13 +101,19 @@ HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 //     goarch.BigEndian branches take the LE path. All other logic is
 //     verbatim.
 //   - DEVIATION 3 (documented): exported multi-result methods are not
-//     emittable and are dropped: ChaCha8.Read/AppendBinary/MarshalBinary
-//     and PCG.AppendBinary/MarshalBinary. Unexported multi-result
-//     helpers (pcg.next, cutPrefix, readUint8LengthPrefixed) become
-//     single-result pair-struct functions with rewritten call sites;
-//     2-target bits.* calls inside the ported sources are rewritten to
-//     the __bits* helpers.
-//     Retest trigger: frontend supports multi-result method emission.
+//     emittable and are dropped, except ChaCha8.Read (restored 2026-10-30,
+//     review P1-14, via the __chacha8Read pair helper + the m7 desugar
+//     table entry, on the r40 multi-result-method machinery — the old
+//     retest trigger, now satisfied for Read): ChaCha8.AppendBinary/
+//     MarshalBinary and PCG.AppendBinary/MarshalBinary remain dropped,
+//     so calling them fails at type-check (loud, never silent).
+//     Unexported multi-result helpers (pcg.next, cutPrefix,
+//     readUint8LengthPrefixed) become single-result pair-struct
+//     functions with rewritten call sites; 2-target bits.* calls inside
+//     the ported sources are rewritten to the __bits* helpers.
+//     Retest trigger for the remaining dropped methods: frontend
+//     supports multi-result method emission for BinaryMarshaler shapes
+//     (or the methods are restored via pair helpers like Read was).
 //
 // Generated by gen_synth_mathrandv2.py from gc 1.27.1; DO NOT EDIT BY
 // HAND (edit the generator and re-run).
@@ -665,8 +649,28 @@ def build_chacha8_go():
         "buf, data, ok = readUint8LengthPrefixed(data)",
         "__rp := __readUint8LengthPrefixed(data); buf, data, ok = __rp.buf, __rp.rest, __rp.ok",
     )
-    # Drop exported multi-result methods (not emittable; see header).
-    src = strip_method(src, "ChaCha8", "Read")
+    # ChaCha8.Read restored (review 2026-10-30 P1-14): the multi-result
+    # method becomes a pair helper + desugar stub (same pattern as the
+    # other m7 entries; the itab maps interface dispatch to the helper).
+    # The body has a single bare return at the end; the helper declares
+    # n/err explicitly and returns the pair. The old panic message named
+    # "non-standard ECDSA curves" as the blocker — nonsense for ChaCha8
+    # (leaked from the signLegacy use-case); the real blocker was
+    # multi-result method emission, which the r40 machinery provides.
+    m = re.search(r"^func \(c \*ChaCha8\) Read\(p \[\]byte\) \(n int, err error\) \{(.*?)^\}\n",
+                  src, flags=re.M | re.S)
+    assert m is not None, "ChaCha8.Read not found in chacha8.go"
+    body = m.group(1)
+    assert body.count("\n\treturn\n") == 1, "ChaCha8.Read body has unexpected returns"
+    body = body.replace("\n\treturn\n", "\n\treturn __chacha8ReadPair{n: n, err: err}\n", 1)
+    helper = ("type __chacha8ReadPair struct {\n\tn int\n\terr error\n}\n\n"
+              "func __chacha8Read(c *ChaCha8, p []byte) __chacha8ReadPair {\n\tvar n int\n\tvar err error"
+              + body + "}\n\n"
+              "func (c *ChaCha8) Read(p []byte) (n int, err error) {\n"
+              "\tpanic(\"math/rand/v2: ChaCha8.Read: multi-result desugar\")\n}\n")
+    src = src[:m.start()] + helper + src[m.end():]
+    # Drop the remaining exported multi-result methods (not emittable;
+    # see header Deviation 3). Calling them fails at type-check.
     src = strip_method(src, "ChaCha8", "AppendBinary")
     src = strip_method(src, "ChaCha8", "MarshalBinary")
     assert "chacha8rand" not in src, "chacha8rand refs remain"
@@ -677,41 +681,15 @@ def main():
     parts = [HEADER]
     parts.append(build_rand_go().rstrip() + "\n\n")
     parts.append(build_pcg_go().rstrip() + "\n\n")
-    # P3-M9: ChaCha8 removed (scope-limited; requires & on SelectorExpr).
-    # See 01_chacha8.go.scopelimited for retest trigger.
-    # parts.append(build_chacha8_go().rstrip() + "\n\n")
+    # ChaCha8 restored (review 2026-10-30 P1-14): the old scope limit
+    # ("requires & on SelectorExpr") is re-tested by the exporter suite
+    # (TestChaCha8Exports) on every run of this generator's output.
+    parts.append(build_chacha8_go().rstrip() + "\n\n")
     for name in ["exp.go", "normal.go", "zipf.go"]:
         parts.append(build_verbatim(name).rstrip() + "\n\n")
     out = "".join(parts)
     # Remove unused math/bits import (all calls rewritten to __bits*).
     out = out.replace('import "math/bits"\n', '')
-    # P3-M9: Remove ChaCha8 helpers (scope-limited). They are in the HEADER
-    # but the ChaCha8 type/methods are removed. Remove all __chacha8* funcs
-    # and types.
-    # Remove function definitions: func __chacha8XXX(...) ... { ... }
-    # This is complex via regex; instead, we'll filter line by line.
-    lines = out.split('\n')
-    filtered = []
-    skip = 0
-    brace_depth = 0
-    in_chacha8 = False
-    for i, line in enumerate(lines):
-        if not in_chacha8 and re.match(r'^(func|type) __chacha8\w+', line.strip()):
-            in_chacha8 = True
-            brace_depth = 0
-            # Count braces in this line
-            brace_depth += line.count('{') - line.count('}')
-            if brace_depth <= 0 and '{' not in line:
-                # Single line (e.g., type declaration without body)
-                in_chacha8 = False
-            continue
-        if in_chacha8:
-            brace_depth += line.count('{') - line.count('}')
-            if brace_depth <= 0 and '}' in line:
-                in_chacha8 = False
-            continue
-        filtered.append(line)
-    out = '\n'.join(filtered)
     # Move the __bits* helpers to after the last import (they're currently
     # in HEADER before some imports added by build_*).
     # Extract helpers from out.
@@ -730,7 +708,7 @@ def main():
             lines.insert(last_import_idx + 1, "")
             lines.insert(last_import_idx + 2, helpers.rstrip())
             out = '\n'.join(lines)
-    out = out.rstrip() + "\n\n" + CHACHA8_POSTLUDE.rstrip() + "\n`\n"
+    out = out.rstrip() + "\n`\n"
     with open(os.path.join(OUTDIR, "synth_mathrandv2.go"), "w") as f:
         f.write(out)
     print("wrote synth_mathrandv2.go", len(out), "bytes")

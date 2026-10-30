@@ -27,6 +27,21 @@ const syntheticMathBigSource = (
 "//  4. fmt.Scanner/fmt.State/fmt.Formatter interfaces: added to the\n" +
 "//     synthetic fmt package in export.go (types only; the stub had just\n" +
 "//     the seven pure functions).\n" +
+"//  5. Scan restored (review 2026-10-30 P1-13): Float.Scan/Int.Scan were\n" +
+"//     runtime panic traps (the Scan-not-supported scope panic)\n" +
+"//     with no compile-time gate, because Scan is single-result and the\n" +
+"//     multi-result fail-fast only covers multi-result functions. The\n" +
+"//     bodies underneath the panics were already upstream (Float/Int\n" +
+"//     Scan delegate to the pair-transformed z.scan via byteReader),\n" +
+"//     so restoring them took only: dropping the two panic lines;\n" +
+"//     implementing __mrbyteReader_ReadByte from upstream via\n" +
+"//     ScanState.ReadRune (the byteReader.ReadRune/Token panic stubs\n" +
+"//     remain but are unreachable - nothing calls them); and restoring\n" +
+"//     Rat.Scan's upstream s.Token(true, ratTok) call. ScanState's\n" +
+"//     multi-result interface methods (ReadRune, Token) desugar through\n" +
+"//     the general interface multi-result machinery, like the other\n" +
+"//     interface calls in this package.\n" +
+
 "// DEPENDENCIES (all synthetic): bytes, errors, fmt, io, math, math/bits\n" +
 "// (tier-1c's synthetic, incl. the Appendix-M __bits* helpers used via the\n" +
 "// m7MultiResultFuncs desugar), math/rand (minimal faithful port),\n" +
@@ -3009,7 +3024,7 @@ const syntheticMathBigSource = (
 "// [fmt.Scan] for floating point values, which are:\n" +
 "// 'b' (binary), 'e', 'E', 'f', 'F', 'g' and 'G'.\n" +
 "// Scan doesn't handle ±Inf.\n" +
-"func (z *Float) Scan(s fmt.ScanState, ch rune) error {\n" +"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+"func (z *Float) Scan(s fmt.ScanState, ch rune) error {\n" +
 
 "	s.SkipSpace()\n" +
 "	_, _, err := z.scan(byteReader{s}, 0)\n" +
@@ -5438,7 +5453,11 @@ const syntheticMathBigSource = (
 "}\n" +
 "\n" +
 "func __mrbyteReader_ReadByte(r byteReader, ) __mrbyteReader_ReadBytePair {\n" +
-"	panic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+"	ch, size, err := r.ScanState.ReadRune()\n" +
+"	if size != 1 && err == nil {\n" +
+"		err = fmt.Errorf(\"invalid rune %#U\", ch)\n" +
+"	}\n" +
+"	return __mrbyteReader_ReadBytePair{byte(ch), err}\n" +
 "}\n" +
 "\n" +
 "func (r byteReader) ReadByte() (byte, error) {\n" +
@@ -5478,7 +5497,7 @@ const syntheticMathBigSource = (
 "// Scan is a support routine for [fmt.Scanner]; it sets z to the value of\n" +
 "// the scanned number. It accepts the formats 'b' (binary), 'o' (octal),\n" +
 "// 'd' (decimal), 'x' (lowercase hexadecimal), and 'X' (uppercase hexadecimal).\n" +
-"func (z *Int) Scan(s fmt.ScanState, ch rune) error {\n" +"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+"func (z *Int) Scan(s fmt.ScanState, ch rune) error {\n" +
 
 "	s.SkipSpace() // skip leading space characters\n" +
 "	base := 0\n" +
@@ -9570,13 +9589,9 @@ const syntheticMathBigSource = (
 "\n" +
 "// Scan is a support routine for fmt.Scanner. It accepts the formats\n" +
 "// 'e', 'E', 'f', 'F', 'g', 'G', and 'v'. All formats are equivalent.\n" +
-"func (z *Rat) Scan(s fmt.ScanState, ch rune) error {\n" +"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+"func (z *Rat) Scan(s fmt.ScanState, ch rune) error {\n" +
 
-"\tvar tok []byte\n" +
-"\tvar err error\n" +
-"\t_ = tok\n" +
-"\t_ = err\n" +
-"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+"	tok, err := s.Token(true, ratTok)\n" +
 "	if err != nil {\n" +
 "		return err\n" +
 "	}\n" +

@@ -10,8 +10,10 @@
 //
 // Only the main package may be named "main"; every other local package is
 // flattened under a content-derived identifier prefix. Anything the M1
-// scope cannot compile (stdlib packages, func init, import cycles) fails
-// fast with a named error — never silently.
+// scope cannot compile (stdlib packages, import cycles) fails fast with
+// a named error — never silently. (Review 2026-10-30 P1-17: func init()
+// is no longer in that list — the v1 globals-init machinery executes it;
+// see DESIGN.md §4.)
 package p3frontend
 
 import (

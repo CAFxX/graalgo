@@ -41,8 +41,14 @@
 //
 // Evaluation order: the derive node evaluates the base first, then the
 // offset terms in source order; gc evaluates the original additive tree
-// left-to-right. Only side-effecting subexpressions inside unsafe
-// arithmetic could observe the difference.
+// left-to-right. When the base is the leftmost term, the two orders
+// coincide exactly. When offset terms precede the base, the orders
+// differ — so exportUintptrToPointer only lowers that shape when every
+// preceding offset term is side-effect-free (isSideEffectFreeExpr);
+// a possibly-effecting preceding term falls back to the loud
+// "unsafefromuint" trap instead of silently reordering execution.
+// (Review 2026-10-30 P1-16; backend order confirmed from disk:
+// UnsafeDeriveNode.executeLong evaluates baseChild, then offsetChild.)
 
 package main
 
@@ -153,6 +159,112 @@ func flattenAdditive(x ast.Expr, sign int, terms *[]signedTerm) {
 // pointer deref, matching the method call's own auto-deref); the
 // method-set lookup discriminates the method from any func-valued
 // field of the same name.
+// isSideEffectFreeExpr reports whether e can be evaluated without any
+// observable side effect, conservatively: anything it does not recognise
+// as pure is impure. Pure: literals, variable reads, parentheses,
+// arithmetic/logic/comparison over pure operands, conversions, field
+// selection, indexing/slicing, composite literals over pure elements,
+// dereference, type assertions, and closure creation (the body does not
+// run); unsafe.Sizeof is pure (it is not evaluated at runtime).
+// Impure: every other call (function/method calls may print, mutate, or
+// block), and every unrecognised form. Map/slice index reads are pure:
+// they neither mutate nor block. A nil-pointer dereference or a failing
+// bounds check inside an otherwise-pure term can still panic — that is a
+// panic-ordering caveat, not a side-effect reordering: the terms this
+// gate protects are the ones whose evaluation performs effects (calls).
+func (e *exporter) isSideEffectFreeExpr(x ast.Expr) bool {
+	x = unparen(x)
+	switch t := x.(type) {
+	case *ast.Ident, *ast.BasicLit:
+		return true
+	case *ast.ParenExpr:
+		return e.isSideEffectFreeExpr(t.X)
+	case *ast.UnaryExpr:
+		return e.isSideEffectFreeExpr(t.X)
+	case *ast.StarExpr:
+		return e.isSideEffectFreeExpr(t.X)
+	case *ast.BinaryExpr:
+		return e.isSideEffectFreeExpr(t.X) && e.isSideEffectFreeExpr(t.Y)
+	case *ast.SelectorExpr:
+		return e.isSideEffectFreeExpr(t.X)
+	case *ast.IndexExpr:
+		return e.isSideEffectFreeExpr(t.X) && e.isSideEffectFreeExpr(t.Index)
+	case *ast.IndexListExpr:
+		if !e.isSideEffectFreeExpr(t.X) {
+			return false
+		}
+		for _, ix := range t.Indices {
+			if !e.isSideEffectFreeExpr(ix) {
+				return false
+			}
+		}
+		return true
+	case *ast.SliceExpr:
+		if !e.isSideEffectFreeExpr(t.X) {
+			return false
+		}
+		for _, b := range []ast.Expr{t.Low, t.High, t.Max} {
+			if b != nil && !e.isSideEffectFreeExpr(b) {
+				return false
+			}
+		}
+		return true
+	case *ast.CompositeLit:
+		for _, el := range t.Elts {
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				if !e.isSideEffectFreeExpr(kv.Key) || !e.isSideEffectFreeExpr(kv.Value) {
+					return false
+				}
+				continue
+			}
+			if !e.isSideEffectFreeExpr(el) {
+				return false
+			}
+		}
+		return true
+	case *ast.TypeAssertExpr:
+		return e.isSideEffectFreeExpr(t.X)
+	case *ast.FuncLit:
+		return true
+	case *ast.CallExpr:
+		// A conversion (Fun denotes a type) evaluates only its arguments.
+		if e.isTypeConversion(t) {
+			for _, a := range t.Args {
+				if !e.isSideEffectFreeExpr(a) {
+					return false
+				}
+			}
+			return true
+		}
+		// unsafe.Sizeof is not evaluated at runtime.
+		if sel, ok := unparen(t.Fun).(*ast.SelectorExpr); ok && sel.Sel.Name == "Sizeof" {
+			if id, ok := unparen(sel.X).(*ast.Ident); ok {
+				if pkg, ok := e.info.Uses[id].(*types.PkgName); ok && pkg.Imported() != nil && pkg.Imported().Path() == "unsafe" {
+					return true
+				}
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// isTypeConversion reports whether a call expression is a type conversion
+// (its Fun denotes a type name) rather than a function/method call.
+func (e *exporter) isTypeConversion(c *ast.CallExpr) bool {
+	switch f := unparen(c.Fun).(type) {
+	case *ast.Ident:
+		_, ok := e.info.Uses[f].(*types.TypeName)
+		return ok
+	case *ast.SelectorExpr:
+		_, ok := e.info.Uses[f.Sel].(*types.TypeName)
+		return ok
+	default:
+		return false
+	}
+}
+
 func (e *exporter) valuePointerCall(x ast.Expr) (ast.Expr, bool) {
 	ce, ok := unparen(x).(*ast.CallExpr)
 	if !ok || len(ce.Args) != 0 {
@@ -279,6 +391,22 @@ func (e *exporter) exportUintptrToPointer(c *ast.CallExpr, to any) (*Node, bool,
 			continue
 		}
 		if !e.isIntegerExpr(t.expr) || e.exprContainsUnsafePointer(t.expr) {
+			return nil, false, nil
+		}
+	}
+	// Review 2026-10-30 P1-16: the derive node evaluates the base first
+	// and the offset second, while gc evaluates the additive tree
+	// left-to-right. Offset terms AFTER the base keep their order, but a
+	// possibly-effecting offset term BEFORE the base would execute after
+	// the base's own effects — a silent reordering. Such shapes fall
+	// back to the loud unsafefromuint trap; pure preceding terms (a
+	// constant, a variable read, a Sizeof) cannot observe the swap, so
+	// they still lower.
+	for i, t := range terms {
+		if i >= baseIdx {
+			break
+		}
+		if !e.isSideEffectFreeExpr(t.expr) {
 			return nil, false, nil
 		}
 	}
