@@ -3212,7 +3212,8 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	}
 	// P3-M9 (WS D): function field call (e.g., c.generate(r)). The
 	// function value is a field access; call it and pack the 2 results
-	// into the pair struct. Generate a funcfieldcall node.
+	// into the pair struct. Emits a regular "call" node (see
+	// desugarFuncFieldCall); there is no "funcfieldcall" wire kind.
 	if plan.kind == mrFuncField {
 		return e.desugarFuncFieldCall(s, c, plan, define)
 	}
@@ -3368,11 +3369,12 @@ func (e *exporter) desugarSyncMap(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 
 // desugarFuncFieldCall desugars a function field call (e.g.,
 // c.generate(r)) where the field is of function type with 2 results.
-// Generates a funcfieldcall node that calls the field's function value
-// and packs the 2 results into the pair struct.
+// Emits a regular "call" node whose fun is the exported selector; the
+// backend calls the field's function value via FuncValueCallNode and
+// packs the 2 results into the pair struct.
 func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
 	if _, ok := c.Fun.(*ast.SelectorExpr); !ok {
-		return nil, fmt.Errorf("gofrontend: funcfieldcall expects SelectorExpr, got %T", c.Fun)
+		return nil, fmt.Errorf("gofrontend: func-field call expects SelectorExpr, got %T", c.Fun)
 	}
 	// Export the selector as the fun expression (e.g., f.decode).
 	// The backend handles call-with-selector-fun via FuncValueCallNode
@@ -3833,13 +3835,21 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		}
 		tmpTid = resTid
 	} else if plan.kind == mrFuncField {
-		// Function field call (e.g., c.generate(r)): build the
-		// funcfieldcall node directly (mirrors desugarFuncFieldCall).
-		sel, ok := inner.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return nil, nil, fmt.Errorf("gofrontend: funcfieldcall expects SelectorExpr, got %T", inner.Fun)
+		// Function field call (e.g., c.generate(r)) in argument
+		// position: emit a regular "call" node with the exported
+		// selector as fun, exactly like desugarFuncFieldCall (the
+		// assignment path). The backend's selector-fun call path
+		// (FuncValueCallNode) already handles func-typed field calls,
+		// including the nil-func panic. The bespoke "funcfieldcall"
+		// wire kind had no backend handler and must not be emitted:
+		// fix-funcfield-mr converted the assignment path but missed
+		// this hoisting path, so every multi-result func-field call
+		// used as a call argument failed AST building with
+		// "unsupported expression kind funcfieldcall".
+		if _, ok := inner.Fun.(*ast.SelectorExpr); !ok {
+			return nil, nil, fmt.Errorf("gofrontend: func-field call expects SelectorExpr, got %T", inner.Fun)
 		}
-		recvNode, err := e.exportExpr(sel.X)
+		funNode, err := e.exportExpr(inner.Fun)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3851,12 +3861,10 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		if err != nil {
 			return nil, nil, err
 		}
-		callNode = e.node("funcfieldcall", inner, map[string]any{
-			"recv":       recvNode,
-			"field":      sel.Sel.Name,
-			"args":       args,
-			"pairType":   pairTid,
-			"pairFields": plan.pairFields,
+		callNode = e.node("call", inner, map[string]any{
+			"fun":  funNode,
+			"args": args,
+			"type": pairTid,
 		})
 		e.chanSeq++
 		tmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
