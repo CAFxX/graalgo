@@ -31,6 +31,24 @@ make gate1-pilot   # 5-package pilot
 make gate1 PKG=sort # single package
 ```
 
+## Verdicts
+
+`run.py` writes one verdict per package and exits 0 only on PASS:
+
+- `PASS` — both drivers exited 0, at least one test result was parsed,
+  and every per-test result agrees.
+- `SKIP` — the gc driver failed while graalgo passed; the harness
+  cannot validate this package.
+- `DIVERGE` — graalgo failed while gc passed, or per-test results
+  disagree.
+- `ERROR` — both drivers failed, or both exited 0 with no parsed test
+  results. Nothing was compared, so nothing passed. (Before the
+  2026-10-30 fix, this case fell through to a vacuous PASS.)
+
+`make gate1-pilot` fails if any package's verdict is not PASS or its
+verdict file is missing; one package's failure does not stop the
+remaining packages from running.
+
 ## Pilot Results (2026-10-13, master @ 3af2572)
 
 | Package | Tests | gc | graalgo | Verdict | Root cause |

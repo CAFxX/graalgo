@@ -26,6 +26,40 @@ def run_cmd(cmd, env=None, timeout=300):
     except subprocess.TimeoutExpired:
         return -1, "", "TIMEOUT"
 
+def decide_verdict(rc_gc, rc_gr, gc_res, gr_res):
+    """Pure verdict decision for one package.
+
+    Returns (verdict, divergences). PASS must be earned: both legs exit
+    0 AND at least one parsed test result AND no per-test divergence.
+    Anything else is SKIP (gc alone failed: harness issue, not graalgo),
+    DIVERGE (graalgo alone failed, or per-test disagreement), or ERROR
+    (both legs failed, or both legs exited 0 with no parsed results —
+    i.e. nothing was actually compared). Previously the verdict
+    defaulted to PASS, so two crashed legs with two empty result maps
+    reported "0 tests agree" / PASS with exit 0 (review 2026-10-30,
+    P1-9). ERROR is never PASS and always exits non-zero.
+    """
+    if rc_gc != 0 and rc_gr == 0:
+        return "SKIP", []
+    if rc_gr != 0 and rc_gc == 0:
+        return "DIVERGE", []
+    if rc_gc != 0 and rc_gr != 0:
+        # Both legs failed: no evidence about graalgo at all. Not a
+        # divergence (gc did not pass) and certainly not a pass.
+        return "ERROR", []
+    if not gc_res and not gr_res:
+        # Both legs exited 0 but produced no parseable test results:
+        # nothing was compared, so nothing passed.
+        return "ERROR", []
+    divergences = [
+        (name, gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING"))
+        for name in sorted(set(gc_res) | set(gr_res))
+        if gc_res.get(name, "MISSING") != gr_res.get(name, "MISSING")
+    ]
+    if divergences:
+        return "DIVERGE", divergences
+    return "PASS", []
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: run.py <package> [--goroot PATH] [--graalgo-run PATH] [--out DIR]")
@@ -114,28 +148,25 @@ def main():
     print(f"gc:     rc={rc_gc} {gc_sum}")
     print(f"graalgo: rc={rc_gr} {gr_sum}")
 
-    verdict = "PASS"
-    divergences = []
-    if rc_gc != 0 and rc_gr == 0:
+    verdict, divergences = decide_verdict(rc_gc, rc_gr, gc_res, gr_res)
+    if verdict == "SKIP":
         # gc itself failed (e.g. unsupported test helper) — harness issue, not graalgo
-        verdict = "SKIP"
         print(f"SKIP: gc driver failed (rc={rc_gc}); harness cannot validate this package")
         print(f"gc stderr tail: {err_gc[-500:]}")
-    elif rc_gr != 0 and rc_gc == 0:
-        verdict = "DIVERGE"
+    elif verdict == "DIVERGE" and rc_gr != 0 and rc_gc == 0:
         print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
         print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif verdict == "ERROR" and rc_gc != 0 and rc_gr != 0:
+        print(f"ERROR: both drivers failed (gc rc={rc_gc}, graalgo rc={rc_gr}); no comparison possible")
+        print(f"gc stderr tail: {err_gc[-500:]}")
+        print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif verdict == "ERROR":
+        print("ERROR: both drivers exited 0 but produced no parsed test results; no comparison possible")
+    elif verdict == "DIVERGE":
+        for name, g, r in divergences:
+            print(f"  DIVERGE {name}: gc={g} graalgo={r}")
     else:
-        for name in sorted(set(gc_res) | set(gr_res)):
-            g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
-            if g != r:
-                divergences.append((name, g, r))
-        if divergences:
-            verdict = "DIVERGE"
-            for name, g, r in divergences:
-                print(f"  DIVERGE {name}: gc={g} graalgo={r}")
-        else:
-            print(f"  {len(gc_res)} tests agree")
+        print(f"  {len(gc_res)} tests agree")
 
     print(f"VERDICT {pkg}: {verdict}")
     with open(os.path.join(workdir, "verdict.txt"), "w") as f:
