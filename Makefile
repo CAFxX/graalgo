@@ -104,7 +104,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check gate1 gate1-pilot fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -309,3 +309,4 @@ clean:
 	$(MAKE) -C internal/backend/truffle clean
 	$(MAKE) -C internal/backend/runtime clean
 	$(MAKE) -C internal/backend/interop clean
+	rm -f graalgo
