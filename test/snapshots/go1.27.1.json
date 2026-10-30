@@ -8,19 +8,11 @@
     },
     {
       "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
-    },
-    {
-      "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
-    },
-    {
-      "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
+      "reason": "gate-blocking reliability item (2026-10-30 re-probe): lost-sum output NOT reproduced (6/6 completed graalgo runs print 36), but snapshot-record self-consistency failed twice on this program (120s timeout once, buildOk flip once) under load; do not un-exclude until a clean 2-run record succeeds"
     },
     {
       "program": "19_sort",
-      "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
+      "reason": "backend-specific: frontend --check is SIGKILLed on sort.Slice program on two consecutive probes at moderate load (2026-10-30 re-probe); underlying cause uninvestigated, not a clean scope failure"
     },
     {
       "program": "27_panic_trace",
@@ -28,15 +20,7 @@
     },
     {
       "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
-    },
-    {
-      "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
-    },
-    {
-      "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
+      "reason": "backend-specific: graalgo run never completes: 120s timeout on one probe, frontend --check SIGKILL on recheck (2026-10-30); os.Exit path untested"
     },
     {
       "program": "40_method_values",
@@ -44,7 +28,7 @@
     },
     {
       "program": "42_json",
-      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+      "reason": "backend-specific: encoding/json.Marshal panics at runtime: not in M7 scope (needs reflect, P3-M8) (2026-10-30 re-probe)"
     }
   ],
   "format": "graalgo-behavior-snapshot/v1",
@@ -217,6 +201,28 @@
       "timedOut": false
     },
     {
+      "name": "17_generics",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "6\n4\nb a\n3\n",
+      "stderr": ""
+    },
+    {
+      "name": "18_errors",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "ok: 1\ntrue\nfalse\nnot found\n",
+      "stderr": ""
+    },
+    {
       "args": [],
       "buildLog": "",
       "buildOk": true,
@@ -382,6 +388,17 @@
       "timedOut": false
     },
     {
+      "name": "37_utf8",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "14 9\n0 h U+0068\nfoo\u03b2 5\nABC true\n",
+      "stderr": ""
+    },
+    {
       "args": [],
       "buildLog": "",
       "buildOk": true,
@@ -391,6 +408,17 @@
       "stdin": "",
       "stdout": "0 1 2 3\n1 1024 1048576\ntrue\n",
       "timedOut": false
+    },
+    {
+      "name": "39_named_returns",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "7 10\n",
+      "stderr": ""
     },
     {
       "args": [],

@@ -17,8 +17,10 @@
 # Four-way triage per red (PLAN §5): every FAIL line is classified as
 #   graalgo-bug / upstream-change / backend-specific+reason-code /
 #   nondeterminism-normalization
-# and recorded in the JSON report. A red gate means: triage first, then fix
-# or exclusion-list with a reason code (GG-0033).
+# and recorded in the JSON report. Until a classifier assigns a category,
+# a failure is recorded with triage=null ("pending-classification") — the
+# report never claims triage that has not happened. A red gate means:
+# triage first, then fix or exclusion-list with a reason code (GG-0033).
 #
 # Exit status: 0 = all waves green; 1 = any wave red (report has the triage).
 #
@@ -61,6 +63,10 @@ run_wave() {
   "$runner" all > "$log" 2>&1
   local rc=$?
   set -e
+  # Record the runner exit code for the triage report: a wave whose runner
+  # failed is RED even if its log contains no FAIL lines, and a wave with
+  # no summary line is UNKNOWN, never GREEN-by-absence.
+  echo "$rc" > "${log%.log}.rc"
   tail -3 "$log"
   return $rc
 }
@@ -71,7 +77,7 @@ run_wave "wave2" "$GR/test/corpus/wave2/run_wave.sh" "$OUTDIR/wave2.log" || over
 run_wave "wave3" "$GR/test/corpus/wave3/run_wave3.sh" "$OUTDIR/wave3.log" || overall=1
 
 echo "== [3/3] triage report =="
-python3 - "$OUTDIR" "$overall" <<'EOF'
+python3 - "$OUTDIR" "$overall" <<'EOF' || overall=1
 import json, re, sys, datetime
 outdir, overall = sys.argv[1], sys.argv[2]
 report = {
@@ -81,31 +87,55 @@ report = {
     "go_version": "1.27.1",
     "waves": {},
     "failures": [],
-    "verdict": "GREEN" if overall == "0" else "RED",
+    "verdict": "GREEN",
 }
 for wave in ("wave1", "wave2", "wave3"):
     try:
         log = open(f"{outdir}/{wave}.log").read()
     except OSError:
-        report["waves"][wave] = {"status": "no-log"}
+        # No log = no evidence of a pass: UNKNOWN, never GREEN-by-absence.
+        report["waves"][wave] = {"status": "UNKNOWN", "passed": -1,
+                                 "scope_limited": -1, "failed": -1}
+        report["verdict"] = "RED"
         continue
+    try:
+        rc = int(open(f"{outdir}/{wave}.rc").read().strip())
+    except (OSError, ValueError):
+        rc = -1
     m = re.search(r"== differential: (\d+) passed, (\d+) scope-limited, (\d+) failed ==", log)
     fails = [l for l in log.splitlines() if l.startswith("FAIL ")]
+    if m is None:
+        # The summary line is the positive evidence of a completed wave.
+        # Without it, a runner that exited 0 without running anything
+        # (or crashed before summarising) must not be reported GREEN.
+        status = "UNKNOWN"
+    elif rc != 0 or fails:
+        status = "RED"
+    else:
+        status = "GREEN"
     report["waves"][wave] = {
-        "status": "RED" if fails else "GREEN",
+        "status": status,
         "passed": int(m.group(1)) if m else -1,
         "scope_limited": int(m.group(2)) if m else -1,
         "failed": int(m.group(3)) if m else len(fails),
     }
+    if status != "GREEN":
+        report["verdict"] = "RED"
     for f in fails:
-        # Four-way triage placeholder: the gate runner records the raw
-        # failure; classification (graalgo-bug / upstream-change /
-        # backend-specific / nondeterminism) happens at triage time and is
-        # written back into this report's "triage" field.
-        report["failures"].append({"wave": wave, "line": f, "triage": "UNTRIAGED"})
+        # No classifier runs in this script, so no triage category is
+        # claimed: triage=null until a classifier assigns one of the
+        # four categories (graalgo-bug / upstream-change /
+        # backend-specific / nondeterminism) and writes it back.
+        report["failures"].append({"wave": wave, "line": f, "triage": None,
+                                   "triage_status": "pending-classification"})
+if overall != "0":
+    report["verdict"] = "RED"
+report["triage_complete"] = report["verdict"] == "GREEN" or all(
+    f["triage"] is not None for f in report["failures"])
 json.dump(report, open(f"{outdir}/report.json", "w"), indent=2)
 print(f"wrote {outdir}/report.json: verdict={report['verdict']}, "
       f"failures={len(report['failures'])}")
+sys.exit(0 if report["verdict"] == "GREEN" else 1)
 EOF
 
 if [ "$overall" -ne 0 ]; then

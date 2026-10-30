@@ -11,11 +11,15 @@
 //	          mutated source location/description (oracle-validation helper).
 //
 //	validate  full oracle validation: (1) green run of the unmutated corpus
-//	          (expects zero divergences), (2) rerun control under the
-//	          reference backend (expects zero divergences — flakiness check),
-//	          (3) per-class mutation validation (expects a divergence for
-//	          every mutation class). Exit status is non-zero on any violated
-//	          expectation. This is the red-green evidence for the oracles.
+//	          (reference compared against EVERY configured backend —
+//	          including graalgo — expects zero divergences), (2) rerun
+//	          control under the reference backend (expects zero
+//	          divergences — flakiness check), (3) per-class mutation
+//	          validation (expects a divergence for every mutation class
+//	          under EVERY backend: a mutation the graalgo comparator
+//	          misses is a missed detection, not a pass). Exit status is
+//	          non-zero on any violated expectation. This is the
+//	          red-green evidence for the oracles.
 //
 //	snapshot  behavior snapshots (M10 WS I): record graalgo's observable
 //	          behavior on the corpus as the upgrade baseline, or check the
@@ -233,13 +237,25 @@ func cmdMutate(args []string) error {
 	return nil
 }
 
+// backendDetection records, for one backend, whether the comparator flagged
+// the mutant-vs-original change under that backend. Detection is required
+// under EVERY backend: a backend whose comparator misses a mutation is a
+// blind spot, not a pass (a comparator bug that only manifests on the
+// graalgo backend must fail validate, not sail through on the gc result).
+type backendDetection struct {
+	Backend  string   `json:"backend"`
+	Detected bool     `json:"detected"`
+	Reasons  []string `json:"reasons"`
+}
+
 type mutationResult struct {
-	Class       string   `json:"class"`
-	Target      string   `json:"target"`
-	Description string   `json:"description"`
-	Detected    bool     `json:"detected"`
-	Reasons     []string `json:"reasons"`
-	RefLog      string   `json:"refLog,omitempty"`
+	Class       string             `json:"class"`
+	Target      string             `json:"target"`
+	Description string             `json:"description"`
+	Detected    bool               `json:"detected"`
+	Reasons     []string           `json:"reasons"`
+	Backends    []backendDetection `json:"backends"`
+	RefLog      string             `json:"refLog,omitempty"`
 }
 
 type validateReport struct {
@@ -290,34 +306,44 @@ func cmdValidate(args []string) error {
 	}
 	defer os.RemoveAll(workRoot)
 
-	backendNames := []string{cfg.Backends[0].Name, cfg.Backends[1].Name}
+	backendNames := make([]string, len(cfg.Backends))
+	for i, b := range cfg.Backends {
+		backendNames[i] = b.Name
+	}
 	rep := validateReport{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Config:      rf.config,
 		Backends:    backendNames,
 	}
 
-	// (1) Green run: unmutated corpus, ref vs alt — expect zero divergences.
-	// Outcomes under the reference backend are kept: step (3) compares each
+	// (1) Green run: unmutated corpus, reference vs EVERY other backend —
+	// expect zero divergences. Comparing only the first two backends would
+	// leave the graalgo backend unvalidated: a comparator blind spot that
+	// manifests only there (e.g. build-failure-as-baseline, JVM stderr
+	// filtering) would pass validate silently.
+	// Original outcomes are kept per backend: step (3) compares each
 	// mutant against the ORIGINAL program's outcome under the SAME backend.
 	// (Comparing mutant-vs-mutant across backends would be vacuous: two
 	// identical backends running the same mutant must agree.)
 	fmt.Println("== [1/3] green run: unmutated corpus ==")
-	origOut := map[string]harness.Outcome{}
+	origOut := map[string][]harness.Outcome{}
 	for _, p := range progs {
 		outs := runOne(cfg, p, workRoot)
-		origOut[p.Name] = outs[0]
-		c := harness.Compare(outs[0], outs[1])
-		rep.GreenRun = append(rep.GreenRun, c)
-		if !c.Same {
-			rep.GreenDiverged++
-			fmt.Printf("DIVERGE (unexpected!) %s\n", p.Name)
-			for _, r := range c.Reasons {
-				fmt.Printf("    - %s\n", r)
+		origOut[p.Name] = outs
+		for i := 1; i < len(outs); i++ {
+			c := harness.Compare(outs[0], outs[i])
+			rep.GreenRun = append(rep.GreenRun, c)
+			if !c.Same {
+				rep.GreenDiverged++
+				fmt.Printf("DIVERGE (unexpected!) %s %s vs %s\n", p.Name, outs[0].Backend, outs[i].Backend)
+				for _, r := range c.Reasons {
+					fmt.Printf("    - %s\n", r)
+				}
 			}
 		}
 	}
-	fmt.Printf("green: %d programs, %d divergences (want 0)\n", len(progs), rep.GreenDiverged)
+	fmt.Printf("green: %d programs, %d comparisons, %d divergences (want 0)\n",
+		len(progs), len(rep.GreenRun), rep.GreenDiverged)
 
 	// (2) Rerun control: same program twice under the reference backend —
 	// expects zero divergences; catches harness/corpus flakiness.
@@ -367,13 +393,24 @@ func cmdValidate(args []string) error {
 		}
 		mp := harness.Program{Name: m.class + "__" + m.target, Dir: mdir, Main: filepath.Join(mdir, "main.go")}
 		// Oracle question: does the comparator flag a behavioral change in
-		// the program? Compare ORIGINAL vs MUTANT under the SAME backend.
-		mutOut := harness.RunProgram(cfg, &cfg.Backends[0], mp, workRoot)
-		c := harness.Compare(origOut[m.target], mutOut)
-		res.Detected = !c.Same
-		res.Reasons = c.Reasons
-		if !mutOut.BuildOK {
-			res.RefLog = mutOut.BuildLog
+		// the program? Compare ORIGINAL vs MUTANT under the SAME backend,
+		// for EVERY backend. Running mutants only under the reference
+		// backend would never exercise the graalgo comparator path, so a
+		// graalgo-only blind spot would pass validate silently.
+		res.Detected = true
+		for i := range cfg.Backends {
+			mutOut := harness.RunProgram(cfg, &cfg.Backends[i], mp, workRoot)
+			c := harness.Compare(origOut[m.target][i], mutOut)
+			bd := backendDetection{Backend: cfg.Backends[i].Name, Detected: !c.Same, Reasons: c.Reasons}
+			res.Backends = append(res.Backends, bd)
+			if !bd.Detected {
+				res.Detected = false
+			} else {
+				res.Reasons = append(res.Reasons, c.Reasons...)
+			}
+			if i == 0 && !mutOut.BuildOK {
+				res.RefLog = mutOut.BuildLog
+			}
 		}
 		status := "DETECTED"
 		if !res.Detected {
@@ -381,8 +418,15 @@ func cmdValidate(args []string) error {
 			rep.MutationsMissed++
 		}
 		fmt.Printf("%s %-12s %-24s %s\n", status, m.class, m.target, mut.Description)
-		for _, r := range c.Reasons {
-			fmt.Printf("             - %s\n", r)
+		for _, bd := range res.Backends {
+			bstatus := "detected"
+			if !bd.Detected {
+				bstatus = "MISSED"
+			}
+			fmt.Printf("             - %s: %s\n", bd.Backend, bstatus)
+			for _, r := range bd.Reasons {
+				fmt.Printf("               - %s\n", r)
+			}
 		}
 		rep.Mutations = append(rep.Mutations, res)
 	}
