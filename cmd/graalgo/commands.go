@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -254,43 +256,104 @@ func cmdBuild(root string, args []string) int {
 //
 // Runs the frontend translation check (--check) over the named packages,
 // then runs the static analyzers in internal/vet and reports diagnostics
-// in the same style as `go vet`.
+// in the same style as `go vet`: diagnostics go to stderr, and a clean
+// run prints nothing.
 func cmdVet(root string, args []string) int {
+	return cmdVetWithRunner(root, args, graalgoRun)
+}
+
+// cmdVetWithRunner is cmdVet with the --check invoker injected, so the
+// gating is unit testable without a backend. The check runs once per
+// package-clause group (see groupFilesByPackage), not once per file:
+// the frontend compiles exactly the listed files together, so a file
+// referencing a sibling file's declaration fails a per-file gate on a
+// valid package, and the analyzers never run.
+func cmdVetWithRunner(root string, args []string, check func(string, []string) int) int {
 	files, err := resolveFiles(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	for _, group := range groupFilesByPackage(files) {
+		if code := check(root, append([]string{"--check"}, group...)); code != 0 {
 			failed = true
 		}
 	}
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
+	// Run the analyzers over all files. vet.Run's own grouping of the
+	// files into test variants is internal/vet's job (N-P2-34, vet
+	// lane); the driver passes the full file list, unchanged, and
+	// fixes only its own --check gating here.
 	ds, err := vet.Run(files)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
 	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", d.Pos, d.Message)
 	}
 	if len(ds) > 0 {
 		return 1
 	}
-	fmt.Println("vet: no issues found")
 	return 0
+}
+
+// groupFilesByPackage partitions files into groups that share a
+// directory and a package clause, in first-appearance order, files in
+// input order within each group. This mirrors `go vet`'s test variants
+// without duplicating vet.Run's grouping: internal _test.go files share
+// their package's clause and group with it, while external _test.go
+// files (package foo_test) form their own group, and two directories
+// whose packages merely share a name stay separate. A file whose
+// package clause cannot be parsed (including a nonexistent file, which
+// resolveFiles passes through for the backend to report) forms a group
+// of its own, so its --check still reports the real error.
+func groupFilesByPackage(files []string) [][]string {
+	type key struct {
+		dir string
+		pkg string
+	}
+	var order []key
+	groups := make(map[key][]string)
+	for _, f := range files {
+		k := key{dir: filepath.Dir(f)}
+		if name, err := packageClauseName(f); err == nil {
+			k.pkg = name
+		} else {
+			// Unique per file: unparsable files never merge.
+			k.pkg = "\x00" + f
+		}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], f)
+	}
+	var out [][]string
+	for _, k := range order {
+		out = append(out, groups[k])
+	}
+	return out
+}
+
+// packageClauseName returns the package clause of a Go source file,
+// without parsing its body.
+func packageClauseName(path string) (string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+	if err != nil {
+		return "", err
+	}
+	return f.Name.Name, nil
 }
 
 // cmdFmt implements `graalgo fmt [packages]`.
 //
 // Formats the Go source files using gofmt from the stock toolchain.
 func cmdFmt(root string, args []string) int {
-	files, err := resolveFiles(args)
+	files, err := resolveAllFiles(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo fmt: %v\n", err)
 		return 1

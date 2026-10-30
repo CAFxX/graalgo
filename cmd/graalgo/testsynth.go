@@ -17,11 +17,46 @@ import (
 )
 
 // discoverTests returns the names of TestXxx functions in a _test.go file.
+//
+// A function counts only if it has exactly one parameter and that
+// parameter is *testing.T, matching the signature `go test` accepts.
+// The parameter type is resolved through the file's own imports, so an
+// aliased import (`tt "testing"`, param `*tt.T`) and a dot import
+// (param `*T`) both count, while `*testing.M`, `*int`, or any other
+// single-parameter type does not: synthesizing such a function as a
+// test and calling it with a *graalgoT would make the generated driver
+// fail to compile and fail the whole package's run.
+//
+// TestMain is never a test: it is the package's test entry point, not a
+// test function, so it is excluded here (and skipped as an entry point
+// when declarations are inlined). Note the driver does not execute
+// TestMain — a package whose tests depend on TestMain's setup runs
+// without it — which is a known gap, not a silent misclassification.
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
+	}
+	// Resolve the local name of the "testing" import in this file.
+	testingLocal := ""
+	dotTesting := false
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, "\"") != "testing" {
+			continue
+		}
+		if imp.Name == nil {
+			testingLocal = "testing"
+		} else {
+			switch imp.Name.Name {
+			case ".":
+				dotTesting = true
+			case "_":
+				// Side-effect import: binds no qualifier.
+			default:
+				testingLocal = imp.Name.Name
+			}
+		}
 	}
 	var tests []string
 	for _, decl := range f.Decls {
@@ -33,13 +68,48 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
+		// TestMain is the entry point, not a test.
+		if name == "TestMain" {
+			continue
+		}
+		// Exactly one parameter, of type *testing.T. A single field
+		// with several names (func TestX(a, b *testing.T)) is two
+		// parameters, and an unnamed parameter
+		// (func TestX(*testing.T)) is one, so the name count must be
+		// 0 or 1, never more.
 		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+			continue
+		}
+		field := fn.Type.Params.List[0]
+		if len(field.Names) > 1 {
+			continue
+		}
+		if !isTestingTParam(field, testingLocal, dotTesting) {
 			continue
 		}
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// isTestingTParam reports whether field declares *testing.T, resolved
+// through the importing file's bindings: testingLocal is the qualifier
+// of a plain or aliased "testing" import ("" if none), and dotTesting
+// reports a dot import of "testing".
+func isTestingTParam(field *ast.Field, testingLocal string, dotTesting bool) bool {
+	star, ok := field.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	switch t := star.X.(type) {
+	case *ast.SelectorExpr:
+		id, ok := t.X.(*ast.Ident)
+		return ok && testingLocal != "" && id.Name == testingLocal && t.Sel.Name == "T"
+	case *ast.Ident:
+		return dotTesting && t.Name == "T"
+	default:
+		return false
+	}
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every

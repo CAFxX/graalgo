@@ -29,50 +29,63 @@ import (
 const version = "0.4.0"
 
 func main() {
-	if len(os.Args) < 2 {
+	os.Exit(runMain(os.Args[1:]))
+}
+
+// runMain implements the command dispatch, returning the exit code
+// instead of exiting so dispatch of missing/unknown commands is unit
+// testable. Help and version are handled before requiring an
+// installation, exactly as before.
+func runMain(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
-	cmd, args := os.Args[1], os.Args[2:]
+	cmd, rest := args[0], args[1:]
 
 	// Handle help and version before requiring installation
 	switch cmd {
 	case "help", "-h", "--help":
-		if len(args) > 0 {
-			helpFor(args[0])
+		if len(rest) > 0 {
+			helpFor(rest[0])
 		} else {
 			usage()
 		}
-		return
+		return 0
 	case "version", "-v", "--version":
 		fmt.Printf("graalgo version %s\n", version)
-		return
+		return 0
 	}
 
 	root, err := findGraalgoRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
-	var exitCode int
+	return dispatchCommand(root, cmd, rest)
+}
+
+// dispatchCommand routes one command (after help/version and root
+// discovery) to its implementation. Unknown commands exit 2, like the
+// go command's usage error.
+func dispatchCommand(root, cmd string, args []string) int {
 	switch cmd {
 	case "run":
-		exitCode = cmdRun(root, args)
+		return cmdRun(root, args)
 	case "build":
-		exitCode = cmdBuild(root, args)
+		return cmdBuild(root, args)
 	case "test":
-		exitCode = cmdTest(root, args)
+		return cmdTest(root, args)
 	case "vet":
-		exitCode = cmdVet(root, args)
+		return cmdVet(root, args)
 	case "fmt":
-		exitCode = cmdFmt(root, args)
+		return cmdFmt(root, args)
 	default:
 		fmt.Fprintf(os.Stderr, "graalgo: unknown command %q\n", cmd)
 		fmt.Fprintf(os.Stderr, "Run 'graalgo help' for usage.\n")
-		exitCode = 2
+		return 2
 	}
-	os.Exit(exitCode)
 }
 
 func usage() {
@@ -233,15 +246,39 @@ func graalgoRunProgram(root string, args []string) int {
 	return 0
 }
 
-// resolveFiles turns package/file arguments into a list of .go files.
-// With no args, uses *.go in the current directory. Directories are
-// expanded to their *.go files (non-recursive, like a simple package).
+// resolveFiles turns package/file arguments into a list of .go files,
+// honoring build constraints: directories are expanded with
+// buildableGoFiles (go/build constraint evaluation — GOOS/GOARCH
+// filename suffixes and //go:build lines), the same file set `go build`
+// would use. A bare *.go glob here used to inline build-tag-gated
+// alternatives together (e.g. foo_linux.go + foo_darwin.go), which
+// redeclare each other's symbols. Explicitly listed files are passed
+// through unfiltered, like `go run file.go`: naming a file opts into it
+// regardless of constraints. _test.go files are included in the list;
+// run/build filter them out, vet groups them by package clause, and fmt
+// uses resolveAllFiles instead (see below).
 func resolveFiles(args []string) ([]string, error) {
+	return expandFileArgs(args, buildableGoFiles)
+}
+
+// resolveAllFiles is resolveFiles without constraint filtering: every
+// *.go file in a directory, including build-excluded ones. Formatting
+// is not compilation — `gofmt` formats files for every platform — so
+// cmdFmt uses this instead of resolveFiles; using the constrained list
+// there would silently skip formatting files for other platforms.
+func resolveAllFiles(args []string) ([]string, error) {
+	return expandFileArgs(args, func(dir string) []string {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		return matches
+	})
+}
+
+// expandFileArgs is the shared argument expansion for resolveFiles and
+// resolveAllFiles: with no args, the current directory; directories are
+// expanded by expandDir (non-recursive, like a simple package).
+func expandFileArgs(args []string, expandDir func(string) []string) ([]string, error) {
 	if len(args) == 0 {
-		matches, err := filepath.Glob("*.go")
-		if err != nil {
-			return nil, err
-		}
+		matches := expandDir(".")
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("no Go files in current directory")
 		}
@@ -263,11 +300,7 @@ func resolveFiles(args []string) ([]string, error) {
 			return nil, fmt.Errorf("no such file or directory: %s", a)
 		}
 		if fi.IsDir() {
-			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, matches...)
+			files = append(files, expandDir(a)...)
 			continue
 		}
 		files = append(files, a)
