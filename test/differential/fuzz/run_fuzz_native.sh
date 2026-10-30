@@ -64,6 +64,16 @@ REPLAY_DIR="$OUTDIR/replay-corpus"
 rm -rf "$REPLAY_DIR" && mkdir -p "$REPLAY_DIR"
 python3 "$HERE/replay.py" --fuzzdir "$HERE/testdata/fuzz" --out "$REPLAY_DIR" | tee "$OUTDIR/replay.log"
 
+# Fail closed on an empty replay corpus: a diffharness run over zero
+# programs must never print FUZZ-NATIVE GREEN. Count materialized
+# programs on disk (ground truth), not the replay log line.
+REPLAY_COUNT=$(find "$REPLAY_DIR" -mindepth 2 -name main.go | wc -l)
+echo "replay programs on disk: $REPLAY_COUNT"
+if [ "$REPLAY_COUNT" -eq 0 ]; then
+  echo "FUZZ-NATIVE RED: replay produced 0 programs — nothing was differentially tested" >&2
+  exit 1
+fi
+
 echo "== [3/4] differential: gc vs graalgo =="
 cd "$DH_ROOT"
 go build -o "$OUTDIR/diffharness" ./cmd/diffharness
@@ -76,7 +86,7 @@ rc=$?
 
 echo "== [4/4] verdict =="
 if [ $rc -eq 0 ]; then
-  echo "FUZZ-NATIVE GREEN: zero divergences (see $OUTDIR/report.json)"
+  echo "FUZZ-NATIVE GREEN: $REPLAY_COUNT programs, zero divergences (see $OUTDIR/report.json)"
 else
   echo "FUZZ-NATIVE RED: divergences above (see $OUTDIR/report.json)"
 fi

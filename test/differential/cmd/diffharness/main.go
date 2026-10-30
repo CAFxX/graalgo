@@ -5,7 +5,8 @@
 //
 //	run       run the corpus under every configured backend, compare each
 //	          backend against the first (reference), write a JSON report.
-//	          Exit status is non-zero if any program diverges.
+//	          Exit status is non-zero if any program diverges, or if no
+//	          program is compared at all (unless -allow-empty is given).
 //
 //	mutate    apply one mutation class to one corpus program and print the
 //	          mutated source location/description (oracle-validation helper).
@@ -69,7 +70,7 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|srctest> [flags]
 
-  run      -config PATH -corpus DIR -out PATH [-timeout SEC]
+  run      -config PATH -corpus DIR -out PATH [-timeout SEC] [-allow-empty]
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
@@ -77,7 +78,7 @@ func usage() {
   snapshot record -config PATH -corpus DIR -backend NAME -out FILE [-toolchain V] [-graalgo-commit SHA] [-runs N] [-jobs N]
   snapshot check  -config PATH -corpus DIR -backend NAME -snapshot FILE [-jobs N]
   srctest scan -dir DIR -exclusions FILE -out PATH
-  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
+  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC] [-allow-empty]
 `)
 }
 
@@ -139,6 +140,7 @@ type runReport struct {
 func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	rf := baseFlags(fs)
+	allowEmpty := fs.Bool("allow-empty", false, "allow a run with zero comparisons to exit 0 (default: fail — a green run over zero programs proves nothing)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -193,6 +195,14 @@ func cmdRun(args []string) error {
 		return err
 	}
 	fmt.Printf("run: %d comparisons, %d diverged, report %s\n", len(rep.Comparisons), diverged, rf.out)
+	// A run that compared nothing must not exit 0: with zero kept
+	// programs (empty corpus, or every program excluded) "zero
+	// divergences" is vacuous. Callers that genuinely expect an empty
+	// run (e.g. a single-backend diagnostic config, which yields no
+	// comparisons by construction) must pass -allow-empty explicitly.
+	if len(rep.Comparisons) == 0 && !*allowEmpty {
+		return fmt.Errorf("no comparisons: %d programs kept, %d skipped — refusing green on zero programs (use -allow-empty to override)", len(progs), len(skipped))
+	}
 	if diverged > 0 {
 		return fmt.Errorf("%d divergences", diverged)
 	}
@@ -574,6 +584,7 @@ func cmdSrctestRun(args []string) error {
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
 	timeout := fs.Int("timeout", 0, "per-program timeout seconds (0 = config default)")
+	allowEmpty := fs.Bool("allow-empty", false, "allow a run with zero comparisons to exit 0 (default: fail — a green conformance run over zero programs proves nothing)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -630,6 +641,11 @@ func cmdSrctestRun(args []string) error {
 	}
 	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",
 		len(comps), div, skipped, *out)
+	// Same fail-closed rule as cmdRun: zero comparisons (empty scan, or
+	// every file excluded) must not exit 0 as "conformance green".
+	if len(comps) == 0 && !*allowEmpty {
+		return fmt.Errorf("no comparisons: %d files scanned, %d excluded — refusing green on zero programs (use -allow-empty to override)", len(files), skipped)
+	}
 	if div > 0 {
 		return fmt.Errorf("%d divergences", div)
 	}

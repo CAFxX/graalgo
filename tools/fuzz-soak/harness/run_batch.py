@@ -25,6 +25,19 @@ def sh(cmd, **kw):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True, **kw)
 
 
+def batch_exit_code(counts, n_results):
+    """Gate verdict for a batch: 0 only if every result is PASS/SCOPE.
+
+    ANY other result class fails the batch — GC_BUILD_FAIL, WRONG_OUTPUT,
+    CRASH, HANG, EXIT_MISMATCH, HARNESS_ERROR, and any future divergence
+    class. An empty batch (zero programs ran) also fails: a green verdict
+    over zero programs proves nothing.
+    """
+    if n_results == 0:
+        return 1
+    return 0 if all(k in ("PASS", "SCOPE") for k in counts) else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", required=True, help="START:END (e.g. 0:100)")
@@ -114,7 +127,18 @@ def main():
     if scope_rate > 0.2:
         print("WARNING: scope-hit rate >20% — tune generator before scaling")
 
-    return 0 if counts.get("GC_BUILD_FAIL", 0) == 0 else 1
+    # Exit code is the gate: ANY non-PASS/SCOPE result fails the batch.
+    # GC_BUILD_FAIL, WRONG_OUTPUT, CRASH, HANG, EXIT_MISMATCH, HARNESS_ERROR
+    # and any future divergence class are all failures. (Previously only
+    # GC_BUILD_FAIL affected the exit code, so a night full of divergences
+    # exited 0 and the soak stayed green.)
+    if not results:
+        print("ERROR: no programs ran (empty seed range?) — refusing green on an empty batch")
+    non_pass = {k: v for k, v in counts.items() if k not in ("PASS", "SCOPE")}
+    if non_pass:
+        detail = ", ".join(f"{k}={v}" for k, v in sorted(non_pass.items()))
+        print(f"\nERROR: batch failed: {detail}")
+    return batch_exit_code(counts, len(results))
 
 
 if __name__ == "__main__":

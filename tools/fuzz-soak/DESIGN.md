@@ -68,6 +68,17 @@ control flow, and a final deterministic state dump via `fmt.Println`.
 runs `diff_one.sh` in parallel (`-P 4` default, respects load-shed
 backoff), classifies, dedups, writes `results.jsonl` + summary.
 
+Gate semantics (fail-closed, review21-fuzzgates): a batch exits 0
+only if every result is PASS or SCOPE — any other class
+(WRONG_OUTPUT, CRASH, HANG, EXIT_MISMATCH, GC_BUILD_FAIL,
+HARNESS_ERROR, or any future class) fails it, and an empty batch
+fails. `run_soak.sh` minimizes divergences and then fails on any
+diverged program or failed minimization; its overnight verdict and
+the workflow verdict step both run the single shared checker
+[harness/check_soak_report.py](harness/check_soak_report.py), which
+also fails on a missing report or zero batches. Regression tests:
+[harness/gate_regression_test.sh](harness/gate_regression_test.sh).
+
 Classification:
 | Result | Meaning |
 |---|---|

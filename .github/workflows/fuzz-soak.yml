@@ -49,6 +49,10 @@ jobs:
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
       - name: Layer 4a — generative soak (seeded programs, differential)
+        # continue-on-error: both layers must run even if one goes red; the
+        # verdict step below is authoritative for the soak report, and the
+        # native step's own exit code covers its layer.
+        continue-on-error: true
         env:
           GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
           JAVA_BIN: "${{ env.JAVA_HOME }}/bin/java"
@@ -68,6 +72,17 @@ jobs:
           ./test/differential/fuzz/run_fuzz_native.sh \
             --fuzztime 120 \
             --out "$GITHUB_WORKSPACE/fuzz-native-out"
+
+      - name: Verdict — fail on soak divergences
+        # run_soak.sh itself exits non-zero on divergences, but this step
+        # is the fail-closed check on the artifact: a night full of
+        # divergences must not stay green because a step was skipped or
+        # its exit code was swallowed. The check is the same script
+        # run_soak.sh uses for its own verdict, so the two cannot drift.
+        if: always()
+        run: |
+          python3 tools/fuzz-soak/harness/check_soak_report.py \
+            "$GITHUB_WORKSPACE/fuzz-soak-out/soak-report.json"
 
       - name: Upload soak reports
         if: always()

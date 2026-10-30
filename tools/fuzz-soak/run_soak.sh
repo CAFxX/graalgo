@@ -65,7 +65,9 @@ run_batch() {
 minimize_findings() {
   local batchdir="$1"
   # triage.py minimizes each diverged program; failures to minimize are
-  # recorded, never silently dropped.
+  # recorded, never silently dropped. This function EXITS NON-ZERO if any
+  # minimization fails, so callers must not swallow it with `|| true`:
+  # a failed minimization means a divergence has no reproducer on file.
   python3 - "$HERE" "$batchdir" <<'EOF'
 import json, os, subprocess, sys
 here, batchdir = sys.argv[1], sys.argv[2]
@@ -81,48 +83,76 @@ for line in open(res):
 print(f"{len(diverged)} diverged programs to minimize")
 out = os.path.join(batchdir, "minimized")
 os.makedirs(out, exist_ok=True)
+workdir = os.path.join(batchdir, "triage-work")
+failed = 0
 for r in diverged:
     prog = os.path.join(batchdir, "programs", r["file"] + ".go")
     if not os.path.exists(prog):
-        print(f"missing program for {r['file']}; skipping")
+        print(f"missing program for {r['file']}; minimization failed")
+        failed += 1
         continue
     p = subprocess.run(
-        ["python3", f"{here}/harness/triage.py", prog, "--out", out],
+        ["python3", f"{here}/harness/triage.py",
+         "--prog", prog, "--out", os.path.join(out, r["file"] + ".go"),
+         "--workdir", workdir],
         capture_output=True, text=True, timeout=1200)
     print(f"{r['file']}: triage rc={p.returncode}")
     if p.returncode != 0:
         print(p.stderr[-500:])
+        failed += 1
+if failed:
+    print(f"minimization failed for {failed}/{len(diverged)} diverged programs")
+    sys.exit(1)
 EOF
 }
 
 if [ -n "$SEEDS" ]; then
-  # Single bounded batch: the continuous-track slot.
+  # Single bounded batch: the continuous-track slot. Minimize first, then
+  # fail: a diverged batch must not exit 0, and a failed minimization must
+  # not be hidden behind a batch verdict either way.
   echo "== soak batch: seeds $SEEDS =="
-  run_batch "$SEEDS" "$OUT/batch-0"
-  minimize_findings "$OUT/batch-0"
-  echo "batch done: $OUT/batch-0"
+  batch_rc=0
+  run_batch "$SEEDS" "$OUT/batch-0" || batch_rc=$?
+  minimize_rc=0
+  minimize_findings "$OUT/batch-0" || minimize_rc=$?
+  echo "batch done: $OUT/batch-0 (batch_rc=$batch_rc minimize_rc=$minimize_rc)"
+  if [ "$minimize_rc" -ne 0 ]; then
+    echo "SOAK RED: minimization failed" >&2
+    exit 1
+  fi
+  if [ "$batch_rc" -ne 0 ]; then
+    echo "SOAK RED: divergences in batch (see $OUT/batch-0/results.jsonl)" >&2
+    exit 1
+  fi
   exit 0
 fi
 
 [ -n "$HOURS" ] || { echo "need --hours or --seeds" >&2; exit 2; }
 
 # Overnight soak: batches of BATCH seeds until the deadline.
+# A failed batch does not stop the soak (keep sampling), but it is
+# remembered: the final verdict below fails on any diverged program or
+# any failed minimization. Minimization failures are NOT swallowed.
 seed=0
 batch=0
+minimize_failed=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
   if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
     echo "batch $batch failed; continuing with next batch"
   fi
-  minimize_findings "$OUT/batch-$batch" || true
+  if ! minimize_findings "$OUT/batch-$batch"; then
+    echo "batch $batch minimization failed; continuing with next batch"
+    minimize_failed=1
+  fi
   seed=$((seed + BATCH))
   batch=$((batch + 1))
 done
 
 echo "== soak complete: $batch batches, $seed programs =="
-python3 - "$OUT" <<'EOF'
+python3 - "$OUT" "$minimize_failed" <<'EOF'
 import glob, json, os, sys
-out = sys.argv[1]
+out, minimize_failed = sys.argv[1], sys.argv[2] == "1"
 total_div = 0
 for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
     for line in open(res):
@@ -130,7 +160,17 @@ for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
         if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
             total_div += 1
 rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
-       "diverged_total": total_div}
+       "diverged_total": total_div,
+       "minimize_failed": minimize_failed}
 json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
 print(f"soak report: {rep}")
 EOF
+diverged_total=$(python3 -c "import json; print(json.load(open('$OUT/soak-report.json'))['diverged_total'])")
+echo "soak verdict: $diverged_total diverged, minimize_failed=$minimize_failed, batches=$batch"
+# Single source of truth for the verdict: harness/check_soak_report.py
+# (also used by the workflow verdict step). It fails on zero batches,
+# divergences, or failed minimization, and on a missing/malformed report.
+if ! python3 "$HERE/harness/check_soak_report.py" "$OUT/soak-report.json"; then
+  exit 1
+fi
+echo "SOAK GREEN: zero divergences across $batch batches"
