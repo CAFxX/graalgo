@@ -274,8 +274,9 @@ var syntheticSources = map[string]string{
 	// P3-M9 (tier1c): synthetic path (port; imports strings; Match is
 	// scope-limited).
 	"path": syntheticPathSource,
-	// P3-M9 (tier1c): synthetic text/scanner (port; utf8/unicode inlined
-	// as __ts* helpers; ASCII-only IsLetter/IsDigit).
+	// P3-M9 (tier1c): synthetic text/scanner (port; utf8 inlined
+	// as __ts* helpers; unicode.IsLetter/IsDigit from the synthetic
+	// unicode package since the R0-3 remediation).
 	"text/scanner": syntheticTextScannerSource,
 	// P3-M9 (tier1c): synthetic regexp/syntax (SCOPE-LIMITED: requires
 	// tier1a's unicode; see header).
