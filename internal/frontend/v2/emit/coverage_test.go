@@ -115,7 +115,7 @@ var loudlyRejected = map[string]bool{
 	"TypeAssertExpr": true,
 	// Declarations not yet implemented.
 	"BadDecl":   true,
-	"GenDecl":   true, // top-level; const/type/var handled selectively
+	"GenDecl":   true, // top-level; var emitted as Globals, const/type names recorded in Objects
 	"TypeSpec":  true,
 	"ValueSpec": true,
 	// Clauses (only appear inside switch/select).

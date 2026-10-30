@@ -170,7 +170,12 @@ func main() {
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
 `,
-		want: "unsupported expr",
+		// The generic declaration itself is now rejected first:
+		// its parameter has an unhandled *types.TypeParam type,
+		// which the emitter refuses to mis-encode as basic/unknown.
+		// The instantiation would also be rejected as an
+		// unsupported expr if the declaration were ever handled.
+		want: "unsupported",
 	},
 }
 

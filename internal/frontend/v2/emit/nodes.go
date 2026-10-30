@@ -472,6 +472,14 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
+		// The predeclared nil has no type; it is its own node kind,
+		// not an identifier reference (asking for its type id used
+		// to panic in the type table).
+		if _, ok := obj.(*types.Nil); ok {
+			return e.node("nil", id, map[string]any{
+				"name": id.Name,
+			}), nil
+		}
 		oid := e.declareObject(obj)
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
