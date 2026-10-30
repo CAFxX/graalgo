@@ -85,11 +85,14 @@ public final class GoNetpollTest {
     }
 
     /** Wire-format AF_INET 127.0.0.1:port. */
+    // D5 (9c92153d): []byte is byte[]-backed — these helpers must build
+    // byte[] slices, not the pre-migration int[] ones, or GoNet's goBuf
+    // casts fail with ClassCastException before any test logic runs.
     private static GoSlice v4(int port) {
-        int[] a = new int[7];
+        byte[] a = new byte[7];
         a[0] = 2;
-        a[1] = (port >>> 8) & 0xFF;
-        a[2] = port & 0xFF;
+        a[1] = (byte) ((port >>> 8) & 0xFF);
+        a[2] = (byte) (port & 0xFF);
         a[3] = 127;
         a[4] = 0;
         a[5] = 0;
@@ -99,22 +102,18 @@ public final class GoNetpollTest {
 
     private static GoSlice bytes(String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int[] a = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            a[i] = b[i] & 0xFF;
-        }
-        return new GoSlice(a, 0, a.length, a.length);
+        return new GoSlice(b, 0, b.length, b.length);
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static String str(GoSlice gs, int n) {
-        int[] a = (int[]) gs.array();
+        byte[] a = (byte[]) gs.array();
         byte[] b = new byte[n];
         for (int i = 0; i < n; i++) {
-            b[i] = (byte) a[gs.offset() + i];
+            b[i] = a[gs.offset() + i];
         }
         return new String(b, java.nio.charset.StandardCharsets.UTF_8);
     }
@@ -123,7 +122,7 @@ public final class GoNetpollTest {
         GoSlice b = buf(23);
         long r = GoNet.getsockname(cookie, b);
         assertTrue(r > 0, "getsockname ok: " + r);
-        int[] a = (int[]) b.array();
+        byte[] a = (byte[]) b.array();
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
@@ -231,7 +230,7 @@ public final class GoNetpollTest {
             // Peer addresses agree (fd-domain unification: cookies resolve).
             GoSlice pb = buf(23);
             assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
-            int[] a = (int[]) pb.array();
+            byte[] a = (byte[]) pb.array();
             assertEq(2, a[0], "peer family");
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
@@ -756,7 +755,7 @@ public final class GoNetpollTest {
                 GoSlice rb = buf(64);
                 GoSlice ab = buf(23);
                 long r = GoNet.recvfrom(a, rb, ab);
-                int[] aa = (int[]) ab.array();
+                byte[] aa = (byte[]) ab.array();
                 peer.set("fam=" + aa[0]);
                 got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
                 return null;
