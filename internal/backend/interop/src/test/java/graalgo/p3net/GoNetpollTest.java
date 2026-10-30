@@ -7,9 +7,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.frontend.FrontendException;
 import graalgo.p3os.GoOs;
+import graalgo.p3tls.TlsRuntime;
 import graalgo.runtime.Linknames;
 import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 
 /**
  * Tests for the P3-M9 netpoller ({@link GoNetpoll}) and socket traps
@@ -205,6 +207,76 @@ public final class GoNetpollTest {
         assertEq(0, GoOs.close(cookie), "os.close socket");
     }
 
+    // ---- byte[]-backed helpers (P1-5 regression test) ----
+    //
+    // D5: []byte is byte[]-backed (commit 9c92153d). The older v4/buf
+    // helpers above build int[]-backed slices, which the current
+    // GoNet/GoOs buffer adapters reject (pre-existing staleness, owned
+    // by the P1-7 backend-tests lane) — new tests must use byte[].
+
+    /** Wire-format AF_INET 127.0.0.1:port, byte[]-backed. */
+    private static GoSlice v4b(int port) {
+        byte[] a = new byte[7];
+        a[0] = 2;
+        a[1] = (byte) (port >>> 8);
+        a[2] = (byte) port;
+        a[3] = 127;
+        a[4] = 0;
+        a[5] = 0;
+        a[6] = 1;
+        return new GoSlice(a, 0, 7, 7);
+    }
+
+    private static GoSlice bufB(int n) {
+        return new GoSlice(new byte[n], 0, n, n);
+    }
+
+    private static int boundPortB(long cookie) {
+        GoSlice b = bufB(23);
+        long r = GoNet.getsockname(cookie, b);
+        assertTrue(r > 0, "getsockname ok: " + r);
+        byte[] a = (byte[]) b.array();
+        return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
+    }
+
+    /** Loopback listener, fork order (pollOpen before bind/listen); returns {cookie, ctx, port}. */
+    private static long[] listenLoopbackB() {
+        long ls = GoNet.socket(2L, 1L, 0L);
+        assertTrue(ls >= 16, "socket cookie: " + ls);
+        long ctx = openPollFirst(ls);
+        assertEq(0, GoNet.setsockopt(ls, 1L, 2L, 1L), "SO_REUSEADDR");
+        assertEq(0, GoNet.bind(ls, v4b(0)), "bind");
+        assertEq(0, GoNet.listen(ls, 128L), "listen");
+        return new long[]{ls, ctx, boundPortB(ls)};
+    }
+
+    /** Dials 127.0.0.1:port (fork order); returns {cookie, ctx}. Must run on a goroutine. */
+    private static long[] dialLoopbackB(int port) {
+        long cs = GoNet.socket(2L, 1L, 0L);
+        assertTrue(cs >= 16, "socket cookie: " + cs);
+        long ctx = openPollFirst(cs);
+        long rc = GoNet.connect(cs, v4b(port));
+        if (rc == -GoNet.EINPROGRESS) {
+            long w = GoNetpoll.pollWait(ctx, (long) 'w');
+            assertEq(0, w, "connect wait");
+            assertEq(0, GoNet.getsockopt(cs, 1L, 4L), "SO_ERROR after connect");
+        } else {
+            assertEq(0, rc, "connect immediate");
+        }
+        return new long[]{cs, ctx};
+    }
+
+    /** Live poller threads (named by GoNetpoll.pollServerInit). */
+    private static int pollerThreadCount() {
+        int n = 0;
+        for (Thread t : Thread.getAllStackTraces().keySet()) {
+            if ("graalgo-netpoll".equals(t.getName()) && t.isAlive()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
     // ---- tests ----
 
     public void testPollServerInitIdempotent() {
@@ -214,6 +286,92 @@ public final class GoNetpollTest {
             GoNetpoll.pollServerInit();
             assertEq(0, GoNetpoll.descCount(), "no descs");
             assertTrue(GoNetpoll.lastPollerError() == null, "poller healthy");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * P1-5 (independent review 2026-10-30): per-run static state is
+     * reset in multi-program JVMs. Run 1 opens a listener, a client
+     * socket, and a TLS engine and never closes any of them (the
+     * panic / os.Exit / fatal exit shape: no pollClose, no os.close,
+     * no tls.close). The production program boundary — the exact
+     * P3SyncMain sequence — must then leave nothing behind: no
+     * pollDescs, no socket control state, no open channels, no live
+     * TLS handle, no poller thread. Run 2 on the same JVM must then
+     * work from a clean slate (cookies and TLS handles restart, the
+     * poller serves a real dial/accept round-trip, exactly one poller
+     * thread exists) and shut down cleanly.
+     *
+     * <p>Fails without the fix: with the old boundary (GoOs.init
+     * only) every post-boundary assertion fails — descs/states stay
+     * at 2, both channels stay open, the TLS handle stays valid, and
+     * the old poller thread stays alive (verified by a scratch repro
+     * on unmodified code before this test was added).
+     */
+    public void testPerRunResetClearsUnclosedSocketsAndTls() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            // ---- run 1: unclosed sockets + TLS engine ----
+            long ls = GoNet.socket(2L, 1L, 0L);
+            assertEq(16, ls, "run1 first cookie");
+            long lctx = GoNetpoll.pollOpen(ls);
+            assertTrue(lctx != 0, "run1 pollOpen listener");
+            assertEq(0, GoNet.setsockopt(ls, 1L, 2L, 1L), "SO_REUSEADDR");
+            assertEq(0, GoNet.bind(ls, v4b(0)), "run1 bind");
+            assertEq(0, GoNet.listen(ls, 128L), "run1 listen");
+            long cs = GoNet.socket(2L, 1L, 0L);
+            long cctx = GoNetpoll.pollOpen(cs);
+            assertTrue(cctx != 0, "run1 pollOpen client");
+            long tls = TlsRuntime.newClientEngine(GoString.fromUtf8("example.com"),
+                    0L, 0L, 0L, bufB(0));
+            assertEq(1, tls, "run1 TLS handle");
+            java.nio.channels.Channel lsCh = GoOs.socketChannel(ls);
+            java.nio.channels.Channel csCh = GoOs.socketChannel(cs);
+            assertTrue(lsCh != null && csCh != null, "channels resolvable");
+            assertEq(2, GoNetpoll.descCount(), "run1 descs");
+            assertEq(2, GoNet.stateCount(), "run1 states");
+            // No closes: the panic/os.Exit exit path.
+
+            // ---- production program boundary (exact P3SyncMain sequence) ----
+            GoNetpoll.resetForRun();
+            GoNet.resetForRun();
+            TlsRuntime.resetForRun();
+            GoOs.init(new String[0]);
+            assertEq(0, GoNetpoll.descCount(), "boundary clears descs");
+            assertEq(0, GoNet.stateCount(), "boundary clears states");
+            assertTrue(!lsCh.isOpen() && !csCh.isOpen(),
+                    "boundary closes leftover channels");
+            assertEq(-1, TlsRuntime.engineStatus(tls), "boundary drops TLS engine");
+            assertEq(0, TlsRuntime.hasPending(tls), "boundary drops TLS pending");
+            assertEq(0, pollerThreadCount(), "boundary stops old poller thread");
+            assertTrue(GoNetpoll.lastPollerError() == null, "poller healthy");
+
+            // ---- run 2: fresh program on the same JVM ----
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopbackB();
+            assertEq(16, srv[0], "run2 cookies restart at 16");
+            long[] cli = onGoroutine(sched, () -> dialLoopbackB((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long sctx = GoNetpoll.pollOpen(ss);
+            assertTrue(sctx != 0, "pollOpen accepted");
+            GoSlice pb = bufB(23);
+            assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
+            byte[] pa = (byte[]) pb.array();
+            assertEq(2, pa[0], "peer family");
+            long tls2 = TlsRuntime.newClientEngine(GoString.fromUtf8("example.com"),
+                    0L, 0L, 0L, bufB(0));
+            assertEq(1, tls2, "run2 TLS handles restart at 1");
+            assertEq(0, TlsRuntime.engineStatus(tls2), "run2 engine live");
+            assertEq(1, pollerThreadCount(), "run2 has exactly one poller thread");
+            // Clean shutdown of run 2 (the well-behaved path still works).
+            TlsRuntime.close(tls2);
+            assertEq(-1, TlsRuntime.engineStatus(tls2), "closed engine unknown");
+            closeSock(ss, sctx);
+            closeSock(cli[0], cli[1]);
+            closeSock(srv[0], srv[1]);
+            assertEq(0, GoNetpoll.descCount(), "run2 descs dropped after clean close");
         } finally {
             teardown(prev);
         }

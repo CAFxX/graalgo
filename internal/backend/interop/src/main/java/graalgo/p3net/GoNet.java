@@ -80,8 +80,9 @@ import graalgo.values.GoSlice;
  * = completion pending (the netpoller drives {@code OP_CONNECT};
  * failure surfaces through {@code getsockopt(SO_ERROR)}, gc parity).
  *
- * <p>State is per-program-run like {@link GoOs}: {@link #resetForTest}
- * clears it (tests); the launcher path relies on one program per JVM.
+ * <p>State is per-program-run like {@link GoOs}: {@link #resetForRun}
+ * clears it at every program boundary (called by the launcher before
+ * {@code GoOs.init}); {@link #resetForTest} is the test alias.
  */
 public final class GoNet {
     private GoNet() {}
@@ -171,9 +172,47 @@ public final class GoNet {
 
     private static final ConcurrentHashMap<Long, SockState> STATES = new ConcurrentHashMap<>();
 
+    /**
+     * Production per-run teardown (P1-5, independent review 2026-10-30):
+     * closes every leftover socket channel, then clears the per-socket
+     * control state. A program that exits via panic / os.Exit / fatal
+     * without closing its sockets leaves channels open; the next
+     * program reuses cookie numbers from 16, so without this the table
+     * would grow without bound and a stale entry could alias a fresh
+     * cookie's control state (the EBADF guards on missing entries
+     * prevent misdelivery, but not the leak).
+     *
+     * <p>Must run BEFORE {@code GoOs.init} in the launcher's per-run
+     * sequence: the channels are found through the GoOs handle table,
+     * which init drops. Sockets the program already closed resolve to
+     * null here (their handle is gone) and are skipped; closing an
+     * already-closed channel is a no-op. Order-independent with
+     * {@code GoNetpoll.resetForRun} (a closed channel cancels its
+     * selector key), but the launcher stops the poller first so no
+     * poller iteration observes a half-closed channel.
+     */
+    public static void resetForRun() {
+        for (Long cookie : STATES.keySet()) {
+            java.nio.channels.Channel ch = GoOs.socketChannel(cookie);
+            if (ch != null) {
+                try {
+                    ch.close();
+                } catch (IOException ignored) {
+                    // Best effort: the entry is dropped below regardless.
+                }
+            }
+        }
+        STATES.clear();
+    }
+
     /** Clears per-run socket state (tests). The GoOs handle table is reset separately. */
     public static void resetForTest() {
-        STATES.clear();
+        resetForRun();
+    }
+
+    /** Test hook: number of per-socket control entries (tests). */
+    static int stateCount() {
+        return STATES.size();
     }
 
     // ------------------------------------------------------------------

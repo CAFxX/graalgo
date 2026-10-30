@@ -41,7 +41,10 @@ import graalgo.rtstack.RuntimeFuncFileLineNode;
 import graalgo.rtstack.RuntimeFuncForPCNode;
 import graalgo.rtstack.RuntimeFuncNameNode;
 import graalgo.p3link.LinknameIntrinsics;
+import graalgo.p3net.GoNet;
+import graalgo.p3net.GoNetpoll;
 import graalgo.p3os.GoOs;
+import graalgo.p3tls.TlsRuntime;
 import graalgo.p3sync.nodes.AtomicAddrNode;
 import graalgo.p3sync.nodes.AtomicPtrOpNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
@@ -512,6 +515,24 @@ public final class P3SyncMain {
         for (int i = 0; i < goArgs.size(); i++) {
             goArgv[i + 1] = goArgs.get(i);
         }
+        // P1-5 (independent review 2026-10-30): per-run static state
+        // reset. GoOs.init restarts the cookie allocator at 16, so the
+        // net/TLS tables must be cleared at the same boundary: a
+        // previous program that exited via panic / os.Exit / fatal
+        // without closing its sockets leaves poller registrations,
+        // channels, and TLS engines behind, the next program reuses
+        // cookie 16, tables grow without bound, and the old poller
+        // thread keeps waking for dead channels. Order matters: stop
+        // the poller first (its thread must not observe half-closed
+        // channels), then close leftover socket channels (GoNet finds
+        // them through the GoOs handles init is about to drop), then
+        // TLS, then GoOs.init drops the handle table. Reset-at-start
+        // (not end) covers abnormal exits: a program that dies without
+        // running end-of-run cleanup is still cleaned by the next
+        // run's boundary.
+        GoNetpoll.resetForRun();
+        GoNet.resetForRun();
+        TlsRuntime.resetForRun();
         GoOs.init(goArgv);
 
         // Install the scheduler and run main as the first goroutine

@@ -88,9 +88,11 @@ import graalgo.sched.SchedulerCore;
  * readiness that arrives before the park is absorbed by the drainer's
  * unpark-before-parked stash — no wakeup is lost in either order.
  *
- * <p>Like {@link GoOs}, state is per-program-run; {@link #resetForTest}
- * tears it down for tests (closes the selector, stopping the poller
- * thread; the next {@code runtime_pollServerInit} starts a fresh one).
+ * <p>Like {@link GoOs}, state is per-program-run; {@link #resetForRun}
+ * tears it down at every program boundary (called by the launcher
+ * before {@code GoOs.init}; it closes the selector, stopping the poller
+ * thread, and the next {@code runtime_pollServerInit} starts a fresh
+ * one). {@link #resetForTest} is the test alias of the same teardown.
  */
 public final class GoNetpoll {
     private GoNetpoll() {}
@@ -195,12 +197,61 @@ public final class GoNetpoll {
     /** Last poller-thread failure, for tests (no stdout/stderr in library code). */
     private static volatile Throwable lastPollerError;
 
-    /** Test hook: tears down all poller state (closes the selector). */
-    public static synchronized void resetForTest() {
+    /**
+     * Production per-run teardown (P1-5, independent review 2026-10-30):
+     * drops every pollDesc, cancels every selector key, closes the
+     * selector, and stops the poller thread, so a previous program's
+     * unclosed sockets (panic / os.Exit / fatal exit, which never run
+     * {@code runtime_pollClose}) cannot leak tables, hold channels, or
+     * keep waking for dead channels into the next program — which
+     * reuses cookie numbers from 16 (see {@code GoOs.init}).
+     *
+     * <p>Precondition: called on the launcher thread at a program
+     * boundary, when no guest goroutine is running (the launcher awaits
+     * quiescence before returning, so no waiter is parked; a waiter
+     * stranded by an abnormal exit is already unresumable — its
+     * scheduler is gone — and this reset deliberately does NOT unpark
+     * it into the next run's scheduler, which would enqueue an UNPARK
+     * token for a dead handle). Stale deadline timers are defused
+     * without touching the scheduler: their ids are reset to -1, so a
+     * late callback's CAS in {@link #onDeadline} fails and it is
+     * ignored (the timer-heap entry itself is a no-op when it fires).
+     *
+     * <p>The old poller thread is joined (bounded: 1 s) before
+     * returning, so a fresh {@code runtime_pollServerInit} can never
+     * share {@link #REG_Q} with a still-draining predecessor that
+     * would register the new run's channels on the closed selector.
+     * A thread that fails to exit in the bound is left as a daemon;
+     * its selector is closed, so it cannot register anything new.
+     */
+    public static synchronized void resetForRun() {
         INIT.set(false);
         Selector sel = selector;
+        Thread oldPoller = pollerThread;
         selector = null;
         pollerThread = null;
+        // Mark closed first: a poller iteration already in flight
+        // drops the desc via its DESCS/closed guards instead of
+        // waking a waiter for it.
+        for (PollDesc pd : DESCS.values()) {
+            synchronized (pd) {
+                pd.closing = true;
+                pd.closed = true;
+            }
+            // Defuse stale deadline timers (see class doc above).
+            pd.readTimerId.set(-1);
+            pd.writeTimerId.set(-1);
+            pd.readDeadline = 0;
+            pd.writeDeadline = 0;
+            SelectionKey key = pd.key;
+            if (key != null) {
+                try {
+                    key.cancel();
+                } catch (RuntimeException ignored) {
+                    // Already cancelled; the desc is dropped below anyway.
+                }
+            }
+        }
         DESCS.clear();
         BY_SOCK.clear();
         REG_Q.clear();
@@ -213,6 +264,18 @@ public final class GoNetpoll {
                 // Best effort; the poller thread exits on ClosedSelectorException.
             }
         }
+        if (oldPoller != null && oldPoller != Thread.currentThread()) {
+            try {
+                oldPoller.join(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    /** Test hook: the {@link #resetForRun} teardown (same semantics). */
+    public static void resetForTest() {
+        resetForRun();
     }
 
     /** Test hook: the last unexpected poller-thread failure, if any. */
@@ -245,7 +308,7 @@ public final class GoNetpoll {
                 Selector sel = Selector.open();
                 selector = sel;
                 // The thread captures its own selector: it must not
-                // re-read the static, which resetForTest() may null
+                // re-read the static, which resetForRun() may null
                 // (a slow-to-start thread would otherwise NPE-spin).
                 Thread t = Thread.ofPlatform().daemon(true).name("graalgo-netpoll")
                         .start(() -> pollLoop(sel));
@@ -282,7 +345,9 @@ public final class GoNetpoll {
         REG_Q.offer(task);
         Selector sel = selector;
         if (sel == null) {
-            // resetForTest raced us (test-only; production never resets).
+            // A program-boundary resetForRun() raced us (guest code
+            // running concurrently with a boundary reset is a launcher
+            // bug, not a guest error — but fail loud, never hang).
             dropDesc(pd);
             LAST_OPEN_ERRNO.set(GoOs.EINVAL);
             return 0;
@@ -517,7 +582,7 @@ public final class GoNetpoll {
             REG_Q.offer(task);
             Selector sel = selector;
             if (sel == null) {
-                // resetForTest raced us (test-only; production never resets).
+                // A program-boundary resetForRun() raced us (see pollOpen).
                 dropDesc(pd);
                 return -GoOs.EINVAL;
             }
@@ -817,7 +882,7 @@ public final class GoNetpoll {
                     }
                 }
             } catch (ClosedSelectorException e) {
-                return; // resetForTest: shut down.
+                return; // resetForRun: shut down.
             } catch (Throwable t) {
                 // Never let the poller thread die: every parked waiter
                 // would hang forever. Record and continue (no stderr in

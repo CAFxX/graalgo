@@ -50,6 +50,13 @@ import graalgo.values.GoString;
  * <p>Handle-based API: engine handles are long IDs into a
  * {@link ConcurrentHashMap}; the Go side holds the handle in the Conn struct.
  *
+ * <p>Handle state is per-program-run like {@link graalgo.p3os.GoOs}:
+ * {@link #resetForRun} clears it at every program boundary (called by
+ * the launcher before {@code GoOs.init}); without it, a program that
+ * exits without closing its engines leaves them — and any unconsumed
+ * {@code PENDING} input — behind, and the next program's handles would
+ * share the table (P1-5, independent review 2026-10-30).
+ *
  * <p>D5 boxing: Go {@code []byte} arrives as {@link GoSlice}; strings as
  * {@link GoString}; integers and bools as {@link Number} (bool as 0/1).
  *
@@ -770,6 +777,34 @@ public final class TlsRuntime {
     public static long hasPending(Object handleArg) {
         byte[] pending = PENDING.get(num(handleArg));
         return (pending != null && pending.length > 0) ? 1 : 0;
+    }
+
+    /**
+     * Production per-run teardown (P1-5): closes every leftover
+     * SSLEngine, drops all unconsumed {@code PENDING} input, and
+     * restarts handle allocation at 1, so a previous program's
+     * unclosed engines cannot leak into the next program — which, like
+     * the socket cookies, restarts its handle numbering per run.
+     * Engines the program already closed are already removed and are
+     * unaffected; closing is best-effort per engine (one engine's
+     * failure must not strand the rest).
+     */
+    public static void resetForRun() {
+        for (SSLEngine engine : ENGINES.values()) {
+            try {
+                engine.closeInbound();
+            } catch (Exception ignored) {
+                // Best effort: the entry is dropped below regardless.
+            }
+            try {
+                engine.closeOutbound();
+            } catch (Exception ignored) {
+                // Best effort: the entry is dropped below regardless.
+            }
+        }
+        ENGINES.clear();
+        PENDING.clear();
+        NEXT_ENGINE_ID.set(1);
     }
 
     /**
