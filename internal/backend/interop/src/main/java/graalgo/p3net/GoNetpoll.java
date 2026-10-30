@@ -57,7 +57,7 @@ import graalgo.sched.SchedulerCore;
  *       d is relative nanoseconds (per {@code fd_poll_runtime.go}:
  *       {@code d = int64(time.Until(t))}); d &gt; 0 arms, d == 0 disarms,
  *       d &lt; 0 expires immediately. Wired into the Phase-2
- *       {@link graalgo.runtime.TimerHeap} via {@code addCallback}.
+ *       {@link graalgo.runtime.TimerHeap} via {@code addCallbackWithId}.
  *   <li>{@code runtime_pollUnblock(ctx uintptr)} — marks closing, wakes
  *       both waiters with {@code pollErrClosing}, stops deadline timers.
  *   <li>{@code runtime_isPollServerDescriptor(fd uintptr) bool} —
@@ -721,24 +721,40 @@ public final class GoNetpoll {
             }
             setDeadlineState(pd, mode, abs);
             SchedulerCore sched = SchedulerCore.current();
-            // The callback validates its own id (stale fired timers are
-            // ignored) — see onDeadline. The id hand-off is an AtomicLong
-            // (P2-2): the old plain-array box had no happens-before edge
-            // between the carrier's write (after addCallback returns) and
-            // the timer thread's read. -1 = unpublished: a callback that
-            // (formally) fires before the hand-off is dropped instead of
-            // CAS-claiming -1 and delivering a spurious TIMEOUT (timer
-            // ids start at 1, so -1 never collides).
-            final AtomicLong idBox = new AtomicLong(-1);
-            long id = sched.timerHeap().addCallback(abs,
-                    () -> {
-                        long myId = idBox.get();
-                        if (myId >= 0) {
-                            onDeadline(pd, mode, myId);
-                        }
-                    });
-            idBox.set(id);
+            // N-P1-6: no post-hoc id hand-off. The old code armed with
+            // addCallback plus an AtomicLong box set after addCallback
+            // returned, which had TWO drop windows for an already-due
+            // timer: (1) the timer thread could fire before the box
+            // was set and drop itself as "unpublished" (-1); (2) it
+            // could fire after the box was set but before setTimerId
+            // ran, and onDeadline's stale-guard CAS then failed against
+            // the still-previous id. Either drop left a fired timer
+            // recorded as current with no wakeup and no timer remaining,
+            // so an already-parked waiter hung until readiness/close.
+            // The callback now receives its id from the timer entry
+            // itself (addCallbackWithId: assigned under the heap lock
+            // before publication), so window (1) cannot occur — there
+            // is no unpublished state. Window (2) is closed by the
+            // re-check below: once setTimerId has published this id,
+            // an already-expired deadline is delivered via onDeadline
+            // itself, whose CAS is the guard — exactly one of the
+            // early-fired callback, the re-check, or a later fire can
+            // claim the id; a re-arm/disarm between setTimerId and the
+            // re-check changes the idRef, so the CAS fails and no
+            // superseded deadline wakes anyone. If no waiter is parked
+            // yet, wakeWith no-ops and the expired deadline state set
+            // above makes the next pollWaitRaw return TIMEOUT via
+            // checkErr, so no wakeup is lost in any order. The re-check
+            // reads the abs this timer was armed for (not the pd's
+            // current deadline field), so it can never wake for a
+            // deadline another arm installed; the overflow guard above
+            // (abs == Long.MAX_VALUE) keeps it false for huge timers.
+            long id = sched.timerHeap().addCallbackWithId(abs,
+                    myId -> onDeadline(pd, mode, myId));
             setTimerId(pd, mode, id);
+            if (System.nanoTime() >= abs) {
+                onDeadline(pd, mode, id);
+            }
         } else {
             // d == 0: disarm. d < 0: expire immediately (gc: unblock
             // pending IO when the new deadline is in the past).

@@ -575,6 +575,48 @@ public final class GoNetpollTest {
         }
     }
 
+    /**
+     * N-P1-6 symptom test: a waiter already parked in pollWaitRaw when
+     * a tiny deadline is armed must return TIMEOUT — never hang until
+     * readiness/close. Under the old code the already-due timer could
+     * fire in the window between arm and id publication, be dropped,
+     * and leave no timer armed; the waiter then hung. That window
+     * needs a deschedule inside it, so this test is not deterministically
+     * red before the fix (it usually passes even then) — it pins the
+     * reported symptom end to end, while the deterministic mechanism
+     * test is TimerTest.testCallbackWithIdReceivesOwnId and the
+     * publication/re-check closure is argued in armDeadline's comment.
+     * The 10 s bound (not the 1 ms deadline) is the hang detector: a
+     * dropped deadline fails it loudly instead of hanging the suite.
+     */
+    public void testTinyDeadlineWakesParkedWaiter() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long sctx = GoNetpoll.pollOpen(ss);
+            assertTrue(sctx != 0, "pollOpen accepted");
+            AtomicLong res = new AtomicLong(-99);
+            CountDownLatch done = new CountDownLatch(1);
+            sched.spawn(() -> {
+                res.set(GoNetpoll.pollWait(sctx, (long) 'r'));
+                done.countDown();
+            });
+            Thread.sleep(200); // let it park (connected, no data)
+            GoNetpoll.pollSetDeadline(sctx, 1_000_000L, (long) 'r');
+            assertTrue(done.await(10, TimeUnit.SECONDS),
+                    "tiny deadline must wake the parked waiter (dropped deadline hangs)");
+            assertEq(GoNetpoll.POLL_ERR_TIMEOUT, res.get(), "waiter sees TIMEOUT");
+            closeSock(ss, sctx);
+            closeSock(cli[0], cli[1]);
+            closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
     public void testUnblockWakesWaiterWithClosing() throws Exception {
         SchedulerCore prev = setup();
         try {

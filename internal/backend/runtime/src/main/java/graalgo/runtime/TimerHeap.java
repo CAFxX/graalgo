@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
 
 import graalgo.sched.SchedulerCore;
 import graalgo.sched.GoroutineHandle;
@@ -59,6 +60,12 @@ public final class TimerHeap {
         final GoroutineHandle handle; // SLEEP: unpark target (null for CHAN/CALLBACK)
         final GoChan chan; // CHAN: delivery target (null for SLEEP/CALLBACK)
         final Runnable callback; // CALLBACK: runs on the timer thread (null otherwise)
+        // ID_CALLBACK: like CALLBACK, but invoked with the entry's own id
+        // (null otherwise). The id is assigned under the heap lock before
+        // the entry becomes visible, so the callback can never observe an
+        // unpublished id — callers must not hand the id to the callback
+        // through a post-hoc box (see GoNetpoll.armDeadline, N-P1-6).
+        final LongConsumer idCallback;
         final ChanOwner owner; // CHAN ticker/re-arm owner (null for one-shot/SLEEP)
         final long generation; // owner generation at arm time
         /** Ticker period; 0 for one-shot timers. Mutable only for re-arm. */
@@ -67,13 +74,14 @@ public final class TimerHeap {
 
         Entry(long deadlineNanos, long id, long seq,
               GoroutineHandle handle, GoChan chan, Runnable callback,
-              ChanOwner owner, long generation) {
+              LongConsumer idCallback, ChanOwner owner, long generation) {
             this.deadlineNanos = deadlineNanos;
             this.id = id;
             this.seq = seq;
             this.handle = handle;
             this.chan = chan;
             this.callback = callback;
+            this.idCallback = idCallback;
             this.owner = owner;
             this.generation = generation;
         }
@@ -118,7 +126,7 @@ public final class TimerHeap {
         if (handle == null) {
             throw new IllegalArgumentException("sleep timer needs a handle");
         }
-        return add(deadlineNanos, handle, null, null, null, 0, 0);
+        return add(deadlineNanos, handle, null, null, null, null, 0, 0);
     }
 
     /**
@@ -131,7 +139,28 @@ public final class TimerHeap {
         if (callback == null) {
             throw new IllegalArgumentException("callback timer needs a callback");
         }
-        return add(deadlineNanos, null, null, callback, null, 0, 0);
+        return add(deadlineNanos, null, null, callback, null, null, 0, 0);
+    }
+
+    /**
+     * Arms a raw callback timer like {@link #addCallback}, but the
+     * callback receives the entry's own timer id at fire time. The id
+     * is part of the entry (assigned under the heap lock before the
+     * entry becomes visible), so unlike a post-hoc hand-off box there
+     * is no window in which the callback can fire before its id is
+     * published. Returns the timer id (for {@link #cancel}; it is the
+     * same value the callback receives).
+     *
+     * <p>Note: receiving the id at fire time does not by itself publish
+     * the id anywhere else — a caller that also records the id in its
+     * own state (e.g. a current-timer guard) must still close the
+     * fire-before-record window on its side (see GoNetpoll.armDeadline).
+     */
+    public long addCallbackWithId(long deadlineNanos, LongConsumer callback) {
+        if (callback == null) {
+            throw new IllegalArgumentException("callback timer needs a callback");
+        }
+        return add(deadlineNanos, null, null, null, callback, null, 0, 0);
     }
 
     /**
@@ -157,7 +186,7 @@ public final class TimerHeap {
                 long id = idGen.getAndIncrement();
                 owner.setIdLocked(id);
                 Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
-                        null, chan, null, owner, generation);
+                        null, chan, null, null, owner, generation);
                 e.periodNanos = periodNanos;
                 heap.add(e);
                 byId.put(id, e);
@@ -167,12 +196,12 @@ public final class TimerHeap {
     }
 
     private long add(long deadlineNanos, GoroutineHandle handle, GoChan chan,
-                     Runnable callback, ChanOwner owner,
+                     Runnable callback, LongConsumer idCallback, ChanOwner owner,
                      long periodNanos, long generation) {
         synchronized (lock) {
             long id = idGen.getAndIncrement();
             Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
-                    handle, chan, callback, owner, generation);
+                    handle, chan, callback, idCallback, owner, generation);
             // Ticker entries carry their period via the owner; store it
             // on the entry for the re-arm path.
             e.periodNanos = periodNanos;
@@ -296,7 +325,7 @@ public final class TimerHeap {
         // P1-1: id assigned before the entry is visible.
         owner.setIdLocked(id);
         Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
-                null, owner.channelImpl(), null, owner, owner.generationLocked());
+                null, owner.channelImpl(), null, null, owner, owner.generationLocked());
         e.periodNanos = owner.periodNanos();
         heap.add(e);
         byId.put(id, e);
@@ -396,6 +425,18 @@ public final class TimerHeap {
      * run on the timer thread (gc timer-proc parity — must not block).
      */
     private void fireNonChan(Entry e) {
+        if (e.idCallback != null) {
+            try {
+                e.idCallback.accept(e.id);
+            } catch (Throwable t) {
+                // A throwing timer callback must not kill the timer
+                // thread (that would stall every timer). Loud, then
+                // continue — same discipline as the drainer's fatal halt,
+                // but scoped: only this callback is lost.
+                System.err.println("graalgo-timer: callback threw: " + t);
+            }
+            return;
+        }
         if (e.callback != null) {
             try {
                 e.callback.run();

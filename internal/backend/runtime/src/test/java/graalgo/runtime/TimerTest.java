@@ -1,5 +1,7 @@
 package graalgo.runtime;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -468,6 +470,43 @@ public final class TimerTest {
         });
         assertTrue(secondRan.get(),
                 "timer thread died after throwing callback");
+    }
+
+    // N-P1-6: addCallbackWithId delivers the entry's own id at fire
+    // time — deterministically, even for an already-due deadline. The
+    // old Runnable API had no id delivery at all, so a caller had to
+    // hand the id to the callback through a post-hoc box, which the
+    // timer thread could observe as unpublished. Here the callback
+    // receives exactly the id addCallbackWithId returns, regardless of
+    // whether it fires before or after the return: the id lives in the
+    // entry, assigned under the heap lock before publication. (The
+    // end-to-end race window itself — a deschedule between arm and
+    // publication — is not deterministically reproducible, so this
+    // mechanism test plus GoNetpollTest's parked-waiter symptom test
+    // jointly cover the fix; see there.)
+    public void testCallbackWithIdReceivesOwnId() throws Exception {
+        AtomicLong received = new AtomicLong(-1);
+        AtomicLong returned = new AtomicLong(-1);
+        AtomicReference<String> threadName = new AtomicReference<>();
+        CountDownLatch fired = new CountDownLatch(1);
+        withScheduler(1, () -> {
+            TimerHeap heap = sched.timerHeap();
+            long id = heap.addCallbackWithId(System.nanoTime() - 1,
+                    myId -> {
+                        received.set(myId);
+                        threadName.set(Thread.currentThread().getName());
+                        fired.countDown();
+                    });
+            returned.set(id);
+            assertTrue(fired.await(10, TimeUnit.SECONDS),
+                    "already-due id callback must fire");
+        });
+        assertTrue(returned.get() >= 1,
+                "timer id must be positive, got=" + returned.get());
+        assertEquals(returned.get(), received.get(),
+                "callback must receive its own entry id");
+        assertEquals("graalgo-timer", threadName.get(),
+                "id callback runs on the timer thread");
     }
 
     // P2-7: Netpoll deletion pin — all five methods throw UOE with the
