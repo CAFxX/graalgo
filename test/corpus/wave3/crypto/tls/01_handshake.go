@@ -95,7 +95,13 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string) {
+// clientPrinted is closed by the in-process client once it has printed
+// its pre-echo handshake lines. It orders the two goroutines' prints
+// deterministically (client first, as gc prints them) without touching
+// the shipped crypto/tls package: the server waits on it before
+// printing its own handshake-ok line. It is nil in split server/client
+// processes, where there is no in-process peer to wait for.
+func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -111,6 +117,9 @@ func runServer(port string, ready chan<- string) {
 	if err := tlsConn.Handshake(); err != nil {
 		panic("server handshake: " + err.Error())
 	}
+	if clientPrinted != nil {
+		<-clientPrinted
+	}
 	cs := tlsConn.ConnectionState()
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
@@ -125,7 +134,7 @@ func runServer(port string, ready chan<- string) {
 	fmt.Println("server: echo-ok")
 }
 
-func runClient(port string) {
+func runClient(port string, printed chan<- struct{}) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -135,6 +144,9 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	if printed != nil {
+		close(printed)
+	}
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -161,12 +173,12 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready)
+		go runServer(port, ready, nil)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port)
+		runClient(port, nil)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,8 +189,9 @@ func main() {
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(ephemPort, ready)
+		clientPrinted := make(chan struct{})
+		go runServer(ephemPort, ready, clientPrinted)
 		<-ready
-		runClient(ephemPort)
+		runClient(ephemPort, clientPrinted)
 	}
 }
