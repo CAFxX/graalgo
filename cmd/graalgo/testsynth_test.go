@@ -29,7 +29,7 @@ func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in.
 	importPkgNameCache = map[string]string{}
-	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false, "")
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}

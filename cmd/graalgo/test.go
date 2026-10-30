@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"go/build"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +27,7 @@ func cmdTest(root string, args []string) int {
 	var verbose bool
 	var count int = 1
 	var cover bool
+	var tags string
 	var pkgs []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -46,6 +46,7 @@ Flags:
 	-count=n		run tests n times (n=1 disables caching; graalgo
 			has no test cache, so every run is fresh)
 	-cover		enable coverage (not yet supported)
+	-tags=tags	build tags (file selection for the package under test)
 `)
 			return 0
 		case a == "-run" && i+1 < len(args):
@@ -70,6 +71,11 @@ Flags:
 			count = n
 		case a == "-cover":
 			cover = true
+		case a == "-tags" && i+1 < len(args):
+			i++
+			tags = args[i]
+		case strings.HasPrefix(a, "-tags="):
+			tags = strings.TrimPrefix(a, "-tags=")
 		case strings.HasPrefix(a, "-"):
 			fmt.Fprintf(os.Stderr, "graalgo test: unknown flag %q\n", a)
 			return 2
@@ -82,8 +88,12 @@ Flags:
 		return 1
 	}
 
-	// Resolve package dirs.
+	// Resolve package dirs (resolveTestDirs also handles import paths).
 	dirs, err := resolveTestDirs(pkgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+		return 1
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
 		return 1
@@ -101,6 +111,7 @@ Flags:
 	}
 
 	runner := newTestRunner(root, verbose, runRe, count)
+	runner.tags = tags
 	failed := false
 	for _, dir := range dirs {
 		// -count=n: run the package's tests n times, like `go test`.
@@ -143,6 +154,12 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 		}
 		fi, err := os.Stat(p)
 		if err != nil {
+			// Maybe an import path (same-module, stdlib, module
+			// cache, GOPATH/src): resolve it to a directory.
+			if dir, err := importDirForPath(".", p); err == nil {
+				dirs = append(dirs, dir)
+				continue
+			}
 			return nil, fmt.Errorf("no such file or directory: %s", p)
 		}
 		if !fi.IsDir() {
@@ -160,6 +177,7 @@ type testRunner struct {
 	verbose bool
 	runRe   *regexp.Regexp
 	count   int
+	tags    string // -tags value, honoured when selecting buildable files
 }
 
 func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int) *testRunner {
@@ -186,7 +204,7 @@ func (r *testRunner) runPackage(dir string) bool {
 	// //go:build lines) — the same file set `go test` would use. Without
 	// this, build-tag-gated alternatives (e.g. node_js.go vs node_net.go)
 	// are inlined together and redeclare each other's symbols.
-	buildable := buildableGoFiles(dir)
+	buildable := buildableGoFiles(dir, r.tags)
 	var srcFiles []string
 	for _, f := range buildable {
 		if !strings.HasSuffix(f, "_test.go") {
@@ -206,13 +224,20 @@ func (r *testRunner) runPackage(dir string) bool {
 	}
 
 	// Discover the selected tests of every file, applying the -run
-	// filter (regex, like `go test`).
+	// filter (regex, like `go test`). Benchmark/Example/Fuzz/TestMain
+	// entry points are not run by this driver; they are collected so
+	// the package can warn about them loudly instead of silently
+	// reporting "no tests to run" for a benchmark-only package.
 	var ftList []fileTests
+	var dropped []string
 	for _, tf := range runnableTests {
 		tests, err := discoverTests(tf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
 			return false
+		}
+		if names, err := discoverDroppedKinds(tf); err == nil && len(names) > 0 {
+			dropped = append(dropped, fmt.Sprintf("%s: %s", filepath.Base(tf), strings.Join(names, ", ")))
 		}
 		var selected []string
 		for _, t := range tests {
@@ -225,13 +250,17 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
+	if len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "graalgo test: warning: %s: Benchmark/Example/Fuzz/TestMain entry points are not yet supported and were skipped: %s\n", importPath, strings.Join(dropped, "; "))
+	}
+
 	// The synthesized driver prints go-test-format output itself
 	// (=== RUN / --- PASS/FAIL lines, PASS/FAIL summary); a non-zero
 	// exit means the package failed.
 	t0 := time.Now()
 	ok := true
 	if len(ftList) > 0 {
-		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
+		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose, r.tags)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
 			return false
@@ -277,6 +306,13 @@ func importPathForDir(dir string) string {
 	if err != nil {
 		return dir
 	}
+	// Directories under GOROOT/src print as their stdlib import path
+	// (e.g. "fmt"), matching `go test fmt`, rather than an absolute path.
+	if goroot := goRoot(); goroot != "" {
+		if rel, err := filepath.Rel(filepath.Join(goroot, "src"), abs); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." {
+			return filepath.ToSlash(rel)
+		}
+	}
 	if modRoot, module := moduleForDir(dir); module != "" {
 		rel, err := filepath.Rel(modRoot, abs)
 		if err != nil || rel == "." {
@@ -299,9 +335,10 @@ func parseModulePath(modData []byte) string {
 }
 
 // buildableGoFiles returns the .go files in dir that satisfy the current
-// platform's build constraints, using the same rules as `go build`.
-func buildableGoFiles(dir string) []string {
-	ctxt := build.Default
+// platform's build constraints, using the same rules as `go build`,
+// plus the given -tags value when non-empty.
+func buildableGoFiles(dir, tags string) []string {
+	ctxt := buildContextWithTags(tags)
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		// Not importable (no go.mod context, etc.): fall back to all

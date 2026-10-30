@@ -33,6 +33,13 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
+		// TestMain is the test harness entry point, not a test: it
+		// takes *testing.M (which the shim does not rewrite), so
+		// selecting it here would generate a driver that cannot
+		// compile. It is reported by discoverDroppedKinds instead.
+		if name == "TestMain" {
+			continue
+		}
 		// Must take *testing.T (or be a simple TestXxx with one param).
 		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
 			continue
@@ -40,6 +47,33 @@ func discoverTests(path string) ([]string, error) {
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// discoverDroppedKinds returns the names of entry points in a _test.go
+// file that the synthesized driver does not run: Benchmark*, Example*,
+// Fuzz*, and TestMain. Callers warn about these loudly instead of
+// silently reporting "no tests to run" for a benchmark-only package.
+func discoverDroppedKinds(path string) ([]string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	var dropped []string
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil {
+			continue
+		}
+		name := fn.Name.Name
+		if name == "TestMain" ||
+			strings.HasPrefix(name, "Benchmark") ||
+			strings.HasPrefix(name, "Example") ||
+			strings.HasPrefix(name, "Fuzz") {
+			dropped = append(dropped, name)
+		}
+	}
+	return dropped, nil
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -56,12 +90,114 @@ const testShimTemplate = `
 const graalgoVerbose = GRAALGO_VERBOSE_PLACEHOLDER
 
 type graalgoT struct {
-	name       string
-	depth      int
-	failed     bool
-	skipped    bool
-	output     []string // buffered detail lines (flushed on failure when !verbose)
-	subresults []string // buffered subtest result lines (flushed after own result)
+	name        string
+	depth       int
+	failed      bool
+	skipped     bool
+	output      []string // buffered detail lines (flushed on failure when !verbose)
+	subresults  []string // buffered subtest result lines (flushed after own result)
+	cleanups    []func()
+	cleanupsRun bool
+	parallel    bool
+	ctx         context.Context
+	ctxCancel   context.CancelFunc
+}
+
+// Cleanup registers f to run, LIFO, when the test (or subtest) finishes.
+// runCleanups is idempotent so a test that both returns normally and is
+// wrapped in a deferred cleanup call cannot run a cleanup twice.
+func (t *graalgoT) Cleanup(f func()) {
+	t.cleanups = append(t.cleanups, f)
+}
+
+func (t *graalgoT) runCleanups() {
+	if t.cleanupsRun {
+		return
+	}
+	t.cleanupsRun = true
+	for i := len(t.cleanups) - 1; i >= 0; i-- {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.failed = true
+					t.logLine("    cleanup panic: " + toString(r))
+				}
+			}()
+			t.cleanups[i]()
+		}()
+	}
+}
+
+// Parallel marks the test as parallel. The synthesized driver runs tests
+// sequentially (there is no parallel scheduler in the driver), so this
+// is a documented no-op rather than true parallelism: a test that
+// depends on actually running concurrently with another test is out of
+// scope for this driver, but ordinary Parallel() callers now compile
+// and run instead of failing with an undefined method.
+func (t *graalgoT) Parallel() {
+	t.parallel = true
+}
+
+// Setenv sets an environment variable for the duration of the test and
+// restores its previous value (or unsets it) via Cleanup, like testing.T.
+func (t *graalgoT) Setenv(key, value string) {
+	old, ok := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		panic("graalgo test Setenv: " + err.Error())
+	}
+	t.Cleanup(func() {
+		if ok {
+			os.Setenv(key, old)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+}
+
+// Chdir changes the working directory for the duration of the test and
+// restores the previous directory via Cleanup, like testing.T.
+func (t *graalgoT) Chdir(dir string) {
+	old, err := os.Getwd()
+	if err != nil {
+		panic("graalgo test Chdir: " + err.Error())
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic("graalgo test Chdir: " + err.Error())
+	}
+	t.Cleanup(func() {
+		os.Chdir(old)
+	})
+}
+
+// TempDir creates a temporary directory, removed via Cleanup when the
+// test finishes, like testing.T.
+func (t *graalgoT) TempDir() string {
+	dir, err := os.MkdirTemp("", "graalgo-test-")
+	if err != nil {
+		panic("graalgo test TempDir: " + err.Error())
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(dir)
+	})
+	return dir
+}
+
+// Context returns a context cancelled when the test finishes, via
+// Cleanup, like testing.T.
+func (t *graalgoT) Context() context.Context {
+	if t.ctx == nil {
+		t.ctx, t.ctxCancel = context.WithCancel(context.Background())
+		t.Cleanup(func() {
+			t.ctxCancel()
+		})
+	}
+	return t.ctx
+}
+
+// Deadline reports that this driver has no test deadline, like a test
+// run without -timeout: the zero time and false, per testing.T.
+func (t *graalgoT) Deadline() (time.Time, bool) {
+	return time.Time{}, false
 }
 
 // logLine emits a detail line: immediately in verbose mode, buffered
@@ -154,7 +290,13 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
+	// Deferred as well as explicit: a Fatal/Skip panic in the subtest
+	// still runs its cleanups before the panic propagates to the
+	// top-level recover; runCleanups is idempotent, so the explicit
+	// call below cannot double-run them.
+	defer sub.runCleanups()
 	f(sub)
+	sub.runCleanups()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
@@ -417,7 +559,7 @@ func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 // One driver per package (not per file) so the output matches `go test`:
 // a single PASS/FAIL summary and per-test === RUN / --- PASS lines in
 // file order. Verbosity is baked into the driver at synthesis time.
-func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool) (string, error) {
+func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool, tags string) (string, error) {
 	// Import collection preserves every distinct (name, path) form: a
 	// package can be imported plain in one test file and dot-imported
 	// in another (unicode does exactly this), and collapsing to one
@@ -555,7 +697,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// platform (PKG-037).
 	var sibUnits []srcUnit
 	buildable := make(map[string]bool)
-	for _, f := range buildableGoFiles(dir) {
+	for _, f := range buildableGoFiles(dir, tags) {
 		buildable[f] = true
 	}
 	siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
@@ -614,11 +756,14 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main and the graalgoT shim use time, os, and
+	// context directly.
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "context")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "context"}] = true
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -1410,6 +1555,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t\t}()\n")
 			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
 			body.WriteString("\t\t}()\n")
+			// Cleanups run after the test body (and after a
+			// Fatal/Skip panic, which the recover above already
+			// converted into failed/skipped) and before the
+			// result line is decided, like testing.T.
+			body.WriteString("\t\ttt.runCleanups()\n")
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			if verbose {
 				body.WriteString("\t\tif tt.skipped {\n")

@@ -41,12 +41,16 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
+	// bf lives outside the block so its -tags value can be honoured
+	// when resolving the package below.
+	var bf buildFlags
 	if len(flagArgs) > 0 {
-		bf, err := parseBuildFlags(flagArgs)
+		parsed, err := parseBuildFlags(flagArgs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 			return 2
 		}
+		bf = parsed
 		if bf.ldflags != "" {
 			fmt.Fprintf(os.Stderr, "graalgo run: -ldflags: not yet supported\n")
 			return 1
@@ -89,7 +93,7 @@ func cmdRun(root string, args []string) int {
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
 	// the package build).
-	files, err := resolveFiles([]string{target})
+	files, err := resolveFilesTags([]string{target}, bf.tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -117,10 +121,13 @@ func cmdRun(root string, args []string) int {
 // Unrecognized flags are rejected; recognized-but-unsupported flags produce
 // a clear "not yet supported" error naming the flag.
 type buildFlags struct {
-	output  string   // -o: output binary path
-	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
-	tags    string   // -tags: build tags (accepted; backend honors via go/build)
-	pkgs    []string // remaining package/file args
+	output  string // -o: output binary path
+	ldflags string // -ldflags: linker flags (forwarded; -X needs backend)
+	tags    string // -tags: build tags, honoured by the driver when
+	// selecting the top-level package's files (resolveFilesTags, via
+	// go/build constraints). Dependency packages are resolved by the
+	// backend, which receives the selected file list explicitly.
+	pkgs []string // remaining package/file args
 }
 
 // parseBuildFlags separates build flags from package args, following `go`
@@ -197,7 +204,7 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	files, err := resolveFilesTags(bf.pkgs, bf.tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -252,25 +259,54 @@ func cmdBuild(root string, args []string) int {
 
 // cmdVet implements `graalgo vet [packages]`.
 //
-// Runs the frontend translation check (--check) over the named packages,
-// then runs the static analyzers in internal/vet and reports diagnostics
-// in the same style as `go vet`.
+// Runs the frontend translation check (--check) once over the whole
+// non-test file set, then runs the static analyzers in internal/vet and
+// reports diagnostics in the same style as `go vet`. Test files are
+// excluded from the --check (they are not part of the package build)
+// but still passed to vet.Run, which type-checks each package — the
+// internal package and any external `foo_test` package — separately
+// instead of merging them into one synthetic package.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	// Accept -tags (in either -tags value or -tags=value form) anywhere
+	// among the arguments; everything else is a package argument.
+	var tags string
+	var pkgs []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "-tags" && i+1 < len(args):
+			i++
+			tags = args[i]
+		case strings.HasPrefix(a, "-tags="):
+			tags = strings.TrimPrefix(a, "-tags=")
+		default:
+			pkgs = append(pkgs, a)
+		}
+	}
+	files, err := resolveFilesTags(pkgs, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	failed := false
+	// _test.go files are not part of the package build, like `go vet`'s
+	// internal package; the frontend check runs once over the whole
+	// non-test set, not once per file.
+	var pkgFiles []string
 	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			failed = true
+		if !strings.HasSuffix(f, "_test.go") {
+			pkgFiles = append(pkgFiles, f)
 		}
 	}
-	if failed {
+	if len(pkgFiles) == 0 {
+		// A test-only package has no package files for the frontend
+		// check; skip that gate and still run the analyzers over
+		// the test files below, rather than refusing to vet it.
+		fmt.Fprintf(os.Stderr, "graalgo vet: warning: no non-test Go files; skipping frontend check\n")
+	} else if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
+	// Run the analyzers over all resolved files; vet.Run splits them
+	// by package (internal vs external test packages) itself.
 	ds, err := vet.Run(files)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)

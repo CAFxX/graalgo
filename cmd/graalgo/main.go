@@ -21,9 +21,11 @@ package main
 
 import (
 	"fmt"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -103,6 +105,11 @@ func helpFor(cmd string) {
 Compile and run the Go program in package, or the single file if given.
 
 The program arguments follow the package or file.
+
+Flags:
+	-tags=tags	build tags (top-level package file selection)
+	-ldflags=flags	linker flags (not yet supported)
+	-o file		not supported for run (no binary produced)
 `)
 	case "build":
 		fmt.Printf(`usage: graalgo build [-o output] [packages]
@@ -116,7 +123,7 @@ first file base name); -o names the output explicitly.
 Flags:
 	-o file		output artifact path
 	-ldflags=flags	linker flags (not yet supported)
-	-tags=tags	build tags
+	-tags=tags	build tags (top-level package file selection)
 `)
 	case "test":
 		fmt.Printf(`usage: graalgo test [build/test flags] [packages]
@@ -129,6 +136,9 @@ graalgo backend and reports pass/fail.
 
 Vet the named packages: run the frontend's static checks and
 report likely mistakes.
+
+Flags:
+	-tags=tags	build tags (top-level package file selection)
 `)
 	case "fmt":
 		fmt.Printf(`usage: graalgo fmt [packages]
@@ -233,12 +243,69 @@ func graalgoRunProgram(root string, args []string) int {
 	return 0
 }
 
+// buildContextWithTags returns a go/build context honouring the given
+// -tags value (space- and/or comma-separated, like `go build -tags`).
+// An empty tags string returns build.Default unchanged.
+func buildContextWithTags(tags string) build.Context {
+	ctxt := build.Default
+	if tags != "" {
+		ctxt.BuildTags = strings.FieldsFunc(tags, func(r rune) bool {
+			return r == ' ' || r == ',' || r == '\t'
+		})
+	}
+	return ctxt
+}
+
+// expandDirFiles returns the .go files of the package in dir that satisfy
+// the build constraints for the given tags: the package's own files plus
+// its internal and external test files, mirroring `go build`'s file set.
+// When the directory cannot be imported by go/build (no package clause,
+// mixed packages, no module context), it falls back to every *.go file
+// in the directory and lets the backend report the real error, preserving
+// the previous behaviour for such directories.
+func expandDirFiles(dir, tags string) ([]string, error) {
+	ctxt := buildContextWithTags(tags)
+	if pkg, err := ctxt.ImportDir(dir, 0); err == nil {
+		var out []string
+		for _, f := range pkg.GoFiles {
+			out = append(out, filepath.Join(dir, f))
+		}
+		for _, f := range pkg.TestGoFiles {
+			out = append(out, filepath.Join(dir, f))
+		}
+		for _, f := range pkg.XTestGoFiles {
+			out = append(out, filepath.Join(dir, f))
+		}
+		return out, nil
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		return nil, err
+	}
+	return matches, nil
+}
+
 // resolveFiles turns package/file arguments into a list of .go files.
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
+// Arguments that are neither files nor directories are resolved as
+// import paths — same-module packages, the standard library, the module
+// cache, and GOPATH/src — via importDirForPath, so `graalgo build fmt`
+// and `graalgo build example.com/x` work instead of failing with
+// "no such file or directory".
 func resolveFiles(args []string) ([]string, error) {
+	return resolveFilesTags(args, "")
+}
+
+// resolveFilesTags is resolveFiles with -tags applied to directory
+// expansion: files excluded by the tags' build constraints are not
+// returned, so a tagged build compiles the tagged file set rather than
+// silently compiling every *.go file. Explicit .go file arguments are
+// passed through unchanged (as with `go build` file arguments, which
+// ignore build constraints).
+func resolveFilesTags(args []string, tags string) ([]string, error) {
 	if len(args) == 0 {
-		matches, err := filepath.Glob("*.go")
+		matches, err := expandDirFiles(".", tags)
 		if err != nil {
 			return nil, err
 		}
@@ -260,10 +327,20 @@ func resolveFiles(args []string) ([]string, error) {
 				files = append(files, a)
 				continue
 			}
+			// Maybe an import path: resolve it to a directory and
+			// expand that directory like any other.
+			if dir, err := importDirForPath(".", a); err == nil {
+				matches, err := expandDirFiles(dir, tags)
+				if err != nil {
+					return nil, err
+				}
+				files = append(files, matches...)
+				continue
+			}
 			return nil, fmt.Errorf("no such file or directory: %s", a)
 		}
 		if fi.IsDir() {
-			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
+			matches, err := expandDirFiles(a, tags)
 			if err != nil {
 				return nil, err
 			}

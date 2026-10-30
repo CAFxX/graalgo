@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"path/filepath"
 )
 
 // Analyzer is a single static check.
@@ -46,9 +47,23 @@ func Analyzers() []*Analyzer {
 // It parses with comments (for directive checks) and type-checks on a
 // best-effort basis: if type checking fails, analyzers still run on the
 // AST with whatever type info was gathered.
+//
+// Files are grouped by (directory, declared package name) and each group
+// is type-checked and analyzed separately. Grouping matters: `go vet`
+// analyzes the internal package and an external `foo_test` package as
+// two packages, and merging them into one synthetic package (the old
+// behaviour, a single conf.Check over every file as "vetpkg") lets
+// declarations from one package pollute the other's type info and makes
+// type-dependent analyzers silently degrade to syntactic fallbacks.
+// Internal test files (package foo) join the internal group, matching
+// `go vet`'s augmented-package semantics.
 func Run(paths []string) ([]Diagnostic, error) {
 	fset := token.NewFileSet()
-	var files []*ast.File
+	type group struct {
+		files []*ast.File
+	}
+	var order []string
+	groups := make(map[string]*group)
 	for _, path := range paths {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -58,31 +73,42 @@ func Run(paths []string) ([]Diagnostic, error) {
 		if err != nil {
 			return nil, fmt.Errorf("vet: parse %s: %v", path, err)
 		}
-		files = append(files, f)
+		key := filepath.Dir(path) + "\x00" + f.Name.Name
+		g, ok := groups[key]
+		if !ok {
+			g = &group{}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.files = append(g.files, f)
 	}
-	if len(files) == 0 {
+	if len(order) == 0 {
 		return nil, fmt.Errorf("vet: no files")
 	}
 
-	info := &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
-	}
-	conf := types.Config{
-		Importer:                 importer.Default(),
-		IgnoreFuncBodies:         false,
-		DisableUnusedImportCheck: true,
-	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
-	// Type errors are tolerated: analyzers use best-effort info.
-
-	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
 	var out []Diagnostic
-	for _, a := range analyzers {
-		out = append(out, a.Run(pass)...)
+	for _, key := range order {
+		g := groups[key]
+		pkgName := g.files[0].Name.Name
+		info := &types.Info{
+			Types:      make(map[ast.Expr]types.TypeAndValue),
+			Defs:       make(map[*ast.Ident]types.Object),
+			Uses:       make(map[*ast.Ident]types.Object),
+			Selections: make(map[*ast.SelectorExpr]*types.Selection),
+			Scopes:     make(map[ast.Node]*types.Scope),
+		}
+		conf := types.Config{
+			Importer:                 importer.Default(),
+			IgnoreFuncBodies:         false,
+			DisableUnusedImportCheck: true,
+		}
+		pkg, _ := conf.Check(pkgName, fset, g.files, info)
+		// Type errors are tolerated: analyzers use best-effort info.
+
+		pass := &Pass{Fset: fset, Files: g.files, Info: info, Pkg: pkg}
+		for _, a := range analyzers {
+			out = append(out, a.Run(pass)...)
+		}
 	}
 	return SortDiagnostics(out), nil
 }
