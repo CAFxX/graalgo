@@ -170,6 +170,63 @@ public final class ValuesTest {
         assertTrue(v.itab() == "itab", "itab");
     }
 
+    /**
+     * N-P1-4: deepCopy copies struct values held in interface fields —
+     * a fresh interface value, same descriptor/itab, deep-copied
+     * payload. Red: the payload was shared verbatim, so mutating the
+     * copy's inner struct mutated the original.
+     */
+    public void testDeepCopyInterfaceField() {
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("x"), List.of(GoKind.INT64));
+        GoStructDescriptor outer = GoStructDescriptor.layout("Outer",
+                List.of("f"), List.of(GoKind.INTERFACE));
+        GoStruct innerVal = new GoStruct(inner, new long[]{7}, new Object[0]);
+        GoTypeDescriptor desc = new GoTypeDescriptor("main.Inner", GoKind.STRUCT, false);
+        GoInterface ifaceVal = new GoInterface(desc, innerVal, "itab");
+        GoStruct orig = new GoStruct(outer, new long[0], new Object[]{ifaceVal});
+        GoStruct copy = orig.deepCopy();
+        GoInterface copiedIface = (GoInterface) copy.getObject(0);
+        assertTrue(copiedIface != ifaceVal, "fresh interface value");
+        assertTrue(copiedIface.descriptor() == desc, "same descriptor");
+        assertTrue(copiedIface.itab() == "itab", "same itab");
+        GoStruct copiedInner = (GoStruct) copiedIface.data();
+        assertTrue(copiedInner != innerVal, "payload deep-copied, not shared");
+        assertEq(7, copiedInner.getLong(0), "payload value preserved");
+        copiedInner.setLong(0, 99);
+        assertEq(7, innerVal.getLong(0), "mutating the copy leaves the original alone");
+    }
+
+    /**
+     * N-P1-4: deepCopyArray copies interface elements the same way —
+     * and an interface payload that is itself an array is deep-copied
+     * (struct elements inside it are fresh).
+     */
+    public void testDeepCopyArrayInterfaceElements() {
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("x"), List.of(GoKind.INT64));
+        GoStruct innerVal = new GoStruct(inner, new long[]{5}, new Object[0]);
+        GoTypeDescriptor desc = new GoTypeDescriptor("main.Inner", GoKind.STRUCT, false);
+        Object[] arr = new Object[]{new GoInterface(desc, innerVal, null), null};
+        Object[] copy = (Object[]) GoStruct.deepCopyArray(arr);
+        GoInterface copiedIface = (GoInterface) copy[0];
+        assertTrue(copiedIface != arr[0], "fresh interface element");
+        assertTrue(copiedIface.descriptor() == desc, "same descriptor");
+        GoStruct copiedInner = (GoStruct) copiedIface.data();
+        assertTrue(copiedInner != innerVal, "element payload deep-copied");
+        copiedInner.setLong(0, 1);
+        assertEq(5, innerVal.getLong(0), "mutating the copy leaves the original alone");
+        assertTrue(copy[1] == null, "nil element stays nil");
+
+        GoStruct[] structArr = new GoStruct[]{innerVal};
+        GoInterface arrayIface = new GoInterface(desc, structArr, null);
+        GoInterface copiedArrayIface = GoStruct.copyInterfaceValue(arrayIface);
+        GoStruct[] copiedArr = (GoStruct[]) copiedArrayIface.data();
+        assertTrue(copiedArr != structArr, "array payload deep-copied");
+        assertTrue(copiedArr[0] != innerVal, "array payload elements deep-copied");
+        assertEq(5, copiedArr[0].getLong(0), "array payload value preserved");
+    }
+
     public void testUnsafeHandles() {
         UnsafeHandles h = new UnsafeHandles();
         assertEq(0, h.alloc(null), "null -> 0");

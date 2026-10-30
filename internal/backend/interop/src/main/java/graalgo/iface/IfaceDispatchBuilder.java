@@ -38,8 +38,9 @@ import graalgo.values.GoTypeDescriptor;
  * {@code typeDescs} map. The miss-path descriptor is object-identical to
  * the factory's canonical instance, so type switches/asserts and
  * interface {@code ==} inside the callee behave exactly as on
- * factory-boxed values. Dispatch itself keys on descriptor names and was
- * always correct.
+ * factory-boxed values. Dispatch keys on the descriptor's qualified
+ * method-table key ({@code GoTypeDescriptor.methodTableKey()}), never
+ * the display name (N-P1-2).
  *
  * <p>Registered via the public {@code NodeFactory.registerExprKind}
  * hook — no Phase-1 change (beyond the ADR-0003-documented
@@ -123,8 +124,16 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
 
     /**
      * Replica of the factory's private {@code signatureParamTypeIds}: the
-     * callee's parameter type ids, or null when the signature is absent,
-     * unreadable, or variadic (no adaptation — the methodref precedent).
+     * callee's parameter type ids, or null when the signature is absent
+     * or unreadable. Variadic signatures adapt too (N-P1-1, mirroring
+     * the factory's fix-redmaster-r40 fix): the exporter always emits a
+     * variadic call in packed or spread form, so the call's arguments
+     * align 1:1 with the signature's params and the last param — the
+     * variadic slice type itself — is never an interface, hence never
+     * boxed. The previous variadic bail-out skipped adaptation for the
+     * FIXED params too, passing raw concrete values into interface
+     * slots on the iface path (the same failure mode r40 fixed on the
+     * factory path).
      */
     private static List<Integer> signatureParamTypeIds(NodeFactory.BuildCtx ctx,
             Json.Object f, String path) {
@@ -141,9 +150,6 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {

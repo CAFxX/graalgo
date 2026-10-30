@@ -40,6 +40,8 @@ public final class Runner {
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.CommaOkLvalueTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
+        // rev30-iface-valuecopy (N-P1-3): root value-copy choke point.
+        TESTS.add(graalgo.frontend.GoFuncRootNodeValueCopyTest.class);
     }
 
     public static void main(String[] args) {

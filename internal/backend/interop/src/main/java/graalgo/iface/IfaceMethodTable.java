@@ -25,14 +25,16 @@ import graalgo.values.GoTypeDescriptor;
  * (and single-threaded in tests), so a dispatch racing an install is
  * outside the supported lifecycle.
  *
- * <p>Descriptor-name keying: named dynamic types key by the display
- * name ({@code GoTypeDescriptor.name()}, canonical via the factory's
- * {@code NAMED_DESCS} — the package NAME form, e.g. {@code json.Number},
- * not the qualified path); pointer-to-named types key by
- * {@code "*"+qualifiedName} (e.g. {@code *errors.errorString}); other
- * pointer types key by the factory's structural descriptor name — see
- * {@link DescriptorNames} for the replica and the recorded ADR-0003 D5
- * deviation.
+ * <p>Method-table keying (N-P1-2): tables key by
+ * {@code GoTypeDescriptor.methodTableKey()} — the qualified name for
+ * named types (e.g. {@code "a/foo.T"}, not the display form
+ * {@code "foo.T"}, which collides across packages sharing a package
+ * name) and for pointer-to-named types ({@code "*"+qualifiedName},
+ * e.g. {@code *errors.errorString}); other types key by the factory's
+ * structural descriptor name — see {@link DescriptorNames} for the
+ * install-side replica and the recorded ADR-0003 D5 deviation. The
+ * display name ({@code GoTypeDescriptor.name()}) is a %T form, never a
+ * table key.
  */
 public final class IfaceMethodTable {
     private IfaceMethodTable() {}

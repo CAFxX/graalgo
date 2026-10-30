@@ -18,16 +18,15 @@ import graalgo.values.GoFunc;
  * {@code Program.functions()} into {@link GoFunc}s for
  * {@link IfaceMethodTable#install}.
  *
- * <p>Named entries key by the display name ({@code displayNameFor});
- * pointer-to-named entries (the full {@code *T} method set: value +
- * pointer-receiver methods) key by {@code "*"+qualifiedName}; other
- * pointer entries key by the factory's structural descriptor name — all
- * via {@link DescriptorNames}, which mirrors the factory's
- * {@code typeDescriptorFor} naming (see its javadoc for the recorded
- * ADR-0003 D5 deviation). Struct entries (anonymous structs with
- * promoted methods, PKG-036 — e.g. {@code struct{ Reader io.Reader }})
- * key by the factory's structural descriptor name as well, the same
- * name the factory mints at box sites. Method entries are {@code
+ * <p>Entries key by the method-table key
+ * ({@link DescriptorNames#methodTableKey}): named entries by qualified
+ * name (never the display name — N-P1-2: {@code a/foo.T} and
+ * {@code b/foo.T} are distinct types whose display names collide),
+ * pointer-to-named entries by {@code "*"+qualifiedName}, other pointer
+ * and struct entries (anonymous structs with promoted methods, PKG-036
+ * — e.g. {@code struct{ Reader io.Reader }}) by the factory's
+ * structural descriptor name, the same name the factory mints at box
+ * sites. Method entries are {@code
  * {"name": ..., "obj": ..., "index": [...]}} ({@code "recv"} is
  * informational only; {@code "index"} is the receiver adaptation path,
  * empty for direct methods).
@@ -63,18 +62,33 @@ public final class IfaceMethodTables {
             if (!"named".equals(kind) && !"pointer".equals(kind) && !"struct".equals(kind)) {
                 continue;
             }
-            String descName = DescriptorNames.descriptorName(types, id);
+            String descName = DescriptorNames.methodTableKey(types, id);
             Map<String, MethodRef> methods = readMethods(entry, path);
             if (methods.isEmpty()) {
                 continue;
             }
-            // Two entries can share one descriptor name (e.g. two
+            // Two entries can share one method-table key (e.g. two
             // pointer entries with the same structural shape): the
             // factory canonicalizes them to one descriptor, and both
-            // carry the same *T method set — merge, last wins.
+            // carry the same method set — merge. Identical duplicates
+            // merge silently; a merge where the same method maps to a
+            // DIFFERENT function (different obj id, receiver path, or
+            // embedded-interface id) is a contradiction, not a
+            // duplicate: fail fast instead of silently running the
+            // wrong method (the pre-N-P1-2 last-wins behavior). This
+            // check is what separates legitimate structural duplicates
+            // from a genuine key collision.
             objIds.merge(descName, methods, (a, b) -> {
                 Map<String, MethodRef> merged = new LinkedHashMap<>(a);
-                merged.putAll(b);
+                for (Map.Entry<String, MethodRef> e : b.entrySet()) {
+                    MethodRef prev = merged.put(e.getKey(), e.getValue());
+                    if (prev != null && !sameMethodRef(prev, e.getValue())) {
+                        throw new FrontendException("ifacemethod: conflicting method tables for \""
+                                + descName + "\": method \"" + e.getKey()
+                                + "\" maps to obj " + prev.objId() + " and obj "
+                                + e.getValue().objId() + " (internal error)");
+                    }
+                }
                 return merged;
             });
         }
@@ -204,6 +218,15 @@ public final class IfaceMethodTables {
             }
         }
         return names;
+    }
+
+    /** True when two wire entries for the same method are the same method (not a conflict). */
+    private static boolean sameMethodRef(MethodRef a, MethodRef b) {
+        return a.objId() == b.objId()
+                && a.pointerReceiver() == b.pointerReceiver()
+                && a.addrOf() == b.addrOf()
+                && a.embeddedIfaceId() == b.embeddedIfaceId()
+                && java.util.Arrays.equals(a.recvPath(), b.recvPath());
     }
 
     private static Map<String, MethodRef> readMethods(Json.Object entry, String path) {

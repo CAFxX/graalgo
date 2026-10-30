@@ -111,7 +111,10 @@ public final class IfaceDispatchNode extends GoExprNode {
     private Object dispatch(VirtualFrame frame) {
         GoInterface gi = requireReceiver(recv.executeObject(frame));
         Object data = gi.data(); // null for typed-nil: passed through as params[0]
-        String descName = ((GoTypeDescriptor) gi.descriptor()).name();
+        // N-P1-2: key on the qualified method-table key, never the
+        // display name — a/foo.T and b/foo.T share "foo.T" but have
+        // distinct tables.
+        String descName = ((GoTypeDescriptor) gi.descriptor()).methodTableKey();
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
         IfaceMethodTarget target = lookupPic(itab);
@@ -137,7 +140,7 @@ public final class IfaceDispatchNode extends GoExprNode {
                     false, this);
             curGi = requireReceiver(fieldVal);
             data = curGi.data();
-            String innerDesc = ((GoTypeDescriptor) curGi.descriptor()).name();
+            String innerDesc = ((GoTypeDescriptor) curGi.descriptor()).methodTableKey();
             IfaceItab innerItab = IfaceMethodTable.itabFor(innerDesc, target.embeddedIfaceId(),
                     target.embeddedIfaceMethods());
             probe(innerItab);

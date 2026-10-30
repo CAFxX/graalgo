@@ -1387,7 +1387,7 @@ public final class ReflectTypes {
                 // Dispatch on the interface value's itab, chaining through
                 // nested embedded-interface redispatches if needed.
                 Object curData = gi.data();
-                String descName = ((GoTypeDescriptor) gi.descriptor()).name();
+                String descName = ((GoTypeDescriptor) gi.descriptor()).methodTableKey();
                 IfaceItab itab = IfaceMethodTable.itabFor(descName, embeddedIfaceId,
                         embMethodNames);
                 IfaceMethodTarget target = itab.methods().get(methodName);
@@ -1402,7 +1402,7 @@ public final class ReflectTypes {
                                 + methodName + "\": nested embedded field is not an interface");
                     }
                     curData = cgi.data();
-                    String idesc = ((GoTypeDescriptor) cgi.descriptor()).name();
+                    String idesc = ((GoTypeDescriptor) cgi.descriptor()).methodTableKey();
                     IfaceItab iitab = IfaceMethodTable.itabFor(idesc,
                             target.embeddedIfaceId(), target.embeddedIfaceMethods());
                     target = iitab.methods().get(methodName);

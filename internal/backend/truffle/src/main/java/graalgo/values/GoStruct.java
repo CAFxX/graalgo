@@ -7,8 +7,10 @@ import java.util.Arrays;
  *
  * <p>Structs are <em>value</em> types: assignment and argument passing copy
  * the value. {@link #deepCopy()} is the Go assignment semantics — nested
- * struct and array values are copied recursively, while slices, maps,
- * strings, pointers, and interfaces stay shared references. {@link #copy()}
+ * struct and array values are copied recursively, and interface fields
+ * are copied as interface values with a deep-copied struct/array
+ * payload (N-P1-4); slices, maps, strings, and pointers stay shared
+ * references. {@link #copy()}
  * is a shallow carrier copy (fields alias); it is <em>not</em> Go assignment
  * semantics for nested value fields.
  */
@@ -155,10 +157,16 @@ public final class GoStruct {
     /**
      * Deep value copy: Go assignment semantics for structs. Nested struct
      * values and array values are copied recursively; slices, maps,
-     * strings, pointers, and interfaces are references and stay shared.
-     * Every struct-typed assignment, interface box/unbox, and container
-     * store of a struct value goes through this, so {@code b := a; b.E.X
-     * = 1} never observably mutates {@code a} (M4, WS E).
+     * strings, and pointers are references and stay shared. Interface
+     * fields are copied as interface values (N-P1-4): the interface
+     * value itself is fresh, with the same descriptor/itab, and a
+     * struct/array dynamic payload is deep-copied — gc copies the
+     * dynamic value when copying the interface value, so sharing the
+     * payload verbatim let a mutation through one copy be observed
+     * through the other. Every struct-typed assignment, interface
+     * box/unbox, and container store of a struct value goes through
+     * this, so {@code b := a; b.E.X = 1} never observably mutates
+     * {@code a} (M4, WS E).
      */
     public GoStruct deepCopy() {
         Object[] objs = new Object[objects.length];
@@ -170,6 +178,8 @@ public final class GoStruct {
             Object v = objects[f.index()];
             if (v instanceof GoStruct gs) {
                 v = gs.deepCopy();
+            } else if (v instanceof GoInterface gi) {
+                v = copyInterfaceValue(gi);
             } else if (v != null && v.getClass().isArray()) {
                 v = deepCopyArray(v);
             } else if (v instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
@@ -192,13 +202,29 @@ public final class GoStruct {
     }
 
     /**
+     * Copies one interface value under Go assignment semantics (N-P1-4):
+     * a fresh {@link GoInterface} with the same descriptor and itab, and
+     * a deep-copied struct/array payload. Any other payload (pointer,
+     * slice, map, primitive) is a reference or immutable and stays
+     * shared, exactly as for a plain interface-value copy.
+     */
+    public static GoInterface copyInterfaceValue(GoInterface gi) {
+        Object d = gi.data();
+        Object dc = d instanceof GoStruct gs ? gs.deepCopy()
+                : (d != null && d.getClass().isArray() ? deepCopyArray(d) : d);
+        return new GoInterface(gi.descriptor(), dc, gi.itab());
+    }
+
+    /**
      * Deep copy of a Go array value: a fresh array whose struct elements
      * are deep-copied and whose nested arrays are copied recursively.
-     * Slices, maps, pointers, interfaces, and strings are references and
-     * stay shared (Go value semantics — only structs and arrays are
-     * copied by assignment). A shallow {@code System.arraycopy} here
-     * would leave struct element slots aliased across copies, so that
-     * {@code a[i].field = x} on one copy observably mutates the other.
+     * Interface elements are copied as interface values (N-P1-4, same
+     * rule as struct interface fields). Slices, maps, pointers, and
+     * strings are references and stay shared (Go value semantics — only
+     * structs and arrays are copied by assignment). A shallow
+     * {@code System.arraycopy} here would leave struct element slots
+     * aliased across copies, so that {@code a[i].field = x} on one copy
+     * observably mutates the other.
      */
     public static Object deepCopyArray(Object array) {
         Class<?> ct = array.getClass().getComponentType();
@@ -210,6 +236,8 @@ public final class GoStruct {
                 Object e = src[i];
                 if (e instanceof GoStruct gs) {
                     e = gs.deepCopy();
+                } else if (e instanceof GoInterface gi) {
+                    e = copyInterfaceValue(gi);
                 } else if (e instanceof graalgo.runtime.sync.GoMutex) {
                     // P3-M9 (driver-harden, go-cmp lane): copied sync
                     // primitives get fresh instances per slot — sharing

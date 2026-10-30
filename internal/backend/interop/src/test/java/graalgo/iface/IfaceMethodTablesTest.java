@@ -237,6 +237,84 @@ public final class IfaceMethodTablesTest {
     }
 
     /**
+     * N-P1-2: two packages with the same package name but different
+     * paths (a/foo.T, b/foo.T) install under SEPARATE qualified keys —
+     * never merged. Red: both keyed by the display name "foo.T" and
+     * the second method set silently overwrote the first.
+     */
+    public void testSamePackageNameDifferentPathsDoNotCollide() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "named", "detail": {"name": "a/foo.T", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 7, "recv": "value"}]}},
+                   {"kind": "named", "detail": {"name": "b/foo.T", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 8, "recv": "value"}]}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        GoFunc fa = goFunc();
+        GoFunc fb = goFunc();
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of(7, fa, 8, fb));
+        assertEquals(2, out.size(), "two distinct tables, keys=" + out.keySet());
+        assertTrue(out.get("a/foo.T") != null, "a/foo.T table present");
+        assertTrue(out.get("b/foo.T") != null, "b/foo.T table present");
+        assertTrue(out.get("a/foo.T").get("M").func() == fa, "a/foo.T.M is obj 7");
+        assertTrue(out.get("b/foo.T").get("M").func() == fb, "b/foo.T.M is obj 8");
+        assertTrue(!out.containsKey("foo.T"), "no display-name key survives");
+    }
+
+    /**
+     * N-P1-2: a merge where the same method maps to different function
+     * objects under one key fails fast instead of last-wins.
+     */
+    public void testConflictingMergeFailsFast() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "named", "detail": {"name": "main.T", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 7, "recv": "value"}]}},
+                   {"kind": "named", "detail": {"name": "main.T", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 8, "recv": "value"}]}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        try {
+            IfaceMethodTables.resolve(parseDoc(doc), Map.of(7, goFunc(), 8, goFunc()));
+        } catch (FrontendException fe) {
+            assertTrue(fe.getMessage().contains("conflicting"),
+                    "names the conflict: " + fe.getMessage());
+            return;
+        }
+        throw new AssertionError("expected FrontendException for conflicting merge");
+    }
+
+    /**
+     * N-P1-2 (guard): identical structural duplicates still merge
+     * silently — the fail-fast above must not break the legitimate
+     * case of two type-table entries for the same structural type
+     * carrying the same method entry.
+     */
+    public void testIdenticalStructuralDuplicateMerges() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "struct", "detail": {"fields": [{"name": "x", "type": 0, "embedded": false}]}},
+                   {"kind": "pointer", "detail": {"elem": 1, "methods": [{"name": "M", "obj": 7, "recv": "pointer", "index": []}]}},
+                   {"kind": "pointer", "detail": {"elem": 1, "methods": [{"name": "M", "obj": 7, "recv": "pointer", "index": []}]}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        GoFunc f = goFunc();
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of(7, f));
+        assertEquals(1, out.size(), "one merged table, keys=" + out.keySet());
+        Map<String, IfaceMethodTarget> methods = out.values().iterator().next();
+        assertTrue(methods.get("M").func() == f, "identical duplicate merges to obj 7");
+    }
+
+    /**
      * A document without any method tables resolves to an empty map
      * (install is still called — no stale tables).
      * verifies: GG-0014

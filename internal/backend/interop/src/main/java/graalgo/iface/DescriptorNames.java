@@ -105,6 +105,41 @@ public final class DescriptorNames {
     }
 
     /**
+     * The interface-method-table key for a type-table entry (N-P1-2):
+     * the qualified name for named types (detail {@code name} verbatim,
+     * e.g. {@code "a/foo.T"}) and for pointer-to-named types
+     * ({@code "*"} + the element's qualified name), and
+     * {@link #descriptorName} for everything else (structural types,
+     * whose key already encodes the full shape, and basic/interface
+     * entries, which carry no methods). This is the install-side
+     * counterpart of {@link graalgo.values.GoTypeDescriptor#methodTableKey}:
+     * the two must agree byte-exactly, or dispatch misses its table.
+     * The display name is deliberately NOT used here — it is a %T
+     * form, not an identity, and collides across packages sharing a
+     * package name. Interface-name lists ({@code resolveInterfaces})
+     * are a separate namespace and keep display-name keying (their
+     * lookup side uses {@code iface.name()}).
+     */
+    public static String methodTableKey(TypeTable types, int typeId) {
+        String path = "types[" + typeId + "]";
+        typeId = resolveAlias(types, typeId, path);
+        Json.Object entry = types.entry(typeId, path);
+        String k = entry.string("kind", path);
+        Json.Object detail = entry.object("detail", path);
+        if ("named".equals(k)) {
+            return detail.string("name", path);
+        }
+        if ("pointer".equals(k)) {
+            int elemId = resolveAlias(types, detail.intValue("elem", path), path);
+            Json.Object elemEntry = types.entry(elemId, path);
+            if ("named".equals(elemEntry.string("kind", path))) {
+                return "*" + elemEntry.object("detail", path).string("name", path);
+            }
+        }
+        return descriptorName(types, typeId);
+    }
+
+    /**
      * Replica of {@code NodeFactory.kindOf}: named resolves to underlying,
      * alias to its rhs (bounded walk, fail-fast on cycles).
      */

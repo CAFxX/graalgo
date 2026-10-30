@@ -182,20 +182,35 @@ public final class GoFuncRootNode extends RootNode {
                         + "): concrete param " + i
                         + " still interface-boxed after unwrap (caller contract violated)");
             }
-            // P3-M4 (WS C; remediated P3-M4 P0-1): atomic cells are Go
-            // values: a by-value (STRUCT-kind) parameter gets its own
-            // cell (clone), so `f(a)` cannot observe or affect the
-            // caller's cell — like gc. Pointer-kind params (`*atomic.T`)
-            // carry the same cell object and must NOT be cloned, or
-            // pointer aliasing breaks (`setIt(p)` mutating through p).
-            // (Struct by-value params are not deep-copied today, a
-            // pre-existing gap out of M4 scope; atomic cells clone
-            // because their entire state is the integer.)
+            // N-P1-3 (rev30-iface-valuecopy): THE value-copy choke
+            // point. By-value STRUCT/ARRAY parameters are deep-copied
+            // here, on every invocation, for every call path — direct
+            // calls (which also copy at the call site; the second copy
+            // is redundant but harmless), interface dispatch (the
+            // receiver travels as params[0] and struct/array args as
+            // params[1..]), method values (bound args are prepended
+            // per invocation by GoCalls, so a bind-time copy would
+            // still leak across repeated invocations — copying here
+            // gives each invocation its own value, like gc), and
+            // reflect/linkname calls into Go roots. INTERFACE params
+            // are deliberately NOT copied here: passing an interface
+            // value shares its dynamic data in gc (the copy happens at
+            // conversion/box time, in Boxing.copyForAssign); only a
+            // value-receiver method's STRUCT params[0] needs the fresh
+            // copy, and it gets one by this rule. Pointer-kind params
+            // (`*atomic.T`, `*T`) carry the same object and must NOT
+            // be cloned, or pointer aliasing breaks (`setIt(p)`
+            // mutating through p). Atomic cells are Go values: a
+            // by-value (STRUCT-kind) parameter gets its own cell
+            // (clone), so `f(a)` cannot observe or affect the
+            // caller's cell — like gc (P3-M4 P0-1).
             if (paramKinds[i] == graalgo.values.GoKind.STRUCT) {
-                // fix-linkname: match the GoAtomic wrappers before the
-                // raw AtomicLong/Integer (they extend them) so the clone
-                // keeps the LongCell/IntCell interface.
-                if (arg instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                if (arg instanceof graalgo.values.GoStruct gs) {
+                    arg = gs.deepCopy();
+                } else if (arg instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                    // fix-linkname: match the GoAtomic wrappers before
+                    // the raw AtomicLong/Integer (they extend them) so
+                    // the clone keeps the LongCell/IntCell interface.
                     arg = new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
                 } else if (arg instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
                     arg = new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
@@ -204,6 +219,9 @@ public final class GoFuncRootNode extends RootNode {
                 } else if (arg instanceof java.util.concurrent.atomic.AtomicInteger ai) {
                     arg = new java.util.concurrent.atomic.AtomicInteger(ai.get());
                 }
+            } else if (paramKinds[i] == graalgo.values.GoKind.ARRAY
+                    && arg != null && arg.getClass().isArray()) {
+                arg = graalgo.values.GoStruct.deepCopyArray(arg);
             }
             Boxing.setSlot(frame, paramSlots[i], paramKinds[i], arg);
         }

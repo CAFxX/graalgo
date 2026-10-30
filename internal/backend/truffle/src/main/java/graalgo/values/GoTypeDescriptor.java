@@ -34,6 +34,22 @@ public final class GoTypeDescriptor {
     private final GoKind kind;
     private final boolean emptyInterface;
     /**
+     * Method-table key (rev30-iface-valuecopy, N-P1-2): the qualified
+     * identity of a named type (full package path, e.g.
+     * {@code "a/foo.T"}), as opposed to {@link #name()}, the %T display
+     * form (package NAME only, e.g. {@code "foo.T"}). Two packages with
+     * the same package name but different paths mint distinct
+     * descriptors whose display names collide, so keying interface
+     * method tables on {@link #name()} silently merged their method
+     * sets, last wins. The key is the qualified name for named and
+     * pointer-to-named types and falls back to {@link #name()} for every
+     * other descriptor (basic, structural, interface), where the name
+     * already identifies the type. Descriptors minted without a
+     * qualified name (tests, reflect shells) default the key to the
+     * name, preserving their existing table keys.
+     */
+    private final String qualifiedName;
+    /**
      * bug-019: whether values of this type can be compared with ==.
      * gc panics ("comparing uncomparable type") when two interface values
      * with the identical dynamic type are compared and the type is not
@@ -49,15 +65,30 @@ public final class GoTypeDescriptor {
     }
 
     public GoTypeDescriptor(String name, GoKind kind, boolean emptyInterface, boolean comparable) {
+        this(name, kind, emptyInterface, comparable, name);
+    }
+
+    public GoTypeDescriptor(String name, GoKind kind, boolean emptyInterface, boolean comparable,
+            String qualifiedName) {
         this.name = name;
         this.kind = kind;
         this.emptyInterface = emptyInterface;
         this.comparable = comparable;
+        this.qualifiedName = qualifiedName == null ? name : qualifiedName;
     }
 
     /** Human-readable type name (qualified for named types). */
     public String name() {
         return name;
+    }
+
+    /**
+     * The interface-method-table key for this type: the qualified name
+     * for named/pointer-to-named types, the display name otherwise.
+     * Method tables key on this, never on {@link #name()} alone.
+     */
+    public String methodTableKey() {
+        return qualifiedName;
     }
 
     public GoKind kind() {

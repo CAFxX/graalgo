@@ -18,6 +18,8 @@ public final class IfaceTestRunner {
     static {
         TESTS.add(IfaceDispatchNodeTest.class);
         TESTS.add(IfaceMethodTablesTest.class);
+        // rev30-iface-valuecopy (N-P1-1): variadic iface adaptation.
+        TESTS.add(graalgo.frontend.IfaceDispatchBuilderTest.class);
         TESTS.add(graalgo.frontend.DescriptorNamesTest.class);
         TESTS.add(LinknameTest.class);
         // fix-linkname (Caddy/godebug lane): sync.Map backing store.

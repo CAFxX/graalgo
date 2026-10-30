@@ -1298,8 +1298,11 @@ public final class NodeFactory {
             String qname = entry.object("detail", path).string("name", path);
             graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qname);
             if (nd == null) {
+                // N-P1-2: carry the qualified name as the method-table
+                // key — the display name alone collides across packages
+                // sharing a package name (a/foo.T vs b/foo.T).
                 nd = new graalgo.values.GoTypeDescriptor(displayNameFor(qname),
-                        kindOf(ctx, typeId, path), false, comparable);
+                        kindOf(ctx, typeId, path), false, comparable, qname);
                 graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(qname, nd);
                 if (prev != null) {
                     nd = prev;
@@ -1585,7 +1588,7 @@ public final class NodeFactory {
         graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qualifiedName);
         if (nd == null) {
             nd = new graalgo.values.GoTypeDescriptor(
-                    displayNameFor(qualifiedName), kind, false);
+                    displayNameFor(qualifiedName), kind, false, true, qualifiedName);
             graalgo.values.GoTypeDescriptor prev =
                     NAMED_DESCS.putIfAbsent(qualifiedName, nd);
             if (prev != null) {

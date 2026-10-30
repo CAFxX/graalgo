@@ -122,6 +122,12 @@ public final class IfaceDispatchNodeTest {
         return new GoInterface(new GoTypeDescriptor(descName, GoKind.STRUCT, false), data, null);
     }
 
+    /** An interface value whose descriptor displays as "foo.T" but keys as the qualified name. */
+    private static GoInterface qualifiedIface(String qualifiedName, Object data) {
+        return new GoInterface(new GoTypeDescriptor("foo.T", GoKind.STRUCT, false, true, qualifiedName),
+                data, null);
+    }
+
     private IfaceDispatchNode node(GoExprNode recv, GoExprNode[] args, List<String> methodNames,
             int ifaceId) {
         return new IfaceDispatchNode(recv, args, "M", methodNames, ifaceId,
@@ -227,6 +233,58 @@ public final class IfaceDispatchNodeTest {
         @Override
         public Object executeObject(VirtualFrame frame) {
             return value;
+        }
+    }
+
+    /**
+     * N-P1-2: dispatch keys on the qualified method-table key, not the
+     * display name. Two types displaying as "foo.T" but qualified as
+     * a/foo.T and b/foo.T dispatch to their OWN methods. Red: both
+     * looked up "foo.T" and the second-installed method won for both.
+     */
+    public void testSameDisplayNameDispatchesByQualifiedKey() {
+        CaptureRoot rootA = new CaptureRoot(11L);
+        CaptureRoot rootB = new CaptureRoot(22L);
+        java.util.Map<String, Map<String, IfaceMethodTarget>> table = new java.util.HashMap<>();
+        table.put("a/foo.T", Map.of("M", target(rootA)));
+        table.put("b/foo.T", Map.of("M", target(rootB)));
+        setUp(table);
+        try {
+            VirtualFrame f = frame();
+            IfaceDispatchNode na = node(new ConstNode(GoKind.INTERFACE,
+                    qualifiedIface("a/foo.T", "da"), 0), new GoExprNode[0], List.of("M"), 3);
+            assertEquals(11L, na.executeLong(f), "a/foo.T dispatches to its own method");
+            IfaceDispatchNode nb = node(new ConstNode(GoKind.INTERFACE,
+                    qualifiedIface("b/foo.T", "db"), 0), new GoExprNode[0], List.of("M"), 3);
+            assertEquals(22L, nb.executeLong(f), "b/foo.T dispatches to its own method");
+            assertEquals(1, rootA.seen.size(), "a method invoked once");
+            assertEquals(1, rootB.seen.size(), "b method invoked once");
+            assertEquals("da", rootA.seen.get(0)[1], "a receiver data");
+            assertEquals("db", rootB.seen.get(0)[1], "b receiver data");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * N-P1-3 (dispatch side, via the root choke point — see
+     * GoFuncRootNodeValueCopyTest): a value-receiver method dispatched
+     * through an interface receives the receiver as params[0]; the root
+     * copies STRUCT params per invocation, so the callee cannot mutate
+     * the caller's struct through the interface box. This test pins the
+     * dispatch contract (receiver data travels as params[0]); the copy
+     * itself is pinned at the root.
+     */
+    public void testDispatchReceiverTravelsAsParamsZero() {
+        CaptureRoot root = new CaptureRoot(5L);
+        setUp(Map.of("main.T", Map.of("M", target(root))));
+        try {
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(5L, n.executeLong(frame()), "dispatch result");
+            assertEquals("DATA", root.seen.get(0)[1], "params[0] is the receiver data");
+        } finally {
+            tearDown();
         }
     }
 
