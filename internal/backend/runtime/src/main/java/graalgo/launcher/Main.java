@@ -322,6 +322,13 @@ public final class Main {
      * {@code {"file":..., "exit":N, "stdout":..., "stderr":...}}.
      * The process exit code is 0 if the batch file was processed (even if
      * individual entries failed); per-entry failures are in the JSON.
+     *
+     * <p>A guest exit ({@code os.Exit}, {@code sync.throw},
+     * {@code sync.fatal}) ends only its own entry: the batch loop traps
+     * it (see {@code graalgo.runtime.GuestExit}), records the guest's
+     * code in that entry's {@code "exit"}, and continues with the next
+     * entry — previously the exit killed the whole JVM, aborting the
+     * remaining entries and losing the JSON report.
      */
     static int runBatch(String batchFile) {
         java.util.List<String> lines;
@@ -360,7 +367,25 @@ public final class Main {
             System.setErr(new java.io.PrintStream(berr, true, StandardCharsets.UTF_8));
             int exit;
             try {
-                exit = runOne(file, check, false, null);
+                // Batch exit trap (review 2026-10-30-21): a guest exit
+                // ends this entry, not the JVM. GuestExit is an Error,
+                // so it propagates through runOne untouched (runOne
+                // catches RuntimeException for execution failures).
+                graalgo.runtime.GuestExit.beginTrap();
+                try {
+                    exit = runOne(file, check, false, null);
+                } catch (graalgo.runtime.GuestExit e) {
+                    exit = e.code();
+                } finally {
+                    graalgo.runtime.GuestExit.endTrap();
+                }
+                // An exit raised off the entry thread (a lingering
+                // goroutine) does not unwind runOne, but its recorded
+                // code still wins over the entry's normal return.
+                int trapped = graalgo.runtime.GuestExit.trappedCode();
+                if (trapped >= 0) {
+                    exit = trapped;
+                }
             } finally {
                 System.setOut(realOut);
                 System.setErr(realErr);

@@ -94,6 +94,30 @@ public final class StackTrace {
     }
 
     /**
+     * Clears all per-run state: the intern table, the PC table, and the
+     * function-definition sites. Called on the program boundary (from
+     * {@code ReflectTypes.install}, which every launcher runs per build)
+     * so a later program in the same JVM never observes an earlier
+     * program's interning. Without this, tokens/PCs restart per program
+     * while this state does not: every batch entry defines
+     * {@code main.main}, so first-write-wins {@code FUNC_DEFS} made
+     * entry 2's {@code Func.Entry()} report entry 1's file/line, and
+     * stale interned PCs could resolve to another program's sites.
+     * PCs are only meaningful within the run that interned them, so
+     * clearing them at the boundary invalidates nothing live: no
+     * entry's execution has started yet when its install runs.
+     */
+    public static void resetForRun() {
+        synchronized (INTERN_LOCK) {
+            INTERN.clear();
+            TABLE.clear();
+            TABLE.add(null); // id 0 is never valid
+            NEXT_ID.set(1);
+        }
+        FUNC_DEFS.clear();
+    }
+
+    /**
      * The entry PC for the named function (its definition site), or 0 when
      * unknown. gc: "Entry ... may be zero if not known".
      */

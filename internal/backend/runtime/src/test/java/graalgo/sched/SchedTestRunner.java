@@ -48,6 +48,9 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.sched.TimerDifferentialTest.class);
         TESTS.add(graalgo.sched.launcher.GoDebugTest.class);
         TESTS.add(graalgo.runtime.TimerTest.class);
+        TESTS.add(graalgo.runtime.StackTraceTest.class);
+        TESTS.add(graalgo.runtime.GuestExitTest.class);
+        TESTS.add(graalgo.launcher.BatchTrapTest.class);
         TESTS.add(graalgo.runtime.FreezeGapTest.class);
         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
         TESTS.add(graalgo.runtime.StructSizeNestedTest.class);

@@ -218,6 +218,19 @@ public final class ReflectTypes {
         installed = build(doc, types, functions);
         cacheTypes(types);
         captureDescriptors(types);
+        // Program boundary (review 2026-10-30-21, batch-mode state leak):
+        // this install replaces the table, and tokens restart per table,
+        // so a promoted method set cached under the previous table's
+        // tokens would be served to unrelated types of this program.
+        // The cache is only a memo over the installed table — clearing it
+        // here (after a successful build, so a failed build keeps the old
+        // table and its cache consistent) can never change a result,
+        // only force recomputation. Stack-trace interning is likewise
+        // per-run; see StackTrace.resetForRun.
+        synchronized (METHOD_SET_CACHE) {
+            METHOD_SET_CACHE.clear();
+        }
+        graalgo.runtime.StackTrace.resetForRun();
     }
 
     /** The current run's table; fails fast when no run is installed. */

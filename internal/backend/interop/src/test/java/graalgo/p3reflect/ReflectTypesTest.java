@@ -1,8 +1,12 @@
 package graalgo.p3reflect;
 
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.RootNode;
 import graalgo.frontend.FrontendException;
+import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -353,5 +357,77 @@ public void testInvalidTypeWireEntryFailsLoud() {
             }
         }
         assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
+    }
+
+    private static GoFunc goFunc() {
+        RootNode root = new RootNode(null) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                return null;
+            }
+        };
+        return new GoFunc(root.getCallTarget(), null, null);
+    }
+
+    /**
+     * Builds a wire document whose struct S (wire id 3) embeds named type
+     * E (wire id 2, underlying empty struct, wire id 1) carrying one
+     * value-receiver method named {@code methodName} (obj 101, signature
+     * wire id 0). S itself has no methods, so {@link
+     * ReflectTypes#methodSetFor} computes its promoted set from the
+     * embedded field — and caches it per token.
+     */
+    private static String methodSetDoc(String methodName) {
+        return """
+                {"types": [
+                  {"kind": "signature", "detail": {
+                     "params": [{"name": "recv", "type": 2}], "results": [], "variadic": false}},
+                  {"kind": "struct", "detail": {"fields": []}},
+                  {"kind": "named", "detail": {
+                     "name": "main.E", "pkgpath": "main", "underlying": 1,
+                     "methods": [{"name": "%s", "obj": 101, "recv": "value"}]}},
+                  {"kind": "struct", "detail": {"fields": [
+                     {"name": "E", "type": 2, "tag": "", "offset": 0, "embedded": true}]}}],
+                 "nodes": [{"kind": "funcdecl",
+                     "fields": {"obj": 101, "sig": 0}}]}
+                """.formatted(methodName);
+    }
+
+    private static List<String> methodNames(List<ReflectTypes.MethodInfo> ms) {
+        List<String> names = new java.util.ArrayList<>();
+        for (ReflectTypes.MethodInfo m : ms) {
+            names.add(m.name);
+        }
+        return names;
+    }
+
+    /**
+     * Review 2026-10-30-21, batch-mode state leak (P1): METHOD_SET_CACHE
+     * was keyed by bare token and never cleared when install() replaced
+     * the table, while tokens restart per table. Two programs whose
+     * struct types land on the same token therefore shared a promoted
+     * method set: the second program dispatched the first program's
+     * methods. This test installs two docs with identical canonical
+     * layout (hence identical tokens) but different embedded method
+     * names, and requires the second install's method set to be its own.
+     * The token-equality assertion guards the test's premise: if the
+     * tokens ever diverged, the test would pass vacuously.
+     */
+    public void testMethodSetCacheClearedAcrossInstalls() {
+        Map<Integer, GoFunc> funcs = Map.of(101, goFunc());
+        ReflectTypes.install(parseDoc(methodSetDoc("Alpha")), funcs);
+        long tok = ReflectTypes.tokForWireId(3);
+        assertTrue(tok > 0, "no token for struct wire id 3");
+        assertTrue(methodNames(ReflectTypes.methodSetFor(tok)).equals(List.of("Alpha")),
+                "first install should promote [Alpha], got "
+                        + methodNames(ReflectTypes.methodSetFor(tok)));
+        ReflectTypes.install(parseDoc(methodSetDoc("Beta")), funcs);
+        long tok2 = ReflectTypes.tokForWireId(3);
+        assertTrue(tok == tok2,
+                "test premise broken: struct token changed across installs (" + tok + " vs " + tok2 + ")");
+        assertTrue(methodNames(ReflectTypes.methodSetFor(tok2)).equals(List.of("Beta")),
+                "second install should promote [Beta], got "
+                        + methodNames(ReflectTypes.methodSetFor(tok2))
+                        + " (stale METHOD_SET_CACHE entry from the first install?)");
     }
 }

@@ -1692,7 +1692,9 @@ public final class GoOs {
 
     /** graalgo.os.exit */
     public static long exit(Object codeArg) {
-        System.exit(num32(codeArg));
+        // Batch mode traps the exit (GuestExit) instead of killing the
+        // JVM; single-run mode keeps the raw System.exit path.
+        graalgo.runtime.GuestExit.exit(num32(codeArg));
         return 0; // unreachable
     }
 

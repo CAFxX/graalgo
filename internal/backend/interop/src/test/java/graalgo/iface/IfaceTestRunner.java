@@ -31,6 +31,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
+        // Review 2026-10-30-21 (batch-mode state leak, P1): guest exits
+        // trapped per batch entry at every call site.
+        TESTS.add(graalgo.p3os.GoOsExitTrapTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.

@@ -480,7 +480,9 @@ public final class SyncRuntime {
     public static void syncThrow(Object arg) {
         System.err.println("fatal error: " + goString(arg, "sync.throw"));
         System.err.flush();
-        System.exit(2);
+        // Batch mode traps the exit (GuestExit) instead of killing the
+        // JVM; single-run mode keeps the raw System.exit path.
+        graalgo.runtime.GuestExit.exit(2);
     }
 
     /**
@@ -490,7 +492,9 @@ public final class SyncRuntime {
     public static void syncFatal(Object arg) {
         System.err.println("fatal error: " + goString(arg, "sync.fatal"));
         System.err.flush();
-        System.exit(2);
+        // Batch mode traps the exit (GuestExit) instead of killing the
+        // JVM; single-run mode keeps the raw System.exit path.
+        graalgo.runtime.GuestExit.exit(2);
     }
 
     /**
