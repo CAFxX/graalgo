@@ -18,8 +18,11 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: harness/ -> fuzz-soak/ -> tools/ -> repo (4 dirnames up),
+# or $GR as exported by run_soak.sh.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def diff_result(gofile, workdir):
@@ -62,7 +65,9 @@ def minimize(prog_path, out_path, workdir):
             f.write(src)
         # Must still build under gc (else not a valid reduction).
         env = dict(os.environ)
-        env["PATH"] = os.path.expanduser("~/tools/go/bin") + ":" + env.get("PATH", "")
+        env["PATH"] = (os.environ.get("GO_BIN_DIR")
+                       or os.path.expanduser("~/tools/go/bin")) \
+            + ":" + env.get("PATH", "")
         r = subprocess.run(["go", "build", "-o", os.devnull, tmp],
                            capture_output=True, env=env)
         if r.returncode != 0:

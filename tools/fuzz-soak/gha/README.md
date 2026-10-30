@@ -16,16 +16,22 @@ projects/graalgo-fuzz/
 
 ## graalgo-slim.tar.gz
 
-Built from a graalgo worktree at the pinned commit:
+Built from a graalgo worktree at the pinned commit (current layout —
+the retired `phases/` tree must NOT be used):
 
 ```bash
-cd ~/workspace/graalgo-m9   # at the commit to fuzz
+cd ~/workspace/graalgo   # at the commit to fuzz
 tar -czf graalgo-slim.tar.gz \
-  phases/phase1/src phases/phase1/lib internal/frontend \
-  phases/phase1/Makefile \
-  phases/phase2/src phases/phase2/Makefile \
-  phases/phase3/src phases/phase3/fuzzing phases/phase3/Makefile
+  Makefile \
+  tools/fuzz-soak \
+  internal/backend \
+  internal/frontend
 ```
+
+The image pre-builds the backend (`make build`) and gofrontend
+(`internal/frontend/build.sh build`); the shard driver
+(`driver/fuzz_driver.py`) requires both, and fails fast with a
+`GRAALGO_HOME layout` message if the tarball predates this layout.
 
 Rebuild and re-push the Dockerfile whenever the pinned graalgo commit
 changes (the image bakes the sources).

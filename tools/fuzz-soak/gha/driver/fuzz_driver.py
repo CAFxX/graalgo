@@ -9,7 +9,16 @@ Env:
   SHARD_IDX, SHARD_COUNT : shard identity
   OUT_DIR                : output directory
   SEEDS_PER_SHARD        : programs per shard (default 50)
-  GRAALGO_HOME           : /opt/graalgo (image default)
+  GRAALGO_HOME           : repo checkout in the image (/opt/graalgo default)
+
+GRAALGO_HOME contract (see gha/Dockerfile): the image must contain a
+repo checkout at $GRAALGO_HOME with the CURRENT layout —
+tools/fuzz-soak/ (generator + harness) and internal/backend/ built via
+`make build`, plus internal/frontend/gofrontend built. The old
+phases/phase3/fuzzing layout no longer exists; an image baked from it
+makes every shard fail at the generator/canary step. diff_one.sh itself
+derives the repo root from its own location, so it works wherever the
+checkout lives; only this FUZZ path needs GRAALGO_HOME to be right.
 
 Golden canary: seed 999999 is a known-pass program; if it doesn't PASS,
 the shard writes CANARY_FAIL and exits nonzero (batch quarantined).
@@ -21,7 +30,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 GRAALGO_HOME = os.environ.get("GRAALGO_HOME", "/opt/graalgo")
-FUZZ = os.path.join(GRAALGO_HOME, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GRAALGO_HOME, "tools", "fuzz-soak")
 OUT_DIR = os.environ.get("OUT_DIR", "/out")
 SHARD_IDX = int(os.environ.get("SHARD_IDX", "0"))
 SHARD_COUNT = int(os.environ.get("SHARD_COUNT", "1"))
@@ -47,6 +56,13 @@ def diff_one(gofile, workdir, gmp=1):
 
 
 def main():
+    # Fail fast on a stale image layout instead of quarantining every
+    # shard through the canary with a confusing generator error.
+    for needed in (f"{FUZZ}/gen/generator.py", f"{FUZZ}/harness/diff_one.sh"):
+        if not os.path.isfile(needed):
+            print(f"CANARY_FAIL: {needed} missing — GRAALGO_HOME={GRAALGO_HOME} "
+                  "does not hold the current repo layout (rebuild the image)")
+            sys.exit(2)
     os.makedirs(OUT_DIR, exist_ok=True)
     # Shard i owns seeds [i*N, (i+1)*N) offset by a base to avoid overlap
     # with local runs (local uses 0..; GHA uses 1_000_000..).

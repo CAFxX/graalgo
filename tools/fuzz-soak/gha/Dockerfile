@@ -1,7 +1,8 @@
 # graalgo-fuzz GHA image: Go 1.27.1 + GraalVM JDK 25 + graalgo sources.
 #
-# The graalgo sources are baked as a slim tarball (phases/phase1/{src,lib,
-# frontend}, phases/phase2/src, phases/phase3/{src,fuzzing}; ~45MB).
+# The graalgo sources are baked as a slim tarball (current repo layout:
+# tools/fuzz-soak, internal/backend, internal/frontend; the retired
+# phases/ tree is NOT in the image anymore).
 # Rebuild the tarball and re-push the Dockerfile when graalgo changes.
 #
 # Build via the fanout build-image.yml workflow (push trigger on
@@ -31,16 +32,17 @@ ENV PATH=/opt/graalvm/bin:$PATH
 ENV GRAALVM_HOME=/opt/graalvm
 
 # graalgo slim sources (tarball committed alongside this Dockerfile).
-# Layout inside tarball: graalgo/{phases/phase1/{src,lib,frontend,Makefile},
-# phases/phase2/{src,Makefile}, phases/phase3/{src,fuzzing,Makefile}}
+# Layout inside tarball: graalgo/{tools/fuzz-soak, internal/backend,
+# internal/frontend, Makefile} — see README.md for the exact recipe.
 COPY graalgo-slim.tar.gz /tmp/
 RUN mkdir -p /opt && tar -xz -C /opt -f /tmp/graalgo-slim.tar.gz \
     && rm /tmp/graalgo-slim.tar.gz
 
-# Pre-build the Java modules so shards start immediately.
-# (go build of the frontend happens on first use; cached in GOCACHE.)
+# Pre-build the backend + gofrontend so shards start immediately.
+# (The fuzz driver's GRAALGO_HOME contract requires both built.)
 WORKDIR /opt/graalgo
-RUN make -C phases/phase3 main && echo "graalgo pre-build OK"
+RUN make build && (cd internal/frontend && ./build.sh build) \
+    && echo "graalgo pre-build OK"
 
 # Shard contract env (set by dispatch.yml at runtime).
 ENV OUT_DIR=/out SHARD_IDX=0 SHARD_COUNT=1

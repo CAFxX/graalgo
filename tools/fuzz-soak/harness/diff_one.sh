@@ -2,21 +2,37 @@
 # Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
 # Usage: diff_one.sh <go-file> <workdir> <gmp>
 # Emits a JSON result record to stdout.
+# Env: GR (repo root; default: derived from this script's location),
+#   GO_BIN_DIR (Go toolchain bin dir), JAVA_BIN or GRAALVM_HOME (JVM),
+#   FUZZ_TMPDIR (JVM temp dir override; default: <workdir>/tmp).
+# Requires `make build` at the repo root first (backend classes).
 set -uo pipefail
 
 GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: harness/ -> fuzz-soak/ -> tools/ -> repo. $GR overrides
+# (run_soak.sh exports it; the GHA image layout derives it the same way).
+if [ -z "${GR:-}" ]; then
+  GR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+fi
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+# The graalgo run goes through internal/backend/graalgo-sync-run, which
+# owns the load-bearing classpath (interop/out/classes, then
+# runtime/out/classes, then truffle/out/classes, then truffle/lib/*.jar)
+# and the JVM flags — diff_one.sh must not duplicate it. JAVA_BIN (a java
+# binary path) is translated to GRAALVM_HOME for the wrapper.
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+  GRAALVM_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+fi
+export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+# JVM temp dir: per-workdir, never /tmp (a full /tmp silently yields
+# empty output with exit 0) and never a hidden_files/ scratch dir.
+export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR/tmp}"
+mkdir -p "$TMPDIR"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+WRAPPER="$GR/internal/backend/graalgo-sync-run"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
@@ -31,10 +47,14 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (120s timeout; JVM startup dominates). Fail fast as
+# HARNESS_ERROR if the backend was never built: without classes, java
+# would die with NoClassDefFoundError and misclassify as CRASH.
+if [ ! -x "$WRAPPER" ] || [ ! -d "$GR/internal/backend/interop/out/classes" ]; then
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "backend not built: run make build at the repo root first"}\n' "$base"
+    exit 0
+fi
+timeout 120 "$WRAPPER" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 
