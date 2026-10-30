@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Replay native fuzz corpora differentially (GG-0037(i)).
 
-Reads testdata/fuzz/FuzzXxx/ corpus files (grown by `go test -fuzz`),
-materializes each entry as a single-file Go program calling the target
-stdlib function, and writes a diffharness corpus directory. The caller
-then runs `diffharness run -config backends.json -corpus <dir>` for the
+Reads testdata/fuzz/FuzzXxx/ corpus files (grown by `go test -fuzz`) AND
+the f.Add seeds from fuzz_test.go (SEEDS below), materializes each entry
+as a single-file Go program calling the target stdlib function, and
+writes a diffharness corpus directory. The caller then runs
+`diffharness run -config backends.json -corpus <dir>` for the
 gc-vs-graalgo differential.
+
+The seeds step is load-bearing (R1-34): f.Add seeds live in the test
+binary, not in testdata/fuzz/FuzzXxx/ files, so a corpus-only replay
+never differentially checked the hand-picked edge cases. A template
+target that yields zero programs (no seeds, no corpus entries) is a
+hard failure, never a silent skip.
 
 Usage: replay.py --fuzzdir DIR --out DIR
 """
@@ -43,6 +50,69 @@ TEMPLATES = {
         ["bytes"], ["[]byte"],
         'fmt.Printf("%q", bytes.ToUpper({a0}))'),
 }
+
+# SEEDS[target] = list of f.Add seed calls from fuzz_test.go, each seed as
+# a list of (type, value) pairs aligned with TEMPLATES[target] argtypes.
+# KEEP IN SYNC with fuzz_test.go: every TEMPLATES target must have an
+# entry here (an empty list is allowed for a fuzzer-only target, but a
+# missing entry fails the replay). String values are BYTE strings in
+# latin-1: go_quote_string re-emits each character as a \xNN byte, which
+# round-trips corpus bytes exactly. Non-ASCII seeds must therefore be
+# written as their UTF-8 BYTES (e.g. "ß" is "\xc3\x9f", "ﬁ" is
+# "\xef\xac\x81", "İ" is "\xc4\xb0", "Σ" is "\xce\xa3", NBSP is
+# "\xc2\xa0") — writing the Unicode character itself would render a
+# different (single-byte) input for code points below U+0100.
+SEEDS = {
+    "FuzzStringsToUpper": [
+        [("string", "")], [("string", "hello")], [("string", "HELLO")],
+        [("string", "\xc3\x9f")], [("string", "\xef\xac\x81")],
+        [("string", "\xff\xfe")], [("string", "aBc123")],
+    ],
+    "FuzzStringsToLower": [
+        [("string", "")], [("string", "hello")], [("string", "HELLO")],
+        [("string", "\xc4\xb0")], [("string", "\xce\xa3")],
+        [("string", "\xff")],
+    ],
+    "FuzzStringsTrimSpace": [
+        [("string", "")], [("string", "  x  ")],
+        [("string", "\t\nx\r\n")], [("string", "\xc2\xa0")],
+        [("string", "x")],
+    ],
+    "FuzzStringsCount": [
+        [("string", ""), ("string", "")],
+        [("string", "hello"), ("string", "l")],
+        [("string", "aaa"), ("string", "aa")],
+        [("string", "x"), ("string", "")],
+    ],
+    "FuzzStringsReplaceAll": [
+        [("string", ""), ("string", ""), ("string", "")],
+        [("string", "hello"), ("string", "l"), ("string", "L")],
+        [("string", "aaa"), ("string", "aa"), ("string", "b")],
+    ],
+    "FuzzStrconvAtoi": [
+        [("string", "0")], [("string", "42")], [("string", "-42")],
+        [("string", "  42")], [("string", "0x2a")], [("string", "42x")],
+        [("string", "")], [("string", "9999999999999999999999")],
+    ],
+    "FuzzStrconvItoa": [
+        [("int", 0)], [("int", 1)], [("int", -1)], [("int", 42)],
+        [("int", 1 << 62)], [("int", -(1 << 62))],
+    ],
+    "FuzzBytesToUpper": [
+        [("[]byte", b"")], [("[]byte", b"hello")],
+        [("[]byte", b"HELLO")], [("[]byte", bytes([0xff, 0xfe]))],
+    ],
+}
+
+
+def materialize(out, target, n, imports, body, qargs):
+    progdir = os.path.join(out, f'{target}_{n:04d}')
+    os.makedirs(progdir, exist_ok=True)
+    implines = '\n'.join(f'\t"{i}"' for i in imports)
+    main_go = ('package main\n\nimport (\n\t"fmt"\n%s\n)\n\nfunc main() {\n\t%s\n}\n'
+               % (implines, body.format(**qargs)))
+    with open(os.path.join(progdir, 'main.go'), 'w') as f:
+        f.write(main_go)
 
 
 def go_quote_string(s):
@@ -141,44 +211,76 @@ def main():
     args = ap.parse_args()
 
     n = 0
+    failed = False
     for target, (imports, argtypes, body) in sorted(TEMPLATES.items()):
+        n_target = 0
+        # 1. f.Add seeds (R1-34): seeds live in the test binary, not in
+        # testdata/fuzz/FuzzXxx/ files, so the corpus-only replay never
+        # differentially checked the hand-picked edge cases.
+        if target not in SEEDS:
+            print(f'FAIL {target}: no SEEDS entry in replay.py '
+                  f'(keep in sync with fuzz_test.go f.Add)')
+            failed = True
+        else:
+            for seed in SEEDS[target]:
+                if len(seed) != len(argtypes):
+                    print(f'FAIL {target}: seed {seed!r} has {len(seed)} '
+                          f'args, want {len(argtypes)}')
+                    failed = True
+                    continue
+                qargs = {}
+                ok = True
+                for i, ((typ, val), want) in enumerate(zip(seed, argtypes)):
+                    if typ != want and not (want == 'int' and typ == 'int64'):
+                        print(f'FAIL {target}: seed arg {i} type {typ} != {want}')
+                        ok = False
+                        break
+                    qargs[f'a{i}'] = render_arg(want, val)
+                if not ok:
+                    failed = True
+                    continue
+                materialize(args.out, target, n, imports, body, qargs)
+                n += 1
+                n_target += 1
+        # 2. Fuzzer-grown corpus files.
         cdir = os.path.join(args.fuzzdir, target)
         if not os.path.isdir(cdir):
             print(f'skip {target}: no corpus dir')
-            continue
-        for fn in sorted(os.listdir(cdir)):
-            if fn.startswith('.'):
-                continue
-            path = os.path.join(cdir, fn)
-            if not os.path.isfile(path):
-                continue
-            try:
-                vals = parse_corpus_file(path)
-            except ValueError as e:
-                print(f'skip {path}: {e}')
-                continue
-            if len(vals) != len(argtypes):
-                print(f'skip {path}: want {len(argtypes)} args, have {len(vals)}')
-                continue
-            qargs = {}
-            ok = True
-            for i, ((typ, val), want) in enumerate(zip(vals, argtypes)):
-                if typ != want and not (want == 'int' and typ == 'int64'):
-                    print(f'skip {path}: arg {i} type {typ} != {want}')
-                    ok = False
-                    break
-                qargs[f'a{i}'] = render_arg(want, val)
-            if not ok:
-                continue
-            progdir = os.path.join(args.out, f'{target}_{n:04d}')
-            os.makedirs(progdir, exist_ok=True)
-            implines = '\n'.join(f'\t"{i}"' for i in imports)
-            main_go = ('package main\n\nimport (\n\t"fmt"\n%s\n)\n\nfunc main() {\n\t%s\n}\n'
-                       % (implines, body.format(**qargs)))
-            with open(os.path.join(progdir, 'main.go'), 'w') as f:
-                f.write(main_go)
-            n += 1
+        else:
+            for fn in sorted(os.listdir(cdir)):
+                if fn.startswith('.'):
+                    continue
+                path = os.path.join(cdir, fn)
+                if not os.path.isfile(path):
+                    continue
+                try:
+                    vals = parse_corpus_file(path)
+                except ValueError as e:
+                    print(f'skip {path}: {e}')
+                    continue
+                if len(vals) != len(argtypes):
+                    print(f'skip {path}: want {len(argtypes)} args, have {len(vals)}')
+                    continue
+                qargs = {}
+                ok = True
+                for i, ((typ, val), want) in enumerate(zip(vals, argtypes)):
+                    if typ != want and not (want == 'int' and typ == 'int64'):
+                        print(f'skip {path}: arg {i} type {typ} != {want}')
+                        ok = False
+                        break
+                    qargs[f'a{i}'] = render_arg(want, val)
+                if not ok:
+                    continue
+                materialize(args.out, target, n, imports, body, qargs)
+                n += 1
+                n_target += 1
+        if n_target == 0:
+            print(f'FAIL {target}: zero replay programs '
+                  f'(no seeds and no corpus entries)')
+            failed = True
     print(f'materialized {n} replay programs in {args.out}')
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

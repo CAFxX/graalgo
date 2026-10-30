@@ -61,7 +61,10 @@ case "${1-all}" in
         for d in */*/; do
             case "$d" in _*/*) continue ;; esac
             # Only nested dirs that actually hold corpus programs.
-            if compgen -G "${d%/}/[0-9][0-9]_*.go" > /dev/null; then
+            # Enumerate *.go, not just numbered files: the old numbered
+            # glob silently dropped crypto/ecdh, crypto/elliptic and
+            # crypto/hkdf, which hold only main.go (R1-33).
+            if compgen -G "${d%/}/*.go" > /dev/null; then
                 dirs+=("${d%/}")
             fi
         done
@@ -188,14 +191,21 @@ run_one() { # $1 = go file, $2 = gmp
 # address a non-loopback host. Static grep over Dial/Listen call targets.
 # net.Pipe programs and 127.0.0.1/::1/localhost are allowed.
 echo "== loopback egress gate =="
-if grep -rn --include='[0-9][0-9]_*.go' -E '\.(Dial|DialTimeout|Listen)\(' . | grep -v -E '127\.0\.0\.1|::1|localhost|net\.Pipe' ; then
+if grep -rn --include='*.go' -E '\.(Dial|DialTimeout|Listen)\(' . | grep -v -E '127\.0\.0\.1|::1|localhost|net\.Pipe' ; then
     echo "FAIL: non-loopback network address in corpus program"
     exit 1
 fi
 
 for dir in "${dirs[@]}"; do
-    for go in "$dir"/[0-9][0-9]_*.go; do
-        [ -e "$go" ] || continue
+    # Enumerate every program in the dir, not just numbered ones (R1-33:
+    # the old glob skipped unnumbered main.go programs). A dir that
+    # contributes zero programs fails loudly — unless it is a container
+    # dir whose programs live in subdirs (e.g. archive/, crypto/),
+    # which are enumerated as their own dirs entries above.
+    dir_programs=0
+    for go in "$dir"/*.go; do
+        [ -e "$go" ] || break
+        dir_programs=$((dir_programs+1))
         base="${go%.go}"
         # Scope-limited programs: gc leg only, counted separately.
         if [ -f "$base.scopelimited" ]; then
@@ -211,6 +221,14 @@ for dir in "${dirs[@]}"; do
             run_one "$go" 1; run_one "$go" 4
         fi
     done
+    if [ "$dir_programs" = 0 ]; then
+        if compgen -G "$dir"/*/*.go > /dev/null; then
+            echo "== $dir: container dir; programs live in subdirs =="
+        else
+            echo "FAIL $dir: no corpus programs (*.go) — dir contributes nothing to the gate"
+            fail=$((fail+1))
+        fi
+    fi
 done
 
 echo "== differential: $pass passed, $scopelimited scope-limited, $fail failed =="

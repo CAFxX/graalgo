@@ -47,10 +47,17 @@ run_one() { # $1 = go file, $2 = gmp
         cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base (gmp=$gmp): stdout differs gc-vs-graalgo"; }
     fi
     if [ "$gc_exit" != "$gr_exit" ]; then
-        # For racy programs, exit code may differ; only fail if .expected
-        # exists and stdout matched (i.e., deterministic programs).
-        if [ -f "$base.expected" ] && cmp -s "$base.expected" "$TMP/gr.out"; then
-            : # stdout matched .expected; exit code diff is racy, ignore
+        # Exit-code parity is mandatory. The only carve-out is a program
+        # carrying an explicit empty <base>.racy marker (genuinely
+        # nondeterministic exit, e.g. a racy select): for such programs
+        # an exit-code diff is ignored. Keying the carve-out on
+        # .expected existence (as before) silently passed deterministic
+        # programs that exit nonzero under graalgo with identical stdout
+        # (R1-31). No program in this corpus currently carries a .racy
+        # marker; ch12's select is deterministic (a send on a closed
+        # channel is never ready in a select), so it gets none.
+        if [ -f "$base.racy" ]; then
+            : # racy program (explicit marker); exit code diff ignored
         else
             ok=0; echo "FAIL $base (gmp=$gmp): exit gc=$gc_exit graalgo=$gr_exit"
         fi

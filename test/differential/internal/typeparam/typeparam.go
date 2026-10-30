@@ -386,7 +386,21 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 	}
 
 	// Run the batch: one JVM for all graalgo invocations in this job.
-	batchOut := runGraalgoBatch(cfg, alt, batchPath, workRoot)
+	// A batch-level failure must fail every staged file in the job: a
+	// missing batch result otherwise reads as a zero Outcome
+	// (BuildOK=false), which the errorcheck class below would pass
+	// vacuously without graalgo ever running (R1-30).
+	batchOut, batchErr := runGraalgoBatch(cfg, alt, batchPath, workRoot)
+	if batchErr != nil {
+		for k := range comps {
+			if srcs[k] == "" {
+				continue // staging already failed; keep its reason
+			}
+			comps[k].Same = false
+			comps[k].Reasons = append(comps[k].Reasons, fmt.Sprintf("batch: %v", batchErr))
+		}
+		return comps
+	}
 
 	// Now do the gc backend work and combine with batch results.
 	for k, idx := range mine {
@@ -404,8 +418,14 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		// gc backend (fast, per-case).
 		bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
 
-		// graalgo build result from batch.
-		bAlt := batchOut[batchKey("check", srcs[k])]
+		// graalgo build result from batch. A missing key means the batch
+		// dropped this entry; it must fail, never read as a zero
+		// Outcome (R1-30: the zero value would pass errorcheck files).
+		bAlt, ok := batchOut[batchKey("check", srcs[k])]
+		if !ok {
+			fail("batch: no check result for %s", tf.Name)
+			continue
+		}
 
 		switch tf.Class {
 		case ClassCompile:
@@ -437,7 +457,11 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			continue
 		}
 		oRef := harness.RunProgram(cfg, ref, prog, workRoot)
-		oAlt := batchOut[batchKey("run", srcs[k])]
+		oAlt, ok := batchOut[batchKey("run", srcs[k])]
+		if !ok {
+			fail("batch: no run result for %s", tf.Name)
+			continue
+		}
 		// RunProgram does BuildOnly first; our batch already did the build.
 		// For the run outcome, use the batch's run result directly.
 		// But we need to construct an Outcome for Compare.
@@ -495,7 +519,11 @@ type batchResult struct {
 // runGraalgoBatch invokes graalgo-run --batch and returns outcomes keyed by
 // batchKey(mode, src). The graalgo backend's build command is
 // {GRAALGO_RUN} --check {SRC}; we replace it with --batch for the whole job.
-func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workRoot string) map[string]harness.Outcome {
+// A batch-level failure (launcher crash, unparseable JSON, unreadable
+// batch file) is an error, never an empty map: the caller fails every
+// file in the job on error, because an empty map would read as zero
+// Outcomes and pass errorcheck files vacuously (R1-30).
+func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workRoot string) (map[string]harness.Outcome, error) {
 	out := make(map[string]harness.Outcome)
 	// Render the batch command from the backend's build template, replacing
 	// the per-file invocation with --batch.
@@ -523,7 +551,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 	// --check {SRC} with --batch <file>.
 	buildCmd := alt.RenderBuild("/tmp/placeholder-src", "/tmp/placeholder-bin")
 	if len(buildCmd) == 0 {
-		return out
+		return nil, fmt.Errorf("batch: empty graalgo build command")
 	}
 	// Replace the args: [launcher --check src] -> [launcher --batch=batchfile]
 	batchCmd := []string{buildCmd[0], "--batch=" + batchPath}
@@ -536,8 +564,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// Batch failed entirely; mark all as failed.
-		return out
+		return nil, fmt.Errorf("batch JVM failed: %v; stderr: %s", err, firstLines(stderr.String(), 4))
 	}
 	// Parse JSON array. Results are in the same order as the batch file
 	// lines (the Java batch processor outputs sequentially).
@@ -548,11 +575,14 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		Stderr string `json:"stderr"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
-		return out
+		return nil, fmt.Errorf("batch: unparseable batch JSON: %v", err)
 	}
 	// Map results by (mode, src) using positional matching: the Nth
 	// non-empty batch line corresponds to the Nth result.
-	data, _ := os.ReadFile(batchPath)
+	data, err := os.ReadFile(batchPath)
+	if err != nil {
+		return nil, fmt.Errorf("batch: cannot read batch file: %v", err)
+	}
 	resultIdx := 0
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -600,7 +630,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		}
 		out[batchKey(mode, src)] = oc
 	}
-	return out
+	return out, nil
 }
 
 // stageFile copies the program's single source into dir/main.go.

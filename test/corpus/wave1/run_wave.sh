@@ -156,8 +156,17 @@ run_one() { # $1 = go file, $2 = gmp
 }
 
 for dir in "${dirs[@]}"; do
-    for go in "$dir"/[0-9][0-9]_*.go; do
-        [ -e "$go" ] || continue
+    # Enumerate every program in the dir, not just numbered ones: the
+    # old [0-9][0-9]_*.go glob silently skipped math/ (m00_*.go) and
+    # any other unnumbered program dir, and the [ -e ] guard swallowed
+    # the empty match (R1-33). A dir that contributes zero programs
+    # fails loudly — unless it is a container dir whose programs live
+    # in subdirs (e.g. encoding/), which are run via their own
+    # run_differential.sh wrappers.
+    dir_programs=0
+    for go in "$dir"/*.go; do
+        [ -e "$go" ] || break
+        dir_programs=$((dir_programs+1))
         base="${go%.go}"
         # Scope-limited programs: gc leg only, counted separately.
         if [ -f "$base.scopelimited" ]; then
@@ -173,6 +182,14 @@ for dir in "${dirs[@]}"; do
             run_one "$go" 1; run_one "$go" 4
         fi
     done
+    if [ "$dir_programs" = 0 ]; then
+        if compgen -G "$dir"/*/*.go > /dev/null; then
+            echo "== $dir: container dir; programs live in subdirs =="
+        else
+            echo "FAIL $dir: no corpus programs (*.go) — dir contributes nothing to the gate"
+            fail=$((fail+1))
+        fi
+    fi
 done
 
 echo "== differential: $pass passed, $scopelimited scope-limited, $fail failed =="
