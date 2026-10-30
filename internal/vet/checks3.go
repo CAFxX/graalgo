@@ -337,8 +337,9 @@ func runSlog(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	slogFuncs := map[string]bool{
 		"Info": true, "Debug": true, "Warn": true, "Error": true,
-		"Log": true, "InfoContext": true, "DebugContext": true,
-		"WarnContext": true, "ErrorContext": true, "LogAttrs": true,
+		"Log": true, "LogContext": true, "InfoContext": true,
+		"DebugContext": true, "WarnContext": true, "ErrorContext": true,
+		"LogAttrs": true,
 	}
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -362,13 +363,24 @@ func runSlog(pass *Pass) []Diagnostic {
 			}
 			// Args after msg should be key-value pairs.
 			// For *Context variants, first arg is ctx.
+			// Log/LogContext take (ctx, level, msg, args...), so the
+			// pairs start at index 3, not 1: treating level as a key
+			// would false-positive on valid code and flip parity.
 			args := call.Args
 			start := 1 // skip msg
-			if strings.HasSuffix(sel.Sel.Name, "Context") {
+			switch {
+			case sel.Sel.Name == "Log" || sel.Sel.Name == "LogContext":
+				start = 3 // skip ctx, level, msg
+			case strings.HasSuffix(sel.Sel.Name, "Context"):
 				start = 2 // skip ctx, msg
 			}
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
+			}
+			// Malformed calls (e.g. slog.Info() with 0 args) are the
+			// type checker's problem; vet must not panic slicing.
+			if len(args) < start {
+				return true
 			}
 			rest := args[start:]
 			if len(rest)%2 != 0 {

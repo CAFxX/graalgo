@@ -25,23 +25,22 @@ func init() {
 }
 
 // atomic checks:
-// - direct assignment to sync/atomic.Value or atomic.Int64 etc. (should use Store)
-// - copying a lock/atomic value (overlaps copylocks, but atomic-specific)
+//   - direct assignment to a sync/atomic value (atomic.Int64, atomic.Bool,
+//     atomic.Value, ...) instead of using Store: `v = atomic.Int64{}` or
+//     `v = other` copies the value instead of storing through it.
+//     (The old selector-only check could never fire: sync/atomic types
+//     have no exported settable fields, so `x.Field = ...` on an atomic
+//     value cannot occur in compilable code.)
 func runAtomic(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
-			// Look for assignments to fields of atomic types.
 			assign, ok := n.(*ast.AssignStmt)
 			if !ok || assign.Tok != token.ASSIGN {
 				return true
 			}
 			for _, lhs := range assign.Lhs {
-				sel, ok := lhs.(*ast.SelectorExpr)
-				if !ok {
-					continue
-				}
-				if isAtomicType(pass, sel.X) {
+				if isAtomicValue(pass, lhs) {
 					out = append(out, Diagnostic{
 						pass.position(assign),
 						"direct assignment to atomic value; use atomic.Store or the typed Store method",
@@ -54,18 +53,19 @@ func runAtomic(pass *Pass) []Diagnostic {
 	return out
 }
 
-// isAtomicType reports whether e denotes a sync/atomic typed value
-// (atomic.Int64, atomic.Bool, atomic.Value, etc.).
-func isAtomicType(pass *Pass, e ast.Expr) bool {
+// isAtomicValue reports whether e's type is a named sync/atomic type
+// (atomic.Int64, atomic.Bool, atomic.Value, ...). The LHS type itself
+// is checked, so plain assignments (`v = ...`), struct-field
+// assignments (`s.v = ...`), and through-pointer assignments
+// (`*p = ...`, whose type is the element type) are all caught, while
+// assigning a *pointer* to an atomic value (`p = &...`) is not: no
+// atomic value is copied there. Unknown types are not flagged.
+func isAtomicValue(pass *Pass, e ast.Expr) bool {
 	tv, ok := pass.Info.Types[e]
 	if !ok || tv.Type == nil {
 		return false
 	}
-	t := tv.Type
-	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
-	}
-	named, ok := t.(*types.Named)
+	named, ok := tv.Type.(*types.Named)
 	if !ok || named.Obj().Pkg() == nil {
 		return false
 	}
@@ -136,16 +136,25 @@ func typeContainsLock(t types.Type, seen map[types.Type]bool) bool {
 		return false
 	}
 	seen[t] = true
-	// Unwrap pointer: *sync.Mutex is fine, sync.Mutex is the lock.
-	if p, ok := t.(*types.Pointer); ok {
-		return typeContainsLock(p.Elem(), seen)
+	// Copying a POINTER to a lock is safe and idiomatic (*sync.Mutex
+	// is fine): only the lock value itself, or a struct/array that
+	// embeds one by value, is a copy problem. Never recurse through
+	// pointers — a struct holding only *sync.Mutex fields contains
+	// no lock value.
+	if _, ok := t.(*types.Pointer); ok {
+		return false
 	}
 	named, ok := t.(*types.Named)
 	if !ok {
-		// Check struct types directly.
+		// Unnamed struct/array types directly.
 		if s, ok := t.Underlying().(*types.Struct); ok {
 			return structContainsLock(s, seen)
 		}
+		if a, ok := t.Underlying().(*types.Array); ok {
+			return typeContainsLock(a.Elem(), seen)
+		}
+		// Slices, maps, channels, interfaces: copying the header or
+		// descriptor does not copy the lock value.
 		return false
 	}
 	obj := named.Obj()
@@ -155,7 +164,14 @@ func typeContainsLock(t types.Type, seen map[types.Type]bool) bool {
 			return true
 		}
 	}
-	return structContainsLock(named.Underlying(), seen)
+	u := named.Underlying()
+	if s, ok := u.(*types.Struct); ok {
+		return structContainsLock(s, seen)
+	}
+	if a, ok := u.(*types.Array); ok {
+		return typeContainsLock(a.Elem(), seen)
+	}
+	return false
 }
 
 func structContainsLock(t types.Type, seen map[types.Type]bool) bool {

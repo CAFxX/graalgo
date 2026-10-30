@@ -23,7 +23,10 @@ func main() {
 	_ = s
 	var f func()
 	if f == nil {
-		fmt.Println("nil")
+		fmt.Println("nil") // NOT flagged: a func variable can be nil
+	}
+	if main == nil {
+		fmt.Println("never") // flagged: a declared function is never nil
 	}
 	x := true
 	if x == true {
@@ -62,18 +65,23 @@ func copyLock(m sync.Mutex) {
 
 	// Each analyzer should fire at least once.
 	want := []string{
-		"expects integer",       // printf %d with string
-		"missing argument",      // printf missing arg
-		"one rune",              // stringintconv
-		"always false",          // nilfunc
-		"redundant comparison",  // bools
-		"unreachable",           // unreachable
-		"context leak",          // lostcancel
-		"copies lock",           // copylocks
+		"expects integer",      // printf %d with string
+		"missing argument",     // printf missing arg
+		"one rune",             // stringintconv
+		"always false",         // nilfunc
+		"redundant comparison", // bools
+		"unreachable",          // unreachable
+		"context leak",         // lostcancel
+		"copies lock",          // copylocks
 	}
 	for _, w := range want {
 		if !strings.Contains(joined, w) {
 			t.Errorf("expected diagnostic containing %q, got:\n%s", w, joined)
 		}
+	}
+	// The nilfunc diagnostic must come exactly once, from `main == nil`:
+	// the `f == nil` variable comparison above must not be flagged.
+	if n := strings.Count(joined, "comparison of function to nil"); n != 1 {
+		t.Errorf("expected exactly 1 nilfunc diagnostic (from main == nil), got %d:\n%s", n, joined)
 	}
 }

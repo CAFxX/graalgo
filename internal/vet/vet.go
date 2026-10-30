@@ -64,25 +64,45 @@ func Run(paths []string) ([]Diagnostic, error) {
 		return nil, fmt.Errorf("vet: no files")
 	}
 
-	info := &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
+	// Type-check per package clause, not all files as one package: a
+	// directory routinely holds both `package foo` and `package foo_test`
+	// files, and checking them as a unit fails outright, degrading every
+	// analyzer to partial info. Each clause group gets its own type
+	// info and analyzer pass; diagnostics are merged at the end.
+	// (Grouping is vet.Run's job only; what file list the driver feeds
+	// it is the driver's concern and is untouched here.)
+	var groups [][]*ast.File
+	byName := make(map[string]int)
+	for _, f := range files {
+		name := f.Name.Name
+		if idx, ok := byName[name]; ok {
+			groups[idx] = append(groups[idx], f)
+		} else {
+			byName[name] = len(groups)
+			groups = append(groups, []*ast.File{f})
+		}
 	}
-	conf := types.Config{
-		Importer:                 importer.Default(),
-		IgnoreFuncBodies:         false,
-		DisableUnusedImportCheck: true,
-	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
-	// Type errors are tolerated: analyzers use best-effort info.
-
-	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
 	var out []Diagnostic
-	for _, a := range analyzers {
-		out = append(out, a.Run(pass)...)
+	for _, group := range groups {
+		info := &types.Info{
+			Types:      make(map[ast.Expr]types.TypeAndValue),
+			Defs:       make(map[*ast.Ident]types.Object),
+			Uses:       make(map[*ast.Ident]types.Object),
+			Selections: make(map[*ast.SelectorExpr]*types.Selection),
+			Scopes:     make(map[ast.Node]*types.Scope),
+		}
+		conf := types.Config{
+			Importer:                 importer.Default(),
+			IgnoreFuncBodies:         false,
+			DisableUnusedImportCheck: true,
+		}
+		pkg, _ := conf.Check("vetpkg", fset, group, info)
+		// Type errors are tolerated: analyzers use best-effort info.
+
+		pass := &Pass{Fset: fset, Files: group, Info: info, Pkg: pkg}
+		for _, a := range analyzers {
+			out = append(out, a.Run(pass)...)
+		}
 	}
 	return SortDiagnostics(out), nil
 }

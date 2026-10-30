@@ -67,9 +67,13 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 	return out
 }
 
-// Comparing a func value to nil is always false (except for a nil
-// func variable, which is useless to compare). go vet flags
-// comparisons where one side is a func type and the other is nil.
+// Comparing a declared function or method value to nil is always false
+// (a function value is never nil), so the comparison is useless. But a
+// func-typed VARIABLE, parameter, or field CAN be nil — nil is the zero
+// value — and the idiomatic `if cb != nil { cb() }` guard must not be
+// flagged. Only expressions denoting a declared function/method value
+// (or a func literal, which is likewise never nil) are flagged; anything
+// else, including code with degraded type info, is left alone.
 func runNilFunc(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -78,8 +82,8 @@ func runNilFunc(pass *Pass) []Diagnostic {
 			if !ok || (be.Op != token.EQL && be.Op != token.NEQ) {
 				return true
 			}
-			if isNil(pass, be.X) && isFuncType(pass, be.Y) ||
-				isNil(pass, be.Y) && isFuncType(pass, be.X) {
+			if isNil(pass, be.X) && isNonNilFuncValue(pass, be.Y) ||
+				isNil(pass, be.Y) && isNonNilFuncValue(pass, be.X) {
 				out = append(out, Diagnostic{
 					pass.position(be),
 					"comparison of function to nil is always " + constBool(be.Op == token.NEQ),
@@ -96,13 +100,39 @@ func isNil(pass *Pass, e ast.Expr) bool {
 	return ok && tv.IsNil()
 }
 
-func isFuncType(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
-	if !ok || tv.Type == nil {
+// isNonNilFuncValue reports whether e denotes a function value that
+// cannot be nil: a declared function (including a package-qualified
+// function or method expression), a method value, or a func literal.
+// Variables, parameters, and struct fields resolve to *types.Var, not
+// *types.Func, and are therefore never flagged here.
+func isNonNilFuncValue(pass *Pass, e ast.Expr) bool {
+	switch e := e.(type) {
+	case *ast.Ident:
+		// Declared function used as a value resolves to *types.Func;
+		// a variable/parameter/constant resolves to *types.Var/*types.Const.
+		obj := pass.Info.Uses[e]
+		if obj == nil {
+			obj = pass.Info.Defs[e]
+		}
+		_, ok := obj.(*types.Func)
+		return ok
+	case *ast.SelectorExpr:
+		// Method value (x.M) or method expression (T.M): both denote
+		// a declared method and are never nil. A field selection
+		// (s.cb) has kind FieldVal and is correctly rejected.
+		if sel := pass.Info.Selections[e]; sel != nil {
+			return sel.Kind() == types.MethodVal || sel.Kind() == types.MethodExpr
+		}
+		// Package-qualified function (pkg.F) or method expression (T.M).
+		if obj := pass.Info.Uses[e.Sel]; obj != nil {
+			_, ok := obj.(*types.Func)
+			return ok
+		}
 		return false
+	case *ast.FuncLit:
+		return true
 	}
-	_, ok = tv.Type.Underlying().(*types.Signature)
-	return ok
+	return false
 }
 
 func constBool(b bool) string {
