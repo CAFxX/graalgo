@@ -35,15 +35,19 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Post-migration layout (the phases/ tree was removed 2026-10-14): the
+# backend lives in internal/backend/, the frontend in internal/frontend/.
+GR="${GR:-$(cd ../../.. && pwd)}"
+BACKEND="$GR/internal/backend"
+FRONTEND="$GR/internal/frontend"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
-# Tmp discipline (corpus/wave2/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m8-tmp/wave2"
+# Tmp discipline (corpus/wave2/README.md; repo AGENTS.md §5 no-debris):
+# never write to /tmp, and never re-create hidden_files/ under the removed
+# phases/ path. Inherit TMPDIR from the gate runner
+# (tools/run_stdlib_gate.sh exports $OUTDIR/tmp); standalone runs default
+# to this wave dir's gitignored .tmp/ tree.
+export TMPDIR="${TMPDIR:-$PWD/.tmp}"
 export GOCACHE="$HOME/workspace/.gocache-m8-wave2"
 mkdir -p "$TMPDIR"
 
@@ -61,15 +65,22 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules + gofrontend =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$FRONTEND/gofrontend" ]; then
+    (cd "$FRONTEND" && ./build.sh build) > /dev/null \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
+[ -x "$BACKEND/graalgo-sync-run" ] \
+    || { echo "graalgo-sync-run missing: $BACKEND/graalgo-sync-run"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M8b: point java.io.tmpdir at $TMPDIR (never /tmp): the JVM's shared-
-# memory files warn "Insufficient space" on the 512M /tmp tmpfs, which is
-# harness noise in every corpus run's stderr.
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m "-Djava.io.tmpdir=$TMPDIR" -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# The product launcher (P3SyncMain) via internal/backend/graalgo-sync-run:
+# it carries the interop:runtime:truffle classpath order and sets
+# -Djava.io.tmpdir from $TMPDIR (never /tmp: the JVM's shared-memory files
+# warn "Insufficient space" on the 512M /tmp tmpfs, which is harness noise
+# in every corpus run's stderr), so the runner must not hand-roll the java
+# invocation anymore.
+GRAALGO_RUN=( "$BACKEND/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -87,7 +98,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$FRONTEND" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m8prog/main.go" \
