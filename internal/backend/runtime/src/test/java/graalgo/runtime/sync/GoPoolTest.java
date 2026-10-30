@@ -141,6 +141,92 @@ public final class GoPoolTest {
      * completely (spillover to global, then the weakly-held victim, loses
      * nothing while the items are strongly reachable).
      */
+    /**
+     * Registry purge (review-pool-io, R1-23): 200 threads each touch the
+     * pool and drain their own Local, then die. A slow-path get from the
+     * main thread (registry over the 128 high-water mark) must purge
+     * their empty Locals, leaving only the main thread's Local — the
+     * registry must not grow with threads-ever. Fails on the old design
+     * (no removal path: count stays 201). No GC dependence: dead threads
+     * report !isAlive() whether or not their Thread object was collected.
+     */
+    public void testDeadEmptyLocalsPurged() throws Exception {
+        GoPool pool = new GoPool();
+        int n = 200;
+        Thread[] threads = new Thread[n];
+        for (int i = 0; i < n; i++) {
+            Object item = new Object();
+            threads[i] = new Thread(() -> {
+                pool.put(item);
+                assertTrue(pool.get() == item, "own item must round-trip");
+            });
+        }
+        for (Thread t : threads) {
+            t.start();
+        }
+        for (Thread t : threads) {
+            t.join(10_000);
+            assertTrue(!t.isAlive(), "worker thread did not finish");
+        }
+        assertTrue(pool.get() == null, "drained pool gets null");
+        assertEquals(1, pool.registeredLocalCount(),
+                "dead empty Locals must be purged");
+    }
+
+    /**
+     * Purge retention (review-pool-io, R1-23): dead threads' Locals that
+     * still hold items are NOT purged — their items stay stealable
+     * (the testCrossThreadSteal contract at scale). Fails if the purge
+     * drops non-empty dead Locals (items lost). The purge itself is
+     * amortized by doubling: the first drain-time slow path purges but
+     * keeps all 200 non-empty Locals (baseline 200 + the main Local),
+     * so the registry is only re-purged once it doubles — the second
+     * burst of 210 put-and-drain threads crosses that mark, after which
+     * every dead empty Local (both bursts) must be gone.
+     */
+    public void testDeadNonEmptyLocalsRetainedThenPurged() throws Exception {
+        GoPool pool = new GoPool();
+        int n = 200;
+        Object[] items = new Object[n];
+        Thread[] threads = new Thread[n];
+        for (int i = 0; i < n; i++) {
+            items[i] = new Object();
+            final Object item = items[i];
+            threads[i] = new Thread(() -> pool.put(item));
+        }
+        for (Thread t : threads) {
+            t.start();
+        }
+        for (Thread t : threads) {
+            t.join(10_000);
+        }
+        Set<Object> got = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            Object x = pool.get();
+            assertTrue(x != null, "steal returned null at " + i);
+            got.add(x);
+        }
+        assertEquals(n, got.size(), "stolen multiset size");
+        assertTrue(pool.get() == null, "pool drained after steal");
+        Thread[] burst = new Thread[210];
+        for (int i = 0; i < burst.length; i++) {
+            Object item = new Object();
+            burst[i] = new Thread(() -> {
+                pool.put(item);
+                assertTrue(pool.get() == item, "own item must round-trip");
+            });
+        }
+        for (Thread t : burst) {
+            t.start();
+        }
+        for (Thread t : burst) {
+            t.join(10_000);
+        }
+        assertTrue(pool.get() == null, "drained pool gets null");
+        assertEquals(1, pool.registeredLocalCount(),
+                "dead empty Locals must be purged once the registry doubles");
+    }
+
     public void testSpillBounded() {
         GoPool pool = new GoPool();
         int n = 2000;

@@ -31,9 +31,15 @@ import java.util.concurrent.atomic.AtomicReference;
  *       racing a thief is safe. Stealing {@code private} is a deliberate
  *       JVM adaptation (see the field doc): gc's {@code getSlow} skips it
  *       because Ps are immortal; our threads are not. Locals of dead
- *       threads stay registered — their items remain stealable. The
- *       registry is bounded in practice by the scheduler's carrier pool
- *       plus the threads that touch the pool.</li>
+ *       threads stay registered while they still hold items — their items
+ *       remain stealable — but a dead thread's <em>empty</em> Local is
+ *       pruned by the slow path (see {@link #purgeDeadEmptyLocals}):
+ *       goroutines are one virtual thread each, so without pruning the
+ *       registry would grow with every goroutine that ever touched the
+ *       pool and every slow-path {@code get} would scan it all. The
+ *       purge is amortized (doubling high-water, not per-call), so the
+ *       slow-path scan stays proportional to live threads plus Locals
+ *       still holding stealable items, never to threads-ever.</li>
  *   <li>Victim cache + GC interaction: gc rotates primary→victim at each
  *       GC stop-the-world ({@code poolCleanup}); there is no STW hook on
  *       the JVM, so the victim holds {@link WeakReference}s. The JVM GC
@@ -70,8 +76,29 @@ public final class GoPool {
      * spill into the weakly-held victim. */
     private static final int GLOBAL_SHARED_CAP = 256;
 
+    /**
+     * High-water mark for the {@link #allLocals} registry: the slow path
+     * purges dead empty Locals only once the registry exceeds this size,
+     * so small pools (the common case) pay no purge cost at all.
+     */
+    private static final int PURGE_HIGH_WATER = 128;
+
     /** Per-thread pool (gc's {@code poolLocal}). */
     private static final class Local {
+        /**
+         * The thread this Local belongs to, weakly held: a strong
+         * reference here would pin every dead goroutine's thread object
+         * (and, through it, its stack/frame state) for the pool's
+         * lifetime — the very retention the purge exists to avoid. The
+         * referent of a terminated thread is either already collected
+         * (reference cleared) or reports {@code !isAlive()}; a live
+         * thread's object is strongly reachable from the VM, so its
+         * weak reference never clears spuriously while the thread runs.
+         * Captured in the constructor, which the {@code ThreadLocal}
+         * initialiser runs on the owning thread.
+         */
+        final WeakReference<Thread> owner =
+                new WeakReference<>(Thread.currentThread());
         /**
          * 1-item fast path (gc's {@code poolLocal.private}). An
          * {@link AtomicReference} — not for contention (the owner uses it
@@ -100,6 +127,14 @@ public final class GoPool {
     /** All per-thread Locals ever used with this pool (gc's allPools). */
     private final Set<Local> allLocals =
             Collections.newSetFromMap(new IdentityHashMap<>());
+    /**
+     * Registry size just after the last purge (pool-lock-guarded). The
+     * next purge runs only once the registry has at least doubled since
+     * then, so a purge's O(n) scan is amortized O(1) per registration
+     * instead of recurring on every slow-path {@code get} while dead
+     * non-empty Locals keep the size above the high-water mark.
+     */
+    private int purgeBaseline;
     private final Deque<Object> globalShared = new ArrayDeque<>();
     private final Deque<WeakReference<Object>> victim = new ArrayDeque<>();
 
@@ -114,6 +149,34 @@ public final class GoPool {
     /** Writes the New field. */
     public void setNewFunc(Object f) {
         newFunc = f;
+    }
+
+    /**
+     * Removes Locals whose owner thread is dead <em>and</em> which hold
+     * no items. Callers must hold {@link #lock}. Dead Locals that still
+     * hold items are deliberately kept: their items are stealable pool
+     * content (see the class javadoc), and they become purgeable as soon
+     * as a thief drains them. A Local is never removed while its owner
+     * is alive — the owner reuses it through its {@code ThreadLocal} —
+     * and a purged Local can never be re-registered, because its owner
+     * is dead and its {@code ThreadLocal} entry dies with the thread.
+     */
+    private void purgeDeadEmptyLocals() {
+        allLocals.removeIf(o -> {
+            Thread t = o.owner.get();
+            if (t != null && t.isAlive()) {
+                return false;
+            }
+            return o.privateSlot.get() == null && o.shared.isEmpty();
+        });
+        purgeBaseline = allLocals.size();
+    }
+
+    /** Number of Locals currently registered (tests only). */
+    int registeredLocalCount() {
+        synchronized (lock) {
+            return allLocals.size();
+        }
     }
 
     /** The calling thread's Local, registered on first use. */
@@ -173,6 +236,16 @@ public final class GoPool {
             return x;
         }
         synchronized (lock) {
+            // Amortized purge (review-pool-io): only once the registry
+            // is large and has at least doubled since the last purge,
+            // so the hot slow path below never pays a purge scan per call
+            // and never scans dead empty Locals once purged. The first
+            // purge (baseline 0) runs as soon as the high-water mark is
+            // crossed.
+            if (allLocals.size() > PURGE_HIGH_WATER
+                    && allLocals.size() >= 2 * purgeBaseline) {
+                purgeDeadEmptyLocals();
+            }
             // Slow path (gc's getSlow): steal from other threads'
             // shared queues, then their private slots (JVM adaptation —
             // see the privateSlot field doc), then the global spillover,

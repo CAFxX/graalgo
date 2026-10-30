@@ -143,6 +143,62 @@ public final class SchedulerCore {
     }
 
     /**
+     * Blocking-I/O bracket for interop choke points (review-pool-io,
+     * R1-24): the silent no-op form of {@link #ioEnter} for call sites
+     * that also run off-scheduler. Returns {@code true} iff the calling
+     * goroutine's slot was actually released; the caller must pass the
+     * result to {@link #ioBracketExit} in a {@code finally} block:
+     * <pre>{@code
+     * boolean bracketed = SchedulerCore.ioBracketEnter();
+     * try {
+     *     blockingCall();
+     * } finally {
+     *     SchedulerCore.ioBracketExit(bracketed);
+     * }
+     * }</pre>
+     *
+     * <p>Returns {@code false} (no slot change, no error) when no
+     * scheduler is installed, when the calling thread is not a scheduler
+     * goroutine (phase-1 runs, launcher threads, unit tests calling an
+     * interop intrinsic directly), or when the goroutine is already
+     * inside a bracket — a nested bracket is redundant because the outer
+     * bracket already released the slot, and re-entering would trip
+     * {@code ioEnter}'s re-entrancy fail-fast. The nested caller still
+     * calls {@code ioBracketExit(false)}, which is a no-op, so the
+     * pairing stays uniform.
+     *
+     * <p>Only for true blocking syscalls that never park through the
+     * scheduler: a goroutine that parks via {@code parkCurrent} while
+     * in I/O trips the drainer's fail-fast, so the bracketed call must
+     * not itself park, yield, or wait on a scheduler primitive.
+     */
+    public static boolean ioBracketEnter() {
+        SchedulerCore sc = installed;
+        if (sc == null) {
+            return false;
+        }
+        GoroutineHandle h = sc.currentHandle.get();
+        if (h == null || h.inIo.get()) {
+            return false;
+        }
+        sc.ioEnter();
+        return true;
+    }
+
+    /**
+     * Closes an {@link #ioBracketEnter} bracket: re-acquires the slot
+     * iff {@code entered} is true, otherwise a no-op. Must run on the
+     * same goroutine as the matching enter (the usual {@code finally}
+     * placement guarantees this).
+     */
+    public static void ioBracketExit(boolean entered) {
+        if (!entered) {
+            return;
+        }
+        current().ioExit();
+    }
+
+    /**
      * Enter blocking I/O (P2-M3, GG-0018/GG-SCHED-0004 — netpoller
      * deletion): releases the goroutine's in-flight slot synchronously
      * (returns only after the drainer has released it), so the slot is
@@ -152,7 +208,9 @@ public final class SchedulerCore {
      * <p>Every {@code ioEnter} must be paired with {@code ioExit} on the
      * same goroutine (use try/finally); re-entrant ioEnter and unpaired
      * ioExit fail fast on the calling thread, and the drainer
-     * fail-fasts on any accounting mismatch.
+     * fail-fasts on any accounting mismatch. Interop call sites that
+     * also run off-scheduler must use {@link #ioBracketEnter} /
+     * {@link #ioBracketExit} instead, which no-op there.
      */
     public void ioEnter() {
         GoroutineHandle h = requireHandle();

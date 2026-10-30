@@ -7,6 +7,8 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import graalgo.sched.SchedulerCore;
+
 /**
  * The Go toolchain this backend emulates, for {@code runtime.GOROOT()} and
  * {@code runtime.Version()}.
@@ -71,14 +73,24 @@ final class GoToolchain {
         try {
             Process p = new ProcessBuilder("go", "env", "GOROOT")
                     .redirectErrorStream(true).start();
-            if (!p.waitFor(10, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                return "";
-            }
-            String out = new String(p.getInputStream().readAllBytes(),
-                    StandardCharsets.UTF_8).trim();
-            if (p.exitValue() == 0 && !out.isEmpty()) {
-                return out;
+            // GG-0018 slot bracket (review-pool-io, R1-24): the probe
+            // waits up to 10 s for a child process; a goroutine calling
+            // runtime.GOROOT() must not hold its in-flight slot for that
+            // long. One-shot and cached, so the bracket matters only on
+            // the first call; it no-ops off-scheduler.
+            boolean bracketed = SchedulerCore.ioBracketEnter();
+            try {
+                if (!p.waitFor(10, TimeUnit.SECONDS)) {
+                    p.destroyForcibly();
+                    return "";
+                }
+                String out = new String(p.getInputStream().readAllBytes(),
+                        StandardCharsets.UTF_8).trim();
+                if (p.exitValue() == 0 && !out.isEmpty()) {
+                    return out;
+                }
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

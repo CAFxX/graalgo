@@ -107,6 +107,110 @@ public final class IoSlotsTest {
                 "cap violated: maxInflight=" + sched.maxInflightObserved());
     }
 
+    // The interop bracket (review-pool-io, R1-24) releases the slot
+    // exactly like ioEnter/ioExit: same GMP=1 starvation setup, but the
+    // reader brackets through ioBracketEnter/ioBracketExit. Fails if
+    // the helper is a no-op on a scheduler goroutine.
+    public void testIoBracketReleasesSlot() throws Exception {
+        AtomicLong counter = new AtomicLong();
+        AtomicBoolean stop = new AtomicBoolean();
+        AtomicBoolean inIo = new AtomicBoolean();
+        AtomicBoolean readerDone = new AtomicBoolean();
+        AtomicReference<Throwable> readerError = new AtomicReference<>();
+        withScheduler(1, () -> {
+            PipedInputStream in = new PipedInputStream();
+            PipedOutputStream out = new PipedOutputStream(in);
+            sched.spawn(() -> {
+                boolean bracketed = SchedulerCore.ioBracketEnter();
+                inIo.set(true);
+                try {
+                    int b = in.read();
+                    if (b != 7) {
+                        throw new AssertionError("short read: " + b);
+                    }
+                } catch (java.io.IOException e) {
+                    readerError.set(e);
+                } finally {
+                    SchedulerCore.ioBracketExit(bracketed);
+                }
+                readerDone.set(true);
+            });
+            long deadline = System.currentTimeMillis() + 5000;
+            while (!inIo.get()) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new AssertionError("reader never entered blocking I/O");
+                }
+                Thread.sleep(5);
+            }
+            sched.spawn(() -> {
+                while (!stop.get()) {
+                    counter.incrementAndGet();
+                }
+            });
+            Thread.sleep(300);
+            long c = counter.get();
+            assertTrue(c > 1000,
+                    "busy goroutine starved at GOMAXPROCS=1 while peer in bracketed I/O: " + c);
+            out.write(7);
+            out.flush();
+            stop.set(true);
+            out.close();
+        });
+        assertTrue(readerError.get() == null,
+                "reader failed: " + readerError.get());
+        assertTrue(readerDone.get(), "reader did not complete after bracket exit");
+        assertTrue(sched.maxInflightObserved() <= 1,
+                "cap violated: maxInflight=" + sched.maxInflightObserved());
+    }
+
+    // The interop bracket no-ops off-scheduler: no scheduler installed,
+    // and (inside withScheduler) the calling thread is not a goroutine.
+    // Fails if the helper throws where interop intrinsics also run
+    // outside a scheduler goroutine (phase-1 runs, direct unit calls).
+    public void testIoBracketNoOpOffScheduler() throws Exception {
+        SchedulerCore prev = SchedulerCore.install(null);
+        try {
+            assertTrue(!SchedulerCore.ioBracketEnter(),
+                    "ioBracketEnter with no scheduler must be false");
+            SchedulerCore.ioBracketExit(false);
+        } finally {
+            SchedulerCore.install(prev);
+        }
+        withScheduler(1, () -> {
+            assertTrue(!SchedulerCore.ioBracketEnter(),
+                    "ioBracketEnter on a non-goroutine thread must be false");
+            SchedulerCore.ioBracketExit(false);
+        });
+    }
+
+    // A nested bracket is a no-op: the outer bracket owns the slot
+    // release, so the inner enter returns false and its exit does
+    // nothing — the outer exit still re-acquires exactly once. Fails
+    // if nesting trips ioEnter's re-entrancy fail-fast.
+    public void testIoBracketNestedIsNoOp() throws Exception {
+        AtomicBoolean ok = new AtomicBoolean();
+        AtomicReference<String> err = new AtomicReference<>();
+        withScheduler(1, () -> {
+            sched.spawn(() -> {
+                try {
+                    boolean outer = SchedulerCore.ioBracketEnter();
+                    boolean inner = SchedulerCore.ioBracketEnter();
+                    if (!outer || inner) {
+                        throw new AssertionError(
+                                "outer=" + outer + " inner=" + inner);
+                    }
+                    SchedulerCore.ioBracketExit(inner);
+                    SchedulerCore.ioBracketExit(outer);
+                    ok.set(true);
+                } catch (Throwable t) {
+                    err.set(String.valueOf(t));
+                }
+            });
+        });
+        assertTrue(err.get() == null, "nested bracket failed: " + err.get());
+        assertTrue(ok.get(), "nested bracket goroutine did not complete");
+    }
+
     // ioExit re-acquires the slot: the goroutine continues and the cap
     // still holds when both run. P2-2: pins the re-acquire — a no-op
     // ioExit leaves inIo set, so the second ioEnter/ioExit pair throws

@@ -1,6 +1,7 @@
 package graalgo.p3net;
 
 import com.oracle.truffle.api.dsl.Cached;
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import java.net.URI;
@@ -79,7 +80,18 @@ public final class GoHttp {
                 }
             }
             HttpRequest req = rb.build();
-            HttpResponse<byte[]> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
+            // GG-0018 slot bracket (review-pool-io, R1-24): the send
+            // blocks up to the 30 s timeout; without the bracket a
+            // goroutine awaiting a slow server holds its in-flight slot
+            // and starves compute goroutines at low GOMAXPROCS. The
+            // bracket no-ops off-scheduler (plain tests, phase-1 runs).
+            HttpResponse<byte[]> resp;
+            boolean bracketed = SchedulerCore.ioBracketEnter();
+            try {
+                resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
+            }
             int status = resp.statusCode();
             // Collect headers first to count them.
             List<String> hkeys = new ArrayList<>();

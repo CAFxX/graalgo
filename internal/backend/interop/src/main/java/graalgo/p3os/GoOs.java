@@ -9,6 +9,7 @@ import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.Pipe;
 import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.SelectableChannel;
 import java.nio.channels.WritableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
@@ -43,6 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -773,6 +775,26 @@ public final class GoOs {
         return 0;
     }
 
+    /**
+     * Whether a channel read/write can block, for the GG-0018 slot
+     * bracket (review-pool-io, R1-24). A nonblocking
+     * {@code SelectableChannel} — every socket channel GoNet creates —
+     * never blocks: it returns data, 0, or -1 immediately, and its
+     * readiness wait already parks through {@code GoNetpoll.pollWait},
+     * which releases the slot via the scheduler. Bracketing such a
+     * channel would pay a scheduler round-trip per read/write for no
+     * accounting gain. Every other channel can block: pipes and stdio
+     * stream channels (blocking by construction), and regular files
+     * (briefly on page-in / slow storage). The EPIPE retry write in
+     * {@code onEpipe} is intentionally outside the bracket: it runs
+     * only after the first write failed with EPIPE, i.e. the peer is
+     * gone, so it fails fast or kills the process via SIGPIPE rather
+     * than blocking.
+     */
+    private static boolean mayBlock(Channel ch) {
+        return !(ch instanceof SelectableChannel sc && !sc.isBlocking());
+    }
+
     /** graalgo.os.read — exactly one channel read (R2). */
     public static long read(Object hArg, Object bArg) {
         ChannelHandle ch = channelHandle(num(hArg));
@@ -788,7 +810,13 @@ public final class GoOs {
             return -EBADF;
         }
         try {
-            int n = ((ReadableByteChannel) ch.ch).read(bb);
+            int n;
+            boolean bracketed = mayBlock(ch.ch) && SchedulerCore.ioBracketEnter();
+            try {
+                n = ((ReadableByteChannel) ch.ch).read(bb);
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
+            }
             if (n < 0) {
                 return 0; // EOF
             }
@@ -814,7 +842,13 @@ public final class GoOs {
         }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
         try {
-            int n = wch.write(bb);
+            int n;
+            boolean bracketed = mayBlock(ch.ch) && SchedulerCore.ioBracketEnter();
+            try {
+                n = wch.write(bb);
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
+            }
             return (long) n + 1;
         } catch (IOException e) {
             if (errno(e) == EPIPE) {
@@ -870,7 +904,13 @@ public final class GoOs {
         }
         ByteBuffer bb = goBuf(bArg);
         try {
-            int n = fc.read(bb, num(posArg));
+            int n;
+            boolean bracketed = SchedulerCore.ioBracketEnter();
+            try {
+                n = fc.read(bb, num(posArg));
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
+            }
             if (n < 0) {
                 return 0; // EOF
             }
@@ -895,7 +935,13 @@ public final class GoOs {
         ByteBuffer bb = goBuf(bArg);
         long pos = num(posArg);
         try {
-            int n = fc.write(bb, pos);
+            int n;
+            boolean bracketed = SchedulerCore.ioBracketEnter();
+            try {
+                n = fc.write(bb, pos);
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
+            }
             return (long) n + 1;
         } catch (IOException e) {
             if (errno(e) == EPIPE) {
@@ -1037,7 +1083,12 @@ public final class GoOs {
             return -EINVAL;
         }
         try {
-            fc.force(true);
+            boolean bracketed = SchedulerCore.ioBracketEnter();
+            try {
+                fc.force(true);
+            } finally {
+                SchedulerCore.ioBracketExit(bracketed);
+            }
             return 0;
         } catch (IOException e) {
             return -errno(e);
