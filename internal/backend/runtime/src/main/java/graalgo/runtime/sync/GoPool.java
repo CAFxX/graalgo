@@ -2,10 +2,10 @@ package graalgo.runtime.sync;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
-import java.util.Collections;
 import java.util.Deque;
 import java.util.IdentityHashMap;
-import java.util.Set;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -31,9 +31,16 @@ import java.util.concurrent.atomic.AtomicReference;
  *       racing a thief is safe. Stealing {@code private} is a deliberate
  *       JVM adaptation (see the field doc): gc's {@code getSlow} skips it
  *       because Ps are immortal; our threads are not. Locals of dead
- *       threads stay registered — their items remain stealable. The
- *       registry is bounded in practice by the scheduler's carrier pool
- *       plus the threads that touch the pool.</li>
+ *       threads do NOT stay registered: the registry maps each
+ *       {@code Local} to a weak reference to its owner thread, and the
+ *       slow path (plus every new registration) evicts entries whose
+ *       owner has terminated, draining their items into the bounded
+ *       global queue first — so dead threads' items remain stealable
+ *       while the registry itself stays bounded by the number of live
+ *       threads that touch the pool, not by every thread that ever did.
+ *       Goroutines are virtual threads and therefore unbounded, so a
+ *       strong never-evicted registry would grow (and pin pooled items)
+ *       without bound on a long-lived program with a global Pool.</li>
  *   <li>Victim cache + GC interaction: gc rotates primary→victim at each
  *       GC stop-the-world ({@code poolCleanup}); there is no STW hook on
  *       the JVM, so the victim holds {@link WeakReference}s. The JVM GC
@@ -89,7 +96,9 @@ public final class GoPool {
          * the pool lock. */
         final ConcurrentLinkedDeque<Object> shared = new ConcurrentLinkedDeque<>();
         /** Whether this Local is in {@link GoPool#allLocals}. Written
-         * under the pool lock; the benign read race is idempotent. */
+         * under the pool lock; the benign read race is idempotent.
+         * Cleared when the entry is evicted, so a Local whose owner
+         * somehow outlives its eviction can re-register. */
         boolean registered;
     }
 
@@ -97,9 +106,20 @@ public final class GoPool {
 
     /** Pool-lock-guarded shared state. */
     private final Object lock = new Object();
-    /** All per-thread Locals ever used with this pool (gc's allPools). */
-    private final Set<Local> allLocals =
-            Collections.newSetFromMap(new IdentityHashMap<>());
+    /**
+     * Per-thread Locals currently registered with this pool (gc's
+     * allPools), each mapped to a weak reference to its owner thread.
+     * The Local itself is held strongly — that is what makes a dead
+     * owner's items drainable rather than silently lost — but the entry
+     * is evicted as soon as its owner thread has terminated (see
+     * {@link #purgeDeadLocalsLocked}), so the registry is bounded by
+     * live threads, not by every thread that ever touched the pool.
+     * Identity semantics: two threads never share a Local, and a Local
+     * is never re-keyed. Guarded by {@link #lock} for all mutation and
+     * iteration; the steal scan already holds the lock.
+     */
+    private final IdentityHashMap<Local, WeakReference<Thread>> allLocals =
+            new IdentityHashMap<>();
     private final Deque<Object> globalShared = new ArrayDeque<>();
     private final Deque<WeakReference<Object>> victim = new ArrayDeque<>();
 
@@ -121,11 +141,71 @@ public final class GoPool {
         Local l = locals.get();
         if (!l.registered) {
             synchronized (lock) {
-                allLocals.add(l);
+                // Registration is the bound on registry growth for
+                // put-only workloads (which never take the get slow
+                // path): every new registrant first evicts the
+                // terminated owners, so the registry holds at most the
+                // live threads plus threads that died since the last
+                // registration or slow-path get. The scan is once per
+                // thread lifetime, not per operation.
+                purgeDeadLocalsLocked();
+                allLocals.put(l, new WeakReference<>(Thread.currentThread()));
                 l.registered = true;
             }
         }
         return l;
+    }
+
+    /**
+     * Appends x to the bounded global queue, spilling the oldest items
+     * into the weakly-held victim while the queue is over cap. Caller
+     * must hold {@link #lock}; used by both the put spill path and the
+     * dead-Local drain, so the two paths cannot drift apart on the cap.
+     */
+    private void offerGlobalLocked(Object x) {
+        globalShared.addLast(x);
+        while (globalShared.size() > GLOBAL_SHARED_CAP) {
+            victim.addLast(new WeakReference<>(globalShared.pollFirst()));
+        }
+    }
+
+    /**
+     * Evicts every registry entry whose owner thread has terminated
+     * (weak reference cleared, or {@code isAlive()} false — the latter
+     * covers a terminated thread whose Thread object is still strongly
+     * reachable elsewhere, so eviction is deterministic and does not
+     * wait for a GC cycle). Each evicted Local's items are drained into
+     * the bounded global queue first — shared queue in FIFO order, then
+     * the private slot, matching the steal scan's order — so a dead
+     * thread's items stay retrievable by Get (the existing
+     * cross-thread-steal contract) while the strongly-held total stays
+     * bounded by live Locals plus the global cap: nothing a dead thread
+     * held remains pinned in a dead Local. Caller must hold
+     * {@link #lock}: the drain races no live owner (the owner is dead,
+     * so no lock-free put can land mid-drain) and is mutually exclusive
+     * with every thief's steal scan, which holds the same lock.
+     */
+    private void purgeDeadLocalsLocked() {
+        Iterator<Map.Entry<Local, WeakReference<Thread>>> it =
+                allLocals.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Local, WeakReference<Thread>> e = it.next();
+            Thread owner = e.getValue().get();
+            if (owner != null && owner.isAlive()) {
+                continue;
+            }
+            Local dead = e.getKey();
+            Object x;
+            while ((x = dead.shared.pollFirst()) != null) {
+                offerGlobalLocked(x);
+            }
+            x = dead.privateSlot.getAndSet(null);
+            if (x != null) {
+                offerGlobalLocked(x);
+            }
+            dead.registered = false;
+            it.remove();
+        }
     }
 
     /**
@@ -148,10 +228,7 @@ public final class GoPool {
         synchronized (lock) {
             int n = l.shared.size() / 2;
             for (int i = 0; i < n; i++) {
-                globalShared.addLast(l.shared.pollFirst());
-            }
-            while (globalShared.size() > GLOBAL_SHARED_CAP) {
-                victim.addLast(new WeakReference<>(globalShared.pollFirst()));
+                offerGlobalLocked(l.shared.pollFirst());
             }
         }
         l.shared.addLast(x);
@@ -173,11 +250,16 @@ public final class GoPool {
             return x;
         }
         synchronized (lock) {
+            // Evict terminated owners first: their items land in the
+            // global queue below, so the steal scan that follows sees
+            // only live threads, and the registry never accumulates
+            // dead entries between registrations.
+            purgeDeadLocalsLocked();
             // Slow path (gc's getSlow): steal from other threads'
             // shared queues, then their private slots (JVM adaptation —
             // see the privateSlot field doc), then the global spillover,
             // then the victim.
-            for (Local o : allLocals) {
+            for (Local o : allLocals.keySet()) {
                 if (o == l) {
                     continue;
                 }
@@ -186,7 +268,7 @@ public final class GoPool {
                     return x;
                 }
             }
-            for (Local o : allLocals) {
+            for (Local o : allLocals.keySet()) {
                 if (o == l) {
                     continue;
                 }
