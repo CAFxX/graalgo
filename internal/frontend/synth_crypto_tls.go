@@ -38,6 +38,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"runtime"
 	"time"
 	"unsafe"
 )
@@ -318,6 +319,11 @@ type Conn struct {
 	isClient     bool
 	// handshakeComplete tracks whether doHandshake finished.
 	handshakeComplete bool
+	// peerVerified tracks whether verifyPeer has already run to
+	// completion (via verifyPeerEarly before the Finished flight, or
+	// via the engineFinished fallback). Once set, later wraps skip
+	// the peer-certificates probe.
+	peerVerified bool
 }
 
 // Client creates a TLS client over conn. The handshake runs on Handshake().
@@ -712,9 +718,15 @@ func connectionStateTrap(engineHandle int64) int64
 
 // Handshake performs the TLS handshake, driving the Java SSLEngine state
 // machine: shuttling handshake records between the engine and the raw
-// net.Conn until the engine reports FINISHED. Afterwards (client side,
-// unless InsecureSkipVerify) the peer chain is verified in Go for exact
-// Go verification semantics.
+// net.Conn until the engine reports FINISHED. The peer chain is verified
+// in Go for exact Go verification semantics (client side, unless
+// InsecureSkipVerify): as soon as the peer certificates are available,
+// before the client wraps (sends) its Finished flight — see
+// verifyPeerEarly. That ordering is load-bearing: the server can only
+// complete after receiving Finished, so the server necessarily completes
+// after the client's verification, the same causal order gc has (gc
+// verifies before sending Finished). No sleep is used anywhere on this
+// path: ordering comes from protocol causality, not a timing bet.
 // NetConn returns the underlying network connection.
 func (c *Conn) NetConn() net.Conn {
 	return c.conn
@@ -736,21 +748,28 @@ func (c *Conn) Handshake() error {
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
-			if err := c.verifyPeer(); err != nil {
-				return err
-			}
-			// P3-M9 (x509): the in-process handshake test prints
-			// "handshake-ok" right after Handshake() returns. The client's
-			// verifyPeer (x509 chain building under Truffle) is slower
-			// than the server's no-op verify, so the server would print
-			// first while gc prints the client first. Brief yield so the
-			// client's prints land first (byte-identical differential).
-			// TODO: replace with proper synchronization or faster verify.
-			if !c.isClient {
-				time.Sleep(10 * time.Second)
+			// Normally verifyPeerEarly already verified before the
+			// Finished flight was sent; this is only a fallback for
+			// paths where the certificates never became visible to
+			// an earlier wrap (e.g. resumption without certificates),
+			// so verification can never be skipped by accident.
+			if !c.peerVerified {
+				if err := c.verifyPeer(); err != nil {
+					return err
+				}
+				c.peerVerified = true
 			}
 			return nil
 		case engineNeedWrap:
+			// Verify before wrapping: once the peer certificates are
+			// available, verify now rather than after FINISHED, so
+			// this side's Finished flight is only sent to a verified
+			// peer. On the client this is what keeps the server from
+			// completing (and printing) before the client's
+			// verification has finished — see the Handshake comment.
+			if err := c.verifyPeerEarly(); err != nil {
+				return err
+			}
 			out := wrapTrap(c.engineHandle, nil)
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
@@ -771,8 +790,13 @@ func (c *Conn) Handshake() error {
 				// P3-M9 (x509): the engine can report NEED_WRAP while a
 				// wrap produces no bytes (transitional state). Spinning
 				// here starves the peer goroutine on a single worker
-				// (--gmp=1): yield so it can make progress.
-				time.Sleep(time.Millisecond)
+				// (--gmp=1): yield so it can make progress. This is a
+				// voluntary scheduler yield, not a wall-clock sleep:
+				// Gosched hands the worker to the peer immediately and
+				// resumes as soon as the scheduler re-runs this
+				// goroutine, so no handshake pays a fixed delay and no
+				// deadline can expire inside a sleep here.
+				runtime.Gosched()
 			}
 		case engineNeedUnwrap:
 			// P3-M9 (x509): the engine may hold unconsumed input bytes
@@ -797,6 +821,36 @@ func (c *Conn) Handshake() error {
 			return fmt.Errorf("tls: handshake failed (status %d)", st)
 		}
 	}
+}
+
+// verifyPeerEarly verifies the peer certificate chain as soon as the
+// peer certificates are available, before the next wrap sends this
+// side's next flight (on the client, that flight is Finished). It is a
+// no-op when verification already ran, when this is the server side
+// (server verification is a no-op), or when no peer certificates have
+// been received yet (the engine has not processed the peer's
+// Certificate flight; a later wrap retries). Failing verification
+// aborts the handshake before Finished is sent, matching gc, which
+// verifies before sending Finished. This must stay free of sleeps:
+// the probe runs on every wrap until the certificates arrive, and the
+// peerCertificates trap returns empty (not an error) while they have
+// not, so polling it is cheap and safe.
+func (c *Conn) verifyPeerEarly() error {
+	if c.peerVerified || !c.isClient {
+		return nil
+	}
+	if c.config != nil && c.config.InsecureSkipVerify {
+		c.peerVerified = true
+		return nil
+	}
+	if len(decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))) == 0 {
+		return nil
+	}
+	if err := c.verifyPeer(); err != nil {
+		return err
+	}
+	c.peerVerified = true
+	return nil
 }
 
 // verifyPeer verifies the peer certificate chain after the handshake
