@@ -146,8 +146,11 @@ var syntheticSources = map[string]string{
 	"crypto/sha256": syntheticSha256Source,
 	"crypto/sha512": syntheticSha512Source,
 	"crypto/sha3":   syntheticSha3Source,
-	"crypto/subtle": syntheticSubtleSource,
-	"crypto/hmac":   syntheticHmacSource,
+	// R-02 (2026-10-31): crypto/subtle RETIRED — real go1.27.1 source
+	// compiles from GOROOT via the general disk importer (importPkgTree
+	// in export.go, as for reflect). The synthetic source file is
+	// deleted; do not re-add this entry without a root-cause reason.
+	"crypto/hmac": syntheticHmacSource,
 	// The cipher package spans two source files (modes + GCM); the GCM
 	// fragment is concatenated after the main source.
 	"crypto/cipher": syntheticCipherSource + syntheticCipherGcmSource,
