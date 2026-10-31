@@ -18,7 +18,7 @@
 #
 # CI SCOPE — honest, not aspirational.
 #   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#                + test-unit + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -32,6 +32,14 @@
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-unit per-push unit gate (review P1-4): the three backend
+#               runners minus their corpus/differential classes, plus
+#               the root-module Go tests (cmd/graalgo, internal/driver,
+#               internal/vet — an explicit list, because root `./...`
+#               is polluted by test/corpus .go files). The v1 frontend
+#               Go suite already runs per-push via `check` (gofrontend
+#               gofmt/vet/tests gate); the v2 suite via `test-v2`.
+#               A new backend test class is gated per-push by default.
 #     test-regression
 #               regression tests for fixed PKGs
 #               ([test/regression/](test/regression/)): each
@@ -43,6 +51,15 @@
 #   phase2 SchedTestRunner, phase3 IfaceTestRunner, plus the wave1-3
 #   corpus differentials). It takes 30+ minutes and runs in local
 #   verification and nightly runs, not per-push. Invoke it explicitly.
+#   Only the corpus/differential runner classes are weekly-only now
+#   (they are the `test-unit` skip lists); every other runner class
+#   runs per-push via `test-unit` (review P1-4 correction: the review
+#   claimed no CI job ran the unit suites, but the weekly `make test`
+#   job always did — the gap was per-push signal, now closed).
+#   `test-p3frontend` — the p3frontend module Go suite, excluded until
+#   its 4 pre-existing failures are fixed (see the target comment below);
+#   that exclusion is a known gap owned by the p3frontend work, not a
+#   silent omission — gating on it today would red every push.
 #
 
 
@@ -104,9 +121,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-unit test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-ci test-regression
+all: generate build snapshot-check check test-v2 test-ci test-unit test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -142,6 +159,24 @@ check:
 # `make test` (see header comment).
 test-ci: build
 	$(MAKE) -C internal/backend/truffle smoke-test
+
+# Per-push unit gate (review P1-4): backend runners minus their
+# corpus/differential classes (see each backend Makefile's TEST_UNIT_SKIP)
+# plus the root-module Go tests. Failures fail the gate: each runner exits
+# 1 on any failure, and `go test` exits non-zero on any failure. The
+# corpus/differential classes stay weekly-only via `make test`; the
+# p3frontend module suite stays excluded until its 4 pre-existing
+# failures are fixed (see test-p3frontend below). Cost control is the
+# skip lists, documented in the backend Makefiles — not omission.
+# /tmp is a 512M tmpfs: keep go build/test temps on persistent disk.
+UNIT_TMP := $(CURDIR)/.tmp/unit
+test-unit: build
+	$(MAKE) -C internal/backend/truffle test-unit
+	$(MAKE) -C internal/backend/runtime test-unit
+	$(MAKE) -C internal/backend/interop test-unit
+	mkdir -p $(UNIT_TMP) && \
+	TMPDIR="$(UNIT_TMP)" GOTMPDIR="$(UNIT_TMP)" $(GO) vet ./cmd/graalgo/ ./internal/driver/ ./internal/vet/ && \
+	TMPDIR="$(UNIT_TMP)" GOTMPDIR="$(UNIT_TMP)" $(GO) test ./cmd/graalgo/ ./internal/driver/ ./internal/vet/
 
 # Regression tests for fixed PKGs ([test/regression/](test/regression/)):
 # each test/regression/<pkg>/ directory is a Go test package run through

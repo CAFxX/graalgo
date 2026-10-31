@@ -89,7 +89,7 @@ P1_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
 # self-attack if deeper adversarial recursion lands.
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main test smoke smoke-test clean check
+.PHONY: all main test test-unit smoke smoke-test clean check
 
 all: main
 
@@ -133,6 +133,19 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
 	touch $(OUT_TEST)/.built
+
+# Per-push unit gate (review P1-4): the Runner classes minus the
+# corpus/differential classes (each runs many Go programs through the
+# backend — that is the 30+ minute full suite, weekly-only by design).
+# Every other registered class runs here, and a new test class is gated
+# per-push by default: it is only excluded by adding it to this list.
+# Failures exit non-zero via the Runner (exit 1 on any failure).
+TEST_UNIT_SKIP := StraightLineCorpusTest,ArithmeticCorpusTest,ControlFlowCorpusTest,CompositeCorpusTest,PanicCorpusTest,GenericsCorpusTest,VarsCorpusTest,BuiltinsCorpusTest,TypeparamDifferentialTest
+test-unit: main $(OUT_TEST)/.built
+	mkdir -p out/test-tmp
+	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
+	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(P1_DIR_PROP) $(JAVA_FLAGS) \
+	-cp "$(OUT_TEST):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner --skip=$(TEST_UNIT_SKIP)
 
 # placeholder grep gate (done-gate 5): fails on TODO/FIXME/stub markers in src,
 # plus the gofrontend check (gofmt/vet/tests/vendoring diff gate).

@@ -3,13 +3,22 @@ package graalgo.sched;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}):
  * instantiates each registered test class and invokes every public no-arg
  * method whose name starts with "test". Exits 0 on all-pass, 1 on any
  * failure. New test classes register in TESTS below.
+ *
+ * <p>Unit gate (review P1-4): {@code --skip=ClassA,ClassB} runs every
+ * registered class except the named ones (simple names). The per-push
+ * {@code test-unit} target skips the differential classes, which stay
+ * covered by the weekly full suite ({@code make test}). An unknown skip
+ * name fails loudly (exit 2): a typo must never silently run zero tests.
+ * No args means all classes, as before.
  *
  * <h2>Test-writing rules (P2-M9 process patch)</h2>
  * A spawned goroutine holds a scheduler in-flight slot until it parks via
@@ -66,9 +75,13 @@ public final class SchedTestRunner {
     }
 
     public static void main(String[] args) {
+        Set<String> skip = parseSkip(args);
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {
+            if (skip.contains(c.getSimpleName())) {
+                continue;
+            }
             for (Method m : c.getMethods()) {
                 if (!m.getName().startsWith("test") || m.getParameterCount() != 0
                         || !Modifier.isPublic(m.getModifiers())) {
@@ -90,5 +103,31 @@ public final class SchedTestRunner {
         if (failed > 0) {
             System.exit(1);
         }
+    }
+
+    private static Set<String> parseSkip(String[] args) {
+        Set<String> skip = new HashSet<>();
+        for (String arg : args) {
+            if (!arg.startsWith("--skip=")) {
+                System.err.println("usage: SchedTestRunner [--skip=ClassA,ClassB]");
+                System.exit(2);
+            }
+            for (String name : arg.substring("--skip=".length()).split(",")) {
+                if (!name.isEmpty()) {
+                    skip.add(name);
+                }
+            }
+        }
+        Set<String> known = new HashSet<>();
+        for (Class<?> c : TESTS) {
+            known.add(c.getSimpleName());
+        }
+        for (String name : skip) {
+            if (!known.contains(name)) {
+                System.err.println("unknown --skip class: " + name);
+                System.exit(2);
+            }
+        }
+        return skip;
     }
 }

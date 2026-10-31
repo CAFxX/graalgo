@@ -74,7 +74,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main test check clean run
+.PHONY: all main test test-unit check clean run
 
 all: main
 
@@ -109,6 +109,19 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
 	touch $(OUT_TEST)/.built
+
+# Per-push unit gate (review P1-4): the SchedTestRunner classes minus
+# the differential classes (each runs a corpus through the backend — that
+# is the 30+ minute full suite, weekly-only by design). Every other
+# registered class runs here, and a new test class is gated per-push by
+# default: it is only excluded by adding it to this list. Failures exit
+# non-zero via the runner (exit 1 on any failure).
+TEST_UNIT_SKIP := ChannelDifferentialTest,TimerDifferentialTest,GcDifferentialTest
+test-unit: main $(OUT_TEST)/.built
+	mkdir -p out/test-tmp
+	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
+	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
+	-cp "$(TEST_CP)" graalgo.sched.SchedTestRunner --skip=$(TEST_UNIT_SKIP)
 
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
 # The launchers (SchedMain, and Main inherited from the phase-1 tree) are

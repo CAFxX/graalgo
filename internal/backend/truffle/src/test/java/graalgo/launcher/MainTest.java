@@ -20,7 +20,15 @@ import java.nio.file.Path;
 // by every test below).
 public final class MainTest {
 
-    private static final Path CORPUS = Path.of("corpus", "straightline");
+    // Review P1-4: resolve the corpus via graalgo.repo.dir (set by the
+    // backend Makefiles to the repo root), mirroring StraightLineCorpusTest.
+    // The previous CWD-relative "corpus/straightline" only worked when the
+    // runner was launched from test/corpus/phase1, so MainTest failed under
+    // every Makefile invocation (make test, make test-unit) with
+    // "cannot read input file: corpus/straightline/sl01_consts.go".
+    // With repo.dir unset, "." keeps the repo-root-CWD behaviour.
+    private static final Path CORPUS = Path.of(System.getProperty("graalgo.repo.dir", "."))
+            .resolve("test").resolve("corpus").resolve("phase1").resolve("straightline");
 
     private static String captureStderr(java.util.concurrent.Callable<Integer> r) throws Exception {
         PrintStream old = System.err;

@@ -3,7 +3,9 @@ package graalgo.iface;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}
@@ -11,6 +13,13 @@ import java.util.List;
  * class and invokes every public no-arg method whose name starts with
  * "test". Exits 0 on all-pass, 1 on any failure. New test classes register
  * in TESTS below.
+ *
+ * <p>Unit gate (review P1-4): {@code --skip=ClassA,ClassB} runs every
+ * registered class except the named ones (simple names). The per-push
+ * {@code test-unit} target currently skips nothing here; the flag exists
+ * so a future slow class can be excluded without a second harness change.
+ * An unknown skip name fails loudly (exit 2): a typo must never silently
+ * run zero tests. No args means all classes, as before.
  */
 public final class IfaceTestRunner {
     private static final List<Class<?>> TESTS = new ArrayList<>();
@@ -66,15 +75,23 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // Review P1-4: these two unit classes were never registered in any
+        // runner, so no CI job ever executed them (weekly or per-push).
+        TESTS.add(graalgo.p3reflect.GcMaskTest.class);
+        TESTS.add(graalgo.p3reflect.MapKeyHashTest.class);
     }
 
     private IfaceTestRunner() {}
 
     public static void main(String[] args) {
+        Set<String> skip = parseSkip(args);
         int run = 0;
         int failed = 0;
         List<String> failures = new ArrayList<>();
         for (Class<?> tc : TESTS) {
+            if (skip.contains(tc.getSimpleName())) {
+                continue;
+            }
             Object inst;
             try {
                 inst = tc.getDeclaredConstructor().newInstance();
@@ -106,5 +123,31 @@ public final class IfaceTestRunner {
             }
             System.exit(1);
         }
+    }
+
+    private static Set<String> parseSkip(String[] args) {
+        Set<String> skip = new HashSet<>();
+        for (String arg : args) {
+            if (!arg.startsWith("--skip=")) {
+                System.err.println("usage: IfaceTestRunner [--skip=ClassA,ClassB]");
+                System.exit(2);
+            }
+            for (String name : arg.substring("--skip=".length()).split(",")) {
+                if (!name.isEmpty()) {
+                    skip.add(name);
+                }
+            }
+        }
+        Set<String> known = new HashSet<>();
+        for (Class<?> c : TESTS) {
+            known.add(c.getSimpleName());
+        }
+        for (String name : skip) {
+            if (!known.contains(name)) {
+                System.err.println("unknown --skip class: " + name);
+                System.exit(2);
+            }
+        }
+        return skip;
     }
 }

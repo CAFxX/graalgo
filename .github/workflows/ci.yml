@@ -5,8 +5,12 @@
 # differently from what's committed, the build fails.
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
-# (generate/build/check/test-ci) plus the testing-strategy layers at their
-# cadence (phases/phase3/PLAN.md §5):
+# (generate/build/check/test-ci/test-unit) plus the testing-strategy layers
+# at their cadence (phases/phase3/PLAN.md §5). test-unit (review P1-4) is
+# the backend unit runners minus their corpus/differential classes plus the
+# root-module Go tests; the skipped corpus/differential classes run weekly
+# via `make test` below, and the p3frontend module suite stays excluded
+# until its 4 pre-existing failures are fixed (Makefile test-p3frontend):
 #   layer 1 (smoke):            per-commit  — diffharness smoke corpus,
 #                               mutation-validated oracle (this job)
 #   layer 2 (conformance):      per-commit on frontend changes —

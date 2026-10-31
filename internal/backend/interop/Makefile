@@ -52,7 +52,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main test check clean run
+.PHONY: all main test test-unit check clean run
 
 all: main
 
@@ -77,6 +77,14 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.p3sync.launcher.P3SyncMain $(ARGS)
 
 test: main $(OUT_TEST)/.built
+	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
+
+# Per-push unit gate (review P1-4): every registered IfaceTestRunner
+# class, including the two formerly orphaned classes (GcMaskTest,
+# MapKeyHashTest) that no runner executed before this change. No class
+# is skipped here: nothing in this runner runs a multi-program corpus.
+# Failures exit non-zero via the runner (exit 1 on any failure).
+test-unit: main $(OUT_TEST)/.built
 	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
