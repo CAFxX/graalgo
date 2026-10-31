@@ -1,5 +1,5 @@
 {
-  "generated_by": "phases/phase3/stdlib-fork/gen-asm-inventory.py",
+  "generated_by": "tools/stdlib-fork/gen-asm-inventory.py",
   "go_version": "go1.27.1",
   "categories": [
     "evaporate",

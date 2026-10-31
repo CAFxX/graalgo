@@ -105,7 +105,7 @@ var syntheticSources = map[string]string{
 	// synth_reflect.go). RETIRED: real reflect now compiles from GOROOT
 	// via the disk importer (real-reflect lane). The wire type table
 	// carries field offsets/tags, method tables, and signatures; the
-	// runtime GoRType table is built from it (phases/phase3 p3reflect).
+	// runtime GoRType table is built from it (internal/backend/interop p3reflect).
 	// internal/reflectlite is a pure adapter; iter is the minimal generic
 	// sequence declarations.
 	// "reflect": syntheticReflectSource, // RETIRED - uses disk importer
@@ -138,7 +138,7 @@ var syntheticSources = map[string]string{
 	"unicode/utf8":  syntheticUnicodeUtf8Source,
 	"unicode/utf16": syntheticUnicodeUtf16Source,
 	// P3-M8 (wave 2): crypto/* packages (synth_crypto*.go). Software
-	// implementations only; see phases/phase3/hidden_files/m8-analysis/crypto.md.
+	// implementations only; see the pre-migration phase-3 m8 crypto analysis (archived).
 	"hash":          syntheticHashSource,
 	"crypto":        syntheticCryptoSource,
 	"crypto/md5":    syntheticMd5Source,

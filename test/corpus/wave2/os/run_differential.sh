@@ -17,19 +17,20 @@
 #     the pinned "not in M8 scope" message on stderr (checked).
 set -u
 
-PIPE="$HOME/workspace/graalgo-m8-pipe"
-OSDIR="$PIPE/phases/phase3/corpus/wave2/os"
-export TMPDIR="$PIPE/phases/phase3/hidden_files/m8-tmp/os"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../../../.." && pwd)"
+OSDIR="$HERE"
+export TMPDIR="$REPO/out/wave2-os-tmp"
 export GOCACHE="$HOME/workspace/.gocache-m8-os"
 mkdir -p "$TMPDIR" "$GOCACHE"
 GO="$HOME/tools/go/bin/go"
-RUN="${GRAALGO_RUN:-$PIPE/phases/phase3/out/graalgo-sync-run}"
+RUN="${GRAALGO_RUN:-$REPO/internal/backend/graalgo-sync-run}"
 
 pass=0; fail=0; failed_cases=()
 
 if [[ ! -x "$RUN" ]]; then
     echo "FAIL: graalgo launcher not found: $RUN"
-    echo "  build phase3 first (make main), or set GRAALGO_RUN"
+    echo "  build first (make build at the repo root), or set GRAALGO_RUN"
     exit 1
 fi
 

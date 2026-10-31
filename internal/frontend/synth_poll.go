@@ -4,7 +4,7 @@ package main
 //
 // Real-Go source: adapted from gc go1.27.1
 // ($GOROOT/src/internal/poll/fd_poll_runtime.go + errno_unix.go), per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md:
+// the pre-migration phase-3 net-fork contract (archived):
 //
 //   - fd_poll_runtime.go logic kept unmodified; only the declaration block
 //     is replaced with the single-result //go:linkname declarations (the

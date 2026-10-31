@@ -13,5 +13,5 @@
 # calls. In graalgo every Go store is a JVM store and the JVM's own
 # barriers cover them (P2 ADR-0002 D3); there is no concurrent-mark phase
 # needing a mutator barrier, so the analog of writeBarrier.enabled is the
-# constant false. Source: phases/phase3/hidden_files/m4/intrinsic-audit.md §4.
+# constant false. Source: pre-migration phase-3 intrinsic audit (§4, archived).
 runtime.writeBarrier -> const:false # JVM owns all barriers (P2 ADR-0002 D3); no mutator barrier exists, writeBarrier.enabled ≡ false

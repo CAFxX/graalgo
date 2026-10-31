@@ -7,7 +7,7 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in phases/phase2/GODEBUG.md)
+#                documented in docs/arch/phases/phase2/GODEBUG.md)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)
@@ -17,16 +17,16 @@
 # Exit 0 iff every knob diffs as expected. Writes REPORT.md on success.
 set -u
 
-P2="$(cd "$(dirname "$0")/../../phases/phase2" && pwd)"
-GRAALGO="$P2"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+BACKEND="$REPO/internal/backend"
 GO="$HOME/tools/go/bin/go"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 JAVA="$GRAALVM_HOME/bin/java"
-CORPUS="$P2/corpus/godebug"
+CORPUS="$REPO/test/corpus/phase2/godebug"
 WORK="$(mktemp -d)"
 KEEP="${1:-}"
 
-CP="$P2/out/classes:$P2/../phase1/out/classes:$(echo $P2/../phase1/lib/*.jar | tr ' ' ':')"
+CP="$BACKEND/runtime/out/classes:$BACKEND/truffle/out/classes:$(echo $BACKEND/truffle/lib/*.jar | tr ' ' ':')"
 JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
 
 pass=0
@@ -64,8 +64,8 @@ check() { # $1=knob $2=ok(0/1) $3=detail
     fi
 }
 
-echo "== building phase2 =="
-make -C "$P2" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
+echo "== building backend =="
+make -C "$REPO" build >/dev/null 2>&1 || { echo "build failed"; exit 1; }
 
 # --- schedtrace ---
 # Strengthened comparator: requires >=3 lines with STRICTLY INCREASING

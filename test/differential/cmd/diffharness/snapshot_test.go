@@ -60,7 +60,7 @@ func TestDiffEntries_BuildLogOnlyCompared(t *testing.T) {
 }
 
 func TestScrubEnvPaths(t *testing.T) {
-	in := "build [/home/u/checkout/phases/phase1/graalgo-run --check /home/u/checkout/tools/diffharness/corpus/13_x/main.go] failed"
+	in := "build [/home/u/checkout/internal/backend/graalgo-run --check /home/u/checkout/tools/diffharness/corpus/13_x/main.go] failed"
 	got := scrubEnvPaths(in, "/home/u/checkout/tools/diffharness/corpus")
 	if strings.Contains(got, "/home/u/checkout") {
 		t.Fatalf("machine paths not scrubbed: %q", got)

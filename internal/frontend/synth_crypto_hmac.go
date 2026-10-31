@@ -2,7 +2,7 @@ package main
 
 // P3-M8 (wave 2): synthetic `hmac` package.
 // Software implementation only (no intrinsification).
-// See phases/phase3/hidden_files/m8-analysis/crypto.md.
+// See the pre-migration phase-3 m8 crypto analysis (archived).
 const syntheticHmacSource = `package hmac
 
 // Copyright 2009 The Go Authors. All rights reserved.

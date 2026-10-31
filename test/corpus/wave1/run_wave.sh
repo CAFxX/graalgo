@@ -35,14 +35,12 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 GR="${GR:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+BACKEND="$GR/internal/backend"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave1/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
+export TMPDIR="$GR/out/wave1-tmp"
 export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
 mkdir -p "$TMPDIR"
 
@@ -60,10 +58,14 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+  (cd "$GR/internal/frontend" && PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH" ./build.sh build) > /dev/null || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+CP="$BACKEND/interop/out/classes:$BACKEND/runtime/out/classes:$BACKEND/truffle/out/classes:$(ls "$BACKEND/truffle/lib/"*.jar | tr '
+' ':')"
 # P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
 # yields empty output with exit 0 — methodology review finding).
 GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
@@ -86,7 +88,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \

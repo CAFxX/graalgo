@@ -1,4 +1,4 @@
-# Layer 2 — conformance (phases/phase3/PLAN.md §5, GG-0029/GG-0032):
+# Layer 2 — conformance (docs/arch/phases/phase3/PLAN.md §5, GG-0029/GG-0032):
 # GOROOT/test language suite (356 files), per-commit on frontend changes.
 #
 # The srctest adapter (test/differential/internal/srctest) classifies every

@@ -40,7 +40,7 @@ import graalgo.sched.SchedulerCore;
  * 1-slot buffer underneath keeps fire values deliverable (recv,
  * select, close-drain) while the observation probes are masked to 0.
  * Red-green evidence:
- * {@code phases/phase3/hidden_files/m2/redgreen.md}; the
+ * {@code pre-migration phase-3 M2 red-green evidence (archived)}; the
  * {@code DIV-M3-1} re-test trigger is discharged by the differential
  * timer corpus (tm15) re-run.
  *

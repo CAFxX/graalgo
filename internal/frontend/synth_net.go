@@ -4,7 +4,7 @@ package main
 //
 // Real-Go sources: curated from gc go1.27.1 ($GOROOT/src/net/*.go).
 // The socket path is wired to the netpoller runtime traps per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md.
+// the pre-migration phase-3 net-fork contract (archived).
 //
 // Contents:
 //   - Addr types (IP, IPAddr, TCPAddr, UDPAddr, IPNet) + ParseIP/ParseCIDR/
@@ -846,7 +846,7 @@ func (p *pipeAddr) String() string { return "pipe" }
 // ---------------------------------------------------------------------------
 // Socket address types + Dial/Listen (P3-M9 tier-4: loopback TCP/UDP).
 // Wired to the graalgo.net.* traps + internal/poll per
-// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md.
+// the pre-migration phase-3 net-fork contract (archived).
 // ---------------------------------------------------------------------------
 
 // Listener is a generic network listener for stream-oriented protocols.

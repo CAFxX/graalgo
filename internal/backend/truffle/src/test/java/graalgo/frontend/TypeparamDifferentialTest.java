@@ -384,7 +384,7 @@ public final class TypeparamDifferentialTest {
     // These pin the robust repo-root resolution: the pre-migration
     // resolvePhase1Dir() stripped two levels off the raw cwd with no
     // validation, so running the suite from any nonstandard directory
-    // (e.g. phases/phase1/frontend) silently produced a wrong root and a
+    // (e.g. internal/frontend) silently produced a wrong root and a
     // confusing "No such file or directory" from the diffharness build.
     // The Phase-4 migration generalized that resolver to resolveRepoDir()
     // (repo root located by layout markers, with the graalgo.repo.dir

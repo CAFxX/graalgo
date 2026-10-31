@@ -9,19 +9,21 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+BACKEND="$GR/internal/backend"
 export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
+export TMPDIR="$GR/out/wave1-math-tmp"
 export GOCACHE="$HOME/workspace/.gocache-m7-math"
 mkdir -p "$TMPDIR"
 JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+  (cd "$GR/internal/frontend" && PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH" ./build.sh build) > /dev/null || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+CP="$BACKEND/interop/out/classes:$BACKEND/runtime/out/classes:$BACKEND/truffle/out/classes:$(ls "$BACKEND/truffle/lib/"*.jar | tr '
+' ':')"
 # P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
 # yields empty output with exit 0 — methodology review finding).
 GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \

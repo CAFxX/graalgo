@@ -2,7 +2,7 @@ package main
 
 // exec.go — backend execution for the M8 fuzzer.
 //
-// Two backends: stock gc (~/tools/go) and graalgo-run (phases/phase1).
+// Two backends: stock gc (~/tools/go) and graalgo-run (internal/backend/graalgo-run).
 // Each run captures build success, exit code, stdout, stderr.
 
 import (
@@ -15,7 +15,7 @@ import (
 )
 
 var goBin = os.ExpandEnv("$HOME/tools/go/bin/go")
-var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/phases/phase1/graalgo-run")
+var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/internal/backend/graalgo-run")
 
 type runResult struct {
 	buildOK   bool

@@ -9,7 +9,7 @@ import java.lang.reflect.Modifier;
  * Timers.startTimer/stopTimer and Netpoll.waitForEvents/breakWait.
  * Phase-1 files are immutable to Phase 2, so the gap is closed here
  * by reflection against the freeze-stub contract
- * (phases/phase1/docs/freeze-stub.md §§ Timers, Netpoller API contract).
+ * (pre-migration phase-1 freeze-stub contract, §§ Timers, Netpoller API contract).
  */
 public final class FreezeGapTest {
 

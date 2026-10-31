@@ -274,11 +274,11 @@ do_test() {
         fi
         # Test classpath: test classes first, then main.
         # RUNTEST invokes methods directly (no System.exit).
-        # Pass the phase1 dir property (matches the Makefile's P1_DIR_PROP).
-        # $BACKEND is internal/backend, so phases is ../../phases.
-        local p1dir="$BACKEND/../../phases/phase1"
-        # For truffle tests, the property is graalgo.phase1.dir
-        local props="graalgo.phase1.dir=$p1dir"
+        # Pass the repo-dir property (matches the Makefile's P1_DIR_PROP):
+        # truffle corpus tests resolve test/corpus/phase1/ under it.
+        # $BACKEND is internal/backend, so the repo root is $BACKEND/../..
+        local repodir="$BACKEND/../.."
+        local props="graalgo.repo.dir=$repodir"
         if [ -n "$method" ]; then
             send "RUNTEST $testout:$FULL_CP $testclass $method -- $props"
         else

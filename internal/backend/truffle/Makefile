@@ -1,7 +1,7 @@
 # graalgo backend — truffle module build (Truffle AST implementation)
 #
-# Own javac module: phases/phase1's language-core sources, relocated per the
-# Phase-4 repo restructure (lane 3):
+# Own javac module: the language-core sources (pre-migration tree,
+# relocated per the Phase-4 repo restructure (lane 3)):
 #   internal/backend/truffle/src/main/java — graalgo.{nodes,values,frontend}
 #     (AST node implementations) + the 8 frozen phase-1 stubs
 #     (graalgo/runtime/{ChanOps,GcInterop,GoroutineState,Netpoll,Panic,

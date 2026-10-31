@@ -13,14 +13,17 @@ import (
 	"time"
 )
 
-// repoRoot returns the graalgo repo root (four levels above this file's dir).
+// repoRoot returns the graalgo repo root (three levels above this file's
+// dir: p3frontend -> frontend -> internal -> repo root). The old
+// four-level climb was correct only in the pre-migration p3frontend
+// layout and overshoots by one level now.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..")
+	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
 
 type cmdResult struct {
@@ -85,13 +88,13 @@ func goTool(t *testing.T) string {
 	return p
 }
 
-// graalgoRun executes the merged single-file program with the Phase-2
-// launcher (make -s run ARGS="--gmp=1 <file>"); -s keeps make's own echo
-// out of stdout so it stays byte-comparable with gc's.
+// graalgoRun executes the merged single-file program with the
+// graalgo-run launcher (internal/backend/graalgo-run). The launcher takes
+// the program path directly (no --gmp flag: that belongs to the scheduler
+// launcher, not graalgo-run); these differential programs do not need it.
 func graalgoRun(t *testing.T, mergedPath string) cmdResult {
 	t.Helper()
-	phase2 := filepath.Join(repoRoot(t), "phases", "phase2")
-	return runCommand(t, phase2, "make", "-s", "run", "ARGS=--gmp=1 "+mergedPath)
+	return runCommand(t, repoRoot(t), filepath.Join(repoRoot(t), "internal", "backend", "graalgo-run"), mergedPath)
 }
 
 // normalizeDoc unmarshals a frontend/v1 document and normalizes the

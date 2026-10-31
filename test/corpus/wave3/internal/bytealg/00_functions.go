@@ -14,7 +14,7 @@ import (
 //
 // CORRECTNESS EVIDENCE: this program is self-checking — every bytealg
 // result is cross-checked against the stdlib wrappers that use it. The
-// tier1d harness (phases/phase3/hidden_files/m9-tmp/tier1d-harness/)
+// tier1d harness (the pre-migration tier1d harness (archived))
 // extracts the synthetic source to a GOPATH and runs this exact program
 // under stock gc against it. Any MISMATCH line + panic = harness FAIL.
 func main() {

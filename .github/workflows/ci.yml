@@ -6,7 +6,7 @@
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
 # (generate/build/check/test-ci) plus the testing-strategy layers at their
-# cadence (phases/phase3/PLAN.md §5):
+# cadence (docs/arch/phases/phase3/PLAN.md §5):
 #   layer 1 (smoke):            per-commit  — diffharness smoke corpus,
 #                               mutation-validated oracle (this job)
 #   layer 2 (conformance):      per-commit on frontend changes —

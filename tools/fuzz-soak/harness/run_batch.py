@@ -16,9 +16,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: harness/run_batch.py -> tools/fuzz-soak -> tools -> repo.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -41,13 +41,21 @@ def main():
 
     # 1. Build Java modules once.
     print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    r = sh(f"make -C {GR} build", timeout=600)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
         sys.exit(1)
     print("build ok", flush=True)
+    # P3SyncMain translates via gofrontend; build it if this checkout lacks it.
+    if not os.path.exists(os.path.join(GR, "internal", "frontend", "gofrontend")):
+        print("== building gofrontend ==", flush=True)
+        r = sh(f"cd {GR}/internal/frontend && ./build.sh build", timeout=600)
+        if r.returncode != 0:
+            print("GOFRONTEND BUILD FAILED")
+            print(r.stdout[-2000:]); print(r.stderr[-2000:])
+            sys.exit(1)
 
     # 2. Generate programs.
     seeds = list(range(start, end))

@@ -7,13 +7,13 @@ package main
 // snapshot diff rather than silent staleness.
 //
 // Sources (see README.md § "Provided set"):
-//  1. phases/phase3/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
+//  1. internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
 //     Linknames.register("symbol", ...) calls (Go→intrinsic direction).
-//  2. phases/phase3/src/p3frontend/importer.go — syntheticRuntimePackage,
+//  2. internal/frontend/p3frontend/importer.go — syntheticRuntimePackage,
 //     syntheticFmtPackage, syntheticSyncPackage, syntheticAtomicPackage,
 //     plus the package-level syncMethodSpecs var and the
 //     syncLockerInterface function.
-//  3. phases/phase3/src/p3frontend/synth_time_context.go —
+//  3. internal/frontend/p3frontend/synth_time_context.go —
 //     syntheticTimePackage, syntheticContextPackage.
 //  4. internal/frontend/synth_time_context.go — syntheticTimeSource /
 //     syntheticContextSource embedded Go sources (normative; the

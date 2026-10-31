@@ -168,15 +168,16 @@ test-regression: generate build graalgo
 # (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
 # the <repo>/internal/frontend/gofrontend fallback (export.go).
 #
-# NOT in `all` yet: 4 pre-existing failures need owner fixes first
+# NOT in `all` yet: 2 pre-existing failures need owner fixes first
 # (all fail on master too, never ran in CI):
 #   TestSyncExportDir, TestSyncScopeErrorParity — real-sync exporter
 #     semantics (sync lowering / M2 scope errors); route to the sync
 #     owner or review-d2-vettest (sync test infra).
-#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner points at the removed phases/phase2 tree;
-#     rewire graalgoRun() to internal/backend/graalgo-run; route to
-#     review-t2-testinfra (test infra) or the backend owner.
+#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — FIXED by the
+#     2026-10-31 stale-phases-paths lane: graalgoRun() now runs
+#     internal/backend/graalgo-run (plus a repoRoot() off-by-one fix:
+#     four levels up was correct only in the pre-migration layout);
+#     both tests pass against the current launcher.
 # Add test-p3frontend to `all` once those are green.
 test-p3frontend: generate
 	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
