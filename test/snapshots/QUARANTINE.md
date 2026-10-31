@@ -1,6 +1,8 @@
 # Snapshot quarantine manifest
 
-The behavior snapshot ([`go1.27.1.json`](go1.27.1.json)) covers the
+The behavior snapshot (today [`go1.27.1.json`](go1.27.1.json); the
+filename is derived from the toolchain by both the Makefile and the
+gate — see rule 4) covers the
 differential corpus ([`../differential/corpus/`](../differential/corpus/))
 **minus** the programs quarantined here. Quarantine is a gate discipline,
 not a parking lot: every exclusion has a dated owner lane, and the list
@@ -19,12 +21,17 @@ may only grow through review.
    top-level `exclusions`) and the recorded snapshot (`excluded`). The
    owner is the owning lane area (a person name may replace it when the
    lane has a named owner); `since` is the date the exclusion entered the
-   list. [`check-quarantine.py`](check-quarantine.py) enforces this in
+   list, and must be a real calendar date — YYYY-MM-DD-shaped but
+   impossible dates (e.g. 2026-13-99) fail the gate. [`check-quarantine.py`](check-quarantine.py) enforces this in
    `make snapshot-check` (hence per-push CI via `make all`).
 2. **Growth requires review.** Adding an exclusion without updating the
    `approved_count` line above and the table below fails the gate. The
    PR that grows the list is the review: it must state why the program
-   cannot be in the baseline yet and which lane owns the fix.
+   cannot be in the baseline yet and which lane owns the fix. The gate
+   also checks the table below against `backends-p3.json` on program,
+   owner, and `since` — table drift fails the gate, so the table is a
+   checked record, not decoration (its reason column is a paraphrase
+   and is not compared).
 3. **Shrinkage is the goal.** When an owning lane fixes the underlying
    gap, the program leaves the list (as `43_range_over_func` did on
    2026-10-15 when PKG-039 landed) and the count here drops with it.
@@ -37,6 +44,20 @@ may only grow through review.
    matching program+reason pairs) and re-run the gate before committing.
    The gate fails loudly if this step is skipped, so a re-record can
    never silently un-quarantine the discipline.
+   **Toolchain upgrades are a re-record case, with a filename change.**
+   The Makefile derives the snapshot filename from `go version`
+   (`SNAPSHOT_TOOLCHAIN`), so after an upgrade `make snapshot` writes a
+   NEW file (e.g. `go1.28.json`) while `make snapshot-check` reads that
+   new file. The gate derives the same filename the same way — from
+   `go version`, honoring a `SNAPSHOT_TOOLCHAIN` override — and
+   additionally vets every other `go*.json` file still present for
+   owner/`since`, count-lock, and config agreement. So the upgrade flow
+   is: re-record, `--sync`, re-run the gate, commit; the gate FAILS
+   (listing the files present) if the derived file is missing, and a
+   superseded snapshot left in the tree can never silently pass with
+   unowned exclusions. Never hardcode the snapshot filename in the
+   gate: the hardcoded `go1.27.1.json` it replaced passed against the
+   stale file while the harness read the new one.
 5. **This lane does not fix the underlying bugs.** In particular
    `14_goroutines_sum` is a known scheduler bug ("scheduler loses partial
    sums") owned by the scheduler lane; this manifest only records its
