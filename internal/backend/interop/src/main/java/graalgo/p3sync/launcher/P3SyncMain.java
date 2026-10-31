@@ -41,6 +41,8 @@ import graalgo.rtstack.RuntimeFuncFileLineNode;
 import graalgo.rtstack.RuntimeFuncForPCNode;
 import graalgo.rtstack.RuntimeFuncNameNode;
 import graalgo.p3link.LinknameIntrinsics;
+import graalgo.p3net.GoNet;
+import graalgo.p3net.GoNetpoll;
 import graalgo.p3os.GoOs;
 import graalgo.p3sync.nodes.AtomicAddrNode;
 import graalgo.p3sync.nodes.AtomicPtrOpNode;
@@ -512,6 +514,15 @@ public final class P3SyncMain {
         for (int i = 0; i < goArgs.size(); i++) {
             goArgv[i + 1] = goArgs.get(i);
         }
+        // L2: per-run reset of every process-wide registry in a reused
+        // JVM (batch runs, repeated launcher invocations). The netpoller
+        // and socket-state tables reset first (selector closed, descs
+        // dropped); GoOs.init then closes — not just clears — every
+        // handle left by the previous run before re-seeding stdio.
+        // Without this, a second run in the same JVM inherited the
+        // first run's open files, sockets, and pollDescs.
+        GoNetpoll.resetForRun();
+        GoNet.resetForRun();
         GoOs.init(goArgv);
 
         // Install the scheduler and run main as the first goroutine
@@ -552,6 +563,13 @@ public final class P3SyncMain {
             System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
             return EXIT_INPUT_ERROR;
         } finally {
+            // L2: stop the run's scheduler — drainer and timer threads
+            // included — before restoring the previous scheduler.
+            // Previously every run leaked its drainer + timer platform
+            // threads (and any scheduler state) into the next run in a
+            // reused JVM. stop() is idempotent and terminal for this
+            // scheduler instance; the next run creates a fresh one.
+            sched.stop();
             SchedulerCore.install(prev);
         }
         // M9: dump even on panic (partial traces are marked as such by

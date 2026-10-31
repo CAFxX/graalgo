@@ -531,6 +531,31 @@ public final class GoOsErrnoTest {
         checkEq(0, GoOs.close(r + 1), "close write");
     }
 
+    /**
+     * L2: a per-run reset closes handles, not just clears the table.
+     * Open a file, capture its channel, reset, and prove the channel
+     * itself is closed (a cleared-but-open channel is the leak: the
+     * cookie is gone either way, so only the channel distinguishes
+     * the two). Stdio cookies are re-seeded by the reset and must
+     * stay usable.
+     */
+    public void testResetClosesHandles() throws IOException {
+        try {
+            initScratch();
+            String name = scratch.resolve("reset-closes.txt").toString();
+            long h = GoOs.open(gs(name), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            check(h >= 16, "open cookie");
+            java.nio.channels.Channel ch = GoOs.channelForTest(h);
+            check(ch != null && ch.isOpen(), "channel open before reset");
+            GoOs.init(new String[0]);
+            check(!ch.isOpen(), "reset must close the previous run's channel");
+            checkEq(-GoOs.EBADF, GoOs.handleKind(h), "old cookie gone after reset");
+            checkEq(GoOs.KIND_STDIO, GoOs.handleKind(2L), "stdio re-seeded after reset");
+        } finally {
+            cleanScratch();
+        }
+    }
+
     public void testStdio() {
         GoOs.init(new String[0]);
         checkEq(1, GoOs.stdio(0L), "stdin cookie");

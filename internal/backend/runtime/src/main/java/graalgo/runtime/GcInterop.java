@@ -41,9 +41,12 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  *       finalizer is invoked with a {@code nil} argument — a Cleaner action
  *       is denied the referent and the original object cannot be recovered
  *       on a pure JVM. Finalizers that dereference their argument diverge
- *       from gc (loudly, not silently). The finalizer runs on the Cleaner's
- *       JVM thread, not a goroutine: touching scheduler state from a
- *       finalizer body fail-fasts.
+ *       from gc (loudly, not silently). The finalizer body runs on a
+ *       scheduler goroutine when one is installed (L2: so it may park,
+ *       and so an uncaught panic is recorded as a Go panic, exit 2,
+ *       exactly like any other goroutine's panic); with no scheduler
+ *       installed (unit tests, Phase-1 runs) it runs on the Cleaner
+ *       thread with the old loud-print fallback.
  *   <li>{@code runtime.KeepAlive} — {@link java.lang.ref.Reference#reachabilityFence}.
  *   <li>{@code runtime.GC()} — {@code System.gc()} + poll of GC MXBean
  *       collection counts until they advance, bounded 30 s timeout. If the
@@ -73,30 +76,28 @@ public final class GcInterop {
     private static final java.lang.ref.Cleaner CLEANER = java.lang.ref.Cleaner.create();
     /**
      * Obj -> registration, for {@code SetFinalizer(obj, nil)} removal.
-     * STRONG keys: the registration keeps the GoPointer alive until the
-     * program either cancels (SetFinalizer(x, nil)) or calls runtime.GC().
-     * This is necessary because the interpreter frame's reference may not
-     * be a timely GC root (JIT liveness can collect the GoPointer between
-     * the register and cancel calls, before the Go program nils x).
      *
      * <p>Weak keys so the registry never keeps a finalizable object alive
-     * (that would defeat the phantom). The weak key is safe because
-     * {@link #PINNED} keeps the GoPointer strongly reachable until the
-     * program calls {@link #gc()} or cancels. GoPointer uses identity
-     * equality, so weak-key semantics are identity semantics here. Guarded
-     * by {@link #FINALIZER_LOCK}.
+     * (that would defeat the phantom). L2: there is deliberately NO
+     * strong pin set here. An earlier design kept every registered
+     * GoPointer strongly reachable until the program called
+     * {@code runtime.GC()} (or cancelled), which meant a finalizer
+     * could never fire without an explicit GC call — and the retained
+     * objects leaked forever in programs that never call it (the
+     * documented DIV-M4-10 divergence). The pin now lasts only for
+     * the register/cancel window itself: {@code setFinalizer} holds
+     * {@code obj} as a parameter for the whole call and ends with a
+     * {@link java.lang.ref.Reference#reachabilityFence}, so the object
+     * cannot be collected mid-registration or mid-cancellation.
+     * After the call returns, lifetime is natural (tied to Go
+     * variables, exactly like gc): a Go program that needs the object
+     * alive past its last use must use {@code runtime.KeepAlive},
+     * like gc. GoPointer uses identity equality, so weak-key semantics
+     * are identity semantics here. Guarded by {@link #FINALIZER_LOCK}.
      */
     private static final Object FINALIZER_LOCK = new Object();
     private static final Map<Object, FinalizerAction> BY_OBJ =
             new WeakHashMap<>();
-    /**
-     * Strong references to registered GoPointers, released on {@link #gc()}.
-     * Keeps the referent alive across the register/cancel window. The
-     * explicit GC call is the program's signal that setup is complete; after
-     * release, lifetimes are natural (tied to Go variables). Guarded by
-     * {@link #FINALIZER_LOCK}.
-     */
-    private static final java.util.Set<Object> PINNED = new java.util.HashSet<>();
 
     /**
      * A cancellable finalizer action. The Cleaner API has no "unregister"
@@ -115,11 +116,40 @@ public final class GcInterop {
             if (cancelled) {
                 return;
             }
+            // L2: run the body on a scheduler goroutine, not the
+            // Cleaner thread. On the Cleaner thread a finalizer body
+            // could not park (scheduler state fail-fasts off-goroutine)
+            // and a panic had nowhere to go (only a stderr print).
+            // On a goroutine, SchedulerCore.spawn records an uncaught
+            // Go panic exactly like any other goroutine's (printed
+            // traceback, launcher exit 2) and a Goexit kills just that
+            // goroutine — gc's finalizer-goroutine semantics. The
+            // spawn is fire-and-forget: the Cleaner thread must not
+            // block on the goroutine (a finalizer that parks would
+            // deadlock the Cleaner), and quiescence accounting (the
+            // spawned goroutine counts as live until it finishes) means
+            // a launcher still in awaitQuiescence waits for it. (A
+            // finalizer that fires after the launcher has already passed
+            // quiescence still races process exit, as in gc — no
+            // finalizer is guaranteed to run before exit.)
+            graalgo.sched.SchedulerCore sched =
+                    graalgo.sched.SchedulerCore.installedOrNull();
+            if (sched != null && !sched.isStopped()) {
+                try {
+                    sched.spawn(() -> GoCalls.invoke(fn, new Object[] { null }));
+                    return;
+                } catch (RuntimeException e) {
+                    // Scheduler gone mid-dispatch (stopped concurrently):
+                    // fall through to the direct fallback below rather
+                    // than dropping the finalizer silently.
+                }
+            }
             try {
                 GoCalls.invoke(fn, new Object[] { null });
             } catch (Throwable t) {
-                // gc: a panicking finalizer crashes the program. We cannot
-                // crash the host from here; be loud instead.
+                // No scheduler (unit tests / Phase-1 runs): the old
+                // loud-print fallback. A panicking finalizer here cannot
+                // crash the host from the Cleaner thread; be loud.
                 System.err.println("graalgo: finalizer panicked: " + t);
                 t.printStackTrace(System.err);
             }
@@ -162,7 +192,6 @@ public final class GcInterop {
                             "runtime.SetFinalizer: finalizer already set");
                 }
                 old.cancelled = true; // cancel; the Cleaner action will no-op
-                PINNED.remove(obj);
             }
             if (fn == null) {
                 return;
@@ -172,8 +201,9 @@ public final class GcInterop {
             FinalizerAction action = new FinalizerAction(fn, System.identityHashCode(obj));
             CLEANER.register(obj, action);
             BY_OBJ.put(obj, action);
-            PINNED.add(obj);
             // Fence: keep obj alive until the registration is complete.
+            // This fence (plus the parameter itself) is the whole pin:
+            // it lasts for this call only (see BY_OBJ javadoc).
             // Without this, the JIT may consider obj dead after its last use
             // above and the Cleaner may fire prematurely.
             java.lang.ref.Reference.reachabilityFence(obj);
@@ -226,13 +256,9 @@ public final class GcInterop {
      */
     public static void gc() {
         FORCED_GC_COUNT.incrementAndGet();
-        // Release pinned GoPointers: the explicit GC is the program's signal
-        // that setup is complete. After this, lifetimes are natural (tied to
-        // Go variables), and the Cleaner can collect them. BY_OBJ (weak) is
-        // retained for cancellation lookups. (See PINNED javadoc.)
-        synchronized (FINALIZER_LOCK) {
-            PINNED.clear();
-        }
+        // L2: no pin set to release anymore — lifetimes are natural
+        // from registration on (see BY_OBJ javadoc), so an explicit GC
+        // is a collection request only, not a finalizer gate.
         long before = totalCollections();
         System.gc();
         if (before < 0) {

@@ -38,7 +38,7 @@ public final class GcDifferentialTest {
     /** Programs with graalgo-specific (non-gc-differential) assertions. */
     private static final List<String> NON_DIFFERENTIAL = List.of(
             "gc06_finalizer_panic",
-            "gc07_finalizer_gated");
+            "gc07_finalizer_ungated");
 
     /** Stdout + stderr + exit code from a subprocess run. */
     private static final class ProcessResult {
@@ -181,31 +181,44 @@ public final class GcDifferentialTest {
     }
 
     /**
-     * gc06: a finalizer that dereferences its nil argument must be LOUD.
-     * (DIV-M4-1: not silent.) stdout must be "survived"; stderr must contain
-     * the "graalgo: finalizer panicked:" diagnostic. No .expected file —
-     * gc would fatal-crash here, so this is graalgo-specific behavior.
+     * gc06: a finalizer that dereferences its nil argument must be a Go
+     * panic (DIV-M4-1: not silent). L2: the finalizer body runs on a
+     * scheduler goroutine, so the panic is recorded as an uncaught Go
+     * panic — traceback on stderr, exit 2 — instead of the old
+     * Cleaner-thread "graalgo: finalizer panicked:" print with exit 0.
+     * stdout is still "survived": a panic in the finalizer goroutine
+     * does not kill main (graalgo-specific nuance vs gc's fatal crash).
+     * No .expected file — gc would fatal-crash here, so this is
+     * graalgo-specific behavior.
      */
     public void testGc06FinalizerPanicIsLoud() throws Exception {
         ProcessResult r = runGoFull("gc06_finalizer_panic");
         assertEquals("survived\n", r.stdout, "gc06 stdout");
-        if (!r.stderr.contains("graalgo: finalizer panicked:")) {
+        if (!r.stderr.contains("panic:")) {
             throw new AssertionError(
-                    "gc06: expected loud finalizer-panic diagnostic on stderr, got:\n" + r.stderr);
+                    "gc06: expected Go panic traceback on stderr, got:\n" + r.stderr);
+        }
+        if (r.exitCode != 2) {
+            throw new AssertionError(
+                    "gc06: expected exit 2 (uncaught Go panic), got " + r.exitCode);
         }
     }
 
     /**
-     * gc07: finalizers are gated on an explicit runtime.GC() (DIV-M4-10).
-     * Allocation pressure without the explicit call must NOT run the
-     * finalizer (PINNED is a strong root — deterministic); after
-     * runtime.GC() releases the pin, the finalizer must run. No .expected
-     * file — gc finalizes without the explicit call, so this is
-     * graalgo-specific behavior.
+     * gc07: finalizers are NOT gated on an explicit runtime.GC() (L2
+     * retired DIV-M4-10). Allocation pressure without any explicit GC
+     * call must run the finalizer. No .expected file — this asserts
+     * graalgo behavior against the old gating, not against gc output
+     * (gc would also finalize here; the program is written so both
+     * agree on "finalized").
      */
-    public void testGc07FinalizerGatedOnExplicitGc() throws Exception {
-        ProcessResult r = runGoFull("gc07_finalizer_gated");
-        assertEquals("gated\nreleased\n", r.stdout, "gc07 stdout");
+    public void testGc07FinalizerUngated() throws Exception {
+        ProcessResult r = runGoFull("gc07_finalizer_ungated");
+        assertEquals("finalized\n", r.stdout, "gc07 stdout");
+        if (r.exitCode != 0) {
+            throw new AssertionError(
+                    "gc07: expected exit 0, got " + r.exitCode + "\nstderr:\n" + r.stderr);
+        }
     }
 
     /**

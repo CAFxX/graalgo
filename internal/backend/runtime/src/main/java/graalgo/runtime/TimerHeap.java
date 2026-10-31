@@ -92,6 +92,8 @@ public final class TimerHeap {
     private final AtomicLong idGen = new AtomicLong(1);
     private final AtomicLong seqGen = new AtomicLong(1);
     private Thread timerThread;
+    /** Set by {@link #stop()}; the timer loop exits at the next wait. */
+    private volatile boolean stopping;
 
     public TimerHeap(SchedulerCore sched) {
         if (sched == null) {
@@ -102,11 +104,42 @@ public final class TimerHeap {
 
     /** Starts the timer thread. Idempotent; called by SchedulerCore.start(). */
     public synchronized void start() {
+        if (stopping) {
+            throw new IllegalStateException(
+                    "graalgo-timer: timer heap already stopped");
+        }
         if (timerThread != null) {
             return;
         }
         timerThread = Thread.ofPlatform().daemon(true).name("graalgo-timer")
                 .start(this::timerLoop);
+    }
+
+    /**
+     * Stops the timer thread. Idempotent; only called after quiescence
+     * (SchedulerCore.stop), so no timer may still be pending in a live
+     * program — pending entries are abandoned, never fired. Joins
+     * briefly (daemon thread, so a thread that refuses to die cannot
+     * block JVM exit).
+     */
+    public void stop() {
+        Thread t;
+        synchronized (lock) {
+            if (stopping) {
+                return;
+            }
+            stopping = true;
+            lock.notifyAll();
+            t = timerThread;
+        }
+        if (t != null && t != Thread.currentThread()) {
+            t.interrupt();
+            try {
+                t.join(1000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     /**
@@ -195,8 +228,18 @@ public final class TimerHeap {
                 return false;
             }
             e.cancelled = true;
-            // Lazy removal from the heap: the timer loop skips cancelled
-            // heads. Wake it in case it is waiting on this entry.
+            // L2: eager removal, not lazy. The old lazy scheme left a
+            // cancelled entry in the PriorityQueue until it reached the
+            // head — with a far-future head, every cancelled timer
+            // leaked its entry (and its channel/handle references)
+            // indefinitely, so the heap grew with total cancellations
+            // instead of pending timers. PriorityQueue.remove is O(n)
+            // in pending count; cancel is not a hot path (fires are),
+            // and bounded memory beats a linear scan here. The timer
+            // loop's cancelled-head skip stays as a belt-and-braces
+            // guard for entries popped concurrently with cancel.
+            heap.remove(e);
+            // Wake the timer loop in case it is waiting on this entry.
             lock.notifyAll();
             return true;
         }
@@ -287,6 +330,9 @@ public final class TimerHeap {
             return false;
         }
         e.cancelled = true;
+        // Same eager-removal discipline as cancel(): stop/reset must
+        // not leave a dead entry behind either.
+        heap.remove(e);
         return true;
     }
 
@@ -311,18 +357,37 @@ public final class TimerHeap {
         }
     }
 
+    /**
+     * Raw heap size (including any entry not yet reaped); tests only.
+     * After a cancel the heap size must fall with pendingCount —
+     * a divergence between the two is the cancelled-entry leak.
+     */
+    int heapSizeForTest() {
+        synchronized (lock) {
+            return heap.size();
+        }
+    }
+
     private void timerLoop() {
         for (;;) {
             final Entry e;
             synchronized (lock) {
                 Entry next;
                 for (;;) {
+                    if (stopping) {
+                        return;
+                    }
                     next = heap.peek();
                     if (next == null) {
                         try {
                             lock.wait();
                         } catch (InterruptedException ie) {
-                            continue; // non-terminating, like the drainer
+                            // Non-terminating, like the drainer — unless
+                            // stop() asked for it.
+                            if (stopping) {
+                                return;
+                            }
+                            continue;
                         }
                         continue;
                     }
@@ -337,7 +402,9 @@ public final class TimerHeap {
                     try {
                         lock.wait(wait / 1_000_000L, (int) (wait % 1_000_000L));
                     } catch (InterruptedException ie) {
-                        // Re-check: a new earlier timer may have arrived.
+                        // Re-check: a new earlier timer may have arrived,
+                        // or stop() may have asked for shutdown (checked
+                        // at the top of the loop).
                     }
                 }
                 e = heap.poll();

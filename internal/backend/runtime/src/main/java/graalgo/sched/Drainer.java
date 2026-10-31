@@ -63,14 +63,44 @@ public final class Drainer {
         this.sched = sched;
     }
 
+    /** Set by {@link #stop()}; the drain loop exits at the next take. */
+    private volatile boolean stopping;
+
     /** Starts the drainer platform thread. Idempotent. */
     synchronized void start() {
+        if (stopping) {
+            throw new IllegalStateException(
+                    "graalgo.sched: drainer already stopped");
+        }
         if (drainerThread != null) {
             return;
         }
         drainerThread = Thread.ofPlatform().daemon(true).name("graalgo-drainer")
                 .start(this::drainLoop);
         drainerThread.setPriority(Thread.MAX_PRIORITY);
+    }
+
+    /**
+     * Stops the drainer thread. Idempotent; only called after
+     * quiescence (SchedulerCore.stop), so the inbox/lanes must be
+     * empty — any token still queued is abandoned, never admitted.
+     * Interrupts the blocking take; joins briefly (daemon thread, so
+     * a thread that refuses to die cannot block JVM exit).
+     */
+    synchronized void stop() {
+        if (stopping) {
+            return;
+        }
+        stopping = true;
+        Thread t = drainerThread;
+        if (t != null && t != Thread.currentThread()) {
+            t.interrupt();
+            try {
+                t.join(1000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     /** Package-private for tests: the drainer thread (to interrupt it). */
@@ -99,12 +129,18 @@ public final class Drainer {
 
     private void drainLoop() {
         for (;;) {
+            if (stopping) {
+                return;
+            }
             final ResumeToken token;
             try {
                 token = inbox.take();
             } catch (InterruptedException ie) {
                 // Non-terminating drainer: a stray interrupt must not kill
-                // the scheduler. Swallow and continue.
+                // the scheduler — unless stop() asked for it.
+                if (stopping) {
+                    return;
+                }
                 continue;
             }
             try {
@@ -148,6 +184,18 @@ public final class Drainer {
                             "goroutine g" + token.handle.id
                                     + " exited while in blocking I/O (unpaired ioEnter)");
                 }
+                // L2: a dead goroutine can still own park bookkeeping —
+                // a stashed UNPARK that arrived before its last park
+                // (spurious-wakeup tolerance) or a PARKED record whose
+                // wakeup was consumed another way. Handle ids are never
+                // reused, so the leak is bounded per goroutine, but
+                // over a long run it grows without bound and pollutes
+                // snapshots. EXIT is terminal for the handle: purge
+                // both maps. (A UNPARK offered *after* EXIT still
+                // stashes — it names a handle that will never park
+                // again — but no live goroutine's state is retained.)
+                parked.remove(token.handle.id);
+                unparkPending.remove(token.handle.id);
             }
             case PARKED -> {
                 if (inIo.contains(token.handle.id)) {

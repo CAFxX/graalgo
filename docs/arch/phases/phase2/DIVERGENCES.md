@@ -136,25 +136,20 @@ type metadata for attribution (Phase 4+).
 
 ### DIV-M4-9: `debug.FreeOSMemory` unsupported (no JVM analog)
 
-### DIV-M4-10: finalizers run only after an explicit `runtime.GC()` (registration pins the object)
+### DIV-M4-10 (retired, L2 remediation lane review-backend-runtime): finalizers are no longer gated on an explicit `runtime.GC()`
 
-`GcInterop.setFinalizer` keeps every registered object in a static strong
-set (`PINNED`) until the Go program calls `runtime.GC()` (or cancels via
-`SetFinalizer(x, nil)`). The pin bridges the register/cancel liveness
-window, but it also means: a program that registers a finalizer, drops
-the object, and never calls `runtime.GC()` sees the finalizer **never
-run** — and the object retained **forever** (`PINNED` grows unboundedly,
-a genuine memory leak). gc runs finalizers when the object becomes
-unreachable; no explicit GC call is needed.
-
-Consequence: Go programs that rely on prompt finalization without an
-explicit GC must be restructured (call `runtime.GC()` at quiescent
-points, or use explicit cleanup). Finalizers that do run behave per
-DIV-M4-1/DIV-M4-2.
-
-**Re-test trigger:** if the pinning design changes (e.g. per-object
-reachability fences at the Go call sites instead of the global set),
-re-run the GC differential corpus and drop this entry.
+Formerly, `GcInterop.setFinalizer` kept every registered object in a
+static strong set (`PINNED`) until the Go program called `runtime.GC()`
+(or cancelled), so a finalizer could never fire without an explicit GC
+call and the objects leaked forever in programs that never call it.
+The pin now lasts only for the `setFinalizer` call itself (parameter +
+reachability fence); after that, lifetime is natural, like gc, and
+finalizers run when the object becomes unreachable. The corpus program
+`gc07_finalizer_gated` was replaced by `gc07_finalizer_ungated`, which
+asserts finalization under allocation pressure with no explicit GC
+call. Finalizers that do run behave per DIV-M4-1/DIV-M4-2 (with the L2
+change that the body runs on a scheduler goroutine, so a panicking
+finalizer is an uncaught Go panic, exit 2 — see gc06).
 
 `debug.FreeOSMemory()` forces a GC *and* returns memory to the OS. There is
 no JVM analog: `System.gc()` suggests collection but does not compel the OS

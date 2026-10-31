@@ -376,6 +376,28 @@ public final class GoOs {
     }
 
     private static void resetState(String[] argv) {
+        // L2: close, not just clear. The old code dropped every handle
+        // reference without closing its channel, so a reused JVM (batch
+        // runs, repeated launcher invocations) leaked the previous
+        // run's files, pipes, and sockets — and their netpoller state
+        // outlived the table that named them. Close every handle first
+        // (sockets evict their pollDesc first, exactly like close());
+        // stdio handles are closeUnderlying=false, so closing them is
+        // a no-op and the real System streams are never closed. Best
+        // effort per handle: one failing close must not abort the
+        // reset of the rest. The static initializer calls this with an
+        // empty table, so no netpoller class is loaded at class-load.
+        for (Map.Entry<Long, Handle> e : HANDLES.entrySet()) {
+            Handle h = e.getValue();
+            if (h.kind == KIND_SOCKET) {
+                graalgo.p3net.GoNetpoll.evictForClose(e.getKey());
+            }
+            try {
+                h.close();
+            } catch (IOException | RuntimeException ignored) {
+                // Best effort; the table is cleared regardless.
+            }
+        }
         HANDLES.clear();
         NEXT_COOKIE.set(16);
         ENV_OVERLAY.clear();
@@ -621,6 +643,17 @@ public final class GoOs {
     private static ChannelHandle channelHandle(long h) {
         Handle handle = HANDLES.get(h);
         return handle instanceof ChannelHandle ch ? ch : null;
+    }
+
+    /**
+     * Test hook: the NIO channel behind a cookie, or null. Lets tests
+     * prove a per-run reset actually closed the channel (not merely
+     * dropped the table entry): a cleared-but-open channel is the
+     * leak this hook distinguishes.
+     */
+    static Channel channelForTest(long cookie) {
+        ChannelHandle ch = channelHandle(cookie);
+        return ch == null ? null : ch.ch;
     }
 
     // ------------------------------------------------------------------

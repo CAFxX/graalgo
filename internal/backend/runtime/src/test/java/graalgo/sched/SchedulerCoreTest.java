@@ -31,6 +31,43 @@ public final class SchedulerCoreTest {
         }
     }
 
+    /**
+     * L2: stop() is idempotent and terminal. After quiescence, stop
+     * shuts the drainer/timer threads down; spawn and start after stop
+     * fail fast instead of parking a goroutine on a dead drainer, and
+     * a second stop is a no-op.
+     */
+    public void testStopIsIdempotentAndTerminal() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicInteger done = new AtomicInteger();
+            sched.spawn(done::incrementAndGet);
+            sched.awaitQuiescence();
+            assertEquals(1, done.get(), "goroutine ran before stop");
+            sched.stop();
+            assertTrue(sched.isStopped(), "isStopped after stop");
+            sched.stop(); // idempotent, must not throw
+            boolean threw = false;
+            try {
+                sched.spawn(done::incrementAndGet);
+            } catch (IllegalStateException e) {
+                threw = true;
+            }
+            assertTrue(threw, "spawn after stop must fail fast");
+            threw = false;
+            try {
+                sched.start();
+            } catch (IllegalStateException e) {
+                threw = true;
+            }
+            assertTrue(threw, "start after stop must fail fast");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
     // ---------- spawn / join / quiescence ----------
 
     /**

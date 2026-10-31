@@ -1,7 +1,9 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -46,11 +48,17 @@ public final class GoMutex {
 
     /** Releases the lock, waking the longest-waiting contender (FIFO). */
     public void unlock() {
-        SchedulerCore sched = SchedulerCore.current();
         GoroutineHandle next;
         synchronized (this) {
             if (!locked) {
-                throw new IllegalStateException("sync: unlock of unlocked mutex");
+                // L2: gc panics here ("sync: unlock of unlocked mutex").
+                // A Java IllegalStateException reached the launcher as
+                // an internal error (exit 1); a Go panic reaches it as
+                // an uncaught Go panic (exit 2) and is recoverable by
+                // the goroutine's own defer/recover, like GoChan.close.
+                // The misuse check precedes the scheduler lookup so the
+                // panic does not depend on a scheduler being installed.
+                Panic.throwPanic(GoString.fromUtf8("sync: unlock of unlocked mutex"));
             }
             next = waiters.pollFirst();
             if (next == null) {
@@ -59,7 +67,7 @@ public final class GoMutex {
             // else: locked stays true, ownership transfers to next.
         }
         if (next != null) {
-            sched.unpark(next);
+            SchedulerCore.current().unpark(next);
         }
     }
 

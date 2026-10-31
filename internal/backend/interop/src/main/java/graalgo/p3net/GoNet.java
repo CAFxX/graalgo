@@ -171,9 +171,21 @@ public final class GoNet {
 
     private static final ConcurrentHashMap<Long, SockState> STATES = new ConcurrentHashMap<>();
 
+    /**
+     * Per-run reset: drops every socket's control state. Called by
+     * the launcher between program runs in a reused JVM; the socket
+     * channels themselves are closed by GoOs's per-run reset, and
+     * the netpoller by {@link GoNetpoll#resetForRun}. Kept separate
+     * from the channel table because the two tables are owned by
+     * different classes and must both be reset, in either order.
+     */
+    public static void resetForRun() {
+        STATES.clear();
+    }
+
     /** Clears per-run socket state (tests). The GoOs handle table is reset separately. */
     public static void resetForTest() {
-        STATES.clear();
+        resetForRun();
     }
 
     // ------------------------------------------------------------------

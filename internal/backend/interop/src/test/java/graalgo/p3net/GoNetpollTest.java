@@ -673,6 +673,12 @@ public final class GoNetpollTest {
         }
     }
 
+    /**
+     * L2: close w/o unblock is a Go panic (PanicException), not a Java
+     * IllegalStateException: gc's runtime pollClose throws fatally, and
+     * the graalgo carrier for a fatal runtime throw is the Go panic
+     * path (launcher exit 2), not the internal-error path (exit 1).
+     */
     public void testCloseWithoutUnblockFailsFast() {
         SchedulerCore prev = setup();
         try {
@@ -680,8 +686,10 @@ public final class GoNetpollTest {
             try {
                 GoNetpoll.pollClose(srv[1]);
                 throw new AssertionError("expected throw on close w/o unblock");
-            } catch (IllegalStateException e) {
-                assertTrue(e.getMessage().contains("w/o unblock"), "message: " + e.getMessage());
+            } catch (graalgo.runtime.PanicException pe) {
+                assertTrue(graalgo.values.GoString.fromUtf8(
+                        "runtime: close polldesc w/o unblock").equals(pe.goValue()),
+                        "panic value: " + pe.goValue());
             }
             closeSock(srv[0], srv[1]);
         } finally {

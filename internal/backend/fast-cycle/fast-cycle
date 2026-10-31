@@ -21,6 +21,7 @@ JAVA="$GRAALVM_HOME/bin/java"
 JAVAC="$GRAALVM_HOME/bin/javac"
 PORT=47321
 PORT_FILE="$HOME/.fastcycle.port"
+TOKEN_FILE="$HOME/.fastcycle.token"
 
 TRUFFLE="$BACKEND/truffle"
 RUNTIME="$BACKEND/runtime"
@@ -42,7 +43,7 @@ daemon_pid() {
 }
 
 ensure_daemon() {
-    if echo "PING" | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"; then
+    if send "PING" 2>/dev/null | grep -q "PONG"; then
         return 0
     fi
     # Start the daemon
@@ -59,9 +60,10 @@ ensure_daemon() {
         -cp "$HERE:$FULL_CP" FastCycleDaemon \
         >"$HERE/daemon.log" 2>&1 < /dev/null &
     disown
-    # Wait for readiness
+    # Wait for readiness (send() reads the token file the daemon just wrote;
+    # early attempts with a stale/missing token are rejected and retried)
     for i in $(seq 1 30); do
-        if echo "PING" | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"; then
+        if send "PING" 2>/dev/null | grep -q "PONG"; then
             echo "Daemon ready." >&2
             return 0
         fi
@@ -72,7 +74,14 @@ ensure_daemon() {
 }
 
 send() {
-    echo "$1" | timeout 120 nc 127.0.0.1 $PORT
+    # Every command is preceded by the per-daemon auth token (0600 file
+    # in $HOME, readable only by this user); without it the daemon
+    # answers AUTH_REQUIRED and serves nothing.
+    local token=""
+    if [ -f "$TOKEN_FILE" ]; then
+        token=$(tr -d '[:space:]' < "$TOKEN_FILE" 2>/dev/null || true)
+    fi
+    printf 'AUTH %s\n%s\n' "$token" "$1" | timeout 120 nc 127.0.0.1 $PORT
 }
 
 # Map a .java source path to its module, output dir, and joint-round membership.
@@ -273,7 +282,8 @@ do_test() {
             fi
         fi
         # Test classpath: test classes first, then main.
-        # RUNTEST invokes methods directly (no System.exit).
+        # RUNTEST runs methods in a guest subprocess via the daemon's
+        # TestRunner (a guest System.exit kills only that subprocess).
         # Pass the phase1 dir property (matches the Makefile's P1_DIR_PROP).
         # $BACKEND is internal/backend, so phases is ../../phases.
         local p1dir="$BACKEND/../../phases/phase1"

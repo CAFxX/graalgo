@@ -1,6 +1,7 @@
 // FastCycleDaemon.java — persistent JVM for sub-second edit-compile-run cycles.
 //
 // Protocol (line-based, TCP on localhost):
+//   AUTH <token>
 //   PING
 //     -> PONG
 //   COMPILE <outdir> <classpath> <processorpath> <file1> <file2> ...
@@ -10,23 +11,75 @@
 //   STOP
 //     -> BYE (then exits)
 //
+// The AUTH line is mandatory on every connection and precedes the
+// command line. The token is generated per daemon start, written to
+// ~/.fastcycle.token with owner-only (0600) permissions, and read by
+// the fast-cycle client. Loopback TCP alone is NOT an authorization
+// boundary — any local uid can connect to 127.0.0.1 — so the token is
+// what makes the daemon per-user: only a process running as the same
+// user (able to read the 0600 token file) can ask it to compile or run
+// code. Unauthenticated connections get AUTH_REQUIRED and nothing else.
+//
 // COMPILE uses the in-process JavaCompiler API (no JVM startup).
-// RUN loads the main class in a fresh URLClassLoader per invocation so
-// recompiled classes are picked up and static state doesn't leak.
+// Annotation processors on the processorpath run in-process by design,
+// so COMPILE is trusted same-user input only, like any local build.
+//
+// RUN/RUNTEST execute the guest in a fresh SUBPROCESS (never in the
+// daemon JVM). That closes all three in-process guest hazards at once:
+//   - a guest System.exit kills only the subprocess (its exit code is
+//     reported as EXIT:<code>, exactly like a real process run);
+//   - guest stdout/stderr are the subprocess's streams, captured by
+//     the daemon — no global System.out/err swapping, which was
+//     racy across daemon threads and never restored on System.exit;
+//   - guest classloaders live and die with the subprocess (the test
+//     runner closes its URLClassLoader explicitly), so no loader or
+//     static state leaks into the daemon between runs.
 
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermission;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.util.*;
 import javax.tools.*;
 
 public class FastCycleDaemon {
     static final int PORT = 47321;
 
+    /** Per-start secret, hex-encoded (256 bits). */
+    private static final String TOKEN = generateToken();
+    private static final Path TOKEN_FILE =
+            Paths.get(System.getProperty("user.home"), ".fastcycle.token");
+
+    private static String generateToken() {
+        byte[] raw = new byte[32];
+        new SecureRandom().nextBytes(raw);
+        StringBuilder sb = new StringBuilder(raw.length * 2);
+        for (byte b : raw) {
+            sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+            sb.append(Character.forDigit(b & 0xF, 16));
+        }
+        return sb.toString();
+    }
+
     public static void main(String[] args) throws Exception {
         // Pre-warm the compiler
         ToolProvider.getSystemJavaCompiler();
+
+        // Publish the token owner-only BEFORE accepting connections:
+        // a connection that arrives before the token file exists cannot
+        // authenticate, and a world-readable token would be no token.
+        Files.writeString(TOKEN_FILE, TOKEN + "\n", StandardCharsets.UTF_8);
+        try {
+            Files.setPosixFilePermissions(TOKEN_FILE,
+                    EnumSet.of(PosixFilePermission.OWNER_READ,
+                            PosixFilePermission.OWNER_WRITE));
+        } catch (UnsupportedOperationException ignored) {
+            // Non-POSIX filesystem: the token file lives in $HOME, which
+            // is per-user by construction; permissions are best effort.
+        }
 
         ServerSocket server = new ServerSocket();
         server.bind(new InetSocketAddress("127.0.0.1", PORT));
@@ -52,6 +105,21 @@ public class FastCycleDaemon {
         PrintWriter out = new PrintWriter(
             new OutputStreamWriter(client.getOutputStream(), StandardCharsets.UTF_8), true);
 
+        // First line MUST be the auth token. Constant-time compare so
+        // the token cannot be guessed byte-by-byte from timing.
+        String auth = in.readLine();
+        if (auth == null || !auth.startsWith("AUTH ")) {
+            out.println("AUTH_REQUIRED");
+            return;
+        }
+        String presented = auth.substring("AUTH ".length()).trim();
+        if (!MessageDigest.isEqual(
+                presented.getBytes(StandardCharsets.UTF_8),
+                TOKEN.getBytes(StandardCharsets.UTF_8))) {
+            out.println("AUTH_REQUIRED");
+            return;
+        }
+
         String line = in.readLine();
         if (line == null) return;
 
@@ -63,6 +131,12 @@ public class FastCycleDaemon {
             case "PING" -> out.println("PONG");
             case "STOP" -> {
                 out.println("BYE");
+                out.flush();
+                try {
+                    Files.deleteIfExists(TOKEN_FILE);
+                } catch (IOException ignored) {
+                    // Best effort; the next daemon start overwrites it.
+                }
                 System.exit(0);
             }
             case "COMPILE" -> {
@@ -79,8 +153,8 @@ public class FastCycleDaemon {
             }
             case "RUN" -> {
                 // RUN <classpath> <mainclass> <args...>
-                // Prefers a run(String[]) method returning int (no System.exit);
-                // falls back to main(String[]) (may kill the daemon via System.exit).
+                // Runs main(String[]) in a subprocess: its System.exit
+                // is the subprocess's exit code, never the daemon's.
                 if (parts.length < 3) {
                     out.println("EXIT:2\nusage: RUN <classpath> <mainclass> [args...]");
                     return;
@@ -93,9 +167,8 @@ public class FastCycleDaemon {
             }
             case "RUNTEST" -> {
                 // RUNTEST <classpath> <testclass> [method] [-- <prop>=<val> ...]
-                // Invokes test methods directly (no main, no System.exit).
-                // If method is given, runs just that method; else all test* methods.
-                // Properties after -- are set as system properties for the run.
+                // Runs the test methods in a subprocess via TestRunner
+                // (below): no in-process reflection, no System.exit risk.
                 if (parts.length < 3) {
                     out.println("EXIT:2\nusage: RUNTEST <classpath> <testclass> [method] [-- <prop>=<val>...]");
                     return;
@@ -103,7 +176,7 @@ public class FastCycleDaemon {
                 String cp = parts[1];
                 String testClass = parts[2];
                 String method = null;
-                Map<String, String> props = new HashMap<>();
+                List<String> props = new ArrayList<>();
                 boolean inProps = false;
                 for (int i = 3; i < parts.length; i++) {
                     if (parts[i].equals("--")) {
@@ -111,10 +184,7 @@ public class FastCycleDaemon {
                         continue;
                     }
                     if (inProps) {
-                        int eq = parts[i].indexOf('=');
-                        if (eq > 0) {
-                            props.put(parts[i].substring(0, eq), parts[i].substring(eq + 1));
-                        }
+                        props.add(parts[i]);
                     } else if (method == null) {
                         method = parts[i];
                     }
@@ -163,134 +233,138 @@ public class FastCycleDaemon {
         }
     }
 
-    static String doRun(String cp, String mainClass, String[] args) {
-        // Capture stdout/stderr
-        PrintStream origOut = System.out;
-        PrintStream origErr = System.err;
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        PrintStream ps = new PrintStream(buf, true, StandardCharsets.UTF_8);
-
-        int exitCode = 0;
-        try {
-            System.setOut(ps);
-            System.setErr(ps);
-
-            String[] cpEntries = cp.split(":");
-            java.net.URL[] urls = new java.net.URL[cpEntries.length];
-            for (int i = 0; i < cpEntries.length; i++) {
-                urls[i] = Paths.get(cpEntries[i]).toUri().toURL();
-            }
-            URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
-            Thread.currentThread().setContextClassLoader(cl);
-            Class<?> cls = Class.forName(mainClass, true, cl);
-
-            // Prefer run(String[]) returning int (no System.exit) over main.
-            try {
-                java.lang.reflect.Method run = cls.getDeclaredMethod("run", String[].class);
-                run.setAccessible(true);
-                if (run.getReturnType() == int.class) {
-                    exitCode = (int) run.invoke(null, (Object) args);
-                } else {
-                    run.invoke(null, (Object) args);
-                }
-            } catch (NoSuchMethodException e) {
-                // Fall back to main (may call System.exit and kill the daemon).
-                java.lang.reflect.Method main = cls.getMethod("main", String[].class);
-                try {
-                    main.invoke(null, (Object) args);
-                } catch (java.lang.reflect.InvocationTargetException ite) {
-                    Throwable cause = ite.getCause();
-                    cause.printStackTrace(ps);
-                    exitCode = 1;
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace(ps);
-            exitCode = 1;
-        } finally {
-            System.setOut(origOut);
-            System.setErr(origErr);
-        }
-
-        String output = buf.toString(StandardCharsets.UTF_8);
-        return "EXIT:" + exitCode + "\n" + output.stripTrailing();
+    /** The java binary of the JVM running the daemon. */
+    static String javaBin() {
+        return Paths.get(System.getProperty("java.home"), "bin", "java").toString();
     }
 
-    static String doRunTest(String cp, String testClass, String methodName, Map<String, String> props) {
-        PrintStream origOut = System.out;
-        PrintStream origErr = System.err;
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        PrintStream ps = new PrintStream(buf, true, StandardCharsets.UTF_8);
-
-        // Save and set system properties
-        Map<String, String> savedProps = new HashMap<>();
-        for (Map.Entry<String, String> e : props.entrySet()) {
-            savedProps.put(e.getKey(), System.getProperty(e.getKey()));
-            System.setProperty(e.getKey(), e.getValue());
-        }
-
-        int run = 0;
-        int failed = 0;
+    /**
+     * Runs a command as a subprocess, merging stderr into stdout, and
+     * returns the wire format {@code EXIT:<code>\n<output>}. The
+     * subprocess inherits the daemon's environment (e.g.
+     * GRAALGO_GOFRONTEND) and stdin (the daemon is started with
+     * stdin from /dev/null, so guest stdin reads EOF, as before).
+     */
+    static String runSubprocess(List<String> cmd) {
         try {
-            System.setOut(ps);
-            System.setErr(ps);
-
-            String[] cpEntries = cp.split(":");
-            java.net.URL[] urls = new java.net.URL[cpEntries.length];
-            for (int i = 0; i < cpEntries.length; i++) {
-                urls[i] = Paths.get(cpEntries[i]).toUri().toURL();
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            pb.redirectInput(ProcessBuilder.Redirect.INHERIT);
+            Process p = pb.start();
+            String output;
+            try (InputStream in = p.getInputStream()) {
+                output = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             }
-            URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
-            Thread.currentThread().setContextClassLoader(cl);
-            Class<?> cls = Class.forName(testClass, true, cl);
+            int code = p.waitFor();
+            return "EXIT:" + code + "\n" + output.stripTrailing();
+        } catch (Exception e) {
+            StringWriter sw = new StringWriter();
+            e.printStackTrace(new PrintWriter(sw));
+            return "EXIT:1\n" + sw.toString().stripTrailing();
+        }
+    }
 
-            List<java.lang.reflect.Method> methods = new ArrayList<>();
-            for (java.lang.reflect.Method m : cls.getMethods()) {
-                if (methodName != null) {
-                    if (m.getName().equals(methodName) && m.getParameterCount() == 0) {
+    static String doRun(String cp, String mainClass, String[] args) {
+        List<String> cmd = new ArrayList<>(List.of(
+                javaBin(), "-Xss32m", "--enable-native-access=ALL-UNNAMED",
+                "-cp", cp, mainClass));
+        cmd.addAll(Arrays.asList(args));
+        return runSubprocess(cmd);
+    }
+
+    static String doRunTest(String cp, String testClass, String methodName,
+            List<String> props) {
+        // The runner class lives in the daemon's own classpath; the
+        // guest classpath is appended after it (test classes first in
+        // the guest cp, as the client sends it).
+        String fullCp = System.getProperty("java.class.path") + File.pathSeparator + cp;
+        List<String> cmd = new ArrayList<>(List.of(
+                javaBin(), "-Xss32m", "--enable-native-access=ALL-UNNAMED",
+                "-cp", fullCp, "FastCycleDaemon$TestRunner",
+                testClass, methodName == null ? "" : methodName, cp));
+        cmd.addAll(props);
+        return runSubprocess(cmd);
+    }
+
+    /**
+     * Test runner executed in the guest subprocess (see doRunTest).
+     * Args: testClass, method ("" = all test* methods), guest
+     * classpath, then prop=value pairs applied as system properties
+     * for the run. Loads the test class in a fresh URLClassLoader
+     * over the guest classpath (never the runner's own system
+     * loader, so recompiled test classes are picked up), which is
+     * closed before exiting; the exit code is 0 iff no test failed.
+     */
+    public static class TestRunner {
+        public static void main(String[] args) {
+            if (args.length < 3) {
+                System.err.println("usage: TestRunner <testclass> <method> <guestcp> [prop=val ...]");
+                System.exit(2);
+            }
+            String testClass = args[0];
+            String methodName = args[1].isEmpty() ? null : args[1];
+            String guestCp = args[2];
+            for (int i = 3; i < args.length; i++) {
+                int eq = args[i].indexOf('=');
+                if (eq > 0) {
+                    System.setProperty(args[i].substring(0, eq), args[i].substring(eq + 1));
+                }
+            }
+            int run = 0;
+            int failed = 0;
+            URLClassLoader cl = null;
+            try {
+                String[] entries = guestCp.split(":");
+                java.net.URL[] urls = new java.net.URL[entries.length];
+                for (int i = 0; i < entries.length; i++) {
+                    urls[i] = Paths.get(entries[i]).toUri().toURL();
+                }
+                cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
+                Thread.currentThread().setContextClassLoader(cl);
+                Class<?> cls = Class.forName(testClass, true, cl);
+                List<java.lang.reflect.Method> methods = new ArrayList<>();
+                for (java.lang.reflect.Method m : cls.getMethods()) {
+                    if (methodName != null) {
+                        if (m.getName().equals(methodName) && m.getParameterCount() == 0) {
+                            methods.add(m);
+                        }
+                    } else if (m.getName().startsWith("test") && m.getParameterCount() == 0
+                            && java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
                         methods.add(m);
                     }
-                } else if (m.getName().startsWith("test") && m.getParameterCount() == 0
-                        && java.lang.reflect.Modifier.isPublic(m.getModifiers())) {
-                    methods.add(m);
+                }
+                for (java.lang.reflect.Method m : methods) {
+                    run++;
+                    try {
+                        Object instance = cls.getDeclaredConstructor().newInstance();
+                        m.invoke(instance);
+                        System.out.println("PASS " + cls.getSimpleName() + "." + m.getName());
+                    } catch (Exception e) {
+                        failed++;
+                        Throwable cause = e.getCause() != null ? e.getCause() : e;
+                        System.out.println("FAIL " + cls.getSimpleName() + "." + m.getName() + ": " + cause);
+                    }
+                }
+                System.out.println(run + " tests, " + failed + " failures");
+            } catch (Exception e) {
+                e.printStackTrace(System.out);
+                failed = 1;
+            } finally {
+                if (cl != null) {
+                    try {
+                        cl.close();
+                    } catch (IOException ignored) {
+                        // Best effort; the subprocess exits anyway.
+                    }
                 }
             }
-
-            for (java.lang.reflect.Method m : methods) {
-                run++;
-                try {
-                    Object instance = cls.getDeclaredConstructor().newInstance();
-                    m.invoke(instance);
-                    ps.println("PASS " + cls.getSimpleName() + "." + m.getName());
-                } catch (Exception e) {
-                    failed++;
-                    Throwable cause = e.getCause() != null ? e.getCause() : e;
-                    ps.println("FAIL " + cls.getSimpleName() + "." + m.getName() + ": " + cause);
-                }
-            }
-            ps.println(run + " tests, " + failed + " failures");
-        } catch (Exception e) {
-            e.printStackTrace(ps);
-            failed = 1;
-        } finally {
-            System.setOut(origOut);
-            System.setErr(origErr);
-            // Restore system properties
-            for (Map.Entry<String, String> e : savedProps.entrySet()) {
-                if (e.getValue() == null) {
-                    System.clearProperty(e.getKey());
-                } else {
-                    System.setProperty(e.getKey(), e.getValue());
-                }
-            }
+            System.exit(failed > 0 ? 1 : 0);
         }
-
-        String output = buf.toString(StandardCharsets.UTF_8);
-        return "EXIT:" + (failed > 0 ? 1 : 0) + "\n" + output.stripTrailing();
     }
 
     // Marker for code that calls System.exit (not currently used, but
-    // documents the contract: run targets should return, not exit).
+    // documents the contract: run targets should return, not exit —
+    // and since RUN now uses a subprocess, an exit is harmless anyway).
     static class SystemExitException extends RuntimeException {
         final int code;
         SystemExitException(int code) { this.code = code; }

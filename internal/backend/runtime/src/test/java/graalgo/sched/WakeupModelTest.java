@@ -589,6 +589,33 @@ public final class WakeupModelTest {
     }
 
     /**
+     * L2: EXIT purges the handle's park bookkeeping. A goroutine that
+     * was admitted, received a spurious UNPARK (stashed, never
+     * consumed — it never parked), and then exits must not leave its
+     * id in unparkPending forever: over a long run that set grows with
+     * every such goroutine and pollutes snapshots. The same purge
+     * covers the parked map (a PARKED record for a dead handle).
+     */
+    public void testExitPurgesUnparkPending() {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        Drainer d = sched.drainer();
+        long t0 = sched.armPark(h);
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, h, t0));
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        String before = d.snapshotForTest(null);
+        assertTrue(before.contains("pending=[g" + h.id + "]"),
+                "stashed unpark must be present before EXIT: " + before);
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
+        String after = d.snapshotForTest(null);
+        assertTrue(after.contains("pending=[]"),
+                "EXIT must purge unparkPending: " + after);
+        assertTrue(after.contains("parked={}"),
+                "EXIT must purge parked: " + after);
+    }
+
+    /**
      * Stale unpark after re-arm: the goroutine completes a park/wake
      * cycle, then a STALE unpark arrives while it is RUNNING, then it
      * parks again. The stale unpark stashes and is consumed exactly once

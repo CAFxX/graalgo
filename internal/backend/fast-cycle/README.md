@@ -32,12 +32,20 @@ A persistent JVM daemon (`FastCycleDaemon.java`) holds a warm JVM:
    detection + mtime verification). Output is byte-identical to
    `make build`.
 
-2. **Runs** use a fresh `URLClassLoader` per invocation — picks up
-   recompiled classes, isolates static state. `graalgo.launcher.Main`
-   is invoked via its `run(String[])` method (no `System.exit`).
+2. **Runs** execute in a fresh subprocess per invocation — picks up
+   recompiled classes, isolates static state, and a guest `System.exit`
+   kills only that subprocess (its exit code is reported). The daemon
+   JVM itself never loads guest classes for runs.
 
-3. **Tests** are invoked via `RUNTEST` — test methods are called directly
-   via reflection, bypassing `main` (which calls `System.exit`).
+3. **Tests** are invoked via `RUNTEST` — test methods run in a guest
+   subprocess via the daemon's `TestRunner`, which loads the test class
+   in a fresh `URLClassLoader` and closes it before exiting.
+
+4. **Authentication:** every connection must first send `AUTH <token>`,
+   where the token is generated per daemon start and stored in
+   `~/.fastcycle.token` with owner-only (0600) permissions. Loopback TCP
+   alone authorizes nothing — only a process running as the same user
+   can ask the daemon to compile or run code.
 
 ## Measured cycle times
 

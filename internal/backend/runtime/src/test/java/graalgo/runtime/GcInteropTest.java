@@ -2,7 +2,12 @@ package graalgo.runtime;
 
 import java.lang.ref.WeakReference;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.RootNode;
+
+import graalgo.values.GoFunc;
 import graalgo.values.GoPointer;
 
 /**
@@ -106,6 +111,44 @@ public final class GcInteropTest {
     public void testSetFinalizerRemoveAbsent() {
         GoPointer p = new GoPointer(new Object());
         GcInterop.setFinalizer(p, null); // must not throw
+    }
+
+    /**
+     * L2: a finalizer fires when its object becomes unreachable, with
+     * NO explicit runtime.GC() call. The old PINNED design made this
+     * impossible (the object stayed strongly reachable until gc()).
+     * The registration happens in a helper that returns nothing, so
+     * the GoPointer is unreachable once it returns; plain System.gc()
+     * + allocation pressure (not GcInterop.gc()) must then run the
+     * finalizer. The finalizer body is a trivial GoFunc whose RootNode
+     * sets the flag (no scheduler needed: with none installed, the
+     * Cleaner-thread fallback runs it directly).
+     */
+    public void testFinalizerFiresWithoutExplicitGc() throws Exception {
+        AtomicBoolean fired = new AtomicBoolean();
+        GoFunc fn = new GoFunc(new RootNode(null) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                fired.set(true);
+                return null;
+            }
+        }.getCallTarget(), null, null);
+        registerAndDrop(fn);
+        for (int i = 0; i < 300 && !fired.get(); i++) {
+            System.gc();
+            @SuppressWarnings("unused")
+            byte[] pressure = new byte[1 << 20];
+            Thread.sleep(100);
+        }
+        assertTrue(fired.get(),
+                "finalizer must fire once its object is unreachable, without runtime.GC()");
+    }
+
+    /** Registers a finalizer for a GoPointer that dies on return. */
+    private static void registerAndDrop(GoFunc fn) {
+        GoPointer p = new GoPointer(new Object());
+        GcInterop.setFinalizer(p, fn);
+        // p is not returned and not stored: unreachable after return.
     }
 
     /** gc(): returns promptly (does not hang) on the normal path. */

@@ -1,7 +1,9 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -43,11 +45,12 @@ public final class GoRWMutex {
 
     /** Releases a read lock. */
     public void rUnlock() {
-        SchedulerCore sched = SchedulerCore.current();
         Deque<GoroutineHandle> toWake = new ArrayDeque<>();
         synchronized (this) {
             if (readers <= 0) {
-                throw new IllegalStateException("sync: RUnlock of unlocked RWMutex");
+                // L2: gc panics (see GoMutex.unlock for why this is a
+                // Go panic, not a Java IllegalStateException).
+                Panic.throwPanic(GoString.fromUtf8("sync: RUnlock of unlocked RWMutex"));
             }
             readers--;
             if (readers == 0 && waitingWriters > 0) {
@@ -58,8 +61,11 @@ public final class GoRWMutex {
                 toWake.add(w);
             }
         }
-        for (GoroutineHandle h : toWake) {
-            sched.unpark(h);
+        if (!toWake.isEmpty()) {
+            SchedulerCore sched = SchedulerCore.current();
+            for (GoroutineHandle h : toWake) {
+                sched.unpark(h);
+            }
         }
     }
 
@@ -82,11 +88,11 @@ public final class GoRWMutex {
 
     /** Releases the write lock; wakes all waiting readers first, else next writer. */
     public void unlock() {
-        SchedulerCore sched = SchedulerCore.current();
         Deque<GoroutineHandle> toWake = new ArrayDeque<>();
         synchronized (this) {
             if (!writer) {
-                throw new IllegalStateException("sync: Unlock of unlocked RWMutex");
+                // L2: gc panics (see GoMutex.unlock).
+                Panic.throwPanic(GoString.fromUtf8("sync: Unlock of unlocked RWMutex"));
             }
             writer = false;
             if (!readWaiters.isEmpty()) {
@@ -102,8 +108,11 @@ public final class GoRWMutex {
                 toWake.add(w);
             }
         }
-        for (GoroutineHandle h : toWake) {
-            sched.unpark(h);
+        if (!toWake.isEmpty()) {
+            SchedulerCore sched = SchedulerCore.current();
+            for (GoroutineHandle h : toWake) {
+                sched.unpark(h);
+            }
         }
     }
 }

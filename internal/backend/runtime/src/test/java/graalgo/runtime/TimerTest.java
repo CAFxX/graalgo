@@ -417,6 +417,32 @@ public final class TimerTest {
         });
     }
 
+    // L2: cancelled timers must leave the heap, not just the byId
+    // table. A far-future head timer keeps every lazily-retained
+    // cancelled entry behind it forever; eager removal keeps the heap
+    // at the pending count. (Timers.startTimerId is the callback path;
+    // the heap is reached via the scheduler's TimerHeap directly.)
+    public void testCancelledTimersLeaveHeap() throws Exception {
+        withScheduler(1, () -> {
+            TimerHeap heap = sched.timerHeap();
+            long far = System.nanoTime() + 3_600_000_000_000L; // 1h head
+            heap.addCallback(far, () -> {});
+            java.util.List<Long> ids = new java.util.ArrayList<>();
+            for (int i = 0; i < 50; i++) {
+                ids.add(heap.addCallback(far + i, () -> {}));
+            }
+            assertTrue(heap.heapSizeForTest() == 51,
+                    "heap must hold all armed timers, was " + heap.heapSizeForTest());
+            for (long id : ids) {
+                assertTrue(heap.cancel(id), "cancel must succeed for armed id " + id);
+            }
+            assertTrue(heap.pendingCount() == 1,
+                    "pending must be the head only, was " + heap.pendingCount());
+            assertTrue(heap.heapSizeForTest() == 1,
+                    "heap must drop cancelled entries, was " + heap.heapSizeForTest());
+        });
+    }
+
     // Frozen startTimer/stopTimer pair: arm, cancel before fire.
     public void testStartStopTimerFrozen() throws Exception {
         AtomicBoolean fired = new AtomicBoolean();

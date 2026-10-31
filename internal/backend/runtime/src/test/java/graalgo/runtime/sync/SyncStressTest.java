@@ -1,6 +1,8 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.PanicException;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -106,16 +108,53 @@ public final class SyncStressTest {
         }
     }
 
+    /**
+     * Asserts {@code body} throws a Go panic (PanicException) carrying
+     * exactly {@code message} — not a Java IllegalStateException, which
+     * the launcher would report as an internal error (exit 1) instead
+     * of a Go panic (exit 2).
+     */
+    private static void assertGoPanic(Runnable body, String message) {
+        try {
+            body.run();
+        } catch (PanicException pe) {
+            assertTrue(GoString.fromUtf8(message).equals(pe.goValue()),
+                    "panic value must be " + message + ", was " + pe.goValue());
+            return;
+        }
+        throw new AssertionError("expected Go panic: " + message);
+    }
+
     /** Unlock of an unlocked mutex panics (gc parity). */
     public void testMutexUnlockOfUnlockedPanics() {
         GoMutex mu = new GoMutex();
-        boolean panicked = false;
+        assertGoPanic(mu::unlock, "sync: unlock of unlocked mutex");
+    }
+
+    /** RWMutex misuse panics (gc parity): both unlock directions. */
+    public void testRWMutexMisusePanics() {
+        GoRWMutex mu = new GoRWMutex();
+        assertGoPanic(mu::rUnlock, "sync: RUnlock of unlocked RWMutex");
+        assertGoPanic(mu::unlock, "sync: Unlock of unlocked RWMutex");
+    }
+
+    /**
+     * Misuse inside a goroutine is recorded as a Go panic (panicked),
+     * not an internal crash (crashed): the launcher exit for this is 2,
+     * not 1.
+     */
+    public void testMutexMisuseInGoroutineIsGoPanicNotCrash() throws Exception {
+        SchedulerCore sched = newScheduler(2);
         try {
-            mu.unlock();
-        } catch (IllegalStateException e) {
-            panicked = true;
+            GoMutex mu = new GoMutex();
+            sched.spawn(mu::unlock);
+            sched.awaitQuiescence();
+            assertTrue(sched.panicked(), "misuse must record a Go panic");
+            assertTrue(!sched.crashed(), "misuse must not record an internal crash");
+        } finally {
+            sched.stop();
+            SchedulerCore.install(null);
         }
-        assertTrue(panicked, "unlock of unlocked mutex must panic");
     }
 
     /**
@@ -208,13 +247,7 @@ public final class SyncStressTest {
     /** WaitGroup negative counter panics. */
     public void testWaitGroupNegativePanics() {
         GoWaitGroup wg = new GoWaitGroup();
-        boolean panicked = false;
-        try {
-            wg.add(-1);
-        } catch (IllegalStateException e) {
-            panicked = true;
-        }
-        assertTrue(panicked, "negative WaitGroup counter must panic");
+        assertGoPanic(() -> wg.add(-1), "sync: negative WaitGroup counter");
     }
 
     /** Zero-counter await returns immediately (no park). */

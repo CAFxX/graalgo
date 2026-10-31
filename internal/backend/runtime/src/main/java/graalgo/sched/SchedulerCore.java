@@ -69,6 +69,17 @@ public final class SchedulerCore {
     }
 
     /**
+     * The installed scheduler, or null when none is installed. For
+     * callers that must degrade gracefully without a scheduler (e.g.
+     * finalizer dispatch from the JVM Cleaner thread, which is never a
+     * goroutine) — never a substitute for {@link #current()} on
+     * goroutine paths, where a missing scheduler is a bug.
+     */
+    public static SchedulerCore installedOrNull() {
+        return installed;
+    }
+
+    /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
@@ -89,6 +100,13 @@ public final class SchedulerCore {
     private final graalgo.runtime.TimerHeap timerHeap;
     private final ThreadLocal<GoroutineHandle> currentHandle = new ThreadLocal<>();
     private final AtomicInteger liveGoroutines = new AtomicInteger();
+    /**
+     * Set by {@link #stop()}; a stopped scheduler never admits again.
+     * One scheduler = one program run: launchers create a fresh
+     * SchedulerCore per run instead of restarting a stopped one.
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean stopped =
+            new java.util.concurrent.atomic.AtomicBoolean();
     /**
      * Quiescence monitor (reviewer2 P0). A one-shot CountDownLatch cannot
      * work here: the live count hits zero transiently mid-spawn-stream
@@ -133,8 +151,34 @@ public final class SchedulerCore {
 
     /** Starts the drainer. Must precede the first spawn. */
     public void start() {
+        if (stopped.get()) {
+            throw new IllegalStateException(
+                    "graalgo.sched: scheduler already stopped; create a new SchedulerCore per run");
+        }
         drainer.start();
         timerHeap.start();
+    }
+
+    /**
+     * Stops the drainer and timer threads. Idempotent. Callers must
+     * have awaited quiescence first (the launcher does): stopping with
+     * live goroutines strands them, so this is a run-teardown step,
+     * not a pause. Does not uninstall the static scheduler — the
+     * launcher owns install/uninstall ordering in its finally block.
+     * A stopped scheduler cannot be restarted; spawn() after stop
+     * fails fast instead of parking a goroutine forever.
+     */
+    public void stop() {
+        if (!stopped.compareAndSet(false, true)) {
+            return;
+        }
+        timerHeap.stop();
+        drainer.stop();
+    }
+
+    /** True once {@link #stop()} has run (idempotent, terminal). */
+    public boolean isStopped() {
+        return stopped.get();
     }
 
     /** The scheduler's timer heap (P2-M3, WS C). */
@@ -362,6 +406,10 @@ public final class SchedulerCore {
      * (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
+        if (stopped.get()) {
+            throw new IllegalStateException(
+                    "graalgo.sched: spawn on a stopped scheduler");
+        }
         GoroutineHandle h = new GoroutineHandle(body);
         long t = armPark(h);
         Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {

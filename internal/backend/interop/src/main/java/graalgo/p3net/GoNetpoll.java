@@ -22,8 +22,10 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.jfr.ParkReason;
 import graalgo.p3os.GoOs;
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 /**
  * Host-side implementation of the {@code internal/poll.runtime_poll*}
@@ -195,8 +197,23 @@ public final class GoNetpoll {
     /** Last poller-thread failure, for tests (no stdout/stderr in library code). */
     private static volatile Throwable lastPollerError;
 
+    /**
+     * Per-run teardown: closes the selector (stopping the poller
+     * thread) and drops every pollDesc. Called by the launcher
+     * between program runs in a reused JVM, so a new run never sees
+     * the previous run's selector, keys, or deadlines. The channels
+     * themselves are closed by GoOs's per-run reset, not here.
+     */
+    public static synchronized void resetForRun() {
+        resetForTestLocked();
+    }
+
     /** Test hook: tears down all poller state (closes the selector). */
     public static synchronized void resetForTest() {
+        resetForTestLocked();
+    }
+
+    private static void resetForTestLocked() {
         INIT.set(false);
         Selector sel = selector;
         selector = null;
@@ -321,7 +338,21 @@ public final class GoNetpoll {
         PollDesc pd = requireDesc(((Number) ctxArg).longValue());
         synchronized (pd) {
             if (!pd.closing) {
-                throw new IllegalStateException("runtime: close polldesc w/o unblock");
+                // L2: gc's runtime pollClose throws ("close polldesc
+                // w/o unblock") — a fatal runtime error, not a Go
+                // error value (the fork's pollDesc.close() has no
+                // error return to carry one). A Java
+                // IllegalStateException here reached the launcher as
+                // an internal error (exit 1); a Go panic reaches it
+                // as an uncaught Go panic (exit 2), the closest
+                // graalgo carrier for a fatal runtime throw. Note the
+                // one divergence this keeps: gc's throw is
+                // unrecoverable, while a PanicException is in
+                // principle recoverable by the closing goroutine's
+                // defer/recover — there is no unrecoverable-panic
+                // carrier in the runtime today.
+                Panic.throwPanic(GoString.fromUtf8(
+                        "runtime: close polldesc w/o unblock"));
             }
             // gc parity (pdReady): the fork calls runtime_pollUnblock then
             // runtime_pollClose back-to-back, so a waiter woken by unblock
@@ -332,11 +363,13 @@ public final class GoNetpoll {
             // own slot; it holds pd directly and never re-resolves DESCS.
             Waiter r = pd.reader.get();
             if (r != null && r.result.get() == null) {
-                throw new IllegalStateException("runtime: blocked read on closing polldesc");
+                Panic.throwPanic(GoString.fromUtf8(
+                        "runtime: blocked read on closing polldesc"));
             }
             Waiter w = pd.writer.get();
             if (w != null && w.result.get() == null) {
-                throw new IllegalStateException("runtime: blocked write on closing polldesc");
+                Panic.throwPanic(GoString.fromUtf8(
+                        "runtime: blocked write on closing polldesc"));
             }
             pd.closed = true;
         }
