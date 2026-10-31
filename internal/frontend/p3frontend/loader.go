@@ -21,6 +21,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -94,10 +95,18 @@ const (
 	kindLocal                    // module-local package: flattened
 )
 
-// NewLoader builds a Loader targeting linux/amd64. GOROOT defaults to
-// ~/tools/go-1.27.1 and is overridable with GRAALGO_GOROOT.
+// NewLoader builds a Loader targeting linux/amd64. GOROOT resolves in
+// order: GRAALGO_GOROOT, the GOROOT of the go toolchain discovered via
+// $GO (the binary the CI workflows export for the Makefiles) or `go` on
+// PATH (`go env GOROOT`), then the legacy ~/tools/go-1.27.1 default.
+// The legacy path alone broke every environment whose toolchain lives
+// elsewhere (CI runners install go under a toolcache, not ~/tools), so
+// discovery — not a hardcoded layout — is the default.
 func NewLoader() *Loader {
 	goroot := os.Getenv("GRAALGO_GOROOT")
+	if goroot == "" {
+		goroot = discoveredGOROOT()
+	}
 	if goroot == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			goroot = filepath.Join(home, "tools", "go-1.27.1")
@@ -110,6 +119,33 @@ func NewLoader() *Loader {
 		resolveCache: map[string]*PackageRef{},
 		moduleCache:  map[string]moduleInfo{},
 	}
+}
+
+// goToolchain returns the go binary to probe for toolchain discovery:
+// $GO when set, else `go` on PATH, else "" (callers fall back).
+func goToolchain() string {
+	if p := os.Getenv("GO"); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	return ""
+}
+
+// discoveredGOROOT asks the discovered toolchain for its GOROOT; ""
+// when no toolchain is discoverable or it cannot answer (callers fall
+// back to the legacy default path).
+func discoveredGOROOT() string {
+	goBin := goToolchain()
+	if goBin == "" {
+		return ""
+	}
+	out, err := exec.Command(goBin, "env", "GOROOT").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // GOROOT reports the GOROOT the loader resolves stdlib paths against.

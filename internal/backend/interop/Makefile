@@ -102,10 +102,11 @@ check: main $(OUT_TEST)/.built
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
 	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
-		if [ -x "$(HOME)/tools/go/bin/go" ]; then \
-			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local $(HOME)/tools/go/bin/go run . validate --list ../stdlib-fork/exclusions.yaml; \
+		GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
+		if [ -x "$$GO_BIN" ]; then \
+			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local "$$GO_BIN" run . validate --list ../stdlib-fork/exclusions.yaml; \
 		else \
-			echo "WARNING: $(HOME)/tools/go/bin/go not found; exclusion-list gate skipped"; \
+			echo "WARNING: Go toolchain not found ($$GO_BIN); exclusion-list gate skipped"; \
 		fi; \
 	fi
 	@echo "== asm-inventory sync gate (P3-M6) =="

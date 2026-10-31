@@ -85,9 +85,20 @@ func copyDir(t *testing.T, src string) string {
 
 func goTool(t *testing.T) string {
 	t.Helper()
+	// Same discovery order as the loader: $GO (exported by the CI
+	// workflows for the Makefiles), else `go` on PATH, else the legacy
+	// ~/tools/go layout. Hardcoding the legacy path alone failed CI,
+	// where setup-go installs the toolchain under a toolcache, not
+	// ~/tools — and the failure surfaced only after test-p3frontend
+	// rejoined `make all`.
+	if p := goToolchain(); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
 	p := filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
 	if _, err := os.Stat(p); err != nil {
-		t.Fatalf("go toolchain not found at %s", p)
+		t.Fatalf("go toolchain not found (tried $GO, PATH go, %s)", p)
 	}
 	return p
 }
