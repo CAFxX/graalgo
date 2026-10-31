@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -127,25 +126,16 @@ func main() {
 	}
 }
 
-// TestSyntheticBytesCutFailsFast verifies user calls to multi-result
-// bytes members with no desugar-table entry fail fast with the honest
-// WS D scope error (naming the callee). Reader.Seek has no m7 table
-// entry and no pair-transform call path, so the call cannot be expressed
-// in v1 — the failure, not success, is the correct behavior; only the
-// error's attribution changed when bytes moved from the synthetic M7
-// fail-fast stubs to the generic classifier.
-// Note: Cut, CutPrefix, CutSuffix, CutLast now work via the general
-// userMRFuncs mechanism and are not in this test.
-// Note: Buffer.Read was retired from this test — its M7 fail-fast stub's
-// "re-test when WS D lands" condition is met, so it is now table-driven
-// via __bytesBufferRead (see TestSyntheticBytesBufferReadDesugar).
+// TestSyntheticBytesCutFailsFast is RETIRED (review-bytes-mr lane):
+// its only case, Reader.Seek, now has an m7 table entry and a real
+// __bytesReaderSeek helper, so the call exports instead of failing with
+// the WS D scope error. The discharge is covered by
+// TestSyntheticBytesMRDischarge in synth_bytes_mr_discharge_test.go.
+// This test is kept as a no-op marker so the retirement is explicit
+// in the file that used to pin the fail-fast behavior; it asserts the
+// previously-failing call now exports.
 func TestSyntheticBytesCutFailsFast(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-		want string
-	}{
-		{"Reader.Seek", `package main
+	src := `package main
 
 import "bytes"
 
@@ -153,23 +143,14 @@ func main() {
 	r := bytes.NewReader([]byte("hi"))
 	_, _ = r.Seek(0, 0)
 }
-`, "bytes.Reader.Seek"},
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "synfail.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			p := filepath.Join(dir, "synfail.go")
-			if err := os.WriteFile(p, []byte(c.src), 0644); err != nil {
-				t.Fatal(err)
-			}
-			_, err := ExportFile(p)
-			if err == nil {
-				t.Fatalf("ExportFile succeeded for %s call, want WS D scope error", c.want)
-			}
-			if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "WS D") {
-				t.Fatalf("unexpected error for %s call: %v", c.want, err)
-			}
-		})
+	if _, err := ExportFile(p); err != nil {
+		t.Fatalf("ExportFile failed for bytes.Reader.Seek call, want success after WS D discharge: %v", err)
 	}
 }
 

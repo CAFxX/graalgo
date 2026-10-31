@@ -38,6 +38,16 @@ type diskMRSpec struct {
 	pairType   string // "__parsePair"
 	pairFields []string
 	stub       *ast.FuncDecl // removed after type-check
+	// requiresIntrinsic names the backend intrinsic a bodyless
+	// function needs (qualified original symbol, e.g.
+	// "reflect.chanrecv"): set only when the __-helper is a panic
+	// body for a bodyless declaration with no //go:linkname binding.
+	// "" means the helper has a real Go body or is linkname-bound.
+	// Export-time desugar (classifyDiskMultiResultCall) refuses to
+	// plan a call to a spec with an unprovided required intrinsic,
+	// so the call fails at export instead of emitting a call to a
+	// panic helper that would explode at guest runtime.
+	requiresIntrinsic string
 }
 
 var (
@@ -71,10 +81,15 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		return nil
 	}
 	// Collision guard: collect every existing top-level name BEFORE the
-	// transform runs. A FuncDecl whose generated helper (__F) or pair
-	// type (__FPair) name already exists is skipped — those packages
-	// carry hand-written __-helpers served by the static Appendix-M
-	// tables, and generating a second __F would be a redeclaration.
+	// transform runs, and mark each generated helper/pair name as it is
+	// created. A FuncDecl whose generated helper (__F) or pair type
+	// (__FPair) name already exists is NEVER silently skipped (a skip
+	// drops the function from the desugar table: no funcdecl, no spec,
+	// and the method vanishes from the type's method table). Instead
+	// it is renamed deterministically by disambiguatedMRPrefix
+	// (__F_mr2, __F_mr3, ...). Functions genuinely served by
+	// hand-written __-helpers are still skipped — by the static-table
+	// check below, which names the reason, not by collision.
 	existing := map[string]bool{}
 	for _, f := range files {
 		for _, decl := range f.Decls {
@@ -103,10 +118,9 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				newDecls = append(newDecls, decl)
 				continue
 			}
-			if transformTargetCollides(fd, existing) {
-				newDecls = append(newDecls, decl)
-				continue
-			}
+			// Collision: rename deterministically, never skip (see
+			// the collision-guard comment above).
+			prefix := disambiguatedMRPrefix(fd, existing)
 			// Skip functions served by the static Appendix-M tables
 			// (hand-written __-helpers with ad-hoc names) — with two
 			// tiers (fix-redmaster-r40). M5-owned entries
@@ -140,9 +154,11 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				newDecls = append(newDecls, decl)
 				continue
 			}
-			spec, pairDecl, helperDecl, stubDecl := transformMRFunc(pkgPath, files, fd, mrNames)
+			spec, pairDecl, helperDecl, stubDecl := transformMRFuncWithPrefix(pkgPath, files, fd, mrNames, prefix)
 			newDecls = append(newDecls, pairDecl, helperDecl, stubDecl)
 			specs = append(specs, spec)
+			existing[spec.helper] = true
+			existing[spec.pairType] = true
 		}
 		f.Decls = newDecls
 	}
@@ -745,16 +761,24 @@ func genericRef(name string, tparamNames []string) ast.Expr {
 }
 
 // transformMRFunc transforms one multi-result FuncDecl.
+// transformMRFunc is the default-prefix form of transformMRFuncWithPrefix:
+// methods on different receivers are disambiguated by the receiver name
+// (Recv_Name), plain functions use their own name.
 func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
+	prefix := fd.Name.Name
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		if rt := recvBaseName(fd.Recv.List[0].Type); rt != "" {
+			prefix = rt + "_" + fd.Name.Name
+		}
+	}
+	return transformMRFuncWithPrefix(pkgPath, files, fd, mrNames, prefix)
+}
+
+func transformMRFuncWithPrefix(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrNames map[string]bool, prefix string) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
 	name := fd.Name.Name
 	recvType := ""
 	if fd.Recv != nil && len(fd.Recv.List) > 0 {
 		recvType = recvBaseName(fd.Recv.List[0].Type)
-	}
-	// Disambiguate methods on different receivers with the same name.
-	prefix := name
-	if recvType != "" {
-		prefix = recvType + "_" + name
 	}
 	helper := "__" + prefix
 	pairType := "__" + prefix + "Pair"
@@ -860,7 +884,11 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// Body-less declarations (e.g. //go:noescape assembly stubs like
 	// reflect's chanrecv): there is no body to rewrite. By default the
 	// __-helper gets a fail-fast panic body — the real implementation
-	// is a backend intrinsic. EXCEPTION (fix-redmaster-r42): a
+	// would be a backend intrinsic — and the spec records that
+	// required intrinsic (see requiresIntrinsic): export-time desugar
+	// refuses calls to it unless a provider is visible, so the panic
+	// helper is only ever an unreachable marker, never a callable
+	// implementation. EXCEPTION (fix-redmaster-r42): a
 	// body-less declaration carrying a //go:linkname or //go:linknamestd
 	// directive is served by a backend intrinsic, so its __-helper must
 	// be linkname-bound, not a panic stub. That is possible for the
@@ -976,14 +1004,27 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 		},
 	}
 
+	// A panic helper for a bodyless declaration (no //go:linkname
+	// binding, so helperDoc is nil) records the backend intrinsic it
+	// requires: the qualified original symbol. Real-bodied and
+	// linkname-bound helpers require nothing.
+	requiresIntrinsic := ""
+	if fd.Body == nil && helperDoc == nil {
+		if recvType != "" {
+			requiresIntrinsic = pkgPath + "." + recvType + "." + name
+		} else {
+			requiresIntrinsic = pkgPath + "." + name
+		}
+	}
 	spec := diskMRSpec{
-		pkgPath:    pkgPath,
-		name:       name,
-		recvType:   recvType,
-		helper:     helper,
-		pairType:   pairType,
-		pairFields: pairFields,
-		stub:       stubDecl,
+		pkgPath:           pkgPath,
+		name:              name,
+		recvType:          recvType,
+		helper:            helper,
+		pairType:          pairType,
+		pairFields:        pairFields,
+		stub:              stubDecl,
+		requiresIntrinsic: requiresIntrinsic,
 	}
 	// The original fd is DISCARDED (replaced by helper+stub). We return
 	// the three new decls; the caller splices them in.
@@ -1763,6 +1804,12 @@ func locallyBoundNames(fd *ast.FuncDecl) map[string]bool {
 	return bound
 }
 
+// mrPrefixTaken reports whether either generated name for prefix
+// (__prefix, __prefixPair) already exists as a top-level declaration.
+func mrPrefixTaken(prefix string, existing map[string]bool) bool {
+	return existing["__"+prefix] || existing["__"+prefix+"Pair"]
+}
+
 // transformTargetCollides reports whether transforming fd would generate
 // a helper or pair-type name that already exists as a top-level
 // declaration (a hand-written __-helper). Mirrors transformMRFunc's
@@ -1774,7 +1821,33 @@ func transformTargetCollides(fd *ast.FuncDecl, existing map[string]bool) bool {
 			prefix = rt + "_" + fd.Name.Name
 		}
 	}
-	return existing["__"+prefix] || existing["__"+prefix+"Pair"]
+	return mrPrefixTaken(prefix, existing)
+}
+
+// disambiguatedMRPrefix returns the helper/pair prefix for fd: the usual
+// Recv_Name (or Name) prefix when its __-names are free, otherwise the
+// first suffixed variant (base_mr2, base_mr3, ...) whose __-names are
+// both free. Deterministic — it depends only on the pre-transform
+// top-level names plus names generated earlier in the same pass, which
+// the caller must mark in existing after each transform — so the same
+// package always yields the same helper names, and a colliding function
+// is renamed, never silently dropped.
+func disambiguatedMRPrefix(fd *ast.FuncDecl, existing map[string]bool) string {
+	base := fd.Name.Name
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		if rt := recvBaseName(fd.Recv.List[0].Type); rt != "" {
+			base = rt + "_" + fd.Name.Name
+		}
+	}
+	if !mrPrefixTaken(base, existing) {
+		return base
+	}
+	for i := 2; ; i++ {
+		cand := fmt.Sprintf("%s_mr%d", base, i)
+		if !mrPrefixTaken(cand, existing) {
+			return cand
+		}
+	}
 }
 
 // isFailFastStub reports whether fd's body is a synthetic fail-fast stub:
@@ -2119,6 +2192,11 @@ func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 	if spec == nil || spec.helper == "" {
 		return nil, false
 	}
+	// Same intrinsic gate as classifyDiskMultiResultCall: never
+	// enumerate a panic helper for instantiation.
+	if spec.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(spec) {
+		return nil, false
+	}
 	// The helper is registered in funcByObj at import. The (path, name)
 	// index is the robust lookup (the *types.Func identity can differ
 	// across type-checks — cf. scanRoots' synthetic fallback); fall back
@@ -2148,11 +2226,39 @@ func diskMRPairType(sp *syntheticPackage, spec *diskMRSpec) *types.Named {
 	return tn
 }
 
+// diskMRIntrinsicProvided reports whether the backend intrinsic required
+// by a bodyless disk function is provided by a frontend-visible
+// function: a synthetic-package function with the required qualified
+// name (the same synthFuncIDs lookup exportLinknameDecl uses for
+// linkname providers). Specs with no requirement are always provided.
+// A bodyless declaration with its own //go:linkname directive never
+// gets requiresIntrinsic (its helper is linkname-bound), so this only
+// gates panic helpers.
+func (e *exporter) diskMRIntrinsicProvided(spec *diskMRSpec) bool {
+	if spec == nil || spec.requiresIntrinsic == "" {
+		return true
+	}
+	if e.synthFuncIDs != nil {
+		if _, ok := e.synthFuncIDs[spec.requiresIntrinsic]; ok {
+			return true
+		}
+		// Methods: synthFuncIDs keys omit the receiver
+		// (pkgPath.name), while requiresIntrinsic carries it.
+		if _, ok := e.synthFuncIDs[spec.pkgPath+"."+spec.name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // classifyDiskMultiResultCall desugars multi-result calls to disk-package
 // functions transformed by transformDiskMultiResult. Mirrors
 // classifyM9MultiResultCall but consults the dynamic table and resolves
-// the pair type from the disk-built package.
-func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+// the pair type from the disk-built package. It returns nil for a spec
+// whose required intrinsic is unprovided: with no plan, the call site
+// fails at export instead of emitting a call to the spec's panic
+// helper (which would explode at guest runtime).
+func (e *exporter) classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -2182,6 +2288,11 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 		return nil
 	}
 	if sig.Results().Len() != len(spec.pairFields) {
+		return nil
+	}
+	// Export-time intrinsic gate (review-bytes-mr): a panic helper is
+	// not an implementation. Without a provider, refuse the plan.
+	if spec.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(spec) {
 		return nil
 	}
 	sp, err := getDiskPackage(pkgPath)

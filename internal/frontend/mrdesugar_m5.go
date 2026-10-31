@@ -298,6 +298,24 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// net/url.URL.String and the net/http response writer, hence by any
 	// program importing net/http).
 	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}, false},
+	// bytes: remaining Buffer/Reader multi-result members (review-bytes-mr
+	// lane, WS D discharge of the M7 fail-fast stubs — same pattern as
+	// Read/Write/WriteString above). Pair types shared where the result
+	// shape is identical (__bytesReadPair, __bytesWritePair,
+	// __bytesReadBytePair, __bytesReadRunePair, __bytesWriteToPair).
+	{"bytes", "Peek", "Buffer", "__bytesBufferPeek", "__bytesPeekPair", []string{"b", "err"}, false},
+	{"bytes", "ReadFrom", "Buffer", "__bytesBufferReadFrom", "__bytesReadFromPair", []string{"n", "err"}, false},
+	{"bytes", "WriteTo", "Buffer", "__bytesBufferWriteTo", "__bytesWriteToPair", []string{"n", "err"}, false},
+	{"bytes", "WriteRune", "Buffer", "__bytesBufferWriteRune", "__bytesWritePair", []string{"n", "err"}, false},
+	{"bytes", "ReadByte", "Buffer", "__bytesBufferReadByte", "__bytesReadBytePair", []string{"c", "err"}, false},
+	{"bytes", "ReadRune", "Buffer", "__bytesBufferReadRune", "__bytesReadRunePair", []string{"r", "size", "err"}, false},
+	{"bytes", "ReadBytes", "Buffer", "__bytesBufferReadBytes", "__bytesReadBytesPair", []string{"line", "err"}, false},
+	{"bytes", "ReadString", "Buffer", "__bytesBufferReadString", "__bytesReadStringPair", []string{"line", "err"}, false},
+	{"bytes", "ReadAt", "Reader", "__bytesReaderReadAt", "__bytesReadPair", []string{"n", "err"}, false},
+	{"bytes", "ReadByte", "Reader", "__bytesReaderReadByte", "__bytesReadBytePair", []string{"c", "err"}, false},
+	{"bytes", "ReadRune", "Reader", "__bytesReaderReadRune", "__bytesReadRunePair", []string{"r", "size", "err"}, false},
+	{"bytes", "Seek", "Reader", "__bytesReaderSeek", "__bytesSeekPair", []string{"n", "err"}, false},
+	{"bytes", "WriteTo", "Reader", "__bytesReaderWriteTo", "__bytesWriteToPair", []string{"n", "err"}, false},
 	// encoding/base32: methods on *Encoding.
 	{"encoding/base32", "Decode", "Encoding", "__base32Decode", "base32DecodePair", []string{"n", "err"}, false},
 	{"encoding/base32", "DecodeString", "Encoding", "__base32DecodeString", "base32DecodeStringPair", []string{"b", "err"}, false},
@@ -560,7 +578,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// P3-M9 (tier-5: archive/mime): synthetic archive/* and mime/* (Appendix M).
 	{"archive/tar", "allowedFormats", "Header", "__tarHeaderallowedFormats", "__tarHeaderallowedFormatsPair", []string{"format", "paxHdrs", "err"}, false},
 	{"archive/tar", "FileInfoHeader", "", "__tarFileInfoHeader", "__tarFileInfoHeaderPair", []string{"f0", "f1"}, false},
-	{"archive/tar", "computeChecksum", "block", "__tarblockcomputeChecksum", "__tarblockcomputeChecksumPair", []string{"f0", "signed"}, false},
+	{"archive/tar", "computeChecksum", "block", "__tarblockcomputeChecksum", "__tarblockcomputeChecksumPair", []string{"unsigned", "signed"}, false},
 	{"archive/tar", "Next", "Reader", "__tarReaderNext", "__tarReaderNextPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "next", "Reader", "__tarReadernext", "__tarReadernextPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "readGNUSparsePAXHeaders", "Reader", "__tarReaderreadGNUSparsePAXHeaders", "__tarReaderreadGNUSparsePAXHeadersPair", []string{"f0", "f1"}, false},
@@ -579,7 +597,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/tar", "mustReadFull", "", "__tarmustReadFull", "__tarmustReadFullPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "tryReadFull", "", "__tartryReadFull", "__tartryReadFullPair", []string{"n", "err"}, false},
 	{"archive/tar", "readSpecialFile", "", "__tarreadSpecialFile", "__tarreadSpecialFilePair", []string{"f0", "f1"}, false},
-	{"archive/tar", "splitUSTARPath", "", "__tarsplitUSTARPath", "__tarsplitUSTARPathPair", []string{"f0", "suffix", "ok"}, false},
+	{"archive/tar", "splitUSTARPath", "", "__tarsplitUSTARPath", "__tarsplitUSTARPathPair", []string{"prefix", "suffix", "ok"}, false},
 	{"archive/tar", "Write", "Writer", "__tarWriterWrite", "__tarWriterWritePair", []string{"f0", "f1"}, false},
 	{"archive/tar", "readFrom", "Writer", "__tarWriterreadFrom", "__tarWriterreadFromPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "Write", "regFileWriter", "__tarregFileWriterWrite", "__tarregFileWriterWritePair", []string{"n", "err"}, false},
@@ -587,7 +605,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/tar", "Write", "sparseFileWriter", "__tarsparseFileWriterWrite", "__tarsparseFileWriterWritePair", []string{"n", "err"}, false},
 	{"archive/tar", "ReadFrom", "sparseFileWriter", "__tarsparseFileWriterReadFrom", "__tarsparseFileWriterReadFromPair", []string{"n", "err"}, false},
 	{"archive/tar", "parsePAXTime", "", "__tarparsePAXTime", "__tarparsePAXTimePair", []string{"f0", "f1"}, false},
-	{"archive/tar", "parsePAXRecord", "", "__tarparsePAXRecord", "__tarparsePAXRecordPair", []string{"f0", "f1", "r", "err"}, false},
+	{"archive/tar", "parsePAXRecord", "", "__tarparsePAXRecord", "__tarparsePAXRecordPair", []string{"k", "v", "r", "err"}, false},
 	{"archive/tar", "formatPAXRecord", "", "__tarformatPAXRecord", "__tarformatPAXRecordPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "OpenReader", "", "__zipOpenReader", "__zipOpenReaderPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "NewReader", "", "__zipNewReader", "__zipNewReaderPair", []string{"f0", "f1"}, false},
@@ -617,9 +635,9 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}, false},
 	{"mime", "ParseMediaType", "", "__mimeParseMediaType", "__mimeParseMediaTypePair", []string{"mediatype", "params", "err"}, false},
 	{"mime", "decode2231Enc", "", "__mimedecode2231Enc", "__mimedecode2231EncPair", []string{"f0", "f1"}, false},
-	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"f0", "rest"}, false},
-	{"mime", "consumeValue", "", "__mimeconsumeValue", "__mimeconsumeValuePair", []string{"f0", "rest"}, false},
-	{"mime", "consumeMediaParam", "", "__mimeconsumeMediaParam", "__mimeconsumeMediaParamPair", []string{"f0", "f1", "rest"}, false},
+	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"token", "rest"}, false},
+	{"mime", "consumeValue", "", "__mimeconsumeValue", "__mimeconsumeValuePair", []string{"value", "rest"}, false},
+	{"mime", "consumeMediaParam", "", "__mimeconsumeMediaParam", "__mimeconsumeMediaParamPair", []string{"param", "value", "rest"}, false},
 	{"mime", "percentHexUnescape", "", "__mimepercentHexUnescape", "__mimepercentHexUnescapePair", []string{"f0", "f1"}, false},
 	{"mime", "Decode", "WordDecoder", "__mimeWordDecoderDecode", "__mimeWordDecoderDecodePair", []string{"f0", "f1"}, false},
 	{"mime", "DecodeHeader", "WordDecoder", "__mimeWordDecoderDecodeHeader", "__mimeWordDecoderDecodeHeaderPair", []string{"f0", "f1"}, false},
@@ -1613,7 +1631,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					return plan
 				}
 				// WS G (P3-M9): disk-package multi-result (dynamic table).
-				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
+				if plan := e.classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
 			}
@@ -1681,7 +1699,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				return plan
 			}
 			// WS G (P3-M9): disk-package multi-result (dynamic table).
-			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
+			if plan := e.classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			// P4 (driver-harden): the fmt F-family (Fprint/Fprintf/
@@ -1845,7 +1863,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				return plan
 			}
 			// WS G (P3-M9): disk-package multi-result methods (dynamic table).
-			if plan := classifyDiskMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
+			if plan := e.classifyDiskMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (WS D): multi-result calls on interface values
@@ -1972,7 +1990,7 @@ func (e *exporter) mrPlanForFuncValue(fn *types.Func) *mrPlan {
 	if plan := classifyM9MultiResultCall(pkgPath, fn, nil); plan != nil {
 		return plan
 	}
-	if plan := classifyDiskMultiResultCall(pkgPath, fn, nil); plan != nil {
+	if plan := e.classifyDiskMultiResultCall(pkgPath, fn, nil); plan != nil {
 		return plan
 	}
 	return nil

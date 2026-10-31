@@ -1101,15 +1101,29 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						}
 						continue
 					}
-					// Gate-1 #2: fail-fast stubs must not be pair-transformed.
+					// Gate-1 #2 + review-bytes-mr (stub policy): fail-fast
+					// stubs are NEVER registered as callable functions.
 					// A body that is a single panic("... not in M{5,7,...}
-					// scope ...") must be preserved; the pair-transform
-					// would replace the fail-fast with a working helper.
-					// General (real-x509 lane): stubs ARE registered (so
-					// call sites link to the stub, which panics at runtime
-					// if invoked); skipPairTransform below prevents the
-					// pair-transform. The value-position error is raised
-					// at the use site in exportSyntheticQualified.
+					// scope ...") is a compile-time scope marker, not an
+					// implementation: registering it in funcByObj /
+					// synthFuncIDs flipped isMultiResultSyntheticFailFast
+					// to false, so any call-site position the scope
+					// checks missed linked to the stub and panicked at
+					// guest runtime instead of failing at export.
+					// The stub keeps only a dummy methodIndex entry (so
+					// method-call resolution succeeds and the call-site
+					// checks can report the named scope error) and is
+					// then skipped: no funcByObj/synthFuncIDs entry, no
+					// g.fis entry, no defFunc, no emitted funcdecl. The
+					// panic body stays in the source only as an
+					// unreachable marker — it is never emitted, so no
+					// backend path can reach it. Every non-desugared
+					// use position therefore fails at export: direct
+					// calls via isMultiResultSyntheticFailFast (now true
+					// because the stub is unregistered), value
+					// positions via the exportSyntheticQualified
+					// fallback, and method-table/interface positions via
+					// the missing helper.
 					if isFailFastStub(d) {
 						if d.Recv != nil {
 							recv := sig.Recv()
@@ -1119,18 +1133,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 								}
 							}
 						}
-					// General (real-x509 lane): fail-fast stubs ARE registered
-						// (so call sites link to the stub, which panics at
-						// runtime if invoked — the honest fail-fast
-						// behavior); skipPairTransform below prevents the
-						// pair-transform from replacing the panic body with
-						// a working helper. A stub used as a value (e.g.
-						// var f = time.ParseDuration) is a compile-time
-						// error: there is no pair form to serve as the
-						// value. That error is raised at the use site in
-						// exportSyntheticQualified via the synthFuncIDs
-						// entry registered below.
-						// Fall through to registration (do not continue).
+						continue
 					}
 					// Not table-driven, not a stub: fall through to normal
 					// processing.
@@ -1138,8 +1141,10 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 			// Pass 1: create fi and register in maps (defFunc deferred to
 			// pass 2 below).
-			// General (real-x509 lane): fail-fast stubs are registered
-			// (so call sites link to them) but skip pair-transform below.
+			// Defense in depth (review-bytes-mr stub policy): a
+			// fail-fast stub must never be pair-transformed, even if
+			// it reaches Pass 1 by a path other than the skip above
+			// (stubs normally `continue` there and never reach this).
 			skipPairTransform := false
 			if sig.Results().Len() > 1 && d.Body != nil {
 				if isFailFastStub(d) {
@@ -1177,8 +1182,9 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// via the userMRFuncs mechanism. Register here so call sites
 			// in importing packages classify correctly. registerUserMRFunc
 			// is idempotent and skips table-driven/single-result/bodyless.
-			// General (real-x509 lane): fail-fast stubs skip the
-			// pair-transform (their panic body must be preserved).
+			// Fail-fast stubs never reach this point (they `continue`
+			// above); skipPairTransform above is only a guard for any
+			// other path that brings one here.
 			if !skipPairTransform {
 				if _, rerr := e.registerUserMRFunc(fi); rerr != nil {
 					return rerr

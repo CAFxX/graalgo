@@ -24,16 +24,14 @@
 //     unicode package — see gen_tables.go).
 //   - Multi-result members (Cut/CutLast/CutPrefix/CutSuffix, Buffer.Peek/
 //     Read/ReadByte/ReadBytes/ReadRune/ReadString/Write/WriteString/
-//     WriteRune, Reader.Read/ReadAt/ReadByte/ReadRune/Seek) keep exact gc
-//     signatures with fail-fast bodies: v1 cannot emit or call
-//     multi-result functions (WS D); the exporter skips them and every
-//     call site fails with the named M7 scope error. Re-test when WS D
-//     lands.
-//   - Buffer.ReadFrom/Buffer.WriteTo/Reader.WriteTo need io.Reader/
-//     io.Writer. P3-M8 brings io: the signatures now use io.Reader/
-//     io.Writer exactly, but the bodies stay fail-fast — the loops need
-//     r.Read/w.Write (2-result interface calls, WS D). Re-test when WS D
-//     lands (then: real bodies, no signature change needed).
+//     WriteRune/ReadFrom/WriteTo, Reader.Read/ReadAt/ReadByte/ReadRune/
+//     Seek/WriteTo) keep exact gc signatures with fail-fast bodies for
+//     type-checking; v1 cannot emit multi-result functions (WS D), so
+//     every call site is desugared through the m7 Appendix-M table to
+//     a real single-result __-helper (Buffer.Read/Write/WriteString
+//     were discharged in P3-M9/M10; the remaining members in the
+//     review-bytes-mr lane). A call site with no table entry still
+//     fails with the named M7 scope error.
 //   - 8 members are omitted outright — their types are unnameable
 //     without out-of-scope imports: Lines/SplitSeq/SplitAfterSeq/
 //     FieldsSeq/FieldsFuncSeq (need iter.Seq) and ToUpperSpecial/
@@ -54,8 +52,9 @@ package main
 
 // syntheticBytesSource is the P3-M7 synthetic `bytes` package. Exact gc
 // 1.27.1 signatures for the in-scope API; pure-Go value types (Buffer,
-// Reader) with real methods; fail-fast stubs for multi-result and
-// io-bound members; 8 members omitted (see header).
+// Reader) with real methods; multi-result members keep fail-fast stub
+// bodies for type-checking and are served by real __-helpers via the
+// m7 Appendix-M desugar table; 8 members omitted (see header).
 const syntheticBytesSource = `package bytes
 
 import (
@@ -9929,10 +9928,23 @@ func (b *Buffer) String() string {
 
 // Peek returns the next n bytes without advancing the buffer.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferPeek helper
+// (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
+func __bytesBufferPeek(b *Buffer, n int) __bytesPeekPair {
+	if b.Len() < n {
+		return __bytesPeekPair{b: b.buf[b.off:], err: io.EOF}
+	}
+	return __bytesPeekPair{b: b.buf[b.off : b.off+n], err: nil}
+}
+
+type __bytesPeekPair struct {
+	b   []byte
+	err error
+}
+
 func (b *Buffer) Peek(n int) ([]byte, error) {
-	panic("bytes.Buffer.Peek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.Peek: use __bytesBufferPeek helper (WS D)")
 }
 
 // empty reports whether the unread portion of the buffer is empty.
@@ -10098,11 +10110,38 @@ const MinRead = 512
 // error except EOF encountered during the read is also returned. If the
 // buffer becomes too large, ReadFrom will panic with ErrTooLarge.
 //
-// M8 scope: exact gc signature (io.Reader now nameable); the body stays
-// fail-fast — the loop needs r.Read, a 2-result interface call (WS D).
-// Re-test when WS D lands.
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferReadFrom helper.
+// The loop's r.Read is a 2-result interface call, desugared by the
+// io.Read interface entry exactly like synth_io's __copyBuffer.
+func __bytesBufferReadFrom(b *Buffer, r io.Reader) __bytesReadFromPair {
+	b.lastRead = opInvalid
+	var n int64
+	for {
+		i := b.grow(MinRead)
+		b.buf = b.buf[:i]
+		m, e := r.Read(b.buf[i:cap(b.buf)])
+		if m < 0 {
+			panic(errNegativeRead)
+		}
+		b.buf = b.buf[:i+m]
+		n += int64(m)
+		if e == io.EOF {
+			return __bytesReadFromPair{n: n, err: nil}
+		}
+		if e != nil {
+			return __bytesReadFromPair{n: n, err: e}
+		}
+	}
+}
+
+type __bytesReadFromPair struct {
+	n   int64
+	err error
+}
+
 func (b *Buffer) ReadFrom(r io.Reader) (n int64, err error) {
-	panic("bytes.Buffer.ReadFrom: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("bytes.Buffer.ReadFrom: use __bytesBufferReadFrom helper (WS D)")
 }
 
 // growSlice grows b by n, preserving the original content of b.
@@ -10137,11 +10176,38 @@ func growSlice(b []byte, n int) []byte {
 // int, but it is int64 to match the io.WriterTo interface. Any error
 // encountered during the write is also returned.
 //
-// M8 scope: exact gc signature (io.Writer now nameable); the body stays
-// fail-fast — the loop needs w.Write, a 2-result interface call (WS D).
-// Re-test when WS D lands.
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferWriteTo helper.
+// The w.Write call is a 2-result interface call, desugared by the
+// io.Write interface entry.
+func __bytesBufferWriteTo(b *Buffer, w io.Writer) __bytesWriteToPair {
+	b.lastRead = opInvalid
+	var n int64
+	if nBytes := b.Len(); nBytes > 0 {
+		m, e := w.Write(b.buf[b.off:])
+		if m > nBytes {
+			panic("bytes.Buffer.WriteTo: invalid Write count")
+		}
+		b.off += m
+		n = int64(m)
+		if e != nil {
+			return __bytesWriteToPair{n: n, err: e}
+		}
+		if m != nBytes {
+			return __bytesWriteToPair{n: n, err: io.ErrShortWrite}
+		}
+	}
+	b.Reset()
+	return __bytesWriteToPair{n: n, err: nil}
+}
+
+type __bytesWriteToPair struct {
+	n   int64
+	err error
+}
+
 func (b *Buffer) WriteTo(w io.Writer) (n int64, err error) {
-	panic("bytes.Buffer.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("bytes.Buffer.WriteTo: use __bytesBufferWriteTo helper (WS D)")
 }
 
 // WriteByte appends the byte c to the buffer, growing the buffer as needed.
@@ -10163,10 +10229,27 @@ func (b *Buffer) WriteByte(c byte) error {
 // error is included to match bufio.Writer's WriteRune. The buffer is grown
 // as needed; if it becomes too large, WriteRune will panic with ErrTooLarge.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferWriteRune helper.
+// Shares __bytesWritePair with __bytesBufferWrite (same {n int, err
+// error} shape). The UTF-8 codec is the synthetic one (bytesRuneSelf,
+// bytesAppendRune) in place of gc's utf8 package.
+func __bytesBufferWriteRune(b *Buffer, r rune) __bytesWritePair {
+	if uint32(r) < bytesRuneSelf {
+		b.WriteByte(byte(r))
+		return __bytesWritePair{n: 1, err: nil}
+	}
+	b.lastRead = opInvalid
+	m := b.tryGrowByReslice(bytesUTFMax)
+	if m < 0 {
+		m = b.grow(bytesUTFMax)
+	}
+	b.buf = bytesAppendRune(b.buf[:m], r)
+	return __bytesWritePair{n: len(b.buf) - m, err: nil}
+}
+
 func (b *Buffer) WriteRune(r rune) (n int, err error) {
-	panic("bytes.Buffer.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.WriteRune: use __bytesBufferWriteRune helper (WS D)")
 }
 
 // Read reads the next len(p) bytes from the buffer or until the buffer
@@ -10221,10 +10304,26 @@ func (b *Buffer) Next(n int) []byte {
 
 // ReadByte reads and returns the next byte from the buffer.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferReadByte helper.
+func __bytesBufferReadByte(b *Buffer) __bytesReadBytePair {
+	if b.empty() {
+		b.Reset()
+		return __bytesReadBytePair{c: 0, err: io.EOF}
+	}
+	c := b.buf[b.off]
+	b.off++
+	b.lastRead = opRead
+	return __bytesReadBytePair{c: c, err: nil}
+}
+
+type __bytesReadBytePair struct {
+	c   byte
+	err error
+}
+
 func (b *Buffer) ReadByte() (byte, error) {
-	panic("bytes.Buffer.ReadByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadByte: use __bytesBufferReadByte helper (WS D)")
 }
 
 // ReadRune reads and returns the next UTF-8-encoded
@@ -10233,10 +10332,35 @@ func (b *Buffer) ReadByte() (byte, error) {
 // If the bytes are an erroneous UTF-8 encoding, it
 // consumes one byte and returns U+FFFD, 1.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferReadRune helper.
+// Decoding uses the synthetic codec (bytesDecodeRune) in place of gc's
+// utf8.DecodeRune; lastRead records the rune size like gc's readOp(n).
+func __bytesBufferReadRune(b *Buffer) __bytesReadRunePair {
+	if b.empty() {
+		b.Reset()
+		return __bytesReadRunePair{r: 0, size: 0, err: io.EOF}
+	}
+	c := b.buf[b.off]
+	if c < bytesRuneSelf {
+		b.off++
+		b.lastRead = opReadRune1
+		return __bytesReadRunePair{r: rune(c), size: 1, err: nil}
+	}
+	d := bytesDecodeRune(b.buf[b.off:])
+	b.off += d.size
+	b.lastRead = readOp(d.size)
+	return __bytesReadRunePair{r: d.r, size: d.size, err: nil}
+}
+
+type __bytesReadRunePair struct {
+	r    rune
+	size int
+	err  error
+}
+
 func (b *Buffer) ReadRune() (r rune, size int, err error) {
-	panic("bytes.Buffer.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadRune: use __bytesBufferReadRune helper (WS D)")
 }
 
 // UnreadRune unreads the last rune returned by ReadRune.
@@ -10279,18 +10403,34 @@ func (b *Buffer) UnreadByte() error {
 // ReadBytes returns err != nil if and only if the returned data does not end in
 // delim.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
-func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
-	panic("bytes.Buffer.ReadBytes: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferReadBytes helper.
+// gc's readSlice logic is inlined here (and in __bytesBufferReadString
+// below): the multi-result readSlice itself is deleted — it was
+// unexported, uncalled, and only a fail-fast stub.
+func __bytesBufferReadBytes(b *Buffer, delim byte) __bytesReadBytesPair {
+	i := IndexByte(b.buf[b.off:], delim)
+	end := b.off + i + 1
+	var err error
+	if i < 0 {
+		end = len(b.buf)
+		err = io.EOF
+	}
+	slice := b.buf[b.off:end]
+	b.off = end
+	b.lastRead = opRead
+	var line []byte
+	line = append(line, slice...)
+	return __bytesReadBytesPair{line: line, err: err}
 }
 
-// readSlice is like ReadBytes but returns a reference to internal buffer data.
-//
-// M7 scope: unexported helper kept for source fidelity; unreachable (its
-// callers are multi-result stubs).
-func (b *Buffer) readSlice(delim byte) ([]byte, error) {
-	panic("bytes.Buffer.readSlice: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+type __bytesReadBytesPair struct {
+	line []byte
+	err  error
+}
+
+func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
+	panic("bytes.Buffer.ReadBytes: use __bytesBufferReadBytes helper (WS D)")
 }
 
 // ReadString reads until the first occurrence of delim in the input,
@@ -10300,10 +10440,30 @@ func (b *Buffer) readSlice(delim byte) ([]byte, error) {
 // ReadString returns err != nil if and only if the returned data does not end
 // in delim.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferReadString helper
+// (gc's readSlice logic inlined, as in __bytesBufferReadBytes).
+func __bytesBufferReadString(b *Buffer, delim byte) __bytesReadStringPair {
+	i := IndexByte(b.buf[b.off:], delim)
+	end := b.off + i + 1
+	var err error
+	if i < 0 {
+		end = len(b.buf)
+		err = io.EOF
+	}
+	slice := b.buf[b.off:end]
+	b.off = end
+	b.lastRead = opRead
+	return __bytesReadStringPair{line: string(slice), err: err}
+}
+
+type __bytesReadStringPair struct {
+	line string
+	err  error
+}
+
 func (b *Buffer) ReadString(delim byte) (line string, err error) {
-	panic("bytes.Buffer.ReadString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadString: use __bytesBufferReadString helper (WS D)")
 }
 
 // NewBuffer creates and initializes a new Buffer using buf as its
@@ -10374,18 +10534,46 @@ func (r *Reader) Read(b []byte) (n int, err error) {
 
 // ReadAt implements the io.ReaderAt interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesReaderReadAt helper.
+// Shares __bytesReadPair with __bytesReaderRead (same {n int, err
+// error} shape). ReadAt does not modify the reader state.
+func __bytesReaderReadAt(r *Reader, b []byte, off int64) __bytesReadPair {
+	if off < 0 {
+		return __bytesReadPair{n: 0, err: errors.New("bytes.Reader.ReadAt: negative offset")}
+	}
+	if off >= int64(len(r.s)) {
+		return __bytesReadPair{n: 0, err: io.EOF}
+	}
+	n := copy(b, r.s[off:])
+	if n < len(b) {
+		return __bytesReadPair{n: n, err: io.EOF}
+	}
+	return __bytesReadPair{n: n, err: nil}
+}
+
 func (r *Reader) ReadAt(b []byte, off int64) (n int, err error) {
-	panic("bytes.Reader.ReadAt: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadAt: use __bytesReaderReadAt helper (WS D)")
 }
 
 // ReadByte implements the io.ByteReader interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesReaderReadByte helper.
+// Shares __bytesReadBytePair with __bytesBufferReadByte (same {c byte,
+// err error} shape).
+func __bytesReaderReadByte(r *Reader) __bytesReadBytePair {
+	r.prevRune = -1
+	if r.i >= int64(len(r.s)) {
+		return __bytesReadBytePair{c: 0, err: io.EOF}
+	}
+	c := r.s[r.i]
+	r.i++
+	return __bytesReadBytePair{c: c, err: nil}
+}
+
 func (r *Reader) ReadByte() (byte, error) {
-	panic("bytes.Reader.ReadByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadByte: use __bytesReaderReadByte helper (WS D)")
 }
 
 // UnreadByte complements Reader.ReadByte in implementing the io.ByteScanner interface.
@@ -10400,10 +10588,28 @@ func (r *Reader) UnreadByte() error {
 
 // ReadRune implements the io.RuneReader interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesReaderReadRune helper.
+// Shares __bytesReadRunePair with __bytesBufferReadRune (same {r rune,
+// size int, err error} shape; the Reader signature names the rune ch,
+// extraction is positional). Decoding uses the synthetic codec.
+func __bytesReaderReadRune(r *Reader) __bytesReadRunePair {
+	if r.i >= int64(len(r.s)) {
+		r.prevRune = -1
+		return __bytesReadRunePair{r: 0, size: 0, err: io.EOF}
+	}
+	r.prevRune = int(r.i)
+	if c := r.s[r.i]; c < bytesRuneSelf {
+		r.i++
+		return __bytesReadRunePair{r: rune(c), size: 1, err: nil}
+	}
+	d := bytesDecodeRune(r.s[r.i:])
+	r.i += int64(d.size)
+	return __bytesReadRunePair{r: d.r, size: d.size, err: nil}
+}
+
 func (r *Reader) ReadRune() (ch rune, size int, err error) {
-	panic("bytes.Reader.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadRune: use __bytesReaderReadRune helper (WS D)")
 }
 
 // UnreadRune complements Reader.ReadRune in implementing the io.RuneScanner interface.
@@ -10421,22 +10627,67 @@ func (r *Reader) UnreadRune() error {
 
 // Seek implements the io.Seeker interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesReaderSeek helper.
 //
 // Note: the whence argument takes the same values as io.SeekStart (0),
 // io.SeekCurrent (1) and io.SeekEnd (2); io itself is P3-M8.
+func __bytesReaderSeek(r *Reader, offset int64, whence int) __bytesSeekPair {
+	r.prevRune = -1
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = r.i + offset
+	case io.SeekEnd:
+		abs = int64(len(r.s)) + offset
+	default:
+		return __bytesSeekPair{n: 0, err: errors.New("bytes.Reader.Seek: invalid whence")}
+	}
+	if abs < 0 {
+		return __bytesSeekPair{n: 0, err: errors.New("bytes.Reader.Seek: negative position")}
+	}
+	r.i = abs
+	return __bytesSeekPair{n: abs, err: nil}
+}
+
+type __bytesSeekPair struct {
+	n   int64
+	err error
+}
+
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-	panic("bytes.Reader.Seek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.Seek: use __bytesReaderSeek helper (WS D)")
 }
 
 // WriteTo implements the io.WriterTo interface.
 //
-// M8 scope: exact gc signature (io.Writer now nameable); the body stays
-// fail-fast — the loop needs w.Write, a 2-result interface call (WS D).
-// Re-test when WS D lands.
+// WS D discharge: exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesReaderWriteTo helper.
+// Shares __bytesWriteToPair with __bytesBufferWriteTo (same {n int64,
+// err error} shape). The w.Write call is a 2-result interface call,
+// desugared by the io.Write interface entry.
+func __bytesReaderWriteTo(r *Reader, w io.Writer) __bytesWriteToPair {
+	r.prevRune = -1
+	if r.i >= int64(len(r.s)) {
+		return __bytesWriteToPair{n: 0, err: nil}
+	}
+	b := r.s[r.i:]
+	m, err := w.Write(b)
+	if m > len(b) {
+		panic("bytes.Reader.WriteTo: invalid Write count")
+	}
+	r.i += int64(m)
+	n := int64(m)
+	if m != len(b) && err == nil {
+		err = io.ErrShortWrite
+	}
+	return __bytesWriteToPair{n: n, err: err}
+}
+
 func (r *Reader) WriteTo(w io.Writer) (n int64, err error) {
-	panic("bytes.Reader.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("bytes.Reader.WriteTo: use __bytesReaderWriteTo helper (WS D)")
 }
 
 // Reset resets the Reader to be reading from b.
