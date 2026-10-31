@@ -123,6 +123,107 @@ func main() {
 	}
 }
 
+// TestRuntimeFuncMethodValueFailFast (review-2026-10-31 P1-3): the
+// synthetic runtime stack-inspection methods have no backend funcdecl,
+// so they have no methodref/methodvalue lowering. Using one as a method
+// value (f := fn.Name, take(fn.Name), a value-receiver f.Name) must fail
+// at compile time with the named scope error — never build and then
+// panic at runtime, and never crash the exporter (before this fix,
+// fn.Name as a value dereferenced a nil methodCall.decl and crashed
+// gofrontend). Direct calls keep working (TestRuntimeFuncExport pins
+// the runtimefuncname/runtimefuncentry wire nodes), so the control case
+// below asserts a direct call still exports cleanly.
+func TestRuntimeFuncMethodValueFailFast(t *testing.T) {
+	// Control: a direct call still exports (real PC-to-function table).
+	src := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	fn := runtime.FuncForPC(pcs[0])
+	_ = fn
+	if fn != nil {
+		_ = fn.Name()
+		_ = fn.Entry()
+	}
+}
+`
+	if _, err := ExportFile(writeSyncProg(t, src)); err != nil {
+		t.Fatalf("direct fn.Name()/fn.Entry() must still export: %v", err)
+	}
+	cases := map[string]string{
+		"fn.Name value": `package main
+import "runtime"
+func main() {
+	var pcs [8]uintptr
+	fn := runtime.FuncForPC(pcs[0])
+	_ = fn
+	f := fn.Name
+	_ = f()
+}
+`,
+		"fn.Name as argument": `package main
+import "runtime"
+func take(f func() string) { _ = f() }
+func main() {
+	var pcs [8]uintptr
+	fn := runtime.FuncForPC(pcs[0])
+	_ = fn
+	take(fn.Name)
+}
+`,
+		"value-receiver f.Name value": `package main
+import "runtime"
+func main() {
+	var f runtime.Func
+	g := f.Name
+	_ = g()
+}
+`,
+		"fn.Entry value": `package main
+import "runtime"
+func main() {
+	var pcs [8]uintptr
+	fn := runtime.FuncForPC(pcs[0])
+	_ = fn
+	f := fn.Entry
+	_ = f()
+}
+`,
+		"fn.FileLine value": `package main
+import "runtime"
+func main() {
+	var pcs [8]uintptr
+	fn := runtime.FuncForPC(pcs[0])
+	_ = fn
+	f := fn.FileLine
+	_, _ = f(0)
+}
+`,
+		"frames.Next value": `package main
+import "runtime"
+func main() {
+	var pcs [8]uintptr
+	frames := runtime.CallersFrames(pcs[:])
+	_ = frames
+	f := frames.Next
+	_, _ = f()
+}
+`,
+	}
+	for name, src := range cases {
+		_, err := ExportFile(writeSyncProg(t, src))
+		if err == nil {
+			t.Errorf("%s: expected compile-time scope error, got success", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "has no methodref/methodvalue lowering") {
+			t.Errorf("%s: error %q does not contain the named lowering error", name, err)
+		}
+	}
+}
+
 // TestRuntimeStackFailFast: the multi-result members (Caller, Next,
 // FileLine) outside an N-target assignment fail fast and loud: a bare
 // statement reaches the exporter's named multi-result scope error, and a

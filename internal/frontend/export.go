@@ -4712,10 +4712,16 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
+	// unsupportedMsg, when non-empty, marks a synthetic method with no
+	// methodref/methodvalue lowering (e.g. (*runtime.Func).Name: the
+	// synthetic runtime overlay declares no funcdecl for it). The
+	// consumers (methodRefNode, methodValueNode) must fail at
+	// compile time with this message — never emit a runtime panic,
+	// which would let a program build and then fail only when called
+	// (review-2026-10-31 P1-3). Direct calls of these methods never
+	// reach resolveMethodCall: exportCall intercepts them first and
+	// lowers them to their intrinsic wire nodes.
+	unsupportedMsg string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4755,13 +4761,41 @@ type methodCall struct {
 func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Selection, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
 	mname := sel.Sel.Name
 	rn := derefNamed(selection.Recv())
-	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
-	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
-	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
-		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
+	// P3-M9 (driver-harden, go-cmp lane), reworked review-2026-10-31
+	// P1-3: the synthetic runtime stack-inspection methods
+	// ((*runtime.Func).Name/Entry/FileLine, (*runtime.Frames).Next),
+	// recognised by the existing runtimeStackMethod discriminator
+	// (no new package-name conditional is introduced here).
+	// The type surface exists (synthetic, via AddMethod) but the
+	// method is not in methodIndex and has no backend funcdecl, so
+	// there is no methodref/methodvalue lowering for it. Return a
+	// marker methodCall; the consumers fail at compile time with
+	// the message below. Direct calls never reach here: exportCall
+	// intercepts them first (Name/Entry to their intrinsic wire
+	// nodes, FileLine/Next via the mrRuntimeStack desugar), so the
+	// real PC-to-function table (StackTrace interning +
+	// GoFuncInfo.forPc) keeps serving direct calls. A method value
+	// (f := fn.Name, take(fn.Name)) cannot be a funclit desugar:
+	// the receiver must be evaluated once at value-creation time,
+	// and expression position has no statement slot to hoist it
+	// into — a bound-intrinsic function value needs backend design
+	// (a new wire node or a hoist mechanism), not a frontend hack.
+	if rtName, isRt := runtimeStackMethod(selection); isRt {
+		var msg string
+		if rtName == "Next" {
+			msg = "(*runtime.Frames).Next has no methodref/methodvalue " +
+				"lowering: the synthetic runtime overlay declares no funcdecl " +
+				"for it (direct calls frames.Next() lower via the mrRuntimeStack " +
+				"desugar; method values need a backend funcdecl) " +
+				"in frontend/v1 scope (WS D)"
+		} else {
+			msg = "(*runtime.Func)." + rtName + " has no methodref/methodvalue " +
+				"lowering: the synthetic runtime overlay declares no funcdecl " +
+				"for it (direct calls fn." + rtName + "() lower to the runtime " +
+				"stack intrinsic; method values need a backend funcdecl) " +
+				"in frontend/v1 scope (WS D)"
+		}
+		return &methodCall{unsupportedMsg: msg}, nil
 	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
@@ -9807,16 +9841,12 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
+	// P1-3 (review-2026-10-31): synthetic method with no
+	// methodref/methodvalue lowering (unsupportedMsg). Fail at
+	// compile time: emitting a runtime panic here would let the
+	// program build and fail only when the method value is invoked.
+	if mc.unsupportedMsg != "" {
+		return nil, scopeErrorf("%s", mc.unsupportedMsg)
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
@@ -9962,6 +9992,14 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 			return nil, scopeErrorf("method value %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
 		}
 		return nil, err
+	}
+	// P1-3 (review-2026-10-31): a synthetic method with no lowering
+	// (e.g. (*runtime.Func).Name as a value) must fail here, at
+	// compile time, before mc.decl is touched — decl is nil for the
+	// marker, so falling through would crash the exporter with a
+	// nil dereference instead of reporting the unsupported shape.
+	if mc.unsupportedMsg != "" {
+		return nil, scopeErrorf("%s", mc.unsupportedMsg)
 	}
 	// The ifacemethod fallback is call-only: a method value on a type
 	// parameter would need itab dispatch deferred to call time, which is
