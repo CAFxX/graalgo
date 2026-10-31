@@ -95,7 +95,16 @@ Related: [Makefile](../Makefile) (root build entry point),
       `UnsupportedOperationException`; `Safepoint` is a no-op); three are
       full forked implementations with documented deltas (`Panic`: the
       panicnil knob; `GoroutineState`: `ThreadLocal` vthread-scoped holder
-      lookup; `Timers`: real `nanotime`, stubbed sleep/timer-heap). The
+      lookup; `Timers`: the truffle copy is the frozen Phase-1 stub (real
+      `nanotime`, but sleep/timer-heap throw
+      `UnsupportedOperationException`). The implementation that actually runs
+      under the product launchers is the runtime module's same-FQN
+      [Timers](../internal/backend/runtime/src/main/java/graalgo/runtime/Timers.java),
+      backed by
+      [TimerHeap](../internal/backend/runtime/src/main/java/graalgo/runtime/TimerHeap.java)
+      (scheduler timer heap, scheduler-aware park) — it wins because
+      runtime classes precede truffle classes on the launcher classpaths
+      (see the shadowing note above). The
       Truffle jars live in [lib/](../internal/backend/truffle/lib/); the
       launchers [graalgo-run](../internal/backend/graalgo-run) and
       [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
@@ -112,6 +121,9 @@ Related: [Makefile](../Makefile) (root build entry point),
       compile in the truffle module) merged with phase-2
       `graalgo.{sched,jfr,runtime,safepoint}` — the scheduler keeps its
       `graalgo.sched` package (sources at `.../src/main/java/graalgo/sched/`).
+      The live same-FQN `graalgo.runtime.Timers` (the Phase-2 implementation,
+      not the truffle stub — see the truffle bullet) lives in the phase-2
+      `graalgo.runtime` here.
     - [interop/](../internal/backend/interop/) — Go↔Java interop and
       isolates (also the natural home of Phase 5's privileged runtime
       surface):
