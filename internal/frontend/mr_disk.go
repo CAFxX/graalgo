@@ -226,44 +226,14 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 		}
 	}
-	// Eta-expand intrinsic values: var x = time.Now -> var x = func() time.Time { return time.Now() }.
-	// This is a general fix for intrinsics used in value position (M5 limitation).
-	// Currently handles time.Now; extend as needed.
-	for _, f := range files {
-		ast.Inspect(f, func(n ast.Node) bool {
-			vs, ok := n.(*ast.ValueSpec)
-			if !ok || len(vs.Values) != 1 {
-				return true
-			}
-			sel, ok := vs.Values[0].(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Now" {
-				return true
-			}
-			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" {
-				// Rewrite to func lit.
-				vs.Values[0] = &ast.FuncLit{
-					Type: &ast.FuncType{
-						Params: &ast.FieldList{},
-						Results: &ast.FieldList{
-							List: []*ast.Field{
-								{Type: &ast.SelectorExpr{X: ast.NewIdent("time"), Sel: ast.NewIdent("Time")}},
-							},
-						},
-					},
-					Body: &ast.BlockStmt{
-						List: []ast.Stmt{
-							&ast.ReturnStmt{
-								Results: []ast.Expr{
-									&ast.CallExpr{Fun: sel},
-								},
-							},
-						},
-					},
-				}
-			}
-			return true
-		})
-	}
+	// R-03: no pre-type-check intrinsic eta-expansion here. The deleted
+	// block rewrote exactly `var x = time.Now` (name-keyed on the "time"
+	// ident and the "Now" selector, "extend as needed") and could not
+	// faithfully cover parameterised intrinsics (After, Tick, Sqrt).
+	// Intrinsics in value position now lower at export time through the
+	// general mechanism (exportIntrinsicValueFor via
+	// exportSyntheticQualified), which covers disk packages exactly like
+	// synthetic ones; see mr_disk_timeintrinsic_test.go.
 	// GAP-GENERIC-MR: index the package-level specs by name for the
 	// hoists below (shared by both).
 	specByName := map[string]*diskMRSpec{}

@@ -96,6 +96,24 @@ deliverable until the design lands.
   In flight: `real-reflect2` already drops stale synthetic-reflect entries;
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
+- **Note (2026-10-31, R-03 lane, unmerged at time of writing):** the
+  `time.Now` case is now done, not "needs design": the pre-type-check
+  `var x = time.Now` rewrite in
+  [mr_disk.go](../../internal/frontend/mr_disk.go) is deleted, and
+  intrinsics in value position lower at export time through the one
+  registry-driven wrapper
+  ([synth_machinery.go](../../internal/frontend/synth_machinery.go):
+  `exportIntrinsicValueFor` / `exportIntrinsicValue`), which covers
+  time, math, alias, reflect, and internal/abi intrinsics — math
+  intrinsics in value position no longer fail fast with the M7 scope
+  error. The same change fixes the `synthFuncIDs` package-var skip to
+  match by `*types.Func` object identity, so `var FAfter = time.After`
+  is no longer silently dropped by collision with the `(*Time).After`
+  method registered under the same key. The per-package need-lists in
+  [export.go](../../internal/frontend/export.go), the
+  `isMultiResultSynthetic` chains, and the intrinsic predicates
+  themselves are NOT retired by this change — they shrink only as their
+  packages retire (R-02).
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
 - **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
   the *declared view* of the already-inventoried dedicated stubs

@@ -1292,7 +1292,22 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
 							if obj.Pkg() != nil && e.synthFuncIDs != nil {
 								key := obj.Pkg().Path() + "." + obj.Name()
-								if _, ok := e.synthFuncIDs[key]; ok {
+								// R-03: match by object identity, not by
+								// (path, name) alone. The key does not
+								// distinguish a package-level function
+								// from a method of the same name (e.g.
+								// time.After the intrinsic vs
+								// (*Time).After the method, both
+								// registered under "time.After"); a
+								// bare key match silently dropped the
+								// initializer of `var FAfter = time.After`
+								// in disk packages. The *types.Func
+								// pointer is shared: imports resolve
+								// through the overlay importer, which
+								// returns the cached *types.Package, so
+								// the use-site object and the
+								// registration object are identical.
+								if fi, ok := e.synthFuncIDs[key]; ok && fi.obj == obj {
 									// Skip: leave init nil.
 									varInits = append(varInits, ginit{oid: sv.oids[i], init: nil, expr: nil, pos: e.pos(n)})
 									continue
@@ -1504,16 +1519,21 @@ func (e *exporter) timeIntrinsicNode(pos ast.Node, name string, args []*Node, ty
 	return nil, scopeErrorf("time.%s is not a recognized intrinsic", name)
 }
 
-// exportTimeIntrinsicValue lowers a synthetic time intrinsic used in value
-// position (e.g. `timeNow = time.Now`) to a synthesized wrapper closure:
-// func() time.Time { return time.Now() }. General: any time intrinsic, any
-// arity — parameters are forwarded to the intrinsic call, and evaluation
-// is deferred to call time, matching gc's func-value semantics. (The M5
-// fail-fast this replaces assumed intrinsics could only be called.)
-func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func) (*Node, error) {
+// exportIntrinsicValue lowers any intrinsic function used in value position
+// (e.g. `timeNow = time.Now`, `sqrt = math.Sqrt`) to a synthesized wrapper
+// closure: func(p0 T0, ...) R { return pkg.F(p0, ...) }. General: any
+// intrinsic family, any arity — parameters are forwarded to the intrinsic
+// call, and evaluation is deferred to call time, matching gc's func-value
+// semantics. The inner call is built by callNode, the same node builder
+// the direct-call path uses for that family, so a wrapped intrinsic
+// behaves exactly like a direct call. Zero-result intrinsics get an
+// expression statement instead of a return; multi-result intrinsics are
+// still a scope error (frontend/v1 cannot emit multi-result values).
+// (The M5 fail-fast this replaces assumed intrinsics could only be called.)
+func (e *exporter) exportIntrinsicValue(x *ast.SelectorExpr, obj *types.Func, callNode func(args []*Node, typ any) (*Node, error)) (*Node, error) {
 	sig, ok := obj.Type().(*types.Signature)
 	if !ok {
-		return nil, fmt.Errorf("gofrontend: time intrinsic %s has non-signature type %s", obj.Name(), obj.Type())
+		return nil, fmt.Errorf("gofrontend: intrinsic %s.%s has non-signature type %s", obj.Pkg().Path(), obj.Name(), obj.Type())
 	}
 	params, err := e.exportSignatureVars(x, sig.Params())
 	if err != nil {
@@ -1543,9 +1563,9 @@ func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func
 			return nil, err
 		}
 	} else if nr > 1 {
-		return nil, scopeErrorf("time.%s has %d results; an intrinsic value with multiple results is not supported in frontend/v1 scope", obj.Name(), nr)
+		return nil, scopeErrorf("%s.%s has %d results; an intrinsic value with multiple results is not supported in frontend/v1 scope", obj.Pkg().Path(), obj.Name(), nr)
 	}
-	call, err := e.timeIntrinsicNode(x, obj.Name(), args, typ)
+	call, err := callNode(args, typ)
 	if err != nil {
 		return nil, err
 	}
@@ -1569,6 +1589,49 @@ func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func
 	}), nil
 }
 
+// exportTimeIntrinsicValue is the time-family specialisation of
+// exportIntrinsicValue, kept for the pre-existing call site shape.
+func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func) (*Node, error) {
+	return e.exportIntrinsicValue(x, obj, func(args []*Node, typ any) (*Node, error) {
+		return e.timeIntrinsicNode(x, obj.Name(), args, typ)
+	})
+}
+
+// exportIntrinsicValueFor lowers an intrinsic function in value position
+// through the intrinsic registry, not through a per-package branch at the
+// use site: the family is selected by the existing intrinsic predicates
+// (isTimeIntrinsicFunc, isMathIntrinsicFunc, isAliasIntrinsicFunc,
+// isReflectIntrinsicFunc, isAbiFuncPCIntrinsicFunc), and every family
+// funnels into the one wrapper builder above. A function that matches
+// none of the predicates is not an intrinsic and is left to the caller's
+// func-value path.
+func (e *exporter) exportIntrinsicValueFor(x *ast.SelectorExpr, obj *types.Func) (*Node, error) {
+	switch {
+	case isTimeIntrinsicFunc(obj):
+		return e.exportIntrinsicValue(x, obj, func(args []*Node, typ any) (*Node, error) {
+			return e.timeIntrinsicNode(x, obj.Name(), args, typ)
+		})
+	case isMathIntrinsicFunc(obj):
+		return e.exportIntrinsicValue(x, obj, func(args []*Node, typ any) (*Node, error) {
+			return e.mathIntrinsicNode(x, obj.Name(), args, typ)
+		})
+	case isAliasIntrinsicFunc(obj):
+		return e.exportIntrinsicValue(x, obj, func(args []*Node, typ any) (*Node, error) {
+			return e.aliasIntrinsicNode(x, obj.Name(), args, typ)
+		})
+	case isReflectIntrinsicFunc(obj):
+		return e.exportIntrinsicValue(x, obj, func(args []*Node, typ any) (*Node, error) {
+			return e.reflectIntrinsicNode(x, obj.Name(), args, typ)
+		})
+	case isAbiFuncPCIntrinsicFunc(obj):
+		return e.exportIntrinsicValue(x, obj, func(args []*Node, typ any) (*Node, error) {
+			return e.abiFuncPCNode(x, obj.Name(), args)
+		})
+	default:
+		return nil, scopeErrorf("%s.%s is not an intrinsic and cannot be lowered as an intrinsic value", obj.Pkg().Path(), obj.Name())
+	}
+}
+
 // exportMathIntrinsic lowers a call to a synthetic math intrinsic
 // (P3-M7, ADR-0007 D5) into its wire node. Each intrinsic gets its own
 // wire kind (the time-intrinsic precedent): "mathf64bits",
@@ -1584,6 +1647,14 @@ func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, err
 	if err != nil {
 		return nil, err
 	}
+	return e.mathIntrinsicNode(c, name, args, typ)
+}
+
+// mathIntrinsicNode builds the wire node for a synthetic math intrinsic
+// call from already-exported args. Split out of exportMathIntrinsic so
+// intrinsic values (exportIntrinsicValueFor) can synthesize the call
+// without an *ast.CallExpr, mirroring timeIntrinsicNode.
+func (e *exporter) mathIntrinsicNode(pos ast.Node, name string, args []*Node, typ any) (*Node, error) {
 	kind, ok := map[string]string{
 		"Float64bits":     "mathf64bits",
 		"Float64frombits": "mathf64frombits",
@@ -1607,7 +1678,7 @@ func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, err
 		fields["y"] = args[1]
 		fields["z"] = args[2]
 	}
-	return e.node(kind, c, fields), nil
+	return e.node(kind, pos, fields), nil
 }
 
 // exportAliasIntrinsic lowers a call to crypto/internal/fips140/alias.AnyOverlap
@@ -1621,14 +1692,22 @@ func (e *exporter) exportAliasIntrinsic(c *ast.CallExpr, name string) (*Node, er
 	if err != nil {
 		return nil, err
 	}
-	if len(args) != 2 {
-		return nil, scopeErrorf("alias.%s takes 2 arguments", name)
-	}
 	typ, err := e.callType(c)
 	if err != nil {
 		return nil, err
 	}
-	return e.node("sliceoverlap", c, map[string]any{
+	return e.aliasIntrinsicNode(c, name, args, typ)
+}
+
+// aliasIntrinsicNode builds the "sliceoverlap" wire node from
+// already-exported args. Split out of exportAliasIntrinsic so intrinsic
+// values (exportIntrinsicValueFor) can synthesize the call without an
+// *ast.CallExpr, mirroring timeIntrinsicNode.
+func (e *exporter) aliasIntrinsicNode(pos ast.Node, name string, args []*Node, typ any) (*Node, error) {
+	if len(args) != 2 {
+		return nil, scopeErrorf("alias.%s takes 2 arguments", name)
+	}
+	return e.node("sliceoverlap", pos, map[string]any{
 		"x": args[0], "y": args[1],
 		"inexact": name == "InexactOverlap",
 		"type":    typ,
@@ -2048,14 +2127,14 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		}
 		return e.node("ident", x, map[string]any{"name": x.Sel.Name, "obj": oid, "type": t}), nil
 	case *types.Func:
-		if obj.Pkg() != nil && obj.Pkg().Path() == "time" && timeIntrinsicNames[obj.Name()] {
-			// A time intrinsic in value position (e.g. `timeNow = time.Now`)
-			// lowers to a synthesized wrapper closure; the call itself
-			// stays a wire node inside the closure body.
-			return e.exportTimeIntrinsicValue(x, obj)
-		}
-		if obj.Pkg() != nil && obj.Pkg().Path() == "math" && mathIntrinsicNames[obj.Name()] {
-			return nil, scopeErrorf("math.%s is an intrinsic and cannot be used in value position (M7)", obj.Name())
+		// R-03: any intrinsic in value position (e.g. `timeNow = time.Now`,
+		// `sqrt = math.Sqrt`) lowers to a synthesized wrapper closure
+		// through the one registry-driven path (exportIntrinsicValueFor);
+		// the call itself stays a wire node inside the closure body.
+		// This replaces the time-only branch and the math fail-fast:
+		// no family gets its own branch at the use site.
+		if isTimeIntrinsicFunc(obj) || isMathIntrinsicFunc(obj) || isAliasIntrinsicFunc(obj) || isReflectIntrinsicFunc(obj) || isAbiFuncPCIntrinsicFunc(obj) {
+			return e.exportIntrinsicValueFor(x, obj)
 		}
 		// P3-M8b: a named synthetic function in value position (e.g.
 		// sha256.New passed to hmac.New) lowers via the M6 func-value

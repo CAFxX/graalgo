@@ -2923,8 +2923,16 @@ func (e *exporter) exportReflectIntrinsic(c *ast.CallExpr, name string) (*Node, 
 	if err != nil {
 		return nil, err
 	}
+	return e.reflectIntrinsicNode(c, name, args, typ)
+}
+
+// reflectIntrinsicNode builds the "reflectop" wire node from
+// already-exported args. Split out of exportReflectIntrinsic so intrinsic
+// values (exportIntrinsicValueFor) can synthesize the call without an
+// *ast.CallExpr, mirroring timeIntrinsicNode.
+func (e *exporter) reflectIntrinsicNode(pos ast.Node, name string, args []*Node, typ any) (*Node, error) {
 	op := strings.TrimPrefix(name, "__reflect_")
-	return e.node("reflectop", c, map[string]any{
+	return e.node("reflectop", pos, map[string]any{
 		"op":   op,
 		"args": args,
 		"type": typ,
