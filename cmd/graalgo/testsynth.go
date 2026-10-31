@@ -1558,8 +1558,11 @@ func moduleForDir(dir string) (root, modulePath string) {
 // relative to the module containing dir.
 func importDirForPath(dir, importPath string) (string, error) {
 	// Same module: parent and sibling package imports (e.g. the caddy
-	// root package imported by caddyconfig's tests).
-	if modRoot, modulePath := moduleForDir(dir); modulePath != "" {
+	// root package imported by caddyconfig's tests). modRoot is also the
+	// go.mod context for the module-cache lookup below, so it is computed
+	// once here rather than per branch.
+	modRoot, modulePath := moduleForDir(dir)
+	if modulePath != "" {
 		if importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/") {
 			rel := strings.TrimPrefix(importPath, modulePath)
 			rel = strings.TrimPrefix(rel, "/")
@@ -1580,7 +1583,7 @@ func importDirForPath(dir, importPath string) (string, error) {
 	} else {
 		// Third-party: module cache first, then GOPATH/src.
 		if mc := goModCacheDir(); mc != "" {
-			if d, ok := findInModCache(mc, importPath); ok {
+			if d, ok := findInModCache(mc, modRoot, importPath); ok {
 				return d, nil
 			}
 		}
@@ -1639,9 +1642,33 @@ func goPathDirs() []string {
 
 // findInModCache locates importPath under the module cache, trying
 // progressively shorter module prefixes (the cache stores the module at
-// <escaped>@<version>, with the package as a subdirectory). Any version
-// will do: the declared package name does not vary by version.
-func findInModCache(mc, importPath string) (string, bool) {
+// <escaped>@<version>, with the package as a subdirectory). The version
+// is pinned by the requiring module's go.mod when modRoot names one
+// (longest-module-prefix require match, with version replaces applied):
+// the pinned version's directory wins, and any other version is only a
+// fallback that warns on stderr, so a test driver never silently
+// type-checks against a different dependency version than the module
+// under test declares. With no go.mod context (modRoot == "") the lookup
+// keeps the old any-version behavior, also with a warning, because the
+// declared package name does not vary by version but the API might.
+// Local-path replaces are out of scope here: they resolve through the
+// GOPATH/src fallback in importDirForPath, not the module cache.
+func findInModCache(mc, modRoot, importPath string) (string, bool) {
+	pinnedMod, pinnedVer, pinned := pinnedModuleVersion(modRoot, importPath)
+	if pinned {
+		// Exact pinned version first: the module path is known, so the
+		// subpackage path is the remainder after the module prefix.
+		dir := filepath.Join(mc, escapeModulePath(pinnedMod)+"@"+pinnedVer)
+		if sub := strings.TrimPrefix(importPath, pinnedMod); sub != "" {
+			dir = filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(sub, "/")))
+		}
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir, true
+		}
+	}
+	// Fallback: highest version present for any module-prefix candidate.
+	// Warns, because the chosen version differs from (or is unconstrained
+	// by) what the requiring module declares.
 	escaped := escapeModulePath(importPath)
 	elems := strings.Split(escaped, "/")
 	for i := len(elems); i >= 1; i-- {
@@ -1653,20 +1680,190 @@ func findInModCache(mc, importPath string) (string, bool) {
 		if err != nil {
 			continue
 		}
+		best := ""
 		for _, e := range entries {
 			if !e.IsDir() || !strings.HasPrefix(e.Name(), base+"@") {
 				continue
 			}
-			d := filepath.Join(parent, e.Name())
+			ver := strings.TrimPrefix(e.Name(), base+"@")
+			if best == "" || compareModSemver(ver, best) > 0 {
+				best = ver
+			}
+		}
+		if best != "" {
+			d := filepath.Join(parent, base+"@"+best)
 			if subPath != "" {
 				d = filepath.Join(d, filepath.FromSlash(subPath))
 			}
 			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				if pinned {
+					fmt.Fprintf(os.Stderr, "graalgo test: warning: import %q: go.mod pins %s@%s, which is absent from the module cache; using %s instead\n", importPath, pinnedMod, pinnedVer, best)
+				} else {
+					fmt.Fprintf(os.Stderr, "graalgo test: warning: import %q: no go.mod pins a version for this import; using highest version on disk (%s)\n", importPath, best)
+				}
 				return d, true
 			}
 		}
 	}
 	return "", false
+}
+
+// pinnedModuleVersion resolves importPath against the require/replace
+// directives of the go.mod in modRoot ("": no context, unpinned). It
+// returns the module path, the version to use, and whether the import is
+// pinned. Matching is longest-module-prefix, as in cmd/go: a subpackage
+// import pins to its enclosing module's requirement. A version replace
+// (old [ver] => new ver) substitutes the replacement version; a
+// local-path replace (no version on the new side) is not a cache version
+// and leaves the import unpinned here.
+func pinnedModuleVersion(modRoot, importPath string) (modPath, version string, pinned bool) {
+	if modRoot == "" {
+		return "", "", false
+	}
+	data, err := os.ReadFile(filepath.Join(modRoot, "go.mod"))
+	if err != nil {
+		return "", "", false
+	}
+	requires, replaces := parseGoModRequires(data)
+	best := ""
+	for req := range requires {
+		if importPath == req || strings.HasPrefix(importPath, req+"/") {
+			if len(req) > len(best) {
+				best = req
+			}
+		}
+	}
+	if best == "" {
+		return "", "", false
+	}
+	version = requires[best]
+	if rep, ok := replaces[best]; ok && rep.newVersion != "" && (rep.oldVersion == "" || rep.oldVersion == version) {
+		version = rep.newVersion
+	}
+	return best, version, true
+}
+
+// goModReplace is one parsed replace directive side pair.
+type goModReplace struct {
+	oldVersion string
+	newVersion string // "" for a local-path replacement
+}
+
+// parseGoModRequires extracts require and replace directives from go.mod
+// data (single-line and parenthesized-block forms; trailing // comments
+// stripped). Directives it does not need (module, go, toolchain, exclude,
+// retract) are ignored, as are the contents of other block directives.
+func parseGoModRequires(data []byte) (requires map[string]string, replaces map[string]goModReplace) {
+	requires = map[string]string{}
+	replaces = map[string]goModReplace{}
+	block := ""
+	addReplace := func(line string) {
+		parts := strings.SplitN(line, "=>", 2)
+		if len(parts) != 2 {
+			return
+		}
+		oldF := strings.Fields(strings.TrimSpace(parts[0]))
+		newF := strings.Fields(strings.TrimSpace(parts[1]))
+		if len(oldF) == 0 || len(newF) == 0 {
+			return
+		}
+		rep := goModReplace{}
+		if len(oldF) >= 2 {
+			rep.oldVersion = oldF[1]
+		}
+		if len(newF) >= 2 {
+			rep.newVersion = newF[1]
+		}
+		replaces[oldF[0]] = rep
+	}
+	for _, raw := range strings.Split(string(data), "\n") {
+		line := raw
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		// Normalize whitespace (tabs included) so "require\t(" parses
+		// like its gofmt'd form; parsing below only uses fields.
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			continue
+		}
+		if block != "" {
+			if line == ")" {
+				block = ""
+				continue
+			}
+			switch block {
+			case "require":
+				if f := strings.Fields(line); len(f) >= 2 {
+					requires[f[0]] = f[1]
+				}
+			case "replace":
+				addReplace(line)
+			}
+			continue
+		}
+		switch {
+		case line == "require (" || strings.HasPrefix(line, "require ("):
+			block = "require"
+		case strings.HasPrefix(line, "require "):
+			if f := strings.Fields(strings.TrimPrefix(line, "require ")); len(f) >= 2 {
+				requires[f[0]] = f[1]
+			}
+		case line == "replace (" || strings.HasPrefix(line, "replace ("):
+			block = "replace"
+		case strings.HasPrefix(line, "replace "):
+			addReplace(strings.TrimPrefix(line, "replace "))
+		case strings.HasSuffix(line, "("):
+			block = "other"
+		}
+	}
+	return requires, replaces
+}
+
+// compareModSemver compares "v1.6.0"-style versions numerically, with a
+// lexicographic fallback for pseudo-versions (same rule as the frontend's
+// compareSemver, duplicated because the two packages do not share code).
+func compareModSemver(a, b string) int {
+	norm := func(v string) []string {
+		v = strings.TrimPrefix(v, "v")
+		if i := strings.Index(v, "-"); i >= 0 {
+			v = v[:i]
+		}
+		if i := strings.Index(v, "+"); i >= 0 {
+			v = v[:i]
+		}
+		return strings.Split(v, ".")
+	}
+	pa, pb := norm(a), norm(b)
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		na, ea := strconv.Atoi(pa[i])
+		nb, eb := strconv.Atoi(pb[i])
+		if ea == nil && eb == nil && na != nb {
+			if na < nb {
+				return -1
+			}
+			return 1
+		}
+		if pa[i] != pb[i] {
+			if pa[i] < pb[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	switch {
+	case len(pa) < len(pb):
+		return -1
+	case len(pa) > len(pb):
+		return 1
+	}
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
 }
 
 // escapeModulePath applies the module cache escaping: uppercase letters

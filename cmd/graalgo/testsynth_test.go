@@ -966,3 +966,84 @@ func TestB(t *testing.T) {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
 	}
 }
+
+// Tests for go.mod-pinned module-cache lookup (review lane L4).
+// Fake caches and fake go.mod files live in temp dirs; the real module
+// cache is never touched.
+
+func fakeTestsynthModCache(t *testing.T, versions []string, sub string) string {
+	t.Helper()
+	mc := filepath.Join(t.TempDir(), "modcache")
+	for _, v := range versions {
+		dir := filepath.Join(mc, "example.com", "dep@"+v)
+		if sub != "" {
+			dir = filepath.Join(dir, filepath.FromSlash(sub))
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return mc
+}
+
+func fakeTestsynthModule(t *testing.T, gomod string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", gomod)
+	return dir
+}
+
+func TestFindInModCachePinned(t *testing.T) {
+	mc := fakeTestsynthModCache(t, []string{"v1.0.0", "v2.0.0"}, "sub")
+	modRoot := fakeTestsynthModule(t, "module example.com/main\n\nrequire example.com/dep v1.0.0\n")
+	d, ok := findInModCache(mc, modRoot, "example.com/dep/sub")
+	if !ok {
+		t.Fatalf("pinned lookup: not found")
+	}
+	want := filepath.Join(mc, "example.com", "dep@v1.0.0", "sub")
+	if d != want {
+		t.Fatalf("pinned lookup = %q, want %q (highest on disk must not win)", d, want)
+	}
+}
+
+func TestFindInModCachePinnedMissingFallsBack(t *testing.T) {
+	mc := fakeTestsynthModCache(t, []string{"v1.0.0", "v2.0.0"}, "sub")
+	modRoot := fakeTestsynthModule(t, "module example.com/main\n\nrequire example.com/dep v9.9.9\n")
+	d, ok := findInModCache(mc, modRoot, "example.com/dep/sub")
+	if !ok {
+		t.Fatalf("fallback lookup: not found")
+	}
+	want := filepath.Join(mc, "example.com", "dep@v2.0.0", "sub")
+	if d != want {
+		t.Fatalf("fallback lookup = %q, want highest %q", d, want)
+	}
+}
+
+func TestFindInModCacheUnpinnedHighest(t *testing.T) {
+	mc := fakeTestsynthModCache(t, []string{"v1.0.0", "v2.0.0"}, "sub")
+	d, ok := findInModCache(mc, "", "example.com/dep/sub")
+	if !ok {
+		t.Fatalf("unpinned lookup: not found")
+	}
+	want := filepath.Join(mc, "example.com", "dep@v2.0.0", "sub")
+	if d != want {
+		t.Fatalf("unpinned lookup = %q, want highest %q", d, want)
+	}
+}
+
+func TestPinnedModuleVersionReplaceAndPrefix(t *testing.T) {
+	modRoot := fakeTestsynthModule(t, "module example.com/main\n\nrequire (\n\texample.com/dep v1.0.0\n\texample.com/dep/sub v3.0.0\n)\n\nreplace example.com/dep => example.com/dep v2.0.0\n")
+	mod, ver, pinned := pinnedModuleVersion(modRoot, "example.com/dep/pkg")
+	if !pinned || mod != "example.com/dep" || ver != "v2.0.0" {
+		t.Fatalf("replaced pin = (%q, %q, %v), want (example.com/dep, v2.0.0, true)", mod, ver, pinned)
+	}
+	// Longest prefix: the sub-module requirement wins over the replaced
+	// parent requirement.
+	mod, ver, pinned = pinnedModuleVersion(modRoot, "example.com/dep/sub/pkg")
+	if !pinned || mod != "example.com/dep/sub" || ver != "v3.0.0" {
+		t.Fatalf("sub pin = (%q, %q, %v), want (example.com/dep/sub, v3.0.0, true)", mod, ver, pinned)
+	}
+	if _, _, pinned := pinnedModuleVersion(modRoot, "example.com/other"); pinned {
+		t.Fatalf("unrelated import unexpectedly pinned")
+	}
+}

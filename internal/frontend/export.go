@@ -178,37 +178,37 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // getSyntheticPackage so synthetic->synthetic imports work), and by P3-M7
 // (wave 1) with the synthetic errors and sort packages (real-Go sources
 // in synth_errors.go / synth_sort.go, likewise via getSyntheticPackage).
-// NOTE (503608ea): the synthetic sync and sync/atomic packages were
-// RETIRED — both now resolve from disk (real GOROOT packages) via the
-// general disk importer. The overlay no longer serves them; the retired
-// frontend machinery (syncPrimitiveNamed et al., exportSyncOp*,
-// exportSyncOnceFunc, syntheticSyncPackage/syntheticAtomicPackage) was
-// deleted. Real sync methods compile normally and use the runtime
-// semaphore backend via linkname.
-// it resolves exactly the synthetic package
-// "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface
-// and the stack-inspection family: Callers/CallersFrames/Caller/FuncForPC
-// plus Frames/Frame/Func),
-// the synthetic package "sync" exposing the four P3-M2b
-// primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
-// signatures, the synthetic package "sync/atomic" exposing the P3-M4
-// typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) plus the
-// P3-M10 generic additions (Pointer[T], Value) with exact
-// gc method signatures, the synthetic package "time" (ADR-0005 D1:
-// Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
-// synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
-// channels, synthetic time, and P3-M3 interface dispatch), the synthetic
-// package "errors" (P3-M7: New/Is/Unwrap/Join/AsType as real Go; As
-// fail-fast — it needs reflect), the synthetic package "sort" (P3-M7:
-// pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
-// fail-fast — multi-result/reflect), the 8 P3-M7 (wave 1) encoding/*
-// primitive packages (encoding/base32, encoding/base64, encoding/hex,
-// encoding/binary, encoding/ascii85, encoding/pem, encoding/asn1,
-// encoding) as real-Go sources via getSyntheticPackage (encoding/pem
-// imports synthetic encoding/base64), and the empty synthetic package
-// "unsafe".
-// Every other import still fails via failImporter. WS G's full
-// import overlay absorbs this carve-out.
+// RETIREMENTS (present tense — the history above is not the current
+// state): the M6 D4 fmt stub was retired by real-fmt2 (fmt now resolves
+// from disk, real GOROOT sources), and the synthetic sync and
+// sync/atomic packages were RETIRED by 503608ea — both now resolve from
+// disk (real GOROOT packages) via the general disk importer. The overlay
+// no longer serves any of the three; the retired frontend machinery
+// (syncPrimitiveNamed et al., exportSyncOp*, exportSyncOnceFunc,
+// syntheticSyncPackage/syntheticAtomicPackage) was deleted. Real sync
+// methods compile normally and use the runtime semaphore backend via
+// linkname.
+// The single true resolution order (see importAdmitted, the one gate that
+// states it authoritatively) is: dedicated synthetic constructors
+// (runtime, unsafe) → synthetic sources (syntheticSources map) → disk
+// import (go.mod-pinned module-cache version, warned highest-version
+// fallback, GOPATH/src, pinned-GOROOT stdlib) → scope error. In
+// particular fmt is NOT a dedicated stub: it resolves via disk import,
+// like every other non-synthetic stdlib package.
+// The synthetic packages the overlay still serves include "runtime"
+// exposing runtime.Goexit (plus the P2-M4 GC-interop surface and the
+// stack-inspection family: Callers/CallersFrames/Caller/FuncForPC plus
+// Frames/Frame/Func), "time" (ADR-0005 D1: Duration/Time/Month/Weekday as
+// real Go, clock/timer intrinsics), "context" (ADR-0005 D2: real Go on
+// sync.Mutex, channels, synthetic time, and P3-M3 interface dispatch),
+// "errors" (P3-M7: New/Is/Unwrap/Join/AsType as real Go; As fail-fast —
+// it needs reflect), "sort" (P3-M7: pdqsort/stable/search as real Go;
+// Find/Slice/SliceStable/SliceIsSorted fail-fast — multi-result/reflect),
+// the 8 P3-M7 (wave 1) encoding/* primitive packages (encoding/base32,
+// encoding/base64, encoding/hex, encoding/binary, encoding/ascii85,
+// encoding/pem, encoding/asn1, encoding) as real-Go sources via
+// getSyntheticPackage (encoding/pem imports synthetic encoding/base64),
+// and the empty synthetic package "unsafe".
 // syntheticRuntimePackage builds the synthetic "runtime" package for the
 // import overlay. The runtime package is inherently implementation-defined
 // (gc's own runtime/ is machine-specific and cannot compile on graalgo),
@@ -789,10 +789,17 @@ func internalImportVisible(importPath, importingDir string) bool {
 }
 
 // importAdmitted is the single frontend/v1 import gate (WS G), shared by
-// checkImportAllowed and needsOverlayImporter. General mechanism
-// (hunt-special-cases): instead of a per-package allow-list, admit:
+// checkImportAllowed and needsOverlayImporter. It is also the single
+// authoritative statement of the import resolution order — other comments
+// in this file and diskimport.go describe it by reference, never by
+// restating it (restated lists drifted: fmt was listed as a dedicated
+// stub long after real-fmt2 moved it to disk import). General mechanism
+// (hunt-special-cases): instead of a per-package allow-list, admit, in
+// this order:
 //  1. The packages with dedicated synthetic constructors (not in
-//     syntheticSources): runtime, fmt, unsafe.
+//     syntheticSources): runtime and unsafe only. (fmt is NOT one: it
+//     resolves via disk import, step 4. sync and sync/atomic likewise
+//     resolve from disk since 503608ea retired their synthetics.)
 //  2. Any package with a synthetic source (syntheticSources map) —
 //     including future additions, no allow-list update needed — except
 //     internal packages, which follow Go's internal-visibility rule.
@@ -801,11 +808,14 @@ func internalImportVisible(importPath, importingDir string) bool {
 //     e.g. the `graalgo test` driver for a stdlib package compiles as
 //     the package itself, so its internal/* imports resolve. Ordinary
 //     user code stays rejected.
-//  4. Disk-importable third-party packages.
+//  4. Disk-importable packages: third-party modules (go.mod-pinned
+//     version first, warned highest-version fallback) and non-synthetic
+//     stdlib (pinned-GOROOT sources), via resolveDiskPackageDir.
 //
 // Every other import is a scope error.
 func importAdmitted(path, importingDir string) bool {
-	// The dedicated-constructor packages (sync and sync/atomic now resolve from disk).
+	// The dedicated-constructor packages (runtime, unsafe; sync and
+	// sync/atomic resolve from disk since 503608ea, fmt since real-fmt2).
 	if isDedicatedSyntheticStub(path) {
 		return true
 	}
@@ -838,11 +848,16 @@ func needsOverlayImporter(p string, importingDir string) bool {
 }
 
 // checkImportAllowed validates one import against the frontend/v1 import
-// overlay (WS G): admitted (see importAdmitted), or scope error.
+// overlay (WS G): admitted (see importAdmitted), or scope error. A
+// GOROOT-pin failure recorded during the gate (see diskPinError) is
+// surfaced as itself instead of being degraded into a scope error.
 func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 	path := strings.Trim(imp.Path.Value, "\"`")
 	if importAdmitted(path, importingDir) {
 		return nil
+	}
+	if err := diskPinError(path); err != nil {
+		return err
 	}
 	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 }
@@ -895,6 +910,16 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// The test driver is the package's own test binary: resolve imports
 	// with the package's privileges (Go's internal-visibility rule).
 	idir := importingDir(paths, testPackageDir)
+	// The importing module's go.mod pins disk-import versions (see
+	// gomod.go) and constrains the toolchain: a module declaring a newer
+	// go version or a different toolchain than the one that built
+	// gofrontend fails here, before any import resolves against the
+	// wrong stdlib. The export document records the pinned toolchain in
+	// Generator.GoRoot (runtime.Version()).
+	setImportingModule(idir)
+	if err := checkModuleToolchain(currentImportingModule(), runtime.Version()); err != nil {
+		return "", err
+	}
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if err := checkImportAllowed(imp, idir); err != nil {
@@ -4412,7 +4437,8 @@ func (e *exporter) indexDiskMethodOnDemand(recvObj types.Object, mname string) *
 		return nil
 	}
 	pkgPath := pkg.Path()
-	// Only for disk-importable packages (not synthetic, not the 3 stubs).
+	// Only for disk-importable packages (not synthetic, not the dedicated
+	// stubs runtime/unsafe — fmt resolves via disk, like other stdlib).
 	if _, ok := syntheticSources[pkgPath]; ok {
 		return nil
 	}
