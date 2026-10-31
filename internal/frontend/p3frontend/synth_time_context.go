@@ -314,10 +314,18 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 	}
 
 	// Context interface. Matches the phase-1 synthetic exactly: Deadline
-	// is OMITTED (afc0dfb — v1 cannot emit multi-result methods, WS D),
-	// and Done() returns <-chan struct{} (receive-only, as in the
-	// synthetic source).
+	// is PRESENT (restored in phase-1 by the P4 multi-result interface
+	// mechanism, 046afc86 — the old afc0dfb omission, "v1 cannot emit
+	// multi-result methods", no longer holds), and Done() returns
+	// <-chan struct{} (receive-only, as in the synthetic source).
+	// Result names (deadline, ok) match the phase-1 source so the
+	// drift test's rendered-signature comparison agrees exactly.
 	ctxMethods := []*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Deadline",
+			types.NewSignatureType(nil, nil, nil, nil,
+				types.NewTuple(
+					newParam("deadline", timeType),
+					newParam("ok", boolT)), false)),
 		types.NewFunc(token.NoPos, pkg, "Done",
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(

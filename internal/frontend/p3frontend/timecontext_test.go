@@ -278,12 +278,19 @@ func TestContextSyntheticSignatures(t *testing.T) {
 				want.Name(), sigString(wantSig), sigString(gotSig))
 		}
 	}
-	// Deadline must be absent from the mirror (afc0dfb): v1 cannot emit
-	// multi-result methods, so the synthetic interface omits it.
+	// Deadline must be PRESENT in the mirror: phase-1 restored it (P4
+	// multi-result interface mechanism, 046afc86), retiring the old
+	// afc0dfb omission. The method-for-method loop above already
+	// compares its signature; this explicit check keeps the
+	// restoration pinned if the loop's expectations ever change.
+	foundDeadline := false
 	for i := 0; i < mirrorIface.NumMethods(); i++ {
 		if mirrorIface.Method(i).Name() == "Deadline" {
-			t.Fatal("mirror Context must not declare Deadline (afc0dfb)")
+			foundDeadline = true
 		}
+	}
+	if !foundDeadline {
+		t.Fatal("mirror Context must declare Deadline (restored in phase-1, 046afc86)")
 	}
 
 	// CancelFunc and CancelCauseFunc.

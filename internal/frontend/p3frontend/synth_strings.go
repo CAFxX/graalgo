@@ -14,9 +14,11 @@ package p3frontend
 // Deliberate omissions (inexpressible in the synthetic source; documented
 // in the phase-1 header): ToUpperSpecial/ToLowerSpecial/ToTitleSpecial
 // (need unicode.SpecialCase), Replacer.WriteString and Reader.WriteTo
-// (need io.Writer), Lines/SplitSeq/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
-// (need iter.Seq). Title is present with exact gc signature and a
-// fail-fast body (deprecated; needs unicode tables).
+// (need io.Writer), Lines/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
+// (need iter.Seq). SplitSeq LANDED in phase-1 (real-nethttp: the iter
+// import it needs is now available) and is mirrored below, so it is no
+// longer in the omission set. Title is present with exact gc signature
+// and a fail-fast body (deprecated; needs unicode tables).
 
 import (
 	"go/token"
@@ -185,6 +187,35 @@ func syntheticStringsPackage() *types.Package {
 	insertFunc("SplitAfterN",
 		[]*types.Var{newParam("s", stringT), newParam("sep", stringT), newParam("n", intT)},
 		[]*types.Var{newParam("", strSlice)}, false)
+
+	// SplitSeq(s, sep string) iter.Seq[string] (landed in phase-1 via
+	// real-nethttp). iter.Seq is built programmatically — a generic
+	// named type Seq[V any] = func(yield func(V) bool) bool in a
+	// package named "iter", instantiated at string — so the mirror
+	// renders exactly "iter.Seq[string]" without depending on a
+	// GOROOT source import at mirror-build time. The construction is
+	// verified by the drift test's rendered-signature comparison.
+	iterPkg := types.NewPackage("iter", "iter")
+	seqVName := types.NewTypeName(token.NoPos, iterPkg, "V", nil)
+	seqV := types.NewTypeParam(seqVName, types.Universe.Lookup("any").Type())
+	seqYieldSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "", seqV)),
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "", boolT)), false)
+	seqSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "yield", seqYieldSig)),
+		types.NewTuple(types.NewParam(token.NoPos, iterPkg, "", boolT)), false)
+	seqName := types.NewTypeName(token.NoPos, iterPkg, "Seq", nil)
+	seqNamed := types.NewNamed(seqName, seqSig, nil)
+	seqNamed.SetTypeParams([]*types.TypeParam{seqV})
+	iterPkg.Scope().Insert(seqName)
+	iterPkg.MarkComplete()
+	seqString, err := types.Instantiate(nil, seqNamed, []types.Type{stringT}, true)
+	if err != nil {
+		panic("strings mirror: instantiating iter.Seq[string]: " + err.Error())
+	}
+	insertFunc("SplitSeq",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("", seqString)}, false)
 
 	// Case mapping.
 	for _, name := range []string{"ToUpper", "ToLower", "ToTitle", "Title", "TrimSpace", "Clone"} {

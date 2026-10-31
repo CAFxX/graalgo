@@ -88,9 +88,10 @@ func TestStringsOmissionSet(t *testing.T) {
 		// Need io.Writer (io wave).
 		"WriteString": "io.Writer parameter (Replacer.WriteString)",
 		"WriteTo":     "io.Writer parameter (Reader.WriteTo)",
-		// Need iter.Seq (iter wave).
+		// Need iter.Seq (iter wave). SplitSeq is NOT omitted anymore:
+		// it landed in phase-1 (real-nethttp) and is mirrored, so it
+		// is asserted present by TestStringsSyntheticSignatures.
 		"Lines":         "iter.Seq result",
-		"SplitSeq":      "iter.Seq result",
 		"SplitAfterSeq": "iter.Seq result",
 		"FieldsSeq":     "iter.Seq result",
 		"FieldsFuncSeq": "iter.Seq result",

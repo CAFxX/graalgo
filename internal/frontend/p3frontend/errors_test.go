@@ -16,13 +16,29 @@ import (
 	"testing"
 )
 
+// gorootSourceImporter returns a types.Importer that type-checks real
+// GOROOT packages from source (the test toolchain's GOROOT, pinned to gc
+// 1.27.1). Drift-test oracles use it for imports that are real stdlib
+// packages, not synthetic mirrors: "iter" (phase-1 strings SplitSeq) and
+// "internal/reflectlite" (phase-1 errors As, via internal/reflectlite
+// since real-reflect2). The source importer resolves internal packages
+// from a std-tree importer, so both succeed here; the oracle compares
+// only the exported scope of the package under test, never the imported
+// package's own surface, so delegating these imports does not weaken
+// the drift check.
+func gorootSourceImporter() types.Importer {
+	return importer.ForCompiler(token.NewFileSet(), "source", nil)
+}
+
 // phase1SyntheticPackageForTest parses the named string const out of a
 // phase-1 frontend source file, type-checks the embedded Go source with
 // imp, and returns its *types.Package. This is the drift oracle for the
 // mirrors: tests compare the mirror against this package — not against
 // itself — so a phase-1-side change fails fast instead of silently
 // diverging. (Generalizes phase1SyntheticContextPackage in
-// timecontext_test.go; errors/sort import nothing.)
+// timecontext_test.go; sort imports nothing, errors imports
+// internal/reflectlite — callers pass an importer that delegates it,
+// see gorootSourceImporter.)
 func phase1SyntheticPackageForTest(t *testing.T, srcFile, constName, path string, imp types.Importer) *types.Package {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -96,6 +112,12 @@ func syntheticStdImporter(t *testing.T) types.Importer {
 	errorsPkg.MarkComplete()
 	var imp importerFunc
 	imp = importerFunc(func(path string) (*types.Package, error) {
+		if path == "iter" || path == "internal/reflectlite" {
+			// Real GOROOT packages, not synthetic mirrors: strings
+			// SplitSeq needs iter, and the synthetic errors source
+			// (via this importer's errors case) needs reflectlite.
+			return gorootSourceImporter().Import(path)
+		}
 		if path == "errors" {
 			return errorsPkg, nil
 		}
@@ -164,9 +186,17 @@ func TestErrorsSyntheticSignatures(t *testing.T) {
 		t.Fatalf("package name/path = %s/%s, want errors/errors",
 			mirror.Name(), mirror.Path())
 	}
+	// The phase-1 errors source imports internal/reflectlite (its As
+	// implementation, since real-reflect2); that real GOROOT package
+	// is delegated to the source importer, everything else rejected.
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../synth_errors.go", "syntheticErrorsSource",
-		"errors", rejectImports{})
+		"errors", importerFunc(func(path string) (*types.Package, error) {
+			if path == "internal/reflectlite" {
+				return gorootSourceImporter().Import(path)
+			}
+			return nil, fmt.Errorf("unexpected synthetic import %q", path)
+		}))
 
 	// Full exported-scope drift check (names + rendered types).
 	assertScopeMatchesPhase1(t, "errors", mirror, phase1)

@@ -68,7 +68,12 @@ func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 		t.Fatalf("parsing synthetic errors source: %v", err)
 	}
 	conf := types.Config{
+		// As in errors_test.go: the errors source imports the real
+		// GOROOT internal/reflectlite; delegate it, reject the rest.
 		Importer: importerFunc(func(path string) (*types.Package, error) {
+			if path == "internal/reflectlite" {
+				return gorootSourceImporter().Import(path)
+			}
 			return nil, fmt.Errorf("unexpected synthetic import %q", path)
 		}),
 	}

@@ -143,6 +143,12 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 				"../synth_errors.go",
 				"syntheticErrorsSource", "errors", imp), nil
 		}
+		if p == "internal/reflectlite" {
+			// The synthetic errors source (above) imports the real
+			// GOROOT internal/reflectlite; delegate it to the source
+			// importer (see gorootSourceImporter in errors_test.go).
+			return gorootSourceImporter().Import(p)
+		}
 		if p == "sync" {
 			// The synthetic sync surface is unexported in the phase-1
 			// frontend; real sync is a superset and the drift comparison

@@ -5666,8 +5666,24 @@ func (e *exporter) enumerateInstantiations(files []*ast.File, funcs []*funcDeclI
 			return nil, err
 		}
 	}
-	// Deterministic emission order (TestDeterministic).
-	sort.Slice(order, func(i, j int) bool { return order[i].name < order[j].name })
+	// Deterministic emission order (TestDeterministic). Sort by
+	// (name, key), not name alone: two instantiations can share a
+	// display name while differing in concrete type arguments — e.g.
+	// two shortFloat method instantiations both rendering as
+	// "internal/strconv.shortFloat[internal/strconv.F]" — and
+	// sort.Slice is unstable, so name-only sorting leaves their
+	// relative order to the map-iteration order that fed enqueue
+	// (scanRoots iterates info.Instances). That flipped the wire
+	// type ids of their signatures, type arguments, and MR pair
+	// types run to run, failing TestDeterministic. The dedup key is
+	// deterministic and distinct per instantiation (enumerate
+	// dedups by it), so (name, key) is a total deterministic order.
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].name != order[j].name {
+			return order[i].name < order[j].name
+		}
+		return order[i].key < order[j].key
+	})
 	return order, nil
 }
 
