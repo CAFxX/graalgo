@@ -60,6 +60,36 @@ func TestEmitProducesBinary(t *testing.T) {
 	}
 }
 
+// TestEmitRelativeOutputPath is the regression test for a relative
+// output landing in the temp build dir (and being deleted with it)
+// instead of in the caller's directory: the launcher is compiled with
+// cmd.Dir set to a temp dir, so Emit must absolutize first.
+func TestEmitRelativeOutputPath(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj := t.TempDir()
+	if err := os.Chdir(proj); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    []byte(`{"frontend":"v1"}`),
+	}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(proj, "prog"))
+	if err != nil {
+		t.Fatalf("relative artifact not in caller directory: %v", err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact is not executable (mode %v)", fi.Mode())
+	}
+}
+
 func TestEmitNoOutput(t *testing.T) {
 	err := Emit(Artifact{GraalgoRoot: "/x", WireJSON: []byte("{}")})
 	if err == nil || !strings.Contains(err.Error(), "output") {

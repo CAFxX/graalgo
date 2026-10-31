@@ -51,6 +51,18 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("no graalgo root")
 	}
 
+	// The launcher is compiled with cmd.Dir set to a temp build dir,
+	// so a relative output path would resolve inside that dir — and
+	// be deleted with it — instead of in the caller's directory.
+	// Resolve it against the caller's working directory first.
+	if !filepath.IsAbs(a.OutputPath) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("cannot determine working directory: %v", err)
+		}
+		a.OutputPath = filepath.Join(cwd, a.OutputPath)
+	}
+
 	// Compress the JSON. Frontend output can be large (100MB+ for big
 	// programs); JSON compresses well with gzip.
 	var compressed bytes.Buffer

@@ -88,12 +88,18 @@ func cmdRun(root string, args []string) int {
 
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
-	// the package build).
-	files, err := resolveFiles([]string{target})
+	// the package build). A pattern matching several packages cannot
+	// run: `go run` takes exactly one main package.
+	groups, err := resolveFileGroups([]string{target})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
 	}
+	if len(groups) > 1 {
+		fmt.Fprintf(os.Stderr, "graalgo run: %s matches %d packages; run one package at a time\n", target, len(groups))
+		return 1
+	}
+	files := groups[0].files
 	var pkgFiles []string
 	for _, f := range files {
 		if !strings.HasSuffix(f, "_test.go") {
@@ -197,19 +203,52 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	groups, err := resolveFileGroups(bf.pkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
 	}
 	// _test.go files are not part of the package build, like `go build`.
-	var pkgFiles []string
-	for _, f := range files {
-		if !strings.HasSuffix(f, "_test.go") {
-			pkgFiles = append(pkgFiles, f)
+	nonTest := func(files []string) []string {
+		var out []string
+		for _, f := range files {
+			if !strings.HasSuffix(f, "_test.go") {
+				out = append(out, f)
+			}
 		}
+		return out
 	}
+	// Several matched packages (a pattern, or several directory args
+	// that resolved to several groups): validate each package on its
+	// own and discard the results, like `go build` does for multiple
+	// packages — merging them into one artifact would merge their
+	// package clauses. A package with only test files contributes
+	// nothing, like `go build ./...` over a test-only package.
+	if len(groups) > 1 {
+		if bf.output != "" {
+			fmt.Fprintf(os.Stderr, "graalgo build: -o with multiple packages is not supported: omit -o to validate all matched packages without emitting an artifact\n")
+			return 1
+		}
+		for _, g := range groups {
+			pkgFiles := nonTest(g.files)
+			if len(pkgFiles) == 0 {
+				continue
+			}
+			if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+				fmt.Fprintf(os.Stderr, "graalgo build: build failed: %s\n", g.dir)
+				return 1
+			}
+		}
+		return 0
+	}
+	pkgFiles := nonTest(groups[0].files)
 	if len(pkgFiles) == 0 {
+		// A pattern matching a single test-only package builds nothing,
+		// like `go build ./onlytest/...`; an explicitly named package
+		// with no non-test files is an error, like `go build ./onlytest`.
+		if groups[0].pattern != "" {
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
 		return 1
 	}
@@ -234,7 +273,13 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: cannot read frontend output: %v\n", err)
 		return 1
 	}
-	out, err := driver.DefaultOutputName(bf.output, bf.pkgs)
+	// A single package matched by a pattern is named after its
+	// directory, not after the pattern string (whose base is "...").
+	outPkgs := bf.pkgs
+	if groups[0].pattern != "" {
+		outPkgs = []string{groups[0].dir}
+	}
+	out, err := driver.DefaultOutputName(bf.output, outPkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -256,30 +301,50 @@ func cmdBuild(root string, args []string) int {
 // then runs the static analyzers in internal/vet and reports diagnostics
 // in the same style as `go vet`.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	groups, err := resolveFileGroups(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	// The frontend compiles a package's files together, so the check
+	// runs once per group over that group's non-test files — checking
+	// files one by one fails any multi-file package (a file's symbols
+	// resolve against its siblings). A group with only test files
+	// keeps the old per-file behaviour (its files as given).
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	for _, g := range groups {
+		checkFiles := g.files
+		var nonTest []string
+		for _, f := range g.files {
+			if !strings.HasSuffix(f, "_test.go") {
+				nonTest = append(nonTest, f)
+			}
+		}
+		if len(nonTest) > 0 {
+			checkFiles = nonTest
+		}
+		if code := graalgoRun(root, append([]string{"--check"}, checkFiles...)); code != 0 {
 			failed = true
 		}
 	}
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
+	// Run the analyzers over each group as its own package: analyzing
+	// files from several packages together would merge their scopes.
+	var all []vet.Diagnostic
+	for _, g := range groups {
+		ds, err := vet.Run(g.files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			return 1
+		}
+		all = append(all, ds...)
 	}
-	for _, d := range ds {
+	for _, d := range all {
 		fmt.Printf("%s: %s\n", d.Pos, d.Message)
 	}
-	if len(ds) > 0 {
+	if len(all) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")

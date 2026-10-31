@@ -128,6 +128,12 @@ func parseCount(s string) (int, error) {
 }
 
 // resolveTestDirs turns package arguments into directories to test.
+// Pattern arguments ("./...", "<dir>/...") expand to every matched
+// package directory (a directory holding at least one .go file; the
+// per-package runner already reports "[no test files]" for packages
+// without tests, like `go test`). Results are deduplicated across
+// overlapping patterns and explicit arguments, preserving first-seen
+// order.
 func resolveTestDirs(pkgs []string) ([]string, error) {
 	if len(pkgs) == 0 {
 		cwd, err := os.Getwd()
@@ -137,9 +143,32 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 		return []string{cwd}, nil
 	}
 	var dirs []string
+	seen := map[string]bool{}
+	add := func(d string) {
+		key := filepath.Clean(d)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		dirs = append(dirs, d)
+	}
 	for _, p := range pkgs {
-		if p == "./..." {
-			return nil, fmt.Errorf("./... not yet supported")
+		prefix, isPattern, err := splitPattern(p)
+		if err != nil {
+			return nil, err
+		}
+		if isPattern {
+			matched, err := expandPatternDirs(prefix, p)
+			if err != nil {
+				return nil, err
+			}
+			if len(matched) == 0 {
+				return nil, fmt.Errorf("pattern %s: matched no packages", p)
+			}
+			for _, d := range matched {
+				add(d)
+			}
+			continue
 		}
 		fi, err := os.Stat(p)
 		if err != nil {
@@ -147,10 +176,10 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 		}
 		if !fi.IsDir() {
 			// A single file: test its directory.
-			dirs = append(dirs, filepath.Dir(p))
+			add(filepath.Dir(p))
 			continue
 		}
-		dirs = append(dirs, p)
+		add(p)
 	}
 	return dirs, nil
 }

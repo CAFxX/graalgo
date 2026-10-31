@@ -45,11 +45,16 @@ export GRAALGO_HOME=/path/to/graalgo
 - **build**: Validate that packages translate through the frontend (the
   compile gate), then emit an executable artifact: a real binary that
   embeds the frontend output and runs it through the graalgo backend.
-  (`./...` is not yet supported; build one package/directory at a time.)
+  Package patterns (`./...`, `<dir>/...`) are supported: every matched
+  package is validated, and when several packages match, the results
+  are discarded like `go build` (no artifact is emitted); `-o` with
+  several matched packages is an error.
 - **test**: Discover `*_test.go` files and run each `TestXxx` function
-  through the backend with a minimal `testing.T` shim.
-- **vet**: Run frontend static checks.
-- **fmt**: Format source files with `gofmt`.
+  through the backend with a minimal `testing.T` shim. Package
+  patterns (`./...`, `<dir>/...`) expand to every matched package.
+- **vet**: Run frontend static checks. Package patterns are supported.
+- **fmt**: Format source files with `gofmt`. Package patterns are
+  supported.
 
 ## Architecture
 
