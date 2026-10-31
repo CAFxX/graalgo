@@ -13,8 +13,12 @@ import graalgo.values.GoString;
  *
  * <p>Returns the length of a string (in bytes), array, slice, or map as a
  * Go {@code int} (INT64). The child is evaluated with the execute method
- * matching its kind. A channel argument is a Phase-2 scope error (no
- * channels in Phase 1); the factory rejects it before building this node.
+ * matching its kind. Channel arguments never reach this node: the exporter
+ * lowers {@code len(ch)} to the {@code chanlen} wire kind, built by
+ * {@code ChanLenCapNode} on the {@code GoChan.buffered()} mechanism
+ * (R-07: the old "channels are Phase 2" message was stale — channels
+ * shipped in Phase 3). A {@code CHAN} argument here is therefore a
+ * wire-shape error, not a scope gap.
  */
 public final class LenNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -30,7 +34,8 @@ public final class LenNode extends GoExprNode {
             // P3-M9: len(p) where p is *[N]T returns N (Go spec).
             case POINTER -> {}
             default -> throw new FrontendException(
-                    "len of " + argKind + " is not implemented (WS G); channels are Phase 2");
+                    "len of " + argKind + " is not supported by LenNode (WS G);"
+                            + " channel arguments must be lowered to chanlen by the exporter");
         }
     }
 

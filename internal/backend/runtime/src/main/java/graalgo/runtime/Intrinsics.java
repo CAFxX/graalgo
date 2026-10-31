@@ -456,7 +456,10 @@ public final class Intrinsics {
      * (attached by the frontend); ARRAY-kind fields multiply the element
      * size by the array length (element kinds limited to what the
      * descriptor carries: basic kinds and STRUCT via arrayElemDesc).
-     * Anything else fails fast.
+     * Every other concrete kind has a size via {@link #elemSizeBytes},
+     * so the only kinds that can still fail fast here are
+     * type-parameter/untyped field kinds (R-07: the old "not in M4
+     * scope" label was stale — M4 shipped and concrete kinds are covered).
      */
     public static long structSizeBytes(graalgo.values.GoStructDescriptor desc) {
         return structSizeAndAlign(desc)[0];
@@ -506,7 +509,9 @@ public final class Intrinsics {
             return new long[]{(long) f.arrayLen() * esa[0], esa[1]};
         }
         throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
-                + "\" has non-basic kind " + kind + " (not in M4 scope)");
+                + "\" has unsupported kind " + kind
+                + " (only type-parameter/untyped field kinds reach here;"
+                + " every concrete kind has a size)");
     }
 
     /** Returns {@code {size, alignment}} for an ARRAY-kind field's element. */
@@ -684,14 +689,17 @@ public final class Intrinsics {
 
     /**
      * Itab lookup (interface method table for a concrete type) — REAL via
-     * the installed provider (P3-M3 itab machinery). Without a provider
-     * (phase-1-only mode, which has no method tables) throws, as before.
+     * the installed provider (P3-M3 itab machinery, installed on the real
+     * path by {@code LinknameIntrinsics}). Without a provider (e.g. a
+     * phase-1-only classpath, which has no method tables) throws, as before.
+     * R-07: this throw is a configuration guard for a missing provider,
+     * not an unimplemented feature — the machinery shipped in P3-M3.
      */
     public static Object itabFor(GoTypeDescriptor descriptor, GoTypeDescriptor iface) {
         BiFunction<GoTypeDescriptor, GoTypeDescriptor, Object> p = itabProvider;
         if (p == null) {
             throw new UnsupportedOperationException(
-                    "itab lookup needs the P3-M3 itab machinery (GG-0020): no provider installed");
+                    "itab lookup: no itab provider installed on this classpath (GG-0020)");
         }
         return p.apply(descriptor, iface);
     }

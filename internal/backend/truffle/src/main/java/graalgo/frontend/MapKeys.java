@@ -20,7 +20,10 @@ final class MapKeys {
             // provides value-based equals/hashCode. SLICE and MAP are not
             // comparable and cannot be map keys.
             case SLICE, MAP -> throw new FrontendException(
-                    "map key of kind " + kind + " is not supported in Phase 1 (WS D)");
+                    // R-07: re-labelled — slice/map keys are not comparable,
+                    // so gc rejects them at type-checking; this is not a
+                    // Phase-1 scope gap, it is a wire-shape/type error.
+                    "map key of kind " + kind + " is not comparable (WS D)");
             default -> {
             }
         }

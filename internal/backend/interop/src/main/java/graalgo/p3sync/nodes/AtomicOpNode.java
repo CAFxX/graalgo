@@ -287,13 +287,15 @@ public final class AtomicOpNode extends GoExprNode {
         String key = synctyp + "." + op;
         Integer wantArgs = ARG_COUNTS.get(op);
         if (wantArgs == null) {
-            throw new FrontendException(path + ": unknown atomic op " + key
-                    + " (not in M4 scope)");
+            // R-07: the old "(not in M4 scope)" label was stale — M4 shipped
+            // and the tables below cover every typed-atomic op, so an
+            // unknown op here is a wire-shape error, not a scope gap.
+            throw new FrontendException(path + ": unknown atomic op " + key);
         }
         GoKind resultKind = RESULT_KINDS.get(key);
         if (resultKind == null && !"Store".equals(op)) {
-            throw new FrontendException(path + ": unknown atomic op " + key
-                    + " (not in M4 scope)");
+            // R-07: see above — unknown op is a wire-shape error, not M4 scope.
+            throw new FrontendException(path + ": unknown atomic op " + key);
         }
         if (resultKind == null) {
             resultKind = GoKind.INTERFACE; // void Store

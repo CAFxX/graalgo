@@ -3384,8 +3384,13 @@ public final class NodeFactory {
             Json.Object ff = fun.object("fields", path + ".fun");
             if (ff.has("builtin")) {
                 String name = ff.string("builtin", path + ".fun.fields");
+                // R-07: re-labelled — this is a WS G scope error (a builtin
+                // ident reaching call dispatch without the call node's
+                // builtin marker), not an unimplemented feature: gc
+                // likewise rejects a builtin used outside a builtin call.
                 throw new FrontendException(path + ": call to builtin \"" + name + "\""
-                        + " is not implemented in v1 (WS G intrinsic surface)");
+                        + " via ident form is not a valid builtin call (WS G scope error;"
+                        + " builtin calls dispatch via the call node's builtin marker)");
             }
             GoExprNode fn = buildIdent(fun, ctx);
             if (fn.kind() != GoKind.FUNC) {
@@ -3788,7 +3793,8 @@ public final class NodeFactory {
                 return new MakeNode(-1);
             }
             default -> throw new FrontendException(path + ": make of " + k
-                    + " is not supported in frontend/v1 scope (Phase 2: channels)");
+                    + " is not supported by buildMakeBuiltin (WS G);"
+                    + " make(chan) is lowered to makechan by the exporter instead");
         }
     }
 
