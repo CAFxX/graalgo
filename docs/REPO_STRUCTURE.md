@@ -189,9 +189,7 @@ Related: [Makefile](../Makefile) (root build entry point),
   tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
-  [torture/](../tools/torture/) (scheduler torture),
-  [godebug-diff/](../tools/godebug-diff/),
-  [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
+  [gate1/](../tools/gate1/),
   [req/](../tools/req/) (requirements CLI), and
   [precommit-check.sh](../tools/precommit-check.sh) (mechanical pre-commit
   guard).
@@ -233,7 +231,7 @@ new locations.
 | `phases/phase3/stdlib-fork/` (tooling) | [tools/stdlib-fork/](../tools/stdlib-fork/) (landed 2026-10-14) |
 | `phases/phase3/fuzzing/` | [tools/fuzz-soak/](../tools/fuzz-soak/) (landed 2026-10-14) |
 | `phases/phase1/corpus/`, `phases/phase2/corpus/` | [test/corpus/phase1/](../test/corpus/phase1/), [test/corpus/phase2/](../test/corpus/phase2/) (landed 2026-10-14) |
-| `phases/phase2/tools/torture/` | [tools/torture/](../tools/torture/) (landed 2026-10-14) |
+| `phases/phase2/tools/torture/` | `tools/torture/` (landed 2026-10-14; removed 2026-10-31 as stale phases-layout scripts, L5 lane) |
 | `modprobe/` | [test/e2e/](../test/e2e/) (landed 2026-10-14; harness, uuid cases, bug log) |
 | `SPEC.md`, `PHASES.md`, `FEASIBILITY.md` | [docs/arch/](../docs/arch/) (one consolidated arch doc) |
 | `adr/` | [docs/dev/adr/](../docs/dev/adr/) (landed 2026-10-14) |

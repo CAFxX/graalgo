@@ -199,13 +199,18 @@ pin-audit: main $(OUT_TEST)/.built
 	--out out/pinaudit-report.md
 
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
-torture: main $(OUT_TEST)/.built
-	bash ../../../tools/torture/run_battery.sh
+# REMOVED 2026-10-31 (L5 lane): tools/torture/ was deleted as stale — its
+# scripts targeted the removed phases/ layout (phase-1 classpaths,
+# hidden_files/torture/ outputs) and no longer run. These targets fail
+# fast with that explanation instead of invoking a missing script; a lane
+# that still wants the battery must port the scripts to the
+# internal/backend layout first, then restore real recipes here.
+torture:
+	@echo "torture removed 2026-10-31: tools/torture/ deleted as stale (phases/ layout); port the battery to internal/backend first"; exit 2
 
-# P2-M8 GOMAXPROCS matrix (differential vs gc).
-gmp-matrix: main $(OUT_TEST)/.built
-	bash ../../../tools/torture/gmp_matrix.sh
+# P2-M8 GOMAXPROCS matrix (differential vs gc). Same removal as above.
+gmp-matrix:
+	@echo "gmp-matrix removed 2026-10-31: tools/torture/ deleted as stale (phases/ layout); port the matrix to internal/backend first"; exit 2
 
 clean:
 	rm -rf out

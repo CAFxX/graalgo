@@ -109,3 +109,19 @@ that caused it.** Per-release is the wrong cadence for the check — the
 baseline exists precisely so refactors (per-push) can be diffed against it;
 per-release would let drift accumulate unattributably. Re-*recording* is
 the per-release (or deliberate-change) operation.
+
+## Quarantine discipline
+
+11 of the 49 corpus programs are excluded from the baseline (38
+recorded). Each exclusion has a dated owner lane and the list may only
+grow through review — see [QUARANTINE.md](QUARANTINE.md) for the
+manifest and the rules. `make snapshot-check` first runs
+[`check-quarantine.py`](check-quarantine.py), which fails fast (no JVM
+build) if any exclusion lacks an owner or `since` date, if the exclusion
+count differs from the manifest's approved count, or if excluded +
+recorded programs do not cover the corpus exactly.
+
+After a `make snapshot` re-record, re-attach the quarantine metadata
+(the harness record drops `owner`/`since`) with
+`python3 test/snapshots/check-quarantine.py --sync` and re-run the gate
+before committing — see [QUARANTINE.md](QUARANTINE.md) rule 4.

@@ -3,48 +3,70 @@
   "corpus": "test/differential/corpus",
   "excluded": [
     {
+      "owner": "frontend-lane",
       "program": "10_closures",
-      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
+      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)",
+      "since": "2026-10-13"
     },
     {
+      "owner": "scheduler-lane",
       "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
+      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed",
+      "since": "2026-10-13"
     },
     {
+      "owner": "frontend-lane",
       "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
+      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain",
+      "since": "2026-10-13"
     },
     {
+      "owner": "stdlib-synth-lane",
       "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
+      "reason": "backend-specific: errors.As needs reflect (not in scope)",
+      "since": "2026-10-13"
     },
     {
+      "owner": "stdlib-synth-lane",
       "program": "19_sort",
-      "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
+      "reason": "backend-specific: sort.Slice needs reflect (not in scope)",
+      "since": "2026-10-13"
     },
     {
+      "owner": "backend-runtime-lane",
       "program": "27_panic_trace",
-      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
+      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap",
+      "since": "2026-10-13"
     },
     {
+      "owner": "stdlib-synth-lane",
       "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
+      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope",
+      "since": "2026-10-13"
     },
     {
+      "owner": "stdlib-synth-lane",
       "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
+      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings",
+      "since": "2026-10-13"
     },
     {
+      "owner": "frontend-lane",
       "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
+      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)",
+      "since": "2026-10-13"
     },
     {
+      "owner": "frontend-lane",
       "program": "40_method_values",
-      "reason": "backend-specific: method values not in scope"
+      "reason": "backend-specific: method values not in scope",
+      "since": "2026-10-13"
     },
     {
+      "owner": "stdlib-synth-lane",
       "program": "42_json",
-      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope",
+      "since": "2026-10-13"
     }
   ],
   "format": "graalgo-behavior-snapshot/v1",

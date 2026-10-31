@@ -17,8 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#   `make all` = generate + build + snapshot-check + check + test-v2
+#                + test-ci + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -104,7 +104,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test test-e2e quarantine-check clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-ci test-regression
 
@@ -227,7 +227,7 @@ test: build
 # [test/snapshots/README.md](test/snapshots/README.md) for the format.
 #
 # Backend: the product launcher P3SyncMain via
-# [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
+# [test/differential/backends-p3.json](test/differential/backends-p3.json)
 # (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
 # channel/scheduler support, so recording against it enshrines build
 # failures as the baseline and leaves P3SyncMain regressions invisible to
@@ -258,10 +258,11 @@ SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 # and a true hang still fails fast relative to the ~20min suite.
 # Override with `make snapshot-check SNAPSHOT_JOBS=N`.
 SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
-# The diffharness resolves the graalgo backend launcher as
-# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
-# product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
-# Both wrappers now live in internal/backend/.
+# The diffharness resolves the phase-1 backend launcher as
+# ${PHASE1_DIR}/../../internal/backend/graalgo-run (see
+# test/differential/backends.json); the product launcher as
+# ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json). Both PHASE*_DIR vars
+# are set to internal/backend/ by the targets below.
 snapshot: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
@@ -274,7 +275,13 @@ snapshot: build
 	  -graalgo-commit $(shell git rev-parse HEAD) \
 	  -jobs $(SNAPSHOT_JOBS) -timeout 120
 
-snapshot-check: build
+# Snapshot quarantine gate ([test/snapshots/QUARANTINE.md](test/snapshots/QUARANTINE.md)):
+# every exclusion owned + dated, exclusion count locked to the manifest.
+# Runs BEFORE the JVM build so a quarantine violation fails fast.
+quarantine-check:
+	python3 test/snapshots/check-quarantine.py
+
+snapshot-check: quarantine-check build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
@@ -282,6 +289,21 @@ snapshot-check: build
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -jobs $(SNAPSHOT_JOBS) -timeout 120
+
+# End-to-end: real published Go modules ([test/e2e/](test/e2e/)).
+# MANUAL-ONLY for now, deliberately NOT in `all` or CI: test/e2e/run_module.sh
+# still targets the removed phases/ backend layout (see test/e2e/README.md);
+# wiring a stale runner into CI would red-gate every push. The guard below
+# fails fast with that explanation until the driver-hardening lane updates
+# the runner — at which point the guard passes and this target runs the
+# suite (uuid cases) as-is. Do not remove the guard without updating the
+# runner and the README status in the same change.
+test-e2e:
+	@if grep -q 'phases/phase' test/e2e/run_module.sh; then \
+		echo "test-e2e is manual-only: test/e2e/run_module.sh still targets the removed phases/ layout (see test/e2e/README.md)"; \
+		exit 2; \
+	fi
+	test/e2e/run_module.sh test/e2e/uuid
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
 # Uses a persistent warm JVM: in-process compilation (~0.5s) and runs

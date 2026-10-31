@@ -2,8 +2,9 @@
 
 The day-one conformance net for graalgo (FEASIBILITY.md §7, smoke layer):
 compile and run the same corpus programs under two backends, compare
-observables, report divergences. Validated *now* by differential testing
-gc-vs-gc with injected mutations (graalgo doesn't exist yet).
+observables, report divergences. Validated by differential testing
+gc-vs-gc with injected mutations, and by the gc-vs-graalgo runs in CI
+(`run.sh`, per-push smoke layer).
 
 ## Quick start
 
@@ -20,8 +21,11 @@ toolchain root, or rely on `~/tools/go`, or on `go` in `PATH`.
 - `cmd/diffharness/` — the harness CLI (`run`, `mutate`, `validate`)
 - `internal/harness/` — config, backend runner, normalizer, comparator, corpus
 - `internal/mutate/` — AST mutation generator (oracle validation)
-- `corpus/` — 45 small Go programs covering the language surface
-- `backends.json` — backend declarations (the seam)
+- `corpus/` — 49 small Go programs covering the language surface
+- `backends.json` — backend declarations, phase-1 frontend scope (the seam)
+- `backends-p3.json` — backend declarations, product launcher scope (what
+  `run.sh`, the snapshot gate, and per-push CI use); carries the 11
+  quarantined exclusions (see `../snapshots/QUARANTINE.md`)
 - `mutations.txt` — mutation-validation manifest (`CLASS TARGET` lines)
 - `testdata/` — fixtures for harness unit tests
 
@@ -47,24 +51,31 @@ backends[0] (the reference); `run` compares every backend against the first.
 
 ### Registered backends
 
-| name | build | run | notes |
-|---|---|---|---|
-| `gc-a` | `{GO}/bin/go build -o {BIN} {SRC}` | `{BIN}` | reference backend |
-| `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
-| `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | Phase-1 launcher; `GRAALGO_RUN=${PHASE1_DIR}/graalgo-run` |
+`backends.json` (phase-1 frontend scope) and `backends-p3.json` (product
+launcher scope; what `run.sh` and per-push CI use):
 
-`PHASE1_DIR` is exported by `run.sh` (defaults to `<repo>/phases/phase1`);
-export it yourself for manual `diffharness` invocations. `gc-a` stays the
-reference: `validate` still compares gc-b against gc-a only.
+| config | name | build | run | notes |
+|---|---|---|---|---|
+| both | `gc-a` | `{GO}/bin/go build -o {BIN} {SRC}` | `{BIN}` | reference backend |
+| both | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
+| `backends.json` | `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | phase-1 launcher wrapper; `GRAALGO_RUN=${PHASE1_DIR}/../../internal/backend/graalgo-run` |
+| `backends-p3.json` | `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | product launcher (P3SyncMain); `GRAALGO_RUN=${PHASE3_DIR}/graalgo-sync-run` |
 
-M2 status (2026-10-04): the frontend path is real — graalgo's `--check`
-accepts straight-line programs (exit 0) and rejects bad ones (exit 2 with
-gofrontend's message as the build log). Verified: gc-a vs graalgo on
-`sl06_multiassign` diverges ONLY on the Truffle `sun.misc.Unsafe`
-terminal-deprecation stderr warnings (build, exit code, stdout identical).
-Known M7 concern: the HotSpot Truffle runtime prints those warnings to
-stderr on every JVM launch; the stderr normalizer will need an allowlist
-entry for the graalgo backend before full-corpus differential runs.
+`PHASE3_DIR` is exported by `run.sh` (defaults to
+`<repo>/internal/backend`); the root Makefile's snapshot targets export
+both `PHASE1_DIR` and `PHASE3_DIR` as `<repo>/internal/backend`. For
+manual `diffharness` invocations, export them yourself to
+`<repo>/internal/backend`. The `phases/phase1` default this paragraph
+used to cite no longer exists. `gc-a` stays the reference: `validate`
+still compares gc-b against gc-a only.
+
+Current status (2026-10-31): the smoke layer runs the 49-program corpus
+under `backends-p3.json` — 38 programs after the 11 quarantined
+exclusions (see `../snapshots/QUARANTINE.md`) — gc-a vs gc-b green plus
+the graalgo product launcher. The Truffle `sun.misc.Unsafe`
+terminal-deprecation stderr warnings are allowlisted per backend via
+`stderrFilters` in `backends-p3.json` (the M7 concern from 2026-10-04 is
+closed, not pending).
 
 ## What is compared
 
@@ -101,10 +112,13 @@ Tamed, never silent (FEASIBILITY.md §7):
    key-sorted, goroutine results are combined order-independently
    (sums, WaitGroups), no wall-clock or address values escape
    unnormalized, no `time.Now`/`rand` without fixed seeds.
-3. Documented exclusions live in `backends.json` → `exclusions` with a
+3. Documented exclusions live in `backends-p3.json` → `exclusions` with a
    **reason code** (per §7 the list may only grow through review):
    `nondeterministic-output`, `backend-specific`, `flaky`, `other:<text>`.
-   Currently empty — every corpus program passes unmutated gc-vs-gc.
+   Currently 11 of 49 programs (38 run); each exclusion carries a dated
+   owner lane and the count is locked by the manifest in
+   `../snapshots/QUARANTINE.md` (`make snapshot-check` enforces it).
+   `backends.json` itself carries no exclusions.
 4. The `validate` rerun control (same program twice under the reference
    backend) mechanically guards against flakiness: any divergence there
    fails validation (kill trigger K3).
@@ -132,5 +146,5 @@ and every comparator branch has a must-change and a must-not-change case.
 - Compares process observables only; sandboxed file/network effects are a
   later layer (FEASIBILITY.md §7 mentions them; not in the smoke net).
 - No timing comparison (excluded deliberately).
-- Sequential runs; ~45 programs × backends take a few minutes, dominated
-  by the cold `go build` cache.
+- Sequential runs; 49 programs (38 run after exclusions) × backends take
+  a few minutes, dominated by the cold `go build` cache.
