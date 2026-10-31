@@ -33,6 +33,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+        // R-01 (independent codebase review 2026-10-31-19): dynamic-struct
+        // synthesis must be safe under concurrent guest goroutines.
+        TESTS.add(graalgo.p3reflect.ReflectLinknamesDynStructConcurrencyTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
