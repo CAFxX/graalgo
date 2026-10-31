@@ -29,6 +29,43 @@ post-fix.
 
 (The remainder of this entry is the pre-fix record.)
 
+### DIV-M3-2: `select` on `time.After` hangs forever (PKG-048) — REFUTED, not a divergence
+
+**Status: REFUTED 2026-10-31 (no divergence; no fix needed).** Three
+comments on master asserted timer channels do not fire end-to-end under
+graalgo ([Makefile](../../../../Makefile),
+[test/regression/pkg031/repeat_test.go](../../../../test/regression/pkg031/repeat_test.go),
+[test/regression/pkg031/builder_iface_test.go](../../../../test/regression/pkg031/builder_iface_test.go)),
+citing PKG-048, introduced 2026-10-16 by the PKG-031 lane and tracked
+nowhere else. The claim is false on master at `acbb849b`.
+
+**Evidence (empirical, driver end-to-end, 2026-10-31):** a minimal probe
+program run through `./graalgo run` with an outer timeout: (1) a
+single-case `select` on `time.After(200ms)` fired; (2) a direct receive on
+`time.NewTimer(200ms).C` fired; (3) `time.Sleep(200ms)` returned; (4) a
+watchdog goroutine selecting on `time.After` fired while main slept; (5)
+the differential corpus programs
+[tm02_after_timeout](../../../../test/corpus/phase2/timers/tm02_after_timeout.go)
+and
+[tm11_select_after_both](../../../../test/corpus/phase2/timers/tm11_select_after_both.go)
+reproduced their `.expected` outputs exactly. All runs exit 0. The three
+stale comments were corrected in the same change. This entry supersedes the
+UNVERIFIED draft recorded in unintegrated commit `5d745074`, which must
+not be integrated as-is.
+
+**Load confound, recorded honestly:** the first tm11 attempt under system
+load ~20 failed with a backend signal death (`exit status -1`, no output),
+and a second shape failed to finish in 300s under the same load. Both
+reran green under low load with identical binaries. Those failures tracked
+load/memory pressure, not timer semantics; a future `exit status -1` under
+extreme load should be re-run under low load before being read as a
+product bug.
+
+**Consequence:** in-test watchdog guards using `time.After` are possible;
+the outer `timeout 600` in `test-regression` is retained as a backstop
+only. Re-test trigger: none — closed by this probe. Do not reintroduce
+the PKG-048 claim without a new failing probe on a stated commit.
+
 ## P2-M4 (GC interop, ADR-0002)
 
 ### DIV-M4-1: finalizer runs with a nil argument (no resurrection)
