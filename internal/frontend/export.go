@@ -10414,10 +10414,12 @@ func typeKeyOf(t types.Type) string {
 // "pointer"); "index" is the receiver adaptation path: Selection.Index()
 // minus its last entry (the method's own index in the declaring type) —
 // empty for direct methods, e.g. [0] for a method promoted via embedded
-// field 0, null for unsupported promotions. "addrOf" is true when the
+// field 0 (null only for unsupported promotions, a shape the exporter
+// no longer produces — retained as a guard). "addrOf" is true when the
 // dispatcher must take the address of the promoted field value: a
-// pointer-receiver method promoted via a value-embedded struct field
-// (P3-M9). The Java dispatcher walks "index" to adapt the receiver
+// pointer-receiver method promoted via a value-embedded field (P3-M9
+// for struct fields, P1-01(b) for every other kind, via a GoFieldCell).
+// The Java dispatcher walks "index" to adapt the receiver
 // (P3-M3). Interface-declared methods (no funcdecl exists to point at)
 // are skipped. Template methods of concrete generic instantiations are
 // monomorphized (P3-M9 instantiation method tables): "obj" is the
@@ -10484,17 +10486,18 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 	}
 	// P3-M3: promoted method with a pointer receiver via a
 	// value-embedded field: the dispatcher must take the address of
-	// the promoted field value (gc's implicit &). P3-M9: this is
-	// sound for struct-typed fields (read by reference — the live
-	// field object), so mark supported with "addrOf": true. For
-	// non-struct fields (primitives etc.) address-taking would need
-	// writeback (out of scope): mark unsupported ("index": null)
-	// rather than failing the export — the failure fires only if the
-	// method is actually dispatched through an interface (fail fast
-	// at dispatch, named P3-M3 scope error — R2 P2-7 narrowed the
-	// old whole-itab fail-fast to per-method) — never for programs
-	// that merely declare the type.
-	unsupported := false
+	// the promoted field value (gc's implicit &). P3-M9 marked only
+	// struct-typed fields supported with "addrOf": true and every
+	// other kind unsupported ("index": null) on the theory that
+	// address-taking would need writeback. P1-01(b) removes that
+	// split: the dispatcher addresses every field kind through a
+	// GoFieldCell over the owner struct (the same &s.f machinery
+	// the direct-call path uses), so mutations through the pointer
+	// are visible in the outer struct for primitives, strings,
+	// slices, and every other kind exactly as for structs. The
+	// "unsupported" wire shape is retained as a guard for any future
+	// shape that still cannot be addressed, but nothing produces
+	// it from this function anymore.
 	addrOf := false
 	if len(path) > 0 && recv == "pointer" {
 		if ft := embeddedFieldType(t, path); ft != nil {
@@ -10506,11 +10509,7 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 				break
 			}
 			if _, ok := ft.(*types.Pointer); !ok {
-				if _, ok := ft.(*types.Struct); ok {
-					addrOf = true
-				} else {
-					unsupported = true
-				}
+				addrOf = true
 			}
 		}
 	}
@@ -10523,7 +10522,7 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 			mobj.Name(), mobj.Type())
 	}
 	return methodEntry{name: mobj.Name(), obj: obj, recv: recv, index: path,
-		implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf,
+		implkey: implKeyOf(mobj, msig), unsupported: false, addrOf: addrOf,
 		embeddedIface: -1}, nil
 }
 
@@ -10655,7 +10654,14 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 				// P3-M9 (instantiation method tables): the method-set
 				// object of an instantiated type is a copy that never
 				// hits funcByObj. Resolve the template and monomorphize.
-				if e.mtOnDemand && isGenericInstantiation(t) {
+				// P1-01(a): the gate is the DECLARING receiver, not
+				// t — a method promoted from a generic instantiation
+				// into a non-generic outer type (Outer struct {
+				// Box[int] }) has a copy method object too, and the
+				// old isGenericInstantiation(t) gate silently dropped
+				// it (no entry, no marker) so dispatch died with "no
+				// method table installed".
+				if e.mtOnDemand && methodTableDeclIsInstantiation(t, sel) {
 					inst, err := e.methodTableOnDemand(t, sel, mobj)
 					if err != nil {
 						return nil, false, err
@@ -10714,7 +10720,11 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			// object id so interface dispatch (itab) targets emitted
 			// code. Anything not monomorphizable keeps the old
 			// skip-and-mark (fail fast at boxing, never silent).
-			if e.mtOnDemand && isGenericInstantiation(t) {
+			// P1-01(a): gate on the declaring receiver (see the
+			// funcByObj-miss branch above), not on t alone, so
+			// template methods promoted from a generic instantiation
+			// into a non-generic outer type monomorphize too.
+			if e.mtOnDemand && methodTableDeclIsInstantiation(t, sel) {
 				inst, err := e.methodTableOnDemand(t, sel, mobj)
 				if err != nil {
 					return nil, false, err
@@ -10776,6 +10786,28 @@ func isGenericInstantiation(t types.Type) bool {
 		return n.TypeArgs() != nil && n.TypeArgs().Len() > 0
 	}
 	return false
+}
+
+// methodTableDeclIsInstantiation reports whether the method's declaring
+// receiver — the type the method is actually declared on, after walking
+// the promotion path — is a generic instantiation. It mirrors
+// buildMethodTableInst's receiver walk: for a promoted method the
+// declaring receiver is the embedded field's type, not the method-set
+// type t. A non-generic outer type embedding a generic instantiation
+// (Outer struct { Box[int] }) therefore qualifies for on-demand
+// monomorphization even though t itself is not an instantiation;
+// the old isGenericInstantiation(t) gate silently dropped those
+// promoted methods from the table (no entry, no marker).
+func methodTableDeclIsInstantiation(t types.Type, sel *types.Selection) bool {
+	recvT := t
+	if index := sel.Index(); len(index) > 1 {
+		recvT = embeddedFieldType(t, index[:len(index)-1])
+		if recvT == nil {
+			return false
+		}
+	}
+	rn := derefNamed(recvT)
+	return rn != nil && isGenericInstantiation(rn)
 }
 
 // resolveIfaceMethod looks the method up in the method set of the

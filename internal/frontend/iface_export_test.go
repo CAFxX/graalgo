@@ -1028,6 +1028,114 @@ func main() {
 	}
 }
 
+// TestIfacePromotedGenericMethodTable (P1-01(a)): methods promoted
+// from a generic instantiation into a non-generic outer type
+// (Outer struct { Box[int] }) appear in the outer type's method table,
+// monomorphized — the value method on the named entry, both methods on
+// the pointer entry — with NO "templateMethodsSkipped" marker.
+// Pre-fix the gate checked the method-set type (Outer, not an
+// instantiation) and silently dropped both methods (no entry, no
+// marker), so interface dispatch died with "no method table installed
+// for dynamic type *main.Outer".
+func TestIfacePromotedGenericMethodTable(t *testing.T) {
+	const src = `package main
+
+type Getter interface{ Get() int }
+type Setter interface{ Set(int) }
+
+type Box[T any] struct{ v T }
+
+func (b Box[T]) Get() T { return b.v }
+func (b *Box[T]) Set(x T) { b.v = x }
+
+type Outer struct{ Box[int] }
+
+func main() {
+	o := &Outer{Box[int]{v: 6}}
+	var g Getter = o
+	println(g.Get())
+	var s Setter = o
+	s.Set(13)
+	println(o.Get())
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	id, detail := findNamedEntry(t, entries, "main.Outer")
+	if _, has := detail["templateMethodsSkipped"]; has {
+		t.Fatal("main.Outer unexpectedly carries templateMethodsSkipped")
+	}
+	methods, _ := detail["methods"].([]any)
+	if len(methods) != 1 {
+		t.Fatalf("main.Outer methods = %d entries, want 1 (value method Get only)", len(methods))
+	}
+	mentry, _ := methods[0].(map[string]any)
+	if mentry["name"] != "Get" {
+		t.Fatalf("main.Outer method name = %v, want Get", mentry["name"])
+	}
+	objects, _ := doc["objects"].([]any)
+	foundGet, foundSet := false, false
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		if em["kind"] != "pointer" {
+			continue
+		}
+		d, _ := em["detail"].(map[string]any)
+		if elem, _ := d["elem"].(float64); int(elem) != id {
+			continue
+		}
+		if _, has := d["templateMethodsSkipped"]; has {
+			t.Fatal("*main.Outer unexpectedly carries templateMethodsSkipped")
+		}
+		pmethods, _ := d["methods"].([]any)
+		if len(pmethods) != 2 {
+			t.Fatalf("*main.Outer methods = %d entries, want 2 (Get, Set)", len(pmethods))
+		}
+		for _, m := range pmethods {
+			mm, _ := m.(map[string]any)
+			idx, ok := mm["index"].([]any)
+			if !ok || len(idx) != 1 || idx[0] != float64(0) {
+				t.Fatalf("*main.Outer.%v index = %v, want [0]", mm["name"], mm["index"])
+			}
+			objID, _ := mm["obj"].(float64)
+			if int(objID) < 0 || int(objID) >= len(objects) {
+				t.Fatalf("*main.Outer.%v obj %v out of range", mm["name"], objID)
+			}
+			obj, _ := objects[int(objID)].(map[string]any)
+			if obj["kind"] != "inst" {
+				t.Fatalf("*main.Outer.%v obj kind = %v, want inst (monomorphized)", mm["name"], obj["kind"])
+			}
+			switch mm["name"] {
+			case "Get":
+				foundGet = true
+				if mm["recv"] != "value" {
+					t.Fatalf("Get recv = %v, want value", mm["recv"])
+				}
+				if ao, _ := mm["addrOf"].(bool); ao {
+					t.Fatal("Get addrOf = true, want false")
+				}
+			case "Set":
+				foundSet = true
+				if mm["recv"] != "pointer" {
+					t.Fatalf("Set recv = %v, want pointer", mm["recv"])
+				}
+				if ao, _ := mm["addrOf"].(bool); !ao {
+					t.Fatal("Set addrOf = false, want true")
+				}
+			default:
+				t.Fatalf("*main.Outer unexpected method %v", mm["name"])
+			}
+		}
+	}
+	if !foundGet || !foundSet {
+		t.Fatalf("*main.Outer missing promoted method (Get=%v, Set=%v)", foundGet, foundSet)
+	}
+}
+
 // TestFreshSigIDKeepsTypeListParallel (R2 P2-3): freshSigID appends to
 // e.types, so it must append a (nil) placeholder to e.typeList to keep
 // the two parallel — recomputeMethodTables indexes e.types by e.typeList
@@ -1073,14 +1181,16 @@ func TestMentionsTypeParamAliasUnion(t *testing.T) {
 	}
 }
 
-// TestIfaceMethodTableValueEmbedPrimitiveUnsupported (P3-M9): a
-// pointer-receiver method promoted via a VALUE-embedded non-struct field
-// (e.g. a defined int type) is still marked unsupported in the wire
-// ("index": null) — taking the address would need writeback for the
-// primitive field value (out of scope). The mark is lazy: the export
-// succeeds, and dispatch fails fast with a named P3-M3 scope error only
-// if the method is actually dispatched.
-func TestIfaceMethodTableValueEmbedPrimitiveUnsupported(t *testing.T) {
+// TestIfaceMethodTableValueEmbedPrimitiveAddrOf (P1-01(b), supersedes
+// the P3-M9 unsupported marking): a pointer-receiver method promoted via
+// a VALUE-embedded non-struct field (e.g. a defined int type) is marked
+// supported in the wire ("index": [0], "addrOf": true) — the dispatcher
+// addresses the field's storage with a GoFieldCell over the owner
+// struct (the same &s.f machinery the direct-call path uses), so
+// mutations through the pointer are visible in the outer struct.
+// Pre-fix the entry carried "index": null and dispatch failed fast
+// with the named P3-M3 scope error.
+func TestIfaceMethodTableValueEmbedPrimitiveAddrOf(t *testing.T) {
 	const src = `package main
 
 type Counter int
@@ -1097,7 +1207,7 @@ func main() {
 `
 	out, err := ExportFile(writeIfaceProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: export must succeed (unsupported is lazy), got %v", err)
+		t.Fatalf("ExportFile: export must succeed, got %v", err)
 	}
 	doc := decodeExport(t, out)
 	entries := typeEntries(t, doc)
@@ -1119,11 +1229,12 @@ func main() {
 				continue
 			}
 			found = true
-			if idx, ok := mm["index"]; !ok || idx != nil {
-				t.Fatalf("*V.Inc index = %v (%T), want JSON null (unsupported)", mm["index"], mm["index"])
+			idx, ok := mm["index"].([]any)
+			if !ok || len(idx) != 1 || idx[0] != float64(0) {
+				t.Fatalf("*V.Inc index = %v (%T), want [0] (supported with addrOf)", mm["index"], mm["index"])
 			}
-			if ao, ok := mm["addrOf"].(bool); !ok || ao {
-				t.Fatalf("*V.Inc addrOf = %v (%T), want false", mm["addrOf"], mm["addrOf"])
+			if ao, ok := mm["addrOf"].(bool); !ok || !ao {
+				t.Fatalf("*V.Inc addrOf = %v (%T), want true", mm["addrOf"], mm["addrOf"])
 			}
 		}
 	}

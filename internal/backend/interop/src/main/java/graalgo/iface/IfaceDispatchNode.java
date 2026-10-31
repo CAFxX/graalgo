@@ -9,6 +9,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
+import graalgo.frontend.GoFieldCell;
 import graalgo.runtime.GoCalls;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.GoroutineState;
@@ -16,6 +17,7 @@ import graalgo.runtime.Panic;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
+import graalgo.values.GoStruct;
 import graalgo.values.GoTypeDescriptor;
 import graalgo.values.InterfaceDispatchProbes;
 
@@ -115,11 +117,15 @@ public final class IfaceDispatchNode extends GoExprNode {
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
         IfaceMethodTarget target = lookupPic(itab);
-        // R2 P2-7: an unsupported promotion (pointer receiver via a
-        // value-embedded field — wire "index" null) fails fast here, only
-        // when the method is actually dispatched. The itab build carries
-        // the unsupported target precisely so programs dispatching only
-        // supported methods through the interface keep working.
+        // R2 P2-7: an unsupported promotion (wire "index" null) fails
+        // fast here, only when the method is actually dispatched. The
+        // itab build carries the unsupported target precisely so
+        // programs dispatching only supported methods through the
+        // interface keep working. P1-01(b): no exporter shape produces
+        // an unsupported promotion anymore (value-embedded fields of
+        // every kind address through a GoFieldCell, see the addrOf
+        // branch below); this check remains as a guard for any future
+        // shape that still cannot be addressed.
         if (!target.supported()) {
             throw new FrontendException("interface dispatch: method \"" + methodName
                     + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
@@ -184,12 +190,22 @@ public final class IfaceDispatchNode extends GoExprNode {
             callArgs[0] = curGi;
         }
         // P3-M9: pointer-receiver method promoted via a value-embedded
-        // struct field — take the address of the promoted field value
-        // (gc's implicit &). Struct fields are read by reference, so the
-        // pointer targets the live field object and mutations through it
-        // are visible to the outer struct, exactly like gc.
+        // field — take the address of the promoted field value (gc's
+        // implicit &). A struct-typed field value is read by reference,
+        // so the pointer targets the live field object and mutations
+        // through it are visible to the outer struct, exactly like gc.
+        // P1-01(b): any other field kind (a named int, string, slice,
+        // ...) is read by value, so wrapping the snapshot would
+        // silently break mutation visibility — instead address the
+        // field's storage with a GoFieldCell over the owner struct
+        // (the same &s.f machinery FieldAddrNode uses), so writes
+        // through the pointer land in the outer struct.
         if (target.addrOf() && !(callArgs[0] instanceof GoPointer)) {
-            callArgs[0] = new GoPointer(callArgs[0]);
+            if (callArgs[0] instanceof GoStruct) {
+                callArgs[0] = new GoPointer(callArgs[0]);
+            } else {
+                callArgs[0] = fieldCellPointer(data, target.recvPath());
+            }
         }
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
@@ -244,6 +260,57 @@ public final class IfaceDispatchNode extends GoExprNode {
         }
         throw new FrontendException("ifacemethod: receiver evaluated to "
                 + r.getClass().getName() + ", not a GoInterface (internal error)");
+    }
+
+    /**
+     * Pointer to a promoted value-embedded field's storage (P1-01(b)):
+     * a {@link GoFieldCell} over the field's owner struct, so {@code *p}
+     * reads and writes land in the field itself rather than in a snapshot
+     * of its value. {@code recvPath} is the exporter's embedding path
+     * from the dynamic value to the field; the owner is everything but
+     * the last hop. A last hop out of range for the owner's descriptor
+     * (possible only for the prefix-descent shapes
+     * {@code SelectorNode.readFieldPath} handles specially, never for
+     * an ordinary promotion path) keeps the loud failure instead of
+     * addressing the wrong field.
+     */
+    private GoPointer fieldCellPointer(Object data, int[] recvPath) {
+        Object owner = data;
+        if (recvPath.length > 1) {
+            int[] prefix = java.util.Arrays.copyOf(recvPath, recvPath.length - 1);
+            owner = graalgo.frontend.SelectorNode.readFieldPath(data, prefix, false, this);
+        }
+        GoStruct s = unwrapToStruct(owner);
+        int fieldIndex = recvPath[recvPath.length - 1];
+        if (fieldIndex < 0 || fieldIndex >= s.descriptor().fields().size()) {
+            throw new FrontendException("interface dispatch: promoted field index "
+                    + fieldIndex + " out of range (internal error)");
+        }
+        GoKind fieldKind = s.descriptor().field(fieldIndex).kind();
+        return new GoPointer(new GoFieldCell(s, fieldIndex, fieldKind));
+    }
+
+    /** Unwraps a pointer/interface value to its struct (cf. FieldAddrNode). */
+    private GoStruct unwrapToStruct(Object o) {
+        if (o instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
+            }
+            o = gp.referent();
+        }
+        if (o instanceof GoInterface gi) {
+            if (gi.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
+            }
+            o = gi.data();
+        }
+        if (o instanceof GoStruct s) {
+            return s;
+        }
+        throw new FrontendException("interface dispatch: promoted field owner is not a struct"
+                + " (internal error)");
     }
 
     private IfaceMethodTarget lookupPic(IfaceItab itab) {
