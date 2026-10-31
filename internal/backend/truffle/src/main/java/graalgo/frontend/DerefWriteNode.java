@@ -33,10 +33,12 @@ public final class DerefWriteNode extends GoStmtNode {
         Object o = ptr.executeObject(frame);
         if (o instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
             // fix-redmaster-r39: writing through &x.v of an
-            // atomic.Pointer/Value cell (FieldAddrNode yields the cell
-            // itself — the DerefNode read path already handles this
-            // shape) stores the boxed value in the cell, e.g.
-            // StorePointer(&x.v, v) in (*atomic.Pointer[T]).Store.
+            // atomic.Pointer/Value cell (the DerefNode read path already
+            // handles this shape) stores the boxed value in the cell,
+            // e.g. StorePointer(&x.v, v) in (*atomic.Pointer[T]).Store.
+            // R-04: cells no longer come from FieldAddrNode; this branch
+            // serves cells produced through the retained syncnew wire
+            // kind only.
             @SuppressWarnings("unchecked")
             java.util.concurrent.atomic.AtomicReference<Object> cell =
                     (java.util.concurrent.atomic.AtomicReference<Object>) ar;

@@ -48,8 +48,10 @@ public final class AtomicAddrNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         Object a = addr.executeObject(frame);
-        // PKG-053: &x.v on an atomic wrapper cell evaluates to the cell
-        // itself (FieldAddrNode) — it already IS the IntCell / LongCell /
+        // R-04: an address that already evaluates to a cell (only
+        // possible for cells produced through the retained syncnew wire
+        // kind — FieldAddrNode no longer yields cells, since wrappers
+        // are plain GoStructs) already IS the IntCell / LongCell /
         // AtomicReference the syncop machinery needs, so use it directly
         // instead of wrapping a pointer.
         if (a instanceof IntCell || a instanceof LongCell

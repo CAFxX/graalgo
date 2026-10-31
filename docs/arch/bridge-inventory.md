@@ -33,8 +33,10 @@ deliverable until the design lands.
   delete the machinery wholesale: `syntheticSources` + the import overlay,
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
   allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
-  intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
-  `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
+  intrinsic predicates, and the `"syncop"`/`"runtimecaller"` wire nodes.
+  (`NodeFactory.syncPrimitiveName` was already deleted early by the R-04
+  lane — see B-2 — so it is not part of this remaining list.) Retires
+  the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
@@ -65,6 +67,35 @@ deliverable until the design lands.
   ([FieldAddrNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FieldAddrNode.java)).
   `sync.Pool`/`sync.Map` keep their Java objects. Full deletion of the
   method awaits those.
+- **Retired (R-04, 2026-10-31):** `syncPrimitiveName` and
+  `newSyncPrimitive` are deleted, as is the cell-transparent `&x.v`
+  path in `FieldAddrNode`. `sync.Pool` and every `sync/atomic`
+  wrapper now materialise as plain `GoStruct`s and their real bodies
+  run end-to-end (the cell shapes were not merely redundant — a
+  struct-embedded `sync.Pool` died with `ClassCastException` because
+  `GoPool` is not a `GoStruct`, while the real body expects struct
+  layout). Atomicity of `&x.v` comes from the `atomicaddr` wire node,
+  which wraps the ordinary field address in a delegating cell for
+  `AtomicOpNode` — the value's representation carries no special case.
+  Differential coverage:
+  [test/differential/corpus/49_sync_retire/](../../test/differential/corpus/49_sync_retire/)
+  (embedded/array/copied Pool, drop-permissive Get, embedded/copy/
+  by-value/concurrent atomics, atomic map keys, `sync.Map`
+  multi-result ops). Two adjacent gaps are NOT fixed by this
+  retirement and stay open: `atomic.Value` (its real body reinterprets
+  the struct as `efaceWords` via `unsafe`, which the value model
+  cannot represent) and `sync.Map.CompareAndSwap` (returns false for
+  a present key); both are pre-existing, reproduced by the R-04 lane,
+  and need their own lanes — neither is a reason to restore the
+  deleted lowering.
+- **Follow-up (dead code, needs a p3frontend-independence proof
+  before deleting):** the `syncnew`/`syncop` wire nodes
+  (`SyncNewNode`/`SyncOpNode`), the `GoPool`/`GoSyncMap`/`GoAtomic*`
+  classes, and their unit tests have no v1 emitter or producer left
+  (verified: v1 wire documents for a Pool-only program and corpus 46
+  contain zero `syncnew` nodes and zero non-`atomic.*` `syncop`
+  nodes), but they stay registered for the p3frontend wire protocol.
+  Delete them only after proving no p3frontend flow feeds them.
 - **Phase:** 3 (after the last synthetic package that depends on it retires).
 
 ### B-3. Frontend package-name-keyed special-case machinery

@@ -131,10 +131,12 @@ public final class DerefNode extends GoExprNode {
             }
         }
         if (o instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
-            // PKG-053: dereferencing an atomic.Pointer/Value cell (&x.v
-            // yields the cell itself — see FieldAddrNode) reads the
+            // R-04: dereferencing an atomic.Pointer/Value cell reads the
             // stored reference, e.g. LoadPointer(&x.v) in
-            // (*atomic.Pointer[T]).Load.
+            // (*atomic.Pointer[T]).Load. Cells no longer come from
+            // FieldAddrNode (wrappers are plain GoStructs since R-04);
+            // this branch serves cells produced through the retained
+            // syncnew wire kind only.
             Object v = ar.get();
             if (v != null) {
                 return v;

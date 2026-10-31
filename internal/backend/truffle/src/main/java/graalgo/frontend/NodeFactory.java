@@ -9,7 +9,6 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.source.Source;
-import graalgo.runtime.sync.GoPool;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
@@ -1915,109 +1914,24 @@ public final class NodeFactory {
             // WS G: a complex field's zero value is (0+0i), not nil.
             case COMPLEX64 -> graalgo.values.GoComplex32.ZERO;
             case COMPLEX128, UNTYPED_COMPLEX -> graalgo.values.GoComplex64.ZERO;
-            // P3-M9 (driver-harden, go-cmp lane): sync primitive fields get
-            // usable Java primitive objects, not empty structs. Each
-            // evaluation gets its own instance (the template is copied
-            // per use via Boxing.freshZeroCopy for the non-pool cases;
-            // pools are freshened in arrayZeroTemplate/deepCopyArray).
-            case STRUCT -> {
-                String prim = syncPrimitiveName(ctx, fieldTypeId, path);
-                if (prim != null) {
-                    yield newSyncPrimitive(prim);
-                }
-                yield structZeroTemplate(ctx, fieldTypeId, path);
-            }
+            // R-04: sync primitives are plain GoStructs like every other
+            // struct type — their real method bodies (compiled from disk)
+            // run against struct layout. No name-keyed lowering remains.
+            case STRUCT -> structZeroTemplate(ctx, fieldTypeId, path);
             case ARRAY -> arrayZeroTemplate(ctx, fieldTypeId, path);
             default -> null;
         };
     }
 
-    /** Manufactures a fresh Java object for a sync primitive type name. */
-    private static Object newSyncPrimitive(String prim) {
-        return switch (prim) {
-            case "Mutex" -> new graalgo.runtime.sync.GoMutex();
-            case "RWMutex" -> new graalgo.runtime.sync.GoRWMutex();
-            case "WaitGroup" -> new graalgo.runtime.sync.GoWaitGroup();
-            case "Once" -> new graalgo.runtime.sync.GoOnce();
-            case "Pool" -> new GoPool();
-            // fix-linkname: sync/atomic wrapper cells (struct fields).
-            case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" ->
-                new graalgo.runtime.sync.GoAtomicInt64();
-            case "atomic.Int32", "atomic.Uint32", "atomic.Bool" ->
-                new graalgo.runtime.sync.GoAtomicInt32();
-            case "atomic.Pointer", "atomic.Value" ->
-                new java.util.concurrent.atomic.AtomicReference<>();
-            default -> throw new IllegalArgumentException("unknown sync primitive " + prim);
-        };
-    }
-
-    /**
-     * Whether the type-table id denotes one of the synthetic sync/atomic
-     * primitive named types (resolving aliases). Returns the primitive
-     * name ("Pool", "atomic.Int64", ..., "atomic.Pointer",
-     * "atomic.Value") or null. sync.Map is deliberately NOT a primitive
-     * (see the PKG-053 comment below): its disk bodies read the m
-     * field. Generic instantiations (e.g.
-     * {@code sync/atomic.Pointer[T]}) match by their base name.
-     */
-    private static String syncPrimitiveName(BuildCtx ctx, int typeId, String path) {
-        int rid = resolveAlias(ctx, typeId, path);
-        Json.Object entry = ctx.types.entry(rid, path);
-        if (!"named".equals(entry.string("kind", path))) {
-            return null;
-        }
-        String name = entry.object("detail", path).string("name", path);
-        if (name == null) {
-            return null;
-        }
-        if (name.startsWith("sync.")) {
-            String base = name.substring(5);
-            // PKG-053: Mutex/RWMutex/WaitGroup/Once are NOT lowered to
-            // cells. Their real method bodies compile from disk
-            // (503608ea) and assume struct layout (m.mu.Lock(),
-            // o.done.Load(), wg.state.Add(), ...), but the opaque Java
-            // cells (GoMutex, GoRWMutex, GoWaitGroup, GoOnce) are not
-            // GoStructs — any real body touching one threw
-            // ClassCastException (the io.Pipe path died in
-            // (*sync.Once).doSlow → o.m.Lock() on the GoMutex-typed m
-            // field). As plain GoStructs the real bodies work
-            // end-to-end: their fields are either plain structs
-            // (isync.Mutex) or atomic wrappers, which stay cells for
-            // atomicity and are bridged by cell-transparent &x.v
-            // (FieldAddrNode). Pool keeps its Java object: its real
-            // body needs runtime support beyond struct layout (pool
-            // pinning). Map does NOT keep its Java object
-            // (fix-redmaster-r42): go1.27's sync.Map is a thin wrapper
-            // over its m HashTrieMap field, and every Map method body
-            // reads that field — a GoSyncMap field has no fields, so
-            // any disk Map body touching one threw ClassCastException
-            // (reflect's structLookupCache.m.Load died reading field 1
-            // of a GoSyncMap). As a plain GoStruct the disk bodies work
-            // end-to-end; key semantics ride on the HashTrieMap
-            // machinery (keyHash/valEqual from the map type), not on
-            // the GoSyncMap wrapper, whose SyncOpNode Map ops have no
-            // live emitter since the mrSyncMap desugar's mapAnyBoolPair
-            // lookup went dead.
-            switch (base) {
-                case "Pool":
-                    return base;
-            }
-        }
-        if (name.startsWith("sync/atomic.")) {
-            String base = name.substring(12);
-            // Strip generic instantiation suffix: Pointer[T] -> Pointer.
-            int br = base.indexOf('[');
-            if (br >= 0) {
-                base = base.substring(0, br);
-            }
-            switch (base) {
-                case "Int64", "Uint64", "Uintptr", "Int32", "Uint32", "Bool",
-                     "Pointer", "Value":
-                    return "atomic." + base;
-            }
-        }
-        return null;
-    }
+    // R-04: the name-keyed sync lowering (syncPrimitiveName /
+    // newSyncPrimitive) is deleted. sync.Pool and sync/atomic wrappers
+    // materialise as plain GoStructs via structZeroTemplate above;
+    // their real method bodies (compiled from disk) assume struct
+    // layout, and atomicity of &x.v comes from the atomicaddr wire
+    // node wrapping the field address in a delegating cell — not from
+    // the value's representation. The previous GoPool/GoAtomic cell
+    // shapes were incompatible with those bodies: a struct-embedded
+    // Pool died with ClassCastException (GoPool is not a GoStruct).
 
     private static Object arrayZeroTemplate(BuildCtx ctx, int arrayTypeId, String path) {
         int rid = resolveAlias(ctx, arrayTypeId, path);
@@ -2042,12 +1956,12 @@ public final class NodeFactory {
         Object elemZero = fieldZeroTemplate(ctx, elemKind, elemId, path);
         if (elemZero != null && arr instanceof Object[] oa) {
             // fix-redmaster-r42: elements must NOT share the template
-            // instance — Arrays.fill put one sync/atomic cell object
+            // instance — Arrays.fill put one shared template object
             // into every slot, so all elements of an array of
             // atomic.Pointer (e.g. HashTrieMap's children array)
             // aliased to a single word. Each slot gets its own copy
-            // (fresh primitives for sync types, deep copies for
-            // structs, recursive copies for nested arrays).
+            // (deep copies for structs, recursive copies for nested
+            // arrays).
             for (int i = 0; i < oa.length; i++) {
                 oa[i] = Boxing.freshZeroCopy(elemZero);
             }
@@ -5778,12 +5692,8 @@ public final class NodeFactory {
     /** Zero-value template for a composite literal element/field type. */
     private Object zeroTemplateFor(GoKind kind, int typeId, BuildCtx ctx, String path) {
         if (kind == GoKind.STRUCT) {
-            // fix-linkname: sync primitive fields get usable Java objects,
-            // not empty structs (mirrors fieldZeroTemplate).
-            String prim = syncPrimitiveName(ctx, typeId, path);
-            if (prim != null) {
-                return newSyncPrimitive(prim);
-            }
+            // R-04: sync primitives are plain GoStructs (mirrors
+            // fieldZeroTemplate); no name-keyed lowering remains.
             return structZeroTemplate(ctx, typeId, path);
         }
         if (kind == GoKind.ARRAY) {
@@ -5809,15 +5719,12 @@ public final class NodeFactory {
             for (int i = 0; i < len; i++) {
                 objs[i] = switch (ek) {
                     case ARRAY -> zeroArrayFor(elemTid, ctx, path);
-                    // P3-M9 (driver-harden, go-cmp lane): sync primitive
-                    // slots get fresh instances (never shared templates).
-                    case STRUCT -> {
-                        String prim = syncPrimitiveName(ctx, elemTid, path);
-                        if (prim != null) {
-                            yield newSyncPrimitive(prim);
-                        }
-                        yield Boxing.freshZeroCopy(structZeroTemplate(ctx, elemTid, path));
-                    }
+                    // R-04: struct slots get fresh deep copies (never
+                    // shared templates) — this is also what keeps
+                    // per-slot sync primitives (e.g. [2]sync.Pool)
+                    // independent of each other.
+                    case STRUCT ->
+                        Boxing.freshZeroCopy(structZeroTemplate(ctx, elemTid, path));
                     default -> GoString.EMPTY;
                 };
             }

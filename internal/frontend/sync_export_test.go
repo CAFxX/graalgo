@@ -94,14 +94,17 @@ func TestSyncScopeErrors(t *testing.T) {
 // TestSyncCompositeSupported: sync primitives in struct-field positions
 // (and [N]sync.Pool array slots) export successfully. The M2 fail-fast for
 // these positions was deliberately removed (933fd93 driver-harden-gocmp,
-// extended by d174a1e5 fix-linkname): the backend manufactures a fresh
-// GoMutex/GoRWMutex/GoWaitGroup/GoOnce/GoPool per field/slot
-// (NodeFactory.newSyncPrimitive via the type table), so the zero value
-// is a usable primitive — verified end-to-end through the product
-// launcher, byte-identical to gc 1.27.1: struct-held mutex under
-// contention (10 goroutines x 100 increments == 1000), independent
-// instances per struct value, struct-field RWMutex/WaitGroup/Once, and
-// per-slot-distinct [2]sync.Pool.
+// extended by d174a1e5 fix-linkname): the backend materialises every
+// sync primitive as a plain GoStruct (R-04 deleted the old
+// NodeFactory.newSyncPrimitive lowering, whose GoPool/GoAtomic cell
+// shapes were incompatible with the real method bodies — a
+// struct-embedded Pool died with ClassCastException), so the zero
+// value is a usable primitive — verified end-to-end through the
+// product launcher, byte-identical to gc 1.27.1: struct-held mutex
+// under contention (10 goroutines x 100 increments == 1000),
+// independent instances per struct value, struct-field
+// RWMutex/WaitGroup/Once, and per-slot-distinct [2]sync.Pool
+// (differential corpus 49_sync_retire).
 func TestSyncCompositeSupported(t *testing.T) {
 	supported := []struct {
 		name string
