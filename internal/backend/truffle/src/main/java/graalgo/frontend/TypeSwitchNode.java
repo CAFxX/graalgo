@@ -151,7 +151,10 @@ public final class TypeSwitchNode extends GoStmtNode {
     /**
      * Implements check for interface type-switch clauses (P3-M8b): the
      * dynamic type's method implkey set must cover the interface's.
-     * Mirrors {@link TypeAssertNode#holds}.
+     * Mirrors {@link TypeAssertNode#holds}. Reachability (P1-B,
+     * 2026-10-31): only template (unbound) entries carry the sentinel,
+     * so a runtime dynamic type (always concrete) never trips the
+     * incomplete-table error below; the check is defense-in-depth.
      */
     private boolean implementsDyn(GoTypeDescriptor dyn, java.util.List<String> ifaceMethods) {
         if (dyn == null) {
@@ -162,7 +165,7 @@ public final class TypeSwitchNode extends GoStmtNode {
         if (dynMethods.contains(NodeFactory.TEMPLATE_METHODS_SKIPPED)) {
             throw new FrontendException("cannot switch generic instantiation "
                     + dyn.name() + " on interface: method tables for instantiated methods"
-                    + " are not supported (P3-M3 scope)");
+                    + " are incomplete (template methods skipped: unbound type parameters)");
         }
         return dynMethods.containsAll(ifaceMethods);
     }

@@ -4069,9 +4069,13 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			"pkgpath": pkgPath,
 		}
 		if tmplSkipped {
-			// P3-M3 remediation (R1 P1-2): the frontend fails fast
-			// with the named P3-M3 scope error when such an
-			// instantiation is boxed into a non-empty interface.
+			// P1-B reachability (2026-10-31): the marker is set
+			// whenever a template method cannot be monomorphized; in
+			// final exports that is only template (unbound) entries —
+			// concrete instantiations always monomorphize — so the
+			// backend's sentinel checks are defense-in-depth and
+			// cannot fire for a gc-valid program (runtime values
+			// always have concrete types).
 			detail["templateMethodsSkipped"] = true
 		}
 		return mk("named", detail), nil
@@ -10424,11 +10428,14 @@ func typeKeyOf(t types.Type) string {
 // instantiation's object id. Sorted by method name for determinism.
 //
 // The second return value reports whether any template method could not
-// be monomorphized for this type (P3-M3 remediation, R1 P1-2): the caller
-// records it as "templateMethodsSkipped" on the entry detail so the
-// frontend can fail fast with the named P3-M3 scope error when such an
-// instantiation is boxed into a non-empty interface, instead of dying at
-// first dispatch with a misleading "no method table installed" error.
+// be monomorphized for this type: the caller records it as
+// "templateMethodsSkipped" on the entry detail so the backend fails fast
+// with the incomplete-table error instead of dying at first dispatch
+// with a misleading "no method table installed" error. Reachability
+// (P1-B, 2026-10-31): in final exports only template (unbound) entries
+// carry the marker — concrete instantiations always monomorphize — and
+// runtime values always have concrete types, so the backend's sentinel
+// checks are defense-in-depth and cannot fire for a gc-valid program.
 // methodEntry is one wire method-table entry under construction
 // (factored from methodTableEntries so the monomorphization paths share
 // the entry-building logic).

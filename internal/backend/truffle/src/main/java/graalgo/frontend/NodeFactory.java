@@ -1826,18 +1826,22 @@ public final class NodeFactory {
     }
 
     /**
-     * P3-M3 remediation (R1 P1-2): fail fast with the named P3-M3 scope
-     * error when a generic instantiation (e.g. {@code Box[int]}) would be
-     * boxed into a non-empty interface. The exporter's method tables skip
-     * template methods, so the instantiation's wire {@code "methods"} list
-     * is empty (marked {@code "templateMethodsSkipped"}) and the first
-     * dispatch would otherwise die with the misleading "no method table
-     * installed" error. Boxing into the empty interface stays legal (no
-     * method table is consulted there).
+     * Fail fast with the incomplete-table error when the value boxed
+     * into a non-empty interface carries the exporter's
+     * {@code "templateMethodsSkipped"} marker: its wire {@code "methods"}
+     * list is empty, and the first dispatch would otherwise die with the
+     * misleading "no method table installed" error. Boxing into the empty
+     * interface stays legal (no method table is consulted there).
      *
-     * <p>Greppable re-test trigger: when instantiation method tables are
-     * supported, delete this check and the exporter's
-     * {@code "templateMethodsSkipped"} marker.
+     * <p>Reachability (P1-B, 2026-10-31): in final exports the marker
+     * appears only on template (unbound) entries — concrete
+     * instantiations always monomorphize (P3-M9) — and a runtime value
+     * always has a concrete type, so this check is defense-in-depth: it
+     * cannot fire for a gc-valid program. Retain it (and the marker) as
+     * the guard for any future exporter path that marks a concrete entry;
+     * the frontend reachability test pins that no concrete entry is
+     * marked today. The message names the condition (unbound type
+     * parameters), not a phase.
      */
     public static void checkInstantiationBoxedAsInterface(BuildCtx ctx, int fromId, int toTypeId,
             String path) {
@@ -1859,7 +1863,7 @@ public final class NodeFactory {
                 : "*" + namedDisplayName(ctx, detail.intValue("elem", path), path);
         throw new FrontendException(path + ": cannot use generic instantiation " + display
                 + " as a non-empty interface: method tables for instantiated methods"
-                + " are not supported (P3-M3 scope)");
+                + " are incomplete (template methods skipped: unbound type parameters)");
     }
 
     /** Display name for a type-table id: the qualified name for named types, else the kind. */
@@ -2148,16 +2152,20 @@ public final class NodeFactory {
     }
 
     /**
-     * Sentinel member of a descriptor's implkey set (P3-M3 remediation, R1
-     * P1-2): the wire method table skipped template methods, so the set is
-     * empty by design — not because the type has no methods. The runtime
-     * implements check fails fast with the named P3-M3 scope error on this
-     * sentinel instead of reporting "not implemented": the instantiation
-     * may well implement the interface (gc decides by its real method
-     * set), and a bare {@code false} would be a silent divergence.
+     * Sentinel member of a descriptor's implkey set: the wire method
+     * table skipped template methods, so the set is empty by design —
+     * not because the type has no methods. The runtime implements check
+     * fails fast with the incomplete-table error on this sentinel
+     * instead of reporting "not implemented": the instantiation may well
+     * implement the interface (gc decides by its real method set), and a
+     * bare {@code false} would be a silent divergence. Reachability
+     * (P1-B, 2026-10-31): only template (unbound) entries carry the
+     * marker in final exports, so a runtime dynamic type (always
+     * concrete) never carries this sentinel; the check is
+     * defense-in-depth.
      */
     public static final String TEMPLATE_METHODS_SKIPPED =
-            "\u0000<instantiation: template methods skipped (P3-M3 scope)>";
+            "\u0000<instantiation: template methods skipped (unbound type parameters)>";
 
     /** True when a type-table entry's detail carries the templateMethodsSkipped marker. */
     private static boolean templateMethodsSkipped(Json.Object detail) {
@@ -2249,9 +2257,11 @@ public final class NodeFactory {
             // GoKind.transparent(INTERFACE, INTERFACE) returns true above,
             // so interface-to-interface never reaches here; the WS-D
             // retirement amendment covers the live paths.
-            // P3-M3 remediation (R1 P1-2): a generic instantiation boxed
-            // into a non-empty interface fails fast with the named P3-M3
-            // scope error (its wire method table is empty by design).
+            // A generic instantiation boxed into a non-empty interface
+            // fails fast with the incomplete-table error if its wire
+            // method table carries the templateMethodsSkipped marker
+            // (empty by design for template entries; see the javadoc on
+            // checkInstantiationBoxedAsInterface for reachability).
             checkInstantiationBoxedAsInterface(ctx, child.typeId(), toTypeId, path);
             // P3-M3 (WS D): concrete→non-empty-interface boxes (see javadoc
             // above). The empty-interface fast path below is subsumed.
@@ -3490,9 +3500,10 @@ public final class NodeFactory {
             if (!isInterfaceType(ctx, paramTypeIds.get(i), path)) {
                 continue;
             }
-            // P3-M3 remediation (R1 P1-2): a generic instantiation passed
-            // to a non-empty interface parameter fails fast with the named
-            // P3-M3 scope error (its wire method table is empty by design).
+            // A generic instantiation passed to a non-empty interface
+            // parameter fails fast with the incomplete-table error if its
+            // wire method table carries the templateMethodsSkipped marker
+            // (see the javadoc on checkInstantiationBoxedAsInterface).
             checkInstantiationBoxedAsInterface(ctx, args[i].typeId(), paramTypeIds.get(i), path);
             args[i] = boxInterface(args[i], ctx, path);
         }

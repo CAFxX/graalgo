@@ -92,12 +92,16 @@ public final class TypeAssertNode extends GoExprNode {
      * (not bare names) make the check signature-aware: a method with the
      * right name but the wrong signature does not satisfy the assertion.
      *
-     * <p>P3-M3 remediation (R1 P1-2): when the dynamic type is a generic
-     * instantiation whose method table was skipped (the
+     * <p>When the dynamic type is a generic instantiation whose method
+     * table was skipped (the
      * {@link NodeFactory#TEMPLATE_METHODS_SKIPPED} sentinel), the check
-     * cannot be decided — fail fast with the named P3-M3 scope error
+     * cannot be decided — fail fast with the incomplete-table error
      * instead of reporting "not implemented" (a bare {@code false} would
      * be a silent divergence vs gc, which decides by the real method set).
+     * Reachability (P1-B, 2026-10-31): only template (unbound) entries
+     * carry the marker in final exports, so a runtime dynamic type
+     * (always concrete) never carries this sentinel; the check is
+     * defense-in-depth.
      */
     static boolean holds(GoInterface gi, GoTypeDescriptor asserted,
                          List<String> assertedIfaceMethods,
@@ -115,7 +119,7 @@ public final class TypeAssertNode extends GoExprNode {
                 throw new FrontendException("cannot assert generic instantiation "
                         + ((GoTypeDescriptor) gi.descriptor()).name() + " to interface "
                         + asserted.name() + ": method tables for instantiated methods"
-                        + " are not supported (P3-M3 scope)");
+                        + " are incomplete (template methods skipped: unbound type parameters)");
             }
             return dynMethods.containsAll(assertedIfaceMethods);
         }
