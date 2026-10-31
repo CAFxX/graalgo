@@ -4,11 +4,17 @@ Differential corpus for the synthetic `math/rand/v2` package (full port).
 
 ## Scope boundary
 
-Deterministic fixed seeds only. ChaCha8 verified byte-identically vs gc.
+Deterministic fixed seeds only. ChaCha8 verified byte-identically vs gc
+(including Read and the Marshal/Unmarshal round-trip; see the
+review23-chacha8 lane report and the gc harness it left behind).
 Deviations (see `synth_mathrandv2.go` header):
 - `runtime_rand` → composed from `runtime.fastrand`.
 - `internal/chacha8rand` inlined as `__chacha8*` (unsafe-free rewrite).
-- Exported multi-result methods (Read/AppendBinary/MarshalBinary) dropped.
+- PCG.AppendBinary/MarshalBinary still dropped (no in-tree consumer).
+  ChaCha8.Read/AppendBinary/MarshalBinary are carried since
+  review23-chacha8 (the exporter pair-transforms them); the old
+  scope-limit that kept `01_chacha8.go` disabled (`&` on SelectorExpr)
+  is obsolete — the program is restored.
 
 ## Programs
 
