@@ -66,6 +66,20 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // R-03 remediation (2026-10-31): hand-rolled crypto/interop
+        // packages with no interop unit tests — p3x509 (incl. the
+        // hand-rolled EC scalarMultiply), p3tls, p3crypto, rtstack,
+        // p3log, p3math nodes, p3builtin nodes, p3abi, p3sync atomic nodes.
+        TESTS.add(graalgo.p3x509.GoX509Test.class);
+        TESTS.add(graalgo.p3tls.TlsRuntimeTest.class);
+        TESTS.add(graalgo.p3crypto.GoCryptoTest.class);
+        TESTS.add(graalgo.rtstack.RtStackTest.class);
+        TESTS.add(graalgo.p3log.P3LogTest.class);
+        TESTS.add(graalgo.p3math.nodes.MathNodesTest.class);
+        TESTS.add(graalgo.p3builtin.nodes.BuiltinNodesTest.class);
+        TESTS.add(graalgo.p3abi.AbiFuncPCTest.class);
+        TESTS.add(graalgo.p3sync.nodes.SyncAtomicTest.class);
+        TESTS.add(graalgo.p3time.nodes.TimeNodesTest.class);
     }
 
     private IfaceTestRunner() {}
