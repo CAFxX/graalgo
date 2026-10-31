@@ -568,6 +568,21 @@ public final class ReflectLinknames {
     private static final java.util.Map<GoStruct, Long> DYN_STRUCT_TOKS =
             new java.util.IdentityHashMap<>();
     private static ReflectTypes.Table dynStructTable;
+    /**
+     * R-01 (independent codebase review 2026-10-31-19): the dynamic-struct
+     * memo and its table switch are shared mutable state reached from
+     * ordinary guest reflect calls, and guest goroutines run on separate
+     * virtual threads — so the whole memo/table-switch/mint/publish
+     * sequence in {@link #synthesizeDynamicStruct} runs under this one
+     * lock. The switch and the memo must be atomic together: clearing
+     * the memo on a table change while another thread is mid-synthesis
+     * would otherwise wipe (or resurrect) that thread's entry. The
+     * lock serializes dynamic-struct synthesis against itself only;
+     * table thread-safety against the other synthesis families is the
+     * I-3 fix's job (see the residual note on
+     * {@link #synthesizeDynamicStruct}).
+     */
+    private static final Object DYN_STRUCT_LOCK = new Object();
     private static final ThreadLocal<java.util.IdentityHashMap<GoStruct, Boolean>> SYNTHESIZING =
             ThreadLocal.withInitial(java.util.IdentityHashMap::new);
 
@@ -647,7 +662,29 @@ public final class ReflectLinknames {
         }
     }
 
+    /**
+     * Serializes dynamic-struct synthesis (R-01): the memo get, the
+     * table switch, the token mint, and the publish below must be
+     * atomic with respect to other dynamic-struct syntheses, or two
+     * goroutines can mint two tokens for one StructType object (or
+     * one token for two distinct structures) and corrupt the memo.
+     * Reentrant for the calling thread, so a nested dynamic struct
+     * reached through a field type re-enters safely; the
+     * SYNTHESIZING guard still fails a true synthesis cycle loudly.
+     * Residual (pre-I-3-integration): on master the table itself is
+     * still a plain ArrayList/HashMap, so this lock serializes only
+     * the dynamic-struct path against itself — a concurrent
+     * non-dynamic synthesis (ptrTo/arrayOf/...) appending to the
+     * same byTok is outside this lock, and full table thread-safety
+     * arrives with the I-3 integration, not with this change.
+     */
     private static long synthesizeDynamicStruct(GoStruct header, GoStruct structType) {
+        synchronized (DYN_STRUCT_LOCK) {
+            return synthesizeDynamicStructLocked(header, structType);
+        }
+    }
+
+    private static long synthesizeDynamicStructLocked(GoStruct header, GoStruct structType) {
         ReflectTypes.Table table = ReflectTypes.table();
         if (table != dynStructTable) {
             DYN_STRUCT_TOKS.clear();
@@ -709,6 +746,10 @@ public final class ReflectLinknames {
                 "", "", size, (int) align,
                 null, null, 0, null, java.util.List.copyOf(fields), java.util.List.of(),
                 java.util.List.of(), java.util.List.of(), false, java.util.List.of(), "", -1);
+        // Publish order is load-bearing: the byTok entry lands before
+        // the memo put, so no reader of the memo can observe a token
+        // without its TypeInfo (under the lock the two are atomic
+        // together for dynamic-struct readers).
         table.byTok.add(info);
         DYN_STRUCT_TOKS.put(structType, newTok);
         return newTok;
