@@ -131,23 +131,54 @@ deliverable until the design lands.
   `real-reflect2` (`reflect`).
 - **Phase:** 1 (the four in-flight packages) → 2 (remainder).
 
-### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
+### B-5. `GoX509` retained EC scalar multiplication (DER parsing retired)
 
-- **What:**
-  [GoX509.java](../../internal/backend/interop/src/main/java/graalgo/p3x509/GoX509.java):
-  hand-rolled `scalarMultiply`/`ecAdd`/`ecDouble` and byte
-  pattern-matching DER helpers (`extractBitString`, `skipLength`,
-  `derLength`, `parsePkcs1Integers`, `extractSec1PrivateKey`, …) instead of
-  delegating to JDK crypto (`java.security`).
-- **Why:** expedience during the TLS bring-up; the directive (prefer JDK
-  delegation when semantically compatible) was not applied.
-- **Root-cause fix:** delegate to the JDK (e.g. derive SEC1 public points
-  via `KeyAgreement("ECDH")`, parse with `CertificateFactory`) or document
-  specifically why the JDK cannot cover a case, with differential tests vs
-  gc `x509.ParseECPrivateKey` over P-224/256/384/521. In flight: worktree
-  `real-x509` (coordinate — it retires synthetic `crypto/x509`, the Go-side
-  counterpart).
-- **Phase:** 1.
+- **What (narrowed 2026-10-31, review P1-6 remediation):**
+  [GoX509.java](../../internal/backend/interop/src/main/java/graalgo/p3x509/GoX509.java)
+  still hand-rolls one operation: `scalarMultiply`/`ecAdd`/`ecDouble`
+  (SEC1 public-point derivation). Everything else in the original entry
+  is retired in the same change: certificate parsing already used
+  `CertificateFactory`; SPKI and PKCS#8 go through `KeyFactory`;
+  Ed25519 raw keys are reconstructed from the JDK `EdECPublicKey`
+  point; PKCS#1 public keys are validated by a strict sequential DER
+  reader and built by the JDK from a canonical SPKI-wrapped
+  re-encoding; PKCS#1 private keys use the same strict reader plus
+  gc-mirror consistency checks, with the standard 9-integer form
+  materialised as a JDK `RSAPrivateCrtKey`; SEC1 uses a strict
+  sequential parse plus a JDK PKCS#8 re-parse cross-check. The deleted
+  tag-scanning helpers (`extractBitString`, `skipLength`, `derLength`,
+  `parsePkcs1Integers`, `extractSec1PrivateKey`,
+  `extractSec1CurveOid`) are gone. Differential evidence: [GoX509Test.java](../../internal/backend/interop/src/test/java/graalgo/p3x509/GoX509Test.java)
+  (77 cases vs gc over P-224/256/384/521, RSA, Ed25519, and a
+  malformed-DER corpus; the pre-fix code failed 27 of them).
+- **Why the scalar multiplication remains:** the public JCA API exposes
+  no scalar-multiplication operation. `KeyAgreement("ECDH")` returns
+  only the shared secret (the x-coordinate); recovering y from x
+  would need a second hand-rolled primitive (modular square root) plus
+  a sign-disambiguation test — strictly worse than one audited
+  double-and-add over JDK-supplied curve parameters. The result is
+  therefore verified before use: scalar in [1, n-1], non-infinity,
+  on-curve, and x equal to the JDK ECDH shared secret (except
+  secp224r1, which SunEC rejects for ECDH, key generation, and
+  signatures alike — probed on OpenJDK 25 — while accepting it for
+  `KeyFactory` parsing; P-224 relies on the PKCS#8 re-parse, the
+  on-curve check, and the gc differential test). Moving the derivation
+  to the Go side would NOT retire this entry: the synthetic
+  `crypto/elliptic` package is itself synthetic, so that would move
+  hand-rolled math between bridges rather than removing it.
+- **Root-cause fix for the remainder:** a JDK scalar-multiplication
+  API, or compilation of the real (non-synthetic) `crypto/elliptic`
+  sources with SEC1 derivation moved there. Until then this narrowed
+  entry stands, with its verification (on-curve + ECDH cross-check)
+  as the guard against silently wrong key material.
+- **Known gaps (documented, not hidden):** PKCS#1 short forms (6–8
+  integers, CRT parameters omitted) and multi-prime keys cannot be
+  represented by any JDK key type (`RSAPrivateCrtKey` requires all
+  nine; `RSAPrivateKey` drops p and q), so their descriptor
+  components come from the strict parse; gc's parse path does not
+  check primality (a crafted composite "prime" is accepted by both gc
+  and this code, verified in the corpus).
+- **Phase:** 1 (retained by documented decision, not by expedience).
 
 ### B-6. `unsafe.Add` always traps (bridge by omission)
 
