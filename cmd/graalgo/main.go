@@ -127,7 +127,8 @@ self-contained launcher that runs the program through the graalgo
 backend. With no package arguments, builds the package in the current
 directory. The default artifact name mirrors go build (the directory or
 first file base name); -o names the output explicitly. Each named
-package is built separately; -o cannot be used with multiple packages.
+package is built separately; with multiple packages -o must name an
+existing directory, and each package's artifact lands in it.
 
 Package arguments may be directories, import paths, .go files, or
 ./... patterns (which expand to the packages under a directory,
@@ -279,23 +280,157 @@ type resolvedPackage struct {
 	// files are the package's buildable .go files, including _test.go
 	// files; callers that build or run filter those out.
 	files []string
+	// expanded reports whether the package came from a ./... pattern
+	// expansion rather than being named explicitly. Callers that
+	// treat expanded packages leniently (e.g. skipping a test-only
+	// package in a multi-build) must not extend that leniency to an
+	// explicitly named package.
+	expanded bool
 }
 
-// resolveFiles turns package/file arguments into a flat list of .go
-// files, for callers that genuinely operate on files (fmt). It is
-// resolvePackages flattened: the same per-package, constraint-filtered
-// file sets, in argument order.
-func resolveFiles(args []string) ([]string, error) {
-	pkgs, err := resolvePackages(args)
-	if err != nil {
-		return nil, err
+// resolveFmtFiles turns package/file arguments into a flat list of .go
+// files for fmt. It mirrors resolvePackages (directories, import paths,
+// .go file lists, ./... patterns, same directory pruning) but with one
+// deliberate difference: the per-directory listing is an unfiltered
+// *.go glob, NOT the constraint-filtered build file list. gofmt
+// formats all files regardless of build constraints, so a
+// windows-gated or //go:build ignore file must still be formatted,
+// and a directory of only gated files must format, not error.
+// Explicit .go file arguments pass through as-is, as in
+// resolvePackages.
+func resolveFmtFiles(args []string) ([]string, error) {
+	if len(args) == 0 {
+		files, err := fmtFilesInDir(".")
+		if err != nil {
+			return nil, err
+		}
+		if len(files) == 0 {
+			return nil, fmt.Errorf("no Go files in current directory")
+		}
+		return files, nil
 	}
 	var files []string
-	for _, p := range pkgs {
-		files = append(files, p.files...)
+	var fileArgs []string
+	addDir := func(label, dir string) error {
+		fs, err := fmtFilesInDir(dir)
+		if err != nil {
+			return err
+		}
+		if len(fs) == 0 {
+			return fmt.Errorf("no Go files in %s", label)
+		}
+		files = append(files, fs...)
+		return nil
+	}
+	for _, a := range args {
+		if strings.HasSuffix(a, "/...") {
+			base := strings.TrimSuffix(a, "/...")
+			if base == "" {
+				base = "."
+			}
+			expanded, err := expandFmtDotDotDot(base)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, expanded...)
+			continue
+		}
+		if fi, err := os.Stat(a); err == nil {
+			if fi.IsDir() {
+				if err := addDir(a, a); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			fileArgs = append(fileArgs, a)
+			continue
+		}
+		if filepath.Ext(a) == ".go" {
+			fileArgs = append(fileArgs, a)
+			continue
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		dir, err := importDirForPath(cwd, a)
+		if err != nil {
+			return nil, fmt.Errorf("no such file, directory, or import path: %s", a)
+		}
+		if err := addDir(a, dir); err != nil {
+			return nil, err
+		}
+	}
+	if len(fileArgs) > 0 {
+		if len(files) > 0 {
+			return nil, fmt.Errorf("cannot mix .go file arguments with package arguments")
+		}
+		fileDir := ""
+		for _, f := range fileArgs {
+			d := filepath.Dir(f)
+			if fileDir == "" {
+				fileDir = d
+			} else if d != fileDir {
+				return nil, fmt.Errorf("named files must all be in one directory")
+			}
+		}
+		files = append(files, fileArgs...)
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no Go files matched")
+	}
+	return files, nil
+}
+
+// fmtFilesInDir returns every .go file in dir, with no build-constraint
+// filtering and no package-membership check: formatting is a per-file
+// operation. Test files are included, as gofmt formats them too.
+func fmtFilesInDir(dir string) ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range matches {
+		if fi, err := os.Stat(m); err == nil && !fi.IsDir() {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// expandFmtDotDotDot is expandDotDotDot's fmt counterpart: one flat
+// file list per directory under root that contains .go files, with
+// the same pruning (vendor, testdata, hidden or underscore-prefixed
+// trees, nested modules) but no constraint filtering.
+func expandFmtDotDotDot(root string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if path != root {
+			name := d.Name()
+			if name == "vendor" || name == "testdata" ||
+				strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+				return fs.SkipDir
+			}
+			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+				return fs.SkipDir
+			}
+		}
+		fs, err := fmtFilesInDir(path)
+		if err != nil {
+			return err
+		}
+		files = append(files, fs...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return files, nil
 }
@@ -429,6 +564,13 @@ func buildableFiles(dir string) ([]string, error) {
 		}
 		return nil, err
 	}
+	// CgoFiles are not part of GoFiles: dropping them silently would
+	// build a package missing a file the user wrote. Fail loudly
+	// instead — graalgo has no cgo backend, so such a package cannot
+	// be built correctly here.
+	if len(pkg.CgoFiles) > 0 {
+		return nil, fmt.Errorf("package in %s uses cgo, which graalgo does not support", dir)
+	}
 	var out []string
 	for _, f := range pkg.GoFiles {
 		out = append(out, filepath.Join(dir, f))
@@ -446,9 +588,13 @@ func buildableFiles(dir string) ([]string, error) {
 // resolvedPackage per directory under root that contains buildable
 // files, in lexical walk order. vendor, testdata, and hidden or
 // underscore-prefixed directories are pruned, matching `go`'s ./...
-// semantics. A directory ImportDir rejects aborts the expansion with
-// an error rather than being silently skipped: a broken package in
-// the tree is information, not something ./... should hide.
+// semantics, as are nested modules: a directory containing go.mod is
+// a separate module, and `go`'s ./... does not descend into it.
+// Expanded packages are marked as such, so callers can distinguish
+// them from explicitly named packages. A directory ImportDir rejects
+// aborts the expansion with an error rather than being silently
+// skipped: a broken package in the tree is information, not something
+// ./... should hide.
 func expandDotDotDot(root string) ([]resolvedPackage, error) {
 	var pkgs []resolvedPackage
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -464,13 +610,16 @@ func expandDotDotDot(root string) ([]resolvedPackage, error) {
 				strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
 				return fs.SkipDir
 			}
+			if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+				return fs.SkipDir
+			}
 		}
 		files, err := buildableFiles(path)
 		if err != nil {
 			return err
 		}
 		if len(files) > 0 {
-			pkgs = append(pkgs, resolvedPackage{label: path, dir: path, files: files})
+			pkgs = append(pkgs, resolvedPackage{label: path, dir: path, files: files, expanded: true})
 		}
 		return nil
 	})

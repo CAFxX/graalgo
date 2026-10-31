@@ -200,10 +200,20 @@ func parseBuildFlags(args []string) (buildFlags, error) {
 // artifact, because merging them would compile a Franken-package and
 // leave -o ambiguous. Like `go build`, _test.go files are ignored and
 // the artifact defaults to the package directory's base name (or the
-// first .go file's base name) unless -o names the output; -o cannot be
-// used with multiple packages. Without -o, artifacts land in the
-// current directory, so two packages sharing a base name overwrite
-// each other exactly as `go build`'s outputs would.
+// first .go file's base name) unless -o names the output. With
+// multiple packages, -o must name an existing directory, and each
+// package's artifact lands in it under its default name, like
+// `go build`; -o naming anything else with multiple packages is
+// rejected with exit 1.
+//
+// INTENTIONAL DIVERGENCE from `go build`: `go build ./a ./b` with
+// no -o writes nothing (multiple packages are compiled only as a
+// check), while graalgo emits one artifact per package. As a
+// consequence, without -o artifacts land in the current directory,
+// and two packages sharing a base name silently overwrite each other
+// (last wins) instead of producing nothing; the same last-wins
+// collision applies inside an -o directory. This is the price of
+// per-package emission, documented here rather than hidden.
 func cmdBuild(root string, args []string) int {
 	bf, err := parseBuildFlags(args)
 	if err != nil {
@@ -224,8 +234,13 @@ func cmdBuild(root string, args []string) int {
 		return 2
 	}
 	if len(pkgs) > 1 && bf.output != "" {
-		fmt.Fprintf(os.Stderr, "graalgo build: -o cannot be used when building multiple packages\n")
-		return 2
+		// Like `go build`: -o with multiple packages must name an
+		// existing directory; anything else is exit 1, not 2 (it is
+		// a build error, not a usage error), before any backend call.
+		if fi, err := os.Stat(bf.output); err != nil || !fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "graalgo build: cannot write multiple packages to non-directory %s\n", bf.output)
+			return 1
+		}
 	}
 	for _, pkg := range pkgs {
 		// _test.go files are not part of the package build, like
@@ -237,15 +252,27 @@ func cmdBuild(root string, args []string) int {
 			}
 		}
 		if len(pkgFiles) == 0 {
-			if len(pkgs) == 1 {
-				fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
-				return 1
+			// Only a pattern-expanded package with test files only
+			// is skipped: an explicitly named test-only package
+			// errors, like `go build`, even in a multi-build.
+			if pkg.expanded {
+				continue
 			}
-			// A pattern-expanded package with test files only has
-			// nothing to build; it is skipped, not an error.
-			continue
+			fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
+			return 1
 		}
-		if code := buildOnePackage(root, bf.output, pkg, pkgFiles); code != 0 {
+		out := bf.output
+		if len(pkgs) > 1 && out != "" {
+			// -o names an existing directory (checked above): each
+			// package's artifact lands in it under its default name.
+			name, err := driver.DefaultOutputName("", []string{pkg.label})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+				return 2
+			}
+			out = filepath.Join(out, name)
+		}
+		if code := buildOnePackage(root, out, pkg, pkgFiles); code != 0 {
 			return code
 		}
 	}
@@ -355,8 +382,10 @@ func cmdVet(root string, args []string) int {
 // cmdFmt implements `graalgo fmt [packages]`.
 //
 // Formats the Go source files using gofmt from the stock toolchain.
+// The file list is unfiltered by build constraints (see
+// resolveFmtFiles): gofmt formats every .go file, gated or not.
 func cmdFmt(root string, args []string) int {
-	files, err := resolveFiles(args)
+	files, err := resolveFmtFiles(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo fmt: %v\n", err)
 		return 1

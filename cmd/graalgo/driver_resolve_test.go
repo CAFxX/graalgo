@@ -312,10 +312,29 @@ func TestCmdBuildSeparatesPackages(t *testing.T) {
 		}
 	}
 
-	// -o with multiple packages is rejected before any backend call.
+	// -o naming an existing directory with multiple packages: like
+	// `go build`, each package's artifact lands in that directory.
+	outdir2 := t.TempDir()
+	if code := cmdBuild(root, []string{"-o", outdir2, pkgA, pkgB}); code != 0 {
+		t.Fatalf("cmdBuild -o dir with multiple packages = %d, want 0", code)
+	}
+	for _, name := range []string{"a", "b"} {
+		fi, err := os.Stat(filepath.Join(outdir2, name))
+		if err != nil || fi.IsDir() {
+			t.Errorf("artifact %s missing in -o dir after build (stat=%v, isDir=%v)", name, err, err == nil && fi.IsDir())
+		}
+	}
+
+	// -o naming a non-directory path with multiple packages is
+	// rejected with exit 1 (go's convention), before any backend call.
 	before := len(readLog(t, log))
-	if code := cmdBuild(root, []string{"-o", "out", pkgA, pkgB}); code != 2 {
-		t.Errorf("cmdBuild -o with multiple packages = %d, want 2", code)
+	var code int
+	stderr := captureStderr(t, func() { code = cmdBuild(root, []string{"-o", "out", pkgA, pkgB}) })
+	if code != 1 {
+		t.Errorf("cmdBuild -o file with multiple packages = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "cannot write multiple packages to non-directory") {
+		t.Errorf("stderr = %q, want cannot-write-multiple-packages message", stderr)
 	}
 	if got := len(readLog(t, log)); got != before {
 		t.Errorf("backend invoked for rejected -o build: %d lines, want %d", got, before)
@@ -455,6 +474,122 @@ func TestResolveTestDirsDotDotDotAndImportPath(t *testing.T) {
 	}
 	if len(dirs) != 1 || filepath.Base(dirs[0]) != "p1" {
 		t.Errorf("import path resolved to %v, want [p1]", dirs)
+	}
+}
+
+func TestCmdFmtFormatsAllFilesRegardlessOfConstraints(t *testing.T) {
+	// gofmt formats all files regardless of build constraints; fmt
+	// must therefore not use the constraint-filtered build file list.
+	t.Setenv("GOROOT", runtime.GOROOT())
+	root := t.TempDir()
+	work := t.TempDir()
+	writeFile(t, work, "pkg/a.go", "package p\n\nfunc   A()  {}\n")
+	writeFile(t, work, "pkg/foo_windows.go", "//go:build windows\n\npackage p\n\nfunc   Win()  {}\n")
+	writeFile(t, work, "pkg/ignored.go", "//go:build ignore\n\npackage p\n\nfunc   Ignored()  {}\n")
+	if code := cmdFmt(root, []string{filepath.Join(work, "pkg")}); code != 0 {
+		t.Fatalf("cmdFmt(mixed dir) = %d, want 0", code)
+	}
+	for _, name := range []string{"a.go", "foo_windows.go", "ignored.go"} {
+		data, err := os.ReadFile(filepath.Join(work, "pkg", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "func   ") {
+			t.Errorf("%s not formatted: %q", name, data)
+		}
+	}
+
+	// A directory of only constraint-gated files must format, not
+	// error with "no Go files".
+	writeFile(t, work, "gated/only_windows.go", "//go:build windows\n\npackage p\n\nfunc   OnlyWin()  {}\n")
+	if code := cmdFmt(root, []string{filepath.Join(work, "gated")}); code != 0 {
+		t.Fatalf("cmdFmt(gated-only dir) = %d, want 0", code)
+	}
+	data, err := os.ReadFile(filepath.Join(work, "gated", "only_windows.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "func   ") {
+		t.Errorf("gated-only file not formatted: %q", data)
+	}
+}
+
+func TestCmdBuildTestOnlyPackageOrigin(t *testing.T) {
+	root := t.TempDir()
+	fakeBackend(t, root)
+	log := backendLog(t)
+	work := t.TempDir()
+	writeFile(t, work, "onlytest/only_test.go", "package onlytest\nimport \"testing\"\nfunc TestX(t *testing.T) {}\n")
+	writeFile(t, work, "real/r.go", "package main\nfunc main() {}\n")
+	outdir := t.TempDir()
+	chdir(t, outdir)
+
+	// An explicitly named test-only package in a multi-build errors,
+	// like `go build`: it is skipped only when ./... expanded it.
+	var code int
+	stderr := captureStderr(t, func() {
+		code = cmdBuild(root, []string{filepath.Join(work, "onlytest"), filepath.Join(work, "real")})
+	})
+	if code != 1 {
+		t.Errorf("cmdBuild explicit test-only + real = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "no non-test Go files") {
+		t.Errorf("stderr = %q, want no-non-test-Go-files error", stderr)
+	}
+	if lines := readLog(t, log); len(lines) != 0 {
+		t.Errorf("backend invoked %v for a rejected build, want none", lines)
+	}
+
+	// The same test-only package reached via ./... is skipped and
+	// the real package still builds.
+	proj := t.TempDir()
+	writeFile(t, proj, "proj/onlytest/only_test.go", "package onlytest\nimport \"testing\"\nfunc TestX(t *testing.T) {}\n")
+	writeFile(t, proj, "proj/real/r.go", "package main\nfunc main() {}\n")
+	chdir(t, proj)
+	if code := cmdBuild(root, []string{"./proj/..."}); code != 0 {
+		t.Fatalf("cmdBuild ./proj/... with test-only package = %d, want 0", code)
+	}
+	if lines := readLog(t, log); len(lines) != 1 {
+		t.Fatalf("backend invoked %d times %v, want 1 (real package only)", len(lines), lines)
+	}
+}
+
+func TestResolvePackagesDotDotDotPrunesNestedModules(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a/a.go", "package a\n")
+	writeFile(t, root, "nested/n.go", "package nested\n")
+	writeFile(t, root, "nested/go.mod", "module example.com/nested\n\ngo 1.21\n")
+	writeFile(t, root, "nested/inner/i.go", "package inner\n")
+	chdir(t, root)
+
+	pkgs, err := resolvePackages([]string{"./..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := labelSet(pkgs)
+	if !got["a"] {
+		t.Errorf("missing package a in %v", got)
+	}
+	for _, banned := range []string{"nested", "nested/inner"} {
+		if got[banned] {
+			t.Errorf("nested-module package %s present in %v", banned, got)
+		}
+	}
+}
+
+func TestResolvePackagesCgoIsLoud(t *testing.T) {
+	// A package mixing plain and cgo files must not resolve by
+	// silently dropping the cgo file: that would build a package
+	// missing a file the user wrote.
+	root := t.TempDir()
+	writeFile(t, root, "pkg/a.go", "package p\nfunc A() {}\n")
+	writeFile(t, root, "pkg/c.go", "package p\nimport \"C\"\nfunc F() {}\n")
+	chdir(t, root)
+
+	if _, err := resolvePackages([]string{"pkg"}); err == nil {
+		t.Error("cgo package resolved without error; its CgoFiles were silently dropped")
+	} else if !strings.Contains(err.Error(), "cgo") {
+		t.Errorf("cgo package error = %q, want it to name cgo", err)
 	}
 }
 
