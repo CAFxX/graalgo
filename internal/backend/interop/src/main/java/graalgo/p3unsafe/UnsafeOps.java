@@ -42,9 +42,16 @@ import graalgo.values.UnsafeHandles;
  * with gc-exact {@code "runtime error: ..."} messages (fully differential);
  * shapes the handle model cannot represent panic with an
  * {@code "unsafe.<op>: ..."} message (intentional, documented divergence —
- * gc would silently reinterpret); the D5 trap
- * ({@link #fromUintTrap}) throws {@link UnsafeHandles.UnsafeEscapeException}.
- * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> trap:
+ * gc would silently reinterpret); an unproven
+ * {@code uintptr → unsafe.Pointer} conversion panics the same way
+ * ({@link #fromUintPanic} — review-20261031 R-06: formerly the D5 trap,
+ * an {@link UnsafeHandles.UnsafeEscapeException} host internal error
+ * that no guest code could recover from and that exited 1; a Go panic
+ * is recoverable by guest {@code recover()} and exits 2 uncaught, like
+ * every other guest panic. gc would not panic at all here — the message
+ * deliberately carries no {@code "runtime error: "} prefix, so it never
+ * masquerades as gc parity).
+ * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> panic:
  * it yields the handle as an integer identity token (PKG-007; see
  * {@link graalgo.values.GoConvert#unsafePointerToUintptr}) — the token is
  * opaque and comparable but never materializes back into a handle.
@@ -53,7 +60,7 @@ import graalgo.values.UnsafeHandles;
  * term plus integer terms reaches the referent through
  * {@link UnsafeTable#derive} (the {@code "unsafederive"} node), and
  * {@code unsafe.Add} derives from its live pointer operand the same way;
- * every other integer still traps in {@link #fromUintTrap}.
+ * every other integer panics in {@link #fromUintPanic}.
  */
 public final class UnsafeOps {
     private UnsafeOps() {}
@@ -249,16 +256,32 @@ public final class UnsafeOps {
     }
 
     /**
-     * {@code uintptr → unsafe.Pointer} traps (D5) whenever the frontend
+     * Message for an unproven {@code uintptr → unsafe.Pointer} conversion
+     * (D5). Carries the re-test trigger for the byte-addressed value
+     * model (inventory Phase 4), which is the only change that can turn
+     * this failure into a correct result: until then the conversion
+     * panics rather than silently returning a wrong pointer, and the
+     * trap is never widened to cover a proven derivation.
+     */
+    public static final String FROM_UINT_MESSAGE =
+            "unsafe: uintptr -> unsafe.Pointer conversion is not supported "
+                    + "(D5: a handle can never be materialized from an integer; "
+                    + "re-test: byte-addressed value model)";
+
+    /**
+     * {@code uintptr → unsafe.Pointer} panics (D5) whenever the frontend
      * could not prove the operand's provenance: a handle can never be
      * materialized from an integer. Proven derivations never reach this
      * method — they travel as the {@code "unsafederive"} node and resolve
      * through {@link UnsafeTable#derive} (fix-redmaster-r39).
+     *
+     * <p>The panic value is a {@link GoString}, not a raw Java string:
+     * a raw string renders as {@code "(?) 0xADDR"} on the uncaught path
+     * (see {@code PanicRendering.renderValue}) and would hide the
+     * message the user needs. The throwing node is passed as the site
+     * so the uncaught trace attributes the panic to the conversion.
      */
-    public static void fromUintTrap() {
-        throw new UnsafeHandles.UnsafeEscapeException(
-                "unsafe: uintptr -> unsafe.Pointer conversion traps "
-                        + "(D5: a handle can never be materialized from an integer; "
-                        + "re-test: byte-addressed value model)");
+    public static void fromUintPanic(Node site) {
+        Panic.throwPanic(GoString.fromUtf8(FROM_UINT_MESSAGE), null, null, site);
     }
 }

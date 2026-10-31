@@ -20,7 +20,8 @@
 //	                                           from go/types; lowered to the
 //	                                           unsafe* wire nodes over the
 //	                                           per-run handle table)
-//	Add                                       (builtin: always the D5 trap)
+//	Add                                       (builtin: derives from its live
+//	                                           pointer operand, fix-redmaster-r39)
 //
 // Design notes:
 //
@@ -32,9 +33,10 @@
 //     go/types' own universe init); the synthetic package inserts the same
 //     objects, exactly as universe builtins are shared across packages.
 //   - `Pointer` conversions lower via exportUnsafeConversion: *T<->Pointer
-//     intern/resolve over the handle table; uintptr->Pointer traps (D5)
-//     unless the frontend proves the operand's provenance, in which case
-//     it lowers to the "unsafederive" node (fix-redmaster-r39, see
+//     intern/resolve over the handle table; uintptr->Pointer panics with
+//     the documented D5 message (review-20261031 R-06) unless the
+//     frontend proves the operand's provenance, in which case it lowers
+//     to the "unsafederive" node (fix-redmaster-r39, see
 //     unsafe_derive.go); Pointer->uintptr keeps the existing D5
 //     ConvertNode behavior (handle as identity token).
 //   - unsafe.Add derives from its live pointer operand by the byte
@@ -44,9 +46,10 @@
 //     sharing the caller's array would corrupt map keys. Post-call writes
 //     through the original pointer are invisible to the string — an
 //     intentional, documented divergence from gc.
-//   - Fail-fast (loud, with re-test triggers): Add; Pointer<->uintptr;
-//     over-long Slice len and carrier-mismatched referents panic with
-//     gc-exact messages at runtime.
+//   - Fail-fast (loud, with re-test triggers): unproven
+//     uintptr->Pointer conversions (Go panic, D5); over-long Slice len
+//     and carrier-mismatched referents panic with gc-exact messages at
+//     runtime.
 package main
 
 import (
@@ -171,11 +174,11 @@ func (e *exporter) exportUnsafeRuntimeCall(c *ast.CallExpr, name string, typ any
 			"s": s, "type": typ,
 		}), nil
 	case "Add":
-		// D5/GG-0015: handles admit no byte arithmetic — fail fast.
-		// Both arguments are still exported and attached (evaluated
-		// before the trap, matching the existing D5 conversion trap's
-		// evaluate-then-trap order) so arity/operand errors and arg
-		// side effects behave.
+		// fix-redmaster-r39: derives from the live pointer operand
+		// (UnsafeTable.derive). Both arguments are still exported and
+		// attached (evaluated before the derivation, matching the
+		// D5 conversion node's evaluate-then-fail order) so
+		// arity/operand errors and arg side effects behave.
 		ptr, err := e.exportExpr(c.Args[0])
 		if err != nil {
 			return nil, err
@@ -263,8 +266,15 @@ func (e *exporter) exportUnsafeConversion(c *ast.CallExpr, dstT types.Type, x *N
 	}
 }
 
-// isUintptr reports whether t is the uintptr basic type.
+// isUintptr reports whether t is uintptr: the uintptr basic type or a
+// named type whose underlying type is uintptr (e.g. `type addr uintptr`).
+// Conversions to and from such types behave exactly like uintptr
+// conversions (gc-verified), so the provenance proof and the conversion
+// dispatch treat them identically.
 func isUintptr(t types.Type) bool {
-	b, ok := types.Unalias(t).(*types.Basic)
+	if t == nil {
+		return false
+	}
+	b, ok := types.Unalias(t).Underlying().(*types.Basic)
 	return ok && b.Kind() == types.Uintptr
 }

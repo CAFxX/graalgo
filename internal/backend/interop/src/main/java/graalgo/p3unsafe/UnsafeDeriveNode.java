@@ -19,8 +19,10 @@ import graalgo.values.GoKind;
  * bare integer: the result is {@link UnsafeTable#derive} of the live base
  * handle by the offset — a view of the base's own referent, or a loud
  * trap. Any {@code uintptr} whose provenance the frontend cannot prove
- * keeps the D5 {@code "unsafefromuint"} trap
- * ({@link UnsafeFromUintNode}).
+ * keeps the D5 {@code "unsafefromuint"} node
+ * ({@link UnsafeFromUintNode}), which panics with the documented D5
+ * message (review-20261031 R-06) instead of trapping as a host
+ * internal error.
  */
 public final class UnsafeDeriveNode extends GoExprNode {
     @Child private GoExprNode baseChild;

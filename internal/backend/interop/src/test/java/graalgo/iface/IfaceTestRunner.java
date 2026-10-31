@@ -52,6 +52,9 @@ public final class IfaceTestRunner {
         // (UnsafeTable.derive) soundness — a derivation can only ever
         // view its own base referent, never alias another live object.
         TESTS.add(graalgo.p3unsafe.UnsafeDeriveTest.class);
+        // review-20261031 R-06: unproven uintptr -> unsafe.Pointer
+        // panics as a Go panic, never a host internal error.
+        TESTS.add(graalgo.p3unsafe.UnsafeFromUintTest.class);
         // fix-redmaster-r40: string/slice header views for
         // unsafe.Pointer -> *Header reinterpretations (reflect Len).
         TESTS.add(graalgo.p3unsafe.HeaderViewTest.class);

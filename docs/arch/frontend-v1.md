@@ -338,7 +338,7 @@ re-writes the already-registered form.
 Wire-affecting lowering changes regenerate the goldens they touch in the
 same change: e.g. `internal/abi.NoEscape` is lowered to its single
 argument (gc compiles it down to nothing, so executing its
-`uintptr` round-trip body would trap under D5) — goldens for programs
+`uintptr` round-trip body would fail under D5) — goldens for programs
 transitively importing `internal/abi` (via `internal/reflectlite`, e.g.
 `pkgvar_mrarg` through `errors`) therefore carry the collapsed call
 sites and the identity-bodied declaration instead of the round-trip
@@ -348,11 +348,16 @@ nodes.
 fix-redmaster-r39 adds three wire-visible lowerings of the same kind.
 (1) A `uintptr -> unsafe.Pointer` conversion whose operand the
 exporter proves — from the go/types-annotated AST — to be exactly one
-`uintptr(P)` term (P `unsafe.Pointer`-typed, sign +1) plus pure
-integer terms emits an `unsafederive` node carrying the base pointer
-and the byte offset separately, instead of the D5 `unsafefromuint`
-trap; anything unproven (a stored uintptr, two-pointer arithmetic, a
-scaled pointer term) keeps the trap. The backend interns a
+pointer-derived term (a `uintptr(P)` term, P `unsafe.Pointer`-typed,
+sign +1, through value-preserving integer conversions and named
+uintptr types, or a `reflect.Value.Pointer()` call — extended by
+review-20261031 R-06) plus pure integer terms emits an `unsafederive`
+node carrying the base pointer and the byte offset separately,
+instead of the D5 `unsafefromuint` node; anything unproven (a stored
+uintptr, two-pointer arithmetic, a scaled pointer term, a narrowing
+conversion) keeps that node, which panics with the documented D5
+message at runtime (R-06; before that change it trapped as a host
+internal error). The backend interns a
 (root referent, byte offset) view of the still-live base handle, so a
 derivation can only ever name storage of its own base object; the
 typed consumption site validates the offset against the element size,

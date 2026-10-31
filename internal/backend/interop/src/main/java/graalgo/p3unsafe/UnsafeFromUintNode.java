@@ -8,8 +8,13 @@ import graalgo.values.GoKind;
 
 /**
  * {@code uintptr → unsafe.Pointer} (P3-M8): the {@code "unsafefromuint"}
- * wire node. Always traps (D5): a handle can never be materialized from
- * an integer. The operand still evaluates (gc evaluates the argument).
+ * wire node. The frontend emits it only when it cannot prove the
+ * operand's provenance (see {@code unsafe_derive.go}); at runtime the
+ * conversion panics with the documented D5 message
+ * (review-20261031 R-06: a Go panic, recoverable by guest code and
+ * exiting 2 uncaught — never a host internal error, and never a
+ * silently wrong pointer). The operand still evaluates (gc evaluates
+ * the argument).
  */
 public final class UnsafeFromUintNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -22,7 +27,7 @@ public final class UnsafeFromUintNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         child.executeLong(frame);
-        UnsafeOps.fromUintTrap();
+        UnsafeOps.fromUintPanic(this);
         throw new AssertionError("unreachable");
     }
 

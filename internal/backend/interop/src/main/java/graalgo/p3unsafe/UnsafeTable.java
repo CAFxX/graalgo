@@ -55,7 +55,8 @@ import java.util.Map;
  *       {@code uintptr} arithmetic reaches a referent, and it is only
  *       reachable from frontend-proven derivations and
  *       {@code unsafe.Add} — a bare integer still cannot materialize a
- *       handle (see {@code UnsafeOps.fromUintTrap}).</li>
+ *       handle (see {@code UnsafeOps.fromUintPanic}: the unproven
+ *       conversion panics with a Go panic, it does not trap).</li>
  * </ul>
  *
  * <p>Referent shapes the table holds: Java typed arrays (whole-array

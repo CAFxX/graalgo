@@ -16,8 +16,13 @@
 //	unsafe.Pointer(uintptr(l) + uintptr(i)*unsafe.Sizeof(poolLocal{}))
 //
 // where the operand is an additive tree with exactly one term that is a
-// uintptr conversion of an unsafe.Pointer expression and every other
-// term a pure integer expression. For that shape the exporter proves
+// pointer-derived uintptr expression and every other term a pure
+// integer expression. A term is pointer-derived when it is, inductively
+// over value-preserving wrappers only (pointerDerivedBase): a
+// conversion to a uintptr-typed (possibly named) or wider integer type
+// of an unsafe.Pointer expression, the same through further such
+// conversions (uintptr(uint64(uintptr(P))), uintptr(v.Pointer())), or
+// a reflect.Value.Pointer() call. For that shape the exporter proves
 // the provenance from the go/types-annotated AST and emits
 //
 //	unsafederive { base: <the unsafe.Pointer expression>,
@@ -28,7 +33,9 @@
 // byte offset (UnsafeTable.derive) — the summed integer itself is never
 // materialized into a handle. The proof is deliberately conservative;
 // any shape it cannot prove falls back to the existing "unsafefromuint"
-// trap node, byte-identical to the pre-r39 behavior:
+// node, which panics with the documented D5 message
+// (review-20261031 R-06; before that change it trapped as a host
+// internal error):
 //
 //   - zero or multiple pointer-derived terms;
 //   - a pointer-derived term with a negative sign (ptr - off inverts
@@ -38,6 +45,17 @@
 //   - any unsafe.Pointer-typed subexpression inside an offset term
 //     (a hidden second provenance source);
 //   - any non-integer offset term.
+//   - a narrowing integer conversion over a pointer-derived value
+//     (uintptr(uint32(uintptr(P))) truncates the address on 64-bit);
+//   - a uintptr that round-trips through a variable, field, parameter,
+//     or return value. Proving those needs a flow-sensitive analysis
+//     with a dominance proof, not a syntactic scan: a variable assigned
+//     inside a branch and converted on a path where the assignment did
+//     not run holds 0, and deriving from the assigned pointer instead
+//     would fabricate a live pointer from address 0. Until the
+//     byte-addressed value model (inventory Phase 4) exists, those
+//     keep the panic node — loud and recoverable, never a wrong
+//     pointer — with the same re-test trigger.
 //
 // Evaluation order: the derive node evaluates the base first, then the
 // offset terms in source order; gc evaluates the original additive tree
@@ -74,21 +92,77 @@ func isUnsafePointerType(t types.Type) bool {
 	return t != nil && types.Unalias(t) == types.Typ[types.UnsafePointer]
 }
 
-// uintptrConversionOfPointer reports whether e is a conversion
-// uintptr(P) with P unsafe.Pointer-typed, returning P.
-func (e *exporter) uintptrConversionOfPointer(x ast.Expr) (ast.Expr, bool) {
-	ce, ok := unparen(x).(*ast.CallExpr)
-	if !ok || len(ce.Args) != 1 {
-		return nil, false
+// conversionPreservesUintptr reports whether a single-argument
+// conversion preserves a uintptr value exactly: the target type is an
+// integer type at least uintptr-sized (uintptr itself, a named uintptr
+// type, or a wider integer type such as uint64). A conversion whose
+// target size is unknown (type parameters) does not preserve by this
+// proof and returns false.
+func (e *exporter) conversionPreservesUintptr(ce *ast.CallExpr) bool {
+	t := e.info.TypeOf(ce)
+	if t == nil || !e.isIntegerExpr(ce) {
+		return false
 	}
-	if !isUintptr(e.info.TypeOf(ce)) {
-		return nil, false
+	sz, ok := safeSizeof(e.sizes, t)
+	if !ok {
+		return false
 	}
-	arg := ce.Args[0]
-	if !isUnsafePointerType(e.info.TypeOf(arg)) {
-		return nil, false
+	uintptrSz, ok := safeSizeof(e.sizes, types.Typ[types.Uintptr])
+	return ok && sz >= uintptrSz
+}
+
+// pointerDerivedBase reports whether x is a uintptr expression proven
+// to carry a live unsafe.Pointer's provenance, returning the wire node
+// for the base pointer expression. The proof is inductive over
+// value-preserving wrappers only, so the base node evaluates to exactly
+// the pointer the uintptr came from:
+//   - a conversion to a uintptr-typed (possibly named) integer type of
+//     an unsafe.Pointer-typed expression -> that expression itself;
+//   - a conversion to a uintptr-typed type of an expression that is
+//     itself pointer-derived -> that expression's base (this proves
+//     uintptr(uint64(uintptr(P))) and uintptr(v.Pointer()), where the
+//     inner conversion/call preserves the pointer value exactly);
+//   - a reflect.Value.Pointer() call -> the synthetic
+//     v.UnsafePointer() call (same pointer, see valueUnsafePointerCall).
+//
+// Anything else — a variable, a call returning uintptr, arithmetic
+// over a pointer-derived value (uintptr(v.Pointer()+off): treating the
+// wrapper as a base would silently drop the inner offset) — is not
+// proven and returns ok=false. The recursion descends only through
+// conversion arguments, each strictly smaller than its parent, so it
+// always terminates.
+func (e *exporter) pointerDerivedBase(c *ast.CallExpr, x ast.Expr) (*Node, bool, error) {
+	x = unparen(x)
+	if ce, ok := x.(*ast.CallExpr); ok && len(ce.Args) == 1 {
+		// The conversion must preserve a uintptr value exactly: its
+		// target is uintptr (or a named uintptr type) or a wider
+		// integer type. A narrowing wrapper does NOT preserve it —
+		// uintptr(uint32(uintptr(P))) on 64-bit truncates the address,
+		// so treating it as a base would silently return the
+		// untruncated pointer; it is not proven and falls back to the
+		// panic node. (The target type's size comes from the same
+		// go/types Sizes oracle that folds unsafe.Sizeof.)
+		if !e.conversionPreservesUintptr(ce) {
+			return nil, false, nil
+		}
+		arg := ce.Args[0]
+		if isUnsafePointerType(e.info.TypeOf(arg)) {
+			n, err := e.exportExpr(arg)
+			if err != nil {
+				return nil, false, err
+			}
+			return n, true, nil
+		}
+		return e.pointerDerivedBase(c, arg)
 	}
-	return arg, true
+	if recv, ok := e.valuePointerCall(x); ok {
+		n, err := e.valueUnsafePointerCall(c, recv)
+		if err != nil {
+			return nil, false, err
+		}
+		return n, true, nil
+	}
+	return nil, false, nil
 }
 
 // exprContainsUnsafePointer reports whether any subexpression of x is
@@ -238,7 +312,7 @@ func (e *exporter) valueUnsafePointerCall(c *ast.CallExpr, recv ast.Expr) (*Node
 // exportUintptrToPointer attempts the provenance-proven lowering of a
 // uintptr -> unsafe.Pointer conversion call c (whose target type id is
 // to). handled=false means the shape is not provable and the caller must
-// emit the regular unsafefromuint trap node.
+// emit the regular unsafefromuint panic node.
 func (e *exporter) exportUintptrToPointer(c *ast.CallExpr, to any) (*Node, bool, error) {
 	var terms []signedTerm
 	flattenAdditive(c.Args[0], +1, &terms)
@@ -246,20 +320,9 @@ func (e *exporter) exportUintptrToPointer(c *ast.CallExpr, to any) (*Node, bool,
 	baseIdx := -1
 	var baseNode *Node
 	for i, t := range terms {
-		var b *Node
-		isBase := false
-		if p, ok := e.uintptrConversionOfPointer(t.expr); ok {
-			n, err := e.exportExpr(p)
-			if err != nil {
-				return nil, false, err
-			}
-			b, isBase = n, true
-		} else if recv, ok := e.valuePointerCall(t.expr); ok {
-			n, err := e.valueUnsafePointerCall(c, recv)
-			if err != nil {
-				return nil, false, err
-			}
-			b, isBase = n, true
+		b, isBase, err := e.pointerDerivedBase(c, t.expr)
+		if err != nil {
+			return nil, false, err
 		}
 		if isBase {
 			if baseIdx >= 0 || t.sign < 0 {

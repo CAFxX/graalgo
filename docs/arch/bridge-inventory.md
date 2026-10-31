@@ -149,17 +149,32 @@ deliverable until the design lands.
   counterpart).
 - **Phase:** 1.
 
-### B-6. `unsafe.Add` always traps (bridge by omission)
+### B-6. Unproven `uintptr → unsafe.Pointer` conversions cannot produce a pointer (bridge by omission)
 
 - **What:**
   [UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
-  `addTrap` (~line 248) throws on `unsafe.Add` — a legal, common gc
-  operation (used by `reflect`, `encoding/binary` internals) — killing the
-  program with an internal error.
-- **Why:** the value model has no byte-addressed pointer arithmetic yet.
-- **Root-cause fix:** needs design — a byte-addressed value model; at
-  minimum, trap with a Go panic carrying the documented message instead of
-  an internal-error crash.
+  `fromUintPanic` panics on a `uintptr → unsafe.Pointer` conversion
+  whose provenance the frontend cannot prove — a legal, common gc
+  operation (used by `reflect`, `encoding/binary` internals).
+  Partially retired: `unsafe.Add` already derives from its live pointer
+  operand, and frontend-proven derivations (one pointer-derived additive
+  term plus pure integer terms, including value-preserving integer
+  conversions and named uintptr types — see
+  [unsafe_derive.go](../../internal/frontend/unsafe_derive.go)) lower to
+  the `unsafederive` node instead of failing. What remains is the
+  unproven class, above all uintptr values round-tripped through a
+  variable, field, parameter, or return value.
+- **Why:** the value model has no byte-addressed pointer arithmetic yet:
+  a bare integer carries no provenance, and handles are dense sequential
+  integers, so materializing a handle from an integer could silently
+  alias an unrelated referent.
+- **Root-cause fix:** needs design — a byte-addressed value model
+  (Phase 4). Interim state (review-20261031 R-06): the failure is a Go
+  panic carrying the documented message (with the `byte-addressed value
+  model` re-test trigger) — recoverable by guest code, exit 2 uncaught —
+  instead of the previous host internal error (exit 1, unrecoverable).
+  The panic is never widened to cover a proven derivation, and no
+  wrong pointer is ever returned.
 - **Phase:** 4.
 
 ### B-7. `rtstack` synthetic `runtime` stack intrinsics
