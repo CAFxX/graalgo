@@ -19,10 +19,11 @@ deliverable until the design lands.
 
 ## Phased removal order
 
-- **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
+- **Phase 1 — mostly landed (status refreshed 2026-10-31).** Retire the
+  highest-value synthetic packages via root-cause fixes: `fmt`,
+  `reflect`, `net/http` now resolve from disk in code; `crypto/x509`
+  remains (worktree `real-x509` stale since 2026-10-15) and
+  `crypto/subtle` was retired by the R-02 lane (2026-10-31). Retires
   B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
@@ -109,14 +110,30 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. Synthetic `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
-  `synth_*.go` mirrors under
+- **What:** 131 tracked non-test `synth_*.go` files in
+  [internal/frontend/](../../internal/frontend/) (139 including
+  `*_test.go`) plus 12 `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. Counts verified from `git ls-tree` (2026-10-31): at base
+  `d7298a00` the tree held 132 non-test / 140 including tests; the
+  R-02 lane below deletes one file (`synth_crypto_subtle.go`), giving
+  132 → 131 non-test and 140 → 139 including tests. The previous
+  "129" figure was wrong: it came from `grep -v _test`, which wrongly
+  excludes the non-test files `synth_testing.go`,
+  `synth_testing_iotest.go`, and `synth_testing_quick.go` (their names
+  contain "testing" but they do not end in `_test.go`); count with the
+  `_test.go$` suffix only. The previous "142" figure matched no current
+  count and is retired. Distinct counts, not to be conflated: only 18
+  of the 131 are generator-produced (the `GENERATED_SYNTH` block in the
+  [`Makefile`](../../Makefile)); the rest are authored or vendored
+  sources. `syntheticSources` held 130 active entries at `d7298a00`
+  (entries ≠ files: `crypto/cipher` spans two files, and the
+  `reflect_m7` helper entry reuses `synth_reflect.go`); the R-02 lane
+  below takes it to 129. Entries (130 → 129) and files (132 → 131) are
+  separate figures — do not conflate them.
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).
@@ -125,10 +142,22 @@ deliverable until the design lands.
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
-  `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
-  general disk mechanism"), `real-nethttp` (`net`/`net/http`),
-  `real-reflect2` (`reflect`).
+  decision. Status at 2026-10-31 (verified from the tree, not the
+  2026-10-15 in-flight list): `fmt`, `reflect`, and `net/http` already
+  resolve from disk in code (no `syntheticSources` entry; `reflect`
+  via `importPkgTree`, `net/http` per the P4 bridge-removal comment
+  in `export.go`); only `crypto/x509` of the original four is still
+  synthetic, and its `real-x509` branch is stale (last commit
+  2026-10-15, no live lane — do not duplicate it blindly, revive or
+  replace it deliberately). Retired 2026-10-31 by the R-02 lane:
+  `crypto/subtle` (entry + `synth_crypto_subtle.go` deleted, need-block
+  switched to the general `importPkgTree` route, differential/export
+  test `subtle_disk_export_test.go`). Note the boundary: real
+  `crypto/subtle` still depends on still-synthetic
+  `crypto/internal/fips140/subtle`, `crypto/internal/constanttime`,
+  `crypto/internal/fips140deps/byteorder`, and `math/bits` via the
+  overlay — retiring those internal packages is the next step for
+  this family, not part of this entry's claim.
 - **Phase:** 1 (the four in-flight packages) → 2 (remainder).
 
 ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing

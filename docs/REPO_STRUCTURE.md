@@ -149,6 +149,14 @@ Related: [Makefile](../Makefile) (root build entry point),
     [`make gen-synth`](../Makefile) via
     [`internal/frontend/run_gen_synth.py`](../internal/frontend/run_gen_synth.py)
     from the 10 [`gen_synth_*.py`](../internal/frontend/) generators
+    — "18" counts only the generator outputs listed in the
+    `GENERATED_SYNTH` block of the [`Makefile`](../Makefile), not
+    all synthetics: the tree holds 131 tracked non-test `synth_*.go`
+    in [internal/frontend/](../internal/frontend/) (139 including
+    tests; 132 / 140 before the R-02 retirement of
+    `synth_crypto_subtle.go`) plus 12 mirrors in
+    [internal/frontend/p3frontend/](../internal/frontend/p3frontend/),
+    the remainder being authored or vendored sources
     (gc 1.27.1 sources, version-pinned); six files additionally apply a
     frontend-constraint adaptation patch from
     [`internal/frontend/gen_synth_adapt/`](../internal/frontend/gen_synth_adapt/).

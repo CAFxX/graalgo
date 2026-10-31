@@ -2125,8 +2125,14 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			}
 		}
 	}
+	// R-02 (2026-10-31): crypto/subtle RETIRED — resolves via the
+	// general disk importer, exactly as reflect does above. The
+	// importPkgTree lists naming "crypto/subtle" (cipher, aes, hmac,
+	// tier-5 closure) need no change: they already route through
+	// importPkgTree, which falls through to disk now that the
+	// syntheticSources entry is gone.
 	if needCryptoSubtle {
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/subtle")); err != nil {
+		if err := e.importPkgTree("crypto/subtle"); err != nil {
 			return "", err
 		}
 	}
