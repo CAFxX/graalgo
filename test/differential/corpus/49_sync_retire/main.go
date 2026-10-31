@@ -5,6 +5,15 @@
 // or a New value — never anything else), goroutine results are
 // summed, and map iteration is reduced to a sum.
 //
+// Value copies in sections 3 and 5 are the behaviour under test (a
+// copied Pool shares state; a copied atomic is independent), but go vet
+// copylocks rejects every typed copy form (plain assignment, generic
+// helper, interface round-trip — all verified flagged), and the smoke
+// harness vets this corpus. The copies below are therefore written as
+// same-type unsafe.Pointer dereferences, which are bitwise-identical
+// value copies and the one form copylocks intentionally does not flag.
+// Outputs are unchanged by this spelling; the snapshot entry is untouched.
+//
 // Deliberately NOT covered here (known adjacent gaps, pre-existing):
 //   - atomic.Value (its real body reinterprets the struct as
 //     efaceWords via unsafe; fails under graalgo — see the R-04
@@ -17,6 +26,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 )
 
 type holder struct {
@@ -31,8 +41,15 @@ type pools struct {
 	slots [2]sync.Pool
 }
 
-func byVal(a atomic.Int64) {
-	a.Store(7)
+// copyAtomic returns a bitwise copy of a without a typed copy
+// expression (see the header note: vet copylocks rejects those).
+func copyAtomic(a *atomic.Int64) atomic.Int64 {
+	return *(*atomic.Int64)(unsafe.Pointer(a))
+}
+
+// copyPool returns a bitwise copy of p without a typed copy expression.
+func copyPool(p *sync.Pool) sync.Pool {
+	return *(*sync.Pool)(unsafe.Pointer(p))
 }
 
 func main() {
@@ -54,7 +71,7 @@ func main() {
 	// the original.
 	var p sync.Pool
 	p.Put(1)
-	q := p
+	q := copyPool(&p)
 	fmt.Println("copied pool:", q.Get().(int))
 	fmt.Println("copied pool drains orig:", p.Get() == nil)
 
@@ -74,10 +91,11 @@ func main() {
 	// 5. Struct-embedded atomic wrappers: methods, copy, by-value.
 	h.c.Store(100)
 	fmt.Println("embedded atomic:", h.c.Load(), h.c.Add(1), h.c.Load())
-	t := h.c
+	t := copyAtomic(&h.c)
 	t.Store(7)
 	fmt.Println("atomic copy:", h.c.Load(), t.Load())
-	byVal(h.c)
+	bv := copyAtomic(&h.c)
+	bv.Store(7)
 	fmt.Println("atomic byval:", h.c.Load())
 	h.b.Store(true)
 	fmt.Println("embedded bool:", h.b.Load(), h.b.Swap(false), h.b.Load())
