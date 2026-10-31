@@ -78,6 +78,14 @@ func cmdRun(root string, args []string) int {
 			i++
 		}
 		progArgs = rest[i:]
+		// Check phase first: a backend failure here (exit 1/2) is a
+		// driver failure (exit 1, no "exit status" line), which is
+		// what lets graalgoRunProgram treat a run-phase non-zero
+		// code as the program's own exit. See the convention comment
+		// on graalgoRunProgram.
+		if code := graalgoRun(root, append([]string{"--check"}, progFiles...)); code != 0 {
+			return 1
+		}
 		// Program args are separated from the launcher's own flags by
 		// "--" (the launcher treats every bare "-..." before "--" as
 		// its own flag).
@@ -88,14 +96,20 @@ func cmdRun(root string, args []string) int {
 
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
-	// the package build).
-	files, err := resolveFiles([]string{target})
+	// the package build). The target must resolve to exactly one
+	// package: `run` takes a single program, so a ./... pattern that
+	// expands to several packages is rejected, not merged.
+	pkgs, err := resolvePackages([]string{target})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
 	}
+	if len(pkgs) != 1 {
+		fmt.Fprintf(os.Stderr, "graalgo run: %s resolves to %d packages; run takes a single package\n", target, len(pkgs))
+		return 1
+	}
 	var pkgFiles []string
-	for _, f := range files {
+	for _, f := range pkgs[0].files {
 		if !strings.HasSuffix(f, "_test.go") {
 			pkgFiles = append(pkgFiles, f)
 		}
@@ -105,8 +119,9 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
+	// Check-phase failure maps to driver exit 1 (see above).
 	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
-		return code
+		return 1
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
@@ -177,12 +192,18 @@ func parseBuildFlags(args []string) (buildFlags, error) {
 
 // cmdBuild implements `graalgo build [build flags] [packages]`.
 //
-// The named packages are validated through the frontend (the compile
-// gate), then packaged into an executable artifact: a real binary that
-// embeds the frontend output and runs it through the graalgo backend.
-// Like `go build`, _test.go files are ignored and the artifact defaults
-// to the current directory's base name (or the first .go file's base
-// name) unless -o names the output.
+// Each named package is validated through the frontend (the compile
+// gate) and packaged into its own executable artifact: a real binary
+// that embeds the frontend output and runs it through the graalgo
+// backend. Packages are never merged into one compile unit —
+// `graalgo build ./a ./b` builds a and b separately, each with its own
+// artifact, because merging them would compile a Franken-package and
+// leave -o ambiguous. Like `go build`, _test.go files are ignored and
+// the artifact defaults to the package directory's base name (or the
+// first .go file's base name) unless -o names the output; -o cannot be
+// used with multiple packages. Without -o, artifacts land in the
+// current directory, so two packages sharing a base name overwrite
+// each other exactly as `go build`'s outputs would.
 func cmdBuild(root string, args []string) int {
 	bf, err := parseBuildFlags(args)
 	if err != nil {
@@ -197,25 +218,69 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	pkgs, err := resolvePackages(bf.pkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
 	}
-	// _test.go files are not part of the package build, like `go build`.
-	var pkgFiles []string
-	for _, f := range files {
-		if !strings.HasSuffix(f, "_test.go") {
-			pkgFiles = append(pkgFiles, f)
+	if len(pkgs) > 1 && bf.output != "" {
+		fmt.Fprintf(os.Stderr, "graalgo build: -o cannot be used when building multiple packages\n")
+		return 2
+	}
+	for _, pkg := range pkgs {
+		// _test.go files are not part of the package build, like
+		// `go build`.
+		var pkgFiles []string
+		for _, f := range pkg.files {
+			if !strings.HasSuffix(f, "_test.go") {
+				pkgFiles = append(pkgFiles, f)
+			}
+		}
+		if len(pkgFiles) == 0 {
+			if len(pkgs) == 1 {
+				fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
+				return 1
+			}
+			// A pattern-expanded package with test files only has
+			// nothing to build; it is skipped, not an error.
+			continue
+		}
+		if code := buildOnePackage(root, bf.output, pkg, pkgFiles); code != 0 {
+			return code
 		}
 	}
-	if len(pkgFiles) == 0 {
-		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
+	return 0
+}
+
+// buildOnePackage runs the frontend gate for one package and emits its
+// artifact. The gate runs once per package over that package's files
+// only, capturing its output for the artifact, so the artifact never
+// re-runs the frontend.
+func buildOnePackage(root, output string, pkg resolvedPackage, pkgFiles []string) int {
+	out, err := driver.DefaultOutputName(output, []string{pkg.label})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 2
+	}
+	// Emit compiles the launcher in its own temp dir, so a relative
+	// output path must be anchored to the caller's directory first —
+	// otherwise the artifact lands in the temp dir and is deleted with
+	// it, and `graalgo build` silently produces nothing.
+	if abs, err := filepath.Abs(out); err == nil {
+		out = abs
+	} else {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 2
+	}
+	// Fail fast when the output path is an existing directory, like
+	// `go build` ("build output %q already exists and is a
+	// directory"): without this, the launcher's `go build -o` treats
+	// the directory as an output directory and silently writes a
+	// binary of an unrelated name inside it.
+	if fi, err := os.Stat(out); err == nil && fi.IsDir() {
+		fmt.Fprintf(os.Stderr, "graalgo build: build output %q already exists and is a directory\n", out)
 		return 1
 	}
-	// Frontend gate: run the frontend once, capturing its output for the
-	// artifact. This both validates the program and produces the IR that
-	// the artifact embeds, so the artifact never re-runs the frontend.
 	wireFile, err := os.CreateTemp("", "graalgo-wire-*.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: cannot create temp file: %v\n", err)
@@ -226,18 +291,13 @@ func cmdBuild(root string, args []string) int {
 	defer os.Remove(wirePath)
 	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
 	if code := graalgoRun(root, emitArgs); code != 0 {
-		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
+		fmt.Fprintf(os.Stderr, "graalgo build: build failed: %s\n", pkg.label)
 		return 1
 	}
 	wireJSON, err := os.ReadFile(wirePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: cannot read frontend output: %v\n", err)
 		return 1
-	}
-	out, err := driver.DefaultOutputName(bf.output, bf.pkgs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
-		return 2
 	}
 	if err := driver.Emit(driver.Artifact{
 		OutputPath:  out,
@@ -252,34 +312,40 @@ func cmdBuild(root string, args []string) int {
 
 // cmdVet implements `graalgo vet [packages]`.
 //
-// Runs the frontend translation check (--check) over the named packages,
-// then runs the static analyzers in internal/vet and reports diagnostics
-// in the same style as `go vet`.
+// For each named package, runs the frontend translation check (--check)
+// once over the package's whole file set — cross-file references are
+// checked as a unit, not file by file — and then runs the static
+// analyzers in internal/vet over the same set regardless of the check
+// outcome (a failing check must not suppress analyzer diagnostics).
+// Diagnostics go to stderr, like `go vet`; only the "no issues found"
+// summary goes to stdout.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	pkgs, err := resolvePackages(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	for _, pkg := range pkgs {
+		if code := graalgoRun(root, append([]string{"--check"}, pkg.files...)); code != 0 {
+			failed = true
+		}
+		// Analyzers run regardless of the check outcome, over the
+		// whole package file set as one unit.
+		ds, err := vet.Run(pkg.files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			failed = true
+			continue
+		}
+		for _, d := range ds {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", d.Pos, d.Message)
+		}
+		if len(ds) > 0 {
 			failed = true
 		}
 	}
 	if failed {
-		return 1
-	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
-	}
-	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
-	}
-	if len(ds) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")

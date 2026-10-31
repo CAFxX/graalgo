@@ -128,6 +128,10 @@ func parseCount(s string) (int, error) {
 }
 
 // resolveTestDirs turns package arguments into directories to test.
+// A pattern ending in "/..." (including "./...") expands to the
+// packages under that directory (see expandDotDotDot in main.go); an
+// argument that is not on disk is tried as an import path before
+// giving up, like resolvePackages.
 func resolveTestDirs(pkgs []string) ([]string, error) {
 	if len(pkgs) == 0 {
 		cwd, err := os.Getwd()
@@ -138,12 +142,30 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 	}
 	var dirs []string
 	for _, p := range pkgs {
-		if p == "./..." {
-			return nil, fmt.Errorf("./... not yet supported")
+		if strings.HasSuffix(p, "/...") {
+			base := strings.TrimSuffix(p, "/...")
+			if base == "" {
+				base = "."
+			}
+			expanded, err := expandDotDotDot(base)
+			if err != nil {
+				return nil, err
+			}
+			for _, pkg := range expanded {
+				dirs = append(dirs, pkg.dir)
+			}
+			continue
 		}
 		fi, err := os.Stat(p)
 		if err != nil {
-			return nil, fmt.Errorf("no such file or directory: %s", p)
+			cwd, cwdErr := os.Getwd()
+			if cwdErr == nil {
+				if dir, dirErr := importDirForPath(cwd, p); dirErr == nil {
+					dirs = append(dirs, dir)
+					continue
+				}
+			}
+			return nil, fmt.Errorf("no such file, directory, or import path: %s", p)
 		}
 		if !fi.IsDir() {
 			// A single file: test its directory.
