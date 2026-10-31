@@ -114,7 +114,8 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> AtomicAddrNode.build(node, ctx, factory));
         // fix-redmaster-r39: the atomicptrop wire node (atomic.SwapPointer /
         // CompareAndSwapPointer, incl. the unqualified calls inside
-        // sync/atomic's own Pointer[T] method bodies).
+        // sync/atomic's own Pointer[T] method bodies; review23-atomicptr
+        // adds the LoadPointer/StorePointer load/store ops).
         factory.registerExprKind("atomicptrop",
                 (node, ctx) -> AtomicPtrOpNode.build(node, ctx, factory));
         // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*" synctyp

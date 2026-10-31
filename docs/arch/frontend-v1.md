@@ -360,9 +360,12 @@ which (2) direct `unsafe.Pointer -> *T` conversions now carry as an
 `elemSize` field on `unsafetooptr`, from the same go/types `Sizes`
 oracle that folds the program's own `unsafe.Sizeof` constants.
 `unsafe.Add` derives through the same backend path. (3) The
-`sync/atomic` Pointer primitives (`LoadPointer` in expression
-position, `StorePointer` as a statement, `SwapPointer` /
-`CompareAndSwapPointer` as the new `atomicptrop` node) are
+`sync/atomic` Pointer primitives (all four as `atomicptrop` nodes:
+`LoadPointer` in expression position as op `load`, `StorePointer` as
+a statement as op `store`, `SwapPointer` / `CompareAndSwapPointer`
+as ops `swap` / `cas` — the load/store ops were added by
+review23-atomicptr, P1-1, replacing a plain deref read and a plain
+`*addr = val` assign that provided no ordering guarantee at all) are
 intercepted for BOTH the package-qualified selector form and the
 unqualified form used inside `sync/atomic`'s own `Pointer[T]` method
 bodies — the bodies previously called the bodyless assembly

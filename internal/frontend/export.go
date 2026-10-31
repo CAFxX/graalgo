@@ -8463,10 +8463,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// need &x (WS D). Fail fast with the named scope error, never a
 		// confusing "undefined".
 		//
-		// P3-driver-harden (jsonlib lane): atomic.LoadPointer lowers to
-		// a plain deref read (scoped divergence: atomicity without gc's
-		// ordering guarantee); atomic.StorePointer is statement-only and
-		// handled in exportStmt.
+		// review23-atomicptr (P1-1): atomic.LoadPointer lowers to the
+		// "atomicptrop" load op (real atomicity + ordering: volatile
+		// cell access on atomic.Pointer[T] cells, the shared
+		// atomicptrop lock on plain storage); the pre-fix plain deref
+		// read had no ordering guarantee at all. atomic.StorePointer
+		// is statement-only and handled in exportStmt (same wire
+		// node, op "store").
 		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
 			// Only intercept package-qualified calls (atomic.Foo,
 			// rtatomic.Bar). A selector on a non-package identifier is a
@@ -8494,9 +8497,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 					// machinery (AtomicOpNode) performs the op — the same
 					// node that serves the typed wrappers. RMW ops
 					// (Add/Swap/CompareAndSwap) serialize on a shared lock
-					// (documented in GoPointerCell64); Load/Store are plain
-					// volatile-cell accesses, the exportAtomicLoadPointer
-					// precedent.
+					// (documented in GoPointerCell64); Load/Store are
+					// synchronized-cell accesses on that same lock. The
+					// pointer ops use the atomicptrop shared lock instead
+					// (review23-atomicptr, P1-1).
 					if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
 						return n, err
 					}
@@ -9169,22 +9173,34 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	return e.node("call", c, fields), nil
 }
 
-// exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to *addr: a
-// plain deref read of the unsafe.Pointer. Scoped divergence from gc (see
-// the exportCall interception): atomicity without the ordering guarantee.
+// exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to the
+// "atomicptrop" load op (review23-atomicptr, P1-1): an acquire load of
+// the addressed unsafe.Pointer word. On an atomic.Pointer[T]/Value cell
+// (&x.v yields the cell itself) it is the cell's volatile get; on plain
+// unsafe.Pointer storage it reads under the atomicptrop shared lock, the
+// same lock Swap/CompareAndSwapPointer serialize on — so a StorePointer
+// (release) happens-before a later LoadPointer (acquire), and the
+// payload writes preceding the store are visible to the reader, as gc
+// guarantees. The pre-fix plain deref read provided none of this: a
+// publication spin loop could never observe the store (reproduced on
+// the backend's own GoBox storage, hanging at rounds 34 and 39 of the
+// plain-access harness, while the shared-lock form ran 20000 rounds
+// clean).
 func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
 	if len(c.Args) != 1 {
 		return nil, fmt.Errorf("gofrontend: atomic.LoadPointer takes 1 argument")
 	}
-	px, err := e.exportExpr(c.Args[0])
+	addr, err := e.exportExpr(c.Args[0])
 	if err != nil {
 		return nil, err
 	}
-	tid, err := e.typeID(types.Typ[types.UnsafePointer])
+	typ, err := e.callType(c)
 	if err != nil {
 		return nil, err
 	}
-	return e.node("deref", c, map[string]any{"x": px, "type": tid}), nil
+	return e.node("atomicptrop", c, map[string]any{
+		"op": "load", "addr": addr, "args": []*Node{}, "type": typ,
+	}), nil
 }
 
 // atomicWordOp describes one package-level sync/atomic word/bool
@@ -9294,10 +9310,11 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 // unsafe.Pointer word, served by the backend's AtomicPtrOpNode. The
 // typed wrappers (atomic.Pointer[T].Swap/CompareAndSwap) call these
 // bodyless assembly functions unqualified from inside sync/atomic, and
-// user code may call the qualified forms; both lower here. Scoped
-// divergence (the exportAtomicLoadPointer precedent): the op is atomic
-// on atomic-wrapper cells and lock-serialized on plain fields, with no
-// memory-ordering guarantee beyond that.
+// user code may call the qualified forms; both lower here. The op is
+// atomic on atomic-wrapper cells (volatile cell access) and
+// lock-serialized on plain fields; plain-field ops share one lock with
+// the atomicptrop load/store ops (review23-atomicptr, P1-1), so all
+// pointer atomics on one address are mutually ordered.
 func (e *exporter) exportAtomicPtrOp(c *ast.CallExpr, name string) (*Node, error) {
 	op := map[string]string{"SwapPointer": "swap", "CompareAndSwapPointer": "cas"}[name]
 	nargs := map[string]int{"SwapPointer": 2, "CompareAndSwapPointer": 3}[name]
@@ -9326,11 +9343,16 @@ func (e *exporter) exportAtomicPtrOp(c *ast.CallExpr, name string) (*Node, error
 }
 
 // exportAtomicStorePointerStmt lowers a bare-statement
-// atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
-// of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
-// Both spellings lower: the package-qualified atomic.StorePointer and the
-// unqualified StorePointer called from inside sync/atomic itself (the
-// atomic.Pointer[T].Store body — fix-redmaster-r39).
+// atomic.StorePointer(addr, val) call to the "atomicptrop" store op
+// (review23-atomicptr, P1-1): a release store of the unsafe.Pointer
+// word, wrapped as an expression statement. Both spellings lower: the
+// package-qualified atomic.StorePointer and the unqualified StorePointer
+// called from inside sync/atomic itself (the atomic.Pointer[T].Store
+// body — fix-redmaster-r39). On a Pointer[T]/Value cell the store is
+// the cell's volatile set (the pre-fix DerefWriteNode cell path already
+// did this); on plain storage it writes under the atomicptrop shared
+// lock, so it now orders against LoadPointer — unlike the pre-fix plain
+// *addr = val assign, which ordered against nothing.
 func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
 	if id, ok := unparen(c.Fun).(*ast.Ident); ok {
 		obj, ok := e.info.Uses[id].(*types.Func)
@@ -9362,28 +9384,26 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	return e.lowerAtomicStorePointer(s, c)
 }
 
-// lowerAtomicStorePointer is the shared *addr = val lowering behind
-// exportAtomicStorePointerStmt (both call spellings).
+// lowerAtomicStorePointer is the shared atomicptrop-store lowering behind
+// exportAtomicStorePointerStmt (both call spellings). The store op is an
+// expression node, so it is wrapped in an "exprstmt" statement node (the
+// same wrapping the ExprStmt case applies to ordinary calls).
 func (e *exporter) lowerAtomicStorePointer(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
 	if len(c.Args) != 2 {
 		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
 	}
-	px, err := e.exportExpr(c.Args[0])
+	addr, err := e.exportExpr(c.Args[0])
 	if err != nil {
 		return nil, true, err
 	}
-	vx, err := e.exportExpr(c.Args[1])
+	val, err := e.exportExpr(c.Args[1])
 	if err != nil {
 		return nil, true, err
 	}
-	tid, err := e.typeID(types.Typ[types.UnsafePointer])
-	if err != nil {
-		return nil, true, err
-	}
-	lhs := e.node("deref", c, map[string]any{"x": px, "type": tid})
-	return e.node("assign", s, map[string]any{
-		"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{vx},
-	}), true, nil
+	op := e.node("atomicptrop", c, map[string]any{
+		"op": "store", "addr": addr, "args": []*Node{val},
+	})
+	return e.node("exprstmt", s, map[string]any{"x": op}), true, nil
 }
 
 // exportFuncCall exports a call to a named top-level function (M6, WS H).
@@ -9433,9 +9453,10 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 		}
 		// fix-redmaster-r39: the Pointer ops called unqualified from
 		// inside sync/atomic (the atomic.Pointer[T] method bodies in
-		// type.go) lower like their qualified forms — LoadPointer to a
-		// deref read, Swap/CompareAndSwapPointer to "atomicptrop".
-		// StorePointer is statement-only and handled in exportStmt.
+		// type.go) lower like their qualified forms — LoadPointer to
+		// the "atomicptrop" load op, Swap/CompareAndSwapPointer to
+		// "atomicptrop". StorePointer is statement-only and handled
+		// in exportStmt (same wire node, op "store").
 		switch fn.Name() {
 		case "LoadPointer":
 			return e.exportAtomicLoadPointer(c)
