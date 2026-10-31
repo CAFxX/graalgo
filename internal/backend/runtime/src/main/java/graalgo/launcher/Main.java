@@ -56,6 +56,11 @@ public final class Main {
 
     /** Entry point without the System.exit, for tests. Returns the process exit code. */
     static int run(String[] args) {
+        // R-01: fail fast on a wrong classpath order before doing anything
+        // else — including --check and --help. The diffharness build step
+        // is --check, so a check placed only before guest execution would
+        // leave the build step silently passing with the stub loaded.
+        assertSchedulerOverlay();
         boolean check = false;
         boolean dumpVars = false;
         String dumpPoly = null;
@@ -490,6 +495,33 @@ public final class Main {
     private static void reportStackOverflow() {
         System.err.println("graalgo-run: stack overflow: host stack exhausted "
                 + "(see phases/phase1/docs/limitations.md)");
+    }
+
+    /**
+     * Fail-fast that the Phase-2 overlay is active (R-01, same shape as
+     * SchedMain and P3SyncMain): the {@code graalgo.runtime.Scheduler} on
+     * the classpath must be the Phase-2 replacement, i.e.
+     * runtime/out/classes precedes truffle/out/classes. With the wrong
+     * order the Phase-1 stub would throw UOE on first use — and worse,
+     * the Phase-1 static {@code GoroutineState} holder would be silently
+     * shared across goroutines. Never silent.
+     *
+     * <p>Package-visible so the launcher overlay test can call it
+     * directly (same precedent as {@link #isStackOverflowCascade}).
+     */
+    static void assertSchedulerOverlay() {
+        try {
+            if (!graalgo.runtime.Scheduler.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Scheduler.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
     }
 
     /**
