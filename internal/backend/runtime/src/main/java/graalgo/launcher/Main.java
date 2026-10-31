@@ -56,11 +56,13 @@ public final class Main {
 
     /** Entry point without the System.exit, for tests. Returns the process exit code. */
     static int run(String[] args) {
-        // R-01: fail fast on a wrong classpath order before doing anything
-        // else — including --check and --help. The diffharness build step
-        // is --check, so a check placed only before guest execution would
-        // leave the build step silently passing with the stub loaded.
-        assertSchedulerOverlay();
+        // R-01/R-02: fail fast on a wrong classpath order before doing
+        // anything else — including --check and --help. The diffharness
+        // build step is --check, so a check placed only before guest
+        // execution would leave the build step silently passing with a
+        // stub loaded. The check covers all eight shadow classes, not
+        // just Scheduler (see assertOverlay).
+        assertOverlay();
         boolean check = false;
         boolean dumpVars = false;
         String dumpPoly = null;
@@ -498,18 +500,89 @@ public final class Main {
     }
 
     /**
-     * Fail-fast that the Phase-2 overlay is active (R-01, same shape as
-     * SchedMain and P3SyncMain): the {@code graalgo.runtime.Scheduler} on
-     * the classpath must be the Phase-2 replacement, i.e.
-     * runtime/out/classes precedes truffle/out/classes. With the wrong
-     * order the Phase-1 stub would throw UOE on first use — and worse,
-     * the Phase-1 static {@code GoroutineState} holder would be silently
-     * shared across goroutines. Never silent.
+     * Fail-fast that the Phase-2 overlay is active (R-01, extended to
+     * all eight shadows by R-02; same shape as SchedMain and
+     * P3SyncMain): every same-FQN shadow in {@code STUB_REL}
+     * (runtime Makefile) on the classpath must be the Phase-2
+     * replacement, i.e. runtime/out/classes precedes
+     * truffle/out/classes. Each class carries its own
+     * {@code isPhase2()} marker, absent on the Phase-1 copy, so each
+     * probe is a direct static call in its own try block: a stub
+     * loaded first throws {@code NoSuchMethodError} naming that class
+     * (a shared reflective probe would blur which class failed, and a
+     * shared lambda/method-ref probe would resolve outside the try).
+     * With the wrong order the failure modes differ per class and not
+     * all are loud: the Phase-1 {@code Safepoint} is a silent no-op
+     * (quantum/safepoint semantics vanish), the Phase-1 static
+     * {@code GoroutineState} holder would be silently shared across
+     * goroutines, {@code Timers} loads with stubbed sleep/timer-heap,
+     * and {@code ChanOps}/{@code GcInterop}/{@code Netpoll} throw UOE
+     * only on first use of those paths. Never silent.
      *
      * <p>Package-visible so the launcher overlay test can call it
      * directly (same precedent as {@link #isStackOverflowCascade}).
      */
-    static void assertSchedulerOverlay() {
+    static void assertOverlay() {
+        try {
+            if (!graalgo.runtime.ChanOps.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.ChanOps.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.runtime.ChanOps stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
+        try {
+            if (!graalgo.runtime.GcInterop.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.GcInterop.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.runtime.GcInterop stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
+        try {
+            if (!graalgo.runtime.GoroutineState.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.GoroutineState.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.runtime.GoroutineState stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
+        try {
+            if (!graalgo.runtime.Netpoll.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Netpoll.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.runtime.Netpoll stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
+        try {
+            if (!graalgo.runtime.Panic.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Panic.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.runtime.Panic stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
         try {
             if (!graalgo.runtime.Scheduler.isPhase2()) {
                 throw new IllegalStateException(
@@ -518,6 +591,30 @@ public final class Main {
         } catch (NoSuchMethodError e) {
             throw new IllegalStateException(
                     "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
+        try {
+            if (!graalgo.runtime.Timers.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Timers.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.runtime.Timers stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the classpath",
+                    e);
+        }
+        try {
+            if (!graalgo.safepoint.Safepoint.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.safepoint.Safepoint.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 graalgo.safepoint.Safepoint stub loaded instead of the Phase-2 "
                     + "overlay; runtime/out/classes must precede truffle/out/classes "
                     + "on the classpath",
                     e);

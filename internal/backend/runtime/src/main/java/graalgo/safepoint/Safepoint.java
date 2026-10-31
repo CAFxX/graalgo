@@ -22,6 +22,19 @@ package graalgo.safepoint;
 public final class Safepoint {
     private Safepoint() {}
 
+    /**
+     * Phase-2-only diagnostic: true when THIS class (the Phase-2
+     * replacement, delegating to the scheduler quantum check) is
+     * loaded, absent on the Phase-1 no-op copy. The launcher calls it
+     * at startup (R-02 overlay check) to fail fast if the classpath
+     * order is wrong: the no-op copy would otherwise silently drop
+     * scheduler quantum / safepoint semantics. NOT part of the frozen
+     * contract — intentionally not covered by FreezeSignatureTest.
+     */
+    public static boolean isPhase2() {
+        return true;
+    }
+
     /** Phase 2: quantum-expiry check; no-op without a scheduler. */
     public static void poll() {
         graalgo.sched.SchedulerCore.pollCurrentThreadStatic();

@@ -20,7 +20,7 @@ import java.util.TreeSet;
  * loads the truffle module's copy via an isolated classloader and asserts
  * every public method of it exists here with an identical signature. The
  * overlay's additive methods (setPanicNilOldBehavior,
- * isPanicNilOldBehavior) are exempt.
+ * isPanicNilOldBehavior, and the R-02 isPhase2 overlay marker) are exempt.
  *
  * <p>verifies: GG-0055 (panicnil emulation does not desync from the frozen surface)
  */
@@ -28,7 +28,7 @@ public final class PanicOverlayDriftTest {
 
     /** Additive overlay methods, exempt from the drift check. */
     private static final TreeSet<String> ADDITIVE = new TreeSet<>(List.of(
-            "setPanicNilOldBehavior", "isPanicNilOldBehavior"));
+            "setPanicNilOldBehavior", "isPanicNilOldBehavior", "isPhase2"));
 
     public void testOverlayMatchesPhase1Surface() throws Exception {
         // The frozen Panic surface compiles in the truffle module (see its Makefile:

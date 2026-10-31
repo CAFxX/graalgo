@@ -17,6 +17,19 @@ package graalgo.runtime;
  * across {@code LockSupport} park/unpark cycles.
  */
 public final class GoroutineState {
+    /**
+     * Phase-2-only diagnostic: true when THIS class (the Phase-2
+     * replacement, with the virtual-thread-scoped holder) is loaded,
+     * absent on the Phase-1 static-holder copy. The launcher calls it
+     * at startup (R-02 overlay check) to fail fast if the classpath
+     * order is wrong: the Phase-1 holder would otherwise be silently
+     * shared across goroutines. NOT part of the frozen contract —
+     * intentionally not covered by FreezeSignatureTest.
+     */
+    public static boolean isPhase2() {
+        return true;
+    }
+
     private final DeferChain deferChain = new DeferChain();
     private GoStackFrame goStack = new GoStackFrame();
     private PanicException panicking;

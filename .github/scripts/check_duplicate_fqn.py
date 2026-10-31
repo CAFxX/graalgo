@@ -4,15 +4,17 @@
 Fails if any fully-qualified Java class name exists in more than one
 backend module's main source tree, EXCEPT the 8 frozen Phase-1 stub /
 Phase-2 replacement pairs whose shadowing is deliberate and load-bearing
-(classpath order: runtime/out/classes before truffle/out/classes, enforced
-at startup by the isPhase2() assertion in graalgo.launcher.Main,
-graalgo.sched.launcher.SchedMain, and graalgo.p3sync.launcher.P3SyncMain).
+(classpath order: runtime/out/classes before truffle/out/classes).
 
 The allowlist is NOT hardcoded here: it is parsed from STUB_REL in
 internal/backend/runtime/Makefile, the single source of truth for the
 pair set (the runtime build's stub-shadow gate fails if any pair goes
 missing). If that parse yields nothing, this gate fails loudly instead
-of passing vacuously.
+of passing vacuously. The gate itself proves both copies exist, not
+which one loads: load order is enforced at startup by the
+assertOverlay() probe of all eight isPhase2() markers in
+graalgo.launcher.Main, graalgo.sched.launcher.SchedMain, and
+graalgo.p3sync.launcher.P3SyncMain.
 
 Also fails if an allowlisted FQN is missing from either the runtime or
 the truffle tree (a silently dropped pair would re-expose a stub).

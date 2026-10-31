@@ -60,7 +60,10 @@ public final class GoRootNode extends RootNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Safepoint.poll(); // D8 seam: no-op in Phase 1; Phase 2 gives it semantics.
+        // D8 seam: Phase-2 quantum check. The Phase-1 Safepoint copy was
+        // a no-op; the launchers' overlay check (R-02) guarantees the
+        // Phase-2 Safepoint loads, so this call is never silently empty.
+        Safepoint.poll();
         GoroutineState state = new GoroutineState();
         GoroutineState prev = GoroutineState.install(state);
         DeferChain chain = state.deferChain();

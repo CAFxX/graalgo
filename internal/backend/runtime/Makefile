@@ -142,7 +142,12 @@ check: main $(OUT_TEST)/.built
 	@# *code* references to netpoller paths in this module; the ParkReason.java javadoc
 	@# {@code GoNetpoll.pollWait} is documentation of the real interop-module API,
 	@# not a code path, and is excluded.
-	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java'; then \
+	@# R-02: the launchers' overlay probe calls Netpoll.isPhase2() only — an
+	@# identity marker that invokes no poller behavior and runs at startup,
+	@# before any guest code — so that exact call is excluded. The exclusion
+	@# is anchored to the marker name: any other Netpoll.* reference still
+	@# fails this gate.
+	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java' | grep -v 'Netpoll\.isPhase2()'; then \
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
 	@# Exclusion: ToolPaths (phase-1 launcher, startup-only, never
 	@# goroutine-reachable) imports java.net.URISyntaxException for

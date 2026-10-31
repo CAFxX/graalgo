@@ -36,6 +36,18 @@ public final class Panic {
     private Panic() {}
 
     /**
+     * Phase-2-only diagnostic: true when THIS class (the Phase-2
+     * replacement) is loaded, absent on the Phase-1 original. The
+     * launcher calls it at startup (R-02 overlay check) to fail fast
+     * if the classpath order is wrong. NOT part of the frozen contract
+     * — intentionally not covered by FreezeSignatureTest (same
+     * precedent as the panicnil knob above: additive, not frozen).
+     */
+    public static boolean isPhase2() {
+        return true;
+    }
+
+    /**
      * When true, {@link #throwPanic} preserves a nil panic value instead
      * of wrapping it in {@code *PanicNilError} (GODEBUG=panicnil=1,
      * pre-1.21 semantics). Volatile: set once at startup by
