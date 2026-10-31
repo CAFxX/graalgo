@@ -2152,6 +2152,29 @@ func registerDiskMRSpecs(specs []diskMRSpec) {
 	diskMRMu.Unlock()
 }
 
+// diskMRHasUnprovidedIntrinsic reports whether any disk spec in pkgPath
+// for a method named name carries a required intrinsic no provider
+// supplies (a bodyless declaration whose __-helper is a panic body).
+// Interface dispatch is dynamic: at an interface call site the exporter
+// cannot prove the call avoids such an implementation, so the
+// interface-dispatch gates treat ANY such spec as refusing the call —
+// fail-closed, at the cost of refusing programs that only ever box
+// real-bodied implementors of the same interface (documented scope
+// limit of the gate; see diskMRIntrinsicProvided). It scans directly
+// under the table lock (lookupDiskMR takes the lock itself and must
+// not be called while it is held).
+func (e *exporter) diskMRHasUnprovidedIntrinsic(pkgPath, name string) bool {
+	diskMRMu.Lock()
+	defer diskMRMu.Unlock()
+	for i := range diskMRSpecs {
+		s := &diskMRSpecs[i]
+		if s.pkgPath == pkgPath && s.name == name && s.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(s) {
+			return true
+		}
+	}
+	return false
+}
+
 // lookupDiskMR finds a dynamic desugar entry.
 func lookupDiskMR(pkgPath, name, recvType string) *diskMRSpec {
 	diskMRMu.Lock()
@@ -2234,17 +2257,48 @@ func diskMRPairType(sp *syntheticPackage, spec *diskMRSpec) *types.Named {
 // A bodyless declaration with its own //go:linkname directive never
 // gets requiresIntrinsic (its helper is linkname-bound), so this only
 // gates panic helpers.
+//
+// Scope limits of the intrinsic gate (veto fix-up P2d — stated, not
+// redesigned; no concrete broken case is known for either):
+// (i) The gate covers user call sites only. Calls inside the disk
+// package itself are rewritten to the __-helper by the transform
+// (mrRewriteCtx.rewriteBlock) before export, so they never pass
+// through the gate; a bodyless declaration called only from within
+// its own package still reaches its panic helper if the backend
+// provides no intrinsic for it.
+// (ii) This predicate consults only synthFuncIDs: a backend wire-node
+// intrinsic with no synthetic function of the required qualified
+// name would be false-refused (the call fails at export even though
+// the backend could serve it). That is the documented assumption of
+// the gate, not a redesign: no such provider is known today, and
+// widening the predicate to backend wire nodes is future work if
+// one appears.
+// (iii) Matching is on the QUALIFIED symbol only (requiresIntrinsic
+// itself). A short-key fallback (pkgPath.name) was removed: the
+// method's own stub entry is registered under that key, so the
+// fallback made every imported disk method its own provider and
+// the gate never fired end to end (probed 2026-10-31).
 func (e *exporter) diskMRIntrinsicProvided(spec *diskMRSpec) bool {
 	if spec == nil || spec.requiresIntrinsic == "" {
 		return true
 	}
 	if e.synthFuncIDs != nil {
+		// Qualified name ONLY. A short-key fallback (pkgPath.name)
+		// used to live here on the theory that synthFuncIDs keys
+		// omit the receiver — but the method's OWN stub/method
+		// entry is registered under exactly that short key
+		// (importSyntheticPackage registers every processed decl
+		// under sp.path+"."+obj.Name()), so the fallback matched
+		// the method itself and the gate never fired end to end:
+		// probed 2026-10-31, the iface + method-value veto tests
+		// exported with the panic helper wired, while a bare
+		// exporter (empty synthFuncIDs) correctly refused. For
+		// function specs the fallback was identical to this key
+		// anyway (requiresIntrinsic is pkgPath.name); for method
+		// specs it is unsound (it also matches an unrelated
+		// package-level func of the same name). A genuine provider
+		// must register under the qualified symbol.
 		if _, ok := e.synthFuncIDs[spec.requiresIntrinsic]; ok {
-			return true
-		}
-		// Methods: synthFuncIDs keys omit the receiver
-		// (pkgPath.name), while requiresIntrinsic carries it.
-		if _, ok := e.synthFuncIDs[spec.pkgPath+"."+spec.name]; ok {
 			return true
 		}
 	}
@@ -2370,6 +2424,25 @@ func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) 
 		return nil
 	}
 	if sig.Results().Len() != len(spec.pairFields) {
+		return nil
+	}
+	// Veto fix-up F2 (review-bytes-mr): the intrinsic gate the
+	// direct-call classifier applies (classifyDiskMultiResultCall)
+	// was missing here, so a bodyless disk method called through an
+	// interface still dispatched to its panic helper at guest
+	// runtime. Interface specs themselves never carry
+	// requiresIntrinsic (they have no body and no helper), so the
+	// gate must look at the concrete specs: dispatch is dynamic and
+	// may land on a bodyless implementation, so any unprovided
+	// intrinsic for this method in this package refuses the plan
+	// (fail-closed; see diskMRHasUnprovidedIntrinsic). Returning nil
+	// alone is not sufficient — classifyUserIfaceMultiResultCall
+	// would otherwise synthesize a plan around it — so that classifier
+	// applies the same refusal.
+	if spec.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(spec) {
+		return nil
+	}
+	if e.diskMRHasUnprovidedIntrinsic(pkgPath, f.Name()) {
 		return nil
 	}
 	sp, err := getDiskPackage(pkgPath)

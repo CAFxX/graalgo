@@ -2799,6 +2799,16 @@ func (e *exporter) classifyUserIfaceMultiResultCall(selection *types.Selection) 
 	if f.Pkg() != nil {
 		pkgPath = f.Pkg().Path()
 	}
+	// Veto fix-up F2 (review-bytes-mr): this terminal fallback must
+	// not plan around the disk intrinsic gate. Without this check, a
+	// bodyless disk method called through an interface — refused by
+	// classifyDiskIfaceMultiResultCall — would still get a
+	// synthesized pair plan here, and export would succeed with the
+	// itab pointing at the panic helper. Non-disk interfaces are
+	// unaffected (no disk spec exists for them, so the scan is empty).
+	if pkgPath != "" && e.diskMRHasUnprovidedIntrinsic(pkgPath, f.Name()) {
+		return nil
+	}
 	// The pair is fully determined by the (substituted) signature; key
 	// by it so different instantiations get different pairs. The
 	// interface may be anonymous (no named receiver), so the key does
@@ -2992,6 +3002,17 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	}
 	helperPkg, helperName, ok := multiResultHelperFor(mobj.Pkg().Path(), mobj.Name(), nt.Obj().Name())
 	if !ok {
+		return nil, false
+	}
+	// Veto fix-up F2 (review-bytes-mr): the intrinsic gate was missing
+	// here too, so methodTableEntries wired the itab for interface
+	// dispatch to a bodyless disk method's panic helper. A disk spec
+	// wins in multiResultHelperFor, so when a disk spec with a helper
+	// exists for this method, the resolved helper IS that spec's
+	// helper; refuse it when its intrinsic is unprovided (the entry
+	// then stays out of the table and dispatch fails fast with
+	// "missing method" instead of panicking in the helper).
+	if spec := lookupDiskMR(mobj.Pkg().Path(), mobj.Name(), nt.Obj().Name()); spec != nil && spec.helper != "" && spec.helper == helperName && spec.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(spec) {
 		return nil, false
 	}
 	var fi *funcDeclInfo

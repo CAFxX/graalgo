@@ -59,16 +59,6 @@ func TestM7PairFieldsExhaustive(t *testing.T) {
 		key := mf.pkgPath + "." + mf.recvType + "." + mf.name
 		name := key
 		t.Run(name, func(t *testing.T) {
-			// A synthetic package that fails to load standalone (e.g.
-			// archive/zip's reference to time.FixedZone, a
-			// pre-existing load issue outside this audit) must not
-			// abort the whole audit: log it as a skip.
-			defer func() {
-				if r := recover(); r != nil {
-					t.Logf("SKIP: panic loading synthetic package: %v", r)
-					skipped++
-				}
-			}()
 			if seen[key] {
 				t.Fatalf("duplicate m7MultiResultFuncs entry for %s (first match shadows the rest)", key)
 			}
@@ -77,27 +67,54 @@ func TestM7PairFieldsExhaustive(t *testing.T) {
 			if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 				helperPkg = override
 			}
-			sp := getSyntheticPackage(helperPkg)
+			// Veto fix-up P2c (review-bytes-mr): the recover below
+			// covers ONLY the load phase (getSyntheticPackage +
+			// tryLookupM7Func). A synthetic package that fails to
+			// load standalone (e.g. archive/zip's reference to
+			// time.FixedZone, a pre-existing load issue outside
+			// this audit) must not abort the whole audit: log it
+			// as a skip. The previous code deferred the recover
+			// over the entire subtest, so a panic from a checker
+			// bug in the field/type comparisons below was also
+			// counted as a skip — masking the bug. Now a checker
+			// panic fails the test, as it should.
+			sp, mrFn, loadPanicked := func() (sp *syntheticPackage, mrFn *types.Func, loadPanicked bool) {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Logf("SKIP: panic loading synthetic package: %v", r)
+						loadPanicked = true
+					}
+				}()
+				sp = getSyntheticPackage(helperPkg)
+				if sp == nil || sp.pkg == nil {
+					return sp, nil, false
+				}
+				// The multi-result function: in the helper
+				// package, or (for override entries) the entry's
+				// own package.
+				want := m7StrconvJsonExpect{
+					pkgPath: helperPkg, name: mf.name, recvType: mf.recvType,
+					helper: mf.helper, pairType: mf.pairType, pairFields: mf.pairFields,
+				}
+				if fn := tryLookupM7Func(sp, want); fn != nil {
+					mrFn = fn
+				} else if helperPkg != mf.pkgPath {
+					if sp2 := getSyntheticPackage(mf.pkgPath); sp2 != nil && sp2.pkg != nil {
+						want2 := want
+						want2.pkgPath = mf.pkgPath
+						mrFn = tryLookupM7Func(sp2, want2)
+					}
+				}
+				return sp, mrFn, false
+			}()
+			if loadPanicked {
+				skipped++
+				return
+			}
 			if sp == nil || sp.pkg == nil {
 				t.Logf("SKIP: synthetic package %q not loaded", helperPkg)
 				skipped++
 				return
-			}
-			// The multi-result function: in the helper package, or
-			// (for override entries) the entry's own package.
-			var mrFn *types.Func
-			want := m7StrconvJsonExpect{
-				pkgPath: helperPkg, name: mf.name, recvType: mf.recvType,
-				helper: mf.helper, pairType: mf.pairType, pairFields: mf.pairFields,
-			}
-			if fn := tryLookupM7Func(sp, want); fn != nil {
-				mrFn = fn
-			} else if helperPkg != mf.pkgPath {
-				if sp2 := getSyntheticPackage(mf.pkgPath); sp2 != nil && sp2.pkg != nil {
-					want2 := want
-					want2.pkgPath = mf.pkgPath
-					mrFn = tryLookupM7Func(sp2, want2)
-				}
 			}
 			if mrFn == nil {
 				t.Logf("SKIP: multi-result %s not found in synthetic package %q (or %q)", key, helperPkg, mf.pkgPath)

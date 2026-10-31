@@ -133,7 +133,7 @@ func compareSemver(a, b string) int {
 // building e.g. the real GOROOT bytes as a disk package registers its
 // multi-result members in the global disk-MR table, which then shadows
 // the synthetic fail-fast/desugar contracts for every later export in
-// the process (TestSyntheticBytesCutFailsFast isolation). The importer's
+// the process (TestSyntheticBytesSeekDischarged isolation). The importer's
 // cases claim synthetic paths first, but direct getDiskPackage callers
 // (multiResultHelperFunc) bypass the importer, so the guard lives here.
 func resolveDiskPackageDir(importPath string) (string, error) {

@@ -16,7 +16,7 @@ import (
 // body); the rest are pair-transformed via the general userMRFuncs
 // mechanism (Cut, CutPrefix, CutSuffix, CutLast first, then the
 // remaining members). Uncovered call sites fail fast with the WS D
-// scope error (see TestSyntheticBytesCutFailsFast).
+// scope error.
 //
 // The absence check is scoped to pkgpath "bytes" AND to result count:
 // a bare-name walk false-positives on transitive imports (io.Read,
@@ -126,7 +126,11 @@ func main() {
 	}
 }
 
-// TestSyntheticBytesCutFailsFast is RETIRED (review-bytes-mr lane):
+// TestSyntheticBytesSeekDischarged was TestSyntheticBytesCutFailsFast
+// before the veto fix-up rename (review-bytes-mr lane): the old name
+// asserted fail-fast, but the test now asserts the opposite —
+// Reader.Seek exports via its discharged m7 helper. RETIRED as a
+// fail-fast pin; kept as the discharge pin:
 // its only case, Reader.Seek, now has an m7 table entry and a real
 // __bytesReaderSeek helper, so the call exports instead of failing with
 // the WS D scope error. The discharge is covered by
@@ -134,7 +138,7 @@ func main() {
 // This test is kept as a no-op marker so the retirement is explicit
 // in the file that used to pin the fail-fast behavior; it asserts the
 // previously-failing call now exports.
-func TestSyntheticBytesCutFailsFast(t *testing.T) {
+func TestSyntheticBytesSeekDischarged(t *testing.T) {
 	src := `package main
 
 import "bytes"

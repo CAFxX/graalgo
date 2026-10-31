@@ -1122,8 +1122,11 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 					// calls via isMultiResultSyntheticFailFast (now true
 					// because the stub is unregistered), value
 					// positions via the exportSyntheticQualified
-					// fallback, and method-table/interface positions via
-					// the missing helper.
+					// fallback, method values via the methodValueNode
+					// guard (veto fix-up F1: the dummy entry used to
+					// leak an obj-0 methodvalue node), and
+					// method-table/interface positions via the
+					// missing helper.
 					if isFailFastStub(d) {
 						if d.Recv != nil {
 							recv := sig.Recv()
@@ -2111,13 +2114,20 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 				"name": helperFn.Name(), "obj": fi.funcID, "type": sigID,
 			}), nil
 		}
-		// Fail-fast stub multi-result functions (e.g. time.ParseDuration)
-		// cannot be used as values in v1: there is no __-helper to serve
-		// as the pair form, so there is no honest value to emit. This is
-		// a compile-time error, not a nil or panic-on-call value.
+		// Veto fix-up P2a (review-bytes-mr): this branch is NOT the
+		// fail-fast-stub path anymore, and its old comment said it
+		// was. Under the lane's stub policy, fail-fast stubs are
+		// never registered in synthFuncIDs, so they skip this branch
+		// entirely and reach the generic M5 message below (or the
+		// static-entry M5 message, e.g. time.ParseDuration — see
+		// TestMRFuncValueFailFastKept). This branch fires only for a
+		// REGISTERED multi-result function that has no pair form to
+		// serve as its value: there is no honest value to emit, so
+		// this is a compile-time error, not a nil or panic-on-call
+		// value.
 		if e.synthFuncIDs != nil && obj.Pkg() != nil {
 			if _, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok {
-				return nil, scopeErrorf("%s.%s is a fail-fast stub and cannot be used in value position in frontend/v1 scope",
+				return nil, scopeErrorf("%s.%s has no pair form and cannot be used in value position in frontend/v1 scope",
 					pkgName.Name(), obj.Name())
 			}
 		}
@@ -2258,8 +2268,28 @@ func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
 		return false
 	}
 	if e.synthFuncIDs != nil && fn.Pkg() != nil {
-		if _, ok := e.synthFuncIDs[fn.Pkg().Path()+"."+fn.Name()]; ok {
-			return false
+		if fi, ok := e.synthFuncIDs[fn.Pkg().Path()+"."+fn.Name()]; ok && fi != nil {
+			// Veto fix-up follow-through (review-bytes-mr):
+			// synthFuncIDs keys omit the receiver, so a
+			// package-level function masks a same-named method:
+			// time.Date (the func) made isMultiResultSynthetic
+			// FailFast return false for Time.Date (the method),
+			// so the method value leaked past the F1 guard
+			// while Clock/Zone (no package-level namesakes)
+			// were refused. A method counts as registered only
+			// when the entry is itself a method on the same
+			// receiver type; a package-func entry never counts
+			// for a method, and vice versa. When the receiver
+			// cannot be established, fall through to
+			// isMultiResultSynthetic (fail-closed: a loud
+			// export error beats a silent leak).
+			if sig, sok := fn.Type().(*types.Signature); sok && sig.Recv() != nil {
+				if fi.obj != nil && methodRecvBaseName(fi.obj) != "" && methodRecvBaseName(fi.obj) == methodRecvBaseName(fn) {
+					return false
+				}
+			} else {
+				return false
+			}
 		}
 	}
 	return isMultiResultSynthetic(fn)

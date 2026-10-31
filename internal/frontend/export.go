@@ -9949,6 +9949,33 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 // The "type" field is the method value's static func type (no receiver),
 // from the selector expression's type.
 func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	// Veto fix-up F1 (review-bytes-mr): fail-fast stubs must fail here
+	// exactly as they do at direct-call sites. Before this check, a
+	// method value on a fail-fast synthetic multi-result method (e.g.
+	// t.Clock, t.Zone) resolved through the dummy methodIndex entry
+	// the stub policy leaves behind (synth_machinery.go) and emitted a
+	// "methodvalue" node with obj = 0 — the zero-value funcID, which
+	// is main's funcdecl in the emitted doc, so a guest invoking the
+	// value silently misdispatched to the wrong function. The dummy
+	// must NOT be given a sentinel funcID (the backend resolves by
+	// object id); the only sound fix is refusing at export, with the
+	// same named scope error the call sites produce. The guard mirrors
+	// the direct-call/interface sites (generic methods excluded, as
+	// there: instantiations go through the generic MR machinery).
+	if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) && !isGenericFunc(f) && !isGenericFunc(f.Origin()) {
+		return nil, multiResultSyntheticError(f)
+	}
+	// Same family, disk packages: a bodyless disk multi-result method
+	// (panic __-helper, unprovided intrinsic) in method-value position
+	// likewise bypassed every gate — the probe emitted a "methodvalue"
+	// whose obj has no funcdecl in the doc. Refuse it at export too:
+	// the disk spec is keyed by the method's declaring receiver, so
+	// the lookup uses the selected method object itself.
+	if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil {
+		if spec := lookupDiskMR(f.Pkg().Path(), f.Name(), methodRecvBaseName(f)); spec != nil && spec.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(spec) {
+			return nil, scopeErrorf("method value %s requires backend intrinsic %s, which is not provided in frontend/v1 scope", f.Name(), spec.requiresIntrinsic)
+		}
+	}
 	var mtargs []types.Type
 	if ii, ok := e.info.Instances[sel.Sel]; ok {
 		mtargs = typeList(ii.TypeArgs)
@@ -10629,6 +10656,17 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		helperMapped := false
 		if pkg := mobj.Pkg(); pkg != nil {
 			if spec := lookupDiskMR(pkg.Path(), mobj.Name(), methodRecvBaseName(mobj)); spec != nil && spec.helper != "" {
+				// Veto fix-up F2 (review-bytes-mr): never wire the
+				// itab to a panic helper. multiResultHelperFunc
+				// already refuses it, but without this skip the
+				// fallthrough below would wire the entry to the
+				// disk stub instead (fix-redmaster-r40's plain
+				// lookup) — also a panic body. Skipping keeps the
+				// established "missing method" fail-fast for
+				// methods with no usable helper.
+				if spec.requiresIntrinsic != "" && !e.diskMRIntrinsicProvided(spec) {
+					continue
+				}
 				if hfi, hok := e.multiResultHelperFunc(mobj); hok {
 					fi, helperMapped, ok = hfi, true, true
 				}
