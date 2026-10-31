@@ -109,14 +109,23 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. Synthetic `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
-  `synth_*.go` mirrors under
+- **What:** 131 tracked non-test `synth_*.go` files in
+  [internal/frontend/](../../internal/frontend/) (139 including
+  `*_test.go`) plus 12 `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. Counts verified from `git ls-files` at this change (the
+  non-test count excludes exactly the `_test\.go$` suffix, so the
+  `synth_testing*.go` files are counted, not dropped; the previous
+  "142" figure matched no current count and is retired). Distinct
+  counts, not to be conflated: `syntheticSources` holds 129 active
+  entries after this change (130 before it; entries ≠ files — e.g.
+  `crypto/cipher` spans two files, and the `reflect_m7` helper entry
+  reuses `synth_reflect.go`); only 18 of the files are
+  generator-produced (the `GENERATED_SYNTH` block in the
+  [`Makefile`](../../Makefile)).
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).
@@ -125,7 +134,14 @@ deliverable until the design lands.
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
+  decision. Retired 2026-10-31 (P1-5 lane): `container/list`
+  (entry + `synth_container_list.go` deleted, need-block switched to
+  the general `importPkgTree` route, export test
+  `list_disk_export_test.go`; runtime evidence is the wave-3
+  `container/list` differential corpus, re-run for this lane: all
+  three programs (00_basic, 01_move_insert, 02_adversarial) exit 0
+  under both gc and graalgo with byte-identical stdout). In flight:
+  `real-fmt2`/`real-fmt-rebase` (`fmt`),
   `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
   general disk mechanism"), `real-nethttp` (`net`/`net/http`),
   `real-reflect2` (`reflect`).

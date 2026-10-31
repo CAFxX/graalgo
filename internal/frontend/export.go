@@ -2293,14 +2293,22 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// P3-M9 (wave 3, tier-1b): synthetic container/* packages
 	// (synth_container_*.go). heap imports the synthetic sort package,
 	// imported by its own need-block above (importSyntheticPackage is
-	// idempotent); list and ring are self-contained.
+	// idempotent); ring is self-contained. list was retired by the
+	// P1-5 lane (2026-10-31) and now resolves via the disk importer.
 	if needContainerHeap {
 		if err := e.importSyntheticPackage(getSyntheticPackage("container/heap")); err != nil {
 			return "", err
 		}
 	}
+	// P1-5 (2026-10-31): container/list RETIRED — resolves via the
+	// general disk importer, exactly as reflect does. importPkgTree
+	// falls through to disk now that the syntheticSources entry is
+	// gone; the exportSyntheticPkgCall chain entry for
+	// "container/list" is intentionally left in place (as for
+	// reflect): package-level calls still lower to direct calls of
+	// the merged funcdecls, now the real ones.
 	if needContainerList {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/list")); err != nil {
+		if err := e.importPkgTree("container/list"); err != nil {
 			return "", err
 		}
 	}

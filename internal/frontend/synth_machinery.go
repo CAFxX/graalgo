@@ -232,7 +232,10 @@ var syntheticSources = map[string]string{
 	// Pure-Go ports of the stdlib heap/list/ring; heap imports the
 	// synthetic sort package for sort.Interface.
 	"container/heap": syntheticContainerHeapSource,
-	"container/list": syntheticContainerListSource,
+	// P1-5 (2026-10-31): container/list RETIRED — real go1.27.1 source
+	// compiles from GOROOT via the general disk importer (importPkgTree
+	// in export.go, as for reflect). The synthetic source file is
+	// deleted; do not re-add this entry without a root-cause reason.
 	"container/ring": syntheticContainerRingSource,
 	// P3-M9 (wave 3): synthetic hash/* packages (synth_hash_*.go).
 	// Pure-Go ports; adler32/crc32/crc64/fnv are value-identical to gc.
