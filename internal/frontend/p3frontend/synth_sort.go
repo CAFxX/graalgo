@@ -11,8 +11,11 @@ package p3frontend
 // live in `slices`), so the whole surface is non-generic. Unexported
 // implementation details (reverse, pdqsort internals, sortedHint,
 // xorshift, carriers) are not visible to user code and are not mirrored.
-// Find/Slice/SliceStable/SliceIsSorted keep exact gc signatures with
-// fail-fast bodies in the synthetic source (multi-result/reflect).
+// Find/Slice/SliceStable/SliceIsSorted keep exact gc signatures in the
+// synthetic source; their bodies are real implementations (Find via the
+// generic MR pair transform, the Slice family via internal/reflectlite
+// Swapper) — the mirror pins signatures only, so no mirror change is
+// needed for the body work.
 
 import (
 	"go/token"

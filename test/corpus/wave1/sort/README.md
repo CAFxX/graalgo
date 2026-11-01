@@ -2,7 +2,8 @@
 
 Go programs exercising the wave-1 synthetic `sort` package
 (`internal/frontend/synth_sort.go`: faithful pdqsort/stable port +
-search; `Find`/`Slice`/`SliceStable`/`SliceIsSorted` fail-fast),
+search, real `Find` via the generic MR pair transform, real
+`Slice`/`SliceStable`/`SliceIsSorted` on the reflectlite Swapper path),
 differential vs stock gc 1.27.1. Run via `run_differential.sh` (thin
 wrapper over `corpus/wave1/run_wave.sh`; conventions:
 `corpus/wave1/README.md`).
@@ -21,18 +22,30 @@ wrapper over `corpus/wave1/run_wave.sh`; conventions:
 | `so07_large.go` | 5000-element fixed-seed LCG shuffle, full `Sort` |
 | `so08_custom_iface.go` | custom `Interface`s, `Reverse` composition |
 | `so09_combined.go` | sort + errors: priority errors, stable sort, `Join`, `Is` |
+| `so10_slice_find.go` | `Slice`/`SliceStable`/`SliceIsSorted`/`Find`, incl. edges and a 200-element `Slice` (scalar element kinds only — see below) |
 
 `so06`'s duplicates-heavy `Sort` output is byte-compared against gc's
 pdqsort — a faithful-port check on tie-breaking (pdqsort is
 deterministic; the synthetic port must reproduce it exactly).
 
-## Known divergences (fail-fast, never silent)
+## Known divergences
 
-- `sort.Find`: exact gc 1.27.1 signature, panic body — v1 cannot emit or
-  call multi-result functions (WS D). No corpus program calls it;
-  re-test when WS D lands.
-- `sort.Slice` / `sort.SliceStable` / `sort.SliceIsSorted`: exact gc
-  signatures, panic bodies — they need `reflect`. Re-test when reflect
-  lands.
 - The synthetic `reverse` delegates explicitly instead of embedding
   `Interface` (unobservable through the public API).
+- Backend boundary (not a frontend gap): `Slice`/`SliceStable` over
+  struct, array, pointer, float64, or bool element kinds fail at
+  runtime in the backend reflect Swapper — struct elements via
+  `reflect.typedmemmove` ("aggregate store through a byte-offset
+  view") and via direct `reflect.Swapper` ("ArrayRef cannot be cast
+  to GoStruct"), pointers via "GoPointer cannot be cast to Long",
+  float64 via "[D cannot be cast to [J", bool via "[Z cannot be
+  cast to [B" (all reproduced in isolation 2026-11-01). Integer,
+  byte, and string element kinds work. `so10` therefore covers
+  scalars only; SliceStable's stability property on struct payloads
+  is the blocked sub-case and needs a backend reflect lane. The
+  frontend accepts all element kinds (export-level test coverage).
+- (Retired 2026-11-01, review R3: `sort.Find` and the `sort.Slice`
+  family used to be fail-fast stubs — Find for WS D, the Slice family
+  for reflect. Both triggers have since fired, and `so10` covers the
+  real implementations. The fail-fast bullets were deleted, not left
+  as stale history.)

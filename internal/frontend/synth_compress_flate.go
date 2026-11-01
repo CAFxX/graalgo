@@ -2861,11 +2861,12 @@ func (h *huffmanEncoder) bitCounts(list []literalNode, maxBits int32) []int32 {
 // assignEncodingAndSize assigns bit counts and encodings to the leaves
 // as specified in RFC 1951 3.2.2.
 // sortLiteralNodes is a small insertion sort over []literalNode, used in
-// place of sort.Slice (the synthetic sort package's Slice is reflect-based
-// and fail-fast in M7 scope). Both call sites sort under a total order
-// (literal values are unique within the slice), so the result is identical
-// to gc's unstable sort.Slice, and the compressed output matches gc
-// byte-for-byte.
+// place of sort.Slice. (Kept from the M7 era, when the synthetic sort
+// package's Slice was fail-fast; Slice is real now, but this helper's
+// element-based less differs from Slice's index-based less, so it stays.)
+// Both call sites sort under a total order (literal values are unique
+// within the slice), so the result is identical to gc's unstable
+// sort.Slice, and the compressed output matches gc byte-for-byte.
 func sortLiteralNodes(x []literalNode, less func(a, b literalNode) bool) {
 	for i := 1; i < len(x); i++ {
 		for j := i; j > 0 && less(x[j], x[j-1]); j-- {

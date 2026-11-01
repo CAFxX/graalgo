@@ -200,8 +200,9 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // channels, synthetic time, and P3-M3 interface dispatch), the synthetic
 // package "errors" (P3-M7: New/Is/Unwrap/Join/AsType as real Go; As
 // fail-fast — it needs reflect), the synthetic package "sort" (P3-M7:
-// pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
-// fail-fast — multi-result/reflect), the 8 P3-M7 (wave 1) encoding/*
+// pdqsort/stable/search/Find/Slice/SliceStable/SliceIsSorted as real Go
+// (Find via the generic MR pair transform, the Slice family via
+// internal/reflectlite Swapper), the 8 P3-M7 (wave 1) encoding/*
 // primitive packages (encoding/base32, encoding/base64, encoding/hex,
 // encoding/binary, encoding/ascii85, encoding/pem, encoding/asn1,
 // encoding) as real-Go sources via getSyntheticPackage (encoding/pem

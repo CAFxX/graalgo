@@ -77,9 +77,12 @@ func TestSortSyntheticSignatures(t *testing.T) {
 		t.Fatalf("package name/path = %s/%s, want sort/sort",
 			mirror.Name(), mirror.Path())
 	}
+	// The phase-1 sort source imports internal/reflectlite (for the
+	// Slice family); delegate it to the GOROOT source importer via
+	// syntheticStdImporter, as the errors drift tests do.
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../synth_sort.go", "syntheticSortSource",
-		"sort", rejectImports{})
+		"sort", syntheticStdImporter(t))
 
 	// Full exported-scope drift check (names + rendered types). This
 	// covers every package-level function (Sort, Stable, IsSorted,

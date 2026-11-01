@@ -36,9 +36,9 @@ func gorootSourceImporter() types.Importer {
 // mirrors: tests compare the mirror against this package — not against
 // itself — so a phase-1-side change fails fast instead of silently
 // diverging. (Generalizes phase1SyntheticContextPackage in
-// timecontext_test.go; sort imports nothing, errors imports
+// timecontext_test.go; sort and errors both import
 // internal/reflectlite — callers pass an importer that delegates it,
-// see gorootSourceImporter.)
+// see gorootSourceImporter and syntheticStdImporter.)
 func phase1SyntheticPackageForTest(t *testing.T, srcFile, constName, path string, imp types.Importer) *types.Package {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -89,8 +89,10 @@ func phase1SyntheticPackageForTest(t *testing.T, srcFile, constName, path string
 	return pkg
 }
 
-// rejectImports is a types.Importer for self-contained synthetic sources
-// (errors, sort): any import is a test failure.
+// rejectImports is a types.Importer for synthetic sources that must
+// import nothing: any import is a test failure. (Kept for drift tests
+// of import-free sources; sort and errors both import
+// internal/reflectlite now, so their tests delegate it instead.)
 type rejectImports struct{}
 
 func (rejectImports) Import(path string) (*types.Package, error) {

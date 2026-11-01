@@ -104,8 +104,9 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "sort":
 		// P3-M7 (wave 1): synthetic sort package (real-Go pdqsort/stable/
-		// search; Find/Slice/SliceStable/SliceIsSorted fail-fast).
-		// Self-contained: no synthetic dependencies.
+		// search/Find/Slice/SliceStable/SliceIsSorted).
+		// Self-contained: no synthetic dependencies (its
+		// internal/reflectlite import is a real disk package).
 		pkg := syntheticSortPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
