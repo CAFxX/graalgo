@@ -33,6 +33,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+        // F5 follow-up (2026-11-01): EC curve identity from the curve
+        // OID, never from the field size (secp256k1 mislabeling).
+        TESTS.add(graalgo.p3x509.GoX509CurveOidTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.

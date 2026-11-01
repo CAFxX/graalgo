@@ -258,19 +258,27 @@ public final class GoX509 {
     }
 
     /**
-     * EC field size in bits (224, 256, 384, 521), or -1 if not EC.
-     * The Go side maps this to the elliptic.Curve (P-224, P-256, P-384,
-     * P-521) — the JDK does not expose the curve OID directly.
+     * EC curve name for a certificate's public key (e.g. "secp256r1"),
+     * or "" if the key is not EC or its curve OID is not one of the
+     * supported NIST curves. The name comes from the curve OID in the
+     * key's SPKI algorithm identifier — never from the field size: a
+     * field size does not identify a curve (secp256k1 shares P-256's
+     * 256-bit field), and mapping by field size silently relabels
+     * non-NIST keys as NIST keys (F5). The Go side maps the name to
+     * the curve and rejects "" as an unknown curve.
      */
-    public static Object ecFieldSize(Object certArg) {
+    public static Object ecCurveName(Object certArg) {
         X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.ECPublicKey)) {
-            return -1L;
+            return toGoString("");
         }
-        java.security.interfaces.ECPublicKey ec =
-                (java.security.interfaces.ECPublicKey) key;
-        return (long) ec.getParams().getCurve().getField().getFieldSize();
+        byte[] spki = key.getEncoded();
+        if (spki == null) {
+            return toGoString("");
+        }
+        String curveName = ecCurveNameFromSpki(spki);
+        return toGoString(curveName == null ? "" : curveName);
     }
 
     /**
@@ -468,8 +476,18 @@ public final class GoX509 {
                     (java.security.interfaces.ECPublicKey) key;
             byte[] x = stripLeadingZero(ec.getW().getAffineX().toByteArray());
             byte[] y = stripLeadingZero(ec.getW().getAffineY().toByteArray());
-            long fs = ec.getParams().getCurve().getField().getFieldSize();
-            return "EC:" + toHex(x) + ":" + toHex(y) + ":" + fs;
+            // The curve travels by name, identified from the SPKI
+            // algorithm identifier's curve OID — never by field size
+            // (see ecCurveName; F5). An unmapped OID fails the parse.
+            byte[] spki = key.getEncoded();
+            if (spki == null) {
+                return null;
+            }
+            String curveName = ecCurveNameFromSpki(spki);
+            if (curveName == null) {
+                return null;
+            }
+            return "EC:" + toHex(x) + ":" + toHex(y) + ":" + curveName;
         }
         String alg = key.getAlgorithm();
         if ("Ed25519".equalsIgnoreCase(alg) || "EdDSA".equalsIgnoreCase(alg)) {
@@ -669,8 +687,14 @@ public final class GoX509 {
             KeyFactory kf = KeyFactory.getInstance("EC");
             ECPrivateKey key =
                     (ECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
-            int fieldSize = key.getParams().getCurve().getField().getFieldSize();
-            String curveName = ecCurveName(fieldSize);
+            // The curve is identified from the PKCS#8 algorithm
+            // identifier's curve OID — never from the field size (F5:
+            // secp256k1 shares P-256's 256-bit field, and mapping by
+            // field size silently relabeled it as secp256r1, yielding
+            // wrong key material instead of a rejection). An unmapped
+            // OID fails the parse, matching gc's rejection.
+            String oid = extractPkcs8CurveOid(der);
+            String curveName = oid == null ? null : ecCurveNameByOid(oid);
             if (curveName == null) {
                 return null;
             }
@@ -864,21 +888,112 @@ public final class GoX509 {
         return null;
     }
 
-    /** Maps an EC field size in bits to a JDK curve name. */
-    private static String ecCurveName(int fieldSize) {
-        if (fieldSize == 224) {
-            return "secp224r1";
+    /**
+     * Reads one DER TLV at pos. Returns {tag, contentStart, contentEnd},
+     * or null if the header is truncated or the length overruns the
+     * input. This is a positional walk — it never scans for tag bytes —
+     * so a value is only ever read from its structural position.
+     */
+    private static int[] readTlv(byte[] der, int pos) {
+        if (pos < 0 || pos + 2 > der.length) {
+            return null;
         }
-        if (fieldSize == 256) {
-            return "secp256r1";
+        int tag = der[pos] & 0xFF;
+        int contentStart = skipLength(der, pos + 1);
+        if (contentStart < 0) {
+            return null;
         }
-        if (fieldSize == 384) {
-            return "secp384r1";
+        int len = derLength(der, pos + 1);
+        // Bound len by the input size first: without this, a crafted
+        // long-form length near 2^31 could overflow contentStart + len
+        // past the bounds check below.
+        if (len < 0 || len > der.length || contentStart + len > der.length) {
+            return null;
         }
-        if (fieldSize == 521) {
-            return "secp521r1";
+        return new int[]{tag, contentStart, contentStart + len};
+    }
+
+    /** Copies der[start:end] (bounds already validated by readTlv). */
+    private static byte[] sliceRange(byte[] der, int start, int end) {
+        byte[] out = new byte[end - start];
+        System.arraycopy(der, start, out, 0, out.length);
+        return out;
+    }
+
+    /**
+     * Extracts the curve OID from a PKCS#8 PrivateKeyInfo's algorithm
+     * identifier, positionally: SEQUENCE { INTEGER, SEQUENCE { OID,
+     * OID }, ... }. Returns the dotted-decimal curve OID, or null if
+     * the structure is not an EC AlgorithmIdentifier with an OID
+     * parameter (including explicit/non-OID parameters, which gc also
+     * rejects for EC keys). The algorithm OID must be id-ecPublicKey
+     * (1.2.840.10045.2.1).
+     */
+    private static String extractPkcs8CurveOid(byte[] der) {
+        int[] top = readTlv(der, 0);
+        if (top == null || top[0] != 0x30) {
+            return null;
         }
-        return null;
+        int[] version = readTlv(der, top[1]);
+        if (version == null || version[0] != 0x02) {
+            return null;
+        }
+        int[] alg = readTlv(der, version[2]);
+        if (alg == null || alg[0] != 0x30) {
+            return null;
+        }
+        return extractAlgIdCurveOid(der, alg[1]);
+    }
+
+    /**
+     * Extracts the curve OID from an SPKI's algorithm identifier,
+     * positionally: SEQUENCE { SEQUENCE { OID, OID }, BIT STRING }.
+     * Returns the dotted-decimal curve OID, or null if the structure
+     * is not an EC AlgorithmIdentifier with an OID parameter.
+     */
+    private static String extractSpkiCurveOid(byte[] spki) {
+        int[] top = readTlv(spki, 0);
+        if (top == null || top[0] != 0x30) {
+            return null;
+        }
+        int[] alg = readTlv(spki, top[1]);
+        if (alg == null || alg[0] != 0x30) {
+            return null;
+        }
+        return extractAlgIdCurveOid(spki, alg[1]);
+    }
+
+    /**
+     * Reads the curve OID out of an AlgorithmIdentifier's content:
+     * OID id-ecPublicKey followed by OID curve. Returns null unless
+     * both elements are present, in order, and OIDs.
+     */
+    private static String extractAlgIdCurveOid(byte[] der, int algContent) {
+        int[] algOid = readTlv(der, algContent);
+        if (algOid == null || algOid[0] != 0x06) {
+            return null;
+        }
+        String algOidStr = decodeOid(sliceRange(der, algOid[1], algOid[2]));
+        if (!"1.2.840.10045.2.1".equals(algOidStr)) {
+            return null;
+        }
+        int[] curveOid = readTlv(der, algOid[2]);
+        if (curveOid == null || curveOid[0] != 0x06) {
+            return null;
+        }
+        return decodeOid(sliceRange(der, curveOid[1], curveOid[2]));
+    }
+
+    /**
+     * Maps an SPKI encoding to a JDK curve name via its algorithm
+     * identifier's curve OID, or null if the OID is absent or unmapped.
+     */
+    private static String ecCurveNameFromSpki(byte[] spki) {
+        String oid = extractSpkiCurveOid(spki);
+        if (oid == null) {
+            return null;
+        }
+        return ecCurveNameByOid(oid);
     }
 
     /** Parses all INTEGERs from a PKCS#1 SEQUENCE. */

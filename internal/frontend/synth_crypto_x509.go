@@ -100,8 +100,8 @@ func graalgoX509EcX(cert any) []byte
 //go:linkname graalgoX509EcY graalgo.x509.ecY
 func graalgoX509EcY(cert any) []byte
 
-//go:linkname graalgoX509EcFieldSize graalgo.x509.ecFieldSize
-func graalgoX509EcFieldSize(cert any) int64
+//go:linkname graalgoX509EcCurveName graalgo.x509.ecCurveName
+func graalgoX509EcCurveName(cert any) string
 
 //go:linkname graalgoX509Ed25519Raw graalgo.x509.ed25519Raw
 func graalgoX509Ed25519Raw(cert any) []byte
@@ -551,21 +551,16 @@ func __mrParsePKIXPublicKeyFromCert(javaCert any, pubAlg string) __mrParsePKIXPu
 	case "EC", "ECDSA":
 		x := graalgoX509EcX(javaCert)
 		y := graalgoX509EcY(javaCert)
-		fs := graalgoX509EcFieldSize(javaCert)
-		if x == nil || y == nil || fs < 0 {
+		name := graalgoX509EcCurveName(javaCert)
+		if x == nil || y == nil {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
 		}
-		var curve elliptic.Curve
-		switch fs {
-		case 224:
-			curve = elliptic.P224()
-		case 256:
-			curve = elliptic.P256()
-		case 384:
-			curve = elliptic.P384()
-		case 521:
-			curve = elliptic.P521()
-		default:
+		// The curve is identified by the name the Java side derived
+		// from the certificate SPKI's curve OID — never by field size
+		// (F5: secp256k1 shares P-256's 256-bit field). An empty or
+		// unmapped name is an unknown curve, matching gc's rejection.
+		curve := curveFromName(name)
+		if curve == nil {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
 		}
 		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil}
@@ -655,34 +650,20 @@ func __parseSpkiComponents(s string) __mrParsePKIXPublicKeyPair {
 		}
 		return __mrParsePKIXPublicKeyPair{&rsa.PublicKey{N: new(big.Int).SetBytes(n), E: e}, nil}
 	case "EC":
-		// "x_hex:y_hex:fieldSize"
+		// "x_hex:y_hex:curveName" — the name is the curve identity the
+		// Java side derived from the SPKI's curve OID, never a field
+		// size (F5: secp256k1 shares P-256's 256-bit field).
 		parts := __splitColon(rest)
 		if len(parts) != 3 {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse EC SPKI")}
 		}
 		x := __hexToBytes(parts[0])
 		y := __hexToBytes(parts[1])
-		fs := 0
-		for i := 0; i < len(parts[2]); i++ {
-			if parts[2][i] < '0' || parts[2][i] > '9' {
-				return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse EC field size")}
-			}
-			fs = fs*10 + int(parts[2][i]-'0')
-		}
 		if x == nil || y == nil {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
 		}
-		var curve elliptic.Curve
-		switch fs {
-		case 224:
-			curve = elliptic.P224()
-		case 256:
-			curve = elliptic.P256()
-		case 384:
-			curve = elliptic.P384()
-		case 521:
-			curve = elliptic.P521()
-		default:
+		curve := curveFromName(parts[2])
+		if curve == nil {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
 		}
 		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil}
