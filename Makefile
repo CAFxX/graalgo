@@ -136,6 +136,13 @@ check:
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
+	python3 .github/scripts/check_no_bridges.py
+	# Markdown links: the local gate checks relative links + anchors only
+	# (--skip-external). The full check incl. live external URLs (~90s,
+	# network-dependent) stays CI-only (.github/workflows/markdown-links.yml);
+	# run it explicitly before pushing doc changes that add external URLs:
+	#   python3 .github/scripts/check_markdown_links.py
+	python3 .github/scripts/check_markdown_links.py --skip-external
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

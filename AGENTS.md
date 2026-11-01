@@ -14,7 +14,13 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   all` regenerates any tracked file differently from what's committed, the
   build fails. **Push only after `make all` is green locally.**
 - `make check` — placeholder / debug-leftover / netpoller / exclusion-list
-  grep gates + gofrontend gofmt/vet/tests.
+  grep gates + gofrontend gofmt/vet/tests, plus the duplicate-FQN, no-bridges,
+  and markdown-link (relative links + anchors) gates — the same gates CI runs,
+  so a locally green `make check` cannot hide a bridge-pattern or doc-link
+  violation. The one CI-only remainder is the live-external-URL half of the
+  markdown link check (`.github/workflows/markdown-links.yml`, ~90s and
+  network-dependent); run it explicitly before pushing doc changes that add
+  external URLs: `python3 .github/scripts/check_markdown_links.py`.
 - `make test` — the full differential suite (30+ minutes). Not per-push;
   for local verification and nightly runs. Invoke explicitly.
 - `make snapshot-check` — re-runs the differential corpus under graalgo and
