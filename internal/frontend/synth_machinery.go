@@ -101,24 +101,19 @@ var syntheticSources = map[string]string{
 	// from. os imports io/fs, io, syscall, time, errors (all synthetic).
 	"os":    syntheticOsSource,
 	"io/fs": syntheticIoFsSource,
-	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
-	// synth_reflect.go). RETIRED: real reflect now compiles from GOROOT
-	// via the disk importer (real-reflect lane). The wire type table
-	// carries field offsets/tags, method tables, and signatures; the
-	// runtime GoRType table is built from it (phases/phase3 p3reflect).
-	// internal/reflectlite is a pure adapter; iter is the minimal generic
-	// sequence declarations.
-	// "reflect": syntheticReflectSource, // RETIRED - uses disk importer
-	// "internal/reflectlite": syntheticReflectliteSource, // RETIRED - real
-	// internal/reflectlite from GOROOT via disk importer (needed by real
-	// reflect and real errors)
+	// P3-M8 (wave 2): synthetic reflect package. RETIRED (review R7,
+	// 2026-11-01): real reflect compiles from GOROOT via the disk
+	// importer (real-reflect lane) and the synthetic source
+	// (synth_reflect.go) is deleted, along with its reflect_m7 pair
+	// types and __-helpers. The wire type table carries field
+	// offsets/tags, method tables, and signatures; the runtime GoRType
+	// table is built from it (phases/phase3 p3reflect).
+	// internal/reflectlite was a pure adapter; iter is the minimal
+	// generic sequence declarations (synth_iter.go). reflect.Type
+	// interface multi-result calls desugar through the general
+	// disk-interface machinery (mr_disk.go interface specs + the
+	// user-interface fallback), not through a synthetic reflect twin.
 	"iter":                 syntheticIterSource,
-	// M7 helpers for reflect (disk-imported): the M7 desugaring table
-	// still needs the __-helpers and pair types (e.g. __reflect_taglookup,
-	// reflectTagPair). They live in the retired synth_reflect.go source,
-	// registered here under a distinct name so getSyntheticPackage works.
-	// The helperPkg override in m7MultiResultFunc points reflect entries here.
-	"reflect_m7": syntheticReflectSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
 	// synth_bytealg.go). internal/bytealg is synthetic-only, like
 	// internal/reflectlite: user imports of internal/* are not admitted by
@@ -900,9 +895,6 @@ func isSyntheticIntrinsic(path, name string) bool {
 	}
 	if path == "math" {
 		return mathIntrinsicNames[name]
-	}
-	if path == "reflect" {
-		return reflectIntrinsicNames[name]
 	}
 	return false
 }

@@ -1865,7 +1865,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M8 (wave 2): synthetic iter package (synth_reflect.go).
+	// P3-M8 (wave 2): synthetic iter package (synth_iter.go).
 	// Self-contained: no synthetic imports.
 	if needIter {
 		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
@@ -1928,16 +1928,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M8 (wave 2): synthetic reflect (synth_reflect.go). The source
-	// imports iter and strconv (unsafe is a builtin surface, not a
-	// synthetic package); iter is self-contained. The reflect->errors
-	// edge was cut by PKG-022 (fieldByIndexError is local); with the
-	// strconv->errors edge also cut (strconvError in synth_strconv.go),
-	// the errors->reflect->strconv->errors cycle is gone and the 130-
-	// source synthetic import graph is acyclic. Dependencies are
-	// imported before reflect itself (package-level initializers may
-	// call synthetic functions).
-	// real-reflect: the real reflect package compiles from GOROOT via the
+	// P3-M8 (wave 2): synthetic reflect. RETIRED (review R7,
+	// 2026-11-01): synth_reflect.go is deleted; no synthetic reflect
+	// source remains. The real reflect package compiles from GOROOT via the
 	// disk importer. importPkgTree merges its transitive closure
 	// dependencies-first through the existing overlay cases and the disk
 	// importer; idempotent via e.importedPkgTree.
@@ -9480,12 +9473,6 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// "math*" wire nodes. Intercepted before the funcByObj lookup.
 	if isMathIntrinsicFunc(fn) {
 		return e.exportMathIntrinsic(c, fn.Name())
-	}
-	// P3-M8 (wave 2, reflect): reflect intrinsics called from within the
-	// synthetic reflect package (e.g. __reflect_tKind in rtype.Kind) lower
-	// to the "reflectop" wire node. Intercepted before the funcByObj lookup.
-	if isReflectIntrinsicFunc(fn) {
-		return e.exportReflectIntrinsic(c, fn.Name())
 	}
 	// P3-M9 (unsafe patterns): crypto/internal/fips140/alias.AnyOverlap and
 	// InexactOverlap use uintptr(unsafe.Pointer(...)) which traps under D5.

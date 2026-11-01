@@ -263,23 +263,13 @@ func hasStaticIfaceMREntry(method string) bool {
 }
 
 // m7MultiResultFuncs is the desugar table for the encoding/* packages
-// (extended P3-M8 to reflect, P3-M9 to math/bits — the mechanism is
+// (extended P3-M9 to math/bits — the mechanism is
 // package-path-keyed, so entries for any synthetic package work).
 // Every entry was verified against the synthetic source it names:
 // helper name, pair struct name, and field names/order match the
 // source's __-helper and pair struct exactly (e.g. base32's AppendDecode
 // desugars through base32DecodeStringPair{b, err} — there is no
 // base32AppendPair).
-//
-// m7HelperPkgOverride maps a package path to the synthetic package
-// holding its M7 __-helpers and pair types. Used when a package was
-// retired from synthetic (e.g. reflect now uses the disk importer)
-// but the M7 desugaring still needs the helpers. The override package
-// must be registered in syntheticSources.
-var m7HelperPkgOverride = map[string]string{
-	"reflect": "reflect_m7",
-}
-
 var m7MultiResultFuncs = []m7MultiResultFunc{
 	// errors: AsType[E error] (P4 — was M7 fail-fast). The pair struct
 	// and helper are generic; the desugar instantiates both with the
@@ -414,18 +404,21 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
-	// P3-M8 (wave 2, reflect): NOTE (fix-redmaster-r42) — the reflect
-	// rows that used to live here (Select, FieldByIndexErr, TryRecv,
-	// MethodByName, FieldByName, FieldByNameFunc, StructTag.Lookup via
-	// the __reflect* helpers + reflectTagPair etc. in reflect_m7) are
+	// P3-M8 (wave 2, reflect): NOTE (fix-redmaster-r42, completed by
+	// review R7 2026-11-01) — the reflect rows that used to live here
+	// (Select, FieldByIndexErr, TryRecv, MethodByName, FieldByName,
+	// FieldByNameFunc, StructTag.Lookup via the __reflect* helpers +
+	// reflectTagPair etc. in the synthetic reflect_m7 twin) were
 	// DELETED, not moved: reflect now compiles from disk, so those
 	// calls take the normal disk MR path (method tables +
-	// __-helpers, e.g. __StructTag_Lookup), while the synth helpers
-	// were never emitted in disk-reflect programs (reflect_m7 is not
-	// imported) — any executed desugar call died in FuncConstNode
+	// __-helpers, e.g. __StructTag_Lookup); the synth helpers were
+	// never emitted in disk-reflect programs (the reflect_m7 twin was
+	// never imported) — any executed desugar call died in FuncConstNode
 	// with "unresolved function object (WS H)" (34_struct_reflect:
-	// Tag.Get → Lookup). Do NOT re-add reflect rows here without also
-	// emitting the helpers' bodies; the disk path is the implementation.
+	// Tag.Get → Lookup). R7 deleted the twin itself (synth_reflect.go)
+	// and the m8 interface rows; Do NOT re-add reflect rows here
+	// without also restoring a pair source; the disk path is the
+	// implementation.
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
@@ -1300,14 +1293,16 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// interfaces with the same shape dispatch too.
 	{"io", "WriteTo", "ioWriteToPair", []string{"n", "err"}},
 	{"io", "ReadFrom", "ioReadFromPair", []string{"n", "err"}},
-	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods.
-	// The itab maps each to the concrete rtype's pair-returning
-	// __-helper (wired via multiResultHelperFor/methodTableEntries); the
-	// pair field names/types are positionally identical to the method's
-	// results (checked by classifyIfaceMultiResultCall).
-	{"reflect", "MethodByName", "reflectMethodPair", []string{"m", "ok"}},
-	{"reflect", "FieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "FieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
+	// P3-M8 (wave 2, reflect) rows DELETED (review R7, 2026-11-01):
+	// reflect retired to the disk importer, so Type interface
+	// multi-result methods (MethodByName, FieldByName, FieldByNameFunc)
+	// desugar through the disk-interface machinery (mr_disk.go
+	// interface specs: __Type_<Method>Pair{f1, f2} with disk result
+	// types) or the general user-interface fallback — not through the
+	// deleted synthetic reflect_m7 pair types. Do NOT re-add reflect
+	// rows here without also restoring a pair source; the disk path
+	// is the implementation (and MethodByName is intercepted to the
+	// reflectop path, fix-redmaster-r43, before dispatch).
 	// P3-M8b (wave 2, crypto): hash.Cloner.Clone and the
 	// encoding.BinaryMarshaler/BinaryAppender methods, dispatched on the
 	// hash.Cloner / encoding.BinaryMarshaler interfaces. The itab maps
@@ -2243,9 +2238,6 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			return nil
 		}
 		helperPkg := mf.pkgPath
-		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
-			helperPkg = override
-		}
 		sp := getSyntheticPackage(helperPkg)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
@@ -2565,9 +2557,6 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			return nil
 		}
 		helperPkg := mf.pkgPath
-		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
-			helperPkg = override
-		}
 		sp := getSyntheticPackage(helperPkg)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
@@ -2611,14 +2600,9 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		// The pair type may live in an override package (m7HelperPkgOverride):
-		// reflect retired from synthetic to the disk importer, but its M7
-		// __-helpers and pair types still live in the synthetic reflect_m7
-		// package. Same pattern as classifyM7MultiResultCall.
+		// The pair type lives in the table's own package (synthetic
+		// sources are looked up by their registered path).
 		helperPkg := m.pkgPath
-		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
-			helperPkg = override
-		}
 		sp := getSyntheticPackage(helperPkg)
 		if sp == nil {
 			continue
@@ -2687,14 +2671,9 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		// The pair type may live in an override package (m7HelperPkgOverride):
-		// reflect retired from synthetic to the disk importer, but its M7
-		// __-helpers and pair types still live in the synthetic reflect_m7
-		// package. Same pattern as classifyM7MultiResultCall.
+		// The pair type lives in the table's own package (synthetic
+		// sources are looked up by their registered path).
 		helperPkg := m.pkgPath
-		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
-			helperPkg = override
-		}
 		sp := getSyntheticPackage(helperPkg)
 		if sp == nil {
 			continue
@@ -3081,9 +3060,6 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 			return nil
 		}
 		helperPkg := mf.pkgPath
-		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
-			helperPkg = override
-		}
 		sp := getSyntheticPackage(helperPkg)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {

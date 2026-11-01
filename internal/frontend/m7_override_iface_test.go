@@ -1,29 +1,30 @@
 package main
 
-// P3-M8 (wave 2, reflect): the m7HelperPkgOverride gap in the interface
-// multi-result classifiers.
+// P3-M8 (wave 2, reflect): reflect.Type interface multi-result calls
+// after the synthetic twin's deletion (review R7, 2026-11-01).
 //
-// classifyIfaceMultiResultCall and classifyIfaceFallbackMultiResultCall
-// must consult m7HelperPkgOverride when resolving the pair type's
-// package: reflect retired from synthetic to the disk importer, but its
-// M7 __-helpers and pair types still live in the synthetic reflect_m7
-// package. The other three classifiers (classifyM7MultiResultCall,
-// classifyIoMultiResultCall, classifyM7MultiResultCallIfaceFallback)
-// already did; the two interface classifiers did not, so any
+// History: reflect retired from synthetic to the disk importer, but
+// its M7 __-helpers and pair types lingered in the synthetic reflect_m7
+// package, reached through the m7HelperPkgOverride ("reflect" ->
+// "reflect_m7") consulted by classifyIfaceMultiResultCall and
+// classifyIfaceFallbackMultiResultCall. Before that override fix, any
 // reflect.Type interface multi-result call (e.g. t.FieldByName("X"))
 // panicked with "gofrontend: no synthetic source for reflect".
 //
-// Red-green: before the fix, TestM7OverrideIfaceReflectMethod panics
-// with that message; after, it exports an ifacemethod node typed as the
-// reflect_m7 pair.
+// R7 completed the retirement: synth_reflect.go is deleted, the
+// override map and the m8 reflect rows are gone, and reflect.Type
+// interface calls desugar through the general disk-interface
+// machinery (mr_disk.go interface specs: __Type_<Method>Pair{f1, f2}
+// with disk result types) or the user-interface fallback. The tests
+// below pin that division of labor and that no reflect_m7 reference
+// survives anywhere in the exported document.
 //
 // fix-redmaster-r43: MethodByName on reflect.Type no longer exports
 // as ifacemethod. Guest MethodByName via ifacemethod dispatch always
 // returns false at runtime (shells carry no uncommon data), so real
 // Type.MethodByName calls are intercepted to the TypeInfo-based
 // reflectop path (typeMethodByName); FieldByName keeps the
-// ifacemethod desugar pinned below. The test still pins the M7
-// requirement (no exporter panic) plus the new division of labor.
+// ifacemethod desugar pinned below.
 
 import (
 	"strings"
@@ -31,13 +32,14 @@ import (
 )
 
 // TestM7OverrideIfaceReflectMethod pins that reflect.Type interface
-// multi-result calls no longer panic the exporter. Before the fix,
-// classifyIfaceMultiResultCall called getSyntheticPackage("reflect")
-// for the m8IfaceMultiResultMethods reflect entries, panicking with
-// "gofrontend: no synthetic source for reflect" (reflect retired from
-// synthetic to the disk importer). After the fix, the classifier
-// consults m7HelperPkgOverride ("reflect" -> "reflect_m7") and the
-// export completes with an ifacemethod desugar.
+// multi-result calls export without the deleted synthetic twin. Before
+// the override fix, classifyIfaceMultiResultCall called
+// getSyntheticPackage("reflect") for the m8IfaceMultiResultMethods
+// reflect entries, panicking with "gofrontend: no synthetic source
+// for reflect" (reflect retired from synthetic to the disk importer).
+// After review R7 the twin is gone entirely: the export completes
+// with an ifacemethod desugar typed by the disk-interface pair, and
+// no "reflect_m7" reference survives in the exported document.
 func TestM7OverrideIfaceReflectMethod(t *testing.T) {
 	const src = `package main
 
@@ -56,10 +58,15 @@ func main() {
 	if err != nil {
 		t.Fatalf("export failed: %v", err)
 	}
+	// R7: the deleted twin must leave no trace in the export.
+	if strings.Contains(string(out), "reflect_m7") {
+		t.Fatal("exported document still references the deleted reflect_m7 twin")
+	}
 	doc := decodeExport(t, out)
 
-	// FieldByName must desugar to an ifacemethod node in main (the
-	// M7 override); MethodByName on reflect.Type must desugar to
+	// FieldByName must desugar to an ifacemethod node in main (via
+	// the disk-interface pair now, not the deleted twin);
+	// MethodByName on reflect.Type must desugar to
 	// a reflectop typeMethodByName node (the fix-redmaster-r43
 	// interception — guest dispatch always returns false).
 	methods := map[string]bool{}
@@ -89,10 +96,11 @@ func main() {
 	}
 }
 
-// TestM7OverrideIfaceStillStructural pins that the override does not
-// loosen the structural guard: a user interface with a FieldByName-shaped
-// method but non-matching result types must NOT be dispatched through
-// the reflect_m7 pair.
+// TestM7OverrideIfaceStillStructural pins that the structural guard
+// survives the twin's deletion: a user interface with a
+// FieldByName-shaped method but non-matching result types must NOT be
+// dispatched through a reflect pair (the deleted reflect_m7 pair is
+// the regression shape this guards against).
 func TestM7OverrideIfaceStillStructural(t *testing.T) {
 	const src = `package main
 
