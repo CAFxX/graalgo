@@ -155,11 +155,11 @@ func (t *graalgoT) Skipped() bool {
 // LIFO, including on FailNow/Skip. A cleanup registered during cleanup
 // is drained too. A cleanup's own panic fails the test loudly instead
 // of replacing the test's outcome. Calling Cleanup after the test has
-// completed panics, matching go test.
+// completed does not panic and never runs, matching go test: gc's
+// common.Cleanup unconditionally appends to the cleanup list, and a
+// list already drained by runCleanup is never drained again, so a late
+// registration is silently orphaned.
 func (t *graalgoT) Cleanup(f func()) {
-	if t.cleanupsDone {
-		panic("graalgo test: Cleanup called after test completed")
-	}
 	t.cleanups = append(t.cleanups, f)
 }
 
@@ -168,7 +168,8 @@ func (t *graalgoT) Cleanup(f func()) {
 // It is idempotent: the main runner and Run each call it once per test.
 // cleanupsDone is set only AFTER the drain loop, so a Cleanup registered
 // during cleanup appends to the list the loop is still draining (and
-// runs), while a Cleanup after runCleanups returns still panics.
+// runs), while a Cleanup after runCleanups returns appends to the
+// already-drained list and never runs, matching go test.
 func (t *graalgoT) runCleanups() {
 	if t.cleanupsDone {
 		return

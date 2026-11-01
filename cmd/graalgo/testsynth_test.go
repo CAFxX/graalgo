@@ -1155,6 +1155,7 @@ var (
 	failNowAfter bool
 	subCleanupRan bool
 	innerCleanupRan bool
+	lateCleanupRan bool
 )
 
 func TestCleanupOrder(t *testing.T) {
@@ -1292,17 +1293,19 @@ func TestInnerCleanupRan(t *testing.T) {
 	}
 }
 
-func TestCleanupAfterCompletionPanics(t *testing.T) {
+func TestCleanupAfterCompletionDropped(t *testing.T) {
 	var sub *testing.T
 	t.Run("sub", func(t *testing.T) { sub = t })
-	func() {
-		defer func() {
-			if r := recover(); r == nil {
-				t.Error("Cleanup after completion did not panic")
-			}
-		}()
-		sub.Cleanup(func() {})
-	}()
+	// No recover: a panic here fails this test. gc's common.Cleanup
+	// never panics on a completed test; it appends to a list that has
+	// already been drained, so the function is silently orphaned.
+	sub.Cleanup(func() { lateCleanupRan = true })
+}
+
+func TestLateCleanupDidNotRun(t *testing.T) {
+	if lateCleanupRan {
+		t.Fatal("Cleanup after completion ran, want dropped (gc parity)")
+	}
 }
 `)
 	testFile := filepath.Join(root, "p_test.go")
@@ -1340,7 +1343,8 @@ func TestCleanupAfterCompletionPanics(t *testing.T) {
 		"--- PASS: TestFailNowDidStop",
 		"--- PASS: TestRegisterDuringCleanup",
 		"--- PASS: TestInnerCleanupRan",
-		"--- PASS: TestCleanupAfterCompletionPanics",
+		"--- PASS: TestCleanupAfterCompletionDropped (",
+		"--- PASS: TestLateCleanupDidNotRun",
 		"--- FAIL: TestCleanupErrorFails",
 		"cleanup boom",
 		"--- FAIL: TestFailNowStops",
@@ -1351,5 +1355,39 @@ func TestCleanupAfterCompletionPanics(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("driver output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// gcLateCleanupRan is set by a Cleanup registered on a completed test
+// under gc; TestCleanupAfterCompletionGCProbeNeverRan asserts it stays
+// false.
+var gcLateCleanupRan bool
+
+// The probe pair runs in source order (go test runs top-level tests in
+// declaration order unless -shuffle is given) and is the gc oracle for
+// the shim's TestCleanupAfterCompletionDropped driver test, so the two
+// can never silently disagree again.
+
+// TestCleanupAfterCompletionGCProbe asserts gc 1.27.1's actual
+// late-Cleanup behavior: common.Cleanup unconditionally appends (no
+// completed-check, no panic path outside fuzz targets), and a list
+// already drained by runCleanup is never drained again — so a Cleanup
+// call after completion neither panics nor ever runs.
+func TestCleanupAfterCompletionGCProbe(t *testing.T) {
+	var sub *testing.T
+	t.Run("sub", func(t *testing.T) { sub = t })
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Cleanup after completion panicked under gc: %v", r)
+			}
+		}()
+		sub.Cleanup(func() { gcLateCleanupRan = true })
+	}()
+}
+
+func TestCleanupAfterCompletionGCProbeNeverRan(t *testing.T) {
+	if gcLateCleanupRan {
+		t.Fatal("Cleanup registered after completion ran under gc, want dropped")
 	}
 }
