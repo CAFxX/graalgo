@@ -5,6 +5,8 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
+import graalgo.launcher.OverlayCheck;
+
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}
  * and Phase-2 {@code SchedTestRunner}): instantiates each registered test
@@ -71,6 +73,10 @@ public final class IfaceTestRunner {
     private IfaceTestRunner() {}
 
     public static void main(String[] args) {
+        // Lane C: same gate as the other test runners — the interop
+        // tests run against the overlay (interop, then runtime, then
+        // truffle classes on this runner's classpath).
+        OverlayCheck.assertOverlayActive();
         int run = 0;
         int failed = 0;
         List<String> failures = new ArrayList<>();

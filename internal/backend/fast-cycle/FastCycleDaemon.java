@@ -182,6 +182,13 @@ public class FastCycleDaemon {
             }
             URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
             Thread.currentThread().setContextClassLoader(cl);
+            // Lane C: the caller-supplied classpath must resolve the
+            // same-FQN overlay to the runtime side before any guest class
+            // loads. The daemon itself is compiled standalone, so it
+            // cannot reference the check at compile time; it loads the
+            // child loader's copy of the shared implementation instead
+            // (never a second copy of the logic).
+            assertOverlayInLoader(cl);
             Class<?> cls = Class.forName(mainClass, true, cl);
 
             // Prefer run(String[]) returning int (no System.exit) over main.
@@ -242,6 +249,10 @@ public class FastCycleDaemon {
             }
             URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
             Thread.currentThread().setContextClassLoader(cl);
+            // Same overlay gate as doRun: a test classpath that resolves
+            // a shadow class to the truffle side (or lacks the runtime
+            // side entirely) fails here, never silently mid-test.
+            assertOverlayInLoader(cl);
             Class<?> cls = Class.forName(testClass, true, cl);
 
             List<java.lang.reflect.Method> methods = new ArrayList<>();
@@ -287,6 +298,32 @@ public class FastCycleDaemon {
 
         String output = buf.toString(StandardCharsets.UTF_8);
         return "EXIT:" + (failed > 0 ? 1 : 0) + "\n" + output.stripTrailing();
+    }
+
+    /**
+     * Runs the shared overlay check from inside the given per-invocation
+     * loader, so the check inspects that loader's classpath order — not
+     * the daemon's own (correct) one. A missing check class is itself a
+     * failure: it means the runtime module's classes are not on the
+     * invocation classpath at all. Any failure throws and is reported
+     * by the caller's handler as a failed invocation, never skipped.
+     */
+    static void assertOverlayInLoader(URLClassLoader cl) {
+        try {
+            Class<?> check = Class.forName("graalgo.launcher.OverlayCheck", true, cl);
+            check.getMethod("assertOverlayActive").invoke(null);
+        } catch (java.lang.reflect.InvocationTargetException ite) {
+            Throwable cause = ite.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new IllegalStateException("overlay check failed", cause);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "FATAL: overlay check unavailable in the invocation classpath: "
+                    + "graalgo.launcher.OverlayCheck could not be loaded from it; "
+                    + "the runtime module's classes must be on the classpath", e);
+        }
     }
 
     // Marker for code that calls System.exit (not currently used, but

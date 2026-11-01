@@ -78,21 +78,23 @@ Related: [Makefile](../Makefile) (root build entry point),
     landed here in the Phase-4 restructure (lane 3); each module has its own
     `Makefile` (plain `javac`, `-Werror`). The runtime module compiles the
     joint round first (its sources plus the truffle module's — the two form
-    a compile cycle), then the truffle module compiles the 8 same-FQN
-    shadow classes against it, then interop builds against both; root
-    `make build` drives the three in that dependency order.
+    a compile cycle), then the truffle module compiles the 7 remaining
+    same-FQN shadow classes against it, then interop builds against both;
+    root `make build` drives the three in that dependency order.
     - [truffle/](../internal/backend/truffle/) — Truffle AST node
       implementations (the compiled program):
       [src/main/java/](../internal/backend/truffle/src/main/java/) holds
-      `graalgo.{nodes,values,frontend}` from `phases/phase1` plus 8
+      `graalgo.{nodes,values,frontend}` from `phases/phase1` plus 7
       same-FQN shadow classes
       ([graalgo/runtime/](../internal/backend/truffle/src/main/java/graalgo/runtime/)
-      × 7, [graalgo/safepoint/](../internal/backend/truffle/src/main/java/graalgo/safepoint/)).
+      × 7).
       The runtime module's phase-2 implementations shadow these at load
       (runtime classes precede truffle classes on the launcher classpaths
-      — the same-FQN overlay mechanism). Five are frozen stubs (`Netpoll`,
-      `ChanOps`, `Scheduler`, `GcInterop` throw
-      `UnsupportedOperationException`; `Safepoint` is a no-op); three are
+      — the same-FQN overlay mechanism; the shared fail-fast is
+      [OverlayCheck](../internal/backend/runtime/src/main/java/graalgo/launcher/OverlayCheck.java),
+      called by every launcher and test runner). Four are frozen stubs
+      (`Netpoll`, `ChanOps`, `Scheduler`, `GcInterop` throw
+      `UnsupportedOperationException`); three are
       full forked implementations with documented deltas (`Panic`: the
       panicnil knob; `GoroutineState`: `ThreadLocal` vthread-scoped holder
       lookup; `Timers`: real `nanotime`, stubbed sleep/timer-heap). The
@@ -221,7 +223,7 @@ new locations.
 | `phases/phase1/frontend/` | [internal/frontend/](../internal/frontend/) |
 | `phases/phase1/src/main/java/{nodes,values,frontend}/` | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) |
 | `phases/phase1/src/main/java/{runtime,launcher,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) |
-| the 8 same-FQN shadow classes (`graalgo/runtime/` × 7, `graalgo/safepoint/Safepoint`) | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (compile with the phase-1 module; shadowed at load by the runtime module's phase-2 implementations — 5 frozen stubs + 3 forked overlays) |
+| the 7 same-FQN shadow classes (`graalgo/runtime/` × 7) | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (compile with the phase-1 module; shadowed at load by the runtime module's phase-2 implementations — 4 frozen stubs + 3 forked overlays; `graalgo/safepoint/Safepoint` retired 2026-11-01, runtime module is its sole definition) |
 | `phases/phase2/src/main/java/{sched,jfr,runtime,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) (scheduler keeps package `graalgo.sched`) |
 | `phases/phase3/src/main/java/{iface,p3*}/` | [internal/backend/interop/src/main/java/](../internal/backend/interop/src/main/java/) |
 | `phases/phase1/lib/` (Truffle jars) | [internal/backend/truffle/lib/](../internal/backend/truffle/lib/) |

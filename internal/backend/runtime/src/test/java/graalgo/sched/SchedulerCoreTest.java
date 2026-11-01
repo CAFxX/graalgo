@@ -323,12 +323,12 @@ public final class SchedulerCoreTest {
     }
 
     /**
-     * Safepoint.poll() resolves to the Phase-2 overlay (not the Phase-1
-     * stub) and delegates to the installed scheduler.
-     * (No specific GG ID; exercises the overlay wiring.)
-     * The same preemption through the REAL replacement
-     * {@code graalgo.safepoint.Safepoint.poll()} — proves the classpath
-     * overlay resolves to Phase-2 semantics.
+     * Safepoint.poll() delegates to the installed scheduler.
+     * (No specific GG ID; exercises the safepoint wiring.) Lane C
+     * (2026-11-01) retired the Phase-1 Safepoint copy, so this is no
+     * longer an overlay-resolution test — the runtime module is the
+     * sole definition — but the preemption behaviour it pins is
+     * unchanged.
      */
     public void testSafepointPollWiring() throws Exception {
         SchedulerCore sched = new SchedulerCore(1, 20_000_000L);

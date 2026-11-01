@@ -5,6 +5,8 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
+import graalgo.launcher.OverlayCheck;
+
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}):
  * instantiates each registered test class and invokes every public no-arg
@@ -48,6 +50,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.sched.TimerDifferentialTest.class);
         TESTS.add(graalgo.sched.launcher.GoDebugTest.class);
         TESTS.add(graalgo.launcher.LauncherOverlayTest.class);
+        TESTS.add(graalgo.launcher.OverlayCheckTest.class);
         TESTS.add(graalgo.runtime.TimerTest.class);
         TESTS.add(graalgo.runtime.FreezeGapTest.class);
         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
@@ -66,6 +69,10 @@ public final class SchedTestRunner {
     }
 
     public static void main(String[] args) {
+        // Lane C: every test in this runner executes against the overlay;
+        // a runner classpath that resolves a shadow class to the truffle
+        // side must fail here, not halfway through the suite.
+        OverlayCheck.assertOverlayActive();
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {

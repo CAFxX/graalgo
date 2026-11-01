@@ -34,8 +34,9 @@ INTEROP_CLASSES="$INTEROP/out/classes"
 # Full runtime classpath (matches graalgo-run overlay order)
 FULL_CP="$RUNTIME_CLASSES:$TRUFFLE_CLASSES:$INTEROP_CLASSES:$LIB_CP"
 
-# The 8 frozen stubs (compile in truffle module, not the joint round)
-STUBS="graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java graalgo/runtime/Timers.java graalgo/safepoint/Safepoint.java"
+# The remaining frozen stubs (compile in truffle module, not the joint round;
+# Safepoint retired 2026-11-01, lane C — its truffle copy was deleted)
+STUBS="graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java graalgo/runtime/Timers.java"
 
 daemon_pid() {
     pgrep -f "FastCycleDaemon" || true

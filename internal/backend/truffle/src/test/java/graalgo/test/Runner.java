@@ -5,6 +5,8 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
+import graalgo.launcher.OverlayCheck;
+
 /**
  * Minimal red-green test runner: instantiates each registered test class and
  * invokes every public no-arg method whose name starts with "test".
@@ -43,6 +45,10 @@ public final class Runner {
     }
 
     public static void main(String[] args) {
+        // Lane C: same gate as the runtime module's test runner — the
+        // truffle tests run against the overlay too (runtime classes
+        // precede truffle classes on this runner's classpath).
+        OverlayCheck.assertOverlayActive();
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {

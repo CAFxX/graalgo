@@ -3,16 +3,17 @@
 # Own javac module: phases/phase1's language-core sources, relocated per the
 # Phase-4 repo restructure (lane 3):
 #   internal/backend/truffle/src/main/java — graalgo.{nodes,values,frontend}
-#     (AST node implementations) + the 8 frozen phase-1 stubs
+#     (AST node implementations) + the 7 remaining frozen phase-1 stubs
 #     (graalgo/runtime/{ChanOps,GcInterop,GoroutineState,Netpoll,Panic,
-#     Scheduler,Timers}, graalgo/safepoint/Safepoint).
+#     Scheduler,Timers}; Safepoint retired 2026-11-01, lane C — its
+#     truffle copy was deleted, see the runtime Makefile).
 #
 # COMPILE CYCLE (read before restructuring): the AST sources call
 # graalgo.runtime.* intrinsics while graalgo.runtime/launcher/safepoint call
 # back into graalgo.values/graalgo.frontend — the two trees cannot compile
 # as separate javac rounds. The RUNTIME module (internal/backend/runtime)
 # therefore compiles the JOINT round: its own sources plus this module's
-# sources except the 8 stubs below. This module's main target compiles only
+# sources except the stubs below. This module's main target compiles only
 # the stubs, against the runtime module's classes: one javac round cannot
 # hold two classes with the same fully-qualified name, and compiling the
 # stubs here preserves the overlay semantics — the runtime classpath puts
@@ -40,7 +41,7 @@ RUNTIME_CLASSES := $(RUNTIME)/out/classes
 LIB := $(wildcard lib/*.jar)
 CP  := $(subst $(eval) ,:,$(strip $(LIB)))
 
-# The 8 frozen phase-1 stubs: the only sources this module's main target
+# The remaining frozen phase-1 stubs: the only sources this module's main target
 # compiles (the rest of src/main/java compiles in the runtime module's joint
 # round — see the cycle note above). Kept as an explicit list: these are
 # historical GG-0020 freeze artifacts that never grow.
@@ -50,8 +51,7 @@ STUBS := src/main/java/graalgo/runtime/ChanOps.java \
   src/main/java/graalgo/runtime/Netpoll.java \
   src/main/java/graalgo/runtime/Panic.java \
   src/main/java/graalgo/runtime/Scheduler.java \
-  src/main/java/graalgo/runtime/Timers.java \
-  src/main/java/graalgo/safepoint/Safepoint.java
+  src/main/java/graalgo/runtime/Timers.java
 SRC_TEST := $(shell find src/test/java -name '*.java')
 SRC_SMOKE := $(shell find src/smoke -name '*.java')
 OUT_MAIN := out/classes

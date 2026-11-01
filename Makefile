@@ -13,7 +13,7 @@
 # (stdlib bindings: Go<->Java interop). Each module has its own Makefile;
 # this file orchestrates. Compile order is load-bearing: the runtime module
 # compiles the joint round first (its sources plus the truffle module's —
-# the two form a compile cycle), then truffle compiles the 8 frozen stubs
+# the two form a compile cycle), then truffle compiles the 7 remaining frozen stubs
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.

@@ -14,7 +14,7 @@
 # cannot compile as separate javac rounds. This module therefore compiles
 # the JOINT round: its own sources plus the truffle module's sources, in a
 # single javac invocation. The truffle module's own main target then
-# compiles only the 8 frozen stubs (against this module's classes); one
+# compiles only the 7 remaining stubs (against this module's classes); one
 # javac round cannot hold two classes with the same fully-qualified name.
 #
 # Classpath order stays load-bearing: runtime/out/classes comes BEFORE
@@ -41,17 +41,22 @@ INTEROP_CLASSES := $(INTEROP)/out/classes
 LIB := $(wildcard $(TRUFFLE)/lib/*.jar)
 CP := $(INTEROP_CLASSES):$(subst $(eval) ,:,$(strip $(LIB)))
 
-# The 8 frozen phase-1 stubs, as paths relative to a src/main/java root.
+# The remaining frozen phase-1 stubs, as paths relative to a src/main/java root.
 # Historical artifacts of the GG-0020 interface freeze: they compile in the
 # truffle module (same-FQN phase-2 replacements compile here), and the
 # runtime classpath order makes the replacements win at load time.
+# Lane C (2026-11-01) retired graalgo/safepoint/Safepoint from this list:
+# its truffle copy was deleted, leaving the runtime module as its sole
+# definition (see docs/arch/shadow-overlay-retirement.md). This list is
+# one leg of the three-way tie enforced by check_duplicate_fqn.py
+# (STUB_REL = inventory B-8 = OverlayCheck.OVERLAY_CLASSES).
 STUB_REL := graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java \
   graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java \
   graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java \
-  graalgo/runtime/Timers.java graalgo/safepoint/Safepoint.java
+  graalgo/runtime/Timers.java
 
 SRC_MAIN := $(shell find src/main/java -name '*.java')
-# Truffle-module sources for the joint round, minus the 8 stubs (compiled
+# Truffle-module sources for the joint round, minus the stubs above (compiled
 # by the truffle module's own main target — see the cycle note above).
 TRUFFLE_SRC := $(filter-out $(addprefix $(TRUFFLE)/src/main/java/,$(STUB_REL)),$(shell find $(TRUFFLE)/src/main/java -name '*.java'))
 SRC_TEST := $(shell find src/test/java -name '*.java')
@@ -60,7 +65,7 @@ OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
 # Runtime classpath: this module's classes FIRST (overlay), then the truffle
-# module's (the 8 stubs, shadowed), then jars.
+# module's (the remaining stubs, shadowed), then jars.
 RUN_CP := $(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 

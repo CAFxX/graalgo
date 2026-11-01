@@ -8,12 +8,18 @@ package graalgo.safepoint;
  * (WS E).
  *
  * <p><strong>Phase-2 implementation</strong> (P2-D8): this class
- * <em>replaces</em> the Phase-1 no-op of the same fully-qualified name.
+ * <em>replaced</em> the Phase-1 no-op of the same fully-qualified name.
  * The Phase-2 classpath puts {@code phase2/out/classes} before
  * {@code phase1/out/classes}, so every {@code poll()} call compiled into
  * the Phase-1 AST resolves here. The signature is byte-identical to the
  * frozen one (bodies are INTERNAL per freeze §3.5 — no ADR/version bump
  * needed); {@code FreezeSignatureTest} keeps passing.
+ *
+ * <p>2026-11-01 (lane C, shadow-overlay retirement pilot): the truffle
+ * module's Phase-1 no-op was deleted, so this is now the <em>sole</em>
+ * definition of the class — the first overlay pair to retire. The
+ * remaining pairs follow the same recipe in
+ * {@code docs/arch/shadow-overlay-retirement.md}.
  *
  * <p>Semantics: quantum check for the calling goroutine
  * (GG-SCHED-0001). When no scheduler is installed (plain Phase-1 runs),

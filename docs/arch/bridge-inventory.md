@@ -176,6 +176,42 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+### B-8. Same-FQN shadow overlay (7 live pairs, retiring)
+
+- **What:** 7 classes exist twice — a truffle-module copy and a
+  runtime-module replacement — with classpath order deciding which one
+  loads. Live pairs (this list is gate-scanned: it must equal
+  `STUB_REL` in the runtime Makefile and `OVERLAY_CLASSES` in the
+  shared check, or
+  [check_duplicate_fqn.py](../../.github/scripts/check_duplicate_fqn.py)
+  fails):
+  - `graalgo.runtime.ChanOps`
+  - `graalgo.runtime.GcInterop`
+  - `graalgo.runtime.GoroutineState`
+  - `graalgo.runtime.Netpoll`
+  - `graalgo.runtime.Panic`
+  - `graalgo.runtime.Scheduler`
+  - `graalgo.runtime.Timers`
+- **Why:** the two backend source trees form a compile cycle (the AST
+  calls runtime intrinsics; the runtime calls back into values/frontend),
+  so the runtime module compiles the joint round while the truffle
+  module compiles only these copies. At load time the runtime
+  classes precede the truffle classes, so the replacements shadow the
+  originals. The shared fail-fast is
+  [OverlayCheck](../../internal/backend/runtime/src/main/java/graalgo/launcher/OverlayCheck.java),
+  called by every launcher and test runner and, reflectively, by each
+  fast-cycle invocation.
+- **Retired already (2026-11-01, lane C pilot):** Safepoint — its
+  truffle no-op was deleted, leaving the runtime module as the sole
+  definition. It is named here by short name deliberately: only the
+  live pairs above are bullets, so the gate's scan sees exactly the
+  live set.
+- **Root-cause fix:** phased retirement, one pair at a time, ending
+  with one definition per class — see
+  [shadow-overlay-retirement.md](shadow-overlay-retirement.md) for the
+  per-class table, the deletion recipe, and the hard end state.
+- **Phase:** 4 (retirement in progress; Safepoint done, 7 to go).
+
 ## Adjudicated non-bridges
 
 Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
