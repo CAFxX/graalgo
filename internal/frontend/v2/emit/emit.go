@@ -351,6 +351,26 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"embedded": []any{},
 			},
 		}
+	case *types.Tuple:
+		// The type of a multi-valued expression: a call returning
+		// several values, or a comma-ok index/receive. It is a type in
+		// its own right, not a basic type: describing it as a basic
+		// named "(int, int)" (the old default branch) made the Java
+		// backend fail with a misleading "unknown basic class" error.
+		// The backend maps "tuple" to a loud multi-value rejection
+		// until tuple unpacking exists.
+		results := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			v := tt.At(i)
+			results = append(results, map[string]any{
+				"name": v.Name(),
+				"type": e.typeID(v.Type()),
+			})
+		}
+		return map[string]any{
+			"kind":   "tuple",
+			"detail": map[string]any{"results": results},
+		}
 	default:
 		return map[string]any{
 			"kind":   "basic",

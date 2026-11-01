@@ -30,6 +30,31 @@ for the design.
       of a 3-file package are byte-identical (canonical JSON encoding);
       proven to fail with the fix reverted
 
+## 2026-11-01 — H1 multi-value fail-fast (lane h1-v2-multivalue)
+
+- [x] `NodeFactoryV2` now fails loudly on multi-value shapes instead of
+      silently dropping values: multi-result `return` (results > 1),
+      single-RHS/multi-LHS assignment (e.g. `a, b = f()`), and var
+      declarations whose name/value counts differ (e.g. `var a, b = f()`).
+      Previously a multi-result return built a tree containing only the
+      first result, a single-RHS assignment reused one child node for
+      every LHS, and a vardecl count mismatch truncated silently.
+- [x] The emitter now describes `*types.Tuple` (the type of a
+      multi-valued call or comma-ok index/receive) as kind `"tuple"`
+      instead of falling through to a basic type named `"(int, int)"`;
+      the Java factory maps a tuple type to a loud multi-value
+      rejection, so a single multi-valued result expression
+      (e.g. `return f()`) fails with a clear message instead of a
+      misleading "unknown basic class" error.
+- [x] Tests: `emit/multivalue_test.go` pins the emitted shapes and the
+      tuple type-table entry; `NodeFactoryV2MultiValueTest` (Java,
+      registered in `graalgo.test.Runner`) asserts loud rejection for
+      all shapes plus positive controls (matched assign/vardecl,
+      single-valued calls, value-less vardecl still build).
+- [ ] Tuple unpacking itself (real multi-value support) is still open
+      work; these checks are the fail-fast placeholder for it, not the
+      implementation.
+
 ## Master merge log
 
 - 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,

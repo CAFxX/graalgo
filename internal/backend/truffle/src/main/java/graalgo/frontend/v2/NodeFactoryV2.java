@@ -218,6 +218,18 @@ public final class NodeFactoryV2 {
                 return GoKind.STRUCT;
             case "interface":
                 return GoKind.INTERFACE;
+            case "tuple":
+                // A multi-valued expression (a call returning several
+                // values, a comma-ok index/receive) has a tuple type.
+                // There is no single GoKind for a tuple, and mapping it
+                // to INTERFACE would silently treat the first value as
+                // the whole result. Every single-value context that asks
+                // for this kind must fail loudly until tuple support
+                // exists; the statement-level checks (return, assign,
+                // vardecl) reject the common shapes first with a more
+                // specific message.
+                throw new FrontendException(where + ": multi-value (tuple) type " +
+                    "not yet supported in v2 (tuple unpacking required)");
             case "named": {
                 // Named type: resolve to the underlying type.
                 Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
@@ -331,26 +343,25 @@ public final class NodeFactoryV2 {
                 if (results.isEmpty()) {
                     return new ReturnNode(new NilNode(GoKind.INTERFACE, null));
                 }
-                // Build all results; for multi-value, wrap in a tuple-like.
-                // v2 currently supports single-value returns directly.
-                // Multi-value uses the first value (documented limitation for
-                // the factory; the emitter produces single-value in practice
-                // for the tested subset).
-                List<GoExprNode> built = new ArrayList<>();
-                for (int i = 0; i < results.size(); i++) {
-                    Object r = results.get(i);
-                    if (!(r instanceof Map)) {
-                        throw new FrontendException(where + ".results[" + i + "]: must be a map");
-                    }
-                    built.add(buildExpr((Map<String, Object>) r, where + ".results[" + i + "]", scope));
+                // Fail fast on multi-value returns: v2 has no tuple or
+                // result-slot representation yet, so returning only the
+                // first result would silently drop the rest (values and
+                // side effects). Reject before building any result, so a
+                // side-effecting later result is never silently skipped.
+                if (results.size() > 1) {
+                    throw new FrontendException(where + ": multi-value return with " +
+                        results.size() + " results not yet supported in v2 " +
+                        "(tuple/result-slot support required)");
                 }
-                if (built.size() == 1) {
-                    return new ReturnNode(built.get(0));
+                Object r = results.get(0);
+                if (!(r instanceof Map)) {
+                    throw new FrontendException(where + ".results[0]: must be a map");
                 }
-                // Multi-result: build a block that evaluates all, return first.
-                // (Full multi-value return requires result slots; the v2
-                // factory uses single-value ReturnNode for the common case.)
-                return new ReturnNode(built.get(0));
+                // A single result expression may itself be multi-valued
+                // (e.g. `return f()` where f returns two values): its type
+                // is a tuple in the type table, and buildExpr rejects it
+                // loudly via goKindForTypeId (see the "tuple" case there).
+                return new ReturnNode(buildExpr((Map<String, Object>) r, where + ".results[0]", scope));
             }
             case "if": {
                 Object initObj = fields.get("init");
@@ -458,6 +469,20 @@ public final class NodeFactoryV2 {
         List<Object> lhsList = getList(fields, "lhs", where);
         List<Object> rhsList = getList(fields, "rhs", where);
 
+        // Fail fast on single-RHS/multi-LHS assignments: the only
+        // checker-valid shape here is a multi-valued RHS (a call returning
+        // several values, or a comma-ok index/receive), which v2 cannot
+        // unpack yet. Reusing the single RHS node for every LHS would
+        // give every LHS the first value and share one Truffle child
+        // between several parents. Reject before building the RHS, so
+        // the failure is about the assignment shape, not about whatever
+        // the RHS happens to be.
+        if (rhsList.size() == 1 && lhsList.size() > 1) {
+            throw new FrontendException(where + ": multi-value assignment with " +
+                lhsList.size() + " LHS targets but a single RHS not yet supported in v2 " +
+                "(tuple unpacking required)");
+        }
+
         boolean isDefine = ":=".equals(tok);
 
         // Build all RHS first (Go evaluates RHS before assigning).
@@ -501,12 +526,12 @@ public final class NodeFactoryV2 {
             Map<String, Object> lmap = (Map<String, Object>) l;
             String lkind = getString(lmap, "kind", where + ".lhs[" + i + "]");
 
-            // RHS: pair up, or use single RHS for all (e.g. a, b = f()).
+            // RHS: pair up positionally. A single RHS for several LHS
+            // targets is rejected above, so any other count difference
+            // here is a malformed document, not an unpacking.
             GoExprNode rhs;
             if (rhsBuilt.size() == lhsList.size()) {
                 rhs = rhsBuilt.get(i);
-            } else if (rhsBuilt.size() == 1) {
-                rhs = rhsBuilt.get(0);
             } else {
                 throw new FrontendException(where + ": mismatched lhs/rhs count");
             }
@@ -575,6 +600,19 @@ public final class NodeFactoryV2 {
                     scope.declareObj(objId, name, k);
                 }
             }
+        }
+
+        // Fail fast on a name/value count mismatch: the only
+        // checker-valid shape with fewer values than names is a single
+        // multi-valued value (e.g. `var a, b = f()`), which v2 cannot
+        // unpack yet, and extra values would have their side effects
+        // silently dropped by the loop bound below. A declaration with
+        // no values at all (zero values) is legitimate and unaffected.
+        if (!values.isEmpty() && values.size() != names.size()) {
+            throw new FrontendException(where + ": var declaration with " +
+                names.size() + " name(s) but " + values.size() +
+                " value(s) not yet supported in v2 " +
+                "(multi-value unpacking required)");
         }
 
         // Build values and assign.
