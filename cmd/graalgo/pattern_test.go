@@ -417,3 +417,203 @@ func TestExpandPatternDirsSymlinkAndNestedModule(t *testing.T) {
 		}
 	}
 }
+
+// TestExpandPatternDirsCleanedSpellingRootRules pins the F5
+// re-review finding: root-ignore rules judge the segments of
+// filepath.Clean(prefix) with "." and ".." dropped — not the
+// resolved root's basename, and with no cwd exemption. Probe N
+// (../testdata/... from testdata) matches no packages, probe Q
+// (../vendor/... from vendor) is the vendor error, and probe U
+// (../... from testdata/x) expands the testdata tree. The remaining
+// cases pin the same rule's edges, all verified against gc 1.27.1:
+// ./... from testdata (L) and from _hidden (V) still expand, a
+// cleaned-away ignored component (X/Y/Z) does not exclude, a
+// testdata ancestor does not exclude its package child (M1), and a
+// vendor ancestor is the vendor error (M2).
+func TestExpandPatternDirsCleanedSpellingRootRules(t *testing.T) {
+	root := patternFixture(t)
+	cleaned := func(ds []string) string {
+		var out []string
+		for _, d := range ds {
+			out = append(out, filepath.Clean(d))
+		}
+		return strings.Join(out, "|")
+	}
+	// Probe N: from testdata, ../testdata/... matches no packages
+	// (empty from expandPatternDirs, "matched no packages" from
+	// resolveFileGroups); the old cwd exemption returned testdata/x.
+	chdir(t, filepath.Join(root, "testdata"))
+	dirs, err := expandPatternDirs("../testdata", "../testdata/...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(../testdata/...): %v", err)
+	}
+	if len(dirs) != 0 {
+		t.Fatalf("expandPatternDirs(../testdata/...) = %v, want empty", dirs)
+	}
+	if _, err := resolveFileGroups([]string{"../testdata/..."}); err == nil || !strings.Contains(err.Error(), "matched no packages") {
+		t.Fatalf("resolveFileGroups(../testdata/...): err = %v, want 'matched no packages'", err)
+	}
+	// Probe Q: from vendor, ../vendor/... is the vendor error; the
+	// old cwd exemption silently returned vendpkg.
+	chdir(t, filepath.Join(root, "vendor"))
+	if _, err := expandPatternDirs("../vendor", "../vendor/..."); err == nil || !strings.Contains(err.Error(), "vendor") {
+		t.Fatalf("expandPatternDirs(../vendor/...): err = %v, want vendor error", err)
+	}
+	// Probe U: from testdata/x, ../... expands the testdata tree
+	// (testdata/x is the only package under it); the resolved-root
+	// rule returned empty here (basename testdata).
+	chdir(t, filepath.Join(root, "testdata", "x"))
+	dirs, err = expandPatternDirs("..", "../...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(../...): %v", err)
+	}
+	if cleaned(dirs) != filepath.Join("..", "x") {
+		t.Fatalf("expandPatternDirs(../...) from testdata/x = %v, want [../x]", dirs)
+	}
+	groups, err := resolveFileGroups([]string{"../..."})
+	if err != nil {
+		t.Fatalf("resolveFileGroups(../...) from testdata/x: %v", err)
+	}
+	if got := groupDirs(t, groups); len(got) != 1 || got[0] != filepath.Join("..", "x") {
+		t.Fatalf("resolveFileGroups(../...) dirs = %v, want [../x]", got)
+	}
+	// Probes L and V: ./... from inside an ignored directory still
+	// expands it — its cleaned spelling has no segment to judge.
+	chdir(t, filepath.Join(root, "testdata"))
+	dirs, err = expandPatternDirs(".", "./...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(./...) from testdata: %v", err)
+	}
+	if cleaned(dirs) != "x" {
+		t.Fatalf("expandPatternDirs(./...) from testdata = %v, want [x]", dirs)
+	}
+	chdir(t, filepath.Join(root, "_hidden"))
+	dirs, err = expandPatternDirs(".", "./...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(./...) from _hidden: %v", err)
+	}
+	if cleaned(dirs) != "." {
+		t.Fatalf("expandPatternDirs(./...) from _hidden = %v, want [.]", dirs)
+	}
+	// Probes X/Y/Z and M1/M2, all from the module root.
+	chdir(t, root)
+	for _, tc := range []struct{ prefix, want string }{
+		{"./testdata/../sub", filepath.Join("sub", "nested")},
+		{"./sub/../onlytest", "onlytest"},
+		{"./vendor/../sub", filepath.Join("sub", "nested")},
+		{"./testdata/x", filepath.Join("testdata", "x")},
+	} {
+		// Recompute the full expected set: the root plus, for the
+		// sub cases, its nested child.
+		dirs, err := expandPatternDirs(tc.prefix, tc.prefix+"/...")
+		if err != nil {
+			t.Fatalf("expandPatternDirs(%q): %v", tc.prefix, err)
+		}
+		if !strings.Contains(cleaned(dirs), tc.want) {
+			t.Fatalf("expandPatternDirs(%q) = %v, want it to contain %q", tc.prefix, dirs, tc.want)
+		}
+	}
+	if _, err := expandPatternDirs("./vendor/vendpkg", "./vendor/vendpkg/..."); err == nil || !strings.Contains(err.Error(), "vendor") {
+		t.Fatalf("expandPatternDirs(./vendor/vendpkg/...): err = %v, want vendor error", err)
+	}
+}
+
+// TestExpandPatternDirsMatchesGoListCleanedRoots is the gc
+// differential for the F5 probes: N, Q, and U must agree with live
+// `go list` from the same directory, as must the cleaned-away and
+// vendor-ancestor edges. It skips when no gc toolchain is on PATH.
+func TestExpandPatternDirsMatchesGoListCleanedRoots(t *testing.T) {
+	root := patternFixture(t)
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go toolchain on PATH; gc differential skipped")
+	}
+	goList := func(dir, pat string) ([]string, error) {
+		cmd := exec.Command(goBin, "list", "-f", "{{.Dir}}", pat)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=")
+		out, err := cmd.Output()
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(string(out)) == "" {
+			return nil, nil
+		}
+		var dirs []string
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			rel, err := filepath.Rel(root, line)
+			if err != nil {
+				t.Fatalf("rel(%q): %v", line, err)
+			}
+			dirs = append(dirs, rel)
+		}
+		return dirs, nil
+	}
+	laneRel := func(dirs []string) []string {
+		var rel []string
+		for _, d := range dirs {
+			abs, err := filepath.Abs(d)
+			if err != nil {
+				t.Fatalf("abs(%q): %v", d, err)
+			}
+			r, err := filepath.Rel(root, abs)
+			if err != nil {
+				t.Fatalf("rel(%q): %v", abs, err)
+			}
+			rel = append(rel, r)
+		}
+		return rel
+	}
+	// Success cases: lane and gc must report the same directories.
+	for _, tc := range []struct{ dir, prefix, pat string }{
+		{filepath.Join(root, "testdata", "x"), "..", "../..."}, // U
+		{filepath.Join(root, "testdata"), ".", "./..."},        // L
+		{filepath.Join(root, "_hidden"), ".", "./..."},         // V
+		{root, "./testdata/../sub", "./testdata/../sub/..."},   // X
+		{root, "./testdata/x", "./testdata/x/..."},             // M1
+	} {
+		chdir(t, tc.dir)
+		got, err := expandPatternDirs(tc.prefix, tc.pat)
+		if err != nil {
+			t.Fatalf("expandPatternDirs(%q) from %s: %v", tc.pat, tc.dir, err)
+		}
+		want, err := goList(tc.dir, tc.pat)
+		if err != nil {
+			t.Fatalf("go list %s from %s: %v", tc.pat, tc.dir, err)
+		}
+		if strings.Join(laneRel(got), "|") != strings.Join(want, "|") {
+			t.Fatalf("%s from %s: expandPatternDirs = %v, go list = %v", tc.pat, tc.dir, laneRel(got), want)
+		}
+	}
+	// Probe N: gc exits 0 with no packages, and the lane matches
+	// nothing — the driver surfaces that as "matched no packages".
+	testdata := filepath.Join(root, "testdata")
+	chdir(t, testdata)
+	got, err := expandPatternDirs("../testdata", "../testdata/...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(../testdata/...): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expandPatternDirs(../testdata/...) = %v, want empty", got)
+	}
+	want, err := goList(testdata, "../testdata/...")
+	if err != nil {
+		t.Fatalf("go list ../testdata/... from testdata: %v", err)
+	}
+	if len(want) != 0 {
+		t.Fatalf("go list ../testdata/... from testdata = %v, want empty", want)
+	}
+	// Probes Q and M2: gc fails and the lane fails, same class.
+	for _, tc := range []struct{ dir, prefix, pat string }{
+		{filepath.Join(root, "vendor"), "../vendor", "../vendor/..."}, // Q
+		{root, "./vendor/vendpkg", "./vendor/vendpkg/..."},            // M2
+	} {
+		if _, err := goList(tc.dir, tc.pat); err == nil {
+			t.Fatalf("go list %s from %s: unexpectedly succeeded", tc.pat, tc.dir)
+		}
+		chdir(t, tc.dir)
+		if _, err := expandPatternDirs(tc.prefix, tc.pat); err == nil || !strings.Contains(err.Error(), "vendor") {
+			t.Fatalf("expandPatternDirs(%q) from %s: err = %v, want vendor error", tc.pat, tc.dir, err)
+		}
+	}
+}

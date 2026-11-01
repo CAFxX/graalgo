@@ -286,14 +286,31 @@ func splitPattern(arg string) (prefix string, isPattern bool, err error) {
 // it). The root directory itself is a candidate unless a root rule
 // below excludes it.
 //
-// The root rules judge the directory the pattern names, not its
-// spelling: the prefix is resolved to an absolute, cleaned path
-// before any rule runs. That is what makes `..` roots work: from a
-// package directory, `../...` resolves to the module root (which gc
-// expands), instead of being rejected for the dot-prefixed spelling
-// "..". The one exemption is the current directory itself: `./...`
-// from inside a directory gc would otherwise ignore (e.g. testdata)
-// still expands it, matching gc, which lists the root package.
+// The two root judgments use different inputs, and conflating them
+// was the F5 regression on fe9e508a. Module containment (below)
+// judges the resolved path: the prefix is resolved to an absolute,
+// cleaned path before that check runs. That is what makes `..` roots
+// work: from a package directory, `../...` resolves to the module
+// root (which gc expands), instead of being rejected for the
+// dot-prefixed spelling "..". The ignore rules, by contrast, judge
+// the pattern's cleaned spelling: the segments of
+// filepath.Clean(prefix) with "." and ".." segments dropped. A
+// remaining "vendor" segment is the vendor error (gc errors for
+// ./vendor/... and for ./vendor/vendpkg/... alike, since vendored
+// packages are not module packages unless listed in
+// vendor/modules.txt). A remaining dot- or underscore-prefixed or
+// "testdata" segment yields empty only when it is the root's own
+// name — the last remaining segment — because gc expands
+// ./testdata/x/... (x is the root; testdata is only an ancestor)
+// while matching no packages for ./testdata/... and for
+// ../testdata/... spelled from inside testdata. There is no cwd
+// exemption: ../vendor/... from inside vendor is the vendor error,
+// and ../testdata/... from inside testdata matches no packages.
+// Conversely, a cleaned-away ignored component does not exclude:
+// ./testdata/../sub/... expands sub. And ./... from inside testdata
+// or _hidden still expands, because its cleaned spelling has no
+// remaining segment to judge — matching gc, which lists the root
+// package there.
 //
 // Module containment is anchored at the main module of the current
 // directory — the nearest go.mod walking up from the cwd, the same
@@ -345,17 +362,24 @@ func expandPatternDirs(prefix, arg string) ([]string, error) {
 		}
 	}
 	// The ignore rules apply to the pattern root itself, not just to
-	// directories reached while descending: gc reports "matched no
-	// packages" for ./testdata/... and ./_hidden/... (verified against
-	// gc 1.27). A vendor root is a different gc error (it requires
-	// vendor/modules.txt), so it fails loudly instead of matching
-	// nothing silently. The rules judge the resolved root directory,
-	// except the cwd itself, which is always a candidate (see above).
-	if cwdAbs, err := filepath.Abs("."); err != nil || absRoot != cwdAbs {
-		switch base := filepath.Base(absRoot); {
-		case base == "vendor":
+	// directories reached while descending, and they judge the
+	// cleaned spelling (see the doc comment above), not the resolved
+	// root and not cwd identity. The containment check above is
+	// unchanged and still judges the resolved path.
+	var segs []string
+	for _, seg := range strings.Split(filepath.Clean(prefix), string(filepath.Separator)) {
+		if seg == "." || seg == ".." || seg == "" {
+			continue
+		}
+		segs = append(segs, seg)
+	}
+	for _, seg := range segs {
+		if seg == "vendor" {
 			return nil, fmt.Errorf("pattern %s: vendor directories are not matched by ... patterns (gc lists them only via vendor/modules.txt)", arg)
-		case strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") || base == "testdata":
+		}
+	}
+	if len(segs) > 0 {
+		if base := segs[len(segs)-1]; strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") || base == "testdata" {
 			return []string{}, nil
 		}
 	}
