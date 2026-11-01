@@ -48,6 +48,9 @@ jobs:
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
 
+      - name: Bridge-inventory count check (review F-05)
+        run: python3 .github/scripts/check_bridge_inventory.py
+
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
         with:
