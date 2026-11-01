@@ -144,6 +144,96 @@ public final class ValuesTest {
         assertEq(1, fm.size(), "NaN key still stored");
     }
 
+    public void testSignedZeroMapKeys() {
+        // L5 (review 2026-11-01-07): equal keys must hash equal. -0.0 is
+        // computed (Copysign-style), never a literal, as in real programs.
+        double negD = Math.copySign(0.0, -1.0);
+        float negF = (float) Math.copySign(0.0, -1.0);
+        assertTrue(GoEquality.equal(negD, 0.0), "-0.0 == +0.0 (f64)");
+        assertTrue(GoEquality.equal(negF, 0.0f), "-0.0 == +0.0 (f32)");
+        assertEq(GoEquality.hash(0.0), GoEquality.hash(negD), "hash f64 signed zero");
+        assertEq(GoEquality.hash(0.0f), GoEquality.hash(negF), "hash f32 signed zero");
+        // Array carriers, signed zero in first and last positions.
+        assertEq(GoEquality.hash(new double[]{0.0, 1.5}),
+                GoEquality.hash(new double[]{negD, 1.5}), "hash double[] signed zero first");
+        assertEq(GoEquality.hash(new double[]{1.5, 0.0}),
+                GoEquality.hash(new double[]{1.5, negD}), "hash double[] signed zero last");
+        assertEq(GoEquality.hash(new float[]{0.0f, 1.5f}),
+                GoEquality.hash(new float[]{negF, 1.5f}), "hash float[] signed zero first");
+        assertEq(GoEquality.hash(new float[]{1.5f, 0.0f}),
+                GoEquality.hash(new float[]{1.5f, negF}), "hash float[] signed zero last");
+        // Complex array carriers, signed zero in each component position.
+        assertEq(GoEquality.hash(new GoComplex64[]{new GoComplex64(0.0, 2.0)}),
+                GoEquality.hash(new GoComplex64[]{new GoComplex64(negD, 2.0)}),
+                "hash complex128[] signed zero re");
+        assertEq(GoEquality.hash(new GoComplex64[]{new GoComplex64(1.0, 0.0)}),
+                GoEquality.hash(new GoComplex64[]{new GoComplex64(1.0, negD)}),
+                "hash complex128[] signed zero im");
+        assertEq(GoEquality.hash(new GoComplex32[]{new GoComplex32(0.0f, 2.0f)}),
+                GoEquality.hash(new GoComplex32[]{new GoComplex32(negF, 2.0f)}),
+                "hash complex64[] signed zero re");
+        assertEq(GoEquality.hash(new GoComplex32[]{new GoComplex32(1.0f, 0.0f)}),
+                GoEquality.hash(new GoComplex32[]{new GoComplex32(1.0f, negF)}),
+                "hash complex64[] signed zero im");
+        // Struct carriers: hash half only. Struct-key GoMap lookup
+        // end-to-end awaits the L1 equals fix (equals is still bitwise),
+        // so assert hash equality here, not map retrieval.
+        GoStructDescriptor d32 = GoStructDescriptor.layout("S32",
+                List.of("x"), List.of(GoKind.FLOAT32));
+        GoStruct sNeg32 = new GoStruct(d32,
+                new long[]{(long) Float.floatToIntBits(negF)}, new Object[0]);
+        GoStruct sPos32 = new GoStruct(d32,
+                new long[]{(long) Float.floatToIntBits(0.0f)}, new Object[0]);
+        assertEq(sPos32.hashCode(), sNeg32.hashCode(), "hash struct f32 signed zero");
+        GoStructDescriptor d64 = GoStructDescriptor.layout("S64",
+                List.of("x"), List.of(GoKind.FLOAT64));
+        GoStruct sNeg64 = new GoStruct(d64,
+                new long[]{Double.doubleToLongBits(negD)}, new Object[0]);
+        GoStruct sPos64 = new GoStruct(d64,
+                new long[]{Double.doubleToLongBits(0.0)}, new Object[0]);
+        assertEq(sPos64.hashCode(), sNeg64.hashCode(), "hash struct f64 signed zero");
+        GoStructDescriptor dMix = GoStructDescriptor.layout("SMix",
+                List.of("n", "x"), List.of(GoKind.INT64, GoKind.FLOAT64));
+        GoStruct mNeg = new GoStruct(dMix,
+                new long[]{7L, Double.doubleToLongBits(negD)}, new Object[0]);
+        GoStruct mPos = new GoStruct(dMix,
+                new long[]{7L, Double.doubleToLongBits(0.0)}, new Object[0]);
+        assertEq(mPos.hashCode(), mNeg.hashCode(), "hash struct mixed signed zero");
+        // Non-zero hashes are bit-identical to the old terms (no drift
+        // for ordinary keys), and NaN keeps its canonical hash.
+        assertEq(Double.hashCode(1.5), GoEquality.hash(1.5), "hash f64 1.5 unchanged");
+        assertEq(Float.hashCode(1.5f), GoEquality.hash(1.5f), "hash f32 1.5 unchanged");
+        assertEq(java.util.Arrays.hashCode(new double[]{1.5, 2.5}),
+                GoEquality.hash(new double[]{1.5, 2.5}), "hash double[] unchanged");
+        assertEq(Double.hashCode(Double.NaN), GoEquality.hash(Double.NaN), "hash NaN unchanged");
+        // GoMap lookups, both directions, across table sizes/loads.
+        for (int hint : new int[]{8, 64, 512}) {
+            GoMap m = new GoMap(hint);
+            m.put(negD, "neg");
+            assertTrue("neg".equals(m.get(0.0)), "GoMap f64 -0.0 -> +0.0 hint=" + hint);
+            GoMap m2 = new GoMap(hint);
+            m2.put(0.0, "pos");
+            assertTrue("pos".equals(m2.get(negD)), "GoMap f64 +0.0 -> -0.0 hint=" + hint);
+            GoMap m3 = new GoMap(hint);
+            m3.put(negF, "negf");
+            assertTrue("negf".equals(m3.get(0.0f)), "GoMap f32 -0.0 -> +0.0 hint=" + hint);
+            GoMap m4 = new GoMap(hint);
+            m4.put(new double[]{negD}, "arr");
+            assertTrue("arr".equals(m4.get(new double[]{0.0})), "GoMap double[] hint=" + hint);
+            GoMap m5 = new GoMap(hint);
+            m5.put(new float[]{negF}, "arrf");
+            assertTrue("arrf".equals(m5.get(new float[]{0.0f})), "GoMap float[] hint=" + hint);
+            GoMap m6 = new GoMap(hint);
+            m6.put(new GoComplex64[]{new GoComplex64(negD, 1.0)}, "cx");
+            assertTrue("cx".equals(m6.get(new GoComplex64[]{new GoComplex64(0.0, 1.0)})),
+                    "GoMap complex128[] hint=" + hint);
+            GoMap m7 = new GoMap(hint);
+            m7.put(new GoComplex32[]{new GoComplex32(negF, 1.0f)}, "cx32");
+            assertTrue("cx32".equals(m7.get(new GoComplex32[]{new GoComplex32(0.0f, 1.0f)})),
+                    "GoMap complex64[] hint=" + hint);
+        }
+    }
+
     public void testGoStruct() {
         GoStructDescriptor d = GoStructDescriptor.layout("T",
                 List.of("a", "b", "s"), List.of(GoKind.INT32, GoKind.STRING, GoKind.BOOL));

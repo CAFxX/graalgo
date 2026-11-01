@@ -274,7 +274,37 @@ public final class GoStruct {
     @Override
     public int hashCode() {
         int h = System.identityHashCode(descriptor);
-        h = 31 * h + Arrays.hashCode(longs);
+        // L5 (review 2026-11-01-07): hash the longs carrier field by
+        // field instead of Arrays.hashCode(longs), so float fields
+        // canonicalize -0.0 to +0.0 exactly as GoEquality.hash does for
+        // scalar floats. Every other slot contributes precisely the
+        // Arrays.hashCode(long[]) term (31 * h + (int)(v ^ (v >>> 32))),
+        // so hashes are unchanged except for signed-zero float fields.
+        // Descriptor layout assigns longs indices sequentially in field
+        // order, so iterating fields visits the longs slots in order.
+        // (Full struct-key map lookup still awaits the L1 equals fix:
+        // equals is currently bitwise, so a -0.0/+0.0 struct pair is not
+        // yet equal — but after L1 it must hash equal, which this gives.)
+        int lh = 1;
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long v = longs[f.index()];
+            int term;
+            if (f.kind() == GoKind.FLOAT32) {
+                // Stored as (long) Float.floatToIntBits (sign-extended);
+                // (int) recovers the bits under either sign-extension.
+                term = Float.intBitsToFloat((int) v) == 0.0f ? 0 : (int) (v ^ (v >>> 32));
+            } else if (f.kind().isFloatKind()) {
+                // FLOAT64 / UNTYPED_FLOAT, stored as Double bits.
+                term = Double.longBitsToDouble(v) == 0.0 ? 0 : (int) (v ^ (v >>> 32));
+            } else {
+                term = (int) (v ^ (v >>> 32));
+            }
+            lh = 31 * lh + term;
+        }
+        h = 31 * h + lh;
         for (Object o : objects) {
             h = 31 * h + GoEquality.hash(o);
         }

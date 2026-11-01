@@ -171,10 +171,10 @@ public final class GoEquality {
             return Integer.hashCode(i);
         }
         if (key instanceof Double d) {
-            return Double.hashCode(d);
+            return doubleHash(d);
         }
         if (key instanceof Float f) {
-            return Float.hashCode(f);
+            return floatHash(f);
         }
         if (key instanceof Boolean b) {
             return Boolean.hashCode(b);
@@ -210,30 +210,43 @@ public final class GoEquality {
             return java.util.Arrays.hashCode(ia);
         }
         if (key instanceof double[] da) {
-            return java.util.Arrays.hashCode(da);
+            // L5 (review 2026-11-01-07): Arrays.hashCode(double[]) terms
+            // verbatim, except -0.0 canonicalized to +0.0 (see doubleHash).
+            int h = 1;
+            for (double v : da) {
+                h = 31 * h + doubleHash(v);
+            }
+            return h;
         }
         if (key instanceof float[] fa) {
-            // P3-M9 (arrdispatch): [N]float32 carrier hash.
-            return java.util.Arrays.hashCode(fa);
+            // P3-M9 (arrdispatch): [N]float32 carrier hash; L5: same
+            // Arrays.hashCode(float[]) terms, except -0.0 canonicalized.
+            int h = 1;
+            for (float v : fa) {
+                h = 31 * h + floatHash(v);
+            }
+            return h;
         }
         if (key instanceof GoComplex32[] ca) {
             // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
             // with equal above (null elements hash as the zero value).
+            // L5: -0.0 components canonicalized, as equal treats -0.0 == 0.0.
             int h = 1;
             for (GoComplex32 c : ca) {
                 GoComplex32 z = c == null ? GoComplex32.ZERO : c;
-                h = 31 * h + Float.hashCode(z.re());
-                h = 31 * h + Float.hashCode(z.im());
+                h = 31 * h + floatHash(z.re());
+                h = 31 * h + floatHash(z.im());
             }
             return h;
         }
         if (key instanceof GoComplex64[] ca) {
             // P3-M9 (arrdispatch): [N]complex128 carrier hash.
+            // L5: -0.0 components canonicalized, as for GoComplex32[].
             int h = 1;
             for (GoComplex64 c : ca) {
                 GoComplex64 z = c == null ? GoComplex64.ZERO : c;
-                h = 31 * h + Double.hashCode(z.re());
-                h = 31 * h + Double.hashCode(z.im());
+                h = 31 * h + doubleHash(z.re());
+                h = 31 * h + doubleHash(z.im());
             }
             return h;
         }
@@ -249,5 +262,22 @@ public final class GoEquality {
         }
         // Opaque reference keys (pointers, interfaces): identity hash.
         return System.identityHashCode(key);
+    }
+
+    /**
+     * Hash of a float64 value consistent with {@link #equal}: IEEE
+     * {@code ==} treats {@code -0.0 == 0.0}, but {@link Double#hashCode}
+     * distinguishes them, so canonicalize signed zero to {@code +0.0}
+     * (L5, review 2026-11-01-07). NaN is untouched: it never equals
+     * anything, so its hash value is unconstrained by the contract.
+     * Identical to {@code Double.hashCode} for every non-zero value.
+     */
+    private static int doubleHash(double v) {
+        return v == 0.0 ? 0 : Double.hashCode(v);
+    }
+
+    /** Float32 counterpart of {@link #doubleHash(double)}. */
+    private static int floatHash(float v) {
+        return v == 0.0f ? 0 : Float.hashCode(v);
     }
 }
