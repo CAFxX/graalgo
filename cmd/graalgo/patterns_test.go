@@ -205,6 +205,44 @@ func TestResolveFilesDotDotDot(t *testing.T) {
 	}
 }
 
+// TestResolveFilesIgnoresIgnoredFiles pins the go/build rule that
+// files starting with "." or "_" are not part of a package: they must
+// not be returned by directory expansion (or they would be gated by
+// build/run although gc ignores them), while _test.go files are still
+// returned here — the callers that must exclude them filter later.
+func TestResolveFilesIgnoresIgnoredFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.go", "package p\n")
+	writeFile(t, root, "_foo.go", "package p\n")
+	writeFile(t, root, ".dot.go", "package p\n")
+	writeFile(t, root, "b_test.go", "package p\n")
+	chdirTo(t, root)
+
+	got, err := resolveFiles([]string{"."})
+	if err != nil {
+		t.Fatalf("resolveFiles(.): %v", err)
+	}
+	want := []string{"a.go", "b_test.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolveFiles(.) = %v, want %v", got, want)
+	}
+	if got := nonTestGoFiles("."); !reflect.DeepEqual(got, []string{"a.go"}) {
+		t.Fatalf("nonTestGoFiles(.) = %v, want [a.go]", got)
+	}
+}
+
+// TestCmdBuildExpandedRejectsMixedFileArgs pins the loud rejection of
+// `graalgo build ./... file.go`: widening the file to its directory
+// would silently build something the user did not ask for. This fails
+// before any frontend gating, so no backend is needed.
+func TestCmdBuildExpandedRejectsMixedFileArgs(t *testing.T) {
+	root := fixtureModule(t)
+	chdirTo(t, root)
+	if code := cmdBuildExpanded("", buildFlags{pkgs: []string{"./...", "root.go"}}); code != 2 {
+		t.Fatalf("cmdBuildExpanded(./... + file): exit %d, want 2 (loud rejection)", code)
+	}
+}
+
 func TestExpandDotDotDotNoPackages(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "README.txt", "no Go files\n")

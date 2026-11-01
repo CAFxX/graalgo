@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -238,15 +239,41 @@ func graalgoRunProgram(root string, args []string) int {
 	return 0
 }
 
+// consideredGoFile reports whether the go tool would consider a .go
+// file as part of a package directory: files whose base name starts
+// with "." or "_" are ignored by go/build. The driver must apply the
+// same rule, or a lone _foo.go would make a directory look buildable
+// and a _foo.go beside a.go would be gated although gc ignores it.
+func consideredGoFile(path string) bool {
+	base := filepath.Base(path)
+	return !strings.HasPrefix(base, ".") && !strings.HasPrefix(base, "_")
+}
+
+// filterConsidered returns only the files the go tool would consider
+// as part of a package directory (see consideredGoFile).
+func filterConsidered(files []string) []string {
+	var out []string
+	for _, f := range files {
+		if consideredGoFile(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // resolveFiles turns package/file arguments into a list of .go files.
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
+// Files the go tool ignores (see consideredGoFile) are excluded at
+// every expansion site; _test.go files are included here and filtered
+// by the callers that must exclude them (build, run).
 func resolveFiles(args []string) ([]string, error) {
 	if len(args) == 0 {
 		matches, err := filepath.Glob("*.go")
 		if err != nil {
 			return nil, err
 		}
+		matches = filterConsidered(matches)
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("no Go files in current directory")
 		}
@@ -266,7 +293,7 @@ func resolveFiles(args []string) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				files = append(files, matches...)
+				files = append(files, filterConsidered(matches)...)
 			}
 			continue
 		}
@@ -288,7 +315,7 @@ func resolveFiles(args []string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, matches...)
+			files = append(files, filterConsidered(matches)...)
 			continue
 		}
 		files = append(files, a)

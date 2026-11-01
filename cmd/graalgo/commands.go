@@ -299,11 +299,12 @@ func isMainPackage(pkgFiles []string) bool {
 }
 
 // nonTestGoFiles returns the .go files in dir excluding _test.go files,
-// like `go build` (test files are not part of the package build).
+// like `go build` (test files are not part of the package build), and
+// excluding files the go tool ignores (see consideredGoFile).
 func nonTestGoFiles(dir string) []string {
 	matches, _ := filepath.Glob(filepath.Join(dir, "*.go"))
 	var out []string
-	for _, f := range matches {
+	for _, f := range filterConsidered(matches) {
 		if !strings.HasSuffix(f, "_test.go") {
 			out = append(out, f)
 		}
@@ -323,6 +324,20 @@ func nonTestGoFiles(dir string) []string {
 //   - -o with multiple buildable packages is a loud error, like gc's
 //     "cannot write multiple packages".
 func cmdBuildExpanded(root string, bf buildFlags) int {
+	// A file argument cannot be mixed with ./...: resolveTestDirs
+	// would silently widen it to its whole directory, while `go build`
+	// treats named files as their own ad-hoc package. Reject loudly
+	// rather than build something the user did not ask for. (Directory
+	// arguments mix freely: they are packages, like the expansion.)
+	for _, p := range bf.pkgs {
+		if p == "./..." {
+			continue
+		}
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "graalgo build: cannot mix ./... with file argument %q; build files separately\n", p)
+			return 2
+		}
+	}
 	dirs, err := resolveTestDirs(bf.pkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
