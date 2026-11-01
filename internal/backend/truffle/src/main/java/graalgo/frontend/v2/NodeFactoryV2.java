@@ -30,6 +30,7 @@ import graalgo.frontend.MakeNode;
 import graalgo.frontend.NewNode;
 import graalgo.frontend.NilNode;
 import graalgo.frontend.PanicBuiltinNode;
+import graalgo.frontend.PrintNode;
 import graalgo.frontend.RangeArrayNode;
 import graalgo.frontend.RangeIntNode;
 import graalgo.frontend.RangeMapNode;
@@ -1107,12 +1108,13 @@ public final class NodeFactoryV2 {
             }
             case "print":
             case "println": {
-                // print/println write to stderr. For v2, evaluate args
-                // for side effects and return nil.
-                if (args.isEmpty()) {
-                    return new NilNode(GoKind.INTERFACE, null);
-                }
-                return args.get(0);
+                // print/println write to stderr (gc parity — see
+                // BuiltinPrint). Reuse v1's PrintNode: it evaluates every
+                // argument in order and writes all of them. Returning the
+                // first argument (or nil) instead would silently drop the
+                // output and arguments 2..n — the G3 silent drop.
+                return new PrintNode("println".equals(builtin),
+                    args.toArray(new GoExprNode[0]));
             }
             case "delete": {
                 if (args.size() != 2) {
