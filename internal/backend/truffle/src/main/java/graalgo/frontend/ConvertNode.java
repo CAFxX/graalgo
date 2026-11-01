@@ -140,7 +140,28 @@ public final class ConvertNode extends GoExprNode {
         }
         if (from.isFloatKind()) {
             double d = from == GoKind.FLOAT32 ? (double) child.executeFloat(frame) : child.executeDouble(frame);
-            return to == GoKind.UINT64 ? GoConvert.floatToUint64(d) : GoConvert.floatToInt64(d);
+            if (to == GoKind.UINT64) {
+                return GoConvert.floatToUint64(d);
+            }
+            if (to == GoKind.INT64 || !to.isIntKind()) {
+                return GoConvert.floatToInt64(d);
+            }
+            // Review-2026-11-01-07 L3: sub-64-bit targets must go through
+            // the SAME 32-bit conversion executeInt uses, then extend —
+            // not merely mask the 64-bit conversion. gc's rule is by
+            // width, not signedness: every sub-64-bit conversion goes via
+            // the saturating 32-bit conversion (int32(3e9) is
+            // -2147483648, uint16(3e9)/uint16(5e9) are 0 via the saturated
+            // int32), EXCEPT uint32, which truncates via int64
+            // (uint32(5e9) is 705032704). Masking the int64 result would
+            // give int32(3e9) = -1294967296 and uint16(3e9) = 24064,
+            // disagreeing with both gc and executeInt. This keeps
+            // executeLong == sign/zero-extended executeInt, which
+            // comparisons (via BinaryOpNode.executeBoolean), indices
+            // (IndexNode), and slice bounds (SliceExprNode.readBound)
+            // rely on.
+            int w = to == GoKind.UINT32 ? GoConvert.floatToUint32(d) : GoConvert.floatToInt32(d);
+            return extendLong(w, to);
         }
         // int/uint -> int64/uint64: the child's extended long is already exact.
         return extendLong(child.executeLong(frame), to);

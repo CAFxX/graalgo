@@ -89,6 +89,12 @@ public final class ArithmeticCorpusTest {
     // PKG-026: complex arithmetic (add/sub/mul/div on complex64/complex128,
     // negation, untyped-constant operands, complex64->complex128 widening).
     public void testAr18Complex() throws Exception { checkProgram("ar18_complex"); }
+    // Review-2026-11-01-07 L3: float→sub-64-bit-int conversions read via
+    // executeLong (comparisons, indices, slice bounds) must match gc,
+    // including signed saturation (int32(3e9) == -2147483648, so the
+    // int32(f2) == int32(-1294967296) comparison is false) and unsigned
+    // truncation via int64 (uint32(5e9) == 705032704).
+    public void testAr19ConvFloatLong() throws Exception { checkProgram("ar19_conv_float_long"); }
 
     /**
      * Runs one corpus program through both backends and asserts every
