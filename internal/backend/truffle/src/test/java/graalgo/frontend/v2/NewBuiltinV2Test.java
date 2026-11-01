@@ -7,6 +7,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.ConstNode;
 import graalgo.frontend.DerefNode;
+import graalgo.frontend.FrontendException;
 import graalgo.frontend.DerefWriteNode;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.NewNode;
@@ -114,13 +115,24 @@ public final class NewBuiltinV2Test {
 
     /** Builds a v2 document whose single function declares {@code v = new(T)}. */
     private static byte[] newDocument(int resultTypeId) {
-        Map<String, Object> call = map("kind", "call",
-                "fields", map(
-                        "fun", map("kind", "ident",
-                                "fields", map("name", "new", "builtin", "new")),
-                        "args", list(),
-                        "builtin", "new",
-                        "type", (long) resultTypeId));
+        return newDocument(resultTypeId, list(), true);
+    }
+
+    /**
+     * Generalized {@link #newDocument(int)}: the call takes the given value
+     * arguments, and omits its result type id when {@code includeType} is
+     * false (the declared type of {@code v} stays {@code resultTypeId}).
+     */
+    private static byte[] newDocument(int resultTypeId, List<Object> args, boolean includeType) {
+        Map<String, Object> callFields = map(
+                "fun", map("kind", "ident",
+                        "fields", map("name", "new", "builtin", "new")),
+                "args", args,
+                "builtin", "new");
+        if (includeType) {
+            callFields.put("type", (long) resultTypeId);
+        }
+        Map<String, Object> call = map("kind", "call", "fields", callFields);
         Map<String, Object> vardecl = map("kind", "vardecl",
                 "fields", map(
                         "names", list("v"),
@@ -141,6 +153,38 @@ public final class NewBuiltinV2Test {
                 "funcs", list(func),
                 "globals", list());
         return encode(doc);
+    }
+
+    /**
+     * Asserts building the document fails with a {@link FrontendException}
+     * whose message names the expected fail-loudly guard. The message check
+     * matters: it proves the failure came from the {@code new} guard under
+     * test, not from some earlier document validation.
+     */
+    private static void expectFrontendException(byte[] doc, String expectedMessage, String what)
+            throws Exception {
+        Source source = Source.newBuilder("go", "", "test").build();
+        try {
+            new NodeFactoryV2(source).buildProgram(doc);
+        } catch (FrontendException e) {
+            check(e.getMessage() != null && e.getMessage().contains(expectedMessage),
+                    what + " must fail with FrontendException naming \"" + expectedMessage
+                            + "\", got: " + e.getMessage());
+            return;
+        }
+        throw new AssertionError(what + " must fail with FrontendException, but buildProgram succeeded");
+    }
+
+    /** A value-argument expression that builds cleanly (builtin {@code true}). */
+    private static Map<String, Object> trueArg() {
+        return map("kind", "ident",
+                "fields", map("name", "true", "builtin", "true"));
+    }
+
+    /** A value-argument expression that builds cleanly (builtin {@code false}). */
+    private static Map<String, Object> falseArg() {
+        return map("kind", "ident",
+                "fields", map("name", "false", "builtin", "false"));
     }
 
     /** Minimal encoder for the v2 wire format (see BinaryDecoder). */
@@ -319,5 +363,34 @@ public final class NewBuiltinV2Test {
         check(o instanceof GoPointer, "new(*int) must return a GoPointer, got " + o);
         GoPointer p = (GoPointer) o;
         check(p.referent() == null, "new(*int) zero value must be nil, got " + p.referent());
+    }
+
+    public void testNewWithValueArgument() throws Exception {
+        // One value argument: the guard fires before any allocation.
+        expectFrontendException(
+                newDocument(T_PTR_INT, list(trueArg()), true),
+                "new takes no value arguments",
+                "new(int) with one value argument");
+        // Several value arguments: same guard, not an arity-dependent path.
+        expectFrontendException(
+                newDocument(T_PTR_INT, list(trueArg(), falseArg()), true),
+                "new takes no value arguments",
+                "new(int) with two value arguments");
+    }
+
+    public void testNewWithoutResultType() throws Exception {
+        expectFrontendException(
+                newDocument(T_PTR_INT, list(), false),
+                "new without a result type id",
+                "new with no result type id");
+    }
+
+    public void testNewWithNonPointerResultType() throws Exception {
+        // int is a basic type, not a pointer type: the guard fires before
+        // any element resolution.
+        expectFrontendException(
+                newDocument(T_INT, list(), true),
+                "new result is not a pointer type",
+                "new with a non-pointer result type");
     }
 }
