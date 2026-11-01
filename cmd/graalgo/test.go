@@ -40,6 +40,9 @@ func cmdTest(root string, args []string) int {
 Test the named packages. Runs each package's tests through the
 graalgo backend and reports pass/fail.
 
+With ./..., tests every package under the current directory
+(vendor/, hidden, testdata, and nested-module directories excluded).
+
 Flags:
 	-v		verbose output
 	-run=regexp	run only tests matching regexp
@@ -139,7 +142,19 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 	var dirs []string
 	for _, p := range pkgs {
 		if p == "./..." {
-			return nil, fmt.Errorf("./... not yet supported")
+			// Expand to every package directory under the current
+			// directory (see patterns.go); directories with no Go
+			// files, vendor/, hidden, testdata, and nested modules
+			// are excluded, as in `go list ./...`.
+			expanded, err := expandDotDotDot()
+			if err != nil {
+				return nil, err
+			}
+			dirs = append(dirs, expanded...)
+			continue
+		}
+		if err := rejectOtherPattern(p); err != nil {
+			return nil, err
 		}
 		fi, err := os.Stat(p)
 		if err != nil {
@@ -152,7 +167,9 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 		}
 		dirs = append(dirs, p)
 	}
-	return dirs, nil
+	// Like `go test`, each package is tested once even if it is
+	// named (or matched) more than once.
+	return dedupDirs(dirs), nil
 }
 
 type testRunner struct {

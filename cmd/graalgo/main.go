@@ -113,6 +113,11 @@ backend. With no package arguments, builds the package in the current
 directory. The default artifact name mirrors go build (the directory or
 first file base name); -o names the output explicitly.
 
+With ./..., every package under the current directory is validated
+(vendor/, hidden, testdata, and nested-module directories excluded);
+like go build, no artifact is emitted when more than one package
+matches, and -o with multiple packages is an error.
+
 Flags:
 	-o file		output artifact path
 	-ldflags=flags	linker flags (not yet supported)
@@ -250,7 +255,23 @@ func resolveFiles(args []string) ([]string, error) {
 	var files []string
 	for _, a := range args {
 		if a == "./..." {
-			return nil, fmt.Errorf("./... not yet supported")
+			// Expand to the .go files of every package directory
+			// under the current directory (see patterns.go).
+			dirs, err := expandDotDotDot()
+			if err != nil {
+				return nil, err
+			}
+			for _, d := range dirs {
+				matches, err := filepath.Glob(filepath.Join(d, "*.go"))
+				if err != nil {
+					return nil, err
+				}
+				files = append(files, matches...)
+			}
+			continue
+		}
+		if err := rejectOtherPattern(a); err != nil {
+			return nil, err
 		}
 		fi, err := os.Stat(a)
 		if err != nil {
@@ -275,5 +296,5 @@ func resolveFiles(args []string) ([]string, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no Go files matched")
 	}
-	return files, nil
+	return dedupStrings(files), nil
 }
