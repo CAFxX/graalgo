@@ -104,7 +104,10 @@ public final class ChanBuilderTest {
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"bool\",\"name\":\"bool\"}}"
             + "]";
 
-    private static final String POS = "{\"line\":1,\"col\":1,\"len\":1}";
+    // Every pos carries "file":0: the multifile wire format requires pos.file
+    // (NodeFactory.sectionFor selects sources[fileIdx]); 0 is this test's
+    // single Source. Same fix as SectionClampTest's DOC_OUT_OF_RANGE.
+    private static final String POS = "{\"file\":0,\"line\":1,\"col\":1,\"len\":1}";
 
     private NodeFactory factory;
     private NodeFactory.BuildCtx ctx;

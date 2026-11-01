@@ -169,7 +169,12 @@ test-ci: build
 # failures are fixed (see test-p3frontend below). Cost control is the
 # skip lists, documented in the backend Makefiles — not omission.
 # /tmp is a 512M tmpfs: keep go build/test temps on persistent disk.
-UNIT_TMP := $(CURDIR)/.tmp/unit
+# But NOT inside the repo: t.TempDir() under $(CURDIR) lets the go tool
+# discover the repo's own go.mod by walking up, which breaks tests that
+# depend on temp-module isolation (vet TestStdVersion's "no go.mod"
+# case reads the repo's "go 1.21" directive and fails). ~/.cache is
+# persistent disk outside every module.
+UNIT_TMP := $(HOME)/.cache/graalgo-unit-tmp
 test-unit: build
 	$(MAKE) -C internal/backend/truffle test-unit
 	$(MAKE) -C internal/backend/runtime test-unit

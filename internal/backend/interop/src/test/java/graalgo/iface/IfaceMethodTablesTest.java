@@ -176,20 +176,32 @@ public final class IfaceMethodTablesTest {
     }
 
     /**
-     * A method objID missing from Program.functions() fails fast naming
-     * the descriptor, method, and objID.
+     * A method objID missing from Program.functions() is SKIPPED with a
+     * warning, not failed: disk-MR stubs are vestigial (their calls are
+     * desugared to the __-helper), so the entry carries no resolvable
+     * function (d92e11fd). The old fail-fast contract retired with that
+     * change; this test pins the skip: resolving DOC with only objIDs
+     * 7 and 8 succeeds, keeps both M entries, and drops N (obj 9).
      * verifies: GG-0014
      */
-    public void testMissingObjIdFailsFast() {
-        try {
-            IfaceMethodTables.resolve(parseDoc(DOC), Map.of(7, goFunc(), 8, goFunc()));
-        } catch (FrontendException fe) {
-            String msg = fe.getMessage();
-            assertTrue(msg.contains("\"N\""), "names the method: " + msg);
-            assertTrue(msg.contains("9"), "names the objID: " + msg);
-            return;
-        }
-        throw new AssertionError("expected FrontendException for missing objID 9");
+    public void testMissingObjIdSkipped() {
+        GoFunc fm = goFunc();
+        GoFunc fmp = goFunc();
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(DOC), Map.of(7, fm, 8, fmp));
+        assertEquals(2, out.size(), "two descriptors with methods");
+        IfaceMethodTarget mt = out.get("main.T").get("M");
+        assertTrue(mt != null, "main.T keeps M");
+        assertTrue(mt.func() == fm, "M resolves to obj 7");
+        String ptrName = DescriptorNames.descriptorName(
+                new graalgo.frontend.TypeTable(
+                        ((graalgo.frontend.Json.Object) graalgo.frontend.Json.parse(DOC))
+                                .array("types", "t")),
+                2);
+        Map<String, IfaceMethodTarget> ptrMethods = out.get(ptrName);
+        assertTrue(ptrMethods != null, "pointer entry present under " + ptrName);
+        assertTrue(ptrMethods.get("M").func() == fmp, "M resolves to obj 8");
+        assertTrue(ptrMethods.get("N") == null, "N (unknown obj 9) is skipped");
     }
 
     /**

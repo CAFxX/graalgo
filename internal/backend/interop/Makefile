@@ -85,7 +85,13 @@ test: main $(OUT_TEST)/.built
 # is skipped here: nothing in this runner runs a multi-program corpus.
 # Failures exit non-zero via the runner (exit 1 on any failure).
 test-unit: main $(OUT_TEST)/.built
-	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
+	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the
+	# LinknameEndToEnd/RangeConcurrent tests would fill it and fail
+	# with truncated-JSON / ENOSPC errors (same pattern as the truffle
+	# and runtime Makefiles, which already redirect to out/test-tmp).
+	mkdir -p out/test-tmp
+	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
+	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(OUT_MAIN):$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)" -d $(OUT_TEST) $(SRC_TEST)

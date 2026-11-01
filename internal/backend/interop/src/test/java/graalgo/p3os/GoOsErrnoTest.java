@@ -74,24 +74,21 @@ public final class GoOsErrnoTest {
         return GoString.fromUtf8(s);
     }
 
+    // D5 (commit 9c92153d): []byte is byte[]-backed. These helpers predated
+    // that change and still built int[]-backed slices, which GoOs.goBuf
+    // (correctly) rejects with ClassCastException. Build byte[] directly.
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static GoSlice bytesBuf(byte[] data) {
-        int[] arr = new int[data.length];
-        for (int i = 0; i < data.length; i++) {
-            arr[i] = data[i] & 0xFF;
-        }
-        return new GoSlice(arr, 0, arr.length, arr.length);
+        return new GoSlice(data.clone(), 0, data.length, data.length);
     }
 
     private static byte[] sliceBytes(GoSlice gs) {
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] out = new byte[gs.len()];
-        for (int i = 0; i < gs.len(); i++) {
-            out[i] = (byte) arr[gs.offset() + i];
-        }
+        System.arraycopy(arr, gs.offset(), out, 0, gs.len());
         return out;
     }
 

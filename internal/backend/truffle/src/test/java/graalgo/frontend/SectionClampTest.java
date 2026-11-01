@@ -31,7 +31,9 @@ public final class SectionClampTest {
     /**
      * Minimal program: {@code var x = 6} where the literal's pos.line
      * (9999) is far past the 2-line source. The out-of-range position
-     * must clamp, not throw.
+     * must clamp, not throw. Every pos carries {@code "file":0}: the
+     * multifile wire format requires pos.file (NodeFactory.sectionFor
+     * selects sources[fileIdx]); 0 is this test's single Source.
      */
     private static final String DOC_OUT_OF_RANGE = "{"
             + "\"frontend\":\"v1\","
@@ -39,18 +41,18 @@ public final class SectionClampTest {
             + "\"objects\":" + OBJECTS + ","
             + "\"funcs\":[{"
             + "\"kind\":\"funcdecl\","
-            + "\"pos\":{\"line\":1,\"col\":1,\"len\":1},"
+            + "\"pos\":{\"file\":0,\"line\":1,\"col\":1,\"len\":1},"
             + "\"fields\":{"
             + "\"name\":\"main\",\"obj\":0,\"params\":[],\"sig\":0,"
             + "\"body\":{\"kind\":\"block\","
-            + "\"pos\":{\"line\":1,\"col\":1,\"len\":1},"
+            + "\"pos\":{\"file\":0,\"line\":1,\"col\":1,\"len\":1},"
             + "\"fields\":{\"stmts\":[{"
             + "\"kind\":\"vardecl\","
-            + "\"pos\":{\"line\":9999,\"col\":1,\"len\":1},"
+            + "\"pos\":{\"file\":0,\"line\":9999,\"col\":1,\"len\":1},"
             + "\"fields\":{\"define\":true,\"names\":[\"x\"],\"objs\":[0],\"type\":null,"
             + "\"values\":[{"
             + "\"kind\":\"basiclit\","
-            + "\"pos\":{\"line\":9999,\"col\":5,\"len\":1},"
+            + "\"pos\":{\"file\":0,\"line\":9999,\"col\":5,\"len\":1},"
             + "\"fields\":{\"const\":\"6\",\"type\":1,\"value\":\"6\"}"
             + "}]}}]}}}}]}";
 

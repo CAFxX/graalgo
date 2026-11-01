@@ -32,9 +32,12 @@ import graalgo.values.GoFunc;
  * informational only; {@code "index"} is the receiver adaptation path,
  * empty for direct methods).
  *
- * <p>Fail-fast: a method entry without a name/obj, or an obj id absent
- * from {@code Program.functions()}, is a {@link FrontendException} naming
- * the descriptor, method, and obj id.
+ * <p>Fail-fast: a method entry without a name/obj is a
+ * {@link FrontendException} naming the descriptor, method, and obj id.
+ * An obj id absent from {@code Program.functions()} is instead skipped
+ * with a warning (disk-MR stub vestige, d92e11fd): the entry's calls
+ * were desugared to the __-helper, so failing the build on it would
+ * reject programs the frontend deliberately supports.
  */
 public final class IfaceMethodTables {
     private IfaceMethodTables() {}
