@@ -21,7 +21,8 @@ Checked against the inventory:
     map literal in internal/frontend/synth_machinery.go.
 
 Usage: python3 .github/scripts/check_bridge_inventory.py [--root DIR]
-  --root defaults to the repository root (two levels above this script).
+  --root defaults to the repository root (three levels above this
+  script: scripts/ -> .github/ -> root).
   --inventory overrides the inventory path (used to prove the check
   fails on a tampered copy without touching the tree).
 """
@@ -31,6 +32,7 @@ import glob
 import os
 import re
 import sys
+from pathlib import Path
 
 B4_RE = re.compile(
     r"^### B-4\.\s+(\d+) synth_\*\.go files "
@@ -71,9 +73,12 @@ def main():
     ap.add_argument("--root", default=None)
     ap.add_argument("--inventory", default=None)
     args = ap.parse_args()
-    root = args.root or os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__))
-    )
+    # Script lives at <root>/.github/scripts/, so the repo root is
+    # parents[2] (scripts/ -> .github/ -> root); parents[1] is .github
+    # itself and made the default invocation crash with FileNotFoundError
+    # on <root>/.github/docs/arch/bridge-inventory.md. Same pattern as
+    # check_duplicate_fqn.py (REPO_ROOT = parents[2]).
+    root = args.root or str(Path(__file__).resolve().parents[2])
     inv_path = args.inventory or os.path.join(
         root, "docs", "arch", "bridge-inventory.md"
     )
