@@ -201,9 +201,10 @@ func run() int {
 		argv0 = os.Args[0]
 	}
 	// The backend's flag parser accepts only the --flag=value form
-	// (P3SyncMain: `a.startsWith("--wire-input=")`); the space form
+	// (P3SyncMain matches the "--wire-input=" prefix); the space form
 	// is rejected as "unknown flag", which used to make every emitted
-	// artifact fail at run time.
+	// artifact fail at run time. (No backticks here: this comment
+	// lives inside the launcher's raw-string template.)
 	args := []string{"--wire-input=" + tmpName, "--", argv0}
 	args = append(args, os.Args[1:]...)
 
