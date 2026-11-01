@@ -3841,6 +3841,11 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		// The backend handles call-with-selector-fun via
 		// FuncValueCallNode; the shared tail below declares the pair
 		// temp and spreads its fields as separate arguments.
+		// (The "funcfieldcall" node kind was implemented by no backend,
+		// so emitting it made every program reaching this path fail at
+		// backend AST build — e.g. any crypto/tls importer, via
+		// ConnectionState.ExportKeyingMaterial's
+		// `return cs.ekm(label, context, length)`.)
 		if _, ok := inner.Fun.(*ast.SelectorExpr); !ok {
 			return nil, nil, fmt.Errorf("gofrontend: func field call expects SelectorExpr, got %T", inner.Fun)
 		}

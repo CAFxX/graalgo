@@ -56,7 +56,8 @@ import graalgo.values.GoString;
  * <p>Trust: the engine's TrustManager is permissive during the handshake;
  * certificate verification (chain building, hostname) is implemented in Go
  * (synthetic crypto/x509 Verify) for exact Go semantics. The Go side calls
- * {@link #peerCertificates} after the handshake and verifies itself.
+ * {@link #peerCertificates} before sending its Finished (and, as a
+ * fallback, after the handshake) and verifies itself.
  */
 public final class TlsRuntime {
     private TlsRuntime() {}
@@ -633,6 +634,17 @@ public final class TlsRuntime {
     /**
      * Peer certificate chain as length-prefixed DERs (leaf first).
      * graalgo.tls.peerCertificates(handle) -> bytes (may be empty).
+     *
+     * <p>During the handshake the negotiated session is not yet the
+     * engine's current session, so the peer certificates live on the
+     * handshake session (available once the peer's Certificate message
+     * has been processed, i.e. before the local Finished is wrapped).
+     * Prefer the handshake session while one is in progress and fall
+     * back to the current session after the handshake completes (when
+     * the handshake session is null). Before any peer certificate has
+     * arrived, getPeerCertificates throws and the empty result is
+     * returned, exactly as before — callers must treat empty as
+     * "not yet available", not as "no peer certificate".
      */
     public static Object peerCertificates(Object handleArg) {
         SSLEngine engine = ENGINES.get(num(handleArg));
@@ -640,8 +652,11 @@ public final class TlsRuntime {
             return toGoBytes(new byte[0]);
         }
         try {
+            SSLSession handshakeSession = engine.getHandshakeSession();
+            SSLSession session = (handshakeSession != null)
+                    ? handshakeSession : engine.getSession();
             java.security.cert.Certificate[] certs =
-                    engine.getSession().getPeerCertificates();
+                    session.getPeerCertificates();
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             for (java.security.cert.Certificate c : certs) {
                 byte[] der = c.getEncoded();

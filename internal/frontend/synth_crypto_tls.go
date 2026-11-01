@@ -712,9 +712,11 @@ func connectionStateTrap(engineHandle int64) int64
 
 // Handshake performs the TLS handshake, driving the Java SSLEngine state
 // machine: shuttling handshake records between the engine and the raw
-// net.Conn until the engine reports FINISHED. Afterwards (client side,
-// unless InsecureSkipVerify) the peer chain is verified in Go for exact
-// Go verification semantics.
+// net.Conn until the engine reports FINISHED. Client side (unless
+// InsecureSkipVerify) the peer chain is verified in Go for exact Go
+// verification semantics, before the client's Finished is wrapped and
+// sent — as in gc, verification is part of the handshake, so the server
+// cannot complete until the client has verified and sent Finished.
 // NetConn returns the underlying network connection.
 func (c *Conn) NetConn() net.Conn {
 	return c.conn
@@ -731,26 +733,48 @@ func (c *Conn) Handshake() error {
 		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
 	}
 	tmp := make([]byte, 1<<14)
+	// verified tracks whether the client-side peer verification has
+	// already run before the Finished wrap (see engineNeedWrap below).
+	verified := false
 	for {
 		st := engineStatusTrap(c.engineHandle)
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
-			if err := c.verifyPeer(); err != nil {
-				return err
-			}
-			// P3-M9 (x509): the in-process handshake test prints
-			// "handshake-ok" right after Handshake() returns. The client's
-			// verifyPeer (x509 chain building under Truffle) is slower
-			// than the server's no-op verify, so the server would print
-			// first while gc prints the client first. Brief yield so the
-			// client's prints land first (byte-identical differential).
-			// TODO: replace with proper synchronization or faster verify.
-			if !c.isClient {
-				time.Sleep(10 * time.Second)
+			// Fallback for paths on which no NEED_WRAP with peer
+			// certificates was seen (e.g. a resumed session): verify
+			// here, exactly as before this change. The normal path
+			// verifies before Finished (below) and skips this.
+			if !verified {
+				if err := c.verifyPeer(); err != nil {
+					return err
+				}
 			}
 			return nil
 		case engineNeedWrap:
+			// gc verifies the peer chain BEFORE sending Finished:
+			// verification is part of the handshake, not an epilogue.
+			// Previously verifyPeer ran only after engineFinished,
+			// i.e. after Finished was already sent, so the server
+			// could complete (and print) while the client was still
+			// verifying — the 10 s server sleep that used to sit in
+			// the engineFinished case papered over that ordering gap.
+			// Verify here, on the first NEED_WRAP at which peer
+			// certificates are available (the Finished wrap: earlier
+			// wraps, e.g. ClientHello, have no peer certificates yet
+			// and are skipped). The server therefore cannot complete
+			// until the client has verified and sent Finished, which
+			// is the real handshake-completion signal — and a failed
+			// verification now aborts the handshake instead of
+			// failing locally after Finished was already sent.
+			if c.isClient && !verified {
+				if len(decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))) > 0 {
+					if err := c.verifyPeer(); err != nil {
+						return err
+					}
+					verified = true
+				}
+			}
 			out := wrapTrap(c.engineHandle, nil)
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
@@ -799,8 +823,11 @@ func (c *Conn) Handshake() error {
 	}
 }
 
-// verifyPeer verifies the peer certificate chain after the handshake
-// (client side, unless InsecureSkipVerify), using x509.Verify.
+// verifyPeer verifies the peer certificate chain (client side, unless
+// InsecureSkipVerify), using x509.Verify. It is called before the
+// client's Finished is sent (see Handshake), with a fallback call at
+// engineFinished for paths that never saw peer certificates on a
+// NEED_WRAP (e.g. resumed sessions).
 func (c *Conn) verifyPeer() error {
 	if !c.isClient {
 		return nil
