@@ -518,6 +518,14 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}, false},
 	// P3-M9 (tier1c): math/rand.Read (Appendix M).
 	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}, false},
+	// R4: math/rand/v2 ChaCha8 multi-result methods (Appendix M).
+	// The __-helpers and pair structs live in synth_mathrandv2.go
+	// (generated from gc's chacha8.go); the io.Read interface entry
+	// above already covers dispatch through io.Reader, wired via
+	// multiResultHelperFor to these concrete helpers.
+	{"math/rand/v2", "Read", "ChaCha8", "__chacha8Read", "__chacha8ReadPair", []string{"n", "err"}, false},
+	{"math/rand/v2", "AppendBinary", "ChaCha8", "__chacha8AppendBinary", "__chacha8BinaryPair", []string{"b", "err"}, false},
+	{"math/rand/v2", "MarshalBinary", "ChaCha8", "__chacha8MarshalBinary", "__chacha8BinaryPair", []string{"b", "err"}, false},
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).
