@@ -150,10 +150,14 @@ test-ci: build
 # /tmp is a 512M tmpfs shared with other work and routinely full: keep the
 # JVM and driver temp files on the persistent disk (same pattern as the
 # snapshot targets). test/regression/.tmp is gitignored.
-# `timeout 600` is the failability mechanism for hang regressions: no
-# in-test watchdog is possible (timers do not fire under graalgo, PKG-048),
-# so a reintroduced hang is killed here and fails the gate instead of
-# hanging CI. Post-fix the suite passes in ~75s.
+# `timeout 600` is the backstop failability mechanism for hang regressions:
+# a reintroduced hang is killed here and fails the gate instead of
+# hanging CI. In-test watchdogs are possible too: timer channels DO fire
+# under graalgo — the PKG-048 claim that select on time.After hangs forever
+# was refuted empirically 2026-10-31 and re-confirmed on current HEAD
+# (see DIV-M3-2 in docs/arch/phases/phase2/DIVERGENCES.md). Re-enabling a
+# watchdog inside a test is a follow-up, not a blocker. Post-fix the suite
+# passes in ~75s.
 REGRESSION_TEST_DIRS := $(wildcard test/regression/*/)
 REGRESSION_TMP := $(CURDIR)/test/regression/.tmp
 test-regression: generate build graalgo

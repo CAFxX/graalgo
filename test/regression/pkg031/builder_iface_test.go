@@ -31,12 +31,16 @@ import (
 // method values of multi-result methods don't compile), so no red/green
 // test can distinguish it; it is kept as a robustness improvement.
 //
-// NOTE: this test deliberately avoids two patterns that are broken under
-// graalgo for unrelated, pre-existing reasons (see the PKG-031 lane
-// report): (1) the goroutine+time.After timeout guard — timer channels do
-// not fire yet, so a timeout-guarded test hangs instead of failing;
-// (2) a custom interface with a multi-result method (e.g. for WriteRune)
-// — the backend rejects it with "illegal conversion: STRUCT -> INT64".
+// NOTE: this test deliberately avoids one pattern that is broken under
+// graalgo for an unrelated, pre-existing reason (see the PKG-031 lane
+// report): a custom interface with a multi-result method (e.g. for
+// WriteRune) — the backend rejects it with "illegal conversion: STRUCT
+// -> INT64". The goroutine+time.After timeout guard formerly listed here
+// is NOT broken: timer channels fire end-to-end under graalgo (the PKG-048
+// claim was refuted empirically 2026-10-31 and re-confirmed on current
+// HEAD, see DIV-M3-2 in docs/arch/phases/phase2/DIVERGENCES.md); the test
+// stays synchronous as a minimal change, and re-adding a watchdog guard is
+// a follow-up.
 // Correctness is asserted synchronously instead.
 func TestBuilderWriteViaInterface(t *testing.T) {
 	var b strings.Builder

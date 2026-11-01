@@ -27,10 +27,13 @@ import (
 //
 // This test is deliberately synchronous: an earlier version used a
 // goroutine + time.After watchdog to turn the pre-fix hang into a test
-// failure, but timer channels do not fire under graalgo (PKG-048: select
-// on time.After hangs forever), so the guarded version hangs instead of
-// failing. Failability rests on the outer timeout (`timeout 600` in the
-// test-regression Makefile target).
+// failure. The watchdog was dropped on the PKG-048 claim that timer
+// channels do not fire under graalgo; that claim was refuted empirically
+// 2026-10-31 and re-confirmed on current HEAD (timers fire end-to-end
+// through the driver — see DIV-M3-2 in
+// docs/arch/phases/phase2/DIVERGENCES.md), so a watchdog guard is possible
+// again and re-enabling one is a follow-up. Failability currently rests on
+// the outer timeout (`timeout 600` in the test-regression Makefile target).
 //
 // Sizing and failability: 5,000,000 repetitions of the 12-byte unit = 60MB.
 // Pre-fix, the O(n^2) loop performs ~220GB of redundant full-buffer copies
