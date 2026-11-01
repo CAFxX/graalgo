@@ -21,6 +21,7 @@ corpus is that integration test.
 | `if08_embedded_promotion.go` | `struct{ *Buf }` satisfying Writer purely by promotion (receiver adaptation via the wire `index` path); value-embedding + value-receiver promotion |
 | `if09_iface_embedding.go` | `interface{ Writer; Closer }` — flattened embedded method set |
 | `if10_iface_param.go` | interface-typed parameters: concrete arg to a plain function (factory adaptation) and to an interface method (P3 builder replica) |
+| `if13_variadic_iface_param.go` | variadic interface methods with interface-typed FIXED parameters (named interface and `any`; non-spread, spread, zero-tail) plus a no-interface-fixed-param control — G2: the P3 builder previously skipped boxing for the whole variadic signature |
 
 ## Files per program
 

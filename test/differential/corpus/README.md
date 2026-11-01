@@ -68,6 +68,9 @@ Coverage map:
 | 48  | range_over_func_edge | range-over-func exits: return/goto/labels,       |
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
+| 49  | variadic_iface_param | variadic interface methods with interface-typed  |
+|     |                      | fixed parameters (named interface and `any`;    |
+|     |                      | non-spread, spread, zero-tail) — G2 boxing fix  |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,

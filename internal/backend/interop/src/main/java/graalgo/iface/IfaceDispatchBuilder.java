@@ -123,8 +123,22 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
 
     /**
      * Replica of the factory's private {@code signatureParamTypeIds}: the
-     * callee's parameter type ids, or null when the signature is absent,
-     * unreadable, or variadic (no adaptation — the methodref precedent).
+     * callee's parameter type ids, or null when the signature is absent
+     * or unreadable.
+     *
+     * <p>Variadic signatures adapt too (G2, mirroring the factory's
+     * fix-redmaster-r40 fix for direct calls): the exporter always
+     * emits a variadic interface-method call in packed or spread form
+     * (frontend {@code exportCallArgsPacked}), so the call's arguments
+     * align 1:1 with the signature's params and the last param — the
+     * variadic slice type itself — is never an interface, hence never
+     * boxed. The previous variadic bail-out returned null here, which
+     * skipped adaptation for the FIXED params too: a concrete value
+     * passed to an interface-typed fixed parameter of a variadic
+     * interface method arrived unboxed, and the callee's use of it
+     * failed with "no method table installed for dynamic type
+     * \"interface\"". (adaptArgsForInterfaceParams is bounded by the
+     * param count, so no trailing element is ever touched.)
      */
     private static List<Integer> signatureParamTypeIds(NodeFactory.BuildCtx ctx,
             Json.Object f, String path) {
@@ -141,9 +155,9 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
+        // No variadic bail-out here: see the method javadoc. The
+        // "variadic" flag is deliberately ignored — the params list
+        // already carries the variadic slice type as its last entry.
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {
