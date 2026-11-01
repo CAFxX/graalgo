@@ -24,6 +24,7 @@ Go programs exercising the P3-M5 synthetic `time` and `context` packages
 | `tc14_context_cause.go` | `WithCancelCause`, `Cause` |
 | `tc15_sleep_zero_negative.go` | `Sleep(0)`, `Sleep(negative)` |
 | `tc16_timer_reset_expired.go` | `Reset` on expired timer |
+| `tc17_calendar.go` | `Time` calendar accessors (`Year`/`Month`/`Day`/`Weekday`/`Clock`/`Hour`/`Minute`/`Second`/`Nanosecond`/`YearDay`/`Date`/`Zone`/`Location`/`GoString`/`In`), `AddDate`, `Parse` (UTC path: values + error strings), `ParseDuration` |
 
 Timing-sensitive programs print fixed strings only, never measured
 durations. `run_differential.sh` follows the iface/sync harness pattern.

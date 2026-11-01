@@ -42,6 +42,16 @@ package main
 // types (Duration, Time, Month, Weekday) with real methods; intrinsics
 // (Now/Sleep/After/Tick/NewTimer/NewTicker/AfterFunc, Timer/ Ticker.Stop/
 // Reset) with panic bodies for the exporter to intercept.
+// P4 (R1): the calendar accessors (Year/Month/Day/Weekday/Clock/Hour/
+// Minute/Second/Nanosecond/YearDay/Date/AddDate/GoString) and Parse are
+// real UTC implementations over unixnano (civil-from-days; gc-exact
+// Parse values and error strings on the UTC path, verified against gc
+// 1.27.1). Still divergent: any non-UTC zone — Local/In/Zone for a
+// non-UTC location, Parse with a non-zero numeric offset or a non-UTC
+// zone abbreviation — panics with a named message until synthetic
+// zoneinfo lands. Representable range is the unixnano int64 range
+// (~1678..2262) plus the zero instant; years outside it (e.g. year 0
+// from a year-less Parse layout) wrap exactly like Date does today.
 const syntheticTimeSource = `package time
 
 // Duration is an int64 nanosecond count, as in the real package.
@@ -874,34 +884,165 @@ func itoa4(y int64) []byte {
 func hasPrefix(s, p string) bool {
 	return len(s) >= len(p) && s[:len(p)] == p
 }
-func (t Time) GoString() string { panic("time.Time.GoString: not in M5 scope") }
+// timeCivilParts is the UTC calendar decomposition of a Time: the same
+// civil-from-days algorithm Format uses, factored out so the calendar
+// accessors share exactly one decomposition (P4: R1 — the M5 panics are
+// replaced by real UTC accessors; the synthetic Time carries no zone,
+// so every accessor reads the UTC fields).
+type timeCivilParts struct {
+	year    int64
+	month   int64
+	day     int64
+	hour    int64
+	min     int64
+	sec     int64
+	nsec    int64
+	weekday int64
+	yearday int64
+}
+
+// timeDaysFromCivil converts a proleptic Gregorian date to days since
+// 1970-01-01 (Howard Hinnant's days_from_civil; the inverse of the
+// civil-from-days in Format/timeSplit).
+func timeDaysFromCivil(y int64, m int64, d int64) int64 {
+	yy := y
+	if m <= 2 {
+		yy--
+	}
+	era := yy / 400
+	if yy < 0 && yy%400 != 0 {
+		era--
+	}
+	yoe := yy - era*400
+	mp := m - 3
+	if mp < 0 {
+		mp += 12
+	}
+	doy := (153*mp+2)/5 + d - 1
+	doe := yoe*365 + yoe/4 - yoe/100 + doy
+	return era*146097 + doe - 719468
+}
+
+// timeSplit decomposes t into UTC calendar fields. The zero instant is
+// special-cased: its wrapped unixnano marker (see zeroInstantNano)
+// would otherwise decompose to a meaningless year, while gc reports
+// 0001-01-01, Monday, day 1 of the year.
+func timeSplit(t Time) timeCivilParts {
+	if t.IsZero() {
+		return timeCivilParts{year: 1, month: 1, day: 1, weekday: 1, yearday: 1}
+	}
+	sec := t.unixnano / 1e9
+	nsec := t.unixnano % 1e9
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	days := sec / 86400
+	secsOfDay := sec % 86400
+	if secsOfDay < 0 {
+		secsOfDay += 86400
+		days--
+	}
+	z := days + 719468
+	var era int64
+	if z >= 0 {
+		era = z / 146097
+	} else {
+		era = (z - 146096) / 146097
+	}
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	y := yoe + era*400
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d := doy - (153*mp+2)/5 + 1
+	var m int64
+	if mp < 10 {
+		m = mp + 3
+	} else {
+		m = mp - 9
+	}
+	if m <= 2 {
+		y++
+	}
+	wd := (days + 4) % 7
+	if wd < 0 {
+		wd += 7
+	}
+	jan1 := timeDaysFromCivil(y, 1, 1)
+	return timeCivilParts{year: y, month: m, day: d, hour: secsOfDay / 3600, min: (secsOfDay % 3600) / 60, sec: secsOfDay % 60, nsec: nsec, weekday: wd, yearday: days - jan1 + 1}
+}
+
+// GoString renders t in gc's Date-constructor form, e.g.
+// time.Date(2024, time.March, 5, 10, 20, 30, 123456789, time.UTC).
+// Synthetic times are UTC-only, so the location is always time.UTC.
+func (t Time) GoString() string {
+	c := timeSplit(t)
+	b := []byte("time.Date(")
+	b = append(b, timeIntString(c.year)...)
+	b = append(b, ", time."...)
+	b = append(b, monthName(c.month)...)
+	b = append(b, ", "...)
+	b = append(b, timeIntString(c.day)...)
+	b = append(b, ", "...)
+	b = append(b, timeIntString(c.hour)...)
+	b = append(b, ", "...)
+	b = append(b, timeIntString(c.min)...)
+	b = append(b, ", "...)
+	b = append(b, timeIntString(c.sec)...)
+	b = append(b, ", "...)
+	b = append(b, timeIntString(c.nsec)...)
+	b = append(b, ", time.UTC)"...)
+	return string(b)
+}
+
+// AddDate returns the time corresponding to adding the given years,
+// months, and days to t, normalizing exactly like Date (gc semantics:
+// January 31 + 1 month is March 2 in a leap year, via Date's
+// month/day normalization).
 func (t Time) AddDate(years int, months int, days int) Time {
-	panic("time.Time.AddDate: not in M5 scope")
+	c := timeSplit(t)
+	return Date(int(c.year)+years, Month(c.month)+Month(months), int(c.day)+days, int(c.hour), int(c.min), int(c.sec), int(c.nsec), UTC)
 }
+
 func (t Time) Date() (year int, month Month, day int) {
-	panic("time.Time.Date: not in M5 scope")
+	c := timeSplit(t)
+	return int(c.year), Month(c.month), int(c.day)
 }
-func (t Time) Year() int          { panic("time.Time.Year: not in M5 scope") }
-func (t Time) Month() Month       { panic("time.Time.Month: not in M5 scope") }
-func (t Time) Day() int           { panic("time.Time.Day: not in M5 scope") }
-func (t Time) Weekday() Weekday   { panic("time.Time.Weekday: not in M5 scope") }
+func (t Time) Year() int        { return int(timeSplit(t).year) }
+func (t Time) Month() Month     { return Month(timeSplit(t).month) }
+func (t Time) Day() int         { return int(timeSplit(t).day) }
+func (t Time) Weekday() Weekday { return Weekday(timeSplit(t).weekday) }
 func (t Time) Clock() (int, int, int) {
-	panic("time.Time.Clock: not in M5 scope")
+	c := timeSplit(t)
+	return int(c.hour), int(c.min), int(c.sec)
 }
-func (t Time) Hour() int        { panic("time.Time.Hour: not in M5 scope") }
-func (t Time) Minute() int      { panic("time.Time.Minute: not in M5 scope") }
-func (t Time) Second() int      { panic("time.Time.Second: not in M5 scope") }
-func (t Time) Nanosecond() int  { panic("time.Time.Nanosecond: not in M5 scope") }
-func (t Time) YearDay() int     { panic("time.Time.YearDay: not in M5 scope") }
-func (t Time) UTC() Time        { return t }
-func (t Time) Local() Time      { return t }
+func (t Time) Hour() int       { return int(timeSplit(t).hour) }
+func (t Time) Minute() int     { return int(timeSplit(t).min) }
+func (t Time) Second() int     { return int(timeSplit(t).sec) }
+func (t Time) Nanosecond() int { return int(timeSplit(t).nsec) }
+func (t Time) YearDay() int    { return int(timeSplit(t).yearday) }
+func (t Time) UTC() Time       { return t }
+func (t Time) Local() Time     { return t }
+
+// In returns t for UTC (and for a nil-name Location, which String()
+// renders as UTC, matching Date's treatment). Any other location
+// panics: the synthetic Time carries no zone, so a non-UTC In would
+// silently report UTC fields — the documented divergence until
+// synthetic zoneinfo lands. A nil Location panics with gc's message.
 func (t Time) In(loc *Location) Time {
-	panic("time.Time.In: not in M5 scope")
+	if loc == nil {
+		panic("time: missing Location in call to Time.In")
+	}
+	if loc.name != "" && loc.name != "UTC" {
+		panic("time.In: non-UTC locations not in scope (re-test: synthetic zoneinfo)")
+	}
+	return t
 }
-func (t Time) Location() *Location { panic("time.Time.Location: not in M5 scope") }
-func (t Time) Zone() (string, int) {
-	panic("time.Time.Zone: not in M5 scope")
-}
+
+// Location returns UTC: synthetic times are UTC-only by construction.
+func (t Time) Location() *Location { return UTC }
+func (t Time) Zone() (string, int) { return "UTC", 0 }
 func (t Time) UnixMilli() int64 { return t.unixnano / 1e6 }
 func (t Time) UnixMicro() int64 { return t.unixnano / 1e3 }
 
@@ -921,8 +1062,881 @@ func (l *Location) String() string {
 	return l.name
 }
 
+// parseError mirrors gc's time.ParseError, with identical Error()
+// strings: "parsing time \"v\" as \"layout\": cannot parse \"ve\" as
+// \"le\"" for element failures, and "parsing time \"v\": <message>" for
+// range/extra-text failures.
+type parseError struct {
+	layout     string
+	value      string
+	layoutElem string
+	valueElem  string
+	message    string
+}
+
+func (e *parseError) Error() string {
+	if e.message == "" {
+		return "parsing time " + timeQuote(e.value) + " as " + timeQuote(e.layout) + ": cannot parse " + timeQuote(e.valueElem) + " as " + timeQuote(e.layoutElem)
+	}
+	return "parsing time " + timeQuote(e.value) + e.message
+}
+
+// Layout element codes for the Parse chunker (gc 1.27.1 time/format.go
+// element set, renumbered; the chunker is parseNextChunk below).
+const (
+	parseStdNone = iota
+	parseStdLongYear
+	parseStdYear
+	parseStdMonth
+	parseStdLongMonth
+	parseStdNumMonth
+	parseStdZeroMonth
+	parseStdWeekDay
+	parseStdLongWeekDay
+	parseStdDay
+	parseStdUnderDay
+	parseStdZeroDay
+	parseStdHour
+	parseStdHour12
+	parseStdZeroHour12
+	parseStdMinute
+	parseStdZeroMinute
+	parseStdSecond
+	parseStdZeroSecond
+	parseStdPM
+	parseStdpm
+	parseStdTZ
+	parseStdNumTZ
+	parseStdNumShortTZ
+	parseStdNumColonTZ
+	parseStdNumSecondsTZ
+	parseStdNumColonSecondsTZ
+	parseStdISO8601TZ
+	parseStdISO8601ShortTZ
+	parseStdISO8601ColonTZ
+	parseStdISO8601SecondsTZ
+	parseStdISO8601ColonSecondsTZ
+	parseStdFrac0
+	parseStdFrac9
+	parseStdUnderYearDay
+	parseStdZeroYearDay
+)
+
+// parseChunk is one layout element plus the literal prefix before it
+// (gc's nextStdChunk triple, with the fraction digit count and
+// separator carried for the .000/.999 elements).
+type parseChunk struct {
+	prefix     string
+	std        int
+	suffix     string
+	fracDigits int
+	fracSep    byte
+}
+
+func parseStartsLower(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	c := s[0]
+	return c >= 'a' && c <= 'z'
+}
+
+func parseIsDigit(s string, i int) bool {
+	if len(s) <= i {
+		return false
+	}
+	c := s[i]
+	return c >= '0' && c <= '9'
+}
+
+// parseNextChunk finds the first layout element in layout, returning
+// the literal prefix before it, the element code, and the suffix after
+// it. A layout with no element yields std parseStdNone.
+func parseNextChunk(layout string) parseChunk {
+	for i := 0; i < len(layout); i++ {
+		c := layout[i]
+		switch c {
+		case 'J':
+			if hasPrefix(layout[i:], "Jan") {
+				if hasPrefix(layout[i:], "January") {
+					return parseChunk{prefix: layout[0:i], std: parseStdLongMonth, suffix: layout[i+7:]}
+				}
+				if parseStartsLower(layout[i+3:]) == false {
+					return parseChunk{prefix: layout[0:i], std: parseStdMonth, suffix: layout[i+3:]}
+				}
+			}
+		case 'M':
+			if len(layout) >= i+3 {
+				if layout[i:i+3] == "Mon" {
+					if hasPrefix(layout[i:], "Monday") {
+						return parseChunk{prefix: layout[0:i], std: parseStdLongWeekDay, suffix: layout[i+6:]}
+					}
+					if parseStartsLower(layout[i+3:]) == false {
+						return parseChunk{prefix: layout[0:i], std: parseStdWeekDay, suffix: layout[i+3:]}
+					}
+				}
+				if layout[i:i+3] == "MST" {
+					return parseChunk{prefix: layout[0:i], std: parseStdTZ, suffix: layout[i+3:]}
+				}
+			}
+		case '0':
+			if len(layout) >= i+2 && layout[i+1] >= '1' && layout[i+1] <= '6' {
+				std := parseStdZeroMonth
+				if layout[i+1] == '2' {
+					std = parseStdZeroDay
+				} else if layout[i+1] == '3' {
+					std = parseStdZeroHour12
+				} else if layout[i+1] == '4' {
+					std = parseStdZeroMinute
+				} else if layout[i+1] == '5' {
+					std = parseStdZeroSecond
+				} else if layout[i+1] == '6' {
+					std = parseStdYear
+				}
+				return parseChunk{prefix: layout[0:i], std: std, suffix: layout[i+2:]}
+			}
+			if len(layout) >= i+3 && layout[i+1] == '0' && layout[i+2] == '2' {
+				return parseChunk{prefix: layout[0:i], std: parseStdZeroYearDay, suffix: layout[i+3:]}
+			}
+		case '1':
+			if len(layout) >= i+2 && layout[i+1] == '5' {
+				return parseChunk{prefix: layout[0:i], std: parseStdHour, suffix: layout[i+2:]}
+			}
+			return parseChunk{prefix: layout[0:i], std: parseStdNumMonth, suffix: layout[i+1:]}
+		case '2':
+			if hasPrefix(layout[i:], "2006") {
+				return parseChunk{prefix: layout[0:i], std: parseStdLongYear, suffix: layout[i+4:]}
+			}
+			return parseChunk{prefix: layout[0:i], std: parseStdDay, suffix: layout[i+1:]}
+		case '_':
+			if len(layout) >= i+2 && layout[i+1] == '2' {
+				if len(layout) >= i+5 && layout[i+1:i+5] == "2006" {
+					return parseChunk{prefix: layout[0 : i+1], std: parseStdLongYear, suffix: layout[i+5:]}
+				}
+				return parseChunk{prefix: layout[0:i], std: parseStdUnderDay, suffix: layout[i+2:]}
+			}
+			if len(layout) >= i+3 && layout[i+1] == '_' && layout[i+2] == '2' {
+				return parseChunk{prefix: layout[0:i], std: parseStdUnderYearDay, suffix: layout[i+3:]}
+			}
+		case '3':
+			return parseChunk{prefix: layout[0:i], std: parseStdHour12, suffix: layout[i+1:]}
+		case '4':
+			return parseChunk{prefix: layout[0:i], std: parseStdMinute, suffix: layout[i+1:]}
+		case '5':
+			return parseChunk{prefix: layout[0:i], std: parseStdSecond, suffix: layout[i+1:]}
+		case 'P':
+			if len(layout) >= i+2 && layout[i+1] == 'M' {
+				return parseChunk{prefix: layout[0:i], std: parseStdPM, suffix: layout[i+2:]}
+			}
+		case 'p':
+			if len(layout) >= i+2 && layout[i+1] == 'm' {
+				return parseChunk{prefix: layout[0:i], std: parseStdpm, suffix: layout[i+2:]}
+			}
+		case '-':
+			if hasPrefix(layout[i:], "-070000") {
+				return parseChunk{prefix: layout[0:i], std: parseStdNumSecondsTZ, suffix: layout[i+7:]}
+			}
+			if hasPrefix(layout[i:], "-07:00:00") {
+				return parseChunk{prefix: layout[0:i], std: parseStdNumColonSecondsTZ, suffix: layout[i+9:]}
+			}
+			if hasPrefix(layout[i:], "-0700") {
+				return parseChunk{prefix: layout[0:i], std: parseStdNumTZ, suffix: layout[i+5:]}
+			}
+			if hasPrefix(layout[i:], "-07:00") {
+				return parseChunk{prefix: layout[0:i], std: parseStdNumColonTZ, suffix: layout[i+6:]}
+			}
+			if hasPrefix(layout[i:], "-07") {
+				return parseChunk{prefix: layout[0:i], std: parseStdNumShortTZ, suffix: layout[i+3:]}
+			}
+		case 'Z':
+			if hasPrefix(layout[i:], "Z070000") {
+				return parseChunk{prefix: layout[0:i], std: parseStdISO8601SecondsTZ, suffix: layout[i+7:]}
+			}
+			if hasPrefix(layout[i:], "Z07:00:00") {
+				return parseChunk{prefix: layout[0:i], std: parseStdISO8601ColonSecondsTZ, suffix: layout[i+9:]}
+			}
+			if hasPrefix(layout[i:], "Z0700") {
+				return parseChunk{prefix: layout[0:i], std: parseStdISO8601TZ, suffix: layout[i+5:]}
+			}
+			if hasPrefix(layout[i:], "Z07:00") {
+				return parseChunk{prefix: layout[0:i], std: parseStdISO8601ColonTZ, suffix: layout[i+6:]}
+			}
+			if hasPrefix(layout[i:], "Z07") {
+				return parseChunk{prefix: layout[0:i], std: parseStdISO8601ShortTZ, suffix: layout[i+3:]}
+			}
+		case '.', ',':
+			if i+1 < len(layout) && (layout[i+1] == '0' || layout[i+1] == '9') {
+				ch := layout[i+1]
+				j := i + 1
+				for j < len(layout) && layout[j] == ch {
+					j++
+				}
+				if parseIsDigit(layout, j) == false {
+					std := parseStdFrac0
+					if ch == '9' {
+						std = parseStdFrac9
+					}
+					return parseChunk{prefix: layout[0:i], std: std, suffix: layout[j:], fracDigits: j - (i + 1), fracSep: c}
+				}
+			}
+		}
+	}
+	return parseChunk{prefix: layout, std: parseStdNone, suffix: ""}
+}
+
+func parseCutspace(s string) string {
+	for len(s) > 0 && s[0] == ' ' {
+		s = s[1:]
+	}
+	return s
+}
+
+// parseSkipRes carries skip's remainder; ok is false when the value
+// does not start with the literal prefix (space runs in the prefix
+// match any run of spaces in the value, like gc's skip).
+type parseSkipRes struct {
+	rest string
+	ok   bool
+}
+
+func parseSkip(value, prefix string) parseSkipRes {
+	for len(prefix) > 0 {
+		if prefix[0] == ' ' {
+			if len(value) == 0 || value[0] != ' ' {
+				return parseSkipRes{rest: value, ok: false}
+			}
+			prefix = parseCutspace(prefix)
+			value = parseCutspace(value)
+			continue
+		}
+		if len(value) == 0 || value[0] != prefix[0] {
+			return parseSkipRes{rest: value, ok: false}
+		}
+		prefix = prefix[1:]
+		value = value[1:]
+	}
+	return parseSkipRes{rest: value, ok: true}
+}
+
+// parseNumRes is the single-result carrier for getnum/getnum3.
+type parseNumRes struct {
+	v    int
+	rest string
+	ok   bool
+}
+
+// parseGetnum parses 1 digit, or 2 when available; fixed requires 2.
+func parseGetnum(s string, fixed bool) parseNumRes {
+	if parseIsDigit(s, 0) == false {
+		return parseNumRes{rest: s, ok: false}
+	}
+	if parseIsDigit(s, 1) == false {
+		if fixed {
+			return parseNumRes{rest: s, ok: false}
+		}
+		return parseNumRes{v: int(s[0] - '0'), rest: s[1:], ok: true}
+	}
+	return parseNumRes{v: int(s[0]-'0')*10 + int(s[1]-'0'), rest: s[2:], ok: true}
+}
+
+// parseGetnum3 parses 1-3 digits; fixed requires exactly 3.
+func parseGetnum3(s string, fixed bool) parseNumRes {
+	n := 0
+	i := 0
+	for i < 3 && i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		n = n*10 + int(s[i]-'0')
+		i++
+	}
+	if i == 0 || (fixed && i != 3) {
+		return parseNumRes{rest: s, ok: false}
+	}
+	return parseNumRes{v: n, rest: s[i:], ok: true}
+}
+
+// parseMatch reports whether s1 and s2 match ignoring ASCII case
+// (gc's match; both strings are the same length at every call site).
+func parseMatch(s1, s2 string) bool {
+	for i := 0; i < len(s1); i++ {
+		c1 := s1[i]
+		c2 := s2[i]
+		if c1 != c2 {
+			c1 |= 'a' - 'A'
+			c2 |= 'a' - 'A'
+			if c1 != c2 || c1 < 'a' || c1 > 'z' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// parseLookupRes is the single-result carrier for name lookup.
+type parseLookupRes struct {
+	idx  int
+	rest string
+	ok   bool
+}
+
+func parseLookup(tab []string, val string) parseLookupRes {
+	for i := 0; i < len(tab); i++ {
+		v := tab[i]
+		if len(val) >= len(v) && parseMatch(val[:len(v)], v) {
+			return parseLookupRes{idx: i, rest: val[len(v):], ok: true}
+		}
+	}
+	return parseLookupRes{idx: -1, rest: val, ok: false}
+}
+
+// parseNanosRes is the single-result carrier for fractional seconds.
+type parseNanosRes struct {
+	ns int
+	ok bool
+}
+
+// parseNanos converts the first nbytes of value (separator + digits,
+// nbytes capped at 10, so longer fractions truncate to nanoseconds)
+// to nanoseconds, scaling by the missing digits.
+func parseNanos(value string, nbytes int) parseNanosRes {
+	if len(value) == 0 || (value[0] != '.' && value[0] != ',') {
+		return parseNanosRes{ok: false}
+	}
+	n := nbytes
+	if n > 10 {
+		n = 10
+	}
+	if len(value) < n {
+		return parseNanosRes{ok: false}
+	}
+	ns := 0
+	for i := 1; i < n; i++ {
+		if value[i] < '0' || value[i] > '9' {
+			return parseNanosRes{ok: false}
+		}
+		ns = ns*10 + int(value[i]-'0')
+	}
+	for i := 0; i < 10-n; i++ {
+		ns *= 10
+	}
+	return parseNanosRes{ns: ns, ok: true}
+}
+
+// parseZoneLenRes is the single-result carrier for zone-abbreviation
+// length (gc's parseTimeZone, without its GMT offset value: any
+// non-UTC abbreviation is a divergence panic in Parse, so only the
+// consumed length and validity matter here).
+type parseZoneLenRes struct {
+	n  int
+	ok bool
+}
+
+func parseSignedOffsetLen(value string) int {
+	if len(value) == 0 || (value[0] != '-' && value[0] != '+') {
+		return 0
+	}
+	i := 1
+	x := 0
+	for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+		x = x*10 + int(value[i]-'0')
+		i++
+	}
+	if i == 1 || x > 23 {
+		return 0
+	}
+	return i
+}
+
+func parseGMTLen(value string) int {
+	if len(value) <= 3 {
+		return 3
+	}
+	return 3 + parseSignedOffsetLen(value[3:])
+}
+
+func parseZoneLen(value string) parseZoneLenRes {
+	if len(value) < 3 {
+		return parseZoneLenRes{ok: false}
+	}
+	if len(value) >= 4 && (value[:4] == "ChST" || value[:4] == "MeST") {
+		return parseZoneLenRes{n: 4, ok: true}
+	}
+	if value[:3] == "GMT" {
+		return parseZoneLenRes{n: parseGMTLen(value), ok: true}
+	}
+	if value[0] == '+' || value[0] == '-' {
+		n := parseSignedOffsetLen(value)
+		if n > 0 {
+			return parseZoneLenRes{n: n, ok: true}
+		}
+		return parseZoneLenRes{ok: false}
+	}
+	nUpper := 0
+	for nUpper < 6 {
+		if nUpper >= len(value) {
+			break
+		}
+		c := value[nUpper]
+		if c < 'A' || c > 'Z' {
+			break
+		}
+		nUpper++
+	}
+	if nUpper == 5 {
+		if len(value) > 4 && value[4] == 'T' {
+			return parseZoneLenRes{n: 5, ok: true}
+		}
+		return parseZoneLenRes{ok: false}
+	}
+	if nUpper == 4 {
+		if (len(value) > 3 && value[3] == 'T') || value[:4] == "WITA" {
+			return parseZoneLenRes{n: 4, ok: true}
+		}
+		return parseZoneLenRes{ok: false}
+	}
+	if nUpper == 3 {
+		return parseZoneLenRes{n: 3, ok: true}
+	}
+	return parseZoneLenRes{ok: false}
+}
+
+func parseIsLeap(year int) bool {
+	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
+}
+
+func parseDaysBefore(m int) int {
+	adj := 0
+	if m >= 3 {
+		adj = -2
+	}
+	return (214*m-211)/7 + adj
+}
+
+func parseDaysIn(m int, year int) int {
+	if m == 2 {
+		if parseIsLeap(year) {
+			return 29
+		}
+		return 28
+	}
+	v := m + m/8
+	return 30 + v%2
+}
+
+// Parse parses a formatted string and returns the time value it
+// represents, with gc 1.27.1 semantics on the UTC path (P4: R1).
+// Elements omitted from the layout default as in gc (year 0, month 1,
+// day 1); the weekday is syntax-checked but otherwise ignored; a
+// fractional second may follow the seconds even without a fraction
+// element in the layout. Zone handling is the documented UTC-only
+// divergence: no zone indicator, "Z", a zero numeric offset, or the
+// "UTC" abbreviation yield UTC; a non-zero numeric offset or any other
+// zone abbreviation panics (synthetic zoneinfo is the re-test trigger)
+// instead of silently reporting UTC fields for a non-UTC instant.
 func Parse(layout, value string) (Time, error) {
-	panic("time.Parse: not in M5 scope")
+	alayout := layout
+	avalue := value
+	rangeErr := ""
+	amSet := false
+	pmSet := false
+	year := 0
+	month := -1
+	day := -1
+	yday := -1
+	hour := 0
+	min := 0
+	sec := 0
+	nsec := 0
+	zoneIsUTC := false
+	zoneOffset := -1
+	zoneName := ""
+	shortMonths := []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
+	longMonths := []string{"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"}
+	shortDays := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	longDays := []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+	for {
+		chunk := parseNextChunk(layout)
+		stdstr := layout[len(chunk.prefix) : len(layout)-len(chunk.suffix)]
+		sk := parseSkip(value, chunk.prefix)
+		value = sk.rest
+		if sk.ok == false {
+			return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: chunk.prefix, valueElem: value, message: ""}
+		}
+		if chunk.std == parseStdNone {
+			if len(value) != 0 {
+				return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: "", valueElem: value, message: ": extra text: " + timeQuote(value)}
+			}
+			break
+		}
+		layout = chunk.suffix
+		hold := value
+		bad := false
+		switch chunk.std {
+		case parseStdLongYear:
+			if len(value) < 4 || value[0] < '0' || value[0] > '9' {
+				bad = true
+				break
+			}
+			y := 0
+			digitsOK := true
+			for i := 0; i < 4; i++ {
+				if value[i] < '0' || value[i] > '9' {
+					digitsOK = false
+					break
+				}
+				y = y*10 + int(value[i]-'0')
+			}
+			if digitsOK == false {
+				bad = true
+				break
+			}
+			year = y
+			value = value[4:]
+		case parseStdYear:
+			if len(value) < 2 {
+				bad = true
+				break
+			}
+			gn := parseGetnum(value, true)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			year = gn.v
+			if year >= 69 {
+				year += 1900
+			} else {
+				year += 2000
+			}
+			value = gn.rest
+		case parseStdMonth:
+			lk := parseLookup(shortMonths, value)
+			if lk.ok == false {
+				bad = true
+				break
+			}
+			month = lk.idx + 1
+			value = lk.rest
+		case parseStdLongMonth:
+			lk := parseLookup(longMonths, value)
+			if lk.ok == false {
+				bad = true
+				break
+			}
+			month = lk.idx + 1
+			value = lk.rest
+		case parseStdWeekDay:
+			lk := parseLookup(shortDays, value)
+			if lk.ok == false {
+				bad = true
+				break
+			}
+			value = lk.rest
+		case parseStdLongWeekDay:
+			lk := parseLookup(longDays, value)
+			if lk.ok == false {
+				bad = true
+				break
+			}
+			value = lk.rest
+		case parseStdNumMonth, parseStdZeroMonth:
+			gn := parseGetnum(value, chunk.std == parseStdZeroMonth)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			month = gn.v
+			value = gn.rest
+			if month <= 0 || month > 12 {
+				rangeErr = "month"
+			}
+		case parseStdDay, parseStdUnderDay, parseStdZeroDay:
+			if chunk.std == parseStdUnderDay && len(value) > 0 && value[0] == ' ' {
+				value = value[1:]
+			}
+			gn := parseGetnum(value, chunk.std == parseStdZeroDay)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			day = gn.v
+			value = gn.rest
+		case parseStdUnderYearDay, parseStdZeroYearDay:
+			for i := 0; i < 2; i++ {
+				if chunk.std == parseStdUnderYearDay && len(value) > 0 && value[0] == ' ' {
+					value = value[1:]
+				}
+			}
+			gn := parseGetnum3(value, chunk.std == parseStdZeroYearDay)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			yday = gn.v
+			value = gn.rest
+		case parseStdHour:
+			gn := parseGetnum(value, false)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			hour = gn.v
+			value = gn.rest
+			if hour < 0 || hour >= 24 {
+				rangeErr = "hour"
+			}
+		case parseStdHour12, parseStdZeroHour12:
+			gn := parseGetnum(value, chunk.std == parseStdZeroHour12)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			hour = gn.v
+			value = gn.rest
+			if hour < 0 || hour > 12 {
+				rangeErr = "hour"
+			}
+		case parseStdMinute, parseStdZeroMinute:
+			gn := parseGetnum(value, chunk.std == parseStdZeroMinute)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			min = gn.v
+			value = gn.rest
+			if min < 0 || min >= 60 {
+				rangeErr = "minute"
+			}
+		case parseStdSecond, parseStdZeroSecond:
+			gn := parseGetnum(value, chunk.std == parseStdZeroSecond)
+			if gn.ok == false {
+				bad = true
+				break
+			}
+			sec = gn.v
+			value = gn.rest
+			if sec < 0 || sec >= 60 {
+				rangeErr = "second"
+				break
+			}
+			if len(value) >= 2 && (value[0] == '.' || value[0] == ',') && value[1] >= '0' && value[1] <= '9' {
+				nc := parseNextChunk(layout)
+				if nc.std == parseStdFrac0 || nc.std == parseStdFrac9 {
+					break
+				}
+				n := 2
+				for n < len(value) && value[n] >= '0' && value[n] <= '9' {
+					n++
+				}
+				ns := parseNanos(value, n)
+				nsec = ns.ns
+				value = value[n:]
+			}
+		case parseStdPM:
+			if len(value) < 2 {
+				bad = true
+				break
+			}
+			p := value[0:2]
+			value = value[2:]
+			if p == "PM" {
+				pmSet = true
+			} else if p == "AM" {
+				amSet = true
+			} else {
+				bad = true
+			}
+		case parseStdpm:
+			if len(value) < 2 {
+				bad = true
+				break
+			}
+			p := value[0:2]
+			value = value[2:]
+			if p == "pm" {
+				pmSet = true
+			} else if p == "am" {
+				amSet = true
+			} else {
+				bad = true
+			}
+		case parseStdTZ:
+			if len(value) >= 3 && value[0:3] == "UTC" {
+				zoneIsUTC = true
+				value = value[3:]
+				break
+			}
+			zl := parseZoneLen(value)
+			if zl.ok == false {
+				bad = true
+				break
+			}
+			zoneName = value[:zl.n]
+			value = value[zl.n:]
+		case parseStdNumTZ, parseStdNumShortTZ, parseStdNumColonTZ, parseStdNumSecondsTZ, parseStdNumColonSecondsTZ, parseStdISO8601TZ, parseStdISO8601ShortTZ, parseStdISO8601ColonTZ, parseStdISO8601SecondsTZ, parseStdISO8601ColonSecondsTZ:
+			isISO := chunk.std == parseStdISO8601TZ || chunk.std == parseStdISO8601ShortTZ || chunk.std == parseStdISO8601ColonTZ || chunk.std == parseStdISO8601SecondsTZ || chunk.std == parseStdISO8601ColonSecondsTZ
+			if isISO && len(value) >= 1 && value[0] == 'Z' {
+				zoneIsUTC = true
+				value = value[1:]
+				break
+			}
+			sign := ""
+			hourStr := ""
+			minStr := ""
+			secStr := ""
+			rest := ""
+			if chunk.std == parseStdNumColonTZ || chunk.std == parseStdISO8601ColonTZ {
+				if len(value) < 6 || value[3] != ':' {
+					bad = true
+					break
+				}
+				sign, hourStr, minStr, secStr, rest = value[0:1], value[1:3], value[4:6], "00", value[6:]
+			} else if chunk.std == parseStdNumShortTZ || chunk.std == parseStdISO8601ShortTZ {
+				if len(value) < 3 {
+					bad = true
+					break
+				}
+				sign, hourStr, minStr, secStr, rest = value[0:1], value[1:3], "00", "00", value[3:]
+			} else if chunk.std == parseStdNumColonSecondsTZ || chunk.std == parseStdISO8601ColonSecondsTZ {
+				if len(value) < 9 || value[3] != ':' || value[6] != ':' {
+					bad = true
+					break
+				}
+				sign, hourStr, minStr, secStr, rest = value[0:1], value[1:3], value[4:6], value[7:9], value[9:]
+			} else if chunk.std == parseStdNumSecondsTZ || chunk.std == parseStdISO8601SecondsTZ {
+				if len(value) < 7 {
+					bad = true
+					break
+				}
+				sign, hourStr, minStr, secStr, rest = value[0:1], value[1:3], value[3:5], value[5:7], value[7:]
+			} else {
+				if len(value) < 5 {
+					bad = true
+					break
+				}
+				sign, hourStr, minStr, secStr, rest = value[0:1], value[1:3], value[3:5], "00", value[5:]
+			}
+			// gc consumes the zone text before validating the offset,
+			// so range errors report the post-zone remainder as the
+			// value element.
+			value = rest
+			hr := parseGetnum(hourStr, true)
+			mm := parseGetnum(minStr, true)
+			ss := parseGetnum(secStr, true)
+			if hr.ok == false || mm.ok == false || ss.ok == false {
+				bad = true
+				break
+			}
+			if hr.v > 24 {
+				rangeErr = "time zone offset hour"
+			}
+			if mm.v > 60 {
+				rangeErr = "time zone offset minute"
+			}
+			if ss.v > 60 {
+				rangeErr = "time zone offset second"
+			}
+			if rangeErr != "" {
+				break
+			}
+			off := (hr.v*60+mm.v)*60 + ss.v
+			if sign == "-" {
+				off = -off
+			} else if sign != "+" {
+				bad = true
+				break
+			}
+			zoneOffset = off
+			value = rest
+		case parseStdFrac0:
+			ndigit := 1 + chunk.fracDigits
+			if len(value) < ndigit {
+				bad = true
+				break
+			}
+			ns := parseNanos(value, ndigit)
+			if ns.ok == false {
+				bad = true
+				break
+			}
+			nsec = ns.ns
+			value = value[ndigit:]
+		case parseStdFrac9:
+			if len(value) < 2 || (value[0] != '.' && value[0] != ',') || value[1] < '0' || value[1] > '9' {
+				break
+			}
+			i := 0
+			for i+1 < len(value) && value[i+1] >= '0' && value[i+1] <= '9' {
+				i++
+			}
+			ns := parseNanos(value, 1+i)
+			nsec = ns.ns
+			value = value[1+i:]
+		}
+		if rangeErr != "" {
+			return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: stdstr, valueElem: value, message: ": " + rangeErr + " out of range"}
+		}
+		if bad {
+			return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: stdstr, valueElem: hold, message: ""}
+		}
+	}
+	if pmSet && hour < 12 {
+		hour += 12
+	} else if amSet && hour == 12 {
+		hour = 0
+	}
+	if yday >= 0 {
+		m := 0
+		d := 0
+		yy := yday
+		if parseIsLeap(year) {
+			if yy == 60 {
+				m = 2
+				d = 29
+			} else if yy > 60 {
+				yy--
+			}
+		}
+		if yy < 1 || yy > 365 {
+			return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: "", valueElem: value, message: ": day-of-year out of range"}
+		}
+		if m == 0 {
+			m = (yy-1)/31 + 1
+			if parseDaysBefore(m+1) < yy {
+				m++
+			}
+			d = yy - parseDaysBefore(m)
+		}
+		if month >= 0 && month != m {
+			return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: "", valueElem: value, message: ": day-of-year does not match month"}
+		}
+		month = m
+		if day >= 0 && day != d {
+			return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: "", valueElem: value, message: ": day-of-year does not match day"}
+		}
+		day = d
+	} else {
+		if month < 0 {
+			month = 1
+		}
+		if day < 0 {
+			day = 1
+		}
+	}
+	if day < 1 || day > parseDaysIn(month, year) {
+		return Time{}, &parseError{layout: alayout, value: avalue, layoutElem: "", valueElem: value, message: ": day out of range"}
+	}
+	if zoneIsUTC {
+		return Date(year, Month(month), day, hour, min, sec, nsec, UTC), nil
+	}
+	if zoneOffset != -1 {
+		if zoneOffset != 0 {
+			panic("time.Parse: non-zero time zone offset not in scope (re-test: synthetic zoneinfo)")
+		}
+		return Date(year, Month(month), day, hour, min, sec, nsec, UTC), nil
+	}
+	if zoneName != "" {
+		panic("time.Parse: non-UTC zone abbreviation not in scope (re-test: synthetic zoneinfo)")
+	}
+	return Date(year, Month(month), day, hour, min, sec, nsec, UTC), nil
 }
 
 func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time {
