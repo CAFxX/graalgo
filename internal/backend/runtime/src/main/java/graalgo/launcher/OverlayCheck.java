@@ -126,6 +126,15 @@ public final class OverlayCheck {
      * classes from the same exotic location still compare equal, and a
      * class from anywhere else fails loud with both URLs in the
      * message. Returns null only when the resource is absent.
+     *
+     * <p>The URL is located, never opened: this method calls only
+     * {@code toString()} on it, so no connection, socket, or channel
+     * is ever created — this is classpath lookup, not network I/O, and
+     * it runs at launcher startup before any goroutine exists. That is
+     * why the runtime Makefile's netpoller gate (GG-0018 second
+     * disjunct) exempts {@code getResource} lines: the gate guards I/O
+     * that could bypass netpoller slot discipline, and a located-but-
+     * never-opened resource URL cannot bypass anything.
      */
     private static String resourceRoot(ClassLoader loader, String path) {
         java.net.URL url = loader.getResource(path);

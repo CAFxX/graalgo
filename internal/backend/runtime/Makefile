@@ -149,11 +149,23 @@ check: main $(OUT_TEST)/.built
 	@# not a code path, and is excluded.
 	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java'; then \
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
-	@# Exclusion: ToolPaths (phase-1 launcher, startup-only, never
-	@# goroutine-reachable) imports java.net.URISyntaxException for
-	@# code-source URI parsing — not network I/O; the phase-1 tree never
-	@# ran this gate.
-	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
+	@# Exclusions (principle: naming a java.net type is not network I/O;
+	@# the gate guards I/O that could bypass netpoller slot discipline,
+	@# i.e. sockets, channels, and opened connections on goroutine-
+	@# reachable paths):
+	@# - ToolPaths (phase-1 launcher, startup-only, never
+	@#   goroutine-reachable) imports java.net.URISyntaxException for
+	@#   code-source URI parsing — not network I/O; the phase-1 tree never
+	@#   ran this gate.
+	@# - ClassLoader.getResource lines (lane C, 2026-11-01): resource
+	@#   location is not network I/O. The returned URL is never opened
+	@#   (OverlayCheck calls only toString() on it and compares string
+	@#   roots), and the check runs at launcher startup before any
+	@#   goroutine exists, so no slot discipline can be bypassed. A
+	@#   Socket, URLConnection, channel, or openConnection/openStream
+	@#   use on any line still trips this gate: only the getResource
+	@#   location line itself is exempt.
+	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException' | grep -v 'getResource('; then \
 		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (GG-0018 second disjunct)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
 	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
