@@ -549,6 +549,11 @@ public final class TortureBattery {
     // main dispatch
 
     public static void main(String[] args) throws Exception {
+        // P1-5: legs exercise the scheduler directly; a truffle-first
+        // classpath would load the Phase-1 stubs (including the
+        // silently-shared static GoroutineState holder) instead of
+        // failing. Fail fast before dispatch.
+        graalgo.launcher.OverlayGate.assertSchedulerOverlay();
         if (args.length < 1) {
             System.err.println("usage: TortureBattery <F1|F3|F4|F5|F5b|F6> [args...]");
             System.exit(2);

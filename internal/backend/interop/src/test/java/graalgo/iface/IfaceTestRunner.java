@@ -5,6 +5,8 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
+import graalgo.launcher.OverlayGate;
+
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}
  * and Phase-2 {@code SchedTestRunner}): instantiates each registered test
@@ -27,6 +29,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
+        // P1-5 (2026-10-31): product launcher overlay fail-fast, incl.
+        // the --check early-return gap (assert must precede --check).
+        TESTS.add(graalgo.p3sync.launcher.P3SyncOverlayTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
@@ -71,6 +76,11 @@ public final class IfaceTestRunner {
     private IfaceTestRunner() {}
 
     public static void main(String[] args) {
+        // P1-5: tests run in-process against the test classpath; a
+        // truffle-first order would load the Phase-1 stubs (including
+        // the silently-shared static GoroutineState holder) into the
+        // suite instead of failing. Fail fast before any test runs.
+        OverlayGate.assertSchedulerOverlay();
         int run = 0;
         int failed = 0;
         List<String> failures = new ArrayList<>();

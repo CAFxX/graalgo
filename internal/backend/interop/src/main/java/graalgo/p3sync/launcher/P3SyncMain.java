@@ -114,6 +114,14 @@ public final class P3SyncMain {
 
     /** Entry point without System.exit, for tests. */
     static int run(String[] args) {
+        // P1-5: fail fast on a wrong classpath order before doing anything
+        // else — including --check, --emit-wire, and --help. Previously
+        // the assert sat only before guest execution, so the --check
+        // build step (the diffharness build step for the product
+        // launcher) exited 0 with the Phase-1 stub loaded — the exact
+        // hole R-01 closed in graalgo.launcher.Main by asserting at the
+        // top of run().
+        assertSchedulerOverlay();
         // P2-M5 (WS E): GODEBUG surface triage — same as SchedMain.
         try {
             GoDebug.apply();
@@ -516,7 +524,7 @@ public final class P3SyncMain {
 
         // Install the scheduler and run main as the first goroutine
         // (SchedMain's flow, verbatim).
-        assertSchedulerOverlay();
+        // (Overlay already asserted at the top of run(); no second gate.)
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
@@ -589,24 +597,15 @@ public final class P3SyncMain {
     }
 
     /**
-     * Fail-fast that the Phase-2 overlay is active (P2-D8, same as
-     * SchedMain): the {@code graalgo.runtime.Scheduler} on the classpath
-     * must be the Phase-2 replacement, i.e. phase2/out/classes precedes
-     * phase1/out/classes. Never silent.
+     * Fail-fast that the Phase-2 overlay is active (P2-D8; P1-5
+     * centralised the implementation in
+     * {@link graalgo.launcher.OverlayGate}). Called at the top of
+     * {@link #run}, before any early return ({@code --check},
+     * {@code --emit-wire}, {@code --help}, usage errors) — a build step
+     * must never exit 0 with the stub loaded.
      */
     private static void assertSchedulerOverlay() {
-        try {
-            if (!graalgo.runtime.Scheduler.isPhase2()) {
-                throw new IllegalStateException(
-                        "graalgo.runtime.Scheduler.isPhase2() returned false");
-            }
-        } catch (NoSuchMethodError e) {
-            throw new IllegalStateException(
-                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
-                    + "overlay; phase2/out/classes must precede phase1/out/classes "
-                    + "on the classpath",
-                    e);
-        }
+        graalgo.launcher.OverlayGate.assertSchedulerOverlay();
     }
 
     private static int usageError(String msg) {

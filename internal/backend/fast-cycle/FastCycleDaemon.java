@@ -163,6 +163,54 @@ public class FastCycleDaemon {
         }
     }
 
+    /**
+     * P1-5: reflective copy of {@code graalgo.launcher.OverlayGate} for a
+     * child classloader. The daemon compiles standalone
+     * ({@code javac FastCycleDaemon.java}, no backend classes on its
+     * compile classpath), so it cannot call OverlayGate directly — and
+     * it must not judge its OWN classpath anyway: the gate has to judge
+     * the classpath the child will load from ({@code cl}), not the
+     * daemon's. Called by {@link #doRun} and {@link #doRunTest} before
+     * the target class loads, so a wrong-order RUN/RUNTEST fails with
+     * the FATAL message instead of running against the Phase-1 stubs
+     * (whose static GoroutineState holder would be silently shared).
+     *
+     * <p>Semantics: if {@code graalgo.runtime.Scheduler} is absent from
+     * {@code cl}, there is no overlay on this classpath (e.g. a
+     * pure-Truffle run) and the check passes vacuously. If it is
+     * present but has no {@code isPhase2()} method, the Phase-1 stub
+     * won the order — fail fast. If {@code isPhase2()} returns false,
+     * fail the same way.
+     */
+    static void assertSchedulerOverlay(ClassLoader cl) {
+        final Class<?> scheduler;
+        try {
+            scheduler = Class.forName("graalgo.runtime.Scheduler", false, cl);
+        } catch (ClassNotFoundException e) {
+            return; // no overlay classes on this classpath: nothing to shadow
+        }
+        final java.lang.reflect.Method isPhase2;
+        try {
+            isPhase2 = scheduler.getMethod("isPhase2");
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
+                    + "overlay; runtime/out/classes must precede truffle/out/classes "
+                    + "on the child classpath", e);
+        }
+        try {
+            if (!Boolean.TRUE.equals(isPhase2.invoke(null))) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Scheduler.isPhase2() returned false");
+            }
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "FATAL: could not probe graalgo.runtime.Scheduler.isPhase2()", e);
+        }
+    }
+
     static String doRun(String cp, String mainClass, String[] args) {
         // Capture stdout/stderr
         PrintStream origOut = System.out;
@@ -182,6 +230,10 @@ public class FastCycleDaemon {
             }
             URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
             Thread.currentThread().setContextClassLoader(cl);
+            // P1-5: fail fast on a wrong-order child classpath before the
+            // target class loads (its own main/run may assert too, but
+            // RUNTEST targets and non-launcher mains have no assert).
+            assertSchedulerOverlay(cl);
             Class<?> cls = Class.forName(mainClass, true, cl);
 
             // Prefer run(String[]) returning int (no System.exit) over main.
@@ -242,6 +294,10 @@ public class FastCycleDaemon {
             }
             URLClassLoader cl = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader());
             Thread.currentThread().setContextClassLoader(cl);
+            // P1-5: RUNTEST invokes test methods directly — no main, no
+            // launcher assert — so this is the ONLY gate on the test
+            // classpath. Fail fast before any test method runs.
+            assertSchedulerOverlay(cl);
             Class<?> cls = Class.forName(testClass, true, cl);
 
             List<java.lang.reflect.Method> methods = new ArrayList<>();

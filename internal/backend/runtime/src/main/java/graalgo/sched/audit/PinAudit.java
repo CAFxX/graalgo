@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
+import graalgo.launcher.OverlayGate;
+
 import jdk.jfr.consumer.RecordedEvent;
 import jdk.jfr.consumer.RecordedFrame;
 import jdk.jfr.consumer.RecordingFile;
@@ -77,6 +79,11 @@ public final class PinAudit {
     }
 
     public static void main(String[] args) throws Exception {
+        // P1-5: PinAudit builds its children's classpaths from its own
+        // (corpus children inherit java.class.path; --tests children use
+        // -Dpinaudit.test.cp), so a wrong order here would propagate
+        // silently into every child. Fail fast before spawning anything.
+        OverlayGate.assertSchedulerOverlay();
         List<Path> corpusDirs = new ArrayList<>();
         boolean runTests = false;
         Path allowFile = null;

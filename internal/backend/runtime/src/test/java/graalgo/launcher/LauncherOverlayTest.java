@@ -49,6 +49,86 @@ public final class LauncherOverlayTest {
     }
 
     /**
+     * verifies: P1-5 (SchedMain --help still succeeds on the correct
+     * classpath now that the overlay assert sits at the top of run()).
+     * Subprocess: SchedMain.run is package-private to
+     * graalgo.sched.launcher, so the probe goes through a child JVM on
+     * the test classpath (test-classes : runtime/classes :
+     * truffle/classes — runtime first).
+     */
+    public void testSchedMainHelpPassesOnCorrectClasspath() throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+        cmd.add("-cp");
+        cmd.add(System.getProperty("java.class.path"));
+        cmd.add("graalgo.sched.launcher.SchedMain");
+        cmd.add("--help");
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        String out;
+        try {
+            out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            p.destroyForcibly();
+            throw e;
+        }
+        boolean exited = p.waitFor(120, TimeUnit.SECONDS);
+        if (!exited) {
+            p.destroyForcibly();
+            throw new AssertionError("child JVM did not exit within 120s (SchedMain --help)");
+        }
+        assertEquals(Main.EXIT_OK, p.exitValue(),
+                "SchedMain --help on the correct classpath must exit 0; output was: " + out);
+    }
+
+    /**
+     * verifies: P1-5 (SchedMain fails fast on a reversed classpath on
+     * the --help early-return path, never silently). Before the fix the
+     * assert sat only before guest execution, so --help returned
+     * before reaching it and exited 0 with the stub loaded — the same
+     * early-return class as the --check build-step hole.
+     */
+    public void testSchedMainReversedClasspathFailsFast() throws Exception {
+        Path stubDir = null;
+        try {
+            stubDir = compileStubScheduler();
+            List<String> cmd = new ArrayList<>();
+            cmd.add(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+            StringBuilder cp = new StringBuilder();
+            cp.append(stubDir).append(java.io.File.pathSeparator).append(runtimeClassesDir());
+            for (String entry : System.getProperty("java.class.path").split(java.io.File.pathSeparator)) {
+                if (entry.endsWith(".jar")) {
+                    cp.append(java.io.File.pathSeparator).append(entry);
+                }
+            }
+            cmd.add("-cp");
+            cmd.add(cp.toString());
+            cmd.add("graalgo.sched.launcher.SchedMain");
+            cmd.add("--help");
+            Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+            String out;
+            try {
+                out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                p.destroyForcibly();
+                throw e;
+            }
+            boolean exited = p.waitFor(120, TimeUnit.SECONDS);
+            if (!exited) {
+                p.destroyForcibly();
+                throw new AssertionError("child JVM did not exit within 120s (reversed classpath)");
+            }
+            assertTrue(p.exitValue() != 0,
+                    "child with stub Scheduler first must NOT exit 0; output was: " + out);
+            assertTrue(out.contains("FATAL") && out.contains("Phase-1 Scheduler stub"),
+                    "child must report the FATAL overlay message; output was: " + out);
+        } finally {
+            if (stubDir != null) {
+                deleteTree(stubDir.getParent()); // the temp root (stub-classes + leftovers)
+            }
+        }
+    }
+
+    /**
      * verifies: R-01 (a stub Scheduler loaded first fails fast, never silently).
      */
     public void testReversedClasspathFailsFast() throws Exception {

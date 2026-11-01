@@ -48,6 +48,9 @@ jobs:
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
 
+      - name: Overlay-assert check (review P1-5)
+        run: python3 .github/scripts/check_overlay_assert.py
+
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
         with:

@@ -5,6 +5,8 @@ import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 
+import graalgo.launcher.OverlayGate;
+
 /**
  * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}):
  * instantiates each registered test class and invokes every public no-arg
@@ -66,6 +68,11 @@ public final class SchedTestRunner {
     }
 
     public static void main(String[] args) {
+        // P1-5: tests run in-process against the test classpath; a
+        // truffle-first order would load the Phase-1 stubs (including
+        // the silently-shared static GoroutineState holder) into the
+        // suite instead of failing. Fail fast before any test runs.
+        OverlayGate.assertSchedulerOverlay();
         int run = 0;
         int failed = 0;
         for (Class<?> c : TESTS) {
