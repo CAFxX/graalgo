@@ -17,6 +17,7 @@ package main
 //   (P1-2) TestResolveStdlibTreeFallsBackLoud  — no vendored tree: loud GOROOT fallback
 //   (P1-2) TestResolveStdlibTreePinSkewFailsLoud — manifest/pin skew fails loud
 //   (P1-2) TestResolveStdlibTreeRejectsNonTreeDir — same-named non-tree dir refused
+//   (CI-41211913011) TestGoBinaryDiscovery — toolchain discovery order: STDLIB_EXCL_GO, $GO, PATH go, legacy ~/tools fallback
 
 import (
 	"fmt"
@@ -280,7 +281,10 @@ func TestParseVocabularySection(t *testing.T) {
 func fakeRepoRoot(t *testing.T, pin, manifestVer string) string {
 	t.Helper()
 	root := t.TempDir()
-	fork := filepath.Join(root, "phases", "phase3", "stdlib-fork")
+	// The resolver reads tools/stdlib-fork/ (Phase-4 layout); the old
+	// phases/phase3/ path left these tests silently falling through to
+	// the live toolchain instead of exercising the vendored branch.
+	fork := filepath.Join(root, "tools", "stdlib-fork")
 	if err := os.MkdirAll(fork, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -353,6 +357,45 @@ func TestResolveStdlibTreePinSkewFailsLoud(t *testing.T) {
 		t.Fatal("manifest/pin skew: expected loud failure, got a tree")
 	}
 	mustContain(t, err.Error(), "inconsistent", "skew diagnosis")
+}
+
+// Toolchain discovery must not hardcode the developer-machine layout: CI
+// run 41211913011 failed with `fork/exec $HOME/tools/go/bin/go: no such
+// file` even though $GO and a PATH go both existed on the runner. The
+// order pinned here mirrors the p3frontend loader: STDLIB_EXCL_GO, $GO,
+// PATH go, legacy ~/tools/go/bin/go.
+func TestGoBinaryDiscovery(t *testing.T) {
+	fakeHome := t.TempDir() // no tools/ here, like a CI runner HOME
+	binDir := t.TempDir()
+	fakeGo := filepath.Join(binDir, "go")
+	if err := os.WriteFile(fakeGo, []byte("#!/bin/sh\necho fake-go\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	emptyDir := t.TempDir() // a PATH with no go in it
+
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("STDLIB_EXCL_GO", "/override/go")
+	t.Setenv("GO", "/env/go")
+	t.Setenv("PATH", binDir)
+	if got := goBinary(); got != "/override/go" {
+		t.Fatalf("STDLIB_EXCL_GO: got %q, want /override/go", got)
+	}
+
+	t.Setenv("STDLIB_EXCL_GO", "")
+	if got := goBinary(); got != "/env/go" {
+		t.Fatalf("$GO: got %q, want /env/go", got)
+	}
+
+	t.Setenv("GO", "")
+	if got := goBinary(); got != fakeGo {
+		t.Fatalf("PATH go: got %q, want %q", got, fakeGo)
+	}
+
+	t.Setenv("PATH", emptyDir)
+	want := filepath.Join(fakeHome, "tools", "go", "bin", "go")
+	if got := goBinary(); got != want {
+		t.Fatalf("legacy fallback: got %q, want %q", got, want)
+	}
 }
 
 // (P1-2) a same-named dir that is not a stdlib src root is refused.

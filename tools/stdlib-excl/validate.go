@@ -294,9 +294,23 @@ func crossCheckPin(repoRoot, ver string) error {
 	return nil
 }
 
-// goBinary returns the pinned Go toolchain binary.
+// goBinary returns the Go toolchain binary used to answer `go env GOROOT`
+// (and for the `go` invocations in measure). Discovery order mirrors the
+// p3frontend loader (internal/frontend/p3frontend/loader.go): the explicit
+// STDLIB_EXCL_GO override, then $GO (exported by the CI workflows for the
+// Makefiles), then `go` on PATH, then the legacy ~/tools/go/bin/go layout.
+// The legacy path alone broke CI (run 41211913011): GHA runners install go
+// under a toolcache, not ~/tools, so the exclusion-list gate failed with
+// `fork/exec $HOME/tools/go/bin/go: no such file` even though $GO and a
+// PATH go both existed. Discovery — not a hardcoded layout — is the default.
 func goBinary() string {
 	if p := os.Getenv("STDLIB_EXCL_GO"); p != "" {
+		return p
+	}
+	if p := os.Getenv("GO"); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath("go"); err == nil {
 		return p
 	}
 	return filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
