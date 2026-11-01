@@ -647,11 +647,18 @@ public final class NodeFactory {
                 // missing "body" field (additive wire data, freeze §2.3).
                 //
                 // A funcdecl carrying "unimplemented" (bodyless function
-                // without //go:linkname, typically an assembly
-                // implementation) builds an UnimplementedRootNode that
-                // panics if called. This is general: it applies uniformly
-                // to all bodyless functions, preserving type identity
-                // while failing loudly on invocation.
+                // with no provider: bodyless method, multi-result
+                // defaulted declaration, or multi-result linkname
+                // without a provider) builds an UnimplementedRootNode
+                // that panics if called, naming the reason from the
+                // "unimplementedReason" field. This is general: it
+                // applies uniformly to all bodyless functions,
+                // preserving type identity while failing loudly on
+                // invocation. Reachable references are rejected
+                // earlier, at export, by the frontend's reachability
+                // gate — this node is only reached by stubs the gate
+                // cannot see (interface dispatch without an explicit
+                // conversion, reflect).
                 Json.Value linkname = fields.opt("linkname");
                 Json.Value unimplemented = fields.opt("unimplemented");
                 RootCallTarget target;
@@ -674,12 +681,20 @@ public final class NodeFactory {
                     root.setSourceSection(sectionFor(fn, "funcdecl"));
                     target = root.getCallTarget();
                 } else if (unimplemented instanceof Json.Bool b && b.value()) {
-                    // Bodyless function without //go:linkname: build a
-                    // stub that panics if called. The pkgpath field
-                    // identifies the declaring package for the message.
+                    // Bodyless function with no provider: build a stub
+                    // that panics if called. The pkgpath field identifies
+                    // the declaring package for the message, and the
+                    // additive "unimplementedReason" field (P1-3) names
+                    // the actual reason — bodyless method, defaulted
+                    // multi-result, or provider-less linkname — instead
+                    // of blaming assembly for every shape. Older
+                    // documents without the field keep the neutral
+                    // fallback message in UnimplementedRootNode.
                     String pkgPath = fields.opt("pkgpath") instanceof Json.Str ps
                             ? ps.value() : "";
-                    UnimplementedRootNode root = new UnimplementedRootNode(name, pkgPath);
+                    String reason = fields.opt("unimplementedReason") instanceof Json.Str rs
+                            ? rs.value() : "";
+                    UnimplementedRootNode root = new UnimplementedRootNode(name, pkgPath, reason);
                     root.setSourceSection(sectionFor(fn, "funcdecl"));
                     target = root.getCallTarget();
                 } else {
@@ -3443,6 +3458,28 @@ public final class NodeFactory {
             // The exporter emits the index expression as the fun operand;
             // build it and require a func result (mirrors the call/selector
             // branches above).
+            GoExprNode fn = buildExpr(fun, ctx);
+            if (fn.kind() != GoKind.FUNC) {
+                throw new FrontendException(path + ": call to non-function value of kind "
+                        + fn.kind() + " (WS D)");
+            }
+            Json.Object ff = fun.object("fields", path + ".fun");
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
+        }
+        if ("methodvalue".equals(funKind) || "rtstackmethodvalue".equals(funKind)) {
+            // P1-3: call to a bound method value, e.g. the go/defer
+            // desugar of `go fn.Name()` (whose inner call's fun is the
+            // rtstackmethodvalue node), or a parenthesized method value
+            // `(x.M)(args)`. Both node kinds evaluate to a GoFunc with
+            // the receiver already bound, so the call is a plain func
+            // value call with the wire signature (no receiver) for
+            // argument adaptation — mirrors the call/selector/index
+            // branches above.
             GoExprNode fn = buildExpr(fun, ctx);
             if (fn.kind() != GoKind.FUNC) {
                 throw new FrontendException(path + ": call to non-function value of kind "

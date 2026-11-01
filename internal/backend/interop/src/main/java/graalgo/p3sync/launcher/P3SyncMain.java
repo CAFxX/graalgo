@@ -40,6 +40,7 @@ import graalgo.rtstack.RuntimeFuncEntryNode;
 import graalgo.rtstack.RuntimeFuncFileLineNode;
 import graalgo.rtstack.RuntimeFuncForPCNode;
 import graalgo.rtstack.RuntimeFuncNameNode;
+import graalgo.rtstack.RuntimeStackMethodValueNode;
 import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3os.GoOs;
 import graalgo.p3sync.nodes.AtomicAddrNode;
@@ -396,6 +397,10 @@ public final class P3SyncMain {
                     (node, ctx) -> RuntimeFuncForPCNode.build(node, ctx, factory));
             factory.registerExprKind("runtimefuncname",
                     (node, ctx) -> RuntimeFuncNameNode.build(node, ctx, factory));
+            // P1-3: method values of (*Func).Name/Entry (see
+            // P3KindRegistrations for the mechanism).
+            factory.registerExprKind("rtstackmethodvalue",
+                    (node, ctx) -> RuntimeStackMethodValueNode.build(node, ctx, factory));
             factory.registerExprKind("runtimefuncentry",
                     (node, ctx) -> RuntimeFuncEntryNode.build(node, ctx, factory));
             factory.registerExprKind("runtimefuncfileline",

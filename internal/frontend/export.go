@@ -2424,6 +2424,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	}
 	// NOTE: doc.Globals is assembled after all exports below (see below).
 	hasMain := false
+	mainFuncID := -1
 	for _, fi := range funcs {
 		if fi.isTemplate {
 			continue
@@ -2439,6 +2440,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		doc.Funcs = append(doc.Funcs, f)
 		if fi.fd.Name.Name == "main" && fi.recv == nil {
 			hasMain = true
+			mainFuncID = fi.funcID
 		}
 	}
 	for _, inst := range insts {
@@ -2494,6 +2496,14 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	doc.Objects = e.objects
 	if doc.Objects == nil {
 		doc.Objects = []ObjectEnt{}
+	}
+
+	// P1-3: fail the export when an unimplemented stub is referenced
+	// from reachable code — the honest equivalent of gc's link error
+	// for a missing implementation. Unreferenced stubs keep the stub
+	// form (see stub_reachability.go).
+	if err := checkStubReachability(&doc, mainFuncID); err != nil {
+		return "", err
 	}
 
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -4712,10 +4722,6 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4755,14 +4761,15 @@ type methodCall struct {
 func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Selection, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
 	mname := sel.Sel.Name
 	rn := derefNamed(selection.Recv())
-	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
-	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
-	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
-		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
-	}
+	// P1-3: the synthetic runtime stack-inspection methods
+	// ((*Func).Name/Entry/FileLine, (*Frames).Next) never reach here:
+	// direct calls lower to rtstack wire nodes in exportCall, method
+	// values lower to the rtstackmethodvalue wire node in
+	// methodValueNode, and instantiation enumeration skips them
+	// (runtimeStackMethod). The old panicMsg marker for Func.Name
+	// (a runtime panic, plus a nil-decl crash in methodValueNode)
+	// is deleted: Name/Entry are real now, via the PC interning in
+	// graalgo.runtime.StackTrace (the FuncForPC precedent).
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
 		if !ok {
@@ -5183,6 +5190,15 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 				// (skipped during synthetic import) and must not be resolved here.
 				// The named M7 scope error is reported during main export.
 				if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
+					continue
+				}
+				// P1-3: the synthetic runtime stack-inspection methods
+				// lower to intrinsic wire nodes, never through
+				// resolveMethodCall/methodIndex (the non-generic roots
+				// loop below already skips them; this generic-template
+				// loop previously relied on the deleted panicMsg
+				// marker to survive them).
+				if _, isRt := runtimeStackMethod(selection); isRt {
 					continue
 				}
 				mc, err := e.resolveMethodCall(sel, selection, typeList(inst.TypeArgs), nil)
@@ -5788,6 +5804,13 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			if recvIface(selection.Recv()) != nil {
 				return true
 			}
+			// P1-3: the synthetic runtime stack-inspection methods
+			// lower to intrinsic wire nodes, never through
+			// resolveMethodCall/methodIndex (previously the deleted
+			// panicMsg marker carried them through this walk).
+			if _, isRt := runtimeStackMethod(selection); isRt {
+				return true
+			}
 			var mtargs []types.Type
 			if ii, ok := e.info.Instances[n.Sel]; ok {
 				mtargs = typeList(ii.TypeArgs)
@@ -6241,7 +6264,10 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 //     declaration can only be served by an aliased provider. A
 //     multi-result DEFAULTED declaration (internal/cpu.cpuid is the
 //     shape) therefore keeps the stub form, with its pair synthesis,
-//     exactly as before this change.
+//     exactly as before this change — subject to the P1-3 reachability
+//     gate: a stub referenced from reachable code fails the export
+//     (stub_reachability.go), so the stub form survives only for
+//     declarations the emitted program never reaches.
 //
 // Scope: plain functions only. A bodyless METHOD without a directive
 // keeps the "unimplemented" stub: methods bind through method tables,
@@ -6289,15 +6315,22 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	if len(results) > 0 {
 		fields["results"] = results
 	}
-	// markUnimplemented records the panic-stub form. A multi-result
-	// stub still needs a userMRFuncs entry so its callers get the pair
-	// transform and compile (ASM Phase 1: the stub panics if invoked,
-	// so the pair is never constructed at runtime — but callers like
-	// internal/cpu.doinit, which multi-assigns cpuid results, must
-	// type-check). General: any stubbed function with N>1 results gets
-	// it automatically.
-	markUnimplemented := func() error {
+	// markUnimplemented records the panic-stub form, with the reason
+	// the declaration has no implementation (P1-3: the backend's panic
+	// message names this reason instead of blaming assembly for every
+	// shape). A multi-result stub still needs a userMRFuncs entry so
+	// its callers get the pair transform and compile (ASM Phase 1: the
+	// stub panics if invoked, so the pair is never constructed at
+	// runtime — but callers like internal/cpu.doinit, which
+	// multi-assigns cpuid results, must type-check). General: any
+	// stubbed function with N>1 results gets it automatically.
+	// The stub form survives only for declarations unreferenced from
+	// reachable code: checkStubReachability (stub_reachability.go)
+	// fails the export for reachable references, the equivalent of
+	// gc's link error for a missing implementation.
+	markUnimplemented := func(reason string) error {
 		fields["unimplemented"] = true
+		fields["unimplementedReason"] = reason
 		delete(fields, "linkname")
 		if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
 			if _, ok := e.userMRFuncs[fi.obj]; !ok {
@@ -6318,8 +6351,11 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// Only bodyless methods reach here (plain functions got their
 		// default symbol above): no symbol to dispatch on, so the stub
 		// stands. The multi-result WS D restriction does not apply: no
-		// body is built.
-		if err := markUnimplemented(); err != nil {
+		// body is built. In gc this shape is normally backed by an
+		// assembly body, which graalgo does not process, and methods
+		// bind through method tables, not the symbol table, so no
+		// provider can bind it here.
+		if err := markUnimplemented("bodyless method with no //go:linkname directive and no assembly body processed by graalgo (methods are not symbol-dispatched, so no provider can bind it)"); err != nil {
 			return nil, err
 		}
 	} else if defaulted {
@@ -6328,7 +6364,7 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			// declaration never aliases (see the header comment), so
 			// there is no provider for this shape: the stub stands,
 			// with the pair synthesis its callers need.
-			if err := markUnimplemented(); err != nil {
+			if err := markUnimplemented("multi-result declaration under gc's default symbol with no provider (linkname dispatch carries a single result, and a defaulted declaration never aliases to a compiled provider)"); err != nil {
 				return nil, err
 			}
 		} else {
@@ -6350,9 +6386,11 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// calls lower directly to it via linknameAlias. Without a
 		// provider, the backend's LinknameRootNode cannot handle
 		// multi-result dispatch, so emit as unimplemented (panic stub)
-		// rather than failing the entire package export. This is
-		// general: it applies to any bodyless multi-result linkname,
-		// not just reflect's shims.
+		// — and checkStubReachability fails the export if the stub is
+		// referenced from reachable code (P1-3: the link error
+		// equivalent), leaving the stub form only for unreferenced
+		// declarations. This is general: it applies to any bodyless
+		// multi-result linkname, not just reflect's shims.
 		hasProvider := false
 		if strings.Contains(symbol, ".") {
 			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
@@ -6364,10 +6402,14 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 		}
 		if len(results) > 1 && !hasProvider {
-			// No provider to alias to: mark unimplemented so the
-			// backend panics if called, instead of failing export.
-			fields["unimplemented"] = true
-			delete(fields, "linkname")
+			// No provider to alias to: mark unimplemented (with its
+			// reason and the pair synthesis its callers need, exactly
+			// like the defaulted case) so the backend panics if called
+			// and reachable references fail the export via
+			// checkStubReachability.
+			if err := markUnimplemented("multi-result //go:linkname declaration with no compiled provider (linkname dispatch carries a single result)"); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return e.node("funcdecl", fd, fields), nil
@@ -6972,6 +7014,19 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 		(plan.kind == mrM7 || plan.kind == mrXmlToken) {
 		return e.exportDeferMultiResultCall(s, plan)
 	}
+	// P1-3: `defer fn.Name()` / `defer fn.Entry()` desugar through a
+	// funclit running the bound method value (the direct-call wire
+	// node has no fun field for the backend's defer builder).
+	if sel, ok := s.Call.Fun.(*ast.SelectorExpr); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if mname, isRt := runtimeStackMethod(selection); isRt {
+				switch mname {
+				case "Name", "Entry":
+					return e.exportRtStackMethodGoDefer(s, s.Call, sel, selection, true)
+				}
+			}
+		}
+	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
 		return nil, err
@@ -7050,6 +7105,19 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	if plan := e.classifyMultiResultCall(s.Call); plan != nil &&
 		(plan.kind == mrM7 || plan.kind == mrXmlToken) {
 		return e.exportGoMultiResultCall(s, plan)
+	}
+	// P1-3: `go fn.Name()` / `go fn.Entry()` desugar through a funclit
+	// running the bound method value (the direct-call wire node has no
+	// fun field for the backend's go builder).
+	if sel, ok := s.Call.Fun.(*ast.SelectorExpr); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if mname, isRt := runtimeStackMethod(selection); isRt {
+				switch mname {
+				case "Name", "Entry":
+					return e.exportRtStackMethodGoDefer(s, s.Call, sel, selection, false)
+				}
+			}
+		}
 	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
@@ -7318,7 +7386,7 @@ func (e *exporter) hoistGoFunExpr(s *ast.GoStmt, funExpr ast.Expr, seq int, vard
 // hoistGoMethodRecv hoists a method call's receiver to `__go_recv_<seq>`
 // at go-statement time and returns a methodref against the temp (using
 // exportMethodCall's exact resolution via methodRefNode).
-func (e *exporter) hoistGoMethodRecv(s *ast.GoStmt, c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, seq int, vardecls *[]*Node) (*Node, error) {
+func (e *exporter) hoistGoMethodRecv(s ast.Node, c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, seq int, vardecls *[]*Node) (*Node, error) {
 	xt, ok := e.info.Types[sel.X]
 	if !ok || xt.Type == nil {
 		return nil, fmt.Errorf("gofrontend: no type info for go method receiver")
@@ -7342,7 +7410,66 @@ func (e *exporter) hoistGoMethodRecv(s *ast.GoStmt, c *ast.CallExpr, sel *ast.Se
 		"define": true, "type": nil, "values": []*Node{recvx},
 	}))
 	recvIdent := e.node("ident", s, map[string]any{"name": name, "obj": oid, "type": tid})
+	// P1-3: a go/defer statement calling a synthetic runtime stack
+	// method (go fn.Name()) must not reach methodRefNode's methodIndex
+	// path (no funcdecl exists for these methods). Single-result
+	// methods lower to the rtstackmethodvalue wire node, evaluated as
+	// the statement's function value with the hoisted receiver bound.
+	if mname, isRt := runtimeStackMethod(selection); isRt {
+		switch mname {
+		case "Name", "Entry":
+			t, err := e.exprType(sel)
+			if err != nil {
+				return nil, err
+			}
+			return e.node("rtstackmethodvalue", sel, map[string]any{
+				"op": mname, "recv": recvIdent, "type": t,
+			}), nil
+		}
+	}
 	return e.methodRefNode(c, sel, selection, recvIdent)
+}
+
+// exportRtStackMethodGoDefer desugars `go fn.Name()` / `defer fn.Name()`
+// (and Entry). The direct-call wire node (runtimefuncname) cannot serve
+// as a go/defer call — the backend's go/defer builders require a call
+// node with a fun field — so the receiver is hoisted to a temp evaluated
+// at go/defer time (Go semantics: the receiver is evaluated when the
+// statement runs, not when the deferred/spawned call runs) and the bound
+// method value runs inside a zero-arg funclit, mirroring
+// exportGoWithArgs.
+func (e *exporter) exportRtStackMethodGoDefer(s ast.Node, c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, isDefer bool) (*Node, error) {
+	e.chanSeq++
+	seq := e.chanSeq
+	vardecls := make([]*Node, 0, 1)
+	funNode, err := e.hoistGoMethodRecv(s, c, sel, selection, seq, &vardecls)
+	if err != nil {
+		return nil, err
+	}
+	callType, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	innerCall := e.node("call", s, map[string]any{
+		"fun": funNode, "args": []*Node{}, "type": callType,
+	})
+	body := e.node("block", s, map[string]any{"stmts": []*Node{
+		e.node("exprstmt", s, map[string]any{"x": innerCall}),
+	}})
+	funclit := e.node("funclit", s, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	outerCall := e.node("call", s, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
+	var outer *Node
+	if isDefer {
+		outer = e.node("defer", s, map[string]any{"call": outerCall})
+	} else {
+		outer = e.node("gostmt", s, map[string]any{"call": outerCall})
+	}
+	stmts := append(vardecls, outer)
+	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 
 // isMultiResultSyntheticFunc reports whether obj is one of the synthetic
@@ -9823,17 +9950,12 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
-	}
+	// P1-3: no synthetic-method panic marker remains. The runtime
+	// stack-inspection methods never reach methodRefNode (exportCall
+	// intercepts direct calls; methodValueNode and hoistGoMethodRecv
+	// intercept value positions); any other synthetic method without
+	// a backend fails here through resolveMethodCall's error, at
+	// export time, never as a runtime panic.
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
 	// named type), dispatch via the constraint interface. The ifacemethod
@@ -9965,6 +10087,27 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 // The "type" field is the method value's static func type (no receiver),
 // from the selector expression's type.
 func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	// P1-3: the synthetic runtime stack-inspection methods have no
+	// funcdecl (their type surface is declared via AddMethod, not
+	// methodIndex), so they must not reach resolveMethodCall — the
+	// old path crashed on a nil decl for (*Func).Name. Single-result
+	// methods (Name, Entry) lower to the rtstackmethodvalue wire
+	// node: a GoFunc value whose bound receiver is the *Func, backed
+	// by the same PC interning as the direct-call wire nodes
+	// (graalgo.runtime.StackTrace via FuncForPC). Multi-result
+	// methods (FileLine, Frames.Next) have no method-value lowering
+	// yet and fail fast with a named scope error, never a crash or a
+	// runtime panic.
+	if mname, isRt := runtimeStackMethod(selection); isRt {
+		switch mname {
+		case "Name", "Entry":
+			return e.node("rtstackmethodvalue", sel, map[string]any{
+				"op": mname, "recv": recv, "type": t,
+			}), nil
+		default:
+			return nil, scopeErrorf("method value runtime.%s is multi-result and has no method-value lowering in frontend/v1 scope (WS D)", mname)
+		}
+	}
 	var mtargs []types.Type
 	if ii, ok := e.info.Instances[sel.Sel]; ok {
 		mtargs = typeList(ii.TypeArgs)

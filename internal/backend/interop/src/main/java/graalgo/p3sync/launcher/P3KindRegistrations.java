@@ -56,6 +56,7 @@ import graalgo.rtstack.RuntimeFuncEntryNode;
 import graalgo.rtstack.RuntimeFuncFileLineNode;
 import graalgo.rtstack.RuntimeFuncForPCNode;
 import graalgo.rtstack.RuntimeFuncNameNode;
+import graalgo.rtstack.RuntimeStackMethodValueNode;
 import graalgo.sched.nodes.GoStatementNode;
 
 /**
@@ -192,6 +193,11 @@ public final class P3KindRegistrations implements WireKindRegistrar {
                 (node, ctx) -> RuntimeFuncForPCNode.build(node, ctx, factory));
         factory.registerExprKind("runtimefuncname",
                 (node, ctx) -> RuntimeFuncNameNode.build(node, ctx, factory));
+        // P1-3: method values of (*Func).Name/Entry (no funcdecl exists
+        // for these synthetic methods, so the plain methodvalue node
+        // cannot bind them).
+        factory.registerExprKind("rtstackmethodvalue",
+                (node, ctx) -> RuntimeStackMethodValueNode.build(node, ctx, factory));
         factory.registerExprKind("runtimefuncentry",
                 (node, ctx) -> RuntimeFuncEntryNode.build(node, ctx, factory));
         factory.registerExprKind("runtimefuncfileline",

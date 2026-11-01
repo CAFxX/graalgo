@@ -182,13 +182,17 @@ func TestBodylessMultiResultDefaultStaysUnimplemented(t *testing.T) {
 	// The internal/cpu.cpuid shape: multi-result, no directive.
 	// Dispatch cannot carry multiple results and a defaulted
 	// declaration never aliases, so the stub form (with its pair
-	// synthesis for callers) must stand.
+	// synthesis for callers) must stand — but only while the
+	// declaration is unreferenced from reachable code (P1-3: a value
+	// reference from main now fails the export via
+	// checkStubReachability; see stub_reachability_test.go). The
+	// unreferenced shape below is the cpuid shape: declared, and its
+	// only caller (doinit) is itself unreachable.
 	src := `package main
 
 func pair() (int, int)
 
 func main() {
-	_ = pair
 }
 `
 	out, err := ExportFile(writeSyncProg(t, src))
