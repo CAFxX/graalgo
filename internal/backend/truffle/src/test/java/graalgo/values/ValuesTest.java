@@ -163,6 +163,69 @@ public final class ValuesTest {
         assertTrue(z.equals(z.copy()), "struct equals");
     }
 
+    public void testGoStructFloatEquality() {
+        // L1 (review-2026-11-01-07): struct == must use IEEE float
+        // semantics for float fields, not raw carrier bits. gc: NaN !=
+        // NaN (even for the same variable), -0.0 == +0.0, and distinct
+        // NaN payloads are unequal. Map keys inherit the same rules.
+        GoStructDescriptor d64 = GoStructDescriptor.layout("S64",
+                List.of("x"), List.of(GoKind.FLOAT64));
+        GoStructDescriptor d32 = GoStructDescriptor.layout("S32",
+                List.of("x"), List.of(GoKind.FLOAT32));
+        GoStructDescriptor dmix = GoStructDescriptor.layout("M",
+                List.of("i", "x"), List.of(GoKind.INT32, GoKind.FLOAT64));
+        GoStruct nan64a = new GoStruct(d64,
+                new long[]{Double.doubleToLongBits(Double.NaN)}, new Object[0]);
+        GoStruct nan64b = new GoStruct(d64,
+                new long[]{Double.doubleToLongBits(Double.NaN)}, new Object[0]);
+        assertTrue(!nan64a.equals(nan64b), "distinct NaN float64 structs unequal");
+        assertTrue(!nan64a.equals(nan64a), "same NaN float64 struct self-unequal");
+        assertTrue(!GoEquality.equal(nan64a, nan64a), "GoEquality: same NaN struct unequal");
+        assertTrue(!GoEquality.equal(nan64a, nan64b), "GoEquality: distinct NaN structs unequal");
+        GoStruct negZero = new GoStruct(d64,
+                new long[]{Double.doubleToLongBits(-0.0)}, new Object[0]);
+        GoStruct posZero = new GoStruct(d64,
+                new long[]{Double.doubleToLongBits(0.0)}, new Object[0]);
+        assertTrue(negZero.equals(posZero), "-0.0/+0.0 float64 structs equal");
+        assertTrue(GoEquality.equal(negZero, posZero), "GoEquality: -0.0/+0.0 structs equal");
+        assertTrue(negZero.hashCode() == posZero.hashCode(), "-0.0/+0.0 structs hash equal");
+        // float32: distinct NaN payloads, and signed zero.
+        GoStruct nan32a = new GoStruct(d32,
+                new long[]{(long) Float.floatToIntBits(Float.intBitsToFloat(0x7fc00001))},
+                new Object[0]);
+        GoStruct nan32b = new GoStruct(d32,
+                new long[]{(long) Float.floatToIntBits(Float.intBitsToFloat(0x7f800001))},
+                new Object[0]);
+        assertTrue(!nan32a.equals(nan32b), "distinct NaN-payload float32 structs unequal");
+        GoStruct negZero32 = new GoStruct(d32,
+                new long[]{(long) Float.floatToIntBits(-0.0f)}, new Object[0]);
+        GoStruct posZero32 = new GoStruct(d32,
+                new long[]{(long) Float.floatToIntBits(0.0f)}, new Object[0]);
+        assertTrue(negZero32.equals(posZero32), "-0.0/+0.0 float32 structs equal");
+        assertTrue(negZero32.hashCode() == posZero32.hashCode(), "-0.0/+0.0 float32 structs hash equal");
+        // Mixed struct: int field still bit-compared, float field IEEE.
+        GoStruct mixA = new GoStruct(dmix, new long[]{1, Double.doubleToLongBits(-0.0)}, new Object[0]);
+        GoStruct mixB = new GoStruct(dmix, new long[]{1, Double.doubleToLongBits(0.0)}, new Object[0]);
+        GoStruct mixC = new GoStruct(dmix, new long[]{2, Double.doubleToLongBits(0.0)}, new Object[0]);
+        assertTrue(mixA.equals(mixB), "mixed struct -0.0/+0.0 equal");
+        assertTrue(mixA.hashCode() == mixB.hashCode(), "mixed struct -0.0/+0.0 hash equal");
+        assertTrue(!mixA.equals(mixC), "mixed struct int field differs");
+        // Struct map keys: -0.0 and +0.0 are one key; NaN is never found.
+        GoMap m = new GoMap();
+        m.put(negZero, 1L);
+        assertEq(1L, (Long) m.get(posZero), "map -0.0 put / +0.0 get");
+        m.put(posZero, 2L);
+        assertEq(1, m.size(), "map -0.0/+0.0 same key");
+        assertEq(2L, (Long) m.get(negZero), "map +0.0 replace / -0.0 get");
+        GoMap m2 = new GoMap();
+        m2.put(nan64a, 1L);
+        assertTrue(m2.get(nan64a) == null, "map NaN struct key same-var never found");
+        assertTrue(m2.get(nan64b) == null, "map NaN struct key distinct never found");
+        GoMap m3 = new GoMap();
+        m3.put(negZero32, 1L);
+        assertEq(1L, (Long) m3.get(posZero32), "map float32 -0.0 put / +0.0 get");
+    }
+
     public void testGoInterface() {
         assertTrue(GoInterface.NIL.isNil(), "nil interface");
         GoInterface v = new GoInterface("desc", 42L, "itab");

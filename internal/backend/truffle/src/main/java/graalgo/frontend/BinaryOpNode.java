@@ -408,8 +408,9 @@ public final class BinaryOpNode extends GoExprNode {
         }
         // P3-M9 (tier-1d): struct equality (Go: ==/!= on comparable structs
         // compares field-by-field; GoEquality delegates to GoStruct.equals,
-        // which requires identical descriptors and compares longs by value
-        // and objects via GoEquality).
+        // which requires identical descriptors and compares longs
+        // field-by-field (IEEE float semantics for float fields, bits
+        // otherwise) and objects via GoEquality).
         if (operandKind == GoKind.STRUCT) {
             Object l = left.executeObject(frame);
             Object r = right.executeObject(frame);

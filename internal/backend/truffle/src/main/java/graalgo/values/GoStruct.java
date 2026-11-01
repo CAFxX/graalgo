@@ -1,6 +1,5 @@
 package graalgo.values;
 
-import java.util.Arrays;
 
 /**
  * A Go struct value: descriptor + {@code long[]} + {@code Object[]} (D5).
@@ -256,7 +255,51 @@ public final class GoStruct {
     @Override
     public boolean equals(Object o) {
         return o instanceof GoStruct gs && descriptor == gs.descriptor
-                && Arrays.equals(longs, gs.longs) && structObjectsEqual(objects, gs.objects);
+                && structLongsEqual(gs) && structObjectsEqual(objects, gs.objects);
+    }
+
+    /**
+     * Field-by-field comparison of the {@code longs} carrier (L1,
+     * review-2026-11-01-07). A raw bitwise comparison is wrong for
+     * float fields: Go struct equality compares fields with Go
+     * {@code ==}, so NaN never equals anything (not even itself) and
+     * {@code -0.0 == 0.0}. Float fields therefore compare by IEEE
+     * value — {@code ==} plus an explicit NaN exclusion, mirroring
+     * {@link GoEquality}'s scalar float branches (never
+     * {@code Float.compare}/{@code Double.compare}, which order
+     * -0.0 below +0.0 and equate NaNs). Int/uint/bool fields keep
+     * the bitwise comparison. This method deliberately does NOT
+     * short-circuit on identical references: a NaN-fielded struct
+     * is unequal even to itself.
+     */
+    private boolean structLongsEqual(GoStruct gs) {
+        if (longs.length != gs.longs.length) {
+            return false;
+        }
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long a = longs[f.index()];
+            long b = gs.longs[f.index()];
+            if (f.kind() == GoKind.FLOAT32) {
+                float x = Float.intBitsToFloat((int) a);
+                float y = Float.intBitsToFloat((int) b);
+                if (x != y || Float.isNaN(x)) {
+                    return false;
+                }
+            } else if (f.kind().isFloatKind()) {
+                // FLOAT64 (UNTYPED_FLOAT, whose width is 64, lands here too).
+                double x = Double.longBitsToDouble(a);
+                double y = Double.longBitsToDouble(b);
+                if (x != y || Double.isNaN(x)) {
+                    return false;
+                }
+            } else if (a != b) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean structObjectsEqual(Object[] a, Object[] b) {
@@ -274,9 +317,46 @@ public final class GoStruct {
     @Override
     public int hashCode() {
         int h = System.identityHashCode(descriptor);
-        h = 31 * h + Arrays.hashCode(longs);
+        h = 31 * h + structLongsHash();
         for (Object o : objects) {
             h = 31 * h + GoEquality.hash(o);
+        }
+        return h;
+    }
+
+    /**
+     * Hash of the {@code longs} carrier consistent with
+     * {@link #structLongsEqual}: it replicates
+     * {@code Arrays.hashCode(long[])}'s per-element contribution
+     * ({@code 31 * h + Long.hashCode(v)}) with {@code -0.0}
+     * canonicalized to {@code +0.0} for float fields, so structs
+     * that compare equal hash equal. NaN fields need no
+     * canonicalization: no NaN-bearing struct equals anything, so
+     * its hash is unconstrained by the equal/hash contract.
+     * InLongs fields appear in descriptor order with sequential
+     * carrier indices (enforced by {@link GoStructDescriptor}'s
+     * constructor), so iterating fields in order visits the
+     * carrier in order.
+     */
+    private int structLongsHash() {
+        int h = 1;
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long v = longs[f.index()];
+            if (f.kind() == GoKind.FLOAT32) {
+                // (int) recovers the float bits whether the carrier
+                // sign- or zero-extended them.
+                if ((int) v == Float.floatToIntBits(-0.0f)) {
+                    v = 0L;
+                }
+            } else if (f.kind().isFloatKind()) {
+                if (v == Double.doubleToLongBits(-0.0)) {
+                    v = 0L;
+                }
+            }
+            h = 31 * h + Long.hashCode(v);
         }
         return h;
     }

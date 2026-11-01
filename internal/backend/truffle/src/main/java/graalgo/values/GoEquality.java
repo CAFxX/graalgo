@@ -15,10 +15,16 @@ public final class GoEquality {
     private GoEquality() {}
 
     public static boolean equal(Object a, Object b) {
-        if (a == b) {
+        if (a == b && !(a instanceof GoStruct)) {
             // Covers reference-identity and the (null, null) case. Note: for
             // Doubles this would wrongly equate two identical NaN
             // references, so NaN is checked below even on this path.
+            // GoStruct is excluded from the shortcut (L1,
+            // review-2026-11-01-07): it must fall through to field-wise
+            // GoStruct.equals even for identical references, because a
+            // NaN-fielded struct is unequal even to itself and the
+            // identity shortcut would wrongly return true (which also
+            // made NaN struct map keys findable).
             if (a instanceof Double d && d.isNaN()) {
                 return false;
             }
