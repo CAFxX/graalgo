@@ -317,6 +317,8 @@ func nonTestGoFiles(dir string) []string {
 //   - every matched package is gated separately through the frontend;
 //   - packages with no non-test Go files (e.g. test-only packages) are
 //     skipped, as `go build ./...` succeeds over them (verified vs gc);
+//     if every matched package is test-only, the build succeeds with
+//     nothing to do, again like gc;
 //   - with multiple buildable packages, the results are discarded like
 //     `go build` discards them: no artifact is emitted, exit 0;
 //   - with exactly one buildable package and that package main, the
@@ -358,8 +360,13 @@ func cmdBuildExpanded(root string, bf buildFlags) int {
 		}
 	}
 	if len(pkgs) == 0 {
-		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
-		return 1
+		// Expansion matched directories but none has buildable files:
+		// every matched package is test-only. `go build ./...`
+		// succeeds over test-only packages (verified vs gc), so there
+		// is nothing to build and no artifact to emit — exit 0, not
+		// the single-package "no non-test Go files" error, which stays
+		// for an explicitly named test-only package.
+		return 0
 	}
 	if bf.output != "" && len(pkgs) > 1 {
 		fmt.Fprintf(os.Stderr, "graalgo build: -o cannot be used with multiple packages (./... matched %d packages)\n", len(pkgs))

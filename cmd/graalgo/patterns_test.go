@@ -231,6 +231,21 @@ func TestResolveFilesIgnoresIgnoredFiles(t *testing.T) {
 	}
 }
 
+// TestCmdBuildExpandedAllTestOnly pins the gc behaviour verified in
+// the lane's differential run: `go build ./...` over a tree whose only
+// packages are test-only succeeds (exit 0, nothing to build), unlike
+// a single explicitly named test-only package. No backend is involved:
+// the empty-buildable return happens before any frontend gating.
+func TestCmdBuildExpandedAllTestOnly(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "only_test.go", "package t\n\nimport \"testing\"\n\nfunc TestT(t *testing.T) {}\n")
+	writeFile(t, root, "sub/only_test.go", "package sub\n\nimport \"testing\"\n\nfunc TestS(t *testing.T) {}\n")
+	chdirTo(t, root)
+	if code := cmdBuildExpanded("", buildFlags{pkgs: []string{"./..."}}); code != 0 {
+		t.Fatalf("cmdBuildExpanded over all-test-only ./...: exit %d, want 0 (gc succeeds)", code)
+	}
+}
+
 // TestCmdBuildExpandedRejectsMixedFileArgs pins the loud rejection of
 // `graalgo build ./... file.go`: widening the file to its directory
 // would silently build something the user did not ask for. This fails
