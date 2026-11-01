@@ -228,34 +228,7 @@
  		} else {
  			n = copy(b.buf[b.n:], s)
  			b.n += n
-@@ -1062,7 +1067,8 @@
- func NewScanner(r io.Reader) *Scanner {
- 	return &Scanner{
- 		r:            r,
--		split:        ScanLines,
-+		// WS D: nil split means the default (ScanLines); v1 cannot
-+		// take a function value of a 3-result function.
- 		maxTokenSize: MaxScanTokenSize,
- 	}
- }
-@@ -1120,7 +1126,15 @@
- 		// If we've run out of data but have an error, give the split function
- 		// a chance to recover any remaining, possibly empty token.
- 		if s.end > s.start || s.err != nil {
--			advance, token, err := s.split(s.buf[s.start:s.end], s.err != nil)
-+			// WS D: v1 cannot call through a 3-result SplitFunc value.
-+			// The default split (ScanLines) is dispatched directly via
-+			// its __-helper; a custom SplitFunc fails fast (re-test
-+			// when WS D lands multi-result calls).
-+			if s.split != nil {
-+				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope (WS D)")
-+			}
-+			__sp := __bufioScanLines(s.buf[s.start:s.end], s.err != nil)
-+			advance, token, err := __sp.advance, __sp.token, __sp.err
- 			if err != nil {
- 				if err == ErrFinalToken {
- 					s.token = token
-@@ -1178,7 +1192,10 @@
+@@ -1178,7 +1183,10 @@
  			if newSize == 0 {
  				newSize = startBufSize
  			}
@@ -267,7 +240,7 @@
  			newBuf := make([]byte, newSize)
  			copy(newBuf, s.buf[s.start:s.end])
  			s.buf = newBuf
-@@ -1293,7 +1310,8 @@
+@@ -1293,7 +1301,8 @@
  	}
  
  	// Fast path 2: Correct UTF-8 decode without error.
@@ -277,7 +250,7 @@
  	if width > 1 {
  		// It's a valid encoding. Width cannot be one for a correctly encoded
  		// non-ASCII rune.
-@@ -1378,7 +1396,8 @@
+@@ -1378,7 +1387,8 @@
  	start := 0
  	for width := 0; start < len(data); start += width {
  		var r rune
@@ -287,7 +260,7 @@
  		if !isSpace(r) {
  			break
  		}
-@@ -1386,7 +1405,8 @@
+@@ -1386,7 +1396,8 @@
  	// Scan until space, marking end of word.
  	for width, i := 0, start; i < len(data); i += width {
  		var r rune
@@ -297,7 +270,7 @@
  		if isSpace(r) {
  			return i + width, data[start:i], nil
  		}
-@@ -1420,7 +1440,10 @@
+@@ -1420,7 +1431,10 @@
  		if len(p) >= len(b.buf) {
  			// Large read, empty buffer.
  			// Read directly into p to avoid copy.
@@ -309,7 +282,7 @@
  			if n < 0 {
  				panic(errNegativeRead)
  			}
-@@ -1434,7 +1457,10 @@
+@@ -1434,7 +1448,10 @@
  		// Do not use b.fill, which will loop.
  		b.r = 0
  		b.w = 0
@@ -321,7 +294,7 @@
  		if n < 0 {
  			panic(errNegativeRead)
  		}
-@@ -1622,14 +1648,15 @@
+@@ -1622,14 +1639,15 @@
  	__cf := __bufioReadercollectFragments(b, delim)
  	full, frag, n, err := __cf.fullBuffers, __cf.finalFragment, __cf.totalLen, __cf.err
  	// Allocate new buffer to hold the full pieces and the fragment.
@@ -342,7 +315,7 @@
  }
  
  type __bufioWriterWritePair struct {
-@@ -1644,7 +1671,10 @@
+@@ -1644,7 +1662,10 @@
  		if b.Buffered() == 0 {
  			// Large write, empty buffer.
  			// Write directly from p to avoid copy.
@@ -354,7 +327,7 @@
  		} else {
  			n = copy(b.buf[b.n:], p)
  			b.n += n
-@@ -1682,7 +1712,10 @@
+@@ -1682,7 +1703,10 @@
  			// Large write, empty buffer, and the underlying writer supports
  			// WriteString: forward the write to the underlying StringWriter.
  			// This avoids an extra copy.
@@ -366,7 +339,7 @@
  		} else {
  			n = copy(b.buf[b.n:], s)
  			b.n += n
-@@ -1735,3 +1768,28 @@
+@@ -1735,3 +1759,28 @@
  	return __bufioReadercollectFragmentsPair{fullBuffers: fullBuffers, finalFragment: frag, totalLen: totalLen, err: err}
  }
  

@@ -1907,7 +1907,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// tables (hunt-special-cases).
 	if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.FieldVal {
 		if v, ok := selection.Obj().(*types.Var); ok {
-			if sig, ok := v.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
+			// The field type may be a named func type (e.g.
+			// bufio.SplitFunc) rather than a bare signature;
+			// unwrap to the underlying signature either way.
+			if sig, ok := v.Type().Underlying().(*types.Signature); ok && sig.Results().Len() > 1 {
 				if plan := e.classifyGeneralFuncField(selection, v); plan != nil {
 					return plan
 				}
@@ -2083,7 +2086,7 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 
 // classifyGeneralFuncField handles func-typed struct field calls for ANY
 // struct, not just nistCurve (fix-funcfield-mr, Gate-1). The field must
-// have a *types.Signature type with N>1 results. A pair type is
+// have a func type (bare signature or named func type) with N>1 results. A pair type is
 // synthesized on demand with fields f0, f1, ... in result order.
 //
 // Design: the field holds a function value. For the call to work, the
@@ -2099,7 +2102,9 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 // pair type — the backend already handles selector-fun calls via
 // FuncValueCallNode.
 func (e *exporter) classifyGeneralFuncField(selection *types.Selection, v *types.Var) *mrPlan {
-	sig, ok := v.Type().(*types.Signature)
+	// As in classifyMultiResultCall's func-field arm: the field type
+	// may be a named func type (bufio.SplitFunc), so unwrap it.
+	sig, ok := v.Type().Underlying().(*types.Signature)
 	if !ok {
 		return nil
 	}

@@ -1067,8 +1067,7 @@ const (
 func NewScanner(r io.Reader) *Scanner {
 	return &Scanner{
 		r:            r,
-		// WS D: nil split means the default (ScanLines); v1 cannot
-		// take a function value of a 3-result function.
+		split:        ScanLines,
 		maxTokenSize: MaxScanTokenSize,
 	}
 }
@@ -1126,15 +1125,7 @@ func (s *Scanner) Scan() bool {
 		// If we've run out of data but have an error, give the split function
 		// a chance to recover any remaining, possibly empty token.
 		if s.end > s.start || s.err != nil {
-			// WS D: v1 cannot call through a 3-result SplitFunc value.
-			// The default split (ScanLines) is dispatched directly via
-			// its __-helper; a custom SplitFunc fails fast (re-test
-			// when WS D lands multi-result calls).
-			if s.split != nil {
-				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope (WS D)")
-			}
-			__sp := __bufioScanLines(s.buf[s.start:s.end], s.err != nil)
-			advance, token, err := __sp.advance, __sp.token, __sp.err
+			advance, token, err := s.split(s.buf[s.start:s.end], s.err != nil)
 			if err != nil {
 				if err == ErrFinalToken {
 					s.token = token

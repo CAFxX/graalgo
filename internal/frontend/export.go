@@ -8417,6 +8417,33 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 		}
 	}
 	if !ok {
+		// P3-M10 (PKG-035), bare-ident form: a table-driven
+		// multi-result function named without a package qualifier
+		// (e.g. ScanLines inside bufio's own NewScanner literal)
+		// lowers to its pair-returning __-helper, exactly as the
+		// package-qualified path in exportSyntheticQualified does.
+		// Pair-transformed (mrUser) functions are untouched here:
+		// they are already in funcByObj, so a miss for one is a
+		// genuine unknown, not a table lowering. Fail-fast stubs
+		// have no plan and keep the error below.
+		if plan := e.mrPlanForFuncValue(obj); plan != nil && plan.kind != mrUser {
+			helperFn, herr := e.multiResultHelper(plan)
+			if herr != nil {
+				return herr
+			}
+			hfi, hok := e.funcByObj[helperFn]
+			if !hok {
+				return fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", helperFn.Name())
+			}
+			sigID, terr := e.typeID(helperFn.Type())
+			if terr != nil {
+				return terr
+			}
+			fields["name"] = helperFn.Name()
+			fields["obj"] = hfi.funcID
+			fields["type"] = sigID
+			return nil
+		}
 		return fmt.Errorf("gofrontend: unknown function %s", obj.Name())
 	}
 	if fi.recv != nil {
