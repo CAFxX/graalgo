@@ -7,6 +7,7 @@ import graalgo.frontend.AppendNode;
 import graalgo.frontend.AssignNode;
 import graalgo.frontend.BinaryOpNode;
 import graalgo.frontend.BlockNode;
+import graalgo.frontend.Boxing;
 import graalgo.frontend.BranchNode;
 import graalgo.frontend.CapNode;
 import graalgo.frontend.ClearNode;
@@ -43,13 +44,24 @@ import graalgo.frontend.SelectorWriteNode;
 import graalgo.frontend.SliceExprNode;
 import graalgo.frontend.UnaryOpNode;
 import graalgo.frontend.VarReadNode;
+import graalgo.values.GoComplex32;
+import graalgo.values.GoComplex64;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
+import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
+import graalgo.runtime.sync.GoAtomicInt32;
+import graalgo.runtime.sync.GoAtomicInt64;
+import graalgo.runtime.sync.GoPool;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Builds Truffle node trees from frontend/v2 binary documents.
@@ -1219,11 +1231,45 @@ public final class NodeFactoryV2 {
 
     /**
      * Builds a composite literal (e.g. []int{1,2,3}, Point{X:1}).
+     *
+     * <p>Element/key kinds, array length, struct descriptor and zero
+     * templates are resolved from the literal type's entry in the type
+     * table (through named types, and through a pointer for {@code &T{}}
+     * literals) — the same resolution v1 performs. A literal kind the
+     * factory cannot build (anything but slice/array/map/struct, or a
+     * pointer to a non-struct) fails loudly here instead of producing a
+     * node that faults at execution time.
      */
     @SuppressWarnings("unchecked")
     private GoExprNode buildCompositeLit(Map<String, Object> fields, String where, V2Scope scope) {
+        int typeId = getTypeId(fields.get("type"));
+        if (typeId < 0) {
+            throw new FrontendException(where + ": compositelit without a type id");
+        }
         GoKind kind = goKindForTypeId(scope.types, fields.get("type"), where);
         List<Object> elems = getList(fields, "elems", where);
+
+        // Resolve the composite type: through named types, and through a
+        // pointer for &T{...} literals (whose element must be a struct).
+        int compTypeId = typeId;
+        boolean isPointer = false;
+        String compKind = underlyingKind(scope.types, compTypeId, where);
+        if ("pointer".equals(compKind)) {
+            Map<String, Object> ptrDetail = typeDetail(
+                    typeEntry(scope.types, underlyingTypeId(scope.types, compTypeId, where), where),
+                    where);
+            compTypeId = detailTypeId(ptrDetail, "elem", where);
+            compKind = underlyingKind(scope.types, compTypeId, where);
+            if (!"struct".equals(compKind)) {
+                throw new FrontendException(where
+                        + ": pointer composite literal to non-struct type " + compKind);
+            }
+            isPointer = true;
+        }
+        if (!"slice".equals(compKind) && !"array".equals(compKind)
+                && !"map".equals(compKind) && !"struct".equals(compKind)) {
+            throw new FrontendException(where + ": composite literal of " + compKind);
+        }
 
         // Determine if this is a keyed literal.
         List<GoExprNode> keyNodes = new ArrayList<>();
@@ -1247,20 +1293,20 @@ public final class NodeFactoryV2 {
                     throw new FrontendException(where + ": keyvalue key/value must be maps");
                 }
                 // For struct literals, the key is a field name (ident).
-                // For maps, the key is a value.
+                // For every other keyed literal — maps, arrays, slices —
+                // the key is a value expression, even when it happens to
+                // be an ident (e.g. []int{n: 5} with n a variable).
                 Map<String, Object> keyMap = (Map<String, Object>) keyObj;
                 String keyKind = getString(keyMap, "kind", where + ".key");
-                if ("ident".equals(keyKind)) {
+                if ("struct".equals(compKind) && "ident".equals(keyKind)) {
                     // Struct field: resolve field index by name.
                     Map<String, Object> keyFields = getMap(keyMap, "fields", where + ".key.fields");
                     String fieldName = getString(keyFields, "name", where);
                     // Find field index in the struct type.
-                    int fieldIdx = findFieldIndexByTypeId(scope.types,
-                        getTypeId(fields.get("type")), fieldName, where);
+                    int fieldIdx = findFieldIndexByTypeId(scope.types, compTypeId, fieldName, where);
                     fieldIdxList.add(fieldIdx);
-                    keyNodes.add(null); // placeholder
                 } else {
-                    // Map key: build the key expr.
+                    // Map/array/slice key: build the key expr.
                     keyNodes.add(buildExpr(keyMap, where + ".key", scope));
                     fieldIdxList.add(-1);
                 }
@@ -1276,47 +1322,92 @@ public final class NodeFactoryV2 {
             fieldIdx[i] = fieldIdxList.get(i);
         }
 
-        // Elem kind: from the type. For slices/arrays, get from detail.
-        GoKind elemKind = GoKind.INTERFACE;
-        GoKind keyKind = GoKind.INT64;
-        int arrayLen = -1;
+        // Resolve element/key kinds, array length, struct descriptor and
+        // zero templates from the composite type's table entry.
+        Map<String, Object> compDetail = typeDetail(
+                typeEntry(scope.types, underlyingTypeId(scope.types, compTypeId, where), where),
+                where);
+        GoKind elemKind = null;
+        GoKind keyKind = null;
+        int arrayLen = 0;
+        GoStructDescriptor structDesc = null;
+        Object[] fieldZeroTemplates = null;
+        Object elemZeroTemplate = null;
+        switch (compKind) {
+            case "slice": {
+                int elemTid = detailTypeId(compDetail, "elem", where);
+                elemKind = goKindForTypeId(scope.types, Long.valueOf(elemTid), where);
+                elemZeroTemplate = zeroTemplateOrNull(scope.types, elemKind, elemTid, where,
+                        new HashSet<>());
+                break;
+            }
+            case "array": {
+                int elemTid = detailTypeId(compDetail, "elem", where);
+                long len = detailLong(compDetail, "len", where);
+                if (len < 0 || len > Integer.MAX_VALUE) {
+                    throw new FrontendException(where + ": array length out of range: " + len);
+                }
+                arrayLen = (int) len;
+                elemKind = goKindForTypeId(scope.types, Long.valueOf(elemTid), where);
+                elemZeroTemplate = zeroTemplateOrNull(scope.types, elemKind, elemTid, where,
+                        new HashSet<>());
+                break;
+            }
+            case "map": {
+                int keyTid = detailTypeId(compDetail, "key", where);
+                int elemTid = detailTypeId(compDetail, "elem", where);
+                keyKind = goKindForTypeId(scope.types, Long.valueOf(keyTid), where);
+                elemKind = goKindForTypeId(scope.types, Long.valueOf(elemTid), where);
+                break;
+            }
+            case "struct": {
+                structDesc = structDescriptorFor(scope.types, compTypeId, where, new HashSet<>());
+                int[] ftids = structFieldTypeIds(scope.types, compTypeId, where);
+                fieldZeroTemplates = new Object[structDesc.fields().size()];
+                for (int i = 0; i < fieldZeroTemplates.length; i++) {
+                    fieldZeroTemplates[i] = zeroTemplateOrNull(scope.types,
+                            structDesc.fields().get(i).kind(), ftids[i], where, new HashSet<>());
+                }
+                break;
+            }
+            default:
+                throw new FrontendException(where + ": composite literal of " + compKind);
+        }
 
-        return new CompositeLitNode(
+        GoExprNode lit = new CompositeLitNode(
             kind,
             keyNodes.toArray(new GoExprNode[0]),
             fieldIdx,
             valueNodes.toArray(new GoExprNode[0]),
             keyed,
-            false,                  // isPointer
+            isPointer,
             elemKind,
             keyKind,
             arrayLen,
-            null,                   // structDesc
-            null,                   // fieldZeroTemplates
-            null                    // elemZeroTemplate
+            structDesc,
+            fieldZeroTemplates,
+            elemZeroTemplate
         );
+        lit.setTypeId(typeId);
+        return lit;
     }
 
     /**
-     * Finds a field index by type ID (for composite literals).
+     * Finds a field index by type ID (for composite literals). The type
+     * may be named (or a pointer to a struct): it is resolved to its
+     * underlying struct entry first.
      */
     @SuppressWarnings("unchecked")
     private static int findFieldIndexByTypeId(List<Object> types, int typeId,
             String fieldName, String where) {
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
+        int underlying = underlyingTypeId(types, typeId, where);
+        Map<String, Object> typeMap = typeEntry(types, underlying, where);
         String kind = (String) typeMap.get("kind");
         if (!"struct".equals(kind)) {
             throw new FrontendException(where + ": keyed literal on non-struct type " + kind);
         }
-        Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
-        List<Object> fieldsList = (List<Object>) detail.get("fields");
+        Map<String, Object> detail = typeDetail(typeMap, where);
+        List<Object> fieldsList = getList(detail, "fields", where);
         for (int i = 0; i < fieldsList.size(); i++) {
             Object f = fieldsList.get(i);
             if (f instanceof Map) {
@@ -1327,6 +1418,382 @@ public final class NodeFactoryV2 {
             }
         }
         throw new FrontendException(where + ": field \"" + fieldName + "\" not found");
+    }
+
+    /** Bound on named-type chain walks; a cycle fails fast, never hangs. */
+    private static final int MAX_TYPE_CHAIN_STEPS = 10_000;
+
+    /**
+     * Process-wide canonical struct descriptors, keyed by qualified name
+     * (when named) plus full field layout — the same canonicalization v1
+     * uses, so descriptor identity == type identity across functions:
+     * identical anonymous structs share a descriptor, and two structs
+     * differing only in an array element struct type never collide.
+     */
+    private static final ConcurrentHashMap<String, GoStructDescriptor> STRUCT_DESCS =
+            new ConcurrentHashMap<>();
+
+    /** One type-table entry, bounds- and shape-checked. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> typeEntry(List<Object> types, int typeId, String where) {
+        if (typeId < 0 || typeId >= types.size()) {
+            throw new FrontendException(where + ": bad type id " + typeId);
+        }
+        Object t = types.get(typeId);
+        if (!(t instanceof Map)) {
+            throw new FrontendException(where + ": type " + typeId + " must be a map");
+        }
+        return (Map<String, Object>) t;
+    }
+
+    /** A type entry's detail map, shape-checked. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> typeDetail(Map<String, Object> entry, String where) {
+        Object detail = entry.get("detail");
+        if (!(detail instanceof Map)) {
+            throw new FrontendException(where + ": type entry without a detail map");
+        }
+        return (Map<String, Object>) detail;
+    }
+
+    /** A detail field that must be a wire integer. */
+    private static long detailLong(Map<String, Object> detail, String key, String where) {
+        Object v = detail.get(key);
+        if (!(v instanceof Long)) {
+            throw new FrontendException(where + ": detail \"" + key + "\" must be an integer");
+        }
+        return (Long) v;
+    }
+
+    /** A detail field that must be a type-table id. */
+    private static int detailTypeId(Map<String, Object> detail, String key, String where) {
+        long v = detailLong(detail, key, where);
+        if (v < 0 || v > Integer.MAX_VALUE) {
+            throw new FrontendException(where + ": detail \"" + key + "\" out of range: " + v);
+        }
+        return (int) v;
+    }
+
+    /** Follows named-type chains to the underlying type-table id. */
+    private static int underlyingTypeId(List<Object> types, int typeId, String where) {
+        int cur = typeId;
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(where + ": named-type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?)");
+            }
+            Map<String, Object> entry = typeEntry(types, cur, where);
+            if (!"named".equals(entry.get("kind"))) {
+                return cur;
+            }
+            cur = detailTypeId(typeDetail(entry, where), "underlying", where);
+        }
+    }
+
+    /** The kind string of a type after following named-type chains. */
+    private static String underlyingKind(List<Object> types, int typeId, String where) {
+        Map<String, Object> entry = typeEntry(types, underlyingTypeId(types, typeId, where), where);
+        Object kind = entry.get("kind");
+        if (!(kind instanceof String)) {
+            throw new FrontendException(where + ": type entry without a kind");
+        }
+        return (String) kind;
+    }
+
+    /** The qualified name of the first named entry in a type's chain, or null. */
+    private static String namedTypeName(List<Object> types, int typeId, String where) {
+        int cur = typeId;
+        for (int steps = 0; steps <= MAX_TYPE_CHAIN_STEPS; steps++) {
+            Map<String, Object> entry = typeEntry(types, cur, where);
+            if (!"named".equals(entry.get("kind"))) {
+                return null;
+            }
+            Object name = typeDetail(entry, where).get("name");
+            if (name instanceof String) {
+                return (String) name;
+            }
+            cur = detailTypeId(typeDetail(entry, where), "underlying", where);
+        }
+        throw new FrontendException(where + ": named-type chain exceeds "
+                + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?)");
+    }
+
+    /** Field type-table ids parallel to a struct type's fields. */
+    @SuppressWarnings("unchecked")
+    private static int[] structFieldTypeIds(List<Object> types, int typeId, String where) {
+        int underlying = underlyingTypeId(types, typeId, where);
+        Map<String, Object> detail = typeDetail(typeEntry(types, underlying, where), where);
+        List<Object> fieldsList = getList(detail, "fields", where);
+        int[] ftids = new int[fieldsList.size()];
+        for (int i = 0; i < fieldsList.size(); i++) {
+            Object f = fieldsList.get(i);
+            if (!(f instanceof Map)) {
+                throw new FrontendException(where + ": struct field " + i + " is not a map");
+            }
+            Object tid = ((Map<String, Object>) f).get("type");
+            if (!(tid instanceof Long)) {
+                throw new FrontendException(where + ": struct field " + i + " without a type id");
+            }
+            ftids[i] = ((Long) tid).intValue();
+        }
+        return ftids;
+    }
+
+    /** Array length + element type id of an array type, or null if not an array. */
+    private static int[] arrayInfo(List<Object> types, int typeId, String where) {
+        int underlying = underlyingTypeId(types, typeId, where);
+        Map<String, Object> entry = typeEntry(types, underlying, where);
+        if (!"array".equals(entry.get("kind"))) {
+            return null;
+        }
+        Map<String, Object> detail = typeDetail(entry, where);
+        long len = detailLong(detail, "len", where);
+        if (len < 0 || len > Integer.MAX_VALUE) {
+            throw new FrontendException(where + ": array length out of range: " + len);
+        }
+        return new int[]{(int) len, detailTypeId(detail, "elem", where)};
+    }
+
+    /**
+     * Canonical struct descriptor for a type-table id (named types resolve
+     * to their underlying struct). {@code visiting} is the current
+     * descriptor-construction path; a struct containing itself by value
+     * is illegal Go and fails fast instead of recursing forever.
+     */
+    @SuppressWarnings("unchecked")
+    private static GoStructDescriptor structDescriptorFor(List<Object> types, int typeId,
+            String where, Set<Integer> visiting) {
+        int underlying = underlyingTypeId(types, typeId, where);
+        Map<String, Object> entry = typeEntry(types, underlying, where);
+        if (!"struct".equals(entry.get("kind"))) {
+            throw new FrontendException(where + ": not a struct type");
+        }
+        String key = structLayoutKey(types, typeId, where, new HashSet<>());
+        GoStructDescriptor cached = STRUCT_DESCS.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        if (!visiting.add(underlying)) {
+            throw new FrontendException(where + ": cyclic struct type graph");
+        }
+        try {
+            String qname = namedTypeName(types, typeId, where);
+            Map<String, Object> detail = typeDetail(entry, where);
+            List<Object> fieldsList = getList(detail, "fields", where);
+            List<String> names = new ArrayList<>(fieldsList.size());
+            List<GoKind> kinds = new ArrayList<>(fieldsList.size());
+            List<Integer> arrayLens = new ArrayList<>(fieldsList.size());
+            List<GoKind> arrayElemKinds = new ArrayList<>(fieldsList.size());
+            List<GoStructDescriptor> arrayElemDescs = new ArrayList<>(fieldsList.size());
+            List<GoStructDescriptor> structDescs = new ArrayList<>(fieldsList.size());
+            for (int i = 0; i < fieldsList.size(); i++) {
+                Object fv = fieldsList.get(i);
+                if (!(fv instanceof Map)) {
+                    throw new FrontendException(where + ": struct field " + i + " is not a map");
+                }
+                Map<String, Object> fo = (Map<String, Object>) fv;
+                Object fname = fo.get("name");
+                if (!(fname instanceof String)) {
+                    throw new FrontendException(where + ": struct field " + i + " without a name");
+                }
+                names.add((String) fname);
+                Object ftidObj = fo.get("type");
+                if (!(ftidObj instanceof Long)) {
+                    throw new FrontendException(where + ": struct field " + i + " without a type id");
+                }
+                int ftid = ((Long) ftidObj).intValue();
+                GoKind fkind = goKindForTypeId(types, Long.valueOf(ftid), where);
+                kinds.add(fkind);
+                int[] arrInfo = arrayInfo(types, ftid, where);
+                arrayLens.add(arrInfo != null ? arrInfo[0] : -1);
+                GoKind elemKind = arrInfo != null
+                        ? goKindForTypeId(types, Long.valueOf(arrInfo[1]), where) : null;
+                arrayElemKinds.add(elemKind);
+                arrayElemDescs.add(elemKind == GoKind.STRUCT
+                        ? structDescriptorFor(types, arrInfo[1], where, visiting) : null);
+                structDescs.add(fkind == GoKind.STRUCT
+                        ? structDescriptorFor(types, ftid, where, visiting) : null);
+            }
+            GoStructDescriptor nd = GoStructDescriptor.layout(
+                    qname != null ? qname : "struct#" + underlying,
+                    names, kinds, arrayLens, arrayElemKinds, arrayElemDescs, structDescs);
+            GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
+            return prev != null ? prev : nd;
+        } finally {
+            visiting.remove(underlying);
+        }
+    }
+
+    /** Structural layout key for a struct type (see {@link #STRUCT_DESCS}). */
+    @SuppressWarnings("unchecked")
+    private static String structLayoutKey(List<Object> types, int typeId,
+            String where, Set<Integer> visiting) {
+        int underlying = underlyingTypeId(types, typeId, where);
+        Map<String, Object> entry = typeEntry(types, underlying, where);
+        if (!"struct".equals(entry.get("kind"))) {
+            throw new FrontendException(where + ": not a struct type");
+        }
+        if (!visiting.add(underlying)) {
+            throw new FrontendException(where + ": cyclic struct type graph");
+        }
+        try {
+            String qname = namedTypeName(types, typeId, where);
+            StringBuilder sb = new StringBuilder();
+            sb.append(qname != null ? "N:" + qname : "S:").append('|');
+            List<Object> fieldsList = getList(typeDetail(entry, where), "fields", where);
+            for (int i = 0; i < fieldsList.size(); i++) {
+                Object fv = fieldsList.get(i);
+                if (!(fv instanceof Map)) {
+                    throw new FrontendException(where + ": struct field " + i + " is not a map");
+                }
+                Map<String, Object> fo = (Map<String, Object>) fv;
+                Object ftidObj = fo.get("type");
+                if (!(ftidObj instanceof Long)) {
+                    throw new FrontendException(where + ": struct field " + i + " without a type id");
+                }
+                int ftid = ((Long) ftidObj).intValue();
+                GoKind fkind = goKindForTypeId(types, Long.valueOf(ftid), where);
+                sb.append(fo.get("name")).append(':').append(fkind);
+                int[] arrInfo = arrayInfo(types, ftid, where);
+                if (arrInfo != null) {
+                    GoKind elemKind = goKindForTypeId(types, Long.valueOf(arrInfo[1]), where);
+                    sb.append('[').append(arrInfo[0]).append(']').append(elemKind);
+                    if (elemKind == GoKind.STRUCT) {
+                        sb.append(structLayoutKey(types, arrInfo[1], where, visiting));
+                    }
+                }
+                if (fkind == GoKind.STRUCT) {
+                    sb.append(structLayoutKey(types, ftid, where, visiting));
+                }
+                sb.append(';');
+            }
+            return sb.toString();
+        } finally {
+            visiting.remove(underlying);
+        }
+    }
+
+    /**
+     * Zero-value template for a composite literal element/field type:
+     * a fresh zero struct for struct kinds, a fresh zero array for array
+     * kinds, null for every other kind (whose zero is a scalar, a string
+     * handled by the node itself, or nil). {@code visiting} guards the
+     * struct recursion path.
+     */
+    private static Object zeroTemplateOrNull(List<Object> types, GoKind kind, int typeId,
+            String where, Set<Integer> visiting) {
+        if (kind == GoKind.STRUCT) {
+            Object prim = syncPrimitiveFor(types, typeId, where);
+            if (prim != null) {
+                return prim;
+            }
+            return structZeroTemplate(types, typeId, where, visiting);
+        }
+        if (kind == GoKind.ARRAY) {
+            return arrayZeroTemplate(types, typeId, where, visiting);
+        }
+        return null;
+    }
+
+    /** Zero-value template for one struct field / array element. */
+    private static Object fieldZeroTemplate(List<Object> types, GoKind kind, int typeId,
+            String where, Set<Integer> visiting) {
+        return switch (kind) {
+            case STRING -> GoString.EMPTY;
+            case COMPLEX64 -> GoComplex32.ZERO;
+            case COMPLEX128, UNTYPED_COMPLEX -> GoComplex64.ZERO;
+            case STRUCT -> zeroTemplateOrNull(types, kind, typeId, where, visiting);
+            case ARRAY -> arrayZeroTemplate(types, typeId, where, visiting);
+            default -> null;
+        };
+    }
+
+    /** Fresh zero struct for a struct type (fields filled from their own zero templates). */
+    private static GoStruct structZeroTemplate(List<Object> types, int typeId,
+            String where, Set<Integer> visiting) {
+        int underlying = underlyingTypeId(types, typeId, where);
+        if (!visiting.add(underlying)) {
+            throw new FrontendException(where + ": cyclic struct type graph");
+        }
+        try {
+            GoStructDescriptor desc = structDescriptorFor(types, typeId, where, new HashSet<>());
+            int[] ftids = structFieldTypeIds(types, typeId, where);
+            Object[] objects = new Object[desc.objectsCount()];
+            for (int i = 0; i < desc.fields().size(); i++) {
+                GoStructDescriptor.Field f = desc.field(i);
+                if (!f.inLongs()) {
+                    objects[f.index()] = fieldZeroTemplate(types, f.kind(), ftids[i], where, visiting);
+                }
+            }
+            return new GoStruct(desc, new long[desc.longsCount()], objects);
+        } finally {
+            visiting.remove(underlying);
+        }
+    }
+
+    /** Fresh zero array for an array type (elements filled from their own zero templates). */
+    private static Object arrayZeroTemplate(List<Object> types, int typeId,
+            String where, Set<Integer> visiting) {
+        int underlying = underlyingTypeId(types, typeId, where);
+        Map<String, Object> detail = typeDetail(typeEntry(types, underlying, where), where);
+        long len = detailLong(detail, "len", where);
+        if (len < 0 || len > Integer.MAX_VALUE) {
+            throw new FrontendException(where + ": array length out of range: " + len);
+        }
+        int elemTid = detailTypeId(detail, "elem", where);
+        GoKind elemKind = goKindForTypeId(types, Long.valueOf(elemTid), where);
+        Object arr = Boxing.newArray(elemKind, (int) len);
+        // Fill object-backed slots one fresh template per slot (never one
+        // shared instance): a shared sync/atomic cell or struct in the
+        // template would alias across elements.
+        if (arr instanceof Object[] oa) {
+            for (int i = 0; i < oa.length; i++) {
+                Object elemZero = fieldZeroTemplate(types, elemKind, elemTid, where, visiting);
+                if (elemZero != null) {
+                    oa[i] = elemZero;
+                }
+            }
+        }
+        return arr;
+    }
+
+    /**
+     * A fresh Java object for one of the synthetic sync/atomic primitive
+     * named types (mirroring v1: only {@code sync.Pool} survives among
+     * {@code sync.*}; {@code sync/atomic.*} wrappers stay cells), or null
+     * when the type is not such a primitive. Generic instantiations
+     * (e.g. {@code sync/atomic.Pointer[T]}) match by their base name.
+     */
+    private static Object syncPrimitiveFor(List<Object> types, int typeId, String where) {
+        Map<String, Object> entry = typeEntry(types, typeId, where);
+        if (!"named".equals(entry.get("kind"))) {
+            return null;
+        }
+        Object nameObj = typeDetail(entry, where).get("name");
+        if (!(nameObj instanceof String)) {
+            return null;
+        }
+        String name = (String) nameObj;
+        if (name.startsWith("sync.")) {
+            if ("Pool".equals(name.substring(5))) {
+                return new GoPool();
+            }
+            return null;
+        }
+        if (name.startsWith("sync/atomic.")) {
+            String base = name.substring(12);
+            int br = base.indexOf('[');
+            if (br >= 0) {
+                base = base.substring(0, br);
+            }
+            return switch (base) {
+                case "Int64", "Uint64", "Uintptr" -> new GoAtomicInt64();
+                case "Int32", "Uint32", "Bool" -> new GoAtomicInt32();
+                case "Pointer", "Value" -> new AtomicReference<>();
+                default -> null;
+            };
+        }
+        return null;
     }
 
     private static int getTypeId(Object typeIdObj) {
