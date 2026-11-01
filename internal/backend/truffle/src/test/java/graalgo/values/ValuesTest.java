@@ -163,6 +163,70 @@ public final class ValuesTest {
         assertTrue(z.equals(z.copy()), "struct equals");
     }
 
+    public void testGoComplexEquality() {
+        // L2: scalar complex equality must be component-wise IEEE ==,
+        // not reference identity, and not the record's generated equals
+        // (which equates NaNs and distinguishes -0.0 from +0.0).
+        assertTrue(GoEquality.equal(new GoComplex64(1, 2), new GoComplex64(1, 2)),
+                "complex128 distinct literals equal");
+        assertTrue(GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(1f, 2f)),
+                "complex64 distinct literals equal");
+        assertTrue(!GoEquality.equal(new GoComplex64(1, 2), new GoComplex64(1, 3)),
+                "complex128 differing imag unequal");
+        assertTrue(!GoEquality.equal(new GoComplex64(1, 2), new GoComplex32(1f, 2f)),
+                "complex128 vs complex64 never equal");
+        // NaN components never equal, even for the same object.
+        GoComplex64 nan = new GoComplex64(Double.NaN, 0);
+        assertTrue(!GoEquality.equal(nan, nan), "NaN complex same ref unequal");
+        assertTrue(!GoEquality.equal(new GoComplex64(0, Double.NaN),
+                new GoComplex64(0, Double.NaN)), "NaN imag unequal");
+        assertTrue(!GoEquality.equal(new GoComplex32(Float.NaN, 0f),
+                new GoComplex32(Float.NaN, 0f)), "NaN complex32 unequal");
+        // Signed zero: -0.0 components equal +0.0 components (IEEE ==).
+        assertTrue(GoEquality.equal(new GoComplex64(-0.0, -0.0), new GoComplex64(0.0, 0.0)),
+                "-0.0 complex128 components equal +0.0");
+        assertTrue(GoEquality.equal(new GoComplex32(-0.0f, -0.0f), new GoComplex32(0f, 0f)),
+                "-0.0 complex64 components equal +0.0");
+        // Hash consistent with equality: equal keys hash equal.
+        assertEq(GoEquality.hash(new GoComplex64(0.0, 0.0)),
+                GoEquality.hash(new GoComplex64(-0.0, -0.0)), "complex128 -0/+0 hash");
+        assertEq(GoEquality.hash(new GoComplex32(0f, 0f)),
+                GoEquality.hash(new GoComplex32(-0.0f, -0.0f)), "complex64 -0/+0 hash");
+        assertEq(GoEquality.hash(new GoComplex64(1, 2)),
+                GoEquality.hash(new GoComplex64(1, 2)), "complex128 equal hash");
+    }
+
+    public void testGoComplexStructAndMap() {
+        // L2: struct with a complex field, from distinct literals.
+        GoStructDescriptor d = GoStructDescriptor.layout("S",
+                List.of("c"), List.of(GoKind.COMPLEX128));
+        GoStruct s1 = GoStruct.zero(d);
+        s1.setObject(0, new GoComplex64(1, 2));
+        GoStruct s2 = GoStruct.zero(d);
+        s2.setObject(0, new GoComplex64(1, 2));
+        assertTrue(s1.equals(s2), "struct complex field distinct literals equal");
+        GoStruct s3 = GoStruct.zero(d);
+        s3.setObject(0, new GoComplex64(1, 3));
+        assertTrue(!s1.equals(s3), "struct complex field differing unequal");
+        // Interface equality with complex dynamic data.
+        Object desc = new Object();
+        GoInterface i1 = new GoInterface(desc, new GoComplex64(1, 2), "itab");
+        GoInterface i2 = new GoInterface(desc, new GoComplex64(1, 2), "itab");
+        assertTrue(GoEquality.equal(i1, i2), "interface complex data equal");
+        // Map with complex keys: put with one key object, get with an
+        // equal-but-distinct key object.
+        GoMap m = new GoMap();
+        m.put(new GoComplex64(1, 2), 42L);
+        assertEq(42L, (Long) m.get(new GoComplex64(1, 2)), "complex128 map get distinct key");
+        assertEq(GoEquality.hash(new GoComplex64(-0.0, 0.0)),
+                GoEquality.hash(new GoComplex64(0.0, 0.0)), "complex map key -0 hash");
+        m.put(new GoComplex64(-0.0, 0.0), 7L);
+        assertEq(7L, (Long) m.get(new GoComplex64(0.0, 0.0)), "complex -0/+0 map key");
+        GoMap m32 = new GoMap();
+        m32.put(new GoComplex32(3f, 4f), 9L);
+        assertEq(9L, (Long) m32.get(new GoComplex32(3f, 4f)), "complex64 map get distinct key");
+    }
+
     public void testGoInterface() {
         assertTrue(GoInterface.NIL.isNil(), "nil interface");
         GoInterface v = new GoInterface("desc", 42L, "itab");

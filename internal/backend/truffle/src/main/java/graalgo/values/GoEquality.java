@@ -6,10 +6,13 @@ package graalgo.values;
  *
  * <p>Rules: numeric kinds compare by value within their Java carrier
  * ({@code long} for all int/uint kinds, {@code double} for both float
- * kinds); IEEE semantics apply, so a NaN key never equals anything —
- * including itself — matching Go. {@link GoString} compares byte-wise.
- * Values of different carrier classes are never equal (a Go map has a
- * single static key type, so this only arises from misuse).
+ * kinds); complex scalars compare component-wise with IEEE {@code ==}
+ * (never via the records' generated {@code equals}, which equates NaNs
+ * and distinguishes -0.0 from +0.0). IEEE semantics apply, so a NaN key
+ * never equals anything — including itself — matching Go.
+ * {@link GoString} compares byte-wise. Values of different carrier
+ * classes are never equal (a Go map has a single static key type, so
+ * this only arises from misuse).
  */
 public final class GoEquality {
     private GoEquality() {}
@@ -23,6 +26,16 @@ public final class GoEquality {
                 return false;
             }
             if (a instanceof Float f && f.isNaN()) {
+                return false;
+            }
+            // Complex scalars: a NaN component never equals anything,
+            // including the same object (IEEE ==, as in the branches below).
+            if (a instanceof GoComplex32 c32
+                    && (Float.isNaN(c32.re()) || Float.isNaN(c32.im()))) {
+                return false;
+            }
+            if (a instanceof GoComplex64 c64
+                    && (Double.isNaN(c64.re()) || Double.isNaN(c64.im()))) {
                 return false;
             }
             return true;
@@ -115,6 +128,19 @@ public final class GoEquality {
                 }
             }
             return true;
+        }
+        if (a instanceof GoComplex32 ca && b instanceof GoComplex32 cb) {
+            // Scalar complex64: component-wise IEEE ==. Java == on the
+            // components already gives the Go rule: a NaN component
+            // never equals (NaN != anything) and -0.0 equals +0.0.
+            // Deliberately NOT ca.equals(cb): the record's generated
+            // equals boxes the components, equating NaNs and
+            // distinguishing -0.0 from +0.0.
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
+        if (a instanceof GoComplex64 ca && b instanceof GoComplex64 cb) {
+            // Scalar complex128: same IEEE rule as complex64 above.
+            return ca.re() == cb.re() && ca.im() == cb.im();
         }
         if (a instanceof GoComplex32[] ca && b instanceof GoComplex32[] cb) {
             // P3-M9 (arrdispatch): [N]complex64 carrier. Null elements are
@@ -215,6 +241,21 @@ public final class GoEquality {
         if (key instanceof float[] fa) {
             // P3-M9 (arrdispatch): [N]float32 carrier hash.
             return java.util.Arrays.hashCode(fa);
+        }
+        if (key instanceof GoComplex32 c) {
+            // Scalar complex64 hash, consistent with the IEEE equality
+            // above: -0.0 components canonicalize to +0.0 so equal keys
+            // hash equal. (NaN components need no special case: a NaN
+            // key never equals anything, so its hash is unconstrained.)
+            float re = c.re() == 0.0f ? 0.0f : c.re();
+            float im = c.im() == 0.0f ? 0.0f : c.im();
+            return 31 * Float.hashCode(re) + Float.hashCode(im);
+        }
+        if (key instanceof GoComplex64 c) {
+            // Scalar complex128 hash: same -0.0 canonicalization as above.
+            double re = c.re() == 0.0 ? 0.0 : c.re();
+            double im = c.im() == 0.0 ? 0.0 : c.im();
+            return 31 * Double.hashCode(re) + Double.hashCode(im);
         }
         if (key instanceof GoComplex32[] ca) {
             // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
