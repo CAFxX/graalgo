@@ -93,6 +93,27 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 	}
 }
 
+var m7ChaCha8Table = []m7StrconvJsonExpect{
+	// math/rand/v2: ChaCha8 multi-result methods (review-2026-11-01
+	// F-03: the fail-fast stub is replaced by the real gc port; the
+	// __-helpers carry the bodies, wired via m7MultiResultFuncs).
+	{"math/rand/v2", "Read", "ChaCha8", "__chacha8Read", "__chacha8ReadPair", []string{"n", "err"}},
+	{"math/rand/v2", "AppendBinary", "ChaCha8", "__chacha8AppendBinary", "__chacha8BinaryPair", []string{"b", "err"}},
+	{"math/rand/v2", "MarshalBinary", "ChaCha8", "__chacha8MarshalBinary", "__chacha8BinaryPair", []string{"b", "err"}},
+}
+
+func TestM7ChaCha8DesugarWiring(t *testing.T) {
+	if len(m7ChaCha8Table) != 3 {
+		t.Fatalf("m7ChaCha8Table has %d entries, want 3", len(m7ChaCha8Table))
+	}
+	for _, want := range m7ChaCha8Table {
+		name := want.pkgPath + "." + want.recvType + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
 func TestM7StrconvJsonDesugarWiring(t *testing.T) {
 	if len(m7StrconvJsonTable) != 15 {
 		t.Fatalf("m7StrconvJsonTable has %d entries, want 15", len(m7StrconvJsonTable))

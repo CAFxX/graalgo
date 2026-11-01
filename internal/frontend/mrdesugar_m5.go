@@ -444,6 +444,16 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"math/bits", "Div", "", "__bitsDiv", "bitsDivPair", []string{"quo", "rem"}, false},
 	{"math/bits", "Div32", "", "__bitsDiv32", "bitsDiv32Pair", []string{"quo", "rem"}, false},
 	{"math/bits", "Div64", "", "__bitsDiv64", "bitsDiv64Pair", []string{"quo", "rem"}, false},
+	// Review-2026-11-01 F-03: math/rand/v2.ChaCha8 multi-result methods.
+	// The real bodies are the __chacha8* pair helpers in the synthetic
+	// source (WS D pair-transform, bytes.Buffer.Read precedent); the
+	// exact-signature methods are fail-fast stubs call sites never reach.
+	// The Read entry also wires io.Reader interface dispatch (via
+	// multiResultHelperFor) — the crypto/ecdsa signLegacy path reads its
+	// ChaCha8 through io.ReadFull.
+	{"math/rand/v2", "Read", "ChaCha8", "__chacha8Read", "__chacha8ReadPair", []string{"n", "err"}, false},
+	{"math/rand/v2", "AppendBinary", "ChaCha8", "__chacha8AppendBinary", "__chacha8BinaryPair", []string{"b", "err"}, false},
+	{"math/rand/v2", "MarshalBinary", "ChaCha8", "__chacha8MarshalBinary", "__chacha8BinaryPair", []string{"b", "err"}, false},
 	// P3-M9 (tier1c): math.Sincos desugars to the existing __sincos
 	// helper (used internally by the Bessel functions; Sin(x)/Cos(x)
 	// each bit-exact, and Sincos == (Sin, Cos) bit-wise: 0 mismatches
