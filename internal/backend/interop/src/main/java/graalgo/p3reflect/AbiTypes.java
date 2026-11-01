@@ -217,8 +217,17 @@ public final class AbiTypes {
         return ptr;
     }
 
-    /** The type token of a canonical abi shell; 0 when not minted here. */
-    public static long tokForShell(GoStruct shell) {
+    /**
+     * The type token of a canonical abi shell; 0 when not minted here.
+     * Synchronized like every other accessor (review G1): the writers
+     * hold the class lock while they put into (and resize) SHELL_TOKS,
+     * and an unsynchronized read could observe a stale table and
+     * spuriously return 0 for a minted shell — reproduced by
+     * AbiTypesConcurrencyTest (2 spurious-0 resolutions in ~3-4M
+     * concurrent checks). IdentityHashMap has no concurrent
+     * equivalent, so synchronization, not a map swap, is the fix.
+     */
+    public static synchronized long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
     }
@@ -899,7 +908,12 @@ public final class AbiTypes {
      * the same denoted-value read the reflect intrinsics use. A zero
      * Type word with a zero Data word is the nil interface.
      */
-    public static GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
+    // Synchronized like every other accessor (review G1): this method's
+    // SHELL_TOKS read must hold the same class lock the writers hold,
+    // for the same reason as tokForShell above. The lock also serializes
+    // this path's descriptorForTok memoization, whose unsynchronized
+    // HashMap is otherwise corruptible by concurrent first-unpacks.
+    public static synchronized GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
         Object typeWord = null;
         Object itabWord = null;
         long dataHandle = 0;

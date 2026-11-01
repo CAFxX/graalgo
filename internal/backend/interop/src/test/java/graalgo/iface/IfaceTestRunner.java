@@ -66,6 +66,9 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // Review G1 (2026-11-01): concurrent mint/resolve of abi shells
+        // must never spuriously resolve to 0 or a wrong type.
+        TESTS.add(graalgo.p3reflect.AbiTypesConcurrencyTest.class);
     }
 
     private IfaceTestRunner() {}
