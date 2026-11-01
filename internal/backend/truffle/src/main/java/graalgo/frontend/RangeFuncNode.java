@@ -254,7 +254,7 @@ public final class RangeFuncNode extends GoStmtNode {
                 Object k = Boxing.copyForAssign(keyKind, args[1]);
                 if (keyBoxed) {
                     if (keyDefine) {
-                        outer.setObject(keySlot, new GoBox(k));
+                        outer.setObject(keySlot, new GoBox(k, keyKind));
                     } else {
                         Boxing.setBoxedCell(outer, keySlot, keyKind, k);
                     }
@@ -266,7 +266,7 @@ public final class RangeFuncNode extends GoStmtNode {
                 Object v = Boxing.copyForAssign(valKind, args[2]);
                 if (valBoxed) {
                     if (valDefine) {
-                        outer.setObject(valSlot, new GoBox(v));
+                        outer.setObject(valSlot, new GoBox(v, valKind));
                     } else {
                         Boxing.setBoxedCell(outer, valSlot, valKind, v);
                     }

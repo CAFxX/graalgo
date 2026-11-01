@@ -43,6 +43,12 @@ public final class GoArrayCell implements GoCell {
 
     @Override
     public void set(Object value) {
+        if (elemKind == GoKind.POINTER && value instanceof Long l) {
+            // Same word-store normalization as GoBox: a raw address word
+            // through an unsafe.Pointer view into a *T element lands the
+            // denoted pointer (0 → nil), never the Long.
+            value = graalgo.values.GoPointer.pointerForAddress(l.longValue(), value);
+        }
         Boxing.arraySet(array, elemKind, index, value);
     }
 

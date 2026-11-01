@@ -28,6 +28,6 @@ public final class BoxDeclNode extends GoStmtNode {
     @Override
     public void executeVoid(VirtualFrame frame) {
         Object v = Boxing.copyForAssign(kind, Boxing.box(kind, init, frame));
-        frame.setObject(slot, new GoBox(v));
+        frame.setObject(slot, new GoBox(v, kind));
     }
 }

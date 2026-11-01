@@ -59,6 +59,17 @@ public final class GoFieldCell implements GoCell {
         if (inLongs) {
             struct.setLong(fieldIndex, Boxing.toLongBits(fieldKind, value));
         } else {
+            if (fieldKind == GoKind.POINTER && value instanceof Long l) {
+                // Same word-store normalization as GoBox: a raw address
+                // word through an unsafe.Pointer view into a *T field
+                // lands the denoted pointer (0 → nil), never the Long.
+                // (Struct stores through a struct pointer are intercepted
+                // earlier by DerefWriteNode.writeOffsetZero; this covers
+                // stores through &s.f field-cell pointers.)
+                struct.setObject(fieldIndex,
+                        graalgo.values.GoPointer.pointerForAddress(l.longValue(), value));
+                return;
+            }
             struct.setObject(fieldIndex, value);
         }
     }

@@ -35,9 +35,17 @@ public final class ReflectRefs {
     private ReflectRefs() {}
 
     /** Mutable cell backing {@code reflect.New} results. */
-    public static final class Cell {
+    public static final class Cell implements graalgo.values.GoCell {
         /** The current D5 value (canonical boxed form). */
         public Object value;
+
+        /**
+         * The kind of value this cell holds (the {@code T} of the
+         * {@code reflect.New(T)} that created it), or null when unknown.
+         * Only consulted by {@link #set} for the word-store rule below;
+         * a null kind keeps the legacy store-as-is behavior.
+         */
+        public final GoKind kind;
 
         static {
             // fix-redmaster-r43: let the values package (which
@@ -49,8 +57,74 @@ public final class ReflectRefs {
         }
 
         public Cell(Object value) {
-            this.value = value;
+            this(value, null);
         }
+
+        public Cell(Object value, GoKind kind) {
+            this.value = value;
+            this.kind = kind;
+        }
+
+        @Override
+        public Object get() {
+            return value;
+        }
+
+        @Override
+        public void set(Object v) {
+            if (kind == GoKind.POINTER && v instanceof Long l) {
+                // Same word-store normalization as GoBox: a raw address
+                // word through an unsafe.Pointer view into a *T cell
+                // (real reflect Set's else-branch for direct values:
+                // *(*unsafe.Pointer)(v.ptr) = x.ptr, where x.ptr is the
+                // data-word handle) lands the denoted pointer (0 → nil),
+                // never the raw handle — a raw handle in the cell would
+                // misread as a value on every later use of the variable.
+                // Non-pointer cells store the word as-is (their value
+                // IS the word, e.g. unsafe.Pointer cells).
+                value = graalgo.values.GoPointer.pointerForAddress(l.longValue(), v);
+                return;
+            }
+            value = v;
+        }
+
+        @Override
+        public boolean sameStorageAs(graalgo.values.GoCell other) {
+            // Each New cell is distinct storage; object identity is
+            // the storage identity (like GoBox).
+            return this == other;
+        }
+    }
+
+    /**
+     * The {@code *T} pointer value denoted by a Value's data-word handle.
+     * A direct (non-indirect, non-addressable) pointer Value's {@code ptr}
+     * is the interface data word for the pointer itself — the handle of
+     * the pointer's storage identity — NOT an address of the pointee, so
+     * reading the pointee through it (via {@link #denotedValue} or
+     * {@code loadOffsetZero}) is a category error: for a struct pointee
+     * it descends to field 0 (the observed Interface-on-*errorT binding
+     * the {@code msg} string). The denoted pointer is recovered from the
+     * storage shape instead: an already-pointer referent stands, a cell
+     * yields a cell pointer (aliasing preserved), an element view yields
+     * an element pointer, anything else yields a plain pointer over the
+     * referent, and handle 0 yields null. Derived-reference handles
+     * (field/element refs, byte views — the shape Field/Index results
+     * carry, which ARE addresses) fall back to {@link #denotedValue},
+     * preserving today's read-through behavior for them.
+     */
+    public static Object pointerValue(long handle) {
+        Object ref = resolve(handle);
+        if (ref instanceof graalgo.values.GoPointer gp) {
+            return gp;
+        }
+        if (ref instanceof Ref || ref instanceof UnsafeTable.ByteRef) {
+            return denotedValue(handle, GoKind.POINTER);
+        }
+        if (ref == null) {
+            return null;
+        }
+        return UnsafeTable.pointerFor(ref);
     }
 
     /** Base key type for derived references. */
@@ -276,6 +350,37 @@ public final class ReflectRefs {
             GoSlice slice = (GoSlice) denotedValue(sr.base(), GoKind.SLICE);
             return ReflectValues.arrayGet(slice.array(), kind, slice.offset() + sr.index());
         }
+        if (ref instanceof UnsafeTable.ArrayRef ar) {
+            // An element pointer denotes its element for every kind, not
+            // just scalars: real reflect Index on an array/slice of
+            // aggregates (e.g. [][]byte element) yields a Value whose
+            // ptr is an ArrayRef, and Interface() on it must bind the
+            // element (a GoSlice/GoStruct/...) — previously only the
+            // scalar gate below resolved ArrayRefs, so an aggregate
+            // denotedValue fell through to deref() and returned the
+            // ArrayRef key object itself, which guest code then failed
+            // to use (RangeSlice CCE on fmt printing [][]byte).
+            // Scalar kinds keep their exact prior behavior
+            // (readScalarAtElement: nested-array walk + box validation).
+            if (isScalarKind(kind)) {
+                return readScalarAtElement(ar.array(), ar.offset(), kind);
+            }
+            Object arr = ar.array();
+            int idx = ar.offset();
+            if (arr instanceof Object[] oa) {
+                if (idx < 0 || idx >= oa.length) {
+                    throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                            "reflect: element index " + idx + " out of range [0, "
+                                    + oa.length + ") (D5)");
+                }
+                return oa[idx];
+            }
+            // Primitive backings cannot denote aggregates; trap loudly
+            // instead of silently returning the key object.
+            throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                    "reflect: aggregate value denoted by an element pointer into "
+                            + arr.getClass().getSimpleName() + " (D5)");
+        }
         if (isScalarKind(kind)) {
             // fix-redmaster-r43: a handle denoting array storage read as
             // a scalar kind denotes the scalar at that address, not the
@@ -493,7 +598,7 @@ public final class ReflectRefs {
                         "reflect: byte-derived element index " + index + " out of range [0, "
                                 + len + ") (D5: derivation cannot leave its referent)");
             }
-            return ReflectValues.arrayGet(cur, normalizeKind(kind), (int) index);
+            return readCarrierScalar(cur, (int) index, kind);
         }
     }
 
@@ -515,7 +620,55 @@ public final class ReflectRefs {
             }
             return boxedScalar(elem, kind);
         }
-        return ReflectValues.arrayGet(array, normalizeKind(kind), index);
+        return readCarrierScalar(array, index, kind);
+    }
+
+    /**
+     * Reads one scalar of {@code kind} from element {@code index} of a
+     * primitive Java array, converting through the array's actual
+     * component type when it differs from the kind's canonical backing.
+     * Genuine slice/array element reads keep using
+     * {@link ReflectValues#arrayGet} directly (strict: kind↔backing always
+     * matches for {@code Boxing.newArray} storage, so a mismatch there is
+     * a bug and must keep trapping). The mismatch is legitimate only for
+     * scalar-address reads, because a scalar box interned through
+     * {@code UnsafeTable} is normalized to a single-element carrier array
+     * keyed on the BOX type ({@code Integer}→{@code int[1]}), while the
+     * canonical box for every narrow int kind (INT8/UINT8/INT16/UINT16)
+     * is also {@code Integer}: a narrow int that passes through interning
+     * (ValueOf/Interface round-trips, unsafe handles) reads back from an
+     * {@code int[1]} carrier, and a kind-keyed read CCEs ({@code [I}
+     * cannot be cast to {@code [B} — the fmt [][]byte failure and the
+     * Interface-on-int8/uint8/int16 failure are this one bug).
+     *
+     * <p>The conversion applies only to single-element arrays (the
+     * carrier shape by construction): narrowing the widened carrier back
+     * to the kind's width and extending per the kind's signedness
+     * recovers the value bit-exactly, and for a genuine single-element
+     * array it equals gc's flat-memory low bytes at offset 0. Any other
+     * array delegates to {@link ReflectValues#arrayGet} with the
+     * normalized kind, so byte-offset walks into genuine multi-element
+     * arrays keep today's strict behavior instead of silently returning
+     * a wrong byte (the one deliberate normalization: untyped kinds read
+     * with their default concrete carrier, as in the other scalar
+     * readers, where the typedmemmove byte-offset site previously passed
+     * them through unnormalized).
+     */
+    static Object readCarrierScalar(Object array, int index, GoKind kind) {
+        GoKind k = normalizeKind(kind);
+        if (array instanceof int[] ia && ia.length == 1
+                && (k == GoKind.INT8 || k == GoKind.UINT8
+                        || k == GoKind.INT16 || k == GoKind.UINT16)) {
+            int v = ia[index];
+            return switch (k) {
+                case INT8 -> Integer.valueOf((int) (byte) v);
+                case UINT8 -> Integer.valueOf(v & 0xFF);
+                case INT16 -> Integer.valueOf((int) (short) v);
+                case UINT16 -> Integer.valueOf(v & 0xFFFF);
+                default -> throw new AssertionError("unreachable carrier kind " + k);
+            };
+        }
+        return ReflectValues.arrayGet(array, k, index);
     }
 
     /** A boxed scalar element (e.g. []any) read as the given kind. */

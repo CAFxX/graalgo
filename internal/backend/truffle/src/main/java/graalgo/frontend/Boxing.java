@@ -83,7 +83,7 @@ public final class Boxing {
             throw new IllegalStateException("null GoBox cell in slot " + slot
                     + " (per-iteration cell not installed)");
         }
-        cell.value = boxed;
+        cell.set(boxed);
     }
 
     /**
@@ -315,6 +315,15 @@ public final class Boxing {
     public static long toLong(Object boxed, graalgo.values.GoKind kind) {
         if (boxed instanceof Long l) {
             return l.longValue();
+        }
+        if (boxed instanceof graalgo.values.GoPointer gp) {
+            // A pointer value's word is its address word (the canonical
+            // intern handle for its storage; 0 for nil) — never a
+            // Number cast: a *T slot holds a GoPointer, and word reads
+            // of such slots (reflect IsNil's *(*unsafe.Pointer)(ptr),
+            // uintptr conversions) must yield the address, not CCE.
+            // The full 64-bit word is returned (no int truncation).
+            return graalgo.values.GoPointer.handleForPointer(gp);
         }
         int i = ((Number) boxed).intValue();
         return kind.isUintKind() ? (i & 0xFFFFFFFFL) : (long) i;

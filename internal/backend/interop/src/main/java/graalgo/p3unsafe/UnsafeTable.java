@@ -233,6 +233,9 @@ public final class UnsafeTable {
         // frontend's word-store branch. This class loads before
         // any handle exists, so the hook is always set in time.
         graalgo.values.GoPointer.handleResolveHook = UnsafeTable::resolveHandleStatic;
+        // fix-redmaster-stdlibgate: the reverse direction — a pointer
+        // value's address word for word consumers (Boxing.toLong).
+        graalgo.values.GoPointer.handleForPointerHook = UnsafeTable::handleForPointer;
     }
 
     /** Hook implementation: the referent for a handle, or null. */

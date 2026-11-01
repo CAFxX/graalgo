@@ -161,7 +161,14 @@ public final class ReflectLinknames {
 
     /** {@code unsafe_New(t)}: a handle to fresh zeroed storage for one t. */
     private static Object unsafeNew(long tok) {
-        return ReflectRefs.intern(new ReflectRefs.Cell(ReflectOpNode.zeroFor(tok)));
+        // The cell's kind is the allocated type's kind: a *T cell must
+        // normalize pointer word stores (reflect Set's direct-value
+        // else-branch) to the denoted pointer, exactly like the
+        // reflectNew cell — a kind-less cell stores the raw handle,
+        // which later Interface+assert+field reads misread as the
+        // value (Long→GoStruct CCE on New+Elem+Set round-trips).
+        return ReflectRefs.intern(new ReflectRefs.Cell(
+                ReflectOpNode.zeroFor(tok), ReflectTypes.table().info(tok).kind));
     }
 
     /**
@@ -928,8 +935,8 @@ public final class ReflectLinknames {
             if (view.byteOffset() == 0) {
                 return loadOffsetZero(h, t, symbol);
             }
-            return ReflectValues.arrayGet(arrayRoot(view, symbol), t.kind,
-                    elementIndex(view, t, symbol));
+            return ReflectRefs.readCarrierScalar(arrayRoot(view, symbol),
+                    elementIndex(view, t, symbol), t.kind);
         }
         if (ptr instanceof GoPointer p) {
             if (p.isNil()) {

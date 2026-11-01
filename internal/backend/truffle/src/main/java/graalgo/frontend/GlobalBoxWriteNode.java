@@ -35,6 +35,6 @@ public final class GlobalBoxWriteNode extends GoStmtNode {
             throw new IllegalStateException("GlobalBoxWriteNode: null cell in globals slot " + slot
                     + " (global initializer did not run)");
         }
-        cell.value = v;
+        cell.set(v);
     }
 }

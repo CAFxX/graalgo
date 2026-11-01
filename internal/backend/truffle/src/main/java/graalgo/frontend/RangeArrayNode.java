@@ -96,7 +96,7 @@ public final class RangeArrayNode extends Node implements RepeatingNode, LabelTa
         if (keySlot >= 0) {
             if (keyBoxed) {
                 if (keyDefine) {
-                    frame.setObject(keySlot, new GoBox(Long.valueOf(i)));
+                    frame.setObject(keySlot, new GoBox(Long.valueOf(i), keyKind));
                 } else {
                     // `for k = range ...` into a boxed variable: reassign the
                     // same variable (write into its existing cell).
@@ -111,7 +111,7 @@ public final class RangeArrayNode extends Node implements RepeatingNode, LabelTa
             v = Boxing.copyForAssign(valKind, v);
             if (valBoxed) {
                 if (valDefine) {
-                    frame.setObject(valSlot, new GoBox(v));
+                    frame.setObject(valSlot, new GoBox(v, valKind));
                 } else {
                     Boxing.setBoxedCell(frame, valSlot, valKind, v);
                 }

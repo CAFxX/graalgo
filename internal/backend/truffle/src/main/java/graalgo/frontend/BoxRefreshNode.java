@@ -37,6 +37,6 @@ public final class BoxRefreshNode extends GoStmtNode {
         if (carry == null) {
             throw new IllegalStateException("BoxRefreshNode: null carry cell in slot " + carrySlot);
         }
-        frame.setObject(cellSlot, new GoBox(Boxing.copyForAssign(kind, carry.value)));
+        frame.setObject(cellSlot, new GoBox(Boxing.copyForAssign(kind, carry.value), kind));
     }
 }

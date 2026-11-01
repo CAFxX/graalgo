@@ -69,6 +69,70 @@ public final class GoPointer {
         }
     }
 
+    /**
+     * fix-redmaster-stdlibgate: address word for a pointer value, for
+     * word consumers ({@code Boxing.toLong}, unsafe.Pointer word reads).
+     * The values package cannot name the unsafe table, so the table
+     * registers {@link #handleForPointerHook} at class-load (same pattern
+     * as {@link #handleResolveHook}); the hook yields the canonical
+     * intern handle for the pointer's storage (cell/elem/referent, 0 for
+     * nil). The fallback (hook unset, e.g. unit contexts without the
+     * runtime) synthesizes a stable non-zero word from
+     * {@link #storageHash}, which is consistent per storage identity.
+     */
+    public static java.util.function.Function<GoPointer, Long> handleForPointerHook;
+
+    /** The address word denoting this pointer (0 for nil). */
+    public static long handleForPointer(GoPointer gp) {
+        if (gp == null || gp.isNil()) {
+            return 0;
+        }
+        if (handleForPointerHook != null) {
+            try {
+                Long h = handleForPointerHook.apply(gp);
+                if (h != null) {
+                    return h.longValue();
+                }
+            } catch (RuntimeException e) {
+                // Fall through to the storage-hash word below.
+            }
+        }
+        return (gp.storageHash() & 0xFFFFFFFFL) | 1L;
+    }
+
+    /**
+     * The {@code *T} pointer value denoted by an unsafe address word, for
+     * stores into pointer-typed storage (a {@link GoBox} with kind
+     * {@code POINTER}, a {@code POINTER} struct field, a {@code POINTER}
+     * array element). gc memory is flat: a word store through an
+     * {@code unsafe.Pointer} view lands the denoted pointer in the slot —
+     * real reflect's {@code Set} else-branch
+     * ({@code *(*unsafe.Pointer)(v.ptr) = x.ptr}) stores exactly such a
+     * word, and for a direct-iface zero value (real {@code Zero} returns
+     * ptr nil without flagIndir) that word is 0. Address 0 lands nil; a
+     * resolvable address lands a pointer to what it denotes (a cell
+     * pointer for cell storage, else a plain pointer — mirroring
+     * {@code DerefWriteNode}'s handle-valued {@code *T} field store). An
+     * unresolvable address returns {@code fallback} (the caller keeps
+     * today's behavior rather than inventing a value).
+     */
+    public static Object pointerForAddress(long handle, Object fallback) {
+        if (handle == 0) {
+            return null;
+        }
+        Object resolved = resolveHandle(handle);
+        if (resolved instanceof GoPointer gp) {
+            return gp;
+        }
+        if (resolved instanceof GoCell gc) {
+            return new GoPointer(gc);
+        }
+        if (resolved != null) {
+            return new GoPointer(resolved);
+        }
+        return fallback;
+    }
+
     /** Creates a pointer to the storage behind a {@link GoCell} (&x, &s.f). */
     public GoPointer(GoCell cell) {
         this.cell = cell;

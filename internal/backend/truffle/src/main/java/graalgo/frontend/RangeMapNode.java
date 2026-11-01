@@ -120,7 +120,7 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
         if (keySlot >= 0) {
             if (keyBoxed) {
                 if (keyDefine) {
-                    frame.setObject(keySlot, new GoBox(key));
+                    frame.setObject(keySlot, new GoBox(key, keyKind));
                 } else {
                     // `for k = range ...` into a boxed variable: reassign the
                     // same variable (write into its existing cell).
@@ -134,7 +134,7 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
             Object v = Boxing.copyForAssign(valKind, val);
             if (valBoxed) {
                 if (valDefine) {
-                    frame.setObject(valSlot, new GoBox(v));
+                    frame.setObject(valSlot, new GoBox(v, valKind));
                 } else {
                     Boxing.setBoxedCell(frame, valSlot, valKind, v);
                 }

@@ -493,7 +493,7 @@ public final class ReflectOpNode extends GoExprNode {
     private static GoStruct reflectNew(long tok) {
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         Object zero = zeroFor(tok);
-        long handle = ReflectRefs.intern(new Cell(zero));
+        long handle = ReflectRefs.intern(new Cell(zero, ReflectTypes.table().info(tok).kind));
         long ptrTok = ReflectTypes.ptrTo(tok);
         return ReflectValues.pack(desc, ptrTok, handle, 0);
     }
@@ -592,6 +592,14 @@ public final class ReflectOpNode extends GoExprNode {
             return ReflectRefs.load(p.ptr());
         }
         GoKind kind = ReflectTypes.table().info(p.typ()).kind;
+        if (kind == GoKind.POINTER
+                && (p.flag() & (ReflectValues.FLAG_INDIR | ReflectValues.FLAG_ADDR)) == 0) {
+            // Direct pointer Value (ValueOf/New shape): the ptr is the
+            // pointer's data word, not an address of the pointee — see
+            // ReflectRefs.pointerValue. Addressable/indirect pointer
+            // Values keep the read-through path below.
+            return ReflectRefs.pointerValue(p.ptr());
+        }
         return ReflectRefs.denotedValue(p.ptr(), kind);
     }
 
@@ -605,7 +613,17 @@ public final class ReflectOpNode extends GoExprNode {
         v = toSyntheticValue(v);
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        Object d5;
+        if (t.kind == GoKind.POINTER
+                && (p.flag() & (ReflectValues.FLAG_INDIR | ReflectValues.FLAG_ADDR)) == 0) {
+            // Direct pointer Value (ValueOf/New shape): the ptr is the
+            // pointer's data word, not an address of the pointee — see
+            // ReflectRefs.pointerValue. Addressable/indirect pointer
+            // Values keep the read-through path below.
+            d5 = ReflectRefs.pointerValue(p.ptr());
+        } else {
+            d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        }
         if (d5 == null) {
             return null;
         }
@@ -1265,9 +1283,9 @@ public final class ReflectOpNode extends GoExprNode {
             return v;
         }
         long tok = resolveTypeValue(typObj, "reflect.Type.Method");
-        Object data = realData(v.getObject(1), tok);
-        long flag = 0;
         long realFlag = v.getLong(2);
+        Object data = realData(v.getObject(1), tok, realFlag);
+        long flag = 0;
         if ((realFlag & (1L << 5)) != 0) {
             flag |= ReflectValues.FLAG_RO;
         }
@@ -1286,12 +1304,24 @@ public final class ReflectOpNode extends GoExprNode {
      * offset-0-collapsed handles (a field at offset 0 shares its
      * container's handle, so it would return the whole struct for
      * an int field); loadOffsetZero descends offset-0 struct/array
-     * chains to the target kind, which is the correct read.
+     * chains to the target kind, which is the correct read — EXCEPT
+     * for a direct (non-indirect, non-addressable) pointer Value:
+     * its data word IS the pointer (the interface data word from
+     * unpackEface), not an address of the pointee, so loading the
+     * pointer type through it descends a struct pointee to field 0
+     * and binds the field instead of the pointer. Direct pointer
+     * data words recover via {@link ReflectRefs#pointerValue}.
+     * {@code guestFlag} is the guest flag word (gc bit positions:
+     * indir 1&lt;&lt;7, addr 1&lt;&lt;8).
      */
-    private static Object realData(Object ptrObj, long tok) {
+    private static Object realData(Object ptrObj, long tok, long guestFlag) {
         Object x = ptrObj;
         for (int i = 0; i < 8; i++) {
             if (x instanceof Long h) {
+                if (ReflectTypes.table().info(tok).kind == GoKind.POINTER
+                        && (guestFlag & ((1L << 7) | (1L << 8))) == 0) {
+                    return ReflectRefs.pointerValue(h);
+                }
                 return ReflectLinknames.loadOffsetZero(
                         h, ReflectTypes.table().info(tok), "reflect.Value");
             }

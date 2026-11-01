@@ -88,7 +88,7 @@ public final class RangeIntNode extends Node implements RepeatingNode, LabelTarg
                 // keyKind is INT64 for integer ranges; box as Long.
                 Object boxed = Long.valueOf(i);
                 if (keyDefine) {
-                    box = new GoBox(boxed);
+                    box = new GoBox(boxed, keyKind);
                     frame.setObject(keySlot, box);
                 } else {
                     box = (GoBox) frame.getObject(keySlot);

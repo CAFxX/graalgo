@@ -108,7 +108,7 @@ public final class RangeSliceNode extends Node implements RepeatingNode, LabelTa
         if (keySlot >= 0) {
             if (keyBoxed) {
                 if (keyDefine) {
-                    frame.setObject(keySlot, new GoBox(Long.valueOf(i)));
+                    frame.setObject(keySlot, new GoBox(Long.valueOf(i), keyKind));
                 } else {
                     // `for k = range ...` into a boxed variable: the same
                     // variable is reassigned, so write into its existing
@@ -127,7 +127,7 @@ public final class RangeSliceNode extends Node implements RepeatingNode, LabelTa
             v = Boxing.copyForAssign(valKind, v);
             if (valBoxed) {
                 if (valDefine) {
-                    frame.setObject(valSlot, new GoBox(v));
+                    frame.setObject(valSlot, new GoBox(v, valKind));
                 } else {
                     Boxing.setBoxedCell(frame, valSlot, valKind, v);
                 }

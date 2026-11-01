@@ -168,7 +168,7 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
         if (keySlot >= 0) {
             if (keyBoxed) {
                 if (keyDefine) {
-                    frame.setObject(keySlot, new GoBox(Long.valueOf(pos)));
+                    frame.setObject(keySlot, new GoBox(Long.valueOf(pos), keyKind));
                 } else {
                     // `for k = range ...` into a boxed variable: reassign the
                     // same variable (write into its existing cell).

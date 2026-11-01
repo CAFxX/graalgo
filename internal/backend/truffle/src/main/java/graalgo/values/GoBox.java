@@ -41,8 +41,22 @@ public final class GoBox implements GoCell {
     /** The current value in canonical boxed form. */
     public Object value;
 
+    /**
+     * The declared kind of the variable this box stores, or null when the
+     * creating site did not record it (legacy behavior: {@link #set}
+     * stores as-is). Pointer-typed boxes enforce the representation
+     * invariant that a {@code *T} slot holds a {@code GoPointer} or null,
+     * never a raw address word (see {@link #set}).
+     */
+    public final GoKind kind;
+
     public GoBox(Object value) {
+        this(value, null);
+    }
+
+    public GoBox(Object value, GoKind kind) {
         this.value = value;
+        this.kind = kind;
     }
 
     @Override
@@ -52,6 +66,17 @@ public final class GoBox implements GoCell {
 
     @Override
     public void set(Object v) {
+        if (kind == GoKind.POINTER && v instanceof Long l) {
+            // A word store through an unsafe.Pointer view into a *T
+            // variable (real reflect Set's else-branch for direct values,
+            // e.g. Set(Zero) storing address 0): gc flat memory lands
+            // the denoted pointer in the slot, not the raw address — a
+            // raw Long(0) in the box would misread as non-nil and a
+            // raw handle would leak the address representation into
+            // every later use of the variable.
+            value = GoPointer.pointerForAddress(l.longValue(), v);
+            return;
+        }
         value = v;
     }
 

@@ -32,6 +32,6 @@ public final class GlobalBoxInitNode extends GoStmtNode {
     @Override
     public void executeVoid(VirtualFrame frame) {
         Object v = Boxing.copyForAssign(kind, Boxing.box(kind, value, frame));
-        globals.setObject(slot, new GoBox(v));
+        globals.setObject(slot, new GoBox(v, kind));
     }
 }

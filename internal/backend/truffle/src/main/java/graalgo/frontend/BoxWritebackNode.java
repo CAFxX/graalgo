@@ -51,6 +51,6 @@ public final class BoxWritebackNode extends GoStmtNode {
             throw new IllegalStateException("BoxWritebackNode: null carry cell in slot "
                     + carrySlot);
         }
-        carry.value = Boxing.copyForAssign(kind, iter.value);
+        carry.set(Boxing.copyForAssign(kind, iter.value));
     }
 }
