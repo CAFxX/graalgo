@@ -3088,6 +3088,13 @@ type exporter struct {
 	// currently being exported (nil outside such functions). Used to
 	// transform `return a, b` into a pair composite literal.
 	currentMR *userMRInfo
+	// P1-8: proven stored-uintptr definitions for the function body
+	// currently being exported (nil outside a function body, or when
+	// the body defines none); see unsafe_derive.go. Installed around
+	// exportBlock by exportFuncDecl, exportInstantiation, and
+	// exportFuncLit, saved/restored exactly like currentMR, so a
+	// nested literal sees only its own definitions.
+	storedUintptr map[types.Object]*storedUintptrDef
 	// BUG-MODPROBE-010: side channel for temp vardecls hoisted from
 	// multi-result calls in argument position (f(g()) desugar). exportCallArgs
 	// appends the temp vardecls here; exportStmt flushes them by wrapping the
@@ -6067,7 +6074,12 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if mrInfo != nil {
 		e.currentMR = mrInfo
 	}
+	// P1-8: install this body's proven stored-uintptr definitions for
+	// the duration of the body export (restored below, like currentMR).
+	prevProv := e.storedUintptr
+	e.storedUintptr = e.computeStoredUintptr(fd, fd.Body, fd.Type)
 	body, err := e.exportBlock(fd.Body)
+	e.storedUintptr = prevProv
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
@@ -6518,7 +6530,12 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	if mrInfo != nil {
 		e.currentMR = mrInfo
 	}
+	// P1-8: as in exportFuncDecl, install this body's stored-uintptr
+	// definitions for the duration of the body export.
+	prevProv := e.storedUintptr
+	e.storedUintptr = e.computeStoredUintptr(fd, fd.Body, fd.Type)
 	body, err := e.exportBlock(fd.Body)
+	e.storedUintptr = prevProv
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
@@ -11482,7 +11499,13 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	} else {
 		e.currentMR = nil
 	}
+	// P1-8: as in exportFuncDecl, install this literal's stored-uintptr
+	// definitions for the duration of the body export; the outer
+	// function's definitions do not leak into the literal.
+	prevProv := e.storedUintptr
+	e.storedUintptr = e.computeStoredUintptr(l, l.Body, l.Type)
 	body, err := e.exportBlock(l.Body)
+	e.storedUintptr = prevProv
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
