@@ -1,0 +1,414 @@
+package graalgo.p3x509;
+
+import java.math.BigInteger;
+
+import graalgo.values.GoSlice;
+import graalgo.values.GoString;
+
+/**
+ * Differential tests for {@link GoX509} private/public key parsing against
+ * gc {@code crypto/x509} (go1.27.1).
+ *
+ * <p>Vectors below are gc ground truth: each DER was produced by gc
+ * ({@code x509.MarshalECPrivateKey} / {@code MarshalPKCS8PrivateKey} /
+ * {@code MarshalPKCS1PrivateKey} / {@code MarshalPKIXPublicKey}) or, for
+ * the edge cases, hand-built in the SEC1/PKCS#8 ASN.1 layout and fed to
+ * gc {@code ParseECPrivateKey} / {@code ParsePKCS8PrivateKey} to obtain
+ * the verdict embedded in the constant name (ACCEPT with gc X/Y/D, or
+ * REJECT). The generator program is not committed; the vectors are
+ * deterministic (fixed scalars; RSA/Ed25519 keys were generated once and
+ * their values are pinned here). Comparisons are numeric (BigInteger),
+ * so DER padding differences do not matter — only the parsed key does.
+ *
+ * <p>Notable gc behaviours pinned here (all verified against gc 1.27.1,
+ * not assumed): trailing bytes after a SEC1 SEQUENCE are ignored;
+ * the [1] public key is ignored (derived from D instead); a missing [1]
+ * is fine; a missing [0] parameters OID, an unknown curve OID, a
+ * version other than 1, D == 0, D == order, and an over-long D with a
+ * non-zero leading byte are all rejected; a leading-zero-padded D is
+ * accepted; an extra [2] child is ignored; PKCS#8 EC with no parameters
+ * is accepted via the embedded SEC1 OID, while PKCS#8 EC with a
+ * secp256k1 parameters OID is rejected.
+ *
+ * <p>Run via {@code graalgo.iface.IfaceTestRunner} (interop {@code make test}).
+ */
+public final class GoX509Test {
+
+    // ---- helpers ----
+
+    private static byte[] hex(String s) {
+        int n = s.length();
+        byte[] out = new byte[n / 2];
+        for (int i = 0; i < n; i += 2) {
+            out[i / 2] = (byte) ((Character.digit(s.charAt(i), 16) << 4)
+                    + Character.digit(s.charAt(i + 1), 16));
+        }
+        return out;
+    }
+
+    private static Object slice(String hexDer) {
+        byte[] der = hex(hexDer);
+        return new GoSlice(der, 0, der.length, der.length);
+    }
+
+    private static String str(Object goString) {
+        if (!(goString instanceof GoString gs)) {
+            throw new AssertionError("expected GoString, got " + goString);
+        }
+        return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private static void assertTrue(boolean cond, String msg) {
+        if (!cond) {
+            throw new AssertionError(msg);
+        }
+    }
+
+    private static void assertEq(BigInteger want, BigInteger got, String msg) {
+        if (!want.equals(got)) {
+            throw new AssertionError(msg + ": want " + want.toString(16) + " got " + got.toString(16));
+        }
+    }
+
+    private static void assertEq(String want, String got, String msg) {
+        if (!want.equals(got)) {
+            throw new AssertionError(msg + ": want " + want + " got " + got);
+        }
+    }
+
+    private static String[] parts(String desc) {
+        return desc.split(":", -1);
+    }
+
+    private static BigInteger num(String hexValue) {
+        if (hexValue.isEmpty()) {
+            return BigInteger.ZERO;
+        }
+        return new BigInteger(1, hex(hexValue));
+    }
+
+    /** Asserts a SEC1 descriptor matches gc's curve/X/Y/D numerically. */
+    private static void assertSec1(String der, String curve, String gcX, String gcY, String gcD) {
+        String desc = str(GoX509.parsePrivateKey(slice(der)));
+        String[] p = parts(desc);
+        assertEq("SEC1", p[0], "SEC1 fmt for " + curve);
+        assertEq("EC", p[1], "SEC1 alg for " + curve);
+        assertEq(curve, p[2], "SEC1 curve");
+        assertTrue(p.length == 6, "SEC1 descriptor parts: " + desc);
+        assertEq(num(gcX), num(p[3]), "SEC1 X for " + curve);
+        assertEq(num(gcY), num(p[4]), "SEC1 Y for " + curve);
+        assertEq(num(gcD), num(p[5]), "SEC1 D for " + curve);
+    }
+
+    private static void assertSec1Reject(String der, String label) {
+        String desc = str(GoX509.parsePrivateKey(slice(der)));
+        assertEq("", desc, "SEC1 must reject: " + label);
+    }
+
+    /** Asserts a PKCS#8 EC descriptor matches gc's curve/D numerically. */
+    private static void assertPkcs8Ec(String der, String curve, String gcD) {
+        String desc = str(GoX509.parsePrivateKey(slice(der)));
+        String[] p = parts(desc);
+        assertEq("PKCS8", p[0], "PKCS8 fmt for " + curve);
+        assertEq("EC", p[1], "PKCS8 alg for " + curve);
+        assertEq(curve, p[2], "PKCS8 curve");
+        assertTrue(p.length == 4, "PKCS8 EC descriptor parts: " + desc);
+        assertEq(num(gcD), num(p[3]), "PKCS8 D for " + curve);
+    }
+
+    private static void assertPkcs8Reject(String der, String label) {
+        String desc = str(GoX509.parsePrivateKey(slice(der)));
+        assertEq("", desc, "PKCS8 must reject: " + label);
+    }
+
+    // ---- SEC1 valid keys, all four curves ----
+
+    public void testSec1P224() {
+        assertSec1(SEC1_P224_ONE_DER, "secp224r1", SEC1_P224_ONE_X, SEC1_P224_ONE_Y, SEC1_P224_ONE_D);
+        assertSec1(SEC1_P224_TWO_DER, "secp224r1", SEC1_P224_TWO_X, SEC1_P224_TWO_Y, SEC1_P224_TWO_D);
+    }
+
+    public void testSec1P256() {
+        assertSec1(SEC1_P256_ONE_DER, "secp256r1", SEC1_P256_ONE_X, SEC1_P256_ONE_Y, SEC1_P256_ONE_D);
+        assertSec1(SEC1_P256_TWO_DER, "secp256r1", SEC1_P256_TWO_X, SEC1_P256_TWO_Y, SEC1_P256_TWO_D);
+    }
+
+    public void testSec1P384() {
+        assertSec1(SEC1_P384_ONE_DER, "secp384r1", SEC1_P384_ONE_X, SEC1_P384_ONE_Y, SEC1_P384_ONE_D);
+        assertSec1(SEC1_P384_TWO_DER, "secp384r1", SEC1_P384_TWO_X, SEC1_P384_TWO_Y, SEC1_P384_TWO_D);
+    }
+
+    public void testSec1P521() {
+        assertSec1(SEC1_P521_ONE_DER, "secp521r1", SEC1_P521_ONE_X, SEC1_P521_ONE_Y, SEC1_P521_ONE_D);
+        assertSec1(SEC1_P521_TWO_DER, "secp521r1", SEC1_P521_TWO_X, SEC1_P521_TWO_Y, SEC1_P521_TWO_D);
+    }
+
+    /**
+     * Headline F-06 case: the scalar bytes contain 0xA0 followed by 0x06,
+     * which the old byte-scan OID extraction mistook for the [0]
+     * parameters tag and decoded into a garbage OID, rejecting a key gc
+     * accepts. A structured DER walk must not scan scalar content.
+     */
+    public void testSec1PatternScalar() {
+        assertSec1(SEC1_P224_PATTERN_DER, "secp224r1", SEC1_P224_PATTERN_X, SEC1_P224_PATTERN_Y, SEC1_P224_PATTERN_D);
+        assertSec1(SEC1_P256_PATTERN_DER, "secp256r1", SEC1_P256_PATTERN_X, SEC1_P256_PATTERN_Y, SEC1_P256_PATTERN_D);
+        assertSec1(SEC1_P384_PATTERN_DER, "secp384r1", SEC1_P384_PATTERN_X, SEC1_P384_PATTERN_Y, SEC1_P384_PATTERN_D);
+        assertSec1(SEC1_P521_PATTERN_DER, "secp521r1", SEC1_P521_PATTERN_X, SEC1_P521_PATTERN_Y, SEC1_P521_PATTERN_D);
+    }
+
+    // ---- SEC1 rejections (gc rejects, so must GoX509) ----
+
+    public void testSec1Rejects() {
+        assertSec1Reject(SEC1EDGE_VERSION0_DER, "version 0");
+        assertSec1Reject(SEC1EDGE_K1OID_DER, "secp256k1 OID");
+        assertSec1Reject(SEC1EDGE_NOPARAMS_DER, "missing parameters");
+        assertSec1Reject(SEC1EDGE_ORDER_DER, "D == order");
+        assertSec1Reject(SEC1EDGE_ZERO_DER, "D == 0");
+        assertSec1Reject(SEC1EDGE_OVERLONG_DER, "over-long D with non-zero leading byte");
+        assertSec1Reject(SEC1EDGE_TRUNCATED_DER, "truncated DER");
+        assertSec1Reject("", "empty input");
+        assertSec1Reject("deadbeef", "garbage bytes");
+        assertSec1Reject("30", "lone SEQUENCE tag");
+    }
+
+    // ---- SEC1 gc acceptances that a strict-looking parser must NOT reject ----
+
+    public void testSec1GcAcceptances() {
+        // No [1] public key: gc derives from D.
+        assertSec1(SEC1EDGE_NOPUBKEY_DER, "secp256r1", SEC1EDGE_NOPUBKEY_X, SEC1EDGE_NOPUBKEY_Y, SEC1EDGE_NOPUBKEY_D);
+        // [1] public key inconsistent with D: gc ignores [1], derives from D.
+        assertSec1(SEC1EDGE_MISMATCHPUB_DER, "secp256r1", SEC1EDGE_MISMATCHPUB_X, SEC1EDGE_MISMATCHPUB_Y, SEC1EDGE_MISMATCHPUB_D);
+        // Leading-zero-padded D: gc strips the padding.
+        assertSec1(SEC1EDGE_PADZERO_DER, "secp256r1", SEC1EDGE_PADZERO_X, SEC1EDGE_PADZERO_Y, SEC1EDGE_PADZERO_D);
+        // Extra [2] child: gc ignores it.
+        assertSec1(SEC1EDGE_EXTRACHILD_DER, "secp256r1", SEC1EDGE_EXTRACHILD_X, SEC1EDGE_EXTRACHILD_Y, SEC1EDGE_EXTRACHILD_D);
+        // Trailing byte after the SEQUENCE: gc ignores it.
+        assertSec1(SEC1EDGE_TRAILING_DER, "secp256r1", SEC1EDGE_TRAILING_X, SEC1EDGE_TRAILING_Y, SEC1EDGE_TRAILING_D);
+    }
+
+    // ---- PKCS#8 EC ----
+
+    public void testPkcs8Ec() {
+        assertPkcs8Ec(PKCS8EC_P224_ONE_DER, "secp224r1", PKCS8EC_P224_ONE_D);
+        assertPkcs8Ec(PKCS8EC_P224_TWO_DER, "secp224r1", PKCS8EC_P224_TWO_D);
+        assertPkcs8Ec(PKCS8EC_P224_PATTERN_DER, "secp224r1", PKCS8EC_P224_PATTERN_D);
+        assertPkcs8Ec(PKCS8EC_P256_ONE_DER, "secp256r1", PKCS8EC_P256_ONE_D);
+        assertPkcs8Ec(PKCS8EC_P256_TWO_DER, "secp256r1", PKCS8EC_P256_TWO_D);
+        assertPkcs8Ec(PKCS8EC_P256_PATTERN_DER, "secp256r1", PKCS8EC_P256_PATTERN_D);
+        assertPkcs8Ec(PKCS8EC_P384_ONE_DER, "secp384r1", PKCS8EC_P384_ONE_D);
+        assertPkcs8Ec(PKCS8EC_P384_TWO_DER, "secp384r1", PKCS8EC_P384_TWO_D);
+        assertPkcs8Ec(PKCS8EC_P384_PATTERN_DER, "secp384r1", PKCS8EC_P384_PATTERN_D);
+        assertPkcs8Ec(PKCS8EC_P521_ONE_DER, "secp521r1", PKCS8EC_P521_ONE_D);
+        assertPkcs8Ec(PKCS8EC_P521_TWO_DER, "secp521r1", PKCS8EC_P521_TWO_D);
+        assertPkcs8Ec(PKCS8EC_P521_PATTERN_DER, "secp521r1", PKCS8EC_P521_PATTERN_D);
+    }
+
+    public void testPkcs8EcEdges() {
+        assertPkcs8Reject(PKCS8EDGE_K1PARAMS_DER, "secp256k1 parameters OID");
+        assertPkcs8Reject(PKCS8EDGE_DORDER_DER, "D == order");
+        assertPkcs8Reject(PKCS8EDGE_DZERO_DER, "D == 0");
+        // No parameters OID: gc falls back to the embedded SEC1 OID.
+        assertPkcs8Ec(PKCS8EDGE_NOPARAMS_DER, "secp256r1", PKCS8EDGE_NOPARAMS_D);
+    }
+
+    // ---- PKCS#1 RSA ----
+
+    public void testPkcs1Rsa() {
+        String desc = str(GoX509.parsePrivateKey(slice(PKCS1RSA_DER)));
+        String[] p = parts(desc);
+        assertEq("PKCS1", p[0], "PKCS1 fmt");
+        assertEq("RSA", p[1], "PKCS1 alg");
+        assertTrue(p.length == 7, "PKCS1 descriptor parts: " + desc);
+        assertEq(num(PKCS1RSA_N), num(p[2]), "PKCS1 n");
+        assertEq(new BigInteger(PKCS1RSA_E), num(p[3]), "PKCS1 e");
+        assertEq(num(PKCS1RSA_D), num(p[4]), "PKCS1 d");
+        assertEq(num(PKCS1RSA_P), num(p[5]), "PKCS1 p");
+        assertEq(num(PKCS1RSA_Q), num(p[6]), "PKCS1 q");
+
+        Object pub = GoX509.parsePkcs1(slice(PKCS1PUB_DER));
+        assertTrue(pub != null, "parsePkcs1 must accept a valid PKCS#1 public key");
+        String[] q = parts(str(pub));
+        assertTrue(q.length == 2, "parsePkcs1 parts: " + str(pub));
+        assertEq(num(PKCS1RSA_N), num(q[0]), "parsePkcs1 n");
+        assertEq(new BigInteger(PKCS1RSA_E), new BigInteger(q[1]), "parsePkcs1 e");
+
+        assertTrue(GoX509.parsePkcs1(slice("")) == null, "parsePkcs1 must reject empty input");
+        assertTrue(GoX509.parsePkcs1(slice("deadbeef")) == null, "parsePkcs1 must reject garbage");
+        String trunc = PKCS1RSA_DER.substring(0, PKCS1RSA_DER.length() - 20);
+        assertSec1Reject(trunc, "truncated PKCS#1 private (via parsePrivateKey)");
+    }
+
+    // ---- PKCS#8 RSA / Ed25519 ----
+
+    public void testPkcs8RsaAndEd() {
+        String desc = str(GoX509.parsePrivateKey(slice(PKCS8RSA_DER)));
+        String[] p = parts(desc);
+        assertEq("PKCS8", p[0], "PKCS8 RSA fmt");
+        assertEq("RSA", p[1], "PKCS8 RSA alg");
+        assertTrue(p.length == 7, "PKCS8 RSA descriptor parts: " + desc);
+        assertEq(num(PKCS1RSA_N), num(p[2]), "PKCS8 RSA n");
+        assertEq(new BigInteger(PKCS1RSA_E), num(p[3]), "PKCS8 RSA e");
+        assertEq(num(PKCS1RSA_D), num(p[4]), "PKCS8 RSA d");
+        assertEq(num(PKCS1RSA_P), num(p[5]), "PKCS8 RSA p");
+        assertEq(num(PKCS1RSA_Q), num(p[6]), "PKCS8 RSA q");
+
+        String ed = str(GoX509.parsePrivateKey(slice(PKCS8ED_DER)));
+        String[] e = parts(ed);
+        assertEq("PKCS8", e[0], "PKCS8 Ed fmt");
+        assertEq("Ed25519", e[1], "PKCS8 Ed alg");
+        assertTrue(e.length == 3, "PKCS8 Ed descriptor parts: " + ed);
+        assertEq(PKCS8ED_SEED.toLowerCase(), e[2].toLowerCase(), "PKCS8 Ed seed");
+    }
+
+    // ---- SPKI public keys ----
+
+    public void testSpki() {
+        Object rsa = GoX509.parseSpki(slice(SPKIRSA_DER));
+        assertTrue(rsa != null, "parseSpki must accept RSA SPKI");
+        String[] r = parts(str(rsa));
+        assertEq("RSA", r[0], "SPKI RSA tag");
+        assertEq(num(PKCS1RSA_N), num(r[1]), "SPKI RSA n");
+        assertEq(new BigInteger(PKCS1RSA_E), new BigInteger(r[2]), "SPKI RSA e");
+
+        Object ec = GoX509.parseSpki(slice(SPKIEC_DER));
+        assertTrue(ec != null, "parseSpki must accept EC SPKI");
+        String[] c = parts(str(ec));
+        assertEq("EC", c[0], "SPKI EC tag");
+        assertEq(num(SPKIEC_X), num(c[1]), "SPKI EC x");
+        assertEq(num(SPKIEC_Y), num(c[2]), "SPKI EC y");
+        assertEq("256", c[3], "SPKI EC field size");
+
+        Object ed = GoX509.parseSpki(slice(SPKIED_DER));
+        assertTrue(ed != null, "parseSpki must accept Ed25519 SPKI");
+        String[] d = parts(str(ed));
+        assertEq("Ed25519", d[0], "SPKI Ed tag");
+        assertEq(SPKIED_PUB.toLowerCase(), d[1].toLowerCase(), "SPKI Ed raw key");
+
+        assertTrue(GoX509.parseSpki(slice("")) == null, "parseSpki must reject empty input");
+        assertTrue(GoX509.parseSpki(slice("deadbeef")) == null, "parseSpki must reject garbage");
+        String trunc = SPKIRSA_DER.substring(0, SPKIRSA_DER.length() - 20);
+        assertTrue(GoX509.parseSpki(slice(trunc)) == null, "parseSpki must reject truncated SPKI");
+    }
+
+    private static final String SEC1_P224_ONE_DER = "3068020101041c00000000000000000000000000000000000000000000000000000001a00706052b81040021a13c033a0004b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34";
+    private static final String SEC1_P224_ONE_X = "b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21";
+    private static final String SEC1_P224_ONE_Y = "bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34";
+    private static final String SEC1_P224_ONE_D = "00000000000000000000000000000000000000000000000000000001";
+    private static final String PKCS8EC_P224_ONE_DER = "3078020100301006072a8648ce3d020106052b810400210461305f020101041c00000000000000000000000000000000000000000000000000000001a13c033a0004b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34";
+    private static final String PKCS8EC_P224_ONE_D = "00000000000000000000000000000000000000000000000000000001";
+    private static final String SEC1_P224_TWO_DER = "3068020101041c00000000000000000000000000000000000000000000000000000002a00706052b81040021a13c033a0004706a46dc76dcb76798e60e6d89474788d16dc18032d268fd1a704fa61c2b76a7bc25e7702a704fa986892849fca629487acf3709d2e4e8bb";
+    private static final String SEC1_P224_TWO_X = "706a46dc76dcb76798e60e6d89474788d16dc18032d268fd1a704fa6";
+    private static final String SEC1_P224_TWO_Y = "1c2b76a7bc25e7702a704fa986892849fca629487acf3709d2e4e8bb";
+    private static final String SEC1_P224_TWO_D = "00000000000000000000000000000000000000000000000000000002";
+    private static final String PKCS8EC_P224_TWO_DER = "3078020100301006072a8648ce3d020106052b810400210461305f020101041c00000000000000000000000000000000000000000000000000000002a13c033a0004706a46dc76dcb76798e60e6d89474788d16dc18032d268fd1a704fa61c2b76a7bc25e7702a704fa986892849fca629487acf3709d2e4e8bb";
+    private static final String PKCS8EC_P224_TWO_D = "00000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1_P224_PATTERN_DER = "3068020101041c0111121314a0061118191a1b1c1d1e1f202122232425262728292a2ba00706052b81040021a13c033a0004f67e351b784047b672cc3b2c0307b76817762605c080a60b3253bf76b7a7f245e7a506d710eb5c20a5b16e2953425df4c809674f7722b2dd";
+    private static final String SEC1_P224_PATTERN_X = "f67e351b784047b672cc3b2c0307b76817762605c080a60b3253bf76";
+    private static final String SEC1_P224_PATTERN_Y = "b7a7f245e7a506d710eb5c20a5b16e2953425df4c809674f7722b2dd";
+    private static final String SEC1_P224_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b";
+    private static final String PKCS8EC_P224_PATTERN_DER = "3078020100301006072a8648ce3d020106052b810400210461305f020101041c0111121314a0061118191a1b1c1d1e1f202122232425262728292a2ba13c033a0004f67e351b784047b672cc3b2c0307b76817762605c080a60b3253bf76b7a7f245e7a506d710eb5c20a5b16e2953425df4c809674f7722b2dd";
+    private static final String PKCS8EC_P224_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b";
+    private static final String SEC1_P256_ONE_DER = "307702010104200000000000000000000000000000000000000000000000000000000000000001a00a06082a8648ce3d030107a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String SEC1_P256_ONE_X = "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296";
+    private static final String SEC1_P256_ONE_Y = "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String SEC1_P256_ONE_D = "0000000000000000000000000000000000000000000000000000000000000001";
+    private static final String PKCS8EC_P256_ONE_DER = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104200000000000000000000000000000000000000000000000000000000000000001a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String PKCS8EC_P256_ONE_D = "0000000000000000000000000000000000000000000000000000000000000001";
+    private static final String SEC1_P256_TWO_DER = "307702010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1_P256_TWO_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SEC1_P256_TWO_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1_P256_TWO_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String PKCS8EC_P256_TWO_DER = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104200000000000000000000000000000000000000000000000000000000000000002a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String PKCS8EC_P256_TWO_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1_P256_PATTERN_DER = "307702010104200111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2fa00a06082a8648ce3d030107a14403420004fe39f4a3c6bfac8af8df624961ed8c758f500a53ad2667541ad43fd275d8b25625a1978802f46676f85bceee95437aec9e8a875e4769c2ca9d8e717092a98fb0";
+    private static final String SEC1_P256_PATTERN_X = "fe39f4a3c6bfac8af8df624961ed8c758f500a53ad2667541ad43fd275d8b256";
+    private static final String SEC1_P256_PATTERN_Y = "25a1978802f46676f85bceee95437aec9e8a875e4769c2ca9d8e717092a98fb0";
+    private static final String SEC1_P256_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f";
+    private static final String PKCS8EC_P256_PATTERN_DER = "308187020100301306072a8648ce3d020106082a8648ce3d030107046d306b02010104200111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2fa14403420004fe39f4a3c6bfac8af8df624961ed8c758f500a53ad2667541ad43fd275d8b25625a1978802f46676f85bceee95437aec9e8a875e4769c2ca9d8e717092a98fb0";
+    private static final String PKCS8EC_P256_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f";
+    private static final String SEC1_P384_ONE_DER = "3081a40201010430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a00706052b81040022a16403620004aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab73617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f";
+    private static final String SEC1_P384_ONE_X = "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7";
+    private static final String SEC1_P384_ONE_Y = "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f";
+    private static final String SEC1_P384_ONE_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001";
+    private static final String PKCS8EC_P384_ONE_DER = "3081b6020100301006072a8648ce3d020106052b8104002204819e30819b0201010430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a16403620004aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab73617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f";
+    private static final String PKCS8EC_P384_ONE_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001";
+    private static final String SEC1_P384_TWO_DER = "3081a40201010430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a00706052b81040022a1640362000408d999057ba3d2d969260045c55b97f089025959a6f434d651d207d19fb96e9e4fe0e86ebe0e64f85b96a9c75295df618e80f1fa5b1b3cedb7bfe8dffd6dba74b275d875bc6cc43e904e505f256ab4255ffd43e94d39e22d61501e700a940e80";
+    private static final String SEC1_P384_TWO_X = "08d999057ba3d2d969260045c55b97f089025959a6f434d651d207d19fb96e9e4fe0e86ebe0e64f85b96a9c75295df61";
+    private static final String SEC1_P384_TWO_Y = "8e80f1fa5b1b3cedb7bfe8dffd6dba74b275d875bc6cc43e904e505f256ab4255ffd43e94d39e22d61501e700a940e80";
+    private static final String SEC1_P384_TWO_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002";
+    private static final String PKCS8EC_P384_TWO_DER = "3081b6020100301006072a8648ce3d020106052b8104002204819e30819b0201010430000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a1640362000408d999057ba3d2d969260045c55b97f089025959a6f434d651d207d19fb96e9e4fe0e86ebe0e64f85b96a9c75295df618e80f1fa5b1b3cedb7bfe8dffd6dba74b275d875bc6cc43e904e505f256ab4255ffd43e94d39e22d61501e700a940e80";
+    private static final String PKCS8EC_P384_TWO_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1_P384_PATTERN_DER = "3081a402010104300111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fa00706052b81040022a16403620004d1397339ba2d32af3b186da39df32dceacff006e53bf6aeebead97dbade95237313b9bcdc47d267aada6b7e440f98e00a53c72b3c54ba95da3b5247b9099b60c81b7b594fcd317ae36f7b8b4f14a5c53056cef64a6cabd425f272d73124fe3bb";
+    private static final String SEC1_P384_PATTERN_X = "d1397339ba2d32af3b186da39df32dceacff006e53bf6aeebead97dbade95237313b9bcdc47d267aada6b7e440f98e00";
+    private static final String SEC1_P384_PATTERN_Y = "a53c72b3c54ba95da3b5247b9099b60c81b7b594fcd317ae36f7b8b4f14a5c53056cef64a6cabd425f272d73124fe3bb";
+    private static final String SEC1_P384_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
+    private static final String PKCS8EC_P384_PATTERN_DER = "3081b6020100301006072a8648ce3d020106052b8104002204819e30819b02010104300111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3fa16403620004d1397339ba2d32af3b186da39df32dceacff006e53bf6aeebead97dbade95237313b9bcdc47d267aada6b7e440f98e00a53c72b3c54ba95da3b5247b9099b60c81b7b594fcd317ae36f7b8b4f14a5c53056cef64a6cabd425f272d73124fe3bb";
+    private static final String PKCS8EC_P384_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
+    private static final String SEC1_P521_ONE_DER = "3081dc0201010442000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a00706052b81040023a18189038186000400c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650";
+    private static final String SEC1_P521_ONE_X = "00c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66";
+    private static final String SEC1_P521_ONE_Y = "011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650";
+    private static final String SEC1_P521_ONE_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001";
+    private static final String PKCS8EC_P521_ONE_DER = "3081ee020100301006072a8648ce3d020106052b810400230481d63081d30201010442000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a18189038186000400c6858e06b70404e9cd9e3ecb662395b4429c648139053fb521f828af606b4d3dbaa14b5e77efe75928fe1dc127a2ffa8de3348b3c1856a429bf97e7e31c2e5bd66011839296a789a3bc0045c8a5fb42c7d1bd998f54449579b446817afbd17273e662c97ee72995ef42640c550b9013fad0761353c7086a272c24088be94769fd16650";
+    private static final String PKCS8EC_P521_ONE_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001";
+    private static final String SEC1_P521_TWO_DER = "3081dc0201010442000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a00706052b81040023a18189038186000400433c219024277e7e682fcb288148c282747403279b1ccc06352c6e5505d769be97b3b204da6ef55507aa104a3a35c5af41cf2fa364d60fd967f43e3933ba6d783d00f4bb8cc7f86db26700a7f3eceeeed3f0b5c6b5107c4da97740ab21a29906c42dbbb3e377de9f251f6b93937fa99a3248f4eafcbe95edc0f4f71be356d661f41b02";
+    private static final String SEC1_P521_TWO_X = "00433c219024277e7e682fcb288148c282747403279b1ccc06352c6e5505d769be97b3b204da6ef55507aa104a3a35c5af41cf2fa364d60fd967f43e3933ba6d783d";
+    private static final String SEC1_P521_TWO_Y = "00f4bb8cc7f86db26700a7f3eceeeed3f0b5c6b5107c4da97740ab21a29906c42dbbb3e377de9f251f6b93937fa99a3248f4eafcbe95edc0f4f71be356d661f41b02";
+    private static final String SEC1_P521_TWO_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002";
+    private static final String PKCS8EC_P521_TWO_DER = "3081ee020100301006072a8648ce3d020106052b810400230481d63081d30201010442000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a18189038186000400433c219024277e7e682fcb288148c282747403279b1ccc06352c6e5505d769be97b3b204da6ef55507aa104a3a35c5af41cf2fa364d60fd967f43e3933ba6d783d00f4bb8cc7f86db26700a7f3eceeeed3f0b5c6b5107c4da97740ab21a29906c42dbbb3e377de9f251f6b93937fa99a3248f4eafcbe95edc0f4f71be356d661f41b02";
+    private static final String PKCS8EC_P521_TWO_D = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1_P521_PATTERN_DER = "3081dc02010104420111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f5051a00706052b81040023a18189038186000400d20f2c9f3853cf9a2b555cbc76e4800940781fae9f943d0947cb90b7d3762faf9e36e3d2c10bdadd59b326b93833a507d4a2ca5459e078d0b26fe0777fae72feae009f4bd465dfdb91fd02ac30d5a4604217a64fd4394819e918611af31810e1d6eee028f3d7d2aa5b35e2426724c6032a718c2a486e12f12795674683213c82bbb65b";
+    private static final String SEC1_P521_PATTERN_X = "00d20f2c9f3853cf9a2b555cbc76e4800940781fae9f943d0947cb90b7d3762faf9e36e3d2c10bdadd59b326b93833a507d4a2ca5459e078d0b26fe0777fae72feae";
+    private static final String SEC1_P521_PATTERN_Y = "009f4bd465dfdb91fd02ac30d5a4604217a64fd4394819e918611af31810e1d6eee028f3d7d2aa5b35e2426724c6032a718c2a486e12f12795674683213c82bbb65b";
+    private static final String SEC1_P521_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f5051";
+    private static final String PKCS8EC_P521_PATTERN_DER = "3081ee020100301006072a8648ce3d020106052b810400230481d63081d302010104420111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f5051a18189038186000400d20f2c9f3853cf9a2b555cbc76e4800940781fae9f943d0947cb90b7d3762faf9e36e3d2c10bdadd59b326b93833a507d4a2ca5459e078d0b26fe0777fae72feae009f4bd465dfdb91fd02ac30d5a4604217a64fd4394819e918611af31810e1d6eee028f3d7d2aa5b35e2426724c6032a718c2a486e12f12795674683213c82bbb65b";
+    private static final String PKCS8EC_P521_PATTERN_D = "0111121314a0061118191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f5051";
+    private static final String SEC1EDGE_VERSION0_DER = "307702010004200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_K1OID_DER = "307402010104200000000000000000000000000000000000000000000000000000000000000002a00706052b8104000aa144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_NOPARAMS_DER = "306b02010104200000000000000000000000000000000000000000000000000000000000000002a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_NOPUBKEY_DER = "303102010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107";
+    private static final String SEC1EDGE_NOPUBKEY_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SEC1EDGE_NOPUBKEY_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_NOPUBKEY_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1EDGE_MISMATCHPUB_DER = "307702010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String SEC1EDGE_MISMATCHPUB_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SEC1EDGE_MISMATCHPUB_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_MISMATCHPUB_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1EDGE_ORDER_DER = "30770201010420ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551a00a06082a8648ce3d030107a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String SEC1EDGE_ZERO_DER = "3058020101040100a00a06082a8648ce3d030107a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String SEC1EDGE_PADZERO_DER = "30780201010421000000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_PADZERO_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SEC1EDGE_PADZERO_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_PADZERO_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1EDGE_OVERLONG_DER = "30780201010421010000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_EXTRACHILD_DER = "307c02010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1a203020105";
+    private static final String SEC1EDGE_EXTRACHILD_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SEC1EDGE_EXTRACHILD_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_EXTRACHILD_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String SEC1EDGE_TRAILING_DER = "307702010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d100";
+    private static final String SEC1EDGE_TRUNCATED_DER = "307702010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce9";
+    private static final String SEC1EDGE_TRAILING_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SEC1EDGE_TRAILING_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SEC1EDGE_TRAILING_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String PKCS8EDGE_K1PARAMS_DER = "308190020100301006072a8648ce3d020106052b8104000a0479307702010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String PKCS8EDGE_NOPARAMS_DER = "308189020100300906072a8648ce3d02010479307702010104200000000000000000000000000000000000000000000000000000000000000002a00a06082a8648ce3d030107a144034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String PKCS8EDGE_NOPARAMS_D = "0000000000000000000000000000000000000000000000000000000000000002";
+    private static final String PKCS8EDGE_DORDER_DER = "308193020100301306072a8648ce3d020106082a8648ce3d030107047930770201010420ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551a00a06082a8648ce3d030107a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String PKCS8EDGE_DZERO_DER = "3074020100301306072a8648ce3d020106082a8648ce3d030107045a3058020101040100a00a06082a8648ce3d030107a144034200046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    private static final String SPKIEC_DER = "3059301306072a8648ce3d020106082a8648ce3d030107034200047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SPKIEC_X = "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978";
+    private static final String SPKIEC_Y = "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1";
+    private static final String SPKIEC_FIELD = "256";
+    private static final String PKCS1RSA_DER = "3082025b02010002818100b7a976d33d6313292307ff2af22ac1f52a22e5ae7a101cf5ecb741fc4916470735ccdc14458e67b24d5c7d5b14457cfcabab1c52a09bb981ecf05b0c999e8311bef6f1a085c64041a3ac79de56db0a1e1dff51df224e7f812e73615406e1f9a1eb4016c6e99bf7a60d7af979592165a1e8980767852a2bf2f9a22efe9cf552a902030100010281801b4dcf438239cb6c6f2fce28854e03fdbda0e88272d518691b22f765593c3d9cfdcb91e055a2e119a9d4993244263c7997cfdd6b0f437765b062df3655543269dd58489d9a4569940b82409863da295cd7f9429a3760edd2048aa23abed6010b93a2e22dfe081eeb39b609fd2af282a1b27433b1c6bbb1fd72818cec8ac2dfed024100e86ddf2e2045ad7c00c4d3c6a826f2b388ff163fcd62c8feee3ada04fe99dc177274cf2c04181422a335d33cd2c4b11b8ebd63e90298e008456d988226f11057024100ca498a1b81d39b6e4b8822ac489c0b4030f122c0e2c038dca0d81ab3faf0c0d393fa14afd51715884928049940812fb2a61b88e0bdf6ac803feff8c79062d4ff02401e4fedf2530d2341efcbbb9ec5e14677b99f22e4b14177db1f70976c5d53ed8b35471c99adf301f53e79cf91b81f24c5e648b6d5f59bc063f3c20648bb11674302406eb6b324fcf871007bcc85959fa3f03070d8f97972615c7dbc76aa9ec9004db93f2b477938fa8a696e08be03969f5e18bbfb23fe455a25ed8790f2ab5ee608c702407d27e43a35ff5f2bb56fe0044b908c25691388845f06dc3195813febad8b0b19ab5be1f4ed6886be337a2de133efba5ac875ce813ffdb4139983bde38da89a38";
+    private static final String PKCS1RSA_N = "b7a976d33d6313292307ff2af22ac1f52a22e5ae7a101cf5ecb741fc4916470735ccdc14458e67b24d5c7d5b14457cfcabab1c52a09bb981ecf05b0c999e8311bef6f1a085c64041a3ac79de56db0a1e1dff51df224e7f812e73615406e1f9a1eb4016c6e99bf7a60d7af979592165a1e8980767852a2bf2f9a22efe9cf552a9";
+    private static final String PKCS1RSA_E = "65537";
+    private static final String PKCS1RSA_D = "1b4dcf438239cb6c6f2fce28854e03fdbda0e88272d518691b22f765593c3d9cfdcb91e055a2e119a9d4993244263c7997cfdd6b0f437765b062df3655543269dd58489d9a4569940b82409863da295cd7f9429a3760edd2048aa23abed6010b93a2e22dfe081eeb39b609fd2af282a1b27433b1c6bbb1fd72818cec8ac2dfed";
+    private static final String PKCS1RSA_P = "e86ddf2e2045ad7c00c4d3c6a826f2b388ff163fcd62c8feee3ada04fe99dc177274cf2c04181422a335d33cd2c4b11b8ebd63e90298e008456d988226f11057";
+    private static final String PKCS1RSA_Q = "ca498a1b81d39b6e4b8822ac489c0b4030f122c0e2c038dca0d81ab3faf0c0d393fa14afd51715884928049940812fb2a61b88e0bdf6ac803feff8c79062d4ff";
+    private static final String PKCS1PUB_DER = "30818902818100b7a976d33d6313292307ff2af22ac1f52a22e5ae7a101cf5ecb741fc4916470735ccdc14458e67b24d5c7d5b14457cfcabab1c52a09bb981ecf05b0c999e8311bef6f1a085c64041a3ac79de56db0a1e1dff51df224e7f812e73615406e1f9a1eb4016c6e99bf7a60d7af979592165a1e8980767852a2bf2f9a22efe9cf552a90203010001";
+    private static final String PKCS8RSA_DER = "30820275020100300d06092a864886f70d01010105000482025f3082025b02010002818100b7a976d33d6313292307ff2af22ac1f52a22e5ae7a101cf5ecb741fc4916470735ccdc14458e67b24d5c7d5b14457cfcabab1c52a09bb981ecf05b0c999e8311bef6f1a085c64041a3ac79de56db0a1e1dff51df224e7f812e73615406e1f9a1eb4016c6e99bf7a60d7af979592165a1e8980767852a2bf2f9a22efe9cf552a902030100010281801b4dcf438239cb6c6f2fce28854e03fdbda0e88272d518691b22f765593c3d9cfdcb91e055a2e119a9d4993244263c7997cfdd6b0f437765b062df3655543269dd58489d9a4569940b82409863da295cd7f9429a3760edd2048aa23abed6010b93a2e22dfe081eeb39b609fd2af282a1b27433b1c6bbb1fd72818cec8ac2dfed024100e86ddf2e2045ad7c00c4d3c6a826f2b388ff163fcd62c8feee3ada04fe99dc177274cf2c04181422a335d33cd2c4b11b8ebd63e90298e008456d988226f11057024100ca498a1b81d39b6e4b8822ac489c0b4030f122c0e2c038dca0d81ab3faf0c0d393fa14afd51715884928049940812fb2a61b88e0bdf6ac803feff8c79062d4ff02401e4fedf2530d2341efcbbb9ec5e14677b99f22e4b14177db1f70976c5d53ed8b35471c99adf301f53e79cf91b81f24c5e648b6d5f59bc063f3c20648bb11674302406eb6b324fcf871007bcc85959fa3f03070d8f97972615c7dbc76aa9ec9004db93f2b477938fa8a696e08be03969f5e18bbfb23fe455a25ed8790f2ab5ee608c702407d27e43a35ff5f2bb56fe0044b908c25691388845f06dc3195813febad8b0b19ab5be1f4ed6886be337a2de133efba5ac875ce813ffdb4139983bde38da89a38";
+    private static final String SPKIRSA_DER = "30819f300d06092a864886f70d010101050003818d0030818902818100b7a976d33d6313292307ff2af22ac1f52a22e5ae7a101cf5ecb741fc4916470735ccdc14458e67b24d5c7d5b14457cfcabab1c52a09bb981ecf05b0c999e8311bef6f1a085c64041a3ac79de56db0a1e1dff51df224e7f812e73615406e1f9a1eb4016c6e99bf7a60d7af979592165a1e8980767852a2bf2f9a22efe9cf552a90203010001";
+    private static final String SPKIED_DER = "302a300506032b6570032100cc935cb66aef2fe743246fdd33c9403b6dc987ec0b1be2f38c5bf40e02938b53";
+    private static final String SPKIED_PUB = "cc935cb66aef2fe743246fdd33c9403b6dc987ec0b1be2f38c5bf40e02938b53";
+    private static final String PKCS8ED_DER = "302e020100300506032b65700422042021e77ccd2bc7289ab2a60f842d67dd731948f70f33387fa6d4ecb76ae9e92822";
+    private static final String PKCS8ED_SEED = "21e77ccd2bc7289ab2a60f842d67dd731948f70f33387fa6d4ecb76ae9e92822";
+}

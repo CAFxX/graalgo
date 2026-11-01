@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
 import java.security.AlgorithmParameters;
 import java.security.KeyFactory;
+import java.security.Signature;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -13,8 +14,11 @@ import java.security.interfaces.RSAPrivateCrtKey;
 import java.security.spec.ECGenParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+
+import javax.crypto.KeyAgreement;
 
 import graalgo.values.GoInterface;
 import graalgo.values.GoSlice;
@@ -28,6 +32,32 @@ import graalgo.values.GoString;
  * Certificate parsing uses {@link CertificateFactory}; field extraction
  * exposes the X509Certificate fields needed by the synthetic crypto/x509
  * package via {@code graalgo.x509.*} linkname intrinsics.
+ *
+ * <p>Private-key parsing (F-06 remediation, 2026-11-01) is likewise
+ * JDK-delegated as far as the public JCA APIs reach, and differentially
+ * tested against gc {@code crypto/x509} (see
+ * {@code graalgo.p3x509.GoX509Test}):
+ * <ul>
+ *   <li>PKCS#8 and PKCS#1 structures are parsed with {@link KeyFactory}
+ *       where the JDK accepts them; SEC1/PKCS#1/SPKI <em>framing</em>
+ *       (tag/length/value walk) uses the structured {@link DerCursor}
+ *       below — never byte pattern-matching over key material, which
+ *       previously mistook scalar bytes for ASN.1 tags.</li>
+ *   <li>SEC1 public points for P-256/P-384/P-521 are derived via
+ *       {@code KeyAgreement("ECDH")} against the generator (giving X),
+ *       a field square root (giving the two candidate Y values), and
+ *       {@code Signature} verification to pick the right one. The group
+ *       law itself is never reimplemented for these curves.</li>
+ *   <li>P-224 is the documented exception: SunEC on this JDK rejects
+ *       secp224r1 for ECDH, ECDSA and key generation alike
+ *       ("Curve not supported"), so no public JDK API can derive a
+ *       P-224 public point. P-224 SEC1 derivation keeps the
+ *       {@link #scalarMultiply} fallback, fed only by the structured
+ *       parser and explicit D-range validation. Re-test trigger: a JDK
+ *       whose SunEC (or a future EC scalar-multiplication API) supports
+ *       secp224r1 — then delete the fallback and route P-224 through
+ *       the ECDH path.</li>
+ * </ul>
  *
  * <p>D5 types: []byte arrives as GoSlice (int[] backing); strings return as
  * GoString; ints as Long; the X509Certificate passes through as Object.
@@ -306,74 +336,127 @@ public final class GoX509 {
     /**
      * Extracts the BIT STRING content from SPKI DER (skipping the
      * unused-bits byte). Returns null if the structure is unexpected.
+     * Structured walk: SEQUENCE { AlgorithmIdentifier SEQUENCE, BIT STRING }.
      */
     private static byte[] extractBitString(byte[] spki) {
-        int pos = 0;
-        if (spki.length < 2 || spki[pos++] != 0x30) {
+        DerCursor.Tlv top = DerCursor.parse(spki, 0);
+        if (top == null || top.tag != 0x30) {
             return null;
         }
-        pos = skipLength(spki, pos);
-        if (pos < 0 || pos >= spki.length || spki[pos] != 0x30) {
+        List<DerCursor.Tlv> children = DerCursor.children(spki, top);
+        if (children == null || children.size() != 2) {
             return null;
         }
-        pos++;
-        int algLenPos = skipLength(spki, pos);
-        if (algLenPos < 0) {
+        DerCursor.Tlv bitString = children.get(1);
+        if (bitString.tag != 0x03 || bitString.length < 1) {
             return null;
         }
-        int algLen = derLength(spki, pos);
-        pos = algLenPos + algLen;
-        if (pos >= spki.length || spki[pos] != 0x03) {
+        byte[] content = DerCursor.content(spki, bitString);
+        if (content[0] != 0x00) {
             return null;
         }
-        pos++;
-        int bitStrLenPos = skipLength(spki, pos);
-        if (bitStrLenPos < 0) {
-            return null;
-        }
-        int bitStrLen = derLength(spki, pos);
-        pos = bitStrLenPos;
-        if (pos >= spki.length || spki[pos] != 0x00) {
-            return null;
-        }
-        pos++;
-        int contentLen = bitStrLen - 1;
-        if (contentLen < 0 || pos + contentLen > spki.length) {
-            return null;
-        }
-        byte[] out = new byte[contentLen];
-        System.arraycopy(spki, pos, out, 0, contentLen);
+        byte[] out = new byte[content.length - 1];
+        System.arraycopy(content, 1, out, 0, out.length);
         return out;
     }
 
-    /** Returns the position after the DER length bytes at pos, or -1. */
-    private static int skipLength(byte[] der, int pos) {
-        if (pos >= der.length) {
-            return -1;
-        }
-        int b = der[pos] & 0xFF;
-        if ((b & 0x80) == 0) {
-            return pos + 1;
-        }
-        int num = b & 0x7F;
-        if (num > 4 || pos + 1 + num > der.length) {
-            return -1;
-        }
-        return pos + 1 + num;
-    }
+    /**
+     * Minimal structured DER reader: tag/length/value walk with bounds
+     * checks, replacing the byte pattern-matching scans this file used
+     * to have (which could mistake key-material bytes for ASN.1 tags).
+     * Only single-byte tags are supported (all tags this file needs are);
+     * lengths may be short or long form, never indefinite; every returned
+     * value lies inside the input. Malformed input yields null, never an
+     * exception and never a slice past the input end.
+     *
+     * <p>Trailing bytes <em>after</em> a top-level SEQUENCE are ignored by
+     * callers, matching gc's {@code asn1.Unmarshal} (which returns trailing
+     * bytes unchecked); bytes <em>inside</em> a SEQUENCE must be exactly
+     * consumed by well-formed children.
+     */
+    private static final class DerCursor {
+        /** One TLV: tag byte, content offset/length, total encoded length. */
+        private static final class Tlv {
+            private final int tag;
+            private final int contentOff;
+            private final int length;
+            private final int totalLen;
 
-    /** Returns the DER length value at pos (assumes valid). */
-    private static int derLength(byte[] der, int pos) {
-        int b = der[pos] & 0xFF;
-        if ((b & 0x80) == 0) {
-            return b;
+            private Tlv(int tag, int contentOff, int length, int totalLen) {
+                this.tag = tag;
+                this.contentOff = contentOff;
+                this.length = length;
+                this.totalLen = totalLen;
+            }
         }
-        int num = b & 0x7F;
-        int len = 0;
-        for (int i = 0; i < num; i++) {
-            len = (len << 8) | (der[pos + 1 + i] & 0xFF);
+
+        private DerCursor() {}
+
+        /** Parses one TLV at {@code pos}, or null if malformed/truncated. */
+        private static Tlv parse(byte[] der, int pos) {
+            if (der == null || pos < 0 || pos + 2 > der.length) {
+                return null;
+            }
+            int tag = der[pos] & 0xFF;
+            if ((tag & 0x1F) == 0x1F) {
+                return null; // multi-byte tag: not needed here
+            }
+            int lenByte = der[pos + 1] & 0xFF;
+            int contentOff;
+            int length;
+            if ((lenByte & 0x80) == 0) {
+                contentOff = pos + 2;
+                length = lenByte;
+            } else {
+                int num = lenByte & 0x7F;
+                if (num == 0 || num > 4 || pos + 2 + num > der.length) {
+                    return null; // indefinite or oversized length
+                }
+                length = 0;
+                for (int i = 0; i < num; i++) {
+                    length = (length << 8) | (der[pos + 2 + i] & 0xFF);
+                }
+                contentOff = pos + 2 + num;
+            }
+            if (length < 0 || contentOff + length > der.length) {
+                return null;
+            }
+            return new Tlv(tag, contentOff, length, contentOff + length - pos);
         }
-        return len;
+
+        /**
+         * Parses the children of a constructed TLV: they must exactly fill
+         * its content, each well-formed. Returns null otherwise.
+         */
+        private static List<Tlv> children(byte[] der, Tlv parent) {
+            List<Tlv> out = new ArrayList<>();
+            int pos = parent.contentOff;
+            int end = parent.contentOff + parent.length;
+            while (pos < end) {
+                Tlv child = parse(der, pos);
+                if (child == null || pos + child.totalLen > end) {
+                    return null;
+                }
+                out.add(child);
+                pos += child.totalLen;
+            }
+            if (pos != end) {
+                return null;
+            }
+            return out;
+        }
+
+        /** Copies a TLV's content bytes. */
+        private static byte[] content(byte[] der, Tlv tlv) {
+            byte[] out = new byte[tlv.length];
+            System.arraycopy(der, tlv.contentOff, out, 0, out.length);
+            return out;
+        }
+
+        /** Content bytes as an unsigned integer (leading zeros allowed). */
+        private static BigInteger unsigned(byte[] der, Tlv tlv) {
+            return new BigInteger(1, content(der, tlv));
+        }
     }
 
     // ---- Standalone DER parsers (for ParsePKIXPublicKey/ParsePKCS1PublicKey) ----
@@ -401,51 +484,26 @@ public final class GoX509 {
         return encoded == null ? null : toGoString(encoded);
     }
 
-    /** Parses PKCS1 DER into "n_hex:e". */
+    /** Parses PKCS1 DER into "n_hex:e" (SEQUENCE { n, e, ... }). */
     public static Object parsePkcs1(Object derArg) {
         byte[] der = toBytes(derArg);
         try {
-            int pos = 0;
-            if (der.length < 2 || der[pos++] != 0x30) {
+            DerCursor.Tlv top = DerCursor.parse(der, 0);
+            if (top == null || top.tag != 0x30) {
                 return null;
             }
-            pos = skipLength(der, pos);
-            if (pos < 0) {
+            List<DerCursor.Tlv> children = DerCursor.children(der, top);
+            if (children == null || children.size() < 2) {
                 return null;
             }
-            if (pos >= der.length || der[pos++] != 0x02) {
+            DerCursor.Tlv nTlv = children.get(0);
+            DerCursor.Tlv eTlv = children.get(1);
+            if (nTlv.tag != 0x02 || eTlv.tag != 0x02) {
                 return null;
             }
-            int nLenPos = skipLength(der, pos);
-            if (nLenPos < 0) {
-                return null;
-            }
-            int nLen = derLength(der, pos);
-            pos = nLenPos;
-            if (pos + nLen > der.length) {
-                return null;
-            }
-            byte[] nBytes = new byte[nLen];
-            System.arraycopy(der, pos, nBytes, 0, nLen);
-            pos += nLen;
-            nBytes = stripLeadingZero(nBytes);
-            if (pos >= der.length || der[pos++] != 0x02) {
-                return null;
-            }
-            int eLenPos = skipLength(der, pos);
-            if (eLenPos < 0) {
-                return null;
-            }
-            int eLen = derLength(der, pos);
-            pos = eLenPos;
-            if (pos + eLen > der.length) {
-                return null;
-            }
-            long e = 0;
-            for (int i = 0; i < eLen; i++) {
-                e = (e << 8) | (der[pos + i] & 0xFF);
-            }
-            if (e <= 0) {
+            byte[] nBytes = stripLeadingZero(DerCursor.content(der, nTlv));
+            BigInteger e = DerCursor.unsigned(der, eTlv);
+            if (e.signum() <= 0) {
                 return null;
             }
             return toGoString(toHex(nBytes) + ":" + e);
@@ -664,19 +722,13 @@ public final class GoX509 {
                     + toHex(key.getPrimeQ().toByteArray());
         } catch (Exception ignored) {
         }
-        // EC
-        try {
-            KeyFactory kf = KeyFactory.getInstance("EC");
-            ECPrivateKey key =
-                    (ECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
-            int fieldSize = key.getParams().getCurve().getField().getFieldSize();
-            String curveName = ecCurveName(fieldSize);
-            if (curveName == null) {
-                return null;
-            }
-            return "EC:" + curveName + ":"
-                    + toHex(stripLeadingZero(key.getS().toByteArray()));
-        } catch (Exception ignored) {
+        // EC: identified by the AlgorithmIdentifier parameters OID, never
+        // by field size — secp256k1 and secp256r1 share field size 256,
+        // and the old field-size mapping silently misidentified a k1 key
+        // as P-256 (GoX509Test.testPkcs8EcEdges pins the rejection).
+        String ec = pkcs8EcDescriptor(der);
+        if (ec != null) {
+            return ec;
         }
         // Ed25519
         try {
@@ -708,34 +760,263 @@ public final class GoX509 {
         }
     }
 
-    private static String trySec1(byte[] der) {
-        // SEC1 ECPrivateKey: SEQUENCE { version, privateKey OCTET STRING,
-        //   [0] parameters, [1] publicKey }. Extract d and the curve OID.
+    /**
+     * PKCS#8 EC descriptor ("EC:curve:d"), or null if {@code der} is not a
+     * usable PKCS#8 EC key. Curve identification is by OID (see above);
+     * D is range-validated explicitly because SunEC's KeyFactory accepts
+     * out-of-range scalars (S == 0, S == order) that gc rejects.
+     * A parameters-less EC key (legal PKCS#8, rejected by SunEC's
+     * KeyFactory) falls back to the embedded SEC1 key, as gc does.
+     */
+    private static String pkcs8EcDescriptor(byte[] der) {
         try {
-            byte[] d = extractSec1PrivateKey(der);
-            String oid = extractSec1CurveOid(der);
-            if (d == null || oid == null) {
+            DerCursor.Tlv top = DerCursor.parse(der, 0);
+            if (top == null || top.tag != 0x30) {
                 return null;
             }
-            String curveName = ecCurveNameByOid(oid);
+            List<DerCursor.Tlv> fields = DerCursor.children(der, top);
+            if (fields == null || fields.size() < 3) {
+                return null;
+            }
+            if (fields.get(0).tag != 0x02 || fields.get(1).tag != 0x30
+                    || fields.get(2).tag != 0x04) {
+                return null;
+            }
+            List<DerCursor.Tlv> algId = DerCursor.children(der, fields.get(1));
+            if (algId == null || algId.isEmpty() || algId.get(0).tag != 0x06) {
+                return null;
+            }
+            String algOid = decodeOid(DerCursor.content(der, algId.get(0)));
+            if (!"1.2.840.10045.2.1".equals(algOid)) {
+                return null; // not an EC key (RSA/Ed branches handle theirs)
+            }
+            if (algId.size() == 1) {
+                // No parameters: gc derives the curve from the embedded
+                // SEC1 key. The descriptor keeps the PKCS#8 format.
+                Sec1Key inner = parseSec1(DerCursor.content(der, fields.get(2)));
+                if (inner == null) {
+                    return null;
+                }
+                return "EC:" + inner.curveName + ":"
+                        + toHex(stripLeadingZero(inner.d.toByteArray()));
+            }
+            if (algId.get(1).tag != 0x06) {
+                return null; // non-OID EC parameters: not a named curve
+            }
+            String curveName = ecCurveNameByOid(
+                    decodeOid(DerCursor.content(der, algId.get(1))));
+            if (curveName == null) {
+                return null; // e.g. secp256k1: gc rejects, so do we
+            }
+            KeyFactory kf = KeyFactory.getInstance("EC");
+            ECPrivateKey key =
+                    (ECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
+            BigInteger s = key.getS();
+            java.security.spec.ECParameterSpec params = key.getParams();
+            if (s.signum() <= 0 || s.compareTo(params.getOrder()) >= 0) {
+                return null; // gc rejects D == 0 and D >= order
+            }
+            return "EC:" + curveName + ":"
+                    + toHex(stripLeadingZero(s.toByteArray()));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /** A parsed SEC1 key: curve, scalar, derived public point, raw D bytes. */
+    private static final class Sec1Key {
+        private final String curveName;
+        private final BigInteger d;
+        private final BigInteger x;
+        private final BigInteger y;
+        private final byte[] dRaw;
+
+        private Sec1Key(String curveName, BigInteger d, BigInteger x,
+                BigInteger y, byte[] dRaw) {
+            this.curveName = curveName;
+            this.d = d;
+            this.x = x;
+            this.y = y;
+            this.dRaw = dRaw;
+        }
+    }
+
+    /**
+     * Parses a SEC1 ECPrivateKey (RFC 5915) with a structured DER walk and
+     * gc-compatible verdicts (see GoX509Test): version must be 1;
+     * parameters [0] must be present and name a known curve; the [1]
+     * public key, if present, is ignored and the point is derived from D;
+     * further children are ignored; trailing bytes after the SEQUENCE are
+     * ignored; D must satisfy 1 &lt;= D &lt; order after stripping leading
+     * zero padding (over-long D with a non-zero leading byte is rejected).
+     * Returns null on any deviation.
+     */
+    private static Sec1Key parseSec1(byte[] der) {
+        try {
+            DerCursor.Tlv top = DerCursor.parse(der, 0);
+            if (top == null || top.tag != 0x30) {
+                return null;
+            }
+            List<DerCursor.Tlv> ch = DerCursor.children(der, top);
+            if (ch == null || ch.size() < 2) {
+                return null;
+            }
+            if (ch.get(0).tag != 0x02
+                    || !DerCursor.unsigned(der, ch.get(0)).equals(BigInteger.ONE)) {
+                return null; // version != 1: gc rejects
+            }
+            if (ch.get(1).tag != 0x04) {
+                return null;
+            }
+            byte[] dRaw = DerCursor.content(der, ch.get(1));
+            if (ch.size() < 3 || ch.get(2).tag != 0xA0) {
+                return null; // gc: unknown elliptic curve without parameters
+            }
+            List<DerCursor.Tlv> params = DerCursor.children(der, ch.get(2));
+            if (params == null || params.size() != 1 || params.get(0).tag != 0x06) {
+                return null;
+            }
+            String curveName = ecCurveNameByOid(
+                    decodeOid(DerCursor.content(der, params.get(0))));
             if (curveName == null) {
                 return null;
             }
-            // Derive x,y from d via scalar multiplication using the JDK.
             java.security.spec.ECParameterSpec spec = ecSpecForName(curveName);
             if (spec == null) {
                 return null;
             }
-            BigInteger s = new BigInteger(1, d);
-            java.security.spec.ECPoint w = scalarMultiply(spec, s);
+            int size = (spec.getCurve().getField().getFieldSize() + 7) / 8;
+            int first = 0;
+            while (first < dRaw.length && dRaw[first] == 0) {
+                first++;
+            }
+            if (first == dRaw.length) {
+                return null; // D == 0
+            }
+            if (dRaw.length - first > size) {
+                return null; // invalid private key length
+            }
+            byte[] stripped = Arrays.copyOfRange(dRaw, first, dRaw.length);
+            BigInteger d = new BigInteger(1, stripped);
+            if (d.compareTo(spec.getOrder()) >= 0) {
+                return null; // D >= order
+            }
+            java.security.spec.ECPoint w = derivePublic(spec, curveName, d);
             if (w == null) {
                 return null;
             }
-            return "EC:" + curveName + ":" + toHex(toFixed(w.getAffineX(), spec))
-                    + ":" + toHex(toFixed(w.getAffineY(), spec)) + ":" + toHex(d);
+            return new Sec1Key(curveName, d, w.getAffineX(), w.getAffineY(), dRaw);
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private static String trySec1(byte[] der) {
+        Sec1Key key = parseSec1(der);
+        if (key == null) {
+            return null;
+        }
+        java.security.spec.ECParameterSpec spec = ecSpecForName(key.curveName);
+        if (spec == null) {
+            return null;
+        }
+        return "EC:" + key.curveName + ":" + toHex(toFixed(key.x, spec))
+                + ":" + toHex(toFixed(key.y, spec)) + ":" + toHex(key.dRaw);
+    }
+
+    /**
+     * Derives the public point for scalar {@code d} (already validated:
+     * 1 &lt;= d &lt; order). P-256/P-384/P-521 go through the JDK:
+     * ECDH against the generator yields X, a field square root yields
+     * the two candidate Y values, and an ECDSA sign/verify oracle picks
+     * the right one. P-224 keeps the {@link #scalarMultiply} fallback:
+     * SunEC rejects secp224r1 outright (see class javadoc).
+     */
+    private static java.security.spec.ECPoint derivePublic(
+            java.security.spec.ECParameterSpec spec, String curveName,
+            BigInteger d) {
+        if ("secp224r1".equals(curveName)) {
+            return scalarMultiply(spec, d);
+        }
+        try {
+            KeyFactory kf = KeyFactory.getInstance("EC");
+            ECPrivateKey priv = (ECPrivateKey) kf.generatePrivate(
+                    new java.security.spec.ECPrivateKeySpec(d, spec));
+            java.security.interfaces.ECPublicKey genPub =
+                    (java.security.interfaces.ECPublicKey) kf.generatePublic(
+                            new java.security.spec.ECPublicKeySpec(
+                                    spec.getGenerator(), spec));
+            KeyAgreement ka = KeyAgreement.getInstance("ECDH");
+            ka.init(priv);
+            ka.doPhase(genPub, true);
+            BigInteger x = new BigInteger(1, ka.generateSecret());
+            return derivePointFromX(spec, curveName, priv, x);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Recovers the full point for a known X. The Y candidates come from a
+     * field square root (all ECDH-covered curves here have p = 3 mod 4);
+     * the sign is resolved by verifying a fresh ECDSA signature against
+     * each candidate point. Fails closed if neither or both verify, or
+     * if X is not on the curve. Note the sign bit is unrecoverable from
+     * ECDH output alone (ECDH secrets are X-coordinates by design), so
+     * the verify oracle is load-bearing, not decorative.
+     */
+    private static java.security.spec.ECPoint derivePointFromX(
+            java.security.spec.ECParameterSpec spec, String curveName,
+            ECPrivateKey priv, BigInteger x) throws Exception {
+        java.security.spec.ECFieldFp field =
+                (java.security.spec.ECFieldFp) spec.getCurve().getField();
+        BigInteger p = field.getP();
+        if (!p.mod(BigInteger.valueOf(4)).equals(BigInteger.valueOf(3))) {
+            return null;
+        }
+        BigInteger a = spec.getCurve().getA();
+        BigInteger b = spec.getCurve().getB();
+        BigInteger rhs = x.modPow(BigInteger.valueOf(3), p)
+                .add(a.multiply(x)).add(b).mod(p);
+        BigInteger y0 = rhs.modPow(
+                p.add(BigInteger.ONE).divide(BigInteger.valueOf(4)), p);
+        if (!y0.modPow(BigInteger.TWO, p).equals(rhs)) {
+            return null; // X is not on the curve
+        }
+        String sigAlg;
+        if ("secp384r1".equals(curveName)) {
+            sigAlg = "SHA384withECDSA";
+        } else if ("secp521r1".equals(curveName)) {
+            sigAlg = "SHA512withECDSA";
+        } else {
+            sigAlg = "SHA256withECDSA";
+        }
+        Signature signer = Signature.getInstance(sigAlg);
+        signer.initSign(priv);
+        byte[] msg = new byte[]{0x47, 0x6F, 0x58, 0x35, 0x30, 0x39};
+        signer.update(msg);
+        byte[] sig = signer.sign();
+        KeyFactory kf = KeyFactory.getInstance("EC");
+        BigInteger[] candidates = y0.signum() == 0
+                ? new BigInteger[]{y0}
+                : new BigInteger[]{y0, p.subtract(y0)};
+        java.security.spec.ECPoint found = null;
+        for (BigInteger y : candidates) {
+            java.security.interfaces.ECPublicKey cand =
+                    (java.security.interfaces.ECPublicKey) kf.generatePublic(
+                            new java.security.spec.ECPublicKeySpec(
+                                    new java.security.spec.ECPoint(x, y), spec));
+            Signature verifier = Signature.getInstance(sigAlg);
+            verifier.initVerify(cand);
+            verifier.update(msg);
+            if (verifier.verify(sig)) {
+                if (found != null) {
+                    return null; // both verify: fail closed
+                }
+                found = new java.security.spec.ECPoint(x, y);
+            }
+        }
+        return found;
     }
 
     private static byte[] toFixed(BigInteger v, java.security.spec.ECParameterSpec spec) {
@@ -761,6 +1042,13 @@ public final class GoX509 {
         }
     }
 
+    /**
+     * P-224-only fallback (see class javadoc): SunEC rejects secp224r1
+     * for every operation that could derive a public point, so this
+     * double-and-add is the only route for that curve. It is fed only
+     * validated scalars (1 &lt;= s &lt; order) from {@link #parseSec1}.
+     * Delete when the JDK covers P-224; do not extend to other curves.
+     */
     private static java.security.spec.ECPoint scalarMultiply(
             java.security.spec.ECParameterSpec spec, BigInteger s) {
         // Double-and-add on the curve.
@@ -814,40 +1102,6 @@ public final class GoX509 {
         return ecAdd(curve, p, p);
     }
 
-    private static byte[] extractSec1PrivateKey(byte[] der) {
-        // Find the first OCTET STRING (tag 0x04) after the version INTEGER.
-        for (int i = 0; i < der.length - 2; i++) {
-            if ((der[i] & 0xFF) == 0x04) {
-                int len = der[i + 1] & 0xFF;
-                if (len > 0 && len <= 66 && i + 2 + len <= der.length) {
-                    byte[] d = new byte[len];
-                    System.arraycopy(der, i + 2, d, 0, len);
-                    return d;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static String extractSec1CurveOid(byte[] der) {
-        // [0] EXPLICIT parameters containing an OID (tag 0x06).
-        for (int i = 0; i < der.length - 2; i++) {
-            if ((der[i] & 0xFF) == 0xA0) {
-                for (int j = i + 1; j < der.length - 2; j++) {
-                    if ((der[j] & 0xFF) == 0x06) {
-                        int len = der[j + 1] & 0xFF;
-                        if (len > 0 && j + 2 + len <= der.length) {
-                            byte[] oid = new byte[len];
-                            System.arraycopy(der, j + 2, oid, 0, len);
-                            return decodeOid(oid);
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
     private static String ecCurveNameByOid(String oid) {
         if ("1.2.840.10045.3.1.7".equals(oid)) {
             return "secp256r1";
@@ -864,51 +1118,26 @@ public final class GoX509 {
         return null;
     }
 
-    /** Maps an EC field size in bits to a JDK curve name. */
-    private static String ecCurveName(int fieldSize) {
-        if (fieldSize == 224) {
-            return "secp224r1";
-        }
-        if (fieldSize == 256) {
-            return "secp256r1";
-        }
-        if (fieldSize == 384) {
-            return "secp384r1";
-        }
-        if (fieldSize == 521) {
-            return "secp521r1";
-        }
-        return null;
-    }
-
-    /** Parses all INTEGERs from a PKCS#1 SEQUENCE. */
+    /**
+     * Parses all INTEGERs from a PKCS#1 SEQUENCE. Returns an empty list
+     * unless the SEQUENCE holds exactly well-formed INTEGER children;
+     * trailing bytes after the SEQUENCE are ignored (gc-compatible).
+     */
     private static List<byte[]> parsePkcs1Integers(byte[] der) {
         List<byte[]> out = new ArrayList<>();
-        int pos = 0;
-        if (der.length < 2 || der[pos++] != 0x30) {
+        DerCursor.Tlv top = DerCursor.parse(der, 0);
+        if (top == null || top.tag != 0x30) {
             return out;
         }
-        pos = skipLength(der, pos);
-        if (pos < 0) {
+        List<DerCursor.Tlv> children = DerCursor.children(der, top);
+        if (children == null) {
             return out;
         }
-        while (pos < der.length) {
-            if (der[pos++] != 0x02) {
-                break;
+        for (DerCursor.Tlv child : children) {
+            if (child.tag != 0x02) {
+                return new ArrayList<>();
             }
-            int lenPos = skipLength(der, pos);
-            if (lenPos < 0) {
-                break;
-            }
-            int len = derLength(der, pos);
-            pos = lenPos;
-            if (len < 0 || pos + len > der.length) {
-                break;
-            }
-            byte[] val = new byte[len];
-            System.arraycopy(der, pos, val, 0, len);
-            out.add(stripLeadingZero(val));
-            pos += len;
+            out.add(stripLeadingZero(DerCursor.content(der, child)));
         }
         return out;
     }
@@ -920,7 +1149,13 @@ public final class GoX509 {
         }
         StringBuilder sb = new StringBuilder();
         int first = oid[0] & 0xFF;
-        sb.append(first / 40).append('.').append(first % 40);
+        if (first < 40) {
+            sb.append(0).append('.').append(first);
+        } else if (first < 80) {
+            sb.append(1).append('.').append(first - 40);
+        } else {
+            sb.append(2).append('.').append(first - 80);
+        }
         long val = 0;
         for (int i = 1; i < oid.length; i++) {
             int b = oid[i] & 0xFF;

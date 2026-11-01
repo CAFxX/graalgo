@@ -147,6 +147,43 @@ deliverable until the design lands.
   gc `x509.ParseECPrivateKey` over P-224/256/384/521. In flight: worktree
   `real-x509` (coordinate — it retires synthetic `crypto/x509`, the Go-side
   counterpart).
+- **Status (2026-11-01, F-06 remediation lane, branch
+  `wt/review-20261101/review-20261101-f06-gox509` — pending independent
+  review, NOT integrated): partly retired.
+  - Retired: the byte pattern-matching SEC1/PKCS#1/SPKI extraction
+    (`extractSec1PrivateKey`, `extractSec1CurveOid`, `skipLength`,
+    `derLength` deleted) replaced by a structured, bounds-checked DER
+    walker (`DerCursor`); the group-law arithmetic for P-256/P-384/P-521
+    replaced by `KeyAgreement("ECDH")` (X) + field square root (Y
+    candidates) + ECDSA sign/verify disambiguation; PKCS#8 EC curve
+    identification by parameters OID (the old field-size mapping silently
+    misidentified secp256k1 as P-256); explicit D-range validation
+    (SunEC's `KeyFactory` accepts D == 0 and D == order, gc rejects both).
+  - Differential coverage landed:
+    [GoX509Test.java](../../internal/backend/interop/src/test/java/graalgo/p3x509/GoX509Test.java)
+    (12 tests, registered in `IfaceTestRunner`): SEC1 + PKCS#8 EC over
+    P-224/256/384/521 (fixed + pattern scalars), SEC1/PKCS#8 edge cases
+    (version, unknown OID, missing parameters, D == 0/order, over-long D,
+    leading-zero padding, extra child, trailing bytes, truncation),
+    PKCS#1 private/public, SPKI (RSA/EC/Ed25519), PKCS#8 RSA/Ed25519.
+    Baseline before the fix: 3 failing methods (pattern scalars rejected
+    on all four curves; version 0, over-long D, truncated SEC1, k1 PKCS#8,
+    out-of-range PKCS#8 D accepted). After the fix: 12/12 pass, plus a
+    100-key random SEC1 sweep vs gc with zero mismatches (44 odd-Y,
+    exercising both square-root branches).
+  - Remaining, documented with evidence: (1) P-224 SEC1 derivation keeps
+    the `scalarMultiply` fallback — SunEC on this JDK rejects secp224r1
+    for ECDH, ECDSA and key generation alike ("Curve not supported"),
+    so no public JDK API can derive a P-224 point; re-test trigger: a
+    JDK whose SunEC (or a future EC scalar-multiplication API) supports
+    secp224r1, then delete the fallback. (2) A field square root for the
+    Y candidates (p = 3 mod 4 curves only; result verified twice: the
+    square check and the ECDSA verify oracle) — unavoidable, because
+    ECDH outputs are X-coordinates by design and carry no sign bit.
+    (3) Certificate-extension DER helpers (`unwrapOctetString`,
+    `extractAuthorityKeyId`) are untouched: same pattern-scan family,
+    but cert-path code outside this lane's private-key scope; they need
+    cert fixtures and a separate lane.
 - **Phase:** 1.
 
 ### B-6. `unsafe.Add` always traps (bridge by omission)

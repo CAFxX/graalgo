@@ -29,6 +29,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
+        // F-06 remediation (2026-11-01): GoX509 key parsing, differential
+        // vs gc crypto/x509 over P-224/256/384/521 + malformed DER.
+        TESTS.add(graalgo.p3x509.GoX509Test.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
