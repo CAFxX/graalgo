@@ -14,7 +14,11 @@ import graalgo.values.GoKind;
  * that many bytes — a view of the base's own referent that the typed
  * consumption sites validate — instead of the former unconditional D5
  * trap. Both operands still evaluate first, matching gc's argument
- * evaluation order.
+ * evaluation order. The nil-base trap ({@code Add(nil, len != 0)})
+ * surfaces as a Go panic (review finding R5), converted from the
+ * low-level trap via {@link UnsafeOps#panicFromTrap} exactly as in
+ * {@link UnsafeDeriveNode}; other {@code derive} failures still
+ * propagate as internal errors.
  */
 public final class UnsafeAddNode extends GoExprNode {
     @Child private GoExprNode ptrChild;
@@ -30,7 +34,16 @@ public final class UnsafeAddNode extends GoExprNode {
     public long executeLong(VirtualFrame frame) {
         long ptr = ptrChild.executeLong(frame);
         long len = lenChild.executeLong(frame);
-        return UnsafeTable.current().derive(ptr, len);
+        try {
+            return UnsafeTable.current().derive(ptr, len);
+        } catch (graalgo.values.UnsafeHandles.UnsafeEscapeException e) {
+            // See UnsafeDeriveNode: with a nil base this is exactly the
+            // nil-base trap, a guest error surfaced as a Go panic.
+            if (ptr == 0) {
+                UnsafeOps.panicFromTrap(e, this);
+            }
+            throw e;
+        }
     }
 
     /**

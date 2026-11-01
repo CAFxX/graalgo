@@ -364,7 +364,12 @@ public final class UnsafeTable {
      *   <li>offset {@code 0} → the base handle unchanged (an exact
      *       {@code unsafe.Pointer(uintptr(p))} round trip);</li>
      *   <li>a nil base (handle {@code 0}) with a nonzero offset traps —
-     *       there is no referent to derive from;</li>
+     *       there is no referent to derive from. The trap stays a low-level
+     *       {@link UnsafeHandles.UnsafeEscapeException} here; the
+     *       guest-boundary nodes ({@link UnsafeDeriveNode},
+     *       {@link UnsafeAddNode}) convert exactly this case to a Go panic
+     *       (review finding R5), so a guest program never sees it as a
+     *       scheduler internal error;</li>
      *   <li>otherwise the derived view {@link ByteRef} {@code (root,
      *       totalOffset)} is interned by value equality, so the same
      *       derivation always yields the same handle. Whether the view

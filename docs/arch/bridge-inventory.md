@@ -149,17 +149,37 @@ deliverable until the design lands.
   counterpart).
 - **Phase:** 1.
 
-### B-6. `unsafe.Add` always traps (bridge by omission)
+### B-6. `unsafe` provenance traps (bridge by omission)
 
-- **What:**
-  [UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
-  `addTrap` (~line 248) throws on `unsafe.Add` — a legal, common gc
-  operation (used by `reflect`, `encoding/binary` internals) — killing the
-  program with an internal error.
+- **What:** the handle value model has no byte-addressed pointer
+  arithmetic, so two legal gc operations trap by design: a
+  `uintptr → unsafe.Pointer` conversion whose provenance the frontend
+  could not prove ([UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
+  `fromUintTrap`, via the `unsafefromuint` wire node) and a byte
+  derivation from a nil base ([UnsafeTable.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeTable.java)
+  `derive`, via the `unsafederive` and `unsafeadd` wire nodes).
 - **Why:** the value model has no byte-addressed pointer arithmetic yet.
-- **Root-cause fix:** needs design — a byte-addressed value model; at
-  minimum, trap with a Go panic carrying the documented message instead of
-  an internal-error crash.
+- **Partial retirement (fix-redmaster-r39):** `unsafe.Add` no longer
+  traps at all — [UnsafeAddNode.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeAddNode.java)
+  derives a view of the live base via `UnsafeTable.derive`, and
+  provenance-proven conversions lower to the `unsafederive` node instead
+  of trapping. The "Add always traps" line is retired; only the two
+  traps above remain.
+- **Minimum remediation done (review finding R5):** the remaining traps
+  surface as Go panics carrying the documented message, not scheduler
+  internal errors — the guest-boundary nodes convert the low-level
+  `UnsafeEscapeException` via `UnsafeOps.panicFromTrap` at their known
+  throw sites, so an uncaught trap exits 2 with a `panic: <message>`
+  header and a deferred `recover()` observes the message string
+  (pinned by `test/corpus/wave2/unsafe/03c_uintptr2ptr_trap.panic` and
+  `test/regression/unsafe-trap-panic/`). A scan of the go1.27.1 stdlib
+  for further safely-derivable conversion shapes found none beyond the
+  already-covered additive class: alignment masking (`&^`/`|`) needs a
+  numeric address the handle model does not have, and a stored `uintptr`
+  variable cannot be distinguished statically from a computed integer
+  (resolving a stored token arithmetically could alias an unrelated
+  live handle), so both stay traps.
+- **Root-cause fix:** needs design — a byte-addressed value model.
 - **Phase:** 4.
 
 ### B-7. `rtstack` synthetic `runtime` stack intrinsics

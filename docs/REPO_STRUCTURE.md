@@ -170,7 +170,8 @@ Related: [Makefile](../Makefile) (root build entry point),
     (`go1.27.1.json`); `make snapshot-check` fails on drift. See
     [test/snapshots/README.md](../test/snapshots/README.md).
   - [regression/](../test/regression/) — regression tests for fixed
-    package-level bugs (`pkg031/` covers the PKG-031 strings.Repeat hang);
+    package-level bugs (`pkg031/` covers the PKG-031 strings.Repeat hang;
+    `unsafe-trap-panic/` covers the R5 unsafe-trap-as-Go-panic fix);
     run through the graalgo driver + backend via `make test-regression`
     (in `make all`, hence per-push CI).
 - [docs/](../docs/)

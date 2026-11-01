@@ -10,6 +10,11 @@ import graalgo.values.GoKind;
  * {@code uintptr → unsafe.Pointer} (P3-M8): the {@code "unsafefromuint"}
  * wire node. Always traps (D5): a handle can never be materialized from
  * an integer. The operand still evaluates (gc evaluates the argument).
+ * The trap surfaces as a Go panic (review finding R5): this node converts
+ * the low-level {@link graalgo.values.UnsafeHandles.UnsafeEscapeException}
+ * to a panic via {@link UnsafeOps#panicFromTrap} at this known throw site,
+ * so the guest program observes a recoverable panic — never a scheduler
+ * {@code "fatal internal error"} crash.
  */
 public final class UnsafeFromUintNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -22,7 +27,11 @@ public final class UnsafeFromUintNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         child.executeLong(frame);
-        UnsafeOps.fromUintTrap();
+        try {
+            UnsafeOps.fromUintTrap();
+        } catch (graalgo.values.UnsafeHandles.UnsafeEscapeException e) {
+            UnsafeOps.panicFromTrap(e, this);
+        }
         throw new AssertionError("unreachable");
     }
 

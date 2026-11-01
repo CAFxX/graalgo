@@ -44,11 +44,16 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
 
 8. [`03a_add_trap`](03a_add_trap.go) / [`03c_uintptr2ptr_trap`](03c_uintptr2ptr_trap.go) —
    the two remaining D5 traps, each with a `.panic` file pinning the exact first
-   stderr line (`UnsafeEscapeException`, exit 1). gc implements both,
-   so the gc leg exits 0: the exit code differs BY DESIGN. The `.panic`
-   line and (empty) stdout are the assertions. Runner gap (see handoff):
-   `run_wave.sh` compares exit codes unconditionally; these need a
-   `.divergent` marker (skip exit comparison, still pin stdout+stderr).
+   stderr line. gc implements both, so the gc leg exits 0: the exit code
+   differs BY DESIGN. The `.panic` line and (empty) stdout are the
+   assertions. Runner gap (see handoff): `run_wave.sh` compares exit codes
+   unconditionally; these need a `.divergent` marker (skip exit
+   comparison, still pin stdout+stderr). Since review finding R5, `03c`
+   pins a Go panic (`panic: unsafe: uintptr -> unsafe.Pointer
+   conversion traps (D5: ...)`, exit 2, recoverable — see
+   `test/regression/unsafe-trap-panic/`), not the former scheduler
+   `fatal internal error` line (exit 1); `03a`'s pin is unchanged by
+   that fix.
    (`03b` was the third trap pin until PKG-007: `unsafe.Pointer → uintptr`
    now yields the handle as an integer identity token instead of trapping,
    so it moved to the differential list above.)

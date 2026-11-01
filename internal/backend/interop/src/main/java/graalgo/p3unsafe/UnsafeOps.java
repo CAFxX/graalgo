@@ -43,7 +43,13 @@ import graalgo.values.UnsafeHandles;
  * shapes the handle model cannot represent panic with an
  * {@code "unsafe.<op>: ..."} message (intentional, documented divergence —
  * gc would silently reinterpret); the D5 trap
- * ({@link #fromUintTrap}) throws {@link UnsafeHandles.UnsafeEscapeException}.
+ * ({@link #fromUintTrap}) throws {@link UnsafeHandles.UnsafeEscapeException}
+ * at the low level, and the guest-boundary nodes
+ * ({@link UnsafeFromUintNode}, {@link UnsafeDeriveNode},
+ * {@link UnsafeAddNode}) convert that trap to a Go panic via
+ * {@link #panicFromTrap} before it can reach the scheduler — so a guest
+ * program observes a recoverable Go panic, never a
+ * {@code "fatal internal error"} crash (fix for review finding R5).
  * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> trap:
  * it yields the handle as an integer identity token (PKG-007; see
  * {@link graalgo.values.GoConvert#unsafePointerToUintptr}) — the token is
@@ -249,11 +255,33 @@ public final class UnsafeOps {
     }
 
     /**
+     * Converts a D5 trap at the unsafe guest boundary into a Go panic
+     * (review finding R5): the trap's message becomes the panic value
+     * (a {@link GoString}, so the uncaught header renders
+     * {@code panic: <message>} and a deferred {@code recover()} observes
+     * the message string), thrown from the calling node's site so the
+     * trace attributes it to the guest conversion. This is the ONLY
+     * place a D5 trap becomes a panic: the conversion happens here, at
+     * the boundary node whose throw site is known — never by catching
+     * {@code RuntimeException} broadly at the launcher or scheduler,
+     * which would also swallow genuine internal errors. The low-level
+     * trap still throws {@link UnsafeHandles.UnsafeEscapeException};
+     * callers that are not guest-boundary nodes (unit tests, reflect
+     * internals) keep that contract.
+     */
+    public static void panicFromTrap(UnsafeHandles.UnsafeEscapeException e, Node site) {
+        Panic.throwPanic(GoString.fromUtf8(e.getMessage()), null, null, site);
+        throw new AssertionError("unreachable");
+    }
+
+    /**
      * {@code uintptr → unsafe.Pointer} traps (D5) whenever the frontend
      * could not prove the operand's provenance: a handle can never be
      * materialized from an integer. Proven derivations never reach this
      * method — they travel as the {@code "unsafederive"} node and resolve
-     * through {@link UnsafeTable#derive} (fix-redmaster-r39).
+     * through {@link UnsafeTable#derive} (fix-redmaster-r39). The
+     * throwing site is {@link UnsafeFromUintNode}, which converts this
+     * trap to a Go panic via {@link #panicFromTrap}.
      */
     public static void fromUintTrap() {
         throw new UnsafeHandles.UnsafeEscapeException(

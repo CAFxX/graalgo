@@ -1,1 +1,1 @@
-graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: uintptr -> unsafe.Pointer conversion traps (D5: a handle can never be materialized from an integer; re-test: byte-addressed value model)
+panic: unsafe: uintptr -> unsafe.Pointer conversion traps (D5: a handle can never be materialized from an integer; re-test: byte-addressed value model)

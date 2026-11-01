@@ -52,6 +52,10 @@ public final class IfaceTestRunner {
         // (UnsafeTable.derive) soundness — a derivation can only ever
         // view its own base referent, never alias another live object.
         TESTS.add(graalgo.p3unsafe.UnsafeDeriveTest.class);
+        // Review finding R5: D5 unsafe traps surface as Go panics at the
+        // guest boundary (UnsafeOps.panicFromTrap), never as scheduler
+        // internal errors.
+        TESTS.add(graalgo.p3unsafe.UnsafeTrapPanicTest.class);
         // fix-redmaster-r40: string/slice header views for
         // unsafe.Pointer -> *Header reinterpretations (reflect Len).
         TESTS.add(graalgo.p3unsafe.HeaderViewTest.class);
