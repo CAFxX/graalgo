@@ -45,6 +45,13 @@ jobs:
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py
 
+      - name: No-bridges positive controls
+        # The gate's regression net: must-fail bypass fixtures, negatives,
+        # and the loader insertion sweep. Runs here (not just manually)
+        # so the net cannot rot silently — review 2026-11-01 finding F2.
+        # Pure Python, no toolchain needed, so it rides before JDK setup.
+        run: python3 .github/scripts/test_check_no_bridges.py
+
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
 

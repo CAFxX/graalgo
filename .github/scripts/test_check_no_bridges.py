@@ -215,6 +215,60 @@ CASES = [
          ("+", "\tcase \"runtime\", \"fmt\", \"sync\", \"mynewpkg\","),
          (" ", "\t\treturn &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil"),
      ]), "NEW FROZEN SYNTHETIC PACKAGE (p3frontend loader)"),
+    # F1 fix (independent review VETO on 15b46153): inserting a line
+    # immediately after the FIRST case-list line passed clean under the
+    # old kindSynthetic-proximity rule — the hunk's 3 lines of trailing
+    # context end before the kindSynthetic return. The run rule must
+    # flag it wherever it lands in the list.
+    ("p3loader-insert-after-first-line",
+     diff_for(P3LOAD, [
+         (" ", "\tswitch path {"),
+         (" ", "\tcase \"runtime\", \"fmt\", \"sync\", \"time\", \"context\", \"errors\", \"sort\", \"bytes\", \"math\", \"strings\","),
+         ("+", "\t\t\"mynew\","),
+         (" ", "\t\t\"encoding/xml\", \"encoding/csv\", \"encoding/gob\", \"strconv\", \"encoding/json\","),
+         (" ", "\t\t\"encoding/base32\", \"encoding/base64\", \"encoding/hex\", \"encoding/binary\","),
+         (" ", "\t\t\"encoding/ascii85\", \"encoding/pem\", \"encoding/asn1\", \"encoding\":"),
+     ]), "NEW FROZEN SYNTHETIC PACKAGE (p3frontend loader)"),
+    # Mid-list insertion in a longer list: the hunk holds only
+    # continuation lines — neither the case line nor the return — so
+    # only the run rule can flag it.
+    ("p3loader-insert-mid-long-list",
+     diff_for(P3LOAD, [
+         (" ", "\t\t\"aaa\", \"bbb\", \"ccc\","),
+         (" ", "\t\t\"ddd\", \"eee\", \"fff\","),
+         (" ", "\t\t\"ggg\", \"hhh\", \"iii\","),
+         ("+", "\t\t\"mynew\","),
+         (" ", "\t\t\"jjj\", \"kkk\", \"lll\","),
+         (" ", "\t\t\"mmm\", \"nnn\", \"ooo\","),
+         (" ", "\t\t\"ppp\", \"qqq\", \"rrr\","),
+     ]), "NEW FROZEN SYNTHETIC PACKAGE (p3frontend loader)"),
+    # Negatives guarding the run rule against over-broadening: an
+    # import-block addition (single strings, no trailing comma) never
+    # forms a run; a lone string line elsewhere is not a list member;
+    # a plain single-string case arm in another switch (tagSatisfied)
+    # is not a list line.
+    ("p3loader-import-add-passes",
+     diff_for(P3LOAD, [
+         (" ", "import ("),
+         (" ", "\t\"bytes\""),
+         ("+", "\t\"mynewpkg\""),
+         (" ", "\t\"fmt\""),
+         (" ", "\t\"os\""),
+     ]), None),
+    ("p3loader-lone-string-passes",
+     diff_for(P3LOAD, [
+         (" ", "\tanchor, err := filepath.Abs(fromDir)"),
+         ("+", "\tname := \"mynew\""),
+         (" ", "\tif err != nil {"),
+     ]), None),
+    ("p3loader-switch-tag-arm-passes",
+     diff_for(P3LOAD, [
+         (" ", "\tswitch tag {"),
+         (" ", "\tcase l.goos, l.goarch, \"gc\":"),
+         ("+", "\tcase \"mynewtag\":"),
+         (" ", "\t\treturn true"),
+         (" ", "\t}"),
+     ]), None),
     # Old behavior must not regress.
     ("old-new-synth-file",
      new_file_diff("internal/frontend/synth_foo.go", ["package frontend"]),
@@ -237,6 +291,34 @@ CASES = [
          ("+", "// With one more line of comment."),
      ]), None),
 ]
+
+
+def loader_insertion_sweep():
+    """Position-independence sweep for the real ResolveImport list.
+
+    Inserts "mynew", at every insertion point of the real 5-line case
+    list (before each list line, git-like 3-line context windows) and
+    requires the gate to flag each one. Returns a list of failing
+    positions (empty = sweep green).
+    """
+    real = [
+        "\tcase \"runtime\", \"fmt\", \"sync\", \"time\", \"context\", \"errors\", \"sort\", \"bytes\", \"math\", \"strings\",",
+        "\t\t\"encoding/xml\", \"encoding/csv\", \"encoding/gob\", \"strconv\", \"encoding/json\",",
+        "\t\t\"encoding/base32\", \"encoding/base64\", \"encoding/hex\", \"encoding/binary\",",
+        "\t\t\"encoding/ascii85\", \"encoding/pem\", \"encoding/asn1\", \"encoding\":",
+        "\t\treturn &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil",
+    ]
+    full = ["\tswitch path {"] + real
+    failing = []
+    for pos in range(len(real)):
+        idx = 1 + pos  # insertion before full[idx]
+        lines = [(" ", t) for t in full[max(0, idx - 3):idx]]
+        lines.append(("+", "\t\t\"mynew\","))
+        lines += [(" ", t) for t in full[idx:idx + 3]]
+        errors = gate.check_no_bridges(diff_for(P3LOAD, lines))
+        if not any("NEW FROZEN SYNTHETIC PACKAGE (p3frontend loader)" in e for e in errors):
+            failing.append("insert-before-list-line-%d (errors=%s)" % (pos, errors))
+    return failing
 
 
 def main():
@@ -266,10 +348,18 @@ def main():
         print("FAIL no-vacuous-pass (main() returned %s, want 1)" % rc)
         failures.append("no-vacuous-pass")
 
+    # Position-independence sweep over the real ResolveImport list.
+    sweep_failures = loader_insertion_sweep()
+    if not sweep_failures:
+        print("PASS loader-insertion-sweep (all %d positions flagged)" % 5)
+    else:
+        print("FAIL loader-insertion-sweep: %s" % ("; ".join(sweep_failures),))
+        failures.append("loader-insertion-sweep")
+
     if failures:
         print("FAILED: %d case(s): %s" % (len(failures), ", ".join(failures)))
         return 1
-    print("All %d no-bridges positive controls passed." % (len(CASES) + 1))
+    print("All %d no-bridges positive controls passed." % (len(CASES) + 2))
     return 0
 
 

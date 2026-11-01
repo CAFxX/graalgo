@@ -51,13 +51,31 @@ Known static-analysis limits (documented, not hidden):
   string of a composed message, is not seen (only the first string
   literal after the open paren is inspected).
 - A syntheticSources entry whose value does not start with "synthetic"
-  is not seen as a map entry (it would still need its source variable,
-  which check 5 flags outside synth_ files).
-- The p3frontend checks are hunk-scoped: a case arm is flagged only when
-  its hunk also mentions a synthetic*Package call (importer.go) or
-  kindSynthetic (loader.go). A hunk that adds both a case arm and an
-  unrelated synthetic*Package mention in the same hunk over-flags; a
-  human adjudicates.
+  is not seen as a map entry, and there is no backstop for that shape:
+  the source variables live in synth_ files, which check 5 exempts, so
+  a non-synthetic-prefixed value is simply not seen. Every real entry
+  today uses the synthetic* prefix, including concatenated values.
+- The p3frontend checks are hunk-scoped. The importer arm is flagged
+  only when its hunk also mentions a synthetic*Package call. The loader
+  list is flagged when its hunk mentions kindSynthetic OR when an added
+  list line sits in a run of list lines (case-list membership tracked
+  across hunk context), so a mid-list insertion flags wherever it
+  lands, not only near the kindSynthetic return (F1 fix, 2026-11-01).
+  Over-flagging direction: a hunk that adds both a case arm and an
+  unrelated synthetic*Package mention over-flags (importer), and any
+  added list-shaped line in a kindSynthetic hunk over-flags (loader);
+  a human adjudicates. Under-flagging direction: a zero-context diff
+  (-U0) defeats the loader run rule — the added line stands alone with
+  no run to join — and a list line in a spelling the run patterns do
+  not cover (anything but bare quoted strings, comma-terminated, with
+  an optional trailing comment) is not seen as a list line. CI uses
+  default git diff output, so the -U0 shape does not occur there.
+- Two further check-2 shapes are not seen and are documented limits,
+  not live bypasses: Yoda equalsIgnoreCase ("reflect".equalsIgnoreCase
+  (pkg)) and multi-line Objects.equals (the pkg argument on a later
+  line; the per-line patterns do not span lines). No such stdlib-pkg
+  form exists in the tree today (the tree's Yoda equalsIgnoreCase
+  forms compare key-algorithm values, not stdlib pkgs).
 
 Positive controls: .github/scripts/test_check_no_bridges.py runs one
 must-fail fixture per bypass above (plus negatives and old-behavior
@@ -212,6 +230,33 @@ def _is_test_file(fname):
 
 def _quoted_strings(text):
     return re.findall(r'"([^"]+)"', text)
+
+
+# A loader.go case-list line shape (F1 fix, 2026-11-01). Two shapes, both
+# bare quoted strings — deliberately NOT matching the import block (single
+# string, no trailing comma) or a plain single-string case arm
+# (case "x":), which relies on the kindSynthetic proximity rule and
+# keeps other switches in loader.go (e.g. tagSatisfied's switch tag arms)
+# out of runs:
+# - list-style case line: starts with "case " and carries a multi-string
+#   list or a trailing comma (the list continues on the next line).
+# - continuation line: bare quoted strings only, comma-terminated
+#   (one "mynew", or several per line), optionally with a trailing
+#   comment; or the final list line (several strings, ending with ":").
+# A run of >= 2 such lines is a case list: any added line in it is a
+# list member wherever it sits — this is what makes the loader check
+# position-independent instead of depending on hunk proximity to the
+# kindSynthetic return (a mid-list insertion's 3-line context never
+# reaches the return, which is what the old rule missed).
+def _is_loader_list_line(text):
+    stripped = text.strip()
+    if stripped.startswith("case "):
+        return stripped.endswith(",") or len(_quoted_strings(stripped)) >= 2
+    if re.fullmatch(r'("[^"]*"\s*,\s*)+(//.*)?', stripped):
+        return True
+    if re.fullmatch(r'("[^"]*"\s*,\s*)+"[^"]*":(//.*)?', stripped):
+        return True
+    return False
 
 
 def check_no_bridges(diff):
@@ -383,9 +428,13 @@ def check_no_bridges(diff):
     #    importer.go: a new case arm in the synthetic switch — detected
     #    hunk-scoped (the hunk must also mention a synthetic*Package call,
     #    which is what the switch arms do). loader.go: a new string in the
-    #    kindSynthetic case list — detected hunk-scoped (the hunk must
-    #    mention kindSynthetic). Added-minus-removed keeps edits and
-    #    retirements from flagging.
+    #    kindSynthetic case list — detected hunk-scoped two ways: the
+    #    hunk mentions kindSynthetic (the old proximity rule, kept for
+    #    insertions near the return and for single-string arms), OR the
+    #    added line sits in a run of >= 2 case-list lines (the F1
+    #    position-independent rule: a mid-list insertion's context is
+    #    list lines on both sides even though the return is lines away).
+    #    Added-minus-removed keeps edits and retirements from flagging.
     for fname, hunk_lines in hunks:
         if fname == P3_IMPORTER_FILE:
             hunk_text = "\n".join(text for _, text in hunk_lines)
@@ -406,21 +455,51 @@ def check_no_bridges(diff):
                 errors.append(f"NEW FROZEN SYNTHETIC PACKAGE (p3frontend importer) in {fname}: \"{key}\" — synthetic stdlib packages are banned")
         elif fname == P3_LOADER_FILE:
             hunk_text = "\n".join(text for _, text in hunk_lines)
-            if "kindSynthetic" not in hunk_text:
-                continue
             added_strs, removed_strs = set(), set()
-            for prefix, text in hunk_lines:
-                if prefix not in ("+", "-"):
-                    continue
-                stripped = text.strip()
-                if stripped.startswith("case ") or stripped.startswith('"'):
-                    keys = _quoted_strings(stripped)
-                else:
-                    continue
-                if prefix == "+":
-                    added_strs.update(keys)
-                else:
-                    removed_strs.update(keys)
+            if "kindSynthetic" in hunk_text:
+                # Proximity rule (unchanged): any added case/" line in a
+                # hunk mentioning kindSynthetic is a list member.
+                for prefix, text in hunk_lines:
+                    if prefix not in ("+", "-"):
+                        continue
+                    stripped = text.strip()
+                    if stripped.startswith("case ") or stripped.startswith('"'):
+                        keys = _quoted_strings(stripped)
+                    else:
+                        continue
+                    if prefix == "+":
+                        added_strs.update(keys)
+                    else:
+                        removed_strs.update(keys)
+            else:
+                # Position-independent run rule: walk the hunk and mark
+                # maximal runs of case-list lines; an added list line is
+                # a member only if its run holds >= 2 list lines (a lone
+                # added string elsewhere in the file is not a list
+                # member — e.g. an import-block addition, whose lines
+                # carry no trailing comma and so never form a run).
+                is_list = [_is_loader_list_line(text) for _, text in hunk_lines]
+                in_run = [False] * len(hunk_lines)
+                i = 0
+                while i < len(hunk_lines):
+                    if not is_list[i]:
+                        i += 1
+                        continue
+                    j = i
+                    while j < len(hunk_lines) and is_list[j]:
+                        j += 1
+                    if j - i >= 2:
+                        for k in range(i, j):
+                            in_run[k] = True
+                    i = j
+                for (prefix, text), member in zip(hunk_lines, in_run):
+                    if prefix not in ("+", "-") or not member:
+                        continue
+                    keys = _quoted_strings(text.strip())
+                    if prefix == "+":
+                        added_strs.update(keys)
+                    else:
+                        removed_strs.update(keys)
             for key in sorted(added_strs - removed_strs):
                 errors.append(f"NEW FROZEN SYNTHETIC PACKAGE (p3frontend loader) in {fname}: \"{key}\" — synthetic stdlib packages are banned")
 
