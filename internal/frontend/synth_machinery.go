@@ -875,12 +875,20 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg, true)
+	// where F is multi-result. For package-level vars, records aliases
+	// instead of expanding. The maps MUST be stored (mirroring
+	// buildDiskPackage): removePkgSpecs=true deletes the declarations
+	// from the AST, so the maps are the only record of the aliases —
+	// discarding them silently drops the variables (H2 review
+	// 2026-11-01). importSyntheticPackage copies them into the
+	// exporter, where call sites through the vars desugar as the
+	// aliased Funcs.
+	etaVarLits, varAliases := etaExpandMRFuncValues([]*ast.File{file}, info, pkg, true)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
-		raw: []byte(src),
+		raw:        []byte(src),
+		etaVarLits: etaVarLits, varFuncAliases: varAliases,
 	}
 }
 

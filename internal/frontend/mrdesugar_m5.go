@@ -1546,34 +1546,58 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
-				}
-			}
-			// General (real-x509 lane): Var aliases a multi-result Func
-			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
+			// General (real-x509 lane, H2 2026-11-01): Var aliases a
+			// multi-result Func (e.g. path/filepath's lstat ->
+			// os.Lstat, or a synthetic package's var x = pkg.F).
+			// Desugar DIRECTLY via the table plan, BEFORE consulting
+			// userMRInfoForVar: the alias branch there returns only
+			// pair type/fields (an mrUser plan), and mrUser plans
+			// export the call normally — but the aliased var's
+			// declaration was removed from the AST, so no value
+			// exists for exportCall to emit ("used before
+			// declaration"). The table plan instead rewrites the
+			// call to the aliased Func's __-helper, which needs no
+			// var value. (The same reason buildDiskPackage and
+			// buildSyntheticPackage must store the alias maps.)
 			if aliasedFn, ok := e.varFuncAliases[v]; ok {
-				// Build a synthetic SelectorExpr call for classification.
-				// The table classifiers take (pkgPath, fn, targs).
 				pkgPath := ""
 				if aliasedFn.Pkg() != nil {
 					pkgPath = aliasedFn.Pkg().Path()
 				}
-				// Try the general classifiers with the aliased Func.
-				// For os.Lstat, the os table handles it.
+				// The table classifiers take (pkgPath, fn, targs);
+				// aliases never point at generic funcs (etaExpand
+				// skips them), so targs is nil. Coverage mirrors the
+				// Ident-to-Func branch below (Os/M7 order is
+				// immaterial: the tables are disjoint by pkgPath).
 				if plan := classifyOsMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
 				}
-				// Fallback: try other tables.
 				if plan := classifyM7MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
 				}
 				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
+				}
+				if plan := classifyIoMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+					return plan
+				}
+				if plan := classifyM9MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+					return plan
+				}
+				if plan := classifyDiskMultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
+					return plan
+				}
+				// No table covers the aliased Func: fall through to
+				// userMRInfoForVar below, which yields the pair-info
+				// mrUser plan. Its export still fails for a removed
+				// var — that case has no direct emission and stays
+				// a loud failure, not a silent drop.
+			}
+			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
 				}
 			}
 			return nil
@@ -4349,12 +4373,14 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 // values keep their existing path (Selections non-nil skips them).
 //
 // removePkgSpecs controls the package-level `var x = pkg.F` removal:
-// pass true ONLY where the caller consumes the returned alias map
-// (buildDiskPackage wires it into the exporter's varFuncAliases, so call
-// sites through x desugar as the aliased Func). ExportFiles discards the
-// maps, so removing there would silently drop the variable with nothing
-// rewriting its uses — user package-level vars instead keep the PKG-035
-// path (emitted as globals whose initializer links to the pair info via
+// pass true ONLY where the caller stores BOTH returned maps and wires
+// them through to the exporter (buildDiskPackage and
+// buildSyntheticPackage wire them into the exporter's varFuncAliases, so
+// call sites through x desugar as the aliased Func). ExportFiles
+// discards the maps, so removing there would silently drop the variable
+// with nothing rewriting its uses — user package-level vars instead keep
+// the PKG-035 path (emitted as globals whose initializer links to the
+// pair info via
 // mrInfoForFuncValueInit). With removePkgSpecs=false the local
 // eta-expansions (:= and struct/map literal fields) still apply: those
 // rewrite the AST in place and need no map.
@@ -4439,26 +4465,14 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 				}
 			}
 		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
-		}
+		// No ident rewriting happens here: ast.Inspect cannot replace
+		// nodes, and the block this comment replaces only built and
+		// discarded an ident. Call sites through the removed vars are
+		// rewritten downstream via the returned alias map
+		// (importSyntheticPackage copies it into the exporter's
+		// varFuncAliases; classifyMultiResultCall and userMRInfoForVar
+		// consume it). Callers MUST store the maps when
+		// removePkgSpecs=true, or the variables are silently dropped.
 	}
 	return varLits, aliases
 }
