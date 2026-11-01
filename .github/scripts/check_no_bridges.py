@@ -5,7 +5,8 @@ No-bridges check (2026-10-15, his direct order).
 Fails if the diff introduces new bridges:
 - New synth_*.go files
 - New package-name conditionals in frontend/backend
-- New package-path conditionals (obj.Pkg().Path() == "<stdlib>")
+- New package-path conditionals (obj.Pkg().Path() == "<stdlib>", either
+  operand order)
 - New panic stubs
 - New wire node kinds for stdlib functions
 - New synthetic function registrations
@@ -120,9 +121,28 @@ def check_no_bridges(diff):
         errors.append(f"NEW SYNTHETIC FILE: {f} — synthetic stdlib packages are banned")
 
     # 2. Package-name conditionals (stdlib names)
+    # stdlib_pkgs is the COMPLETE top-level stdlib set for the tracked Go
+    # release, derived mechanically — not hand-picked. Derivation
+    # (go1.27.1, repo toolchain ~/tools/go/bin/go): `go list std` returns
+    # 388 paths; their first components are exactly the 52 names below
+    # (plus the pre-existing "http", a package *name* — net/http's Name()
+    # — rather than a top-level path, kept so check 2's Name == "http"
+    # form keeps working). Check 2b's prefix rule (path.startswith(p +
+    # "/")) extends this top-level set to every subpath, so the 388
+    # paths are all covered without listing each one. On a toolchain
+    # upgrade, re-derive with `go list std` and update this list —
+    # a new top-level package added by the toolchain would otherwise
+    # slip past check 2b the same way "unicode"/"log" used to
+    # (REVIEW-2026-11-01-21 V-1 fixup).
     stdlib_pkgs = ["fmt", "sync", "os", "net", "http", "runtime", "reflect", "time",
                    "strings", "bytes", "strconv", "sort", "math", "encoding", "crypto",
                    "syscall", "unsafe", "io", "bufio", "context", "errors",
+                   # Remaining top-level names from `go list std` (go1.27.1).
+                   "archive", "cmp", "compress", "container", "database", "debug",
+                   "embed", "expvar", "flag", "go", "hash", "html", "image",
+                   "index", "internal", "iter", "log", "maps", "mime", "path",
+                   "plugin", "regexp", "slices", "structs", "testing", "text",
+                   "unicode", "unique", "uuid", "vendor", "weak", "zzdiag",
                    # Full stdlib paths, so the == "<pkg>" pattern below also
                    # matches them (e.g. pkgPath == "sync/atomic"). The
                    # Pkg().Path() form is covered separately by check 2b.
@@ -157,17 +177,32 @@ def check_no_bridges(diff):
     # rn.Obj().Pkg().Path() == "runtime") — so those interceptions
     # passed the gate while uninventoried (REVIEW-2026-11-01-21 P1-4).
     # Check 2 now also matches the listed full-path literals; this
-    # check additionally covers ANY stdlib path literal in Pkg().Path()
-    # form (e.g. "internal/abi", "encoding/xml", future stdlib paths)
-    # that the list does not name, and reports each added line once
-    # (lines check 2 already flagged are skipped here). Any literal
-    # package-path equality is package-name-keyed by definition; only
-    # stdlib paths are flagged (a literal naming a user package is not
-    # a stdlib bridge). Variable-to-variable comparisons
-    # (pkgPath == wantPkg) are the general mechanism and are NOT
-    # flagged. This check, like check 2, only inspects ADDED lines, so
-    # the grandfathered lines inventoried in B-3 are not flagged —
-    # only future additions are.
+    # check additionally covers stdlib path literals in Pkg().Path()
+    # form that the list does not name as full paths (e.g.
+    # "internal/abi", "encoding/xml"), and reports each added line once
+    # (lines check 2 already flagged are skipped here). Coverage,
+    # stated exactly so the next miss cannot hide behind a vague
+    # comment (REVIEW-2026-11-01-21 V-1 fixup): a literal is flagged
+    # iff _is_stdlib_path accepts it — i.e. it is a top-level name in
+    # stdlib_pkgs (the complete `go list std` first-component set for
+    # go1.27.1, see above), a subpath of one (prefix rule), or an
+    # "internal/..." path — AND the comparison is a single-line ==
+    # between that literal and a Pkg().Path() expression, in either
+    # operand order (forward: obj.Pkg().Path() == "lit"; reversed:
+    # "lit" == obj.Pkg().Path(), including longer receiver chains such
+    # as rn.Obj().Pkg().Path()). NOT covered, by design or by scope
+    # limit — do not read this check as covering them: != guards,
+    # variable-to-variable comparisons (pkgPath == wantPkg, the general
+    # mechanism), switch-case on a path value, multi-line comparisons,
+    # parenthesized path expressions, and non-Pkg().Path() string forms
+    # (those are check 2's scope, for the listed names/paths only).
+    # Any literal package-path equality this check does flag is
+    # package-name-keyed by definition; only stdlib paths are flagged
+    # (a literal naming a user package is not a stdlib bridge). This
+    # check, like check 2, only inspects ADDED lines, so the
+    # grandfathered lines inventoried in B-3 are not flagged — only
+    # future additions are. Test files are exempt (same rule as
+    # check 2).
     def _is_stdlib_path(path):
         if path in stdlib_pkgs:
             return True
@@ -181,6 +216,12 @@ def check_no_bridges(diff):
         if (fname, line) in pkg_name_flagged:
             continue
         m = re.search(r'Pkg\(\)\.Path\(\)\s*==\s*"([^"]+)"', line)
+        if m is None:
+            # Reversed operand order: "lit" == <recv>.Pkg().Path().
+            # The receiver is restricted to identifier/dot/paren chars
+            # so the match cannot span across an unrelated comparison
+            # on the same line.
+            m = re.search(r'"([^"]+)"\s*==\s*[\w.()]*Pkg\(\)\.Path\(\)', line)
         if m and _is_stdlib_path(m.group(1)):
             if "/test" not in fname and "test_" not in fname and "_test." not in fname:
                 errors.append(f"PACKAGE-PATH CONDITIONAL in {fname}: {line.strip()[:80]}")

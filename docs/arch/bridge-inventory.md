@@ -137,7 +137,7 @@ interceptions stay exactly as they are until their root-cause fix lands.
   a resolved `*types.Func` rather than a selector (~lines 9446–9470:
   word ops plus the unqualified in-package `LoadPointer`/`SwapPointer`/
   `CompareAndSwapPointer` forms, e.g. the `atomic.Pointer[T]` method
-  bodies); `exportAtomicStorePointerStmt` (~lines 9350–9378) intercepts
+  bodies); `exportAtomicStorePointerStmt` (~lines 9350–9379) intercepts
   the statement-only `atomic.StorePointer` in both spellings (qualified
   and unqualified in-package) and lowers it to a plain deref write.
   Method calls on the typed wrappers (`slot.Store` on
@@ -145,9 +145,12 @@ interceptions stay exactly as they are until their root-cause fix lands.
   fall through to the normal method-call path.
 - **Why:** the real `sync/atomic` and `internal/runtime/atomic` sources
   now resolve from disk (the synthetic packages were retired), but
-  their package-level functions are `//go:noescape` bodyless functions
-  whose real implementations are assembly/linkname in gc — there is no
-  Go body for the general disk-importer path to compile, and the
+  their package-level functions are largely `//go:noescape` bodyless
+  functions whose real implementations are assembly/linkname in gc —
+  with at least one exception on amd64, where `LoadAcquintptr` has a
+  real Go body (`return *ptr`) while `StoreReluintptr` is a
+  `//go:noescape` declaration — so there is no Go body for the general
+  disk-importer path to compile for the bodyless ones, and the
   `funcByObj` lookup the function-value path would otherwise use has
   nothing to find. The interception is therefore the lowering itself,
   not a shortcut around a compilable body. Much of it is legitimate
