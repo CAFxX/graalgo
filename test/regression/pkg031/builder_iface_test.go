@@ -120,11 +120,43 @@ func TestBuilderMethodValues(t *testing.T) {
 		t.Fatalf("Builder via method values = %q, want %q", got, "abcdefgh")
 	}
 
-	// Forming a method value on a nil interface must not panic; only
-	// calling it would. (No call here, by design.)
-	var nilW io.Writer
-	nilF := nilW.Write
-	_ = nilF
+	// Forming a method value on a nil interface panics AT FORMATION
+	// under gc — even when the value is never called. The recover-based
+	// assertion below fails if formation does not panic.
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatalf("forming a method value on a nil interface did not panic")
+			}
+		}()
+		var nilW io.Writer
+		nilF := nilW.Write
+		_ = nilF
+	}()
+
+	// p2b shape: defer/recover registered BEFORE formation — the
+	// formation itself must panic, so the code after it is never reached.
+	nilFormationPanicked := func() (panicked bool) {
+		defer func() {
+			if recover() != nil {
+				panicked = true
+			}
+		}()
+		var nilW io.Writer
+		_ = nilW.Write
+		return false
+	}()
+	if !nilFormationPanicked {
+		t.Fatalf("p2b: forming a method value on a nil interface did not panic")
+	}
+
+	// A typed-nil interface still forms successfully: only a nil
+	// interface (no descriptor) panics at formation. (No call here —
+	// calling through a typed nil is a separate, method-specific panic.)
+	var nilBuilder *strings.Builder
+	var typedNilW io.Writer = nilBuilder
+	typedNilF := typedNilW.Write
+	_ = typedNilF
 
 	// Receiver snapshot: the value keeps the receiver from formation.
 	c := mvCounter{x: 3}

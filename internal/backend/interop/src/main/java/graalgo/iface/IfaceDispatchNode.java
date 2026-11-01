@@ -70,9 +70,14 @@ public final class IfaceDispatchNode extends GoExprNode {
     }
 
     private Object dispatch(VirtualFrame frame) {
-        // Evaluation order (unchanged from before the P1-9 factoring):
-        // the receiver evaluates before the arguments, as for a direct
-        // method call.
+        // Evaluation order (P1-9 factoring changed the nil-panic timing
+        // relative to the old node, toward gc): the receiver evaluates
+        // before the arguments, as for a direct method call — but the
+        // nil-receiver panic now fires AFTER argument evaluation (the
+        // dispatcher checks the receiver once the arguments are boxed),
+        // where the old node panicked before evaluating the arguments.
+        // gc probe p1 confirms the new order: argument side effects print
+        // before the nil panic.
         Object recvVal = recv.executeObject(frame);
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {

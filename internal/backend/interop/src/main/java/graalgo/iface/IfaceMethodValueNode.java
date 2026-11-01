@@ -22,11 +22,13 @@ import graalgo.values.GoKind;
  * receiver variable, a later reassignment of that variable does not
  * change what the value calls.
  *
- * <p>Forming the value never panics on a nil interface: the bound value
- * is carried as-is (Java null or a descriptor-less {@code GoInterface})
- * and only a call through it panics, with gc's nil-dereference panic,
- * via the dispatcher's receiver check — matching gc, where
- * {@code f := nilIface.M} succeeds and {@code f()} panics.
+ * <p>Forming the value panics on a nil interface, matching gc: the
+ * bound value is nil-checked at formation time (Java null or a
+ * descriptor-less {@code GoInterface} panics with gc's nil-dereference
+ * panic, via the dispatcher's receiver check), so forming
+ * {@code nilIface.M} panics even when the value is never called. A
+ * typed-nil interface (descriptor set, data null) still forms
+ * successfully, exactly like a direct call proceeds.
  *
  * <p>Multi-result methods need no special case here: the itab target
  * for such a method is its pair-returning form (as for direct
@@ -47,6 +49,12 @@ public final class IfaceMethodValueNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         Object recvVal = recv.executeObject(frame);
+        // gc panics AT FORMATION on a nil interface (even when the value
+        // is never called): nil-check here with the dispatcher's
+        // semantics — Java null or a descriptor-less GoInterface panics
+        // with the nil-dereference panic, while a typed-nil interface
+        // (descriptor set, data null) forms successfully.
+        IfaceDispatcher.requireReceiver(recvVal, this);
         return new GoFunc(target, null, null, new Object[] {recvVal});
     }
 }
