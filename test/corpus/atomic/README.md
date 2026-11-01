@@ -11,6 +11,7 @@ Go programs exercising the P3-M4 `sync/atomic` typed wrappers
 | `at01_contention.go` | 8 goroutines × 1000 `Add` = 8000; 4 goroutines × 1000 CAS-loop increments = 4000 |
 | `at02_types.go` | Zero value usable; `new()` form; value-copy semantics (`b := a` copies, by-value param copies) |
 | `at03_atomic_pointers.go` | Pointer aliasing: `*atomic.Int64` param, pointer copy, interface-held pointer (P0-1); by-value still clones |
+| `at04_pointer_publication.go` | Package-level `LoadPointer`/`StorePointer`: sequential roundtrip, nil, cross-goroutine publication litmus, typed `atomic.Pointer[T]` path, Load-after-Swap/CAS coherence (REVIEW-2026-11-01-21 P0-1) |
 
 ## Design notes
 

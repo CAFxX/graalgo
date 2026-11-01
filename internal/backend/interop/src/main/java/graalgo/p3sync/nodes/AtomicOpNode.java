@@ -36,6 +36,21 @@ import graalgo.values.GoKind;
  * a zero Pointer loads null, i.e. Go's nil {@code *T}); a Go
  * {@code any} result is {@code INTERFACE} kind.
  *
+ * <p>fix-p0-1-atomic-pointer: the package-level {@code LoadPointer} /
+ * {@code StorePointer} lowering also rides here as
+ * {@code atomic.Uintptr} Load/Store (an unsafe.Pointer value is a long
+ * handle). Its receiver is usually a
+ * {@link graalgo.runtime.sync.GoUnsafePointerCell} plain-field cell,
+ * but inside sync/atomic itself the address is {@code &x.v} of
+ * an atomic.Pointer[T], which {@link AtomicAddrNode} passes through as
+ * the {@link AtomicReference} cell itself. The Uintptr Load/Store arms
+ * therefore accept both shapes: a LongCell serves via
+ * {@link graalgo.runtime.Atomics}, an AtomicReference serves via a
+ * volatile get/set with handle normalization (the same normalization
+ * {@link AtomicPtrOpNode} uses for Swap/CAS on cells). The volatile
+ * access is what gives the in-package path gc's acquire/release
+ * ordering.
+ *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1
  * {@code NodeFactory} change. The P3 launcher's {@code "syncop"}
@@ -129,6 +144,59 @@ public final class AtomicOpNode extends GoExprNode {
         return c;
     }
 
+    /**
+     * fix-p0-1-atomic-pointer: the Uintptr Load arm for the
+     * LoadPointer lowering. The receiver is evaluated exactly once:
+     * a LongCell (the usual plain-field cell, or an atomic.Uintptr
+     * wrapper cell) serves via Atomics; an AtomicReference (the
+     * atomic.Pointer[T] cell, passed through by AtomicAddrNode)
+     * serves via a volatile get, normalized to a handle — null to 0,
+     * a stored GoPointer to its interned handle, a stored handle
+     * unchanged. Anything else is a loud failure, never a silent
+     * value.
+     */
+    private long loadUintptr(VirtualFrame frame) {
+        Object r = cell(frame);
+        if (r instanceof AtomicReference<?> ar) {
+            return AtomicPtrOpNode.toHandle(ar.get());
+        }
+        if (r instanceof LongCell c) {
+            return Atomics.loadUintptr(c);
+        }
+        throw new FrontendException(
+                "atomic.Uintptr.Load on non-cell receiver: " + r.getClass().getName());
+    }
+
+    /**
+     * fix-p0-1-atomic-pointer: the Uintptr Store arm for the
+     * StorePointer lowering; the mirror of {@link #loadUintptr}.
+     * The value argument is evaluated here (not by the caller) so a
+     * bare nil literal maps to handle 0 via
+     * {@link AtomicPtrOpNode#handleArg}. Storing the handle (a long)
+     * into an AtomicReference cell is the same content shape
+     * SwapPointer/CAS already write there, so a later LoadPointer,
+     * SwapPointer, or CompareAndSwapPointer on the same cell reads it
+     * back consistently.
+     */
+    private void storeUintptr(VirtualFrame frame) {
+        // Evaluation order is Go's call-arg order: the address operand
+        // (the receiver cell) first, then the value.
+        Object r = cell(frame);
+        long v = AtomicPtrOpNode.handleArg(args[0], frame);
+        if (r instanceof AtomicReference<?> ar) {
+            @SuppressWarnings("unchecked")
+            AtomicReference<Object> cell = (AtomicReference<Object>) ar;
+            cell.set(Long.valueOf(v));
+            return;
+        }
+        if (r instanceof LongCell c) {
+            Atomics.storeUintptr(c, v);
+            return;
+        }
+        throw new FrontendException(
+                "atomic.Uintptr.Store on non-cell receiver: " + r.getClass().getName());
+    }
+
     private IntCell cell32(VirtualFrame frame) {
         Object r = cell(frame);
         if (!(r instanceof IntCell c)) {
@@ -163,7 +231,7 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uint64.Swap" -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.Load" -> Atomics.loadUintptr(cell64(frame));
+            case "atomic.Uintptr.Load" -> loadUintptr(frame);
             case "atomic.Uintptr.Add" -> Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
@@ -240,7 +308,7 @@ public final class AtomicOpNode extends GoExprNode {
         switch (atomicType + "." + op) {
             case "atomic.Int64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.Store" -> Atomics.storeUintptr(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uintptr.Store" -> storeUintptr(frame);
             case "atomic.Int32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Uint32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Bool.Store" -> Atomics.storeBool(cell32(frame), args[0].executeBoolean(frame));
@@ -297,6 +365,22 @@ public final class AtomicOpNode extends GoExprNode {
         }
         if (resultKind == null) {
             resultKind = GoKind.INTERFACE; // void Store
+        }
+        // fix-p0-1-atomic-pointer: the Uintptr Load serves two Go
+        // result types with different kinds — uintptr (the word op
+        // and the typed wrapper) and unsafe.Pointer (LoadPointer).
+        // The node kind must be the call's declared result kind, not
+        // the map's UINT64: a UINT64-kind node where unsafe.Pointer
+        // is expected makes downstream maybeConvert build a
+        // ConvertNode(UINT64 -> UNSAFE_POINTER), which is deliberately
+        // illegal (a bare integer must not materialize a handle).
+        // The wire "type" field carries the frontend's call-result
+        // type id; when it is present it decides the kind, and when
+        // it is absent the map kind stands (word-op behavior
+        // unchanged: uintptr resolves to UINT64 either way).
+        if ("atomic.Uintptr".equals(synctyp) && "Load".equals(op)
+                && f.opt("type") instanceof Json.Num n) {
+            resultKind = NodeFactory.kindOf(ctx, (int) n.longValue(), path);
         }
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
         Json.Array arr = f.array("args", path);

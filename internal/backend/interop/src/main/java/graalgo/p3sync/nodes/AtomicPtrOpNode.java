@@ -8,6 +8,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.p3unsafe.UnsafeTable;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
+import graalgo.runtime.sync.PlainFieldAtomicLock;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 
@@ -37,9 +38,12 @@ import java.util.concurrent.atomic.AtomicReference;
  *   {@link GoPointer} is normalized to its handle for comparison and
  *   replaced in handle form on write.</li>
  *   <li>a plain {@link GoPointer} to an {@code unsafe.Pointer} field:
- *   operations serialize on a shared lock (the {@code GoPointerCell64}
- *   scoped-divergence precedent: mutually atomic RMW, no lock-free
- *   progress or ordering guarantees beyond that).</li>
+ *   operations serialize on the shared plain-field lock
+ *   ({@link graalgo.runtime.sync.PlainFieldAtomicLock}) — the same lock
+ *   the word cells and the LoadPointer/StorePointer lowering use, so
+ *   RMW ops are mutually exclusive with Load/Store on the same address
+ *   and a store's monitor exit happens-before a later load's monitor
+ *   entry. No lock-free progress guarantee.</li>
  * </ul>
  *
  * <p>Handle equality is pointer identity (PKG-007): two handles are
@@ -50,9 +54,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code NodeFactory.registerExprKind} hook — no Phase-1 change.
  */
 public final class AtomicPtrOpNode extends GoExprNode {
-    /** Shared RMW lock for plain-field storage (see class javadoc). */
-    private static final Object LOCK = new Object();
-
     private final String op;
     @Child private GoExprNode addrChild;
     @Children private GoExprNode[] argChildren;
@@ -74,8 +75,12 @@ public final class AtomicPtrOpNode extends GoExprNode {
         return a;
     }
 
-    /** Normalizes a stored cell content to its handle value. */
-    private static long toHandle(Object stored) {
+    /**
+     * Normalizes a stored cell content to its handle value.
+     * Package-private so AtomicOpNode can normalize AtomicReference
+     * cell contents the same way.
+     */
+    static long toHandle(Object stored) {
         if (stored == null) {
             return 0;
         }
@@ -104,11 +109,27 @@ public final class AtomicPtrOpNode extends GoExprNode {
                 + r.getClass().getName());
     }
 
+    /**
+     * Evaluates a pointer-atomic value argument to its handle.
+     * Package-private so AtomicOpNode's Uintptr Store arm (the
+     * StorePointer lowering) shares it. A bare nil literal reaches
+     * here as a NilNode — the frontend types nil literals as the
+     * empty interface, and syncop/atomicptrop args bypass buildCall's
+     * maybeConvert — and the nil pointer is handle 0; every other
+     * value argument evaluates as a long handle.
+     */
+    static long handleArg(GoExprNode arg, VirtualFrame frame) {
+        if (arg instanceof graalgo.frontend.NilNode) {
+            return 0;
+        }
+        return arg.executeLong(frame);
+    }
+
     @Override
     public long executeLong(VirtualFrame frame) {
         // swap: returns the old handle.
         Object s = storage(frame);
-        long newVal = argChildren[0].executeLong(frame);
+        long newVal = handleArg(argChildren[0], frame);
         if (s instanceof AtomicReference<?> ar) {
             @SuppressWarnings("unchecked")
             AtomicReference<Object> cell = (AtomicReference<Object>) ar;
@@ -120,7 +141,7 @@ public final class AtomicPtrOpNode extends GoExprNode {
             }
         }
         if (s instanceof GoPointer p) {
-            synchronized (LOCK) {
+            synchronized (PlainFieldAtomicLock.LOCK) {
                 long old = readPlain(p);
                 p.setReferent(Long.valueOf(newVal));
                 return old;
@@ -134,8 +155,8 @@ public final class AtomicPtrOpNode extends GoExprNode {
     public boolean executeBoolean(VirtualFrame frame) {
         // cas: compares the stored handle against old, stores new on match.
         Object s = storage(frame);
-        long oldVal = argChildren[0].executeLong(frame);
-        long newVal = argChildren[1].executeLong(frame);
+        long oldVal = handleArg(argChildren[0], frame);
+        long newVal = handleArg(argChildren[1], frame);
         if (s instanceof AtomicReference<?> ar) {
             @SuppressWarnings("unchecked")
             AtomicReference<Object> cell = (AtomicReference<Object>) ar;
@@ -150,7 +171,7 @@ public final class AtomicPtrOpNode extends GoExprNode {
             }
         }
         if (s instanceof GoPointer p) {
-            synchronized (LOCK) {
+            synchronized (PlainFieldAtomicLock.LOCK) {
                 if (readPlain(p) != oldVal) {
                     return false;
                 }

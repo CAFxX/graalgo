@@ -96,8 +96,12 @@ func TestSyncPoolRtatomicLowersToSyncop(t *testing.T) {
 
 // TestAtomicStorePointerStmtRenamedImport (R2-P1-1): a renamed sync/atomic
 // import in statement position must be intercepted exactly like the
-// canonical spelling — the bare call lowers to *addr = val (assign/deref)
-// instead of a plain call to the bodyless StorePointer func.
+// canonical spelling — the bare call lowers to the atomicaddr+syncop
+// wire nodes (a "atomic.Uintptr" Store, gc release semantics) instead of
+// a plain call to the bodyless StorePointer func — and, since
+// fix-p0-1-atomic-pointer, instead of the old plain *addr = val
+// (assign/deref) lowering, which carried no atomicity and no ordering
+// guarantee.
 func TestAtomicStorePointerStmtRenamedImport(t *testing.T) {
 	canonical := `package main
 
@@ -143,10 +147,26 @@ func main() {
 				t.Fatal("main funcdecl not found in export")
 			}
 			plainCalls := 0
+			ptrStores := 0
+			ptrCells := 0
 			derefs := 0
 			walkJSONNodes(mainBody, func(m map[string]any) {
 				if m["kind"] == "deref" {
 					derefs++
+				}
+				if m["kind"] == "syncop" {
+					if fields, ok := m["fields"].(map[string]any); ok {
+						if fields["op"] == "Store" && fields["synctyp"] == "atomic.Uintptr" {
+							ptrStores++
+						}
+					}
+				}
+				if m["kind"] == "atomicaddr" {
+					if fields, ok := m["fields"].(map[string]any); ok {
+						if fields["cell"] == "ptr" {
+							ptrCells++
+						}
+					}
 				}
 				if m["kind"] == "call" {
 					walkJSONNodes(m, func(inner map[string]any) {
@@ -161,8 +181,109 @@ func main() {
 			if plainCalls != 0 {
 				t.Errorf("StorePointer call was not intercepted in statement position (%d plain calls)", plainCalls)
 			}
-			if derefs == 0 {
-				t.Error("expected lowered *addr = val (deref node) in main")
+			if ptrStores == 0 {
+				t.Error("expected a syncop atomic.Uintptr Store node in main")
+			}
+			if ptrCells == 0 {
+				t.Error("expected an atomicaddr ptr cell node in main")
+			}
+			if derefs != 0 {
+				t.Errorf("StorePointer must not lower to a plain deref write (%d deref nodes)", derefs)
+			}
+		})
+	}
+}
+
+// TestAtomicLoadPointerLowersToSyncop (fix-p0-1-atomic-pointer): the
+// deterministic regression gate for the P0-1 fix. atomic.LoadPointer
+// must lower to the atomicaddr+syncop wire nodes (a "atomic.Uintptr"
+// Load), never to the old plain deref read — the wire shape is what
+// carries the ordering guarantee, and a plain-deref regression fails
+// this test even though single-threaded programs would still pass.
+// Canonical and renamed imports are both covered.
+func TestAtomicLoadPointerLowersToSyncop(t *testing.T) {
+	canonical := `package main
+
+import (
+	"sync/atomic"
+	"unsafe"
+)
+
+func main() {
+	var p unsafe.Pointer
+	q := atomic.LoadPointer(&p)
+	_ = q
+}
+`
+	renamed := strings.Replace(canonical, `"sync/atomic"`, `atom "sync/atomic"`, 1)
+	renamed = strings.Replace(renamed, "atomic.LoadPointer", "atom.LoadPointer", 1)
+	for _, tc := range []struct{ name, src string }{
+		{"canonical", canonical},
+		{"renamed", renamed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := ExportFile(writeSyncProg(t, tc.src))
+			if err != nil {
+				t.Fatalf("ExportFile: %v", err)
+			}
+			var v any
+			if err := json.Unmarshal([]byte(out), &v); err != nil {
+				t.Fatalf("wire JSON does not parse: %v", err)
+			}
+			var mainBody map[string]any
+			walkJSONNodes(v, func(m map[string]any) {
+				if name, _ := m["name"].(string); name == "main" && mainBody == nil {
+					if _, hasBody := m["body"]; hasBody {
+						mainBody = m
+					}
+				}
+			})
+			if mainBody == nil {
+				t.Fatal("main funcdecl not found in export")
+			}
+			plainCalls := 0
+			ptrLoads := 0
+			ptrCells := 0
+			derefs := 0
+			walkJSONNodes(mainBody, func(m map[string]any) {
+				if m["kind"] == "deref" {
+					derefs++
+				}
+				if m["kind"] == "syncop" {
+					if fields, ok := m["fields"].(map[string]any); ok {
+						if fields["op"] == "Load" && fields["synctyp"] == "atomic.Uintptr" {
+							ptrLoads++
+						}
+					}
+				}
+				if m["kind"] == "atomicaddr" {
+					if fields, ok := m["fields"].(map[string]any); ok {
+						if fields["cell"] == "ptr" {
+							ptrCells++
+						}
+					}
+				}
+				if m["kind"] == "call" {
+					walkJSONNodes(m, func(inner map[string]any) {
+						name, _ := inner["name"].(string)
+						_, hasObj := inner["obj"]
+						if name == "LoadPointer" && hasObj {
+							plainCalls++
+						}
+					})
+				}
+			})
+			if plainCalls != 0 {
+				t.Errorf("LoadPointer call was not intercepted (%d plain calls)", plainCalls)
+			}
+			if ptrLoads == 0 {
+				t.Error("expected a syncop atomic.Uintptr Load node in main")
+			}
+			if ptrCells == 0 {
+				t.Error("expected an atomicaddr ptr cell node in main")
+			}
+			if derefs != 0 {
+				t.Errorf("LoadPointer must not lower to a plain deref read (%d deref nodes)", derefs)
 			}
 		})
 	}

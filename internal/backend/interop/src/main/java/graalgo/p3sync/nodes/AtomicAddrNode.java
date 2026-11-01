@@ -10,6 +10,7 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.runtime.sync.GoPointerCell32;
 import graalgo.runtime.sync.GoPointerCell64;
+import graalgo.runtime.sync.GoUnsafePointerCell;
 import graalgo.runtime.sync.IntCell;
 import graalgo.runtime.sync.LongCell;
 import graalgo.values.GoKind;
@@ -66,6 +67,12 @@ public final class AtomicAddrNode extends GoExprNode {
         return switch (cell) {
             case "int64" -> new GoPointerCell64(gp);
             case "int32" -> new GoPointerCell32(gp);
+            // fix-p0-1-atomic-pointer: the LoadPointer/StorePointer
+            // cell. A dedicated class, not int64: an uninitialized
+            // unsafe.Pointer variable's storage is Java null, and
+            // the pointer cell must read that as handle 0 (nil),
+            // while the word cell rightly treats null as corrupt.
+            case "ptr" -> new GoUnsafePointerCell(gp);
             default -> throw new FrontendException("atomicaddr: unknown cell kind " + cell);
         };
     }
@@ -73,14 +80,16 @@ public final class AtomicAddrNode extends GoExprNode {
     /**
      * Builds the node from the {@code "atomicaddr"} wire node. Fields:
      * {@code addr} (the {@code *T} address expression) and
-     * {@code cell} ({@code "int64"}, {@code "int32"}, or {@code "bool"}).
+     * {@code cell} ({@code "int64"}, {@code "int32"}, or {@code "ptr"}
+     * (the LoadPointer/StorePointer cell; the documented {@code "bool"}
+     * kind was never built — see the validation below).
      */
     public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
             NodeFactory factory) {
         Json.Object f = node.object("fields", "atomicaddr");
         String path = "atomicaddr.fields";
         String cell = f.string("cell", path);
-        if (!cell.equals("int64") && !cell.equals("int32")) {
+        if (!cell.equals("int64") && !cell.equals("int32") && !cell.equals("ptr")) {
             throw new FrontendException(path + ": unknown cell kind " + cell);
         }
         GoExprNode addr = factory.buildExpr(f.object("addr", path), ctx);

@@ -13,17 +13,17 @@ import graalgo.values.GoPointer;
  * existing {@code AtomicOpNode} + {@code graalgo.runtime.Atomics}
  * machinery serves the op unchanged.
  *
- * <p>All operations serialize on a single shared lock: the read-modify-
- * write ops are mutually atomic, and loads/stores are mutually exclusive
- * with them. This is a scoped divergence from gc (no lock-free progress,
- * no memory-ordering subtleties) — the internal packages that need this
- * (e.g. internal/bisect's lossy dedup cache) are race-tolerant by
- * construction.
+ * <p>All operations serialize on the shared plain-field lock
+ * ({@link PlainFieldAtomicLock}): the read-modify-write ops are mutually
+ * atomic, and loads/stores are mutually exclusive with them — and with
+ * the pointer RMW ops and the LoadPointer/StorePointer lowering, which
+ * share the same lock. Monitor exit on a store happens-before monitor
+ * entry on a later load of the same address, which is what gives these
+ * ops gc's acquire/release ordering for the publication pattern. This
+ * is a scoped divergence from gc only in that there is no lock-free
+ * progress guarantee.
  */
 public final class GoPointerCell64 implements LongCell {
-    /** Shared lock (see class javadoc). */
-    private static final Object LOCK = new Object();
-
     private final GoPointer ptr;
 
     public GoPointerCell64(GoPointer ptr) {
@@ -45,21 +45,21 @@ public final class GoPointerCell64 implements LongCell {
 
     @Override
     public long get() {
-        synchronized (LOCK) {
+        synchronized (PlainFieldAtomicLock.LOCK) {
             return read();
         }
     }
 
     @Override
     public void set(long newValue) {
-        synchronized (LOCK) {
+        synchronized (PlainFieldAtomicLock.LOCK) {
             ptr.setReferent(newValue);
         }
     }
 
     @Override
     public long getAndSet(long newValue) {
-        synchronized (LOCK) {
+        synchronized (PlainFieldAtomicLock.LOCK) {
             long old = read();
             ptr.setReferent(newValue);
             return old;
@@ -68,7 +68,7 @@ public final class GoPointerCell64 implements LongCell {
 
     @Override
     public boolean compareAndSet(long expect, long update) {
-        synchronized (LOCK) {
+        synchronized (PlainFieldAtomicLock.LOCK) {
             if (read() != expect) {
                 return false;
             }
@@ -79,7 +79,7 @@ public final class GoPointerCell64 implements LongCell {
 
     @Override
     public long getAndAdd(long delta) {
-        synchronized (LOCK) {
+        synchronized (PlainFieldAtomicLock.LOCK) {
             long old = read();
             ptr.setReferent(old + delta);
             return old;
@@ -88,7 +88,7 @@ public final class GoPointerCell64 implements LongCell {
 
     @Override
     public long addAndGet(long delta) {
-        synchronized (LOCK) {
+        synchronized (PlainFieldAtomicLock.LOCK) {
             long next = read() + delta;
             ptr.setReferent(next);
             return next;
