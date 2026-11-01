@@ -166,11 +166,13 @@ func (t *graalgoT) Cleanup(f func()) {
 // runCleanups drains t.cleanups LIFO and then cancels t's Context, so
 // the context is cancelled after cleanup completes, matching go test.
 // It is idempotent: the main runner and Run each call it once per test.
+// cleanupsDone is set only AFTER the drain loop, so a Cleanup registered
+// during cleanup appends to the list the loop is still draining (and
+// runs), while a Cleanup after runCleanups returns still panics.
 func (t *graalgoT) runCleanups() {
 	if t.cleanupsDone {
 		return
 	}
-	t.cleanupsDone = true
 	for len(t.cleanups) > 0 {
 		f := t.cleanups[len(t.cleanups)-1]
 		t.cleanups = t.cleanups[:len(t.cleanups)-1]
@@ -191,6 +193,7 @@ func (t *graalgoT) runCleanups() {
 			f()
 		}()
 	}
+	t.cleanupsDone = true
 	if t.ctxCancel != nil {
 		t.ctxCancel()
 		t.ctxCancel = nil

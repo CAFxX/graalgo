@@ -1154,6 +1154,7 @@ var (
 	savedCtx    context.Context
 	failNowAfter bool
 	subCleanupRan bool
+	innerCleanupRan bool
 )
 
 func TestCleanupOrder(t *testing.T) {
@@ -1278,6 +1279,31 @@ func TestFailNowDidStop(t *testing.T) {
 func TestParallelLoud(t *testing.T) {
 	t.Parallel()
 }
+
+func TestRegisterDuringCleanup(t *testing.T) {
+	t.Cleanup(func() {
+		t.Cleanup(func() { innerCleanupRan = true })
+	})
+}
+
+func TestInnerCleanupRan(t *testing.T) {
+	if !innerCleanupRan {
+		t.Fatal("cleanup registered during cleanup did not run")
+	}
+}
+
+func TestCleanupAfterCompletionPanics(t *testing.T) {
+	var sub *testing.T
+	t.Run("sub", func(t *testing.T) { sub = t })
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("Cleanup after completion did not panic")
+			}
+		}()
+		sub.Cleanup(func() {})
+	}()
+}
 `)
 	testFile := filepath.Join(root, "p_test.go")
 	tests, err := discoverTests(testFile)
@@ -1312,6 +1338,9 @@ func TestParallelLoud(t *testing.T) {
 		"--- PASS: TestDeadlineZero",
 		"--- PASS: TestSubtestCleanup",
 		"--- PASS: TestFailNowDidStop",
+		"--- PASS: TestRegisterDuringCleanup",
+		"--- PASS: TestInnerCleanupRan",
+		"--- PASS: TestCleanupAfterCompletionPanics",
 		"--- FAIL: TestCleanupErrorFails",
 		"cleanup boom",
 		"--- FAIL: TestFailNowStops",
