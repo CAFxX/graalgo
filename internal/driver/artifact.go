@@ -195,7 +195,7 @@ func run() int {
 	}
 
 	// argv[0] for the Go program is the artifact's own absolute path,
-	// matching `+"`go build`"+` binaries.
+	// matching ` + "`go build`" + ` binaries.
 	argv0, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		argv0 = os.Args[0]
