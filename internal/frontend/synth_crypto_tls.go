@@ -739,16 +739,22 @@ func (c *Conn) Handshake() error {
 			if err := c.verifyPeer(); err != nil {
 				return err
 			}
-			// P3-M9 (x509): the in-process handshake test prints
-			// "handshake-ok" right after Handshake() returns. The client's
-			// verifyPeer (x509 chain building under Truffle) is slower
-			// than the server's no-op verify, so the server would print
-			// first while gc prints the client first. Brief yield so the
-			// client's prints land first (byte-identical differential).
-			// TODO: replace with proper synchronization or faster verify.
-			if !c.isClient {
-				time.Sleep(10 * time.Second)
-			}
+			// No delay here, by design (review-2026-11-01 F-02
+			// removed a 10 s server-side sleep that existed only to
+			// force the client's "handshake-ok" print to land first
+			// for a byte-identical differential). The two peers'
+			// Handshake calls return independently, so the order of
+			// their post-handshake prints is scheduling, not a
+			// crypto/tls semantic: no in-library delay may order
+			// peer output, and blocking Handshake on a post-handshake
+			// peer acknowledgement would change its contract (a peer
+			// that handshakes and then waits for the server's first
+			// message would deadlock). Programs that need
+			// deterministic print order must synchronize their own
+			// output; cf. test/corpus/wave3/crypto/tls/01_handshake.go,
+			// which delivers the server's line over a channel.
+			// Handshake returns as soon as the engine reports
+			// FINISHED and verification succeeds.
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)

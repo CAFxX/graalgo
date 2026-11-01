@@ -95,7 +95,20 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string) {
+// runServer serves one TLS connection. The server's handshake-ok line is
+// always sent over hsLine (the caller provides a buffered channel) and is
+// printed directly only when printLine is set, so the in-process ("both")
+// mode can print the peers' handshake lines in a fixed order: the two
+// Handshake calls return independently, so peer print order is scheduling,
+// not a crypto/tls semantic, and must not be forced with a delay inside
+// the library (review-2026-11-01 F-02 removed a 10 s server-side sleep
+// that did exactly that). The caller synchronizes its own output; the
+// library's Handshake returns as soon as the handshake completes.
+// Standalone ("server") mode passes a dummy buffered channel and
+// printLine=true. No nil channel is passed anywhere: a literal nil
+// argument leaves an "untyped nil" entry in the frontend type table that
+// the backend cannot map (found while verifying this change).
+func runServer(port string, ready chan<- string, hsLine chan<- string, printLine bool) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -112,7 +125,11 @@ func runServer(port string, ready chan<- string) {
 		panic("server handshake: " + err.Error())
 	}
 	cs := tlsConn.ConnectionState()
-	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
+	line := fmt.Sprint("server: handshake-ok version: ", cs.Version, " suite: ", cs.CipherSuite)
+	if printLine {
+		fmt.Println(line)
+	}
+	hsLine <- line
 	buf := make([]byte, 64)
 	n, err := tlsConn.Read(buf)
 	if err != nil {
@@ -125,7 +142,13 @@ func runServer(port string, ready chan<- string) {
 	fmt.Println("server: echo-ok")
 }
 
-func runClient(port string) {
+// runClient dials and echoes. When printServerLine is set, the server's
+// handshake line is received from serverLine and printed after the
+// client's handshake lines and before the first Write, so the in-process
+// mode can print the server's handshake line in a fixed spot (see
+// runServer); standalone ("client") mode passes a dummy channel and
+// false. No nil or function value is passed anywhere (see runServer).
+func runClient(port string, serverLine <-chan string, printServerLine bool) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -135,6 +158,9 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	if printServerLine {
+		fmt.Println(<-serverLine)
+	}
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -161,12 +187,14 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready)
+		dummy := make(chan string, 1)
+		go runServer(port, ready, dummy, true)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port)
+		dummy := make(chan string, 1)
+		runClient(port, dummy, false)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,8 +205,15 @@ func main() {
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(ephemPort, ready)
+		hsLine := make(chan string, 1)
+		go runServer(ephemPort, ready, hsLine, false)
 		<-ready
-		runClient(ephemPort)
+		// Fixed print order: client handshake lines, then the server's
+		// handshake line, then the causally ordered echo lines. The
+		// receive inside runClient blocks until the server's Handshake
+		// has completed and its line sent (Dial returns once the client
+		// has sent its Finished; the server completes on processing
+		// it), so no timing assumption is involved.
+		runClient(ephemPort, hsLine, true)
 	}
 }
