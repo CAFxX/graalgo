@@ -5,6 +5,7 @@ No-bridges check (2026-10-15, his direct order).
 Fails if the diff introduces new bridges:
 - New synth_*.go files
 - New package-name conditionals in frontend/backend
+- New package-path conditionals (obj.Pkg().Path() == "<stdlib>")
 - New panic stubs
 - New wire node kinds for stdlib functions
 - New synthetic function registrations
@@ -121,7 +122,12 @@ def check_no_bridges(diff):
     # 2. Package-name conditionals (stdlib names)
     stdlib_pkgs = ["fmt", "sync", "os", "net", "http", "runtime", "reflect", "time",
                    "strings", "bytes", "strconv", "sort", "math", "encoding", "crypto",
-                   "syscall", "unsafe", "io", "bufio", "context", "errors"]
+                   "syscall", "unsafe", "io", "bufio", "context", "errors",
+                   # Full stdlib paths, so the == "<pkg>" pattern below also
+                   # matches them (e.g. pkgPath == "sync/atomic"). The
+                   # Pkg().Path() form is covered separately by check 2b.
+                   "sync/atomic", "internal/runtime/atomic"]
+    pkg_name_flagged = set()
     for fname, line in added_lines:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
@@ -140,7 +146,44 @@ def check_no_bridges(diff):
                     # `if path == "bytes"` stubs.)
                     if "/test" not in fname and "test_" not in fname and "_test." not in fname:
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
+                        pkg_name_flagged.add((fname, line))
                         break
+
+    # 2b. Package-path conditionals (go/types form). Before this lane,
+    # no check-2 pattern matched the selector interceptions
+    # grandfathered by bridge-inventory B-3.1/B-3.2, which use the
+    # go/types form obj.Pkg().Path() == "sync/atomic" (and
+    # fn.Pkg().Path() == "internal/runtime/atomic",
+    # rn.Obj().Pkg().Path() == "runtime") — so those interceptions
+    # passed the gate while uninventoried (REVIEW-2026-11-01-21 P1-4).
+    # Check 2 now also matches the listed full-path literals; this
+    # check additionally covers ANY stdlib path literal in Pkg().Path()
+    # form (e.g. "internal/abi", "encoding/xml", future stdlib paths)
+    # that the list does not name, and reports each added line once
+    # (lines check 2 already flagged are skipped here). Any literal
+    # package-path equality is package-name-keyed by definition; only
+    # stdlib paths are flagged (a literal naming a user package is not
+    # a stdlib bridge). Variable-to-variable comparisons
+    # (pkgPath == wantPkg) are the general mechanism and are NOT
+    # flagged. This check, like check 2, only inspects ADDED lines, so
+    # the grandfathered lines inventoried in B-3 are not flagged —
+    # only future additions are.
+    def _is_stdlib_path(path):
+        if path in stdlib_pkgs:
+            return True
+        if path.startswith("internal/"):
+            return True
+        return any(path.startswith(p + "/") for p in stdlib_pkgs)
+
+    for fname, line in added_lines:
+        if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
+            continue
+        if (fname, line) in pkg_name_flagged:
+            continue
+        m = re.search(r'Pkg\(\)\.Path\(\)\s*==\s*"([^"]+)"', line)
+        if m and _is_stdlib_path(m.group(1)):
+            if "/test" not in fname and "test_" not in fname and "_test." not in fname:
+                errors.append(f"PACKAGE-PATH CONDITIONAL in {fname}: {line.strip()[:80]}")
 
     # 3. New panic stubs. The old regex only caught literal "not implemented"/
     #    "unsupported"/"todo" messages; fail-fast stubs also hide behind bare

@@ -84,7 +84,20 @@ deliverable until the design lands.
   - [export.go](../../internal/frontend/export.go): `"syncop"` and
     `"runtimecaller"` custom wire nodes for stdlib functions, and the
     `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228);
+  - [export.go](../../internal/frontend/export.go): the
+    package-qualified `sync/atomic` + `internal/runtime/atomic` selector
+    interceptions, the same interceptions in the function-value path, and
+    the statement-form `atomic.StorePointer` interception — see the B-3
+    addendum (2026-11-01, P1-4) below;
+  - [export.go](../../internal/frontend/export.go): the `runtime`
+    overlay guard block in `exportCall` (Goexit, the `gcinterop` marker
+    for `SetFinalizer`/`KeepAlive`/`GC`, and the remaining
+    `runtime*` wire nodes) — see the B-3 addendum below;
+  - [export.go](../../internal/frontend/export.go): the
+    `(*runtime.Func).Name` panic marker in `resolveMethodCall` — see the
+    B-3 addendum below (inventory only; the behavior fix belongs to the
+    P1-3 lane).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -97,6 +110,130 @@ deliverable until the design lands.
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
+### B-3 addendum (2026-11-01, REVIEW-2026-11-01-21 P1-4)
+
+The families below existed in code but had no B-3 entry, so by the
+gate's own rule ("grandfathered only while it has an entry here") they
+were ungrandfathered yet passing, because the gate's patterns never
+matched the `Pkg().Path() == "<stdlib>"` form. They are grandfathered
+by this addendum; the gate extension in
+[check_no_bridges.py](../../.github/scripts/check_no_bridges.py) (check
+2b) now matches that form, so any *new* addition of the same shape
+fails the gate. Nothing in this addendum changes behavior: the
+interceptions stay exactly as they are until their root-cause fix lands.
+
+#### B-3.1. `sync/atomic` + `internal/runtime/atomic` selector interceptions
+
+- **What:** in [export.go](../../internal/frontend/export.go):
+  `exportCall` intercepts package-qualified calls whose resolved
+  `*types.Func` satisfies `Pkg().Path() == "sync/atomic"` (~line 8494:
+  `LoadPointer` → deref read, `SwapPointer`/`CompareAndSwapPointer` →
+  `"atomicptrop"`, word/bool ops → `exportAtomicWordOp` →
+  `"atomicaddr"`+`"syncop"`; any other name fails fast with a named
+  scope error) and `Pkg().Path() == "internal/runtime/atomic"`
+  (~line 8525: word ops via the same `exportAtomicWordOp`, e.g.
+  `LoadAcquintptr`/`StoreReluintptr`); `exportFuncCall` repeats both
+  interceptions for the function-value path, where the call arrives as
+  a resolved `*types.Func` rather than a selector (~lines 9446–9470:
+  word ops plus the unqualified in-package `LoadPointer`/`SwapPointer`/
+  `CompareAndSwapPointer` forms, e.g. the `atomic.Pointer[T]` method
+  bodies); `exportAtomicStorePointerStmt` (~lines 9350–9378) intercepts
+  the statement-only `atomic.StorePointer` in both spellings (qualified
+  and unqualified in-package) and lowers it to a plain deref write.
+  Method calls on the typed wrappers (`slot.Store` on
+  `atomic.Pointer[T]`, etc.) are explicitly NOT intercepted here — they
+  fall through to the normal method-call path.
+- **Why:** the real `sync/atomic` and `internal/runtime/atomic` sources
+  now resolve from disk (the synthetic packages were retired), but
+  their package-level functions are `//go:noescape` bodyless functions
+  whose real implementations are assembly/linkname in gc — there is no
+  Go body for the general disk-importer path to compile, and the
+  `funcByObj` lookup the function-value path would otherwise use has
+  nothing to find. The interception is therefore the lowering itself,
+  not a shortcut around a compilable body. Much of it is legitimate
+  lowering for the atomic-cell representation (see B-2: atomicity is
+  load-bearing for the `sync/atomic.*` wrappers; `LoadPointer`/
+  `StorePointer` are documented scoped divergences — plain deref
+  accesses without gc's ordering guarantee). The defect this entry
+  fixes is that the lowering was uninventoried, not that it exists —
+  do not rip it out.
+- **Root-cause fix:** a general bodyless-function intrinsic mechanism
+  (needs design): a way for the backend to provide implementations for
+  `//go:noescape` functions that does not key on package path in the
+  frontend — e.g. intrinsic declarations carried by the package's own
+  import data, or a general assembly/linkname surface — so each of the
+  three interception sites above deletes in favor of the same path
+  every other bodyless function takes. Until then, extending the
+  `atomicWordOps` table is extending this entry, not a new bridge.
+- **Phase:** 3 (with B-2's cell machinery).
+
+#### B-3.2. `runtime` overlay guard block in `exportCall`
+
+- **What:** in [export.go](../../internal/frontend/export.go)
+  (~lines 8537–8741): `runtime.Goexit()` is intercepted on the
+  resolved object (`Pkg().Name() == "runtime"`, so a shadowed local
+  named `runtime` is not intercepted) and emitted as a `"call"` node
+  with the `goexit` marker; the enclosing guard block (identifier
+  spelling `runtime` plus the same resolved-object check) then
+  dispatches by symbol name: `SetFinalizer`/`KeepAlive`/`GC` → a
+  `"call"` node with the `"gcinterop"` marker naming the intrinsic
+  (the factory builds a `CallNode` delegating to
+  [GcInterop.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/GcInterop.java));
+  `NumCPU` → `"runtimenumcpu"`, `GOMAXPROCS` →
+  `"runtimegomaxprocs"`, `ReadMemStats` → `"runtimereadmemstats"`,
+  `GOROOT` → `"runtimegoroot"`, `Version` → `"runtimeversion"`,
+  `Stack` → `"runtimestack"`, `Callers` → `"runtimecallers"`,
+  `CallersFrames` → `"runtimecallersframes"`, `FuncForPC` →
+  `"runtimefuncforpc"`; `Caller` fails fast with a named scope error
+  because it is multi-result and only the N-target assignment desugar
+  (the `"runtimecaller"` node in
+  [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go)) may lower
+  it. Two members of this block are NOT re-inventoried here because
+  they are already adjudicated non-bridges below: `NumGoroutine`
+  (`"runtimenumgoroutine"`, PKG-023) and `Gosched`
+  (`"runtimegosched"`, PKG-040) — real implementations on scheduler
+  primitives, following the same additive-wire-node precedent.
+- **Why:** the `runtime` package the frontend sees is the synthetic
+  overlay (`syntheticRuntimePackage` in
+  [export.go](../../internal/frontend/export.go)): it declares the
+  surface with exact gc signatures but provides no bodies, so the
+  general call path has nothing to compile. Each member is a host or
+  scheduler primitive that cannot be a Go body: terminating the
+  goroutine (`Goexit`), JVM GC hooks (`SetFinalizer`/`KeepAlive`/`GC`),
+  host queries (`NumCPU`, `GOROOT`, `Version`, `ReadMemStats`), or
+  stack metadata that only the backend owns (`Callers` family — see
+  also B-7, which covers the backend `rtstack` intrinsics for the same
+  surface).
+- **Root-cause fix:** Phase 4 (frontend-v2 replaces the name-keyed
+  export machinery entirely): a general intrinsic registry in which a
+  runtime primitive is declared once (surface + backend node) instead
+  of dispatched by symbol name inside `exportCall`; the stack family
+  retires with B-7 when real call-site metadata threads through the
+  backend. New runtime primitives must follow the adjudicated
+  `NumGoroutine`/`Gosched` precedent (additive wire node + real backend
+  implementation) and get an adjudication entry, not a silent
+  `exportCall` case.
+- **Phase:** 4 (stack family with B-7).
+
+#### B-3.3. `(*runtime.Func).Name` panic marker (inventory only)
+
+- **What:** in [export.go](../../internal/frontend/export.go)
+  `resolveMethodCall` (~lines 4762–4765): a method call whose receiver
+  type is `Func` from package `runtime` and whose method name is
+  `Name` returns a marker `methodCall` whose `panicMsg` is
+  `"runtime.Func.Name not implemented (no PC-to-function table)"`;
+  `methodRefNode` emits a runtime panic for it. This is the same
+  finding as REVIEW-2026-11-01-21 P1-3, which owns the behavior fix.
+- **Why:** the type surface exists (synthetic, via `AddMethod`) but
+  the method is not in `methodIndex`, and there is no PC-to-function
+  table yet to implement it from. The marker is recorded here so the
+  gate's grandfather list covers it; this lane makes no behavior
+  change to it and does not duplicate the P1-3 lane's fix.
+- **Root-cause fix:** implement `runtime.Func.Name` from the existing
+  PC interning (the `runtimefuncforpc` wire-node precedent in B-3.2),
+  or document it as a known gap — as decided by the P1-3 lane.
+- **Phase:** 4 (with B-7's real stack metadata).
+
 - **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
   the *declared view* of the already-inventoried dedicated stubs
   (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
