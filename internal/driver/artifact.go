@@ -51,6 +51,18 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("no graalgo root")
 	}
 
+	// The launcher is compiled with cmd.Dir set to a temp dir below,
+	// so a relative OutputPath must be resolved against the caller's
+	// cwd first: otherwise `go build -o <rel> .` writes the binary
+	// into the temp dir while the chmod at the end resolves against
+	// the caller's cwd, and every default-name or relative -o build
+	// fails with "cannot chmod". Absolute paths are unaffected.
+	abs, err := filepath.Abs(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve output path %s: %v", a.OutputPath, err)
+	}
+	a.OutputPath = abs
+
 	// Compress the JSON. Frontend output can be large (100MB+ for big
 	// programs); JSON compresses well with gzip.
 	var compressed bytes.Buffer
@@ -188,7 +200,11 @@ func run() int {
 	if err != nil {
 		argv0 = os.Args[0]
 	}
-	args := []string{"--wire-input", tmpName, "--", argv0}
+	// The backend's flag parser accepts only the --flag=value form
+	// (P3SyncMain: `a.startsWith("--wire-input=")`); the space form
+	// is rejected as "unknown flag", which used to make every emitted
+	// artifact fail at run time.
+	args := []string{"--wire-input=" + tmpName, "--", argv0}
 	args = append(args, os.Args[1:]...)
 
 	cmd := exec.Command(runner, args...)

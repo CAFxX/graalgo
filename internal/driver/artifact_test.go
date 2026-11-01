@@ -60,6 +60,39 @@ func TestEmitProducesBinary(t *testing.T) {
 	}
 }
 
+// TestEmitRelativeOutputPath pins the fix for the relative-output
+// defect: Emit compiles the launcher with cmd.Dir set to a temp dir,
+// so a relative OutputPath used to resolve against the temp dir for
+// the build and against the caller's cwd for the chmod — every
+// default-name or relative -o build failed with "cannot chmod".
+// Existing tests only ever passed absolute paths, which is why the
+// defect survived. The artifact must land in the caller's cwd.
+func TestEmitRelativeOutputPath(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+	if err := Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    []byte(`{"frontend":"v1","functions":[]}`),
+	}); err != nil {
+		t.Fatalf("Emit with relative output: %v", err)
+	}
+	fi, err := os.Stat(filepath.Join(work, "prog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact is not executable (mode %v)", fi.Mode())
+	}
+}
+
 func TestEmitNoOutput(t *testing.T) {
 	err := Emit(Artifact{GraalgoRoot: "/x", WireJSON: []byte("{}")})
 	if err == nil || !strings.Contains(err.Error(), "output") {
@@ -138,9 +171,13 @@ func TestEmitBinaryRuns(t *testing.T) {
 	}
 	argsFile := filepath.Join(tmpDir, "args.txt")
 	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
+	// The launcher passes --wire-input=<path> (equals form: the only
+	// form the backend's flag parser accepts), so the fake backend
+	// strips the prefix from $1 instead of reading $2.
 	backendScript := "#!/usr/bin/env bash\n" +
 		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
-		"cp \"$2\" " + wireCopy + "\n" + // $2 is the --wire-input path
+		"wire=\"${1#--wire-input=}\"\n" +
+		"cp \"$wire\" " + wireCopy + "\n" +
 		"exit 0\n"
 	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
 	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
@@ -170,11 +207,11 @@ func TestEmitBinaryRuns(t *testing.T) {
 		t.Fatalf("backend was not invoked (no args file): %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-	if len(args) < 4 {
-		t.Fatalf("backend args = %v, want at least [--wire-input FILE -- argv0 ...]", args)
+	if len(args) < 5 {
+		t.Fatalf("backend args = %v, want at least [--wire-input=FILE -- argv0 ...]", args)
 	}
-	if args[0] != "--wire-input" {
-		t.Errorf("args[0] = %q, want --wire-input", args[0])
+	if !strings.HasPrefix(args[0], "--wire-input=") || len(args[0]) <= len("--wire-input=") {
+		t.Errorf("args[0] = %q, want --wire-input=<path>", args[0])
 	}
 	// The backend copied the wire file before the launcher cleaned up.
 	wireData, err := os.ReadFile(wireCopy)
@@ -183,15 +220,15 @@ func TestEmitBinaryRuns(t *testing.T) {
 	} else if string(wireData) != string(wireJSON) {
 		t.Errorf("wire-input content mismatch: got %q, want %q", wireData, wireJSON)
 	}
-	if args[2] != "--" {
-		t.Errorf("args[2] = %q, want --", args[2])
+	if args[1] != "--" {
+		t.Errorf("args[1] = %q, want --", args[1])
 	}
 	// argv[0] for the program should be the artifact's absolute path.
-	if !filepath.IsAbs(args[3]) {
-		t.Errorf("program argv[0] = %q, want absolute path", args[3])
+	if !filepath.IsAbs(args[2]) {
+		t.Errorf("program argv[0] = %q, want absolute path", args[2])
 	}
 	// User args forwarded.
-	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
+	if len(args) < 5 || args[3] != "hello" || args[4] != "world" {
 		t.Errorf("user args not forwarded: %v", args)
 	}
 }
