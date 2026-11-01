@@ -110,9 +110,29 @@ func syntheticStdImporter(t *testing.T) types.Importer {
 			// never observes it (every sync use is unexported).
 			return importer.Default().Import("sync")
 		}
+		if path == "iter" {
+			// Phase-1 strings SplitSeq (and any future iter.Seq
+			// surface) resolves iter from GOROOT source; the mirror
+			// builds iter.Seq[string] programmatically.
+			return gorootSourceImporter().Import(path)
+		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", path)
 	})
 	return imp
+}
+
+// gorootSourceImporter resolves a real GOROOT package from source for
+// drift oracles whose phase-1 synthetic sources import it (errors ->
+// internal/reflectlite, matching real Go's errors, which uses
+// internal/reflectlite, not reflect). The source importer follows
+// transitive imports from source too, so no per-dependency cases are
+// needed. The resolved package's types never appear in a mirror's
+// exported signatures (reflectlite appears only in unexported helpers
+// and function bodies), so the oracle stays strict on what matters.
+// (Same pattern as the sync oracle in sync_test.go, which source-imports
+// the real GOROOT sync package.)
+func gorootSourceImporter() types.Importer {
+	return importer.ForCompiler(token.NewFileSet(), "source", nil)
 }
 
 // assertScopeMatchesPhase1 is the core drift check: every name in the
@@ -164,9 +184,18 @@ func TestErrorsSyntheticSignatures(t *testing.T) {
 		t.Fatalf("package name/path = %s/%s, want errors/errors",
 			mirror.Name(), mirror.Path())
 	}
+	// The errors source imports internal/reflectlite (as real Go's
+	// errors does); resolve it from GOROOT source, reject anything else
+	// — the source is otherwise self-contained, and a new import must
+	// fail fast here rather than silently resolve.
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../synth_errors.go", "syntheticErrorsSource",
-		"errors", rejectImports{})
+		"errors", importerFunc(func(path string) (*types.Package, error) {
+			if path == "internal/reflectlite" {
+				return gorootSourceImporter().Import(path)
+			}
+			return nil, fmt.Errorf("unexpected synthetic import %q", path)
+		}))
 
 	// Full exported-scope drift check (names + rendered types).
 	assertScopeMatchesPhase1(t, "errors", mirror, phase1)

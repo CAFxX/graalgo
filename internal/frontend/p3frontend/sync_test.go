@@ -263,9 +263,26 @@ func TestSyncResolveImportSynthetic(t *testing.T) {
 }
 
 // TestSyncExportDir: a single-file program importing "sync" compiles
-// through ExportDir — loader (synthetic), importer (mirrored
-// signatures), flattener (import spec kept), and the frozen gofrontend
-// binary (syncnew/syncop nodes in the document).
+// through ExportDir — loader, importer (mirrored signatures),
+// flattener (import spec kept), and the frozen gofrontend binary.
+//
+// VERDICT (stale expectation, not a product bug): the old test asserted
+// the M2 synthetic-sync document shape (syncnew/syncop nodes,
+// `"synctyp": "Mutex"`). That contract is gone on master: commit
+// 88b24cac deleted the retired synthetic sync/sync-atomic frontend
+// machinery, and sync now resolves from disk as the real GOROOT package
+// whose methods compile as ordinary calls. Verified empirically on this
+// checkout: a gofrontend document for this exact program contains zero
+// syncnew nodes, and its syncop nodes are sync/atomic wire nodes
+// (synctyp "atomic.*", ops Load/Store) from real sync's own use of
+// sync/atomic — not Mutex ops. This test therefore pins the real-sync
+// contract: ExportDir succeeds, the document names the real sync
+// primitives and their methods, it contains no syncnew node, and the
+// merged source keeps the import spec. The strong pin is ExportDir
+// success itself — the p3frontend mirror, the flattener, and the
+// real-sync exporter agreeing — plus the runtime differential tests
+// (TestTwoPackageDifferential, TestEmbeddedFieldRebinding), which run
+// merged programs under graalgo-sync-run.
 func TestSyncExportDir(t *testing.T) {
 	dir := t.TempDir()
 	src := `package main
@@ -295,11 +312,18 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportDir with import \"sync\": %v", err)
 	}
+	// No syncnew node: synthetic sync was retired (88b24cac); Mutex,
+	// WaitGroup and Once must compile as ordinary calls, not wire nodes.
+	if strings.Contains(doc, `"kind": "syncnew"`) {
+		t.Error("ExportDir doc still contains syncnew nodes: synthetic sync was retired, Mutex/WaitGroup/Once must compile as ordinary calls")
+	}
+	// Named types render with their package path in the document
+	// ("sync.Mutex", not bare "Mutex"); method names are ordinary
+	// call/methodref names, not syncop ops.
 	for _, want := range []string{
-		`"kind": "syncnew"`, `"kind": "syncop"`,
-		`"op": "Lock"`, `"op": "Unlock"`,
-		`"op": "Add"`, `"op": "Done"`, `"op": "Wait"`, `"op": "Do"`,
-		`"synctyp": "Mutex"`, `"synctyp": "WaitGroup"`, `"synctyp": "Once"`,
+		`"name": "sync.Mutex"`, `"name": "sync.WaitGroup"`, `"name": "sync.Once"`,
+		`"name": "Lock"`, `"name": "Unlock"`,
+		`"name": "Add"`, `"name": "Done"`, `"name": "Wait"`, `"name": "Do"`,
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("ExportDir doc missing %s", want)
@@ -315,16 +339,28 @@ func main() {
 	}
 }
 
-// TestSyncScopeErrorParity: out-of-scope sync surface fails through the
-// full ExportDir path with the same named M2 scope errors the frozen
-// exporter produces (the mirrored signatures must agree).
+// TestSyncScopeErrorParity: the former M2 scope-error surface, re-pinned
+// to the real-sync contract.
+//
+// VERDICT (stale expectation, not a product bug): the old test asserted
+// that TryLock, RLocker, and a struct field of type sync.Once fail
+// ExportDir with "not in M2 scope" — the M2 synthetic-sync scope
+// contract. That contract is gone with the synthetic-sync retirement
+// (88b24cac, on master): sync is a real GOROOT package now, so all
+// three are ordinary, compilable Go (TryLock since Go 1.18, RLocker,
+// Once as a field). Asserting the old scope errors would pin a dead
+// contract. The test name is kept so the parity pin remains findable;
+// its contract is now: each former scope-error case compiles through
+// the full ExportDir path, and the test keeps a negative pin so it can
+// still fail — a genuinely undefined sync method must still fail
+// ExportDir with a type error.
 func TestSyncScopeErrorParity(t *testing.T) {
-	cases := map[string]string{
-		"m.TryLock()":                    "not in M2 scope",
-		"rw.RLocker()":                   "not in M2 scope",
-		"type T struct { mu sync.Once }": "not in M2 scope",
+	cases := []string{
+		"m.TryLock()",
+		"rw.RLocker()",
+		"type T struct { mu sync.Once }",
 	}
-	for body, want := range cases {
+	for _, body := range cases {
 		dir := t.TempDir()
 		var src string
 		if strings.HasPrefix(body, "type ") {
@@ -339,14 +375,26 @@ func TestSyncScopeErrorParity(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "main.go"), formatted, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err = ExportDir(dir)
-		if err == nil {
-			t.Errorf("%s: expected scope error, got success", body)
-			continue
+		if _, err := ExportDir(dir); err != nil {
+			t.Errorf("%s: expected success under real sync, got error: %v", body, err)
 		}
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: error %q does not contain %q", body, err, want)
-		}
+	}
+
+	// Negative pin: an undefined sync method is still a type error,
+	// not a silent success.
+	dir := t.TempDir()
+	src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tm.NoSuchMethod()\n}\n"
+	formatted, err := format.Source([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), formatted, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportDir(dir); err == nil {
+		t.Error("m.NoSuchMethod(): expected a type error, got success")
+	} else {
+		t.Logf("undefined sync method correctly rejected: %v", err)
 	}
 }
 

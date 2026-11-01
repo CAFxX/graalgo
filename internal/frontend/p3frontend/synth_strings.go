@@ -14,8 +14,9 @@ package p3frontend
 // Deliberate omissions (inexpressible in the synthetic source; documented
 // in the phase-1 header): ToUpperSpecial/ToLowerSpecial/ToTitleSpecial
 // (need unicode.SpecialCase), Replacer.WriteString and Reader.WriteTo
-// (need io.Writer), Lines/SplitSeq/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
-// (need iter.Seq). Title is present with exact gc signature and a
+// (need io.Writer), Lines/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
+// (need iter.Seq). SplitSeq landed in the phase-1 source and is mirrored
+// above. Title is present with exact gc signature and a
 // fail-fast body (deprecated; needs unicode tables).
 
 import (
@@ -185,6 +186,34 @@ func syntheticStringsPackage() *types.Package {
 	insertFunc("SplitAfterN",
 		[]*types.Var{newParam("s", stringT), newParam("sep", stringT), newParam("n", intT)},
 		[]*types.Var{newParam("", strSlice)}, false)
+
+	// SplitSeq(s, sep string) iter.Seq[string] — landed in the
+	// phase-1 source (real-nethttp: real net/http ranges over it).
+	// iter.Seq[V any] is built programmatically (no iter mirror
+	// exists in p3frontend): its instantiation renders as
+	// "iter.Seq[string]", matching the phase-1 signature. The other
+	// Seq functions (Lines, SplitAfterSeq, FieldsSeq, FieldsFuncSeq)
+	// are still omitted from both sides.
+	iterPkg := types.NewPackage("iter", "iter")
+	vName := types.NewTypeName(token.NoPos, iterPkg, "V", nil)
+	vParam := types.NewTypeParam(vName, types.Universe.Lookup("any").Type())
+	yieldSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(newParam("v", vParam)),
+		types.NewTuple(newParam("", boolT)), false)
+	seqSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(newParam("yield", yieldSig)), nil, false)
+	seqName := types.NewTypeName(token.NoPos, iterPkg, "Seq", nil)
+	seqNamed := types.NewNamed(seqName, seqSig, nil)
+	seqNamed.SetTypeParams([]*types.TypeParam{vParam})
+	iterPkg.Scope().Insert(seqName)
+	iterPkg.MarkComplete()
+	seqString, err := types.Instantiate(nil, seqNamed, []types.Type{stringT}, true)
+	if err != nil {
+		panic(err)
+	}
+	insertFunc("SplitSeq",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("", seqString)}, false)
 
 	// Case mapping.
 	for _, name := range []string{"ToUpper", "ToLower", "ToTitle", "Title", "TrimSpace", "Clone"} {

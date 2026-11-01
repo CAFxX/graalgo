@@ -5666,8 +5666,22 @@ func (e *exporter) enumerateInstantiations(files []*ast.File, funcs []*funcDeclI
 			return nil, err
 		}
 	}
-	// Deterministic emission order (TestDeterministic).
-	sort.Slice(order, func(i, j int) bool { return order[i].name < order[j].name })
+	// Deterministic emission order (TestDeterministic,
+	// TestSyntheticBootstrapRetained). Sorting by name alone is NOT
+	// deterministic: sort.Slice is unstable, and same-named
+	// instantiations (e.g. same method name on different concrete
+	// types) keep whatever order the fixpoint discovery produced —
+	// which follows map iteration and varies run to run — so their
+	// emitted inst/sig ids flip between gofrontend invocations and
+	// the two docs diverge. The dedup key is documented deterministic
+	// and unique per instantiation, so (name, key) is a total order
+	// independent of discovery order.
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].name != order[j].name {
+			return order[i].name < order[j].name
+		}
+		return order[i].key < order[j].key
+	})
 	return order, nil
 }
 

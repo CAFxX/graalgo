@@ -48,6 +48,17 @@ func syntheticStrconvPackage() *types.Package {
 	numError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(numError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
 	numError.AddMethod(types.NewFunc(token.NoPos, pkg, "Unwrap", types.NewSignatureType(newParam("", types.NewPointer(numError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", errorT)), false)))
 
+	// strconvError is the phase-1 source's unexported string-based
+	// error type (synth_strconv.go: `type strconvError string` with
+	// `Error() string`). ErrRange/ErrSyntax are vars of this type, not
+	// of error — the drift test renders their types, so the mirror
+	// must declare the type too (unexported names are skipped by the
+	// scope comparison itself, but the var types are compared).
+	strconvErrorName := types.NewTypeName(token.NoPos, pkg, "strconvError", nil)
+	strconvError := types.NewNamed(strconvErrorName, stringT, nil)
+	pkg.Scope().Insert(strconvErrorName)
+	strconvError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", strconvError), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
+
 	// ---- Functions, vars, consts ----
 	// AppendBool func(dst []byte, b bool) []byte
 	insertFunc("AppendBool", []*types.Var{newParam("dst", types.NewSlice(byteT)), newParam("b", boolT)}, []*types.Var{newParam("", types.NewSlice(byteT))}, false)
@@ -74,9 +85,9 @@ func syntheticStrconvPackage() *types.Package {
 	// CanBackquote func(s string) bool
 	insertFunc("CanBackquote", []*types.Var{newParam("s", stringT)}, []*types.Var{newParam("", boolT)}, false)
 	// ErrRange
-	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "ErrRange", errorT))
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "ErrRange", strconvError))
 	// ErrSyntax
-	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "ErrSyntax", errorT))
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "ErrSyntax", strconvError))
 	// FormatBool func(b bool) string
 	insertFunc("FormatBool", []*types.Var{newParam("b", boolT)}, []*types.Var{newParam("", stringT)}, false)
 	// FormatComplex func(c complex128, fmt byte, prec int, bitSize int) string

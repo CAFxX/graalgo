@@ -13,14 +13,20 @@ import (
 	"time"
 )
 
-// repoRoot returns the graalgo repo root (four levels above this file's dir).
+// repoRoot returns the graalgo repo root. This file lives at
+// <repo>/internal/frontend/p3frontend/, so three levels up:
+// p3frontend -> frontend -> internal -> repo root. (The old code went
+// four levels up, landing on the worktree's parent directory, so the
+// old phases/phase2 runner path could never resolve from this file's
+// location; the graalgoRun fail-fast check below now catches a wrong
+// root loudly instead of failing deep inside the launcher.)
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..")
+	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
 
 type cmdResult struct {
@@ -85,13 +91,37 @@ func goTool(t *testing.T) string {
 	return p
 }
 
-// graalgoRun executes the merged single-file program with the Phase-2
-// launcher (make -s run ARGS="--gmp=1 <file>"); -s keeps make's own echo
-// out of stdout so it stays byte-comparable with gc's.
+// graalgoRun executes the merged single-file program with the product
+// launcher internal/backend/graalgo-sync-run (P3SyncMain). This is the
+// successor of the deleted phases/phase2 `make run` entry point, and
+// the only current launcher with the same `--gmp=N file.go` contract:
+// --gmp is a P3SyncMain flag (internal/backend/interop/.../P3SyncMain.java),
+// while the phase-1 graalgo-run (graalgo.launcher.Main) rejects it
+// ("graalgo-run: unknown flag: --gmp=1", exit 1, verified on this
+// checkout). The task brief's "graalgo-run" wording is therefore
+// implemented as its contract successor, graalgo-sync-run — the product
+// launcher also used by snapshot-check — since the old runner contract
+// the tests pin includes --gmp=1. (On the same checkout a plain fmt
+// program does run under graalgo-run, so the choice rests on the --gmp
+// contract and the product-launcher status, not on a claimed fmt gap;
+// a graalgo-run run of the twopkg fixture itself produced no output
+// and exit 137 under extreme box load, which is recorded as
+// inconclusive, not as a capability verdict.)
+// Precondition, reported fail-fast rather than as a cryptic JVM error:
+// the backend must be built (make build) and the gofrontend binary must
+// exist (make generate); the Makefile test-p3frontend target depends on
+// both, so a plain `go test` without them fails here with the fix, not
+// deep inside the launcher.
 func graalgoRun(t *testing.T, mergedPath string) cmdResult {
 	t.Helper()
-	phase2 := filepath.Join(repoRoot(t), "phases", "phase2")
-	return runCommand(t, phase2, "make", "-s", "run", "ARGS=--gmp=1 "+mergedPath)
+	launcher := filepath.Join(repoRoot(t), "internal", "backend", "graalgo-sync-run")
+	if fi, err := os.Stat(launcher); err != nil || fi.IsDir() || fi.Mode()&0111 == 0 {
+		t.Fatalf("graalgo-sync-run launcher not executable at %s (repo moved?)", launcher)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot(t), "internal", "backend", "interop", "out", "classes", "graalgo", "p3sync", "launcher", "P3SyncMain.class")); err != nil {
+		t.Fatalf("backend not built: run `make build` at the repo root before the differential tests (missing P3SyncMain.class)")
+	}
+	return runCommand(t, repoRoot(t), launcher, "--gmp=1", mergedPath)
 }
 
 // normalizeDoc unmarshals a frontend/v1 document and normalizes the
@@ -156,8 +186,8 @@ func main() {
 // file that must be excluded; main also carries a colliding T and a
 // shadowing Counter to pin the P0-1 and quiet-divergence fixes) runs
 // byte-identically under stock gc (a built binary run directly — `go run`
-// masks the program's exit code) and under graalgo-run (on the merged
-// file): same stdout bytes, same exit code. The panic variant must produce
+// masks the program's exit code) and under graalgo-sync-run (on the merged
+// file, via graalgoRun): same stdout bytes, same exit code. The panic variant must produce
 // the identical panic line and exit code 2 on both. Panic stacks differ by
 // design (the graalgo runtime prints JVM Unsafe warnings on stderr), so the
 // comparison is the first `panic:` line by design, not the full stderr.

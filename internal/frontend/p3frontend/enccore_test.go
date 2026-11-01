@@ -149,6 +149,12 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 			// never observes it (every sync use is unexported).
 			return importer.Default().Import("sync")
 		}
+		if p == "internal/reflectlite" {
+			// The errors source (imported above) uses
+			// internal/reflectlite, as real Go's errors does; resolve
+			// it from GOROOT source (see gorootSourceImporter).
+			return gorootSourceImporter().Import(p)
+		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", p)
 	})
 	return phase1SyntheticPackageForTest(t,

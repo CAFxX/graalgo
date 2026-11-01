@@ -106,7 +106,7 @@ GO ?= $(HOME)/tools/go/bin/go
 
 .PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-ci test-regression
+all: generate build snapshot-check check test-v2 test-ci test-regression test-p3frontend
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -166,20 +166,24 @@ test-regression: generate build graalgo
 # internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
 # and `go test` in the p3frontend module. Needs the gofrontend binary
 # (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
-# the <repo>/internal/frontend/gofrontend fallback (export.go).
+# the <repo>/internal/frontend/gofrontend fallback (export.go). The
+# differential tests (TestTwoPackageDifferential,
+# TestEmbeddedFieldRebinding) also need the backend built (`build`):
+# graalgoRun() invokes internal/backend/graalgo-sync-run (P3SyncMain),
+# the successor of the removed phases/phase2 `make run` entry point
+# with the same --gmp=N contract.
 #
-# NOT in `all` yet: 4 pre-existing failures need owner fixes first
-# (all fail on master too, never ran in CI):
-#   TestSyncExportDir, TestSyncScopeErrorParity — real-sync exporter
-#     semantics (sync lowering / M2 scope errors); route to the sync
-#     owner or review-d2-vettest (sync test infra).
-#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner points at the removed phases/phase2 tree;
-#     rewire graalgoRun() to internal/backend/graalgo-run; route to
-#     review-t2-testinfra (test infra) or the backend owner.
-# Add test-p3frontend to `all` once those are green.
-test-p3frontend: generate
-	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
+# In `all` (hence per-push CI) since rem-review-20261031-p1-3: the four
+# formerly red tests are fixed there — the two sync tests re-scoped from
+# the retired M2 synthetic-sync contract to real sync (88b24cac), the
+# two differential tests rewired from the deleted phases/phase2 tree to
+# graalgo-sync-run. /tmp is a 512M shared tmpfs: keep go build/test
+# temps on persistent disk (p3frontend/.tmp is gitignored).
+P3FRONTEND_TMP := $(CURDIR)/internal/frontend/p3frontend/.tmp
+test-p3frontend: generate build
+	mkdir -p $(P3FRONTEND_TMP) && \
+	cd internal/frontend/p3frontend && TMPDIR="$(P3FRONTEND_TMP)" GOTMPDIR="$(P3FRONTEND_TMP)" $(GO) vet ./... && \
+	TMPDIR="$(P3FRONTEND_TMP)" GOTMPDIR="$(P3FRONTEND_TMP)" $(GO) test ./...
 
 # Frontend v2 module tests: the [internal/frontend/v2](internal/frontend/v2)
 # module (own go.mod) — parser, checker, emitter, and the Go→Java binary
