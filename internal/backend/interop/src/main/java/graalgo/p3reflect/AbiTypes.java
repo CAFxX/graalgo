@@ -218,7 +218,10 @@ public final class AbiTypes {
     }
 
     /** The type token of a canonical abi shell; 0 when not minted here. */
-    public static long tokForShell(GoStruct shell) {
+    public static synchronized long tokForShell(GoStruct shell) {
+        // Synchronized (rev23 P1-1) to pair with synchronized
+        // abiPointerForTok, which mutates SHELL_TOKS (put + table-change
+        // clear): an unsynchronized read could observe the map mid-mutation.
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
     }
@@ -968,8 +971,11 @@ public final class AbiTypes {
                 || !(tp.referent() instanceof GoStruct shell)) {
             return null;
         }
-        Long tok = SHELL_TOKS.get(shell);
-        if (tok == null) {
+        // Via synchronized tokForShell (rev23 P1-1), never a direct
+        // SHELL_TOKS read: this method is unsynchronized and the map is
+        // mutated by synchronized abiPointerForTok.
+        long tok = tokForShell(shell);
+        if (tok == 0) {
             return null;
         }
         ReflectTypes.TypeInfo info;

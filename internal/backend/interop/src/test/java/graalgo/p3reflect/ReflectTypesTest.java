@@ -3,7 +3,14 @@ package graalgo.p3reflect;
 import graalgo.frontend.FrontendException;
 import graalgo.values.GoKind;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Regression tests for reviewer-2 P1-4 (an "invalid type" wire entry must
@@ -353,5 +360,104 @@ public void testInvalidTypeWireEntryFailsLoud() {
             }
         }
         assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
+    }
+
+    /**
+     * rev23 P1-1 (reflect-race): concurrent dynamic-type synthesis must
+     * canonicalize. gc's reflect constructors are concurrent-safe, and
+     * guest goroutines genuinely run in parallel, so N threads calling
+     * ptrTo / structOf on the same not-yet-synthesized type must all
+     * observe ONE token — never two tokens for one type, never a torn
+     * table entry. Each round mints a fresh key (a fresh array length
+     * for ptrTo, a fresh field name for structOf) and releases all
+     * threads from one barrier, so every round re-opens the
+     * check-then-act window (get → size → put → add) that the
+     * unsynchronized synthesis methods leave open. Any duplicate token,
+     * any worker exception (torn ArrayList/HashMap, unknown token), or
+     * any table entry whose tok disagrees with its index fails this
+     * test. This test is the repro: it FAILS on unsynchronized synthesis
+     * and PASSES once synthesis is serialized on one lock per table.
+     */
+    public void testConcurrentDynamicSynthesisCanonicalizes() throws Exception {
+        String doc = "{\"types\": [{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"int\", \"class\": \"int\", \"untyped\": false}}]}";
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        ReflectTypes.TypeInfo intInfo = findByKind(table, GoKind.INT64);
+        assertTrue(intInfo != null, "no INT64 TypeInfo built");
+        final long intTok = intInfo.tok;
+
+        final int threads = 32;
+        final int rounds = 1000;
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        ExecutorService exec = Executors.newFixedThreadPool(threads);
+        try {
+            for (int r = 0; r < rounds; r++) {
+                // Fresh key per round, minted single-threaded so the
+                // barrier below races on exactly one fresh synthesis.
+                final long arrTok = ReflectTypes.arrayOf(intTok, r + 1);
+                // Family 1: ptrTo on the fresh array type.
+                assertSingleToken(exec, threads, errors,
+                        () -> ReflectTypes.ptrTo(arrTok),
+                        "ptrTo round " + r);
+                // Family 2: structOf with a fresh field name.
+                final String field = "F" + r;
+                assertSingleToken(exec, threads, errors,
+                        () -> ReflectTypes.structOf(
+                                new String[]{field}, new long[]{intTok},
+                                new String[]{""}, new String[]{""},
+                                new boolean[]{false}),
+                        "structOf round " + r);
+                if (!errors.isEmpty()) {
+                    break;
+                }
+            }
+        } finally {
+            exec.shutdownNow();
+        }
+        assertTrue(errors.isEmpty(),
+                "concurrent synthesis failed: " + errors.peek());
+        // Table consistency: every slot holds the entry for its own index.
+        for (int i = 1; i < table.byTok.size(); i++) {
+            ReflectTypes.TypeInfo ti = table.byTok.get(i);
+            assertTrue(ti != null, "byTok[" + i + "] is null (lost add?)");
+            assertTrue(ti.tok == i,
+                    "byTok[" + i + "] holds tok " + ti.tok + " (duplicate/overwritten token?)");
+        }
+    }
+
+    /** Runs {@code synth} from all threads behind one barrier; all results must be one token. */
+    private static void assertSingleToken(ExecutorService exec, int threads,
+            ConcurrentLinkedQueue<Throwable> errors, java.util.concurrent.Callable<Long> synth,
+            String what) throws Exception {
+        CyclicBarrier barrier = new CyclicBarrier(threads);
+        long[] results = new long[threads];
+        List<Future<?>> futures = new ArrayList<>(threads);
+        for (int t = 0; t < threads; t++) {
+            final int slot = t;
+            futures.add(exec.submit(() -> {
+                try {
+                    barrier.await();
+                    results[slot] = synth.call();
+                } catch (Throwable e) {
+                    errors.add(e);
+                }
+                return null;
+            }));
+        }
+        for (Future<?> f : futures) {
+            f.get();
+        }
+        if (!errors.isEmpty()) {
+            return;
+        }
+        long first = results[0];
+        for (int t = 1; t < threads; t++) {
+            if (results[t] != first) {
+                errors.add(new AssertionError(what + ": duplicate tokens for one type: "
+                        + first + " vs " + results[t]));
+                return;
+            }
+        }
     }
 }

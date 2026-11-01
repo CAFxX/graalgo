@@ -173,6 +173,28 @@ public final class ReflectTypes {
     public static final class Table {
         final List<TypeInfo> byTok = new ArrayList<>();
         final Map<String, Long> keyToTok = new HashMap<>();
+        /**
+         * Serializes all dynamic synthesis on this table (rev23 P1-1).
+         * Every check-then-act that mints a token — the {@code *Of}
+         * family, {@code dynamicTokForName}, the {@code promoteMethods}
+         * wrapper minting, and the ReflectOpNode/ReflectLinknames
+         * synthesis paths — holds this lock from the {@code keyToTok}
+         * lookup through the {@code byTok} add, so two threads can
+         * never mint two tokens for one type or shift the table with
+         * a duplicate token number. Canonicalization lookups
+         * ({@code existingPtrTo}, {@code infoForName}) hold it too,
+         * so a lookup can never observe a half-minted entry.
+         * Publication rule: a token reaches {@code keyToTok} only
+         * AFTER its {@code byTok} entry exists (add-before-put), and
+         * only under this lock or via the minting call's return after
+         * release — so {@code info(tok)} for a published token always
+         * finds its entry. Install-time building is single-threaded
+         * (the launcher installs before guest code runs) and does not
+         * take this lock. Lock order: {@code METHOD_SET_CACHE} (outer)
+         * before {@code synthLock} (inner) in {@code methodSetFor};
+         * no path takes them in the opposite order.
+         */
+        final Object synthLock = new Object();
         private final Map<GoKind, Long> basicKindToTok = new HashMap<>();
         /** Wire type id → canonical token (for descriptor lookup). */
         private final Map<Integer, Long> wireIdToTok = new HashMap<>();
@@ -247,10 +269,12 @@ public final class ReflectTypes {
     /** The TypeInfo for a qualified type name, or null. */
     public static TypeInfo infoForName(String qname) {
         Table t = table();
-        for (int i = 1; i < t.byTok.size(); i++) {
-            TypeInfo info = t.byTok.get(i);
-            if (info != null && qname.equals(info.name)) {
-                return info;
+        synchronized (t.synthLock) {
+            for (int i = 1; i < t.byTok.size(); i++) {
+                TypeInfo info = t.byTok.get(i);
+                if (info != null && qname.equals(info.name)) {
+                    return info;
+                }
             }
         }
         return null;
@@ -1730,12 +1754,20 @@ public final class ReflectTypes {
     public static long existingPtrTo(long tok) {
         Table table = table();
         TypeInfo t = table.info(tok);
-        Long existing = table.keyToTok.get("ptr:" + structuralKey(t));
-        return existing == null ? 0 : existing;
+        synchronized (table.synthLock) {
+            Long existing = table.keyToTok.get("ptr:" + structuralKey(t));
+            return existing == null ? 0 : existing;
+        }
     }
 
     public static long ptrTo(long tok) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return ptrToLocked(table, tok);
+        }
+    }
+
+    private static long ptrToLocked(Table table, long tok) {
         TypeInfo t = table.info(tok);
         String key = "ptr:" + structuralKey(t);
         Long existing = table.keyToTok.get(key);
@@ -1749,18 +1781,27 @@ public final class ReflectTypes {
         // its own token and this synthesized one is method-less.
         // (In practice the wire always carries *T for named T, so this
         // path serves genuinely new pointers.)
+        // Add-before-put (rev23 P1-1): the entry must exist before the
+        // key names its token, or a concurrent lookup could resolve a
+        // token with no entry behind it.
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         TypeInfo info = new TypeInfo(newTok, GoKind.POINTER, "", "", 8, 8,
                 t, null, 0, null, List.of(), List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         return newTok;
     }
 
     /** arrayOf: token for [n]T (synthesized; no methods). */
     public static long arrayOf(long elemTok, int n) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return arrayOfLocked(table, elemTok, n);
+        }
+    }
+
+    private static long arrayOfLocked(Table table, long elemTok, int n) {
         TypeInfo elem = table.info(elemTok);
         String key = "array:" + n + ":" + structuralKey(elem);
         Long existing = table.keyToTok.get(key);
@@ -1768,18 +1809,24 @@ public final class ReflectTypes {
             return existing;
         }
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         long size = elem.size * n;
         TypeInfo info = new TypeInfo(newTok, GoKind.ARRAY, "", "", size, elem.align,
                 elem, null, n, null, List.of(), List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         return newTok;
     }
 
     /** sliceOf: token for []T (synthesized; no methods). */
     public static long sliceOf(long elemTok) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return sliceOfLocked(table, elemTok);
+        }
+    }
+
+    private static long sliceOfLocked(Table table, long elemTok) {
         TypeInfo elem = table.info(elemTok);
         String key = "slice:" + structuralKey(elem);
         Long existing = table.keyToTok.get(key);
@@ -1787,18 +1834,24 @@ public final class ReflectTypes {
             return existing;
         }
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         // Slice header: ptr, len, cap (3 words)
         TypeInfo info = new TypeInfo(newTok, GoKind.SLICE, "", "", 24, 8,
                 elem, null, 0, null, List.of(), List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         return newTok;
     }
 
     /** mapOf: token for map[K]V (synthesized; no methods). */
     public static long mapOf(long keyTok, long elemTok) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return mapOfLocked(table, keyTok, elemTok);
+        }
+    }
+
+    private static long mapOfLocked(Table table, long keyTok, long elemTok) {
         TypeInfo key = table.info(keyTok);
         TypeInfo elem = table.info(elemTok);
         String keyStr = "map:" + structuralKey(key) + ":" + structuralKey(elem);
@@ -1807,18 +1860,24 @@ public final class ReflectTypes {
             return existing;
         }
         long newTok = table.byTok.size();
-        table.keyToTok.put(keyStr, newTok);
         // Map is a pointer-sized header in the value model
         TypeInfo info = new TypeInfo(newTok, GoKind.MAP, "", "", 8, 8,
                 elem, key, 0, null, List.of(), List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(keyStr, newTok);
         return newTok;
     }
 
     /** chanOf: token for chan T with direction (synthesized; no methods). */
     public static long chanOf(long elemTok, int dirOrdinal) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return chanOfLocked(table, elemTok, dirOrdinal);
+        }
+    }
+
+    private static long chanOfLocked(Table table, long elemTok, int dirOrdinal) {
         TypeInfo elem = table.info(elemTok);
         ChanDir dir = ChanDir.values()[dirOrdinal];
         String key = "chan:" + dir + ":" + structuralKey(elem);
@@ -1827,11 +1886,11 @@ public final class ReflectTypes {
             return existing;
         }
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         TypeInfo info = new TypeInfo(newTok, GoKind.CHAN, "", "", 8, 8,
                 elem, null, 0, dir, List.of(), List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         return newTok;
     }
 
@@ -1860,6 +1919,12 @@ public final class ReflectTypes {
      */
     public static long dynamicTokForName(String qname, GoKind kind) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return dynamicTokForNameLocked(table, qname, kind);
+        }
+    }
+
+    private static long dynamicTokForNameLocked(Table table, String qname, GoKind kind) {
         TypeInfo existing = infoForName(qname);
         if (existing != null) {
             if (existing.kind != kind) {
@@ -1906,17 +1971,23 @@ public final class ReflectTypes {
         int dot = qname.lastIndexOf('.');
         String pkgPath = dot >= 0 ? qname.substring(0, dot) : "";
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         TypeInfo info = new TypeInfo(newTok, kind, qname, pkgPath, basicSize(kind), basicAlign(kind),
                 null, null, 0, null, List.of(), List.of(),
                 List.of(), List.of(), false, List.of(), basicName, -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         return newTok;
     }
 
     /** funcOf: token for func(in...) out (synthesized; no methods). */
     public static long funcOf(long[] inToks, long[] outToks, boolean variadic) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return funcOfLocked(table, inToks, outToks, variadic);
+        }
+    }
+
+    private static long funcOfLocked(Table table, long[] inToks, long[] outToks, boolean variadic) {
         StringBuilder keySb = new StringBuilder("func:");
         List<TypeInfo> ins = new ArrayList<>();
         for (long tok : inToks) {
@@ -1940,11 +2011,11 @@ public final class ReflectTypes {
             return existing;
         }
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         TypeInfo info = new TypeInfo(newTok, GoKind.FUNC, "", "", 8, 8,
                 null, null, 0, null, List.of(), List.of(),
                 ins, outs, variadic, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         return newTok;
     }
 
@@ -1960,6 +2031,13 @@ public final class ReflectTypes {
     public static long structOf(String[] names, long[] toks, String[] tags,
             String[] pkgPaths, boolean[] anon) {
         Table table = table();
+        synchronized (table.synthLock) {
+            return structOfLocked(table, names, toks, tags, pkgPaths, anon);
+        }
+    }
+
+    private static long structOfLocked(Table table, String[] names, long[] toks, String[] tags,
+            String[] pkgPaths, boolean[] anon) {
         StringBuilder keySb = new StringBuilder("struct{");
         List<FieldInfo> fields = new ArrayList<>(names.length);
         long offset = 0;
@@ -1989,7 +2067,6 @@ public final class ReflectTypes {
         }
         long size = alignUp(offset, maxAlign);
         long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
         List<FieldInfo> fieldInfos = List.copyOf(fields);
         // Reserve the struct's index BEFORE promoteMethods appends wrapper
         // func types: newTok must address the struct, not a wrapper.
@@ -1997,6 +2074,7 @@ public final class ReflectTypes {
                 null, null, 0, null, fieldInfos, List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, newTok);
         // Promoted methods from anonymous (embedded) fields, gc rules:
         // shallower embedding depth wins; same-depth duplicates are
         // ambiguous and dropped; only exported method names promote.
@@ -2016,7 +2094,11 @@ public final class ReflectTypes {
 
     /**
      * Computes the promoted method set for a synthesized struct type,
-     * mirroring gc's StructOf promotion (reflect/type.go) exactly:
+     * mirroring gc's StructOf promotion (reflect/type.go) exactly.
+     * Callers must hold {@code table.synthLock}: {@code promoteOne}
+     * mints wrapper func tokens into {@code table.byTok} (rev23 P1-1).
+     * {@code structOfLocked} holds it for its whole body;
+     * {@code methodSetFor} takes it around this call.
      * single-level, in field order; the Go side (StructOf validation)
      * already enforced the Issue-15924 position/count panics, so any
      * embedded field with methods here is necessarily the first and
@@ -2162,7 +2244,15 @@ public final class ReflectTypes {
             if (cached != null) {
                 return cached;
             }
-            List<MethodInfo> promoted = new ArrayList<>(promoteMethods(table(), t, t.fields));
+            // promoteMethods mints wrapper func tokens (rev23 P1-1), so
+            // it runs under the table's synthLock like every other
+            // minting path. Lock order here is METHOD_SET_CACHE (outer)
+            // before synthLock (inner); no path reverses it.
+            Table table = table();
+            List<MethodInfo> promoted;
+            synchronized (table.synthLock) {
+                promoted = new ArrayList<>(promoteMethods(table, t, t.fields));
+            }
             promoted.sort((a, b) -> a.name.compareTo(b.name));
             List<MethodInfo> result = List.copyOf(promoted);
             METHOD_SET_CACHE.put(tok, result);

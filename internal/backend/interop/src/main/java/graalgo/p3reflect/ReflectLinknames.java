@@ -649,6 +649,18 @@ public final class ReflectLinknames {
 
     private static long synthesizeDynamicStruct(GoStruct header, GoStruct structType) {
         ReflectTypes.Table table = ReflectTypes.table();
+        // Same per-table synthesis lock as ReflectTypes (rev23 P1-1):
+        // the DYN_STRUCT_TOKS memo check, the byTok mint, and the memo
+        // put must be atomic, and the mint must never interleave with
+        // the *Of family. Install precedes guest execution, so the
+        // table-change clear below cannot race a concurrent install.
+        synchronized (table.synthLock) {
+            return synthesizeDynamicStructLocked(table, header, structType);
+        }
+    }
+
+    private static long synthesizeDynamicStructLocked(ReflectTypes.Table table,
+            GoStruct header, GoStruct structType) {
         if (table != dynStructTable) {
             DYN_STRUCT_TOKS.clear();
             dynStructTable = table;

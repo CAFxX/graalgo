@@ -1220,19 +1220,24 @@ public final class ReflectOpNode extends GoExprNode {
     /** Token for []E (synthesized if absent). */
     private static long sliceTokFor(long elemTok) {
         ReflectTypes.Table table = ReflectTypes.table();
-        TypeInfo elem = table.info(elemTok);
-        String key = "slice:" + elemKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        // Same per-table synthesis lock as ReflectTypes (rev23 P1-1):
+        // this path shares byTok/keyToTok with sliceOf and must never
+        // mint concurrently with it.
+        synchronized (table.synthLock) {
+            TypeInfo elem = table.info(elemTok);
+            String key = "slice:" + elemKey(elem);
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long tok = table.byTok.size();
+            TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
+                    elem, null, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            table.keyToTok.put(key, tok);
+            return tok;
         }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
     }
 
     private static String elemKey(TypeInfo t) {
@@ -1418,6 +1423,13 @@ public final class ReflectOpNode extends GoExprNode {
     /** Token for a bound method's func type (receiver stripped). */
     private static long boundMethodTok(ReflectTypes.MethodInfo mi) {
         ReflectTypes.Table table = ReflectTypes.table();
+        // Same per-table synthesis lock as ReflectTypes (rev23 P1-1).
+        synchronized (table.synthLock) {
+            return boundMethodTokLocked(table, mi);
+        }
+    }
+
+    private static long boundMethodTokLocked(ReflectTypes.Table table, ReflectTypes.MethodInfo mi) {
         TypeInfo ft = mi.funcType;
         StringBuilder sb = new StringBuilder("func(");
         for (int i = 1; i < ft.ins.size(); i++) {
@@ -1443,12 +1455,12 @@ public final class ReflectOpNode extends GoExprNode {
             return existing;
         }
         long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
         List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
         TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
                 null, null, 0, null, List.of(), List.of(),
                 List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
         table.byTok.add(info);
+        table.keyToTok.put(key, tok);
         return tok;
     }
 
