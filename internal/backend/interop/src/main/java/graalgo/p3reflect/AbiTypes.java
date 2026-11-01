@@ -112,6 +112,20 @@ public final class AbiTypes {
      * {@code EmptyInterface} struct value from its Type word. Shells
      * not minted by {@link #abiPointerForTok} (dynamic types built by
      * reflect's own constructors) are absent and do not unpack.
+     *
+     * <p>Threading (R-02, 2026-11-01): this map is an
+     * {@code IdentityHashMap} — identity semantics are load-bearing
+     * (shells are canonical objects, not value-equal), so it must NOT
+     * be replaced by a {@code ConcurrentHashMap}. Every access is
+     * therefore guarded by the {@code AbiTypes} class monitor: the
+     * writer {@link #abiPointerForTok} (which {@code clear()}s and
+     * {@code put()}s, including a resize-inducing bulk mint) and both
+     * readers {@link #tokForShell} and {@link #unpackInterfaceView}
+     * are {@code synchronized}. The readers run at guest runtime
+     * (unsafe conversions, reflect intrinsics) on scheduler vthreads,
+     * concurrently with the writer — an unsynchronized read during a
+     * {@code clear()}/resize could return a stale or wrong token
+     * (silent wrong dynamic type) or corrupt the probe chain.
      */
     private static final Map<GoStruct, Long> SHELL_TOKS = new IdentityHashMap<>();
 
@@ -217,8 +231,15 @@ public final class AbiTypes {
         return ptr;
     }
 
-    /** The type token of a canonical abi shell; 0 when not minted here. */
-    public static long tokForShell(GoStruct shell) {
+    /**
+     * The type token of a canonical abi shell; 0 when not minted here.
+     *
+     * <p>Synchronized on the {@code AbiTypes} monitor like every other
+     * {@code SHELL_TOKS} accessor (R-02): this is called from reflect
+     * intrinsics at guest runtime, concurrently with
+     * {@link #abiPointerForTok}'s {@code clear()}/{@code put()}.
+     */
+    public static synchronized long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
     }
@@ -898,8 +919,17 @@ public final class AbiTypes {
      * {@link ReflectRefs#denotedValue} with the dynamic type's kind —
      * the same denoted-value read the reflect intrinsics use. A zero
      * Type word with a zero Data word is the nil interface.
+     *
+     * <p>Synchronized on the {@code AbiTypes} monitor like every other
+     * {@code SHELL_TOKS} accessor (R-02): this runs at guest runtime
+     * via {@code UnsafeToPtrNode} on scheduler vthreads, concurrently
+     * with {@link #abiPointerForTok}'s table-change {@code clear()}
+     * and shell {@code put()}s. The whole read — shell lookup plus
+     * the table/descriptor resolution it feeds — holds the lock, so a
+     * concurrent table swap can only delay the unpack, never serve a
+     * token from a half-cleared or resizing map.
      */
-    public static GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
+    public static synchronized GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
         Object typeWord = null;
         Object itabWord = null;
         long dataHandle = 0;
