@@ -14,6 +14,7 @@ package p3frontend
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -21,62 +22,20 @@ import (
 	"testing"
 )
 
-// phase1SyntheticErrorsPackage extracts the syntheticErrorsSource const
-// from the phase-1 frontend and type-checks it, for the strconv drift
-// test's importer.
+// phase1SyntheticErrorsPackage returns the errors package for the
+// strconv drift test's importer.
+//
+// RETIRED (rem-review-20261031-p1-1, 2026-10-31): the phase-1 synthetic
+// errors source is deleted — phase-1 resolves real GOROOT errors via
+// the disk importer now. The importer therefore returns the real errors
+// package (same exported API), exactly as the sync branch below returns
+// real sync; the strconv source under test only needs errors.New.
 func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../synth_errors.go"
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, srcPath, nil, 0)
+	pkg, err := importer.Default().Import("errors")
 	if err != nil {
-		t.Fatalf("parsing phase-1 errors synth source: %v", err)
+		t.Fatalf("importing real errors: %v", err)
 	}
-	var raw string
-	found := false
-	for _, decl := range file.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			for i, name := range vs.Names {
-				if name.Name == "syntheticErrorsSource" && i < len(vs.Values) {
-					lit, ok := vs.Values[i].(*ast.BasicLit)
-					if !ok || lit.Kind != token.STRING {
-						t.Fatalf("syntheticErrorsSource is not a string literal")
-					}
-					raw, err = strconv.Unquote(lit.Value)
-					if err != nil {
-						t.Fatalf("unquoting syntheticErrorsSource: %v", err)
-					}
-					found = true
-				}
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("syntheticErrorsSource const not found in %s", srcPath)
-	}
-	errFset := token.NewFileSet()
-	errFile, err := parser.ParseFile(errFset, "errors.go", raw, parser.AllErrors)
-	if err != nil {
-		t.Fatalf("parsing synthetic errors source: %v", err)
-	}
-	conf := types.Config{
-		Importer: importerFunc(func(path string) (*types.Package, error) {
-			return nil, fmt.Errorf("unexpected synthetic import %q", path)
-		}),
-	}
-	pkg, err := conf.Check("errors", errFset, []*ast.File{errFile}, nil)
-	if err != nil {
-		t.Fatalf("type-checking phase-1 synthetic errors: %v", err)
-	}
-	pkg.MarkComplete()
 	return pkg
 }
 
@@ -131,7 +90,8 @@ func phase1SyntheticStrconvPackage(t *testing.T) *types.Package {
 	conf := types.Config{
 		Importer: importerFunc(func(path string) (*types.Package, error) {
 			if path == "errors" {
-				// Type-check the real synthetic errors source so the
+				// Resolve the real errors package (retired from
+				// synthetic by rem-review-20261031-p1-1) so the
 				// strconv source resolves errors.New faithfully.
 				return phase1SyntheticErrorsPackage(t), nil
 			}

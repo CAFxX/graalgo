@@ -1,7 +1,8 @@
 // P3-M7 (wave 1): synthetic `encoding/csv` and `encoding/gob` packages.
 //
 // REAL Go sources, embedded as text and type-checked on demand with the
-// overlay importer (csv/gob import only the synthetic `errors` package —
+// overlay importer (csv/gob import only the `errors` package —
+// disk-imported since rem-review-20261031-p1-1 —
 // no io, no reflect, no unicode, no strings/bytes/strconv). The resulting
 // *types.Package instances are what overlayImporter.Import returns, so
 // the user's type-check and the synthetic sources' own type-check share
@@ -45,8 +46,8 @@ package main
 
 // syntheticCsvSource is the P3-M7 synthetic `encoding/csv` package: the
 // complete gc 1.27.1 CSV grammar (reader.go/writer.go) ported to
-// single-result style with no imports beyond the synthetic `errors`
-// package. Exact gc public API signatures for the in-scope surface;
+// single-result style with no imports beyond the `errors`
+// package (disk-imported since rem-review-20261031-p1-1). Exact gc public API signatures for the in-scope surface;
 // M7 extensions (NewReaderString, NewBufferWriter, Bytes) are marked.
 const syntheticCsvSource = `package csv
 
@@ -1009,7 +1010,8 @@ func (w *Writer) csvFieldNeedsQuotes(field string) bool {
 // Encoder/Decoder over the closed dynamic any-model (nil, bool, all
 // int/uint widths, float32/float64, string, []byte, []any,
 // map[string]any), with a byte-identical wire format to gc 1.27.1 for
-// the supported subset. Imports only the synthetic `errors` package.
+// the supported subset. Imports only the `errors` package
+// (disk-imported since rem-review-20261031-p1-1).
 //
 // Wire summary (gc 1.27.1, verified by probe):
 //   - builtin type ids: bool=1 int=2 uint=3 float=4 bytes=5 string=6

@@ -1,7 +1,8 @@
 // P3-M8 (wave 2): synthetic `io` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the
-// overlay importer (imports: "errors" → the P3-M7 synthetic package;
+// overlay importer (imports: "errors" → the disk-imported errors package
+// (retired from synthetic by rem-review-20261031-p1-1);
 // "sync" → the P3-M2 surface, Mutex/Once only — see deviations D1/D2
 // below). The resulting *types.Package is what overlayImporter.Import("io")
 // returns, so the user's type-check and the synthetic source's own

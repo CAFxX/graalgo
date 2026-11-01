@@ -139,9 +139,11 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 				"syntheticIoSource", "io", imp), nil
 		}
 		if p == "errors" {
-			return phase1SyntheticPackageForTest(t,
-				"../synth_errors.go",
-				"syntheticErrorsSource", "errors", imp), nil
+			// RETIRED (rem-review-20261031-p1-1): the phase-1
+			// synthetic errors source is deleted; phase-1 resolves
+			// real GOROOT errors via the disk importer. Same sync
+			// precedent as below.
+			return importer.Default().Import("errors")
 		}
 		if p == "sync" {
 			// The synthetic sync surface is unexported in the phase-1

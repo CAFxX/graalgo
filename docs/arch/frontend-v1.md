@@ -345,6 +345,14 @@ sites and the identity-bodied declaration instead of the round-trip
 body, plus the object-ID renumbering that follows from the removed
 nodes.
 
+rem-review-20261031-p1-1 retires the synthetic `errors` package
+(phase-1 source deleted; real GOROOT `errors` via the disk importer),
+so the `pkgvar_mrarg` golden — the only testdata program importing
+`errors` — was regenerated in the same change: its `errors` decls are
+now the disk package's (not the synthetic's), plus the type-ID
+renumbering that follows from the swap. The `pkgMRArg` / `parseLen` /
+`mustLen` hoisting structure is unchanged.
+
 fix-redmaster-r39 adds three wire-visible lowerings of the same kind.
 (1) A `uintptr -> unsafe.Pointer` conversion whose operand the
 exporter proves — from the go/types-annotated AST — to be exactly one

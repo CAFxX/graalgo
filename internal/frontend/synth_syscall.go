@@ -63,8 +63,8 @@ func (e Errno) Error() string {
 // linux/amd64 mapping (syscall_unix.go): the fs.* sentinels are the
 // synthetic io/fs package's (shared instance with synthetic os, so
 // errors.Is(err, fs.ErrNotExist) and os.IsNotExist work across the
-// package boundary), errors.ErrUnsupported is the synthetic errors
-// package's.
+// package boundary), errors.ErrUnsupported is the disk-imported
+// errors package's.
 func (e Errno) Is(target error) bool {
 	switch target {
 	case fs.ErrPermission:

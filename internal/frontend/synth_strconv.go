@@ -3879,10 +3879,18 @@ func appendComplex(dst []byte, c complex128, fmt byte, prec, bitSize int) []byte
 // ---------------------------------------------------------------------------
 
 // ErrRange indicates that a value is out of range for the target type.
-var ErrRange = strconvError("value out of range")
+//
+// Its static type is error, as in real gc strconv (where it is
+// errors.New's result): the value is a strconvError converted to error,
+// so the cycle-breaking local type never leaks into the exported API
+// and user code type-checks against this package exactly as against
+// real strconv — and exactly as the p3frontend mirror declares it.
+var ErrRange error = strconvError("value out of range")
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
-var ErrSyntax = strconvError("invalid syntax")
+//
+// Same static-type rule as ErrRange above: error, as in real gc strconv.
+var ErrSyntax error = strconvError("invalid syntax")
 
 // A NumError records a failed conversion.
 type NumError struct {

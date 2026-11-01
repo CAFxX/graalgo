@@ -11,15 +11,17 @@ GOPATH:
 
   <outdir>/gopath/src/m7synth/csv/csv.go      <- syntheticCsvSource
   <outdir>/gopath/src/m7synth/gob/gob.go      <- syntheticGobSource
-  <outdir>/gopath/src/m7synth/errors/errors.go <- syntheticErrorsSource
   <outdir>/gopath/src/m7prog/main.go          <- corpus program, imports
                                                  rewritten to m7synth/...
 
-The synthetic csv/gob sources import the *synthetic* errors package (that is
-what the overlay importer resolves for the graalgo leg), so their internal
-`import "errors"` is rewritten to the extracted copy as well. The reference
-behavior is therefore the synthetic source executed by stock gc — the same
-sources §11 of the P3-M7 code review validated as gc-faithful on adversarial
+RETIRED (rem-review-20261031-p1-1, 2026-10-31): the phase-1 synthetic
+errors package is deleted — phase-1 resolves real GOROOT errors via the
+disk importer now. The synthetic csv/gob sources' `import "errors"`
+therefore stays as real errors on both legs (no m7synth/errors copy is
+extracted anymore), and corpus programs importing "errors" need no
+.synthetic marker for errors alone. The reference behavior for csv/gob
+is still the synthetic source executed by stock gc — the same sources
+§11 of the P3-M7 code review validated as gc-faithful on adversarial
 inputs — not real std.
 
 Usage: extract_synth_ref.py <phase1-frontend-dir> <prog.go> <outdir>
@@ -31,11 +33,14 @@ import re
 import sys
 
 # Corpus import path -> (phase-1 const name, phase-1 file, synthetic package name).
+# errors was retired from this map by rem-review-20261031-p1-1 (2026-10-31):
+# the phase-1 synthetic errors source is deleted and real GOROOT errors
+# resolves via the disk importer, so no extraction or import rewrite is
+# needed for it anymore.
 SYNTH = {
     "encoding/csv": ("syntheticCsvSource", "synth_enc_csv_gob.go", "csv"),
     "encoding/gob": ("syntheticGobSource", "synth_enc_csv_gob.go", "gob"),
     "encoding/xml": ("syntheticXmlSource", "synth_xml.go", "xml"),
-    "errors": ("syntheticErrorsSource", "synth_errors.go", "errors"),
 }
 
 
@@ -63,16 +68,13 @@ def main():
 
     needed = [ip for ip in SYNTH if imports_ip(progsrc, ip)]
     consts = {SYNTH[ip][0] for ip in needed}
-    # The synthetic csv/gob sources import the synthetic errors package.
-    if consts & {"syntheticCsvSource", "syntheticGobSource"}:
-        consts.add("syntheticErrorsSource")
 
     gopath = os.path.join(outdir, "gopath")
     for const in sorted(consts):
         _, srcfile, pkgname = next(v for v in SYNTH.values() if v[0] == const)
         src = extract_const(os.path.join(p1dir, srcfile), const)
-        # Point the synthetic-internal errors import at the extracted copy.
-        src = src.replace('"errors"', '"m7synth/errors"')
+        # No errors rewrite anymore (rem-review-20261031-p1-1): the
+        # csv/gob sources' `import "errors"` stays real on both legs.
         pkgdir = os.path.join(gopath, "src", "m7synth", pkgname)
         os.makedirs(pkgdir, exist_ok=True)
         with open(os.path.join(pkgdir, pkgname + ".go"), "w") as f:

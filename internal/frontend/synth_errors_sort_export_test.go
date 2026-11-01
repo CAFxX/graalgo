@@ -8,15 +8,18 @@ import (
 	"testing"
 )
 
-// TestSyntheticErrorsSortM7 verifies the P3-M7 wave-1 synthetic packages:
-// a program importing "errors" and "sort" exports cleanly; the real-Go
-// declarations become funcdecls in the wire doc; the multi-result
+// TestSyntheticErrorsSortM7 verifies a program importing "errors" and
+// "sort" exports cleanly; the real-Go declarations become funcdecls in
+// the wire doc. errors is disk-imported since rem-review-20261031-p1-1
+// (see TestErrorsDiskExport); sort is still synthetic. The multi-result
 // members (sort.Find, errors.AsType) are never emitted as raw
 // multi-result funcdecls — Find is pair-transformed via the generic MR
-// machinery, AsType desugars through its m7 table entry (__asTypePub)
-// with the stub skipped — and uncovered call sites fail fast (WS D);
-// the fail-fast single-result members (errors.As, sort.Slice, ...) ARE
-// exported (their panic bodies run if called).
+// machinery, AsType desugars through the general disk transform
+// (__AsType) with the stub skipped — and uncovered call sites fail
+// fast (WS D); the fail-fast single-result members (sort.Slice, ...)
+// ARE exported (their panic bodies run if called). errors.As is a
+// real single-result function in both the old synthetic and the new
+// disk package, so its presence assertion below holds either way.
 //
 // Like TestSyntheticBytesM7, the multi-result check is scoped to the
 // owning package AND to result count: bare names false-positive on

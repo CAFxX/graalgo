@@ -1,7 +1,8 @@
 // P3-M8 (wave 2): synthetic `io/fs` core.
 //
 // REAL Go source, embedded as text and type-checked on demand with the
-// overlay importer (imports: errors, time — both synthetic). The
+// overlay importer (imports: errors, disk-imported since
+// rem-review-20261031-p1-1, and time, synthetic). The
 // resulting *types.Package is what overlayImporter.Import("io/fs")
 // returns, so the user's type-check and the synthetic source's own
 // type-check share identical *types.Func/*types.TypeName objects; the

@@ -176,8 +176,9 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // blank import), and by P3-M5 (WS E, ADR-0005) with the synthetic time and
 // context packages (real-Go sources in synth_time_context.go, resolved via
 // getSyntheticPackage so synthetic->synthetic imports work), and by P3-M7
-// (wave 1) with the synthetic errors and sort packages (real-Go sources
-// in synth_errors.go / synth_sort.go, likewise via getSyntheticPackage).
+// (wave 1) with the synthetic sort package (real-Go source in
+// synth_sort.go, likewise via getSyntheticPackage). errors was retired
+// by rem-review-20261031-p1-1 (2026-10-31) and now resolves from disk.
 // NOTE (503608ea): the synthetic sync and sync/atomic packages were
 // RETIRED — both now resolve from disk (real GOROOT packages) via the
 // general disk importer. The overlay no longer serves them; the retired
@@ -198,8 +199,9 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
 // synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
 // channels, synthetic time, and P3-M3 interface dispatch), the synthetic
-// package "errors" (P3-M7: New/Is/Unwrap/Join/AsType as real Go; As
-// fail-fast — it needs reflect), the synthetic package "sort" (P3-M7:
+// package "errors" (RETIRED by rem-review-20261031-p1-1: real GOROOT
+// errors via the disk importer; AsType desugars via the general disk
+// transform), the synthetic package "sort" (P3-M7:
 // pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
 // fail-fast — multi-result/reflect), the 8 P3-M7 (wave 1) encoding/*
 // primitive packages (encoding/base32, encoding/base64, encoding/hex,
@@ -954,6 +956,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		src:     srcs[0], // fallback for single-file paths; multi-file uses srcByFile
 		info:    info,
 		pkg:     pkg,
+		userPkg: pkg,
 		typeIDs: make(map[types.Type]int),
 		// P3-M9 (WS H): type parameters canonicalized by TypeName object.
 		// go/types mints fresh *types.TypeParam per occurrence; without
@@ -1220,7 +1223,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 				needIo = true
 			case "math":
 				needMath = true
-			// P3-M9 (tier1c): synthetic math/bits (imports synthetic errors
+			// P3-M9 (tier1c): synthetic math/bits (imports errors
 			// for the reconstructed overflow/divide sentinels).
 			case "math/bits":
 				needMathBits = true
@@ -1597,12 +1600,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		return "", err
 	}
 	// P3-M7 (wave 1): synthetic sort is self-contained (no
-	// synthetic->synthetic imports). Synthetic errors imports reflect
-	// (PKG-022: real errors.As is implemented over the synthetic
-	// reflect package); importSyntheticPackage recurses into synthetic
-	// dependencies in post-order, so no manual ordering is needed here.
+	// synthetic->synthetic imports).
+	// errors RETIRED (rem-review-20261031-p1-1, 2026-10-31): resolves
+	// via the general disk importer, exactly as reflect does;
+	// importPkgTree is idempotent, so overlap with other need-blocks
+	// is safe.
 	if needErrors {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 	}
@@ -1627,11 +1631,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M9 (tier1c): the synthetic math/bits package (see
-	// synth_mathbits.go). Imports the synthetic errors package (for the
+	// synth_mathbits.go). Imports the errors package (for the
 	// reconstructed overflow/divide sentinels), so errors must be
-	// imported first.
+	// imported first; errors itself now resolves via the disk
+	// importer (rem-review-20261031-p1-1).
 	if needMathBits {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
@@ -1641,8 +1646,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// P3-M9 (tier1c): the synthetic math/cmplx package (see
 	// synth_mathcmplx.go). Imports the synthetic math and math/bits
 	// packages, so those (and their deps) must be imported first.
+	// errors itself now resolves via the disk importer
+	// (rem-review-20261031-p1-1).
 	if needMathCmplx {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
@@ -1762,11 +1769,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			}
 		}
 	}
-	// P3-M8 (wave 2): synthetic io (depends on synthetic errors).
+	// P3-M8 (wave 2): synthetic io (depends on errors).
 	// Must come before strings (which imports io for io.EOF).
 	if needIo {
 		// P3-M8: io's error vars use errors.New — import errors first.
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		// errors now resolves via the disk importer
+		// (rem-review-20261031-p1-1).
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
@@ -1947,11 +1956,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M8 (wave 2): synthetic io/fs core (synth_iofs.go). Depends on
-	// the synthetic errors package (its Err* sentinel initializers call
+	// the errors package (its Err* sentinel initializers call
 	// errors.New) and imports time (time.Time in the FileInfo/DirEntry
-	// signatures), so errors and time are imported first.
+	// signatures), so errors and time are imported first. errors now
+	// resolves via the disk importer (rem-review-20261031-p1-1).
 	if needIoFs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
@@ -1975,8 +1985,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// (syscall's Errno.Error calls strconv.Itoa), then syscall itself.
 		// (The needStrconv/needErrors blocks above only ran if the user
 		// imported those packages directly — not for a pure
-		// `import "syscall"` program.)
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		// `import "syscall"` program. errors now resolves via the
+		// disk importer, rem-review-20261031-p1-1.)
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
@@ -2007,9 +2018,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// io (os imports io), io/fs (os imports io/fs), syscall (os imports
 	// syscall for Errno), strconv (os uses strconv.Itoa), then os itself.
 	// importSyntheticPackage is idempotent, so overlap with other
-	// need-blocks is safe.
+	// need-blocks is safe. errors now resolves via the disk importer
+	// (rem-review-20261031-p1-1); importPkgTree routes it there.
 	if needOs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
@@ -2091,9 +2103,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// package-level code calls errors.New); io (imported by hash);
 	// hash (sha256's New/digest use hash.Hash and the __hash*
 	// helpers); strconv (imported by crypto); crypto (sha256 calls
-	// crypto.RegisterHash); then crypto/sha256 itself.
+	// crypto.RegisterHash); then crypto/sha256 itself. errors now
+	// resolves via the disk importer (rem-review-20261031-p1-1).
 	if needCryptoSha256 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importPkgTree("errors"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
@@ -2310,8 +2323,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M9 (wave 3, tier-1b): synthetic hash/* packages
-	// (synth_hash_*.go). They import the synthetic hash, errors and io
-	// packages, imported by their own need-blocks above.
+	// (synth_hash_*.go). They import the synthetic hash and io
+	// packages and errors (disk-imported since
+	// rem-review-20261031-p1-1), imported by their own need-blocks above.
 	if needHashAdler32 {
 		for _, p := range []string{"errors", "hash", "hash/adler32"} {
 			if err := e.importPkgTree(p); err != nil {
@@ -2936,9 +2950,15 @@ type exporter struct {
 	srcByFile map[*token.File][]byte
 	info      *types.Info
 	pkg       *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
-	types     []TypeEnt
-	typeList  []types.Type // parallel to types: the go/types type per id (P3-M3)
-	typeIDs   map[types.Type]int
+	// userPkg is the package passed to ExportFiles (user code).
+	// Synthetic/disk package bodies are exported with e.pkg swapped to
+	// their own package (exportSyntheticBodies, exportInstantiation), so
+	// e.pkg == e.userPkg distinguishes user call sites from dependency
+	// bodies during classification.
+	userPkg  *types.Package
+	types    []TypeEnt
+	typeList []types.Type // parallel to types: the go/types type per id (P3-M3)
+	typeIDs  map[types.Type]int
 	// P3-M9 (WS H): canonical IDs for type parameters by TypeName.
 	// Different *types.TypeParam objects denoting the same parameter
 	// must share one wire ID, or F-bounded constraints recurse forever.
@@ -6432,6 +6452,22 @@ func (e *exporter) prepareInstantiation(inst *instantiation) error {
 }
 
 func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
+	// WS G (disk): never emit an instantiation of a disk multi-result
+	// stub. The disk transform replaced the original declaration with
+	// a panic("unreachable") stub plus a __-helper carrying the real
+	// body, and every call site desugars to the helper (disk plans
+	// win in classifyMultiResultCall); the stub instantiation that
+	// instantiation discovery creates from the original call sites
+	// is dead code that must not reach the doc — a backend resolving
+	// it by name would panic at runtime. Package-level functions
+	// only: method instantiations stay untouched (method tables may
+	// reference them; interface dispatch maps to the __-helper
+	// separately via the itab).
+	if inst.decl != nil && inst.decl.recv == nil && inst.decl.obj != nil && inst.decl.obj.Pkg() != nil &&
+		!strings.HasPrefix(inst.decl.obj.Name(), "__") &&
+		lookupDiskMR(inst.decl.obj.Pkg().Path(), inst.decl.obj.Name(), "") != nil {
+		return nil, nil
+	}
 	fd := inst.decl.fd
 	if fd.Body == nil {
 		return nil, scopeErrorf("func %s without body", fd.Name.Name)
@@ -11241,9 +11277,14 @@ func (e *exporter) exportCallArgs(c *ast.CallExpr) ([]*Node, error) {
 	for _, a := range c.Args {
 		if inner, ok := unparen(a).(*ast.CallExpr); ok {
 			if innerPlan := e.classifyMultiResultCall(inner); innerPlan != nil &&
-				(innerPlan.kind == mrUser || innerPlan.kind == mrFuncField) {
+				(innerPlan.kind == mrUser || innerPlan.kind == mrFuncField || innerPlan.isDisk) {
 				// User-defined multi-result call as argument: hoist to
-				// temp, unpack.
+				// temp, unpack. Disk plans (isDisk) hoist the same
+				// way via hoistMRCallArg's helper-call branch: without
+				// this, a generic disk call (e.g. errors.AsType[T])
+				// would fall through to a direct call of the disk
+				// transform's panic stub. Static M5/M7 kinds keep
+				// their pinned fail-fast (isDisk is false for them).
 				unpacked, pre, err := e.hoistMRCallArg(inner, innerPlan)
 				if err != nil {
 					return nil, err

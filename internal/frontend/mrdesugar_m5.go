@@ -281,10 +281,16 @@ var m7HelperPkgOverride = map[string]string{
 }
 
 var m7MultiResultFuncs = []m7MultiResultFunc{
-	// errors: AsType[E error] (P4 — was M7 fail-fast). The pair struct
-	// and helper are generic; the desugar instantiates both with the
-	// call's type argument (instantiatePairType + helperCallTargs).
-	{"errors", "AsType", "", "__asTypePub", "asTypePair", []string{"v", "ok"}, false},
+	// errors.AsType was retired from this table by
+	// rem-review-20261031-p1-1 (2026-10-31) together with the synthetic
+	// errors package: the real GOROOT errors now resolves via the disk
+	// importer, and the general disk transform mechanically generates
+	// its __AsType/__AsTypePair + stub (transformDiskMultiResult) and
+	// classifyDiskMultiResultCall desugars its call sites. The row
+	// MUST NOT be re-added while errors is disk-imported: this
+	// classifier runs before the disk classifier, and its
+	// getSyntheticPackage("errors") lookup would panic on the removed
+	// syntheticSources entry.
 	// bytes: methods on *Reader (P3-M9 WS D: v1 cannot emit 2-result methods).
 	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}, false},
 	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result
@@ -1523,7 +1529,60 @@ func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
 	return nil
 }
 
+// classifyDiskGenericCall resolves a generic instantiation call
+// (foo[T](...), pkg.Fn[T](...)) against the disk multi-result table.
+// Returns nil for non-instantiation calls and for callees with no
+// disk spec, so non-disk generic calls fall through to the
+// instantiation pair transform unchanged.
+func (e *exporter) classifyDiskGenericCall(c *ast.CallExpr) *mrPlan {
+	id := callTargetIdent(c.Fun)
+	if id == nil {
+		if sel, ok := unwrapSelector(c.Fun); ok {
+			id = sel.Sel
+		}
+	}
+	if id == nil {
+		return nil
+	}
+	ii, ok := e.info.Instances[id]
+	if !ok {
+		return nil
+	}
+	fn, ok := denotedFunc(e.info, id)
+	if !ok || fn == nil || fn.Pkg() == nil {
+		return nil
+	}
+	return classifyDiskMultiResultCall(fn.Pkg().Path(), fn, typeList(ii.TypeArgs))
+}
+
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
+	// WS G (disk, generic): a generic instantiation call to a
+	// disk-package multi-result function (e.g. errors.AsType[T])
+	// must desugar via the disk table, NOT the generic-instantiation
+	// pair transform below: the disk transform replaced the original
+	// declaration with a panic("unreachable") stub plus a __-helper
+	// carrying the real body, so instantiating the stub emits a
+	// panic body at runtime (the stub's pair-wrapped signature hides
+	// it at export time). The disk plan must win; the helper
+	// instantiation carries the real body. Checked first because
+	// instMRInfoForCall would otherwise match the stub template's
+	// instantiation info and shadow the disk table.
+	// Scoped to user code (e.pkg == e.userPkg): dependency bodies
+	// are exported with e.pkg swapped to their own package
+	// (exportSyntheticBodies, synthetic instantiations), and their
+	// generic disk calls keep the pre-existing classification — the
+	// disk plan would export the helper's real body, which fails M8
+	// on unsafe.Sizeof over a type parameter (e.g. internal/strconv
+	// shortFloat[F] inside strconv/fmt bodies), while the pre-existing
+	// path exports them fine. Verified by bisection: this first-check
+	// unscoped broke 13 frontend tests (incl. TestDeferMultiResultCall);
+	// scoping it restores them, and user-code disk calls (errors.AsType)
+	// still take the disk plan via e.pkg == e.userPkg.
+	if e.pkg == e.userPkg {
+		if plan := e.classifyDiskGenericCall(c); plan != nil {
+			return plan
+		}
+	}
 	// P4 (generic MR): generic instantiation call, e.g. hashStr[string](...).
 	// The Fun is an IndexExpr/IndexListExpr. Check for instantiation MR
 	// info before the Ident/SelectorExpr cases (which don't match).

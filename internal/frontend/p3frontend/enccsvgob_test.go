@@ -12,9 +12,10 @@ package p3frontend
 // declaration-by-declaration against the resulting *types.Package: every
 // exported type (with exported struct fields and methods), function, and
 // var must match in name and signature. The synthetic sources import the
-// synthetic errors package, resolved here to the drift-pinned errors
-// mirror (errors_test.go pins that mirror against the phase-1 errors
-// source, so this stays honest).
+// errors package, resolved here to the drift-pinned errors
+// mirror (errors_test.go pins that mirror against the real errors package
+// since rem-review-20261031-p1-1 retired the phase-1 synthetic source,
+// so this stays honest).
 
 import (
 	"fmt"

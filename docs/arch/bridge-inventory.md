@@ -109,14 +109,21 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 131 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 131 non-test generated files in [internal/frontend/](../../internal/frontend/)
+  (`synth_*.go`: 139 total including `*_test.go`, counted from
+  `git ls-tree` with the anchored `_test.go$` suffix only — a bare
+  `grep -v _test` undercounts by also dropping `synth_testing*.go`;
+  the old '142' figure matched no current count) plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. `errors` retired 2026-10-31 by rem-review-20261031-p1-1
+  (real go1.27.1 errors via the disk importer; AsType desugar moved
+  from the m7 static table to the general disk transform):
+  `syntheticSources` entries 130 → 129, non-test synth files
+  132 → 131, in the same change as this correction.
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).

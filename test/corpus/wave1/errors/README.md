@@ -1,10 +1,16 @@
 # P3-M7 wave-1 `errors` corpus
 
-Go programs exercising the wave-1 synthetic `errors` package
-(`internal/frontend/synth_errors.go`: real-Go New/Is/Unwrap/Join/AsType;
-As fail-fast — it needs reflect), differential vs stock gc
+Go programs exercising the `errors` package, differential vs stock gc
 1.27.1. Run via `run_differential.sh` (thin wrapper over
 `corpus/wave1/run_wave.sh`; conventions: `corpus/wave1/README.md`).
+
+Frontend note (2026-10-31, rem-review-20261031-p1-1): the phase-1
+synthetic `errors` package (`internal/frontend/synth_errors.go`) is
+retired — the graalgo leg now resolves real GOROOT `errors` via the disk
+importer. The divergence notes below were written against the old
+synthetic; re-test them via differential — notably `errors.As`, which is
+a real implementation in the disk package at the frontend level (its
+runtime behavior still depends on the reflect runtime).
 
 ## Programs
 

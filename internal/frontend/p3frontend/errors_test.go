@@ -158,15 +158,22 @@ func assertScopeMatchesPhase1(t *testing.T, pkgName string, mirror, phase1 *type
 // TestErrorsSyntheticSignatures pins the mirrored synthetic errors
 // package against the phase-1 source: New, Is, As, AsType (generic),
 // Unwrap, Join (variadic), ErrUnsupported.
+//
+// RETIRED (rem-review-20261031-p1-1, 2026-10-31): the phase-1 synthetic
+// errors source is deleted — phase-1 resolves real GOROOT errors via
+// the disk importer now. The drift oracle is therefore the real errors
+// package (same exported API), exactly as the sync mirror pins against
+// real sync; the mirror itself is unchanged (frozen phase-1 surface).
 func TestErrorsSyntheticSignatures(t *testing.T) {
 	mirror := syntheticErrorsPackage()
 	if mirror.Name() != "errors" || mirror.Path() != "errors" {
 		t.Fatalf("package name/path = %s/%s, want errors/errors",
 			mirror.Name(), mirror.Path())
 	}
-	phase1 := phase1SyntheticPackageForTest(t,
-		"../synth_errors.go", "syntheticErrorsSource",
-		"errors", rejectImports{})
+	phase1, err := importer.Default().Import("errors")
+	if err != nil {
+		t.Fatalf("importing real errors: %v", err)
+	}
 
 	// Full exported-scope drift check (names + rendered types).
 	assertScopeMatchesPhase1(t, "errors", mirror, phase1)

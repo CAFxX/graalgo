@@ -5,12 +5,15 @@ package p3frontend
 // signatures (it cannot reuse them — unexported); this mirror pins the
 // signatures so drift fails fast.
 //
-// The signatures match internal/frontend/synth_errors.go exactly
-// (the full gc 1.27.1 public API: New, Is, As, AsType, Unwrap, Join,
-// ErrUnsupported). Unexported implementation types (errorString,
+// The signatures match the gc 1.27.1 public API exactly
+// (New, Is, As, AsType, Unwrap, Join, ErrUnsupported) — formerly pinned
+// against internal/frontend/synth_errors.go, retired 2026-10-31 by
+// rem-review-20261031-p1-1 (phase-1 resolves real GOROOT errors via the
+// disk importer; errors_test.go now pins this mirror against real
+// errors). Unexported implementation types (errorString,
 // joinError, unwrapper, ...) are not visible to user code and are not
 // mirrored. As keeps its exact gc signature with a fail-fast body in
-// the synthetic source (it needs reflect); AsType is a real
+// the old synthetic source (it needs reflect); AsType is a real
 // implementation there (generics; no reflect needed). AsType's generic
 // signature is mirrored with an explicit *types.TypeParam.
 

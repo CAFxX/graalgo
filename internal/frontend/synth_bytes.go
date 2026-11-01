@@ -1,8 +1,8 @@
 // P3-M7 (wave 1): synthetic `bytes` package.
 //
 // The package below is REAL Go source, embedded as text and type-checked
-// on demand with the overlay importer (its `import "errors"` resolves to
-// the synthetic errors package — synthetic→synthetic imports). The
+// on demand with the overlay importer (its `import "errors"` resolves
+// via the overlay importer to the disk-imported errors package). The
 // resulting *types.Package instance is what overlayImporter.Import("bytes")
 // returns, so the user's type-check and the synthetic source's own
 // type-check share identical *types.Func/*types.TypeName objects; the
