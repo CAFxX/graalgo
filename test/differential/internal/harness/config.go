@@ -78,6 +78,14 @@ type Config struct {
 	Backends   []Backend   `json:"backends"`
 	Exclusions []Exclusion `json:"exclusions"`
 	TimeoutSec int         `json:"timeoutSec"`
+	// BuildTimeoutSec caps each backend build step in seconds. It exists
+	// separately from TimeoutSec (which caps runs) because builds —
+	// frontend + JVM launch on the graalgo backend — legitimately take
+	// far longer than runs. Zero means the 120s default; the default is
+	// deliberately NOT raised for contended dev boxes: transient cap
+	// kills are absorbed by the runner's retry-on-timeout instead, so a
+	// genuinely hung build still fails fast.
+	BuildTimeoutSec int `json:"buildTimeoutSec,omitempty"`
 }
 
 // LoadConfig reads and validates a JSON config file.
@@ -95,6 +103,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if c.TimeoutSec <= 0 {
 		c.TimeoutSec = 15
+	}
+	if c.BuildTimeoutSec <= 0 {
+		c.BuildTimeoutSec = 120
 	}
 	seen := map[string]bool{}
 	for i := range c.Backends {

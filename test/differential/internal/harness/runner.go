@@ -30,6 +30,16 @@ type Outcome struct {
 // workRoot scopes build artifacts for this invocation. It exists for
 // compile-only differential modes (build parity / build-failure parity)
 // where running the program is meaningless or impossible.
+//
+// A build killed by the wall-clock cap is retried once: on a contended
+// dev box (sibling lanes, load shedder freezes) a healthy build can
+// exceed the cap purely from scheduling delay, and a cap-kill is
+// transient noise, not a build outcome — two consecutive records failed
+// their self-consistency gate on exactly this signature (buildOk false
+// in run 1, true in run 2, different programs each time). Only a
+// deadline counts for the retry: a genuine compile error fails fast and
+// is reported immediately, so real build failures still fail identically
+// in both record runs and the gate still catches real nondeterminism.
 func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 	oc := Outcome{Program: prog.Name, Backend: b.Name}
 	dir := filepath.Join(workRoot, prog.Name, b.Name)
@@ -40,14 +50,31 @@ func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 	}
 	bin := filepath.Join(dir, "prog")
 	buildCmd := b.RenderBuild(prog.Main, bin)
-	buildCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	var blog bytes.Buffer
-	cmd := exec.CommandContext(buildCtx, buildCmd[0], buildCmd[1:]...)
-	cmd.Env = overrideEnv(os.Environ(), b.Env)
-	cmd.Stdout = &blog
-	cmd.Stderr = &blog
-	if err := cmd.Run(); err != nil {
+	buildTimeout := cfg.BuildTimeoutSec
+	if buildTimeout <= 0 {
+		buildTimeout = 120
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		buildCtx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeout)*time.Second)
+		var blog bytes.Buffer
+		cmd := exec.CommandContext(buildCtx, buildCmd[0], buildCmd[1:]...)
+		cmd.Env = overrideEnv(os.Environ(), b.Env)
+		cmd.Stdout = &blog
+		cmd.Stderr = &blog
+		err := cmd.Run()
+		timedOut := buildCtx.Err() == context.DeadlineExceeded
+		cancel()
+		if err == nil {
+			oc.BuildOK = true
+			// P2-12: apply the stderr filters on the success path too, symmetric
+			// with the failure path below (Compare only reads BuildLog when both
+			// builds fail, so this is hygiene, not behavior).
+			oc.BuildLog = Normalize(b.FilterStderr(blog.String()))
+			return oc
+		}
+		if timedOut && attempt == 0 {
+			continue
+		}
 		oc.BuildOK = false
 		// Scrub the workRoot from the echoed command: it is backend- and
 		// run-specific, so leaving it in would make two identical build
@@ -59,11 +86,6 @@ func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 			b.FilterStderr(blog.String())))
 		return oc
 	}
-	oc.BuildOK = true
-	// P2-12: apply the stderr filters on the success path too, symmetric
-	// with the failure path above (Compare only reads BuildLog when both
-	// builds fail, so this is hygiene, not behavior).
-	oc.BuildLog = Normalize(b.FilterStderr(blog.String()))
 	return oc
 }
 
@@ -92,36 +114,48 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 
 	bin := filepath.Join(workRoot, prog.Name, b.Name, "prog")
 	runCmd := b.RenderRun(prog.Main, bin)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
-	defer cancel()
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, runCmd[0], runCmd[1:]...)
-	cmd.Dir = runDir
-	cmd.Env = runEnv(b.Env)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	start := time.Now()
-	runErr := cmd.Run()
-	oc.Duration = time.Since(start)
-	// Stdout is normalized for addresses: pointer values printed by the
-	// program (%p, %x of pointers) are not semantic observables and differ
-	// between runs even of the same binary. Message text is untouched.
-	oc.Stdout = Normalize(stdout.String())
-	// Stderr carries the backend's declared noise filters (e.g. the
-	// Truffle Unsafe warnings on the graalgo backend) after normalization.
-	oc.Stderr = b.FilterStderr(Normalize(stderr.String()))
-	if ctx.Err() == context.DeadlineExceeded {
-		oc.TimedOut = true
-		oc.ExitCode = -1
-		return oc
-	}
-	if runErr != nil {
-		if ee, ok := runErr.(*exec.ExitError); ok {
-			oc.ExitCode = ee.ExitCode()
-		} else {
-			oc.ExitCode = -1
-			oc.Stderr += Normalize(fmt.Sprintf("\n[harness: run error: %v]", runErr))
+	// Like the build step (see BuildOnly), a run killed by the wall-clock
+	// cap is retried once: on a contended box a healthy program can
+	// exceed the cap purely from scheduling delay, and a cap-kill is
+	// transient noise, not a program outcome. Only a deadline retries;
+	// a genuine non-zero exit is reported immediately.
+	for attempt := 0; attempt < 2; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
+		var stdout, stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, runCmd[0], runCmd[1:]...)
+		cmd.Dir = runDir
+		cmd.Env = runEnv(b.Env)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		start := time.Now()
+		runErr := cmd.Run()
+		oc.Duration = time.Since(start)
+		// Stdout is normalized for addresses: pointer values printed by the
+		// program (%p, %x of pointers) are not semantic observables and differ
+		// between runs even of the same binary. Message text is untouched.
+		oc.Stdout = Normalize(stdout.String())
+		// Stderr carries the backend's declared noise filters (e.g. the
+		// Truffle Unsafe warnings on the graalgo backend) after normalization.
+		oc.Stderr = b.FilterStderr(Normalize(stderr.String()))
+		timedOut := ctx.Err() == context.DeadlineExceeded
+		cancel()
+		if timedOut && attempt == 0 {
+			continue
 		}
+		if timedOut {
+			oc.TimedOut = true
+			oc.ExitCode = -1
+			return oc
+		}
+		if runErr != nil {
+			if ee, ok := runErr.(*exec.ExitError); ok {
+				oc.ExitCode = ee.ExitCode()
+			} else {
+				oc.ExitCode = -1
+				oc.Stderr += Normalize(fmt.Sprintf("\n[harness: run error: %v]", runErr))
+			}
+		}
+		return oc
 	}
 	return oc
 }
@@ -161,11 +195,21 @@ func runEnv(overrides map[string]string) []string {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 	}
-	// The graalgo backend's launcher (graalgo-run) needs GRAALVM_HOME to
+	// The graalgo backend's launcher (graalgo-sync-run) needs GRAALVM_HOME to
 	// find java; without it the script falls back to a local-only default
 	// and fails with 127 in CI. Pass it through when set.
 	if gh := os.Getenv("GRAALVM_HOME"); gh != "" {
 		base = append(base, "GRAALVM_HOME="+gh)
+	}
+	// The backend launcher and frontend dump their temp files under
+	// $TMPDIR (defaulting to /tmp when unset); the snapshot Makefile
+	// points TMPDIR at the worktree .tmp on persistent disk because
+	// /tmp is a small tmpfs that fills up, and a full /tmp truncates
+	// the frontend's AST dump mid-write, failing the run with exit 1.
+	// Pass it through when set so run steps use the same temp dir as
+	// build steps instead of silently falling back to /tmp.
+	if td := os.Getenv("TMPDIR"); td != "" {
+		base = append(base, "TMPDIR="+td)
 	}
 	return overrideEnv(base, overrides)
 }
