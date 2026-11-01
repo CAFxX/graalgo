@@ -22,6 +22,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,14 +95,18 @@ const (
 	kindLocal                    // module-local package: flattened
 )
 
-// NewLoader builds a Loader targeting linux/amd64. GOROOT defaults to
-// ~/tools/go-1.27.1 and is overridable with GRAALGO_GOROOT.
+// NewLoader builds a Loader targeting linux/amd64. GOROOT resolves as
+// GRAALGO_GOROOT, else the developer install ~/tools/go-1.27.1 when
+// present, else the GOROOT of the toolchain that built this binary
+// (runtime.GOROOT), else the legacy ~/tools/go-1.27.1 path so failures
+// keep naming the expected install. The middle step matters wherever
+// the toolchain lives elsewhere — CI runners install Go under the
+// hostedtoolcache, not under $HOME/tools, and a loader that can only
+// see ~/tools/go-1.27.1 fails every stdlib resolution there.
 func NewLoader() *Loader {
 	goroot := os.Getenv("GRAALGO_GOROOT")
 	if goroot == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			goroot = filepath.Join(home, "tools", "go-1.27.1")
-		}
+		goroot = defaultGoroot()
 	}
 	return &Loader{
 		goos:         "linux",
@@ -114,6 +119,24 @@ func NewLoader() *Loader {
 
 // GOROOT reports the GOROOT the loader resolves stdlib paths against.
 func (l *Loader) GOROOT() string { return l.goroot }
+
+// defaultGoroot resolves the toolchain GOROOT when GRAALGO_GOROOT is
+// unset: the developer install first (preserving local behavior), then
+// the building toolchain's GOROOT, then the legacy path as a last
+// resort so diagnostics still name it when no toolchain is installed.
+func defaultGoroot() string {
+	legacy := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		legacy = filepath.Join(home, "tools", "go-1.27.1")
+		if isDir(filepath.Join(legacy, "src")) {
+			return legacy
+		}
+	}
+	if gr := runtime.GOROOT(); gr != "" && isDir(filepath.Join(gr, "src")) {
+		return gr
+	}
+	return legacy
+}
 
 // ---------------------------------------------------------------------------
 // Build-tag evaluation (mirrors go/build's shouldBuild/matchTag/goodOSArchFile)

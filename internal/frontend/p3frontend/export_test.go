@@ -82,13 +82,27 @@ func copyDir(t *testing.T, src string) string {
 	return dst
 }
 
+// goTool locates the gc toolchain the differential tests oracle against,
+// in order: the loader's resolved GOROOT (so the oracle binary and the
+// stdlib sources come from the same install), a `go` on PATH, then the
+// legacy developer install ~/tools/go/bin/go. A single hardcoded
+// $HOME/tools path fails wherever the toolchain lives elsewhere — CI
+// runners install Go under the hostedtoolcache, not under $HOME/tools.
 func goTool(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
-	if _, err := os.Stat(p); err != nil {
-		t.Fatalf("go toolchain not found at %s", p)
+	if p := filepath.Join(NewLoader().GOROOT(), "bin", "go"); isExecutable(p) {
+		return p
 	}
-	return p
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	p := filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
+	if isExecutable(p) {
+		return p
+	}
+	t.Fatalf("go toolchain not found: none at %s/bin/go, none on PATH, none at %s",
+		NewLoader().GOROOT(), p)
+	return ""
 }
 
 // graalgoRun executes the merged single-file program with the product
