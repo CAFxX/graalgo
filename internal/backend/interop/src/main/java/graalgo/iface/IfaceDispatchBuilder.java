@@ -88,7 +88,9 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
      * type-table entry's {@code detail.methods} (the exporter flattens
      * embedded interfaces via go/types' method set).
      */
-    private static List<String> ifaceMethodNames(NodeFactory.BuildCtx ctx, int ifaceId, String path) {
+    // Package-private: reused by IfaceMethodValueBuilder (same itab
+    // method list source as direct interface dispatch).
+    static List<String> ifaceMethodNames(NodeFactory.BuildCtx ctx, int ifaceId, String path) {
         Json.Object entry = ctx.types.entry(ifaceId, path);
         if (!"interface".equals(entry.string("kind", path))) {
             throw new FrontendException(path + ": ifacemethod \"iface\" id " + ifaceId

@@ -1978,6 +1978,86 @@ func (e *exporter) mrPlanForFuncValue(fn *types.Func) *mrPlan {
 	return nil
 }
 
+// mrPlanForMethodValue resolves the pair-desugar plan for a multi-result
+// method used in value position (P1-9, review-2026-10-31-22): e.g.
+// f := c.DivMod, or f := w.WriteRune with w of interface type. It mirrors
+// the method branch of classifyMultiResultCall, which classifies method
+// *calls*: user pair-transformed methods first (userMRFuncs), then the
+// synthetic tables (m7/os/m8/io/m9/disk) with type arguments from the
+// receiver, and for interface receivers the interface classifiers in the
+// same order exportIfaceMethodCall applies them (listed, fallback, disk,
+// general user-interface synthesis). The returned plan's tmpType is the
+// pair struct and pairFields the extraction order, so a variable holding
+// the method value desugars at call sites exactly like a direct call.
+//
+// Returns nil when the method is not multi-result, or when no pair form
+// exists for it as a value (single-result methods need no plan; exotic
+// kinds with no value form — runtime-stack intrinsics, sync.Map ops,
+// trivial forwarders, xml tokens, deadlines — have call-site-only
+// desugar and yield nil, so callers fail loud as before).
+func (e *exporter) mrPlanForMethodValue(selection *types.Selection, fn *types.Func) *mrPlan {
+	if fn == nil || selection == nil {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Results().Len() <= 1 {
+		return nil
+	}
+	// Interface receivers dispatch through the itab; the plan is the
+	// interface pair plan, never a concrete table entry.
+	if recvIface(selection.Recv()) != nil {
+		if plan := e.classifyIfaceMultiResultCall(selection); plan != nil {
+			return plan
+		}
+		if plan := e.classifyIfaceFallbackMultiResultCall(selection); plan != nil {
+			return plan
+		}
+		if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
+			return plan
+		}
+		if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+			return plan
+		}
+		return nil
+	}
+	if mrInfo, ok := e.userMRFuncs[fn]; ok {
+		return &mrPlan{
+			kind:       mrUser,
+			tmpType:    mrInfo.pairType,
+			pairFields: mrInfo.pairFields,
+		}
+	}
+	// Exotic kinds with no value form (runtime-stack intrinsics,
+	// sync.Map ops, trivial forwarders, xml tokens, deadlines) yield
+	// nil here: their call-site desugar builds a wire node directly,
+	// and no bound function value can stand for it. Callers treat nil
+	// as "no pair info" and fail loud, as before.
+	mtargs := targsFromRecv(selection.Recv())
+	if fn.Pkg() == nil {
+		return nil
+	}
+	pkgPath := fn.Pkg().Path()
+	if plan := classifyM7MultiResultCall(pkgPath, fn, mtargs); plan != nil {
+		return plan
+	}
+	if plan := classifyOsMultiResultCall(pkgPath, fn, mtargs); plan != nil {
+		return plan
+	}
+	if plan := classifyM8MultiResultCall(pkgPath, fn, mtargs); plan != nil {
+		return plan
+	}
+	if plan := classifyIoMultiResultCall(pkgPath, fn, mtargs); plan != nil {
+		return plan
+	}
+	if plan := classifyM9MultiResultCall(pkgPath, fn, mtargs); plan != nil {
+		return plan
+	}
+	if plan := classifyDiskMultiResultCall(pkgPath, fn, mtargs); plan != nil {
+		return plan
+	}
+	return nil
+}
+
 // classifyTrivialForwarder recognizes a synthetic stub method whose body
 // is a trivial forwarder: a single `return p()` where p names a
 // function-typed parameter. Such stubs (e.g. a no-memoization cache whose

@@ -7522,11 +7522,15 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 //   - a multi-result function literal (the existing MR-closure-var case),
 //   - a named function in value position (F := two),
 //   - a package-qualified named function (var F ... = syscall.Accept),
+//   - a bound-receiver method value, concrete or interface
+//     (f := c.DivMod, f := w.WriteRune; P1-9),
 //   - an alias of an already-linked variable (G := F).
 //
 // The pair info comes from the func lit's recorded transform
 // (funcLitMRInfo), from the named function's pair plan
-// (mrPlanForFuncValue: userMRFuncs or the table classifiers), or from the
+// (mrPlanForFuncValue: userMRFuncs or the table classifiers), from the
+// method value's pair plan (mrPlanForMethodValue: user pair transform,
+// table helper, or interface pair plan), or from the
 // aliased variable's existing link. Returns nil when the initializer is
 // not a multi-result function value.
 func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
@@ -7536,6 +7540,29 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 			return mrInfo
 		}
 		return nil
+	}
+	// P1-9: a bound-receiver method value (MethodVal selection) carries
+	// the method's pair plan, not a named function's: the value is the
+	// pair-returning implementation (transformed method, table helper,
+	// or interface pair dispatch), so call sites through the variable
+	// desugar exactly like direct calls. Other MethodVal shapes (no
+	// pair plan, e.g. an exotic call-site-only kind) yield nil and
+	// fail loud at the call site, as before.
+	if sel, ok := x.(*ast.SelectorExpr); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if fn, ok := selection.Obj().(*types.Func); ok {
+				if plan := e.mrPlanForMethodValue(selection, fn); plan != nil {
+					switch plan.kind {
+					case mrUser, mrM7, mrIfaceMethod:
+						if nt, ok := plan.tmpType.(*types.Named); ok {
+							sig, _ := fn.Type().(*types.Signature)
+							return &userMRInfo{pairType: nt, pairFields: plan.pairFields, origSig: sig}
+						}
+					}
+				}
+			}
+			return nil
+		}
 	}
 	var fn *types.Func
 	switch x := x.(type) {
@@ -7641,6 +7668,12 @@ func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
 		}
 		rhs = append(rhs, x)
 	}
+	// MR-closure-var / PKG-035 (P1-9): like exportDefine, link a
+	// variable assigned a multi-result function value (here a method
+	// value: F = c.DivMod) to its pair info, so call sites through
+	// the variable desugar. Only Ident LHS variables are linked, so
+	// field/index assignments are unaffected.
+	e.linkFuncValueMRVars(s)
 	return e.node("assign", s, map[string]any{
 		"tok": s.Tok.String(), "lhs": lhs, "rhs": rhs,
 	}), nil
@@ -10013,6 +10046,43 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	} else {
 		objID = mc.decl.funcID
 	}
+	// P1-9: a multi-result method value must bind the pair-returning
+	// implementation, not the multi-result stub. User methods were
+	// transformed to pair form, so the resolved decl already is the
+	// pair form. Table-driven methods (bytes.Buffer.WriteString,
+	// strings.Builder.WriteString, ...) resolve to a stub that is
+	// skipped at import (funcID 0): binding it made the backend fail
+	// at runtime with "unresolved method object 0". Bind the table's
+	// __-helper instead — its first parameter is the receiver
+	// (prependRecv), exactly the slot the bound receiver fills at
+	// call time. A generic table helper has no value form yet (its
+	// instantiation is call-site driven); anything else resolving to
+	// no funcdecl fails loud here instead of at runtime.
+	if !mc.needsInst {
+		if fn, ok := selection.Obj().(*types.Func); ok {
+			if sig, ok := fn.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
+				if plan := e.mrPlanForMethodValue(selection, fn); plan != nil && plan.kind == mrM7 {
+					helperFn, err := e.multiResultHelper(plan)
+					if err != nil {
+						return nil, err
+					}
+					fi, ok := e.funcByObj[helperFn]
+					if !ok && e.synthFuncIDs != nil && helperFn.Pkg() != nil {
+						fi, ok = e.synthFuncIDs[helperFn.Pkg().Path()+"."+helperFn.Name()]
+					}
+					if !ok {
+						return nil, fmt.Errorf("gofrontend: multi-result helper %s not in funcByObj", helperFn.Name())
+					}
+					if fi.isTemplate {
+						return nil, scopeErrorf("multi-result method value %s on a generic method is not supported in frontend/v1 scope (WS H)", sel.Sel.Name)
+					}
+					objID = fi.funcID
+				} else if plan == nil && objID == 0 {
+					return nil, scopeErrorf("multi-result method value %s has no function-value form in frontend/v1 scope (WS D)", sel.Sel.Name)
+				}
+			}
+		}
+	}
 	return e.node("methodvalue", sel, map[string]any{"obj": objID, "recv": recv, "type": t}), nil
 }
 
@@ -10875,6 +10945,57 @@ func mentionsTypeParam(t types.Type) bool {
 		return false
 	}
 	return false
+}
+
+// exportIfaceMethodValue exports an interface method value w.M in value
+// position (P1-9, review-2026-10-31-22) as an additive
+// "ifacemethodvalue" wire node:
+//
+//	{"kind": "ifacemethodvalue", "fields": {
+//	  "recv": <node>, "method": "Write", "iface": <type id>,
+//	  "sig": <type id>, "type": <type id>}}
+//
+// The receiver evaluates to a GoInterface; the backend defers dispatch
+// to call time through the itab built from the interface's method list
+// (the same itab as ifacemethod calls), so the bound value follows the
+// interface's dynamic type at each call, exactly like gc. The "iface"
+// field is the *interface* type-table id (the method list source),
+// computed exactly as in exportIfaceMethodCall. The "sig" field is the
+// method signature type id (no receiver); "type" is the method value's
+// own func type id. Multi-result methods need no special handling here:
+// the itab target for such a method is its pair-returning form (as for
+// direct ifacemethod calls), and call sites through a variable holding
+// the value desugar via the pair info linked by mrInfoForFuncValueInit.
+func (e *exporter) exportIfaceMethodValue(x *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	mname := x.Sel.Name
+	sig, err := e.resolveIfaceMethod(selection.Recv(), mname)
+	if err != nil {
+		return nil, err
+	}
+	ifaceType := types.Unalias(selection.Recv())
+	if nt, ok := ifaceType.(*types.Named); ok {
+		ui, ok := nt.Underlying().(*types.Interface)
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: receiver static type %s is named with non-interface underlying %T (exporter bug)",
+				types.TypeString(ifaceType, nil), nt.Underlying())
+		}
+		ifaceType = ui
+	} else if _, ok := ifaceType.(*types.Interface); !ok {
+		return nil, fmt.Errorf("gofrontend: receiver static type %s is not an interface (exporter bug)",
+			types.TypeString(ifaceType, nil))
+	}
+	ifaceID, err := e.typeID(ifaceType)
+	if err != nil {
+		return nil, err
+	}
+	sigID, err := e.typeID(sig)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("ifacemethodvalue", x, map[string]any{
+		"recv": recv, "method": mname, "iface": ifaceID,
+		"sig": sigID, "type": t,
+	}), nil
 }
 
 // exportIfaceMethodCall exports an interface method call w.M(args)
@@ -11891,10 +12012,12 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// method value (bound receiver) — exported as a "methodvalue" node
 	// (P3-M9, WS H follow-up). Method CALLS are handled by
 	// exportMethodCall.
-	// P3-M3 (WS D, ADR-0003): method values and method expressions on
-	// interface receivers keep failing with a named P3-M3 scope error
-	// (greppable re-test trigger): dynamic dispatch deferred to call
-	// time is out of scope.
+	// P1-9 (review-2026-10-31-22): method values on interface receivers
+	// are no longer a P3-M3 scope error: they export as an
+	// "ifacemethodvalue" wire node (dynamic dispatch deferred to call
+	// time, via the same itab machinery as ifacemethod calls). Method
+	// expressions on interface receivers stay out of scope: an
+	// expression has no receiver value to bind.
 	if _, ok := sel.Obj().(*types.Func); ok {
 		var rt types.Type
 		if sel.Kind() == types.MethodExpr {
@@ -11903,12 +12026,11 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 			rt = tv.Type
 		}
 		if recvIface(rt) != nil {
-			what := "method value"
-			if sel.Kind() == types.MethodExpr {
-				what = "method expression"
+			if sel.Kind() == types.MethodVal {
+				return e.exportIfaceMethodValue(x, sel, xe, t)
 			}
-			return nil, scopeErrorf("%s %s is not supported: %s via interface (P3-M3 scope)",
-				what, x.Sel.Name, what)
+			return nil, scopeErrorf("method expression %s is not supported: method expression via interface (P3-M3 scope)",
+				x.Sel.Name)
 		}
 		if sel.Kind() == types.MethodExpr {
 			return nil, scopeErrorf("method expression %s is not supported: method expression on concrete type (P3-M3 scope)", x.Sel.Name)

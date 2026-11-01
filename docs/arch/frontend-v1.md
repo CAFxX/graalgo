@@ -128,6 +128,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `methodref` | `obj`: object id (method funcdecl/instantiation), `recv`: expr node (evaluated first, passed as the method's params[0]), `type`: signature type id with the receiver as params[0] — a method-call target (M6, WS H) |
 | `methodvalue` | `obj`: object id (method funcdecl/instantiation), `recv`: expr node (evaluated once at creation), `type`: the method value's static func type id (no receiver) — a method value `x.M` evaluating to a GoFunc with the receiver bound; invocations prepend the bound receiver (P3-M9, WS H) |
 | `ifacemethod` | `recv`: expr node (evaluates to a GoInterface), `method`: str, `iface`: type id (the receiver's static interface type — named or anonymous; the method-name list is the `methods` list of the `interface` type-table entry, following `underlying` for `named` entries), `args`: [expr nodes] (the receiver is NOT included), `sig`: type id (the method signature, no receiver — for call-site argument adaptation, the `methodref` precedent), `type`: type id or null (null when the call has no results) — an interface method call `w.M(args)` with dynamic dispatch through the itab (P3-M3, WS D, ADR-0003; additive node kind, first emitted by gofrontend 0.4.0) |
+| `ifacemethodvalue` | `recv`: expr node (evaluates to a GoInterface, evaluated once at creation), `method`: str, `iface`: type id (as for `ifacemethod`), `sig`: type id (the method signature, no receiver — carried for wire parity; dispatch resolves the target from the itab and needs no signature), `type`: the method value's static func type id (no receiver) — an interface method value `w.M` evaluating to a GoFunc whose call target dispatches through the itab at call time (P1-9, review-2026-10-31-22; additive node kind) |
 | `basiclit` | `value`: source text, `const`: `go/constant` `ExactString()` (present when the literal is a constant), `type`: type id; string constants additionally carry `sbytes`: hex of the exact UTF-8 bytes (byte-exact — `ExactString` is a quoted literal and JSON cannot carry invalid UTF-8); float constants additionally carry `f32bits`: int and `f64bits`: long, the signed-reinterpreted IEEE-754 bits (correctly rounded by `go/constant` itself; `ExactString` renders rationals as `"a/b"`, which no float parser reads); complex constants additionally carry `creal32`/`creal64`/`cimag32`/`cimag64`: the IEEE-754 bits of the real and imaginary parts (M7) |
 | `binary` | `op` ∈ {`+`,`-`,`*`,`/`,`%`,`&`,`\|`,`^`,`&^`,`<<`,`>>`,`==`,`!=`,`<`,`<=`,`>`,`>=`,`&&`,`\|\|`}, `x`, `y`, `type`: type id |
 | `unary` | `op` ∈ {`+`,`-`,`!`,`^`}, `x`, `type`: type id |
@@ -300,9 +301,10 @@ the extension:
   (receiver-based dispatch only — implicit address-of/deref on the
   receiver, method values, and interface dispatch on type parameters are
   scope errors naming WS D/WS H); interface method calls (P3-M3, WS D)
-  dispatch dynamically via `ifacemethod` nodes (ADR-0003) — method values
-  and method expressions on interface receivers, and generic (template)
-  methods via interfaces, are named P3-M3 scope errors;
+  dispatch dynamically via `ifacemethod` nodes (ADR-0003) — interface
+  method values dispatch dynamically via `ifacemethodvalue` nodes
+  (P1-9); method expressions on interface receivers, and generic
+  (template) methods via interfaces, are named P3-M3 scope errors;
 - named types with methods beyond the M6 subset → scope error (WS D):
   the M6 subset is receiver-based dispatch on named-type receivers with
   an exact receiver-type match (see the calls bullet).

@@ -352,17 +352,20 @@ func main() {
 }
 `
 
-// TestIfaceMethodValueScopeError: a method value on an interface receiver
-// keeps failing, but with a named P3-M3 scope error (greppable re-test
-// trigger), not the confusing WS H one.
-func TestIfaceMethodValueScopeError(t *testing.T) {
-	_, err := ExportFile(writeIfaceProg(t, ifaceMethodValueSrc))
-	if err == nil {
-		t.Fatal("expected method-value scope error, got success")
+// TestIfaceMethodValueSupported: a method value on an interface receiver
+// used to fail with a named P3-M3 scope error ("method value via
+// interface"); since P1-9 (review-2026-10-31-22) it exports as an
+// "ifacemethodvalue" wire node dispatching through the itab at call
+// time. Method *expressions* on interfaces stay scope errors (see
+// TestIfaceMethodExprScopeError below).
+func TestIfaceMethodValueSupported(t *testing.T) {
+	out, err := ExportFile(writeIfaceProg(t, ifaceMethodValueSrc))
+	if err != nil {
+		t.Fatalf("interface method value export failed: %v", err)
 	}
-	const want = "method value via interface (P3-M3 scope)"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("error %q does not contain %q", err, want)
+	doc := decodeExport(t, out)
+	if nodes := findAllKind(doc, "ifacemethodvalue"); len(nodes) != 1 {
+		t.Fatalf("ifacemethodvalue nodes = %d, want 1", len(nodes))
 	}
 }
 

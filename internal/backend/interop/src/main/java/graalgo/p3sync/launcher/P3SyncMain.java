@@ -14,6 +14,7 @@ import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceDispatchBuilder;
+import graalgo.iface.IfaceMethodValueBuilder;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
 import graalgo.p3builtin.nodes.ClearNode;
@@ -314,6 +315,9 @@ public final class P3SyncMain {
             // P3-M3 (WS D, ADR-0003): interface method dispatch. Public
             // extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("ifacemethod", new IfaceDispatchBuilder(factory));
+            // P1-9 (review-2026-10-31-22): interface method values.
+            // Public extension hook — no Phase-1 NodeFactory change.
+            factory.registerExprKind("ifacemethodvalue", new IfaceMethodValueBuilder(factory));
             // P3-M5 (WS E, ADR-0005 D3): the synthetic time wire kinds.
             // Public extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("timenew", (node, ctx) -> TimeNewNode.build(node, ctx, factory));

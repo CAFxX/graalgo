@@ -3,6 +3,7 @@ package graalgo.p3sync.launcher;
 import graalgo.frontend.NodeFactory;
 import graalgo.frontend.WireKindRegistrar;
 import graalgo.iface.IfaceDispatchBuilder;
+import graalgo.iface.IfaceMethodValueBuilder;
 import graalgo.p3builtin.nodes.ClearNode;
 import graalgo.p3builtin.nodes.GoMaxProcsNode;
 import graalgo.p3builtin.nodes.GoschedNode;
@@ -128,6 +129,8 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         });
         // P3-M3 (WS D, ADR-0003): interface method dispatch.
         factory.registerExprKind("ifacemethod", new IfaceDispatchBuilder(factory));
+        // P1-9 (review-2026-10-31-22): interface method values.
+        factory.registerExprKind("ifacemethodvalue", new IfaceMethodValueBuilder(factory));
         // P3-M5 (WS E, ADR-0005 D3): the synthetic time wire kinds.
         factory.registerExprKind("timenew", (node, ctx) -> TimeNewNode.build(node, ctx, factory));
         factory.registerExprKind("timeop", (node, ctx) -> TimeOpNode.build(node, ctx, factory));
