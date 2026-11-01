@@ -62,6 +62,10 @@ type graalgoT struct {
 	skipped    bool
 	output     []string // buffered detail lines (flushed on failure when !verbose)
 	subresults []string // buffered subtest result lines (flushed after own result)
+	cleanups     []func()
+	cleanupsDone bool
+	ctx          context.Context
+	ctxCancel    context.CancelFunc
 }
 
 // logLine emits a detail line: immediately in verbose mode, buffered
@@ -147,6 +151,138 @@ func (t *graalgoT) Skipped() bool {
 	return t.skipped
 }
 
+// Cleanup registers f to run when the test (or subtest) completes,
+// LIFO, including on FailNow/Skip. A cleanup registered during cleanup
+// is drained too. A cleanup's own panic fails the test loudly instead
+// of replacing the test's outcome. Calling Cleanup after the test has
+// completed panics, matching go test.
+func (t *graalgoT) Cleanup(f func()) {
+	if t.cleanupsDone {
+		panic("graalgo test: Cleanup called after test completed")
+	}
+	t.cleanups = append(t.cleanups, f)
+}
+
+// runCleanups drains t.cleanups LIFO and then cancels t's Context, so
+// the context is cancelled after cleanup completes, matching go test.
+// It is idempotent: the main runner and Run each call it once per test.
+func (t *graalgoT) runCleanups() {
+	if t.cleanupsDone {
+		return
+	}
+	t.cleanupsDone = true
+	for len(t.cleanups) > 0 {
+		f := t.cleanups[len(t.cleanups)-1]
+		t.cleanups = t.cleanups[:len(t.cleanups)-1]
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s := toString(r)
+					if len(s) >= 17 && s[:17] == "graalgo test skip" {
+						t.skipped = true
+					} else if len(s) >= 18 && s[:18] == "graalgo test fatal" {
+						t.failed = true
+					} else {
+						t.failed = true
+						t.logLine("panic: " + s)
+					}
+				}
+			}()
+			f()
+		}()
+	}
+	if t.ctxCancel != nil {
+		t.ctxCancel()
+		t.ctxCancel = nil
+	}
+}
+
+// Setenv sets an environment variable for the test and restores the
+// previous value (or unsets it, if it was unset) via Cleanup.
+func (t *graalgoT) Setenv(key, value string) {
+	prev, hadPrev := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.failed = true
+		t.logLine("Setenv: " + err.Error())
+		panic("graalgo test fatal: " + t.name)
+	}
+	t.Cleanup(func() {
+		if hadPrev {
+			os.Setenv(key, prev)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+}
+
+// Chdir changes the working directory for the test and restores the
+// previous directory via Cleanup.
+func (t *graalgoT) Chdir(dir string) {
+	old, err := os.Getwd()
+	if err != nil {
+		t.failed = true
+		t.logLine("Chdir: " + err.Error())
+		panic("graalgo test fatal: " + t.name)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.failed = true
+		t.logLine("Chdir: " + err.Error())
+		panic("graalgo test fatal: " + t.name)
+	}
+	t.Cleanup(func() {
+		os.Chdir(old)
+	})
+}
+
+// TempDir creates a fresh temporary directory, registers its removal
+// via Cleanup, and returns its path. Each call returns a distinct
+// directory.
+func (t *graalgoT) TempDir() string {
+	dir, err := os.MkdirTemp("", "graalgo-test-")
+	if err != nil {
+		t.failed = true
+		t.logLine("TempDir: " + err.Error())
+		panic("graalgo test fatal: " + t.name)
+	}
+	t.Cleanup(func() {
+		os.RemoveAll(dir)
+	})
+	return dir
+}
+
+// Context returns a context cancelled after the test and its cleanups
+// complete. Like go test, the context is per-test (not shared with the
+// parent), so a subtest's cancellation does not cancel its parent.
+func (t *graalgoT) Context() context.Context {
+	if t.ctx == nil {
+		var cancel context.CancelFunc
+		t.ctx, cancel = context.WithCancel(context.Background())
+		t.ctxCancel = cancel
+	}
+	return t.ctx
+}
+
+// Deadline reports that graalgo test sets no deadline: the zero time
+// and false, exactly as a test binary run without -timeout behaves.
+func (t *graalgoT) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+// Parallel is NOT supported: the driver runs tests sequentially, and
+// silently running a parallel test sequentially would misrepresent
+// its semantics. Fail loudly instead of pretending.
+func (t *graalgoT) Parallel() {
+	panic("graalgo test: t.Parallel is not supported (tests run sequentially)")
+}
+
+// FailNow marks the test failed and stops it immediately. Cleanups
+// still run: the panic unwinds through the runner's cleanup defers
+// before the main runner classifies it as a failure.
+func (t *graalgoT) FailNow() {
+	t.failed = true
+	panic("graalgo test fatal: " + t.name)
+}
+
 func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
 	// === RUN lines are never indented, matching go test.
@@ -154,7 +290,14 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	// Subtest cleanups run when the subtest returns — or when it
+	// panics (FailNow/Skip): the defer runs during unwinding and the
+	// original panic continues to the parent, so a cleanup's Error
+	// still fails the subtest before its result line is computed.
+	func() {
+		defer sub.runCleanups()
+		f(sub)
+	}()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
@@ -614,11 +757,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main and shim use time, os and context directly.
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "context")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "context"}] = true
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -722,6 +867,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				n := d.Name.Name
 				isTest := tu.tests[n]
 				// Skip other entry points (Test/Benchmark/Fuzz/Example).
+				// Benchmark/Fuzz/Example functions are NOT silently
+				// dropped: runPackage counts them (countEntryPoints)
+				// and prints a loud skipped line, so a package whose
+				// only entry points are skipped never reports a bare
+				// ok. See test.go's formatSkippedLine.
 				// Methods (Recv != nil) are always inlined — tests use
 				// them (e.g. badRand.Read implementing io.Reader).
 				isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
@@ -926,7 +1076,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits", "context"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1395,6 +1545,12 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			}
 			body.WriteString("\t\tt0 := time.Now()\n")
 			body.WriteString("\t\tfunc() {\n")
+			// Cleanups run after the test body — including after a
+			// Fatal/Skip panic, whose recover defer below runs first
+			// (LIFO) and swallows the panic, so cleanups still execute.
+			body.WriteString("\t\t\tdefer func() {\n")
+			body.WriteString("\t\t\t\ttt.runCleanups()\n")
+			body.WriteString("\t\t\t}()\n")
 			body.WriteString("\t\t\tdefer func() {\n")
 			body.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
 			body.WriteString("\t\t\t\t\ts := toString(r)\n")

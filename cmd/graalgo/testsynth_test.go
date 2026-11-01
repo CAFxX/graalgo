@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"go/build"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -964,5 +968,359 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestGraalgoTNewMethodsPresent is the regression test for P1-2's
+// missing-method half: every testing.T method the shim previously
+// lacked must exist on graalgoT in the generated driver, so a test
+// using ordinary modern testing API builds under `graalgo test`.
+func TestGraalgoTNewMethodsPresent(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/newmethods\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package newmethods\n")
+	writeFile(t, root, "p_test.go", `package newmethods
+
+import "testing"
+
+func TestUsesNewMethods(t *testing.T) {
+	t.Cleanup(func() {})
+	t.Setenv("K", "v")
+	t.TempDir()
+	t.Context()
+	t.Deadline()
+	t.FailNow()
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	for _, want := range []string{
+		"func (t *graalgoT) Cleanup(f func())",
+		"func (t *graalgoT) Setenv(key, value string)",
+		"func (t *graalgoT) Chdir(dir string)",
+		"func (t *graalgoT) TempDir() string",
+		"func (t *graalgoT) Context() context.Context",
+		"func (t *graalgoT) Deadline() (time.Time, bool)",
+		"func (t *graalgoT) Parallel()",
+		"func (t *graalgoT) FailNow()",
+		"func (t *graalgoT) runCleanups()",
+		"\t\"context\"\n",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("driver lacks %q", want)
+		}
+	}
+	// The generated driver must still parse.
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
+	}
+}
+
+// TestCountEntryPoints pins the Benchmark/Fuzz/Example accounting
+// that feeds the loud skipped line: only top-level functions with the
+// right shape count, so helpers, methods and wrong-signature names
+// never inflate the line.
+func TestCountEntryPoints(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "c_test.go", `package c
+
+func TestA(t *T) {}
+func TestB(t *T) {}
+func TestNoParam() {}
+func BenchmarkX(b *B) {}
+func BenchmarkNoParam() {}
+func FuzzY(f *F) {}
+func ExampleZ() {}
+func ExampleZ_suffix() {}
+func ExampleArg(x int) {}
+func helper() {}
+type M struct{}
+func (m M) TestMethod(t *T) {}
+func (m M) BenchmarkMethod(b *B) {}
+`)
+	c, err := countEntryPoints(filepath.Join(root, "c_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.tests != 2 || c.benchmarks != 1 || c.fuzz != 1 || c.examples != 2 {
+		t.Errorf("countEntryPoints = %+v, want {tests:2 benchmarks:1 fuzz:1 examples:2}", c)
+	}
+}
+
+// TestFormatSkippedLine pins the exact loud-skip wording and the
+// empty case (no line when nothing was skipped).
+func TestFormatSkippedLine(t *testing.T) {
+	if got := formatSkippedLine(entryPointCounts{}); got != "" {
+		t.Errorf("formatSkippedLine(zero) = %q, want empty", got)
+	}
+	want := "skipped: 2 benchmarks, 1 fuzz targets, 0 examples (not run by graalgo test)"
+	if got := formatSkippedLine(entryPointCounts{benchmarks: 2, fuzz: 1}); got != want {
+		t.Errorf("formatSkippedLine = %q, want %q", got, want)
+	}
+}
+
+// TestRunPackageBenchmarkOnlySkipped is the regression test for P1-2's
+// silent-drop half: a package whose only entry points are benchmarks,
+// fuzz targets and examples must report the loud skipped line and
+// must NOT report a bare ok. runPackage needs no backend call here
+// (no tests are selected), so this runs without the JVM.
+func TestRunPackageBenchmarkOnlySkipped(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/benchonly\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package benchonly\n")
+	writeFile(t, root, "p_test.go", `package benchonly
+
+import "testing"
+
+func BenchmarkAlgo(b *testing.B) {}
+func FuzzParse(f *testing.F) {}
+func ExampleHello() {}
+func ExampleHello_suffix() {}
+`)
+	// Capture runPackage's stdout (it prints via fmt.Printf).
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	ok := newTestRunner("", false, nil, 1).runPackage(root)
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if !ok {
+		t.Fatalf("runPackage = false, want true; output:\n%s", out)
+	}
+	wantLine := "skipped: 1 benchmarks, 1 fuzz targets, 2 examples (not run by graalgo test)"
+	if !strings.Contains(string(out), wantLine) {
+		t.Errorf("output lacks skipped line %q:\n%s", wantLine, out)
+	}
+	wantSuffix := "[no tests to run; skipped: 1 benchmarks, 1 fuzz targets, 2 examples]"
+	if !strings.Contains(string(out), wantSuffix) {
+		t.Errorf("ok line lacks skipped suffix %q:\n%s", wantSuffix, out)
+	}
+	if strings.Contains(string(out), "ok  \texample.com/benchonly") &&
+		!strings.Contains(string(out), "skipped:") {
+		t.Errorf("bare ok line for a skipped-only package:\n%s", out)
+	}
+}
+
+// TestShimSemanticsUnderGC runs a generated driver under the gc
+// toolchain and asserts the shim's runtime semantics: Cleanup runs
+// LIFO after the test, Setenv restores (including to unset), TempDir
+// is created and removed, Chdir restores, Context is cancelled after
+// completion, Deadline reports no deadline, subtest cleanups run
+// before the parent checks, a cleanup's Error fails the test, FailNow
+// stops the test, and Parallel fails loudly. The driver is plain Go,
+// so gc execution is a valid oracle for shim logic (backend execution
+// of the same driver is covered by `graalgo test` end-to-end runs).
+func TestShimSemanticsUnderGC(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		// Fall back to the toolchain that built this test binary
+		// (the repo pins ~/tools/go); skip only if neither exists.
+		if goroot := runtime.GOROOT(); goroot != "" {
+			cand := filepath.Join(goroot, "bin", "go")
+			if _, serr := os.Stat(cand); serr == nil {
+				goBin, err = cand, nil
+			}
+		}
+	}
+	if err != nil {
+		t.Skipf("go toolchain not on PATH: %v", err)
+	}
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/shimsem\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package shimsem\n")
+	writeFile(t, root, "p_test.go", `package shimsem
+
+import (
+	"context"
+	"os"
+	"testing"
+)
+
+var (
+	cleanupSeq  string
+	tempDirPath string
+	startDir    string
+	savedCtx    context.Context
+	failNowAfter bool
+	subCleanupRan bool
+)
+
+func TestCleanupOrder(t *testing.T) {
+	t.Cleanup(func() { cleanupSeq += "A" })
+	t.Cleanup(func() { cleanupSeq += "B" })
+}
+
+func TestCleanupRan(t *testing.T) {
+	if cleanupSeq != "BA" {
+		t.Fatalf("cleanup order = %q, want BA (LIFO)", cleanupSeq)
+	}
+}
+
+func TestSetenvSets(t *testing.T) {
+	os.Setenv("GRAALGO_SHIM_KEEP", "orig")
+	t.Setenv("GRAALGO_SHIM_KEEP", "new")
+	if os.Getenv("GRAALGO_SHIM_KEEP") != "new" {
+		t.Fatal("Setenv did not apply")
+	}
+	t.Setenv("GRAALGO_SHIM_UNSET_PROBE", "x")
+	if os.Getenv("GRAALGO_SHIM_UNSET_PROBE") != "x" {
+		t.Fatal("Setenv probe did not apply")
+	}
+}
+
+func TestSetenvRestored(t *testing.T) {
+	if os.Getenv("GRAALGO_SHIM_KEEP") != "orig" {
+		t.Fatalf("Setenv did not restore: %q", os.Getenv("GRAALGO_SHIM_KEEP"))
+	}
+	if _, ok := os.LookupEnv("GRAALGO_SHIM_UNSET_PROBE"); ok {
+		t.Fatal("Setenv did not restore an unset variable to unset")
+	}
+}
+
+func TestTempDirAndChdir(t *testing.T) {
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	startDir = old
+	d := t.TempDir()
+	tempDirPath = d
+	if _, err := os.Stat(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d+"/f.txt", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(d)
+	wd, err := os.Getwd()
+	if err != nil || wd != d {
+		t.Fatalf("Chdir: wd=%q err=%v", wd, err)
+	}
+}
+
+func TestTempDirRemovedAndWdRestored(t *testing.T) {
+	if _, err := os.Stat(tempDirPath); err == nil {
+		t.Fatal("TempDir was not removed by cleanup")
+	}
+	wd, _ := os.Getwd()
+	if wd != startDir {
+		t.Fatalf("Chdir did not restore: wd=%q want %q", wd, startDir)
+	}
+}
+
+func TestContextCancel(t *testing.T) {
+	ctx := t.Context()
+	if ctx == nil {
+		t.Fatal("nil context")
+	}
+	savedCtx = ctx
+}
+
+func TestContextCancelled(t *testing.T) {
+	if savedCtx == nil {
+		t.Fatal("no saved context")
+	}
+	if savedCtx.Err() == nil {
+		t.Fatal("context was not cancelled after the test completed")
+	}
+}
+
+func TestDeadlineZero(t *testing.T) {
+	d, ok := t.Deadline()
+	if ok {
+		t.Fatal("Deadline ok, want false (no -timeout)")
+	}
+	if !d.IsZero() {
+		t.Fatal("Deadline non-zero")
+	}
+}
+
+func TestSubtestCleanup(t *testing.T) {
+	t.Run("sub", func(t *testing.T) {
+		t.Cleanup(func() { subCleanupRan = true })
+		if subCleanupRan {
+			t.Fatal("subtest cleanup ran too early")
+		}
+	})
+	if !subCleanupRan {
+		t.Fatal("subtest cleanup did not run before Run returned")
+	}
+}
+
+func TestCleanupErrorFails(t *testing.T) {
+	t.Run("bad", func(t *testing.T) {
+		t.Cleanup(func() { t.Error("cleanup boom") })
+	})
+}
+
+func TestFailNowStops(t *testing.T) {
+	t.FailNow()
+	failNowAfter = true
+}
+
+func TestFailNowDidStop(t *testing.T) {
+	if failNowAfter {
+		t.Fatal("code after FailNow ran")
+	}
+}
+
+func TestParallelLoud(t *testing.T) {
+	t.Parallel()
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(driver)
+	cmd := exec.Command(goBin, "run", driver)
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	out := stdout.String() + stderr.String()
+	// The driver must FAIL overall (FailNow, Parallel and the cleanup
+	// error tests fail by design) while every other test passes.
+	if runErr == nil {
+		t.Fatalf("driver unexpectedly passed; output:\n%s", out)
+	}
+	for _, want := range []string{
+		"--- PASS: TestCleanupRan",
+		"--- PASS: TestSetenvRestored",
+		"--- PASS: TestTempDirRemovedAndWdRestored",
+		"--- PASS: TestContextCancelled",
+		"--- PASS: TestDeadlineZero",
+		"--- PASS: TestSubtestCleanup",
+		"--- PASS: TestFailNowDidStop",
+		"--- FAIL: TestCleanupErrorFails",
+		"cleanup boom",
+		"--- FAIL: TestFailNowStops",
+		"--- FAIL: TestParallelLoud",
+		"t.Parallel is not supported",
+		"FAIL",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("driver output lacks %q:\n%s", want, out)
+		}
 	}
 }

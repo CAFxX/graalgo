@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
 	"go/build"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,7 +26,8 @@ import (
 // graalgo-vs-gc behavior parity.
 func cmdTest(root string, args []string) int {
 	// Separate test flags from package args. We accept -run, -v, -count,
-	// and -cover (the last two for compatibility; see below).
+	// -cover and -bench (the last three for compatibility; see below:
+	// -cover is rejected, -bench is accepted but benchmarks are not run).
 	var runFilter string
 	var verbose bool
 	var count int = 1
@@ -46,6 +50,8 @@ Flags:
 	-count=n		run tests n times (n=1 disables caching; graalgo
 			has no test cache, so every run is fresh)
 	-cover		enable coverage (not yet supported)
+	-bench=regexp	accepted but benchmarks are NOT run: graalgo test
+			prints a loud skipped line instead (see below)
 `)
 			return 0
 		case a == "-run" && i+1 < len(args):
@@ -68,6 +74,14 @@ Flags:
 				return 2
 			}
 			count = n
+		case a == "-bench" && i+1 < len(args):
+			// Accepted so `graalgo test -bench .` does not die with
+			// "unknown flag", but benchmarks are NOT run: runPackage
+			// prints the loud skipped line for them. No variable is
+			// kept: the flag carries no filtering semantics here.
+			i++
+		case strings.HasPrefix(a, "-bench="):
+			// Same as -bench above.
 		case a == "-cover":
 			cover = true
 		case strings.HasPrefix(a, "-"):
@@ -116,6 +130,73 @@ Flags:
 		return 1
 	}
 	return 0
+}
+
+// entryPointCounts tallies a package's test entry points by kind. The
+// benchmarks/fuzz/examples fields are the entry points graalgo test
+// does NOT run; they are reported loudly (formatSkippedLine), never
+// silently dropped.
+type entryPointCounts struct {
+	tests      int
+	benchmarks int
+	fuzz       int
+	examples   int
+}
+
+// totalSkipped returns the number of entry points graalgo test skips.
+func (c entryPointCounts) totalSkipped() int {
+	return c.benchmarks + c.fuzz + c.examples
+}
+
+// skippedSummary renders "N benchmarks, M fuzz targets, K examples".
+func (c entryPointCounts) skippedSummary() string {
+	return fmt.Sprintf("%d benchmarks, %d fuzz targets, %d examples",
+		c.benchmarks, c.fuzz, c.examples)
+}
+
+// formatSkippedLine renders the loud skip notice for entry points
+// graalgo test does not run, or "" when nothing was skipped.
+func formatSkippedLine(c entryPointCounts) string {
+	if c.totalSkipped() == 0 {
+		return ""
+	}
+	return "skipped: " + c.skippedSummary() + " (not run by graalgo test)"
+}
+
+// countEntryPoints parses one _test.go file and counts its top-level
+// Test/Benchmark/Fuzz/Example functions, using the same shape rules as
+// discoverTests: non-method functions, one parameter for
+// Test/Benchmark/Fuzz, no parameters for Example. It re-parses files
+// discoverTests already parsed; test files are small and the second
+// parse keeps both functions' contracts independent.
+func countEntryPoints(path string) (entryPointCounts, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return entryPointCounts{}, fmt.Errorf("parse: %w", err)
+	}
+	var c entryPointCounts
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil {
+			continue
+		}
+		nparams := 0
+		if fn.Type.Params != nil {
+			nparams = len(fn.Type.Params.List)
+		}
+		switch name := fn.Name.Name; {
+		case strings.HasPrefix(name, "Test") && nparams == 1:
+			c.tests++
+		case strings.HasPrefix(name, "Benchmark") && nparams == 1:
+			c.benchmarks++
+		case strings.HasPrefix(name, "Fuzz") && nparams == 1:
+			c.fuzz++
+		case strings.HasPrefix(name, "Example") && nparams == 0:
+			c.examples++
+		}
+	}
+	return c, nil
 }
 
 // parseCount parses a -count=n value. Like `go test`, n must be >= 1.
@@ -225,6 +306,21 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
+	// Count the entry points graalgo test does NOT run (Benchmark,
+	// Fuzz, Example) so they are reported loudly below — never silently
+	// dropped, and never hidden behind a bare ok line.
+	var skipped entryPointCounts
+	for _, tf := range runnableTests {
+		c, err := countEntryPoints(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		skipped.benchmarks += c.benchmarks
+		skipped.fuzz += c.fuzz
+		skipped.examples += c.examples
+	}
+
 	// The synthesized driver prints go-test-format output itself
 	// (=== RUN / --- PASS/FAIL lines, PASS/FAIL summary); a non-zero
 	// exit means the package failed.
@@ -257,10 +353,19 @@ func (r *testRunner) runPackage(dir string) bool {
 		fmt.Println("testing: warning: no tests to run")
 		fmt.Println("PASS")
 	}
+	// Loud skip notice, printed whether or not tests ran: a package
+	// whose only entry points were skipped must never report a bare ok.
+	if line := formatSkippedLine(skipped); line != "" {
+		fmt.Println(line)
+	}
 	elapsed := time.Since(t0).Seconds()
 	okSuffix := ""
 	if len(ftList) == 0 {
-		okSuffix = " [no tests to run]"
+		if skipped.totalSkipped() > 0 {
+			okSuffix = " [no tests to run; skipped: " + skipped.skippedSummary() + "]"
+		} else {
+			okSuffix = " [no tests to run]"
+		}
 	}
 	if ok {
 		fmt.Printf("ok  \t%s\t%.3fs%s\n", importPath, elapsed, okSuffix)
