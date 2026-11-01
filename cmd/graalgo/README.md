@@ -48,7 +48,13 @@ export GRAALGO_HOME=/path/to/graalgo
   Package patterns (`./...`, `<dir>/...`) are supported: every matched
   package is validated, and when several packages match, the results
   are discarded like `go build` (no artifact is emitted); `-o` with
-  several matched packages is an error.
+  several matched packages is an error. Pattern roots are judged by
+  the directory they resolve to, not their spelling: `../...` from a
+  package directory expands the enclosing module, while a root that is
+  a nested module or falls outside the enclosing module is refused
+  (`does not contain main module`, like gc). A pattern matching no
+  packages is a loud error for build/test/vet — for build this is a
+  deliberate divergence from gc, which only warns and exits 0.
 - **test**: Discover `*_test.go` files and run each `TestXxx` function
   through the backend with a minimal `testing.T` shim. Package
   patterns (`./...`, `<dir>/...`) expand to every matched package.

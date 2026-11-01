@@ -247,6 +247,154 @@ func TestExpandPatternDirsMatchesGoList(t *testing.T) {
 	}
 }
 
+// TestExpandPatternDirsNestedModuleRoot pins the veto finding F1: a
+// pattern whose root IS a nested module is refused gc-style, not
+// expanded — both spelled from the module root and via `..` from a
+// sibling package directory.
+func TestExpandPatternDirsNestedModuleRoot(t *testing.T) {
+	root := patternFixture(t)
+	chdir(t, root)
+	for _, tc := range []struct{ prefix, pat string }{
+		{"nestedmod", "./nestedmod/..."},
+	} {
+		if _, err := expandPatternDirs(tc.prefix, tc.pat); err == nil || !strings.Contains(err.Error(), "does not contain main module") {
+			t.Fatalf("expandPatternDirs(%q): err = %v, want 'does not contain main module'", tc.pat, err)
+		}
+	}
+	if _, err := resolveFileGroups([]string{"./nestedmod/..."}); err == nil || !strings.Contains(err.Error(), "does not contain main module") {
+		t.Fatalf("resolveFileGroups(./nestedmod/...): err = %v, want 'does not contain main module'", err)
+	}
+	chdir(t, filepath.Join(root, "sub"))
+	if _, err := expandPatternDirs("../nestedmod", "../nestedmod/..."); err == nil || !strings.Contains(err.Error(), "does not contain main module") {
+		t.Fatalf("expandPatternDirs(../nestedmod/...): err = %v, want 'does not contain main module'", err)
+	}
+}
+
+// TestResolveFileGroupsDotDotRoot pins the veto finding F2: a `..`
+// pattern root expands the enclosing module tree, judged by the
+// directory it resolves to rather than its dot-prefixed spelling.
+func TestResolveFileGroupsDotDotRoot(t *testing.T) {
+	root := patternFixture(t)
+	chdir(t, filepath.Join(root, "sub"))
+	groups, err := resolveFileGroups([]string{"../..."})
+	if err != nil {
+		t.Fatalf("resolveFileGroups(../...): %v", err)
+	}
+	wantDirs := []string{"..", filepath.Join("..", "onlytest"), filepath.Join("..", "sub"), filepath.Join("..", "sub", "nested")}
+	if got := groupDirs(t, groups); strings.Join(got, "|") != strings.Join(wantDirs, "|") {
+		t.Fatalf("dirs = %v, want %v", got, wantDirs)
+	}
+	// A single package under a `..` root, spelled through the root.
+	groups, err = resolveFileGroups([]string{"../onlytest/..."})
+	if err != nil {
+		t.Fatalf("resolveFileGroups(../onlytest/...): %v", err)
+	}
+	if got := groupDirs(t, groups); len(got) != 1 || got[0] != filepath.Join("..", "onlytest") {
+		t.Fatalf("dirs = %v, want [../onlytest]", got)
+	}
+}
+
+// TestExpandPatternDirsOutsideModuleRoot pins roots that resolve
+// outside the enclosing module: they are refused, whether the escape
+// is from a package directory (`../../...` from sub) or from inside a
+// nested module (`../...` from nestedmod, whose main module is itself).
+func TestExpandPatternDirsOutsideModuleRoot(t *testing.T) {
+	root := patternFixture(t)
+	chdir(t, filepath.Join(root, "sub"))
+	if _, err := expandPatternDirs("../..", "../../..."); err == nil || !strings.Contains(err.Error(), "does not contain main module") {
+		t.Fatalf("expandPatternDirs(../../...): err = %v, want 'does not contain main module'", err)
+	}
+	chdir(t, filepath.Join(root, "nestedmod"))
+	if _, err := expandPatternDirs("..", "../..."); err == nil || !strings.Contains(err.Error(), "does not contain main module") {
+		t.Fatalf("expandPatternDirs(../...) from nestedmod: err = %v, want 'does not contain main module'", err)
+	}
+}
+
+// TestExpandPatternDirsNestedModuleIsMainModuleFromInside pins the
+// anchor of the containment rule: from inside a nested module, that
+// module is the main module, so `./...` expands it — the rule is
+// anchored at the cwd's module, not at the pattern root's ancestors.
+func TestExpandPatternDirsNestedModuleIsMainModuleFromInside(t *testing.T) {
+	root := patternFixture(t)
+	chdir(t, filepath.Join(root, "nestedmod"))
+	dirs, err := expandPatternDirs(".", "./...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(./...) from nestedmod: %v", err)
+	}
+	if len(dirs) != 1 || filepath.Clean(dirs[0]) != "." {
+		t.Fatalf("dirs = %v, want [.]", dirs)
+	}
+}
+
+// TestExpandPatternDirsMatchesGoListRoots extends the gc differential
+// to the divergent roots: a `..` root must match `go list` run from
+// the same subdirectory, and nested-module / outside-module roots
+// must fail on both sides (gc fails, the driver fails).
+func TestExpandPatternDirsMatchesGoListRoots(t *testing.T) {
+	root := patternFixture(t)
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go toolchain on PATH; gc differential skipped")
+	}
+	goList := func(dir, pat string) ([]string, error) {
+		cmd := exec.Command(goBin, "list", "-f", "{{.Dir}}", pat)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=")
+		out, err := cmd.Output()
+		if err != nil {
+			return nil, err
+		}
+		var dirs []string
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			rel, err := filepath.Rel(root, line)
+			if err != nil {
+				t.Fatalf("rel(%q): %v", line, err)
+			}
+			dirs = append(dirs, rel)
+		}
+		return dirs, nil
+	}
+	// Success case: ../... from sub matches go list's whole tree.
+	sub := filepath.Join(root, "sub")
+	chdir(t, sub)
+	got, err := expandPatternDirs("..", "../...")
+	if err != nil {
+		t.Fatalf("expandPatternDirs(../...): %v", err)
+	}
+	var gotRel []string
+	for _, d := range got {
+		abs, err := filepath.Abs(d)
+		if err != nil {
+			t.Fatalf("abs(%q): %v", d, err)
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			t.Fatalf("rel(%q): %v", abs, err)
+		}
+		gotRel = append(gotRel, rel)
+	}
+	want, err := goList(sub, "../...")
+	if err != nil {
+		t.Fatalf("go list ../...: %v", err)
+	}
+	if strings.Join(gotRel, "|") != strings.Join(want, "|") {
+		t.Fatalf("../...: expandPatternDirs = %v, go list = %v", gotRel, want)
+	}
+	// Failure cases: gc fails and the driver fails, same class.
+	for _, tc := range []struct{ dir, prefix, pat string }{
+		{root, "nestedmod", "./nestedmod/..."},
+		{sub, "../..", "../../..."},
+	} {
+		if _, err := goList(tc.dir, tc.pat); err == nil {
+			t.Fatalf("go list %s from %s: unexpectedly succeeded", tc.pat, tc.dir)
+		}
+		chdir(t, tc.dir)
+		if _, err := expandPatternDirs(tc.prefix, tc.pat); err == nil || !strings.Contains(err.Error(), "does not contain main module") {
+			t.Fatalf("expandPatternDirs(%q) from %s: err = %v, want 'does not contain main module'", tc.pat, tc.dir, err)
+		}
+	}
+}
+
 // TestExpandPatternDirsSkipsUnreadableAndSymlinkDirs pins two walk
 // rules that the fixture cannot express via plain files: symlinked
 // directories are not followed, and a nested go.mod stops descent.

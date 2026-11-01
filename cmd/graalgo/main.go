@@ -283,7 +283,31 @@ func splitPattern(arg string) (prefix string, isPattern bool, err error) {
 // "." or "_", directories named "testdata" or "vendor", symlinked
 // directories, and nested modules (a subdirectory holding its own
 // go.mod belongs to another module, so the walk does not descend into
-// it). The root directory itself is always a candidate.
+// it). The root directory itself is a candidate unless a root rule
+// below excludes it.
+//
+// The root rules judge the directory the pattern names, not its
+// spelling: the prefix is resolved to an absolute, cleaned path
+// before any rule runs. That is what makes `..` roots work: from a
+// package directory, `../...` resolves to the module root (which gc
+// expands), instead of being rejected for the dot-prefixed spelling
+// "..". The one exemption is the current directory itself: `./...`
+// from inside a directory gc would otherwise ignore (e.g. testdata)
+// still expands it, matching gc, which lists the root package.
+//
+// Module containment is anchored at the main module of the current
+// directory — the nearest go.mod walking up from the cwd, the same
+// rule gc uses to pick the main module — not at the pattern root's
+// ancestors. That distinction matters: from inside a nested module,
+// that module IS the main module, so `./...` expands it (gc agrees),
+// while from the enclosing module the same directory is a foreign
+// module and `./nestedmod/...` is refused. A root outside the main
+// module, or a root at/under a nested module boundary between the
+// main module root and the pattern root, is refused with gc's
+// "does not contain main module" wording. With no enclosing go.mod
+// (a module-free tree), expansion proceeds as before: gc refuses
+// such patterns outright, but the driver keeps its historical
+// module-free behavior, and no test pins the gc refusal there.
 func expandPatternDirs(prefix, arg string) ([]string, error) {
 	fi, err := os.Stat(prefix)
 	if err != nil {
@@ -292,14 +316,43 @@ func expandPatternDirs(prefix, arg string) ([]string, error) {
 	if !fi.IsDir() {
 		return nil, fmt.Errorf("pattern %s: %s is not a directory", arg, prefix)
 	}
+	absRoot, err := filepath.Abs(prefix)
+	if err != nil {
+		return nil, fmt.Errorf("pattern %s: %v", arg, err)
+	}
+	absRoot = filepath.Clean(absRoot)
+	noModule := func() error {
+		return fmt.Errorf("pattern %s: directory prefix %s does not contain main module or its selected dependencies", arg, prefix)
+	}
+	// Module containment, anchored at the cwd's main module.
+	if modRoot, _ := moduleForDir("."); modRoot != "" {
+		rel, err := filepath.Rel(modRoot, absRoot)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil, noModule()
+		}
+		// Any go.mod on the path from the main module root
+		// (exclusive) down to the pattern root (inclusive) marks a
+		// nested-module boundary: the root belongs to another module.
+		for d := absRoot; d != modRoot; {
+			if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+				return nil, noModule()
+			}
+			parent := filepath.Dir(d)
+			if parent == d {
+				break
+			}
+			d = parent
+		}
+	}
 	// The ignore rules apply to the pattern root itself, not just to
 	// directories reached while descending: gc reports "matched no
 	// packages" for ./testdata/... and ./_hidden/... (verified against
 	// gc 1.27). A vendor root is a different gc error (it requires
 	// vendor/modules.txt), so it fails loudly instead of matching
-	// nothing silently.
-	if base := filepath.Base(filepath.Clean(prefix)); base != "." {
-		switch {
+	// nothing silently. The rules judge the resolved root directory,
+	// except the cwd itself, which is always a candidate (see above).
+	if cwdAbs, err := filepath.Abs("."); err != nil || absRoot != cwdAbs {
+		switch base := filepath.Base(absRoot); {
 		case base == "vendor":
 			return nil, fmt.Errorf("pattern %s: vendor directories are not matched by ... patterns (gc lists them only via vendor/modules.txt)", arg)
 		case strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") || base == "testdata":
@@ -389,6 +442,10 @@ func resolveFileGroups(args []string) ([]fileGroup, error) {
 			if err != nil {
 				return nil, err
 			}
+			// Deliberate fail-loud divergence, documented in
+			// README: gc's `build` only warns on a no-match
+			// pattern and exits 0; the driver errors instead,
+			// so an empty match can never pass silently.
 			if len(dirs) == 0 {
 				return nil, fmt.Errorf("pattern %s: matched no packages", a)
 			}
