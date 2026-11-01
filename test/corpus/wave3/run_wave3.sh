@@ -5,7 +5,7 @@
 # exit codes, and — for panic programs — the first stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs (marked with an
+# the runner's own stderr filter). Timing-sensitive programs (marked with an
 # empty <base>.timing file) print fixed strings only (never measured
 # durations) and run with gmp=1 only; all other programs run with gmp=1
 # and gmp=4 (the timectx convention).

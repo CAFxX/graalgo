@@ -4,7 +4,7 @@
 # normalize.py and compared. Exit codes are compared too (gc: 2).
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7).
+# the runner's own stderr filter).
 set -uo pipefail
 cd "$(dirname "$0")"
 

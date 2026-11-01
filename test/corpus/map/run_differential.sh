@@ -9,7 +9,7 @@
 # (gc vs graalgo) and against the checked-in `$base.panic` anchor.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7).
+# the runner's own stderr filter).
 set -uo pipefail
 cd "$(dirname "$0")"
 

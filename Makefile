@@ -106,7 +106,7 @@ GO ?= $(HOME)/tools/go/bin/go
 
 .PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-p3frontend test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -161,48 +161,37 @@ test-regression: generate build graalgo
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
 
-# p3frontend drift tests: the phase-3 importer/loader module's own test
-# suite, including the synthetic-surface drift tests that the
-# internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
-# and `go test` in the p3frontend module. Needs the gofrontend binary
-# (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
-# the <repo>/internal/frontend/gofrontend fallback (export.go). Needs
-# the backend too (built by `build`): the differential tests run the
-# merged programs under internal/backend/graalgo-sync-run (P3SyncMain),
-# the successor of the deleted phases/phase2 `make run` entry point.
-#
-# In `all` (hence per-push CI) since review-2026-10-31 P1-1: the four
-# failures that kept it out are fixed in this lane —
-#   TestSyncExportDir, TestSyncFormerScopeErrorsNowCompile (was
-#     TestSyncScopeErrorParity) — re-scoped to the real-sync contract:
-#     synthetic sync was retired in 503608ea, so sync compiles as
-#     ordinary calls and the old M2 scope errors no longer exist.
-#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner rewired from phases/phase2 to graalgo-sync-run.
-# The same lane also fixed the further drift failures the full run
-# exposed (errors/reflectlite and strings/iter oracle imports, the
-# context Deadline restoration, the strconv strconvError type, and
-# strings SplitSeq landing); see the test comments for each verdict.
+# p3frontend drift harness: since lane D (review P1-4, 2026-11-01) this
+# module is test-only — it pins v1's synthetic stdlib
+# (internal/frontend/synth_*.go) against real gc 1.27.1, and contains no
+# frontend code. Runs `go vet` and `go test` in the p3frontend module.
+# It needs neither the gofrontend binary nor the backend (the old
+# ExportDir differentials died with the importer/loader/flattener), so
+# it has no `generate`/`build` prerequisites. In `all` (hence per-push
+# CI): a v1 synthetic API change fails here until the harness table is
+# updated with a reason — that is the point, not an accident.
 # /tmp is a 512M shared tmpfs: keep go build/test temps on persistent
-# disk, as test-v2 does (p3frontend/.tmp is gitignored).
+# disk (p3frontend/.tmp is gitignored).
 P3FRONTEND_TMP := $(CURDIR)/internal/frontend/p3frontend/.tmp
-test-p3frontend: generate build
+test-p3frontend:
 	mkdir -p $(P3FRONTEND_TMP) && \
 	cd internal/frontend/p3frontend && TMPDIR="$(P3FRONTEND_TMP)" GOTMPDIR="$(P3FRONTEND_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(P3FRONTEND_TMP)" GOTMPDIR="$(P3FRONTEND_TMP)" $(GO) test ./...
 
-# Frontend v2 module tests: the [internal/frontend/v2](internal/frontend/v2)
+# Frontend v2 module tests: the [research/frontend-v2](research/frontend-v2)
 # module (own go.mod) — parser, checker, emitter, and the Go→Java binary
 # encoder, including the byte-exact zigzag wire contract
 # (TestEncodeIntContract) and the cross-language golden document
 # (TestEncodeGoldenDoc, mirrored by BinaryDecoderTest on the Java side).
-# In `all` (hence per-push CI): this module was previously invisible to CI
-# (R5-P1-2) and the R5-P1-1 zigzag corruption had no mechanical backstop.
+# NOT in `all`: v2 is a research track since lane D (review P1-4,
+# 2026-11-01), not a per-push gate. Run manually while the track is
+# active; it re-enters `all` only through the parity gate in
+# docs/arch/frontend-v2.md §4.
 # /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
-V2_TMP := $(CURDIR)/internal/frontend/v2/.tmp
+V2_TMP := $(CURDIR)/research/frontend-v2/.tmp
 test-v2:
 	mkdir -p $(V2_TMP) && \
-	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
+	cd research/frontend-v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).

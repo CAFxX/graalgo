@@ -1,6 +1,9 @@
 # frontend/v2 — proper parser → AST pipeline
 
-**Status:** design / in-progress (long-lived parallel track, started 2026-10-15).
+**Status:** research track (moved out of the product tree 2026-11-01,
+lane D, review P1-4 — see [REPO_STRUCTURE.md](../REPO_STRUCTURE.md#frontend-consolidation-decision-2026-11-01)).
+Not a cutover candidate until the §4 parity gate passes. Started
+2026-10-15 as a long-lived parallel track.
 **Goal:** Replace the bodge-y v1 frontend with a clean parser → AST → backend
 pipeline. No synthetic packages, no package-name special cases, no stdlib-call
 desugaring, no import overlay, no JSON wire format.
@@ -96,22 +99,38 @@ The single exception is the already-approved temporary synthetic `syscall`
 (his 2026-10-15 order, documented in the bridge-removal tracker). v2 does
 not add new ones.
 
-## 4. Migration plan
+## 4. Migration plan (parity gate — the only re-entry path)
 
-1. **Bootstrap** (this track): skeleton with all three stages, emitting
-   valid v1 JSON for a hello-world program. Differential test against v1
-   output.
-2. **Parity**: extend node coverage until v2 passes the differential corpus
-   (`test/corpus/`) with zero drift vs v1.
-3. **Cutover**: when parity is reached, v2 becomes the default frontend.
-   v1 is deleted (not kept as a fallback).
+State at the 2026-11-01 research decision: 18/60 AST node kinds
+handled, 25 loudly rejected; no method declarations, no generics, no
+multi-package import resolution, no differential corpus run, no
+product caller on either side. The steps below are the gate, not a
+schedule — v2 re-enters the product tree only when every step passes
+and an independent review approves the cutover:
+
+1. **Bootstrap** (done, this track): skeleton with all three stages,
+   emitting an in-memory program for a hello-world program.
+2. **Parity**: extend node coverage until v2 passes the differential
+   corpus (`test/corpus/`) with zero drift vs gc (not vs v1's
+   JSON — v2 emits no JSON; the comparison is behavioural, program
+   by program). Missing before parity can even be attempted: method
+   declarations, generics, multi-package import resolution,
+   package-level vars and init order, channels, go/defer, interfaces,
+   composite literals — see `research/frontend-v2/PROGRESS.md`.
+3. **Cutover**: when parity is reached AND independently reviewed, v2
+   becomes the default frontend. v1 is deleted (not kept as a
+   fallback).
 4. **Cleanup**: the 142 `synth_*.go` files, the import overlay, and the
    desugaring workarounds are deleted with v1.
+
+Until step 2 passes, v2 stays in `research/` and stays out of `make
+all` (`make test-v2` runs its suite manually). A partial v2 must never
+be wired as a second product frontend alongside v1.
 
 ## 5. Layout
 
 ```
-internal/frontend/v2/
+research/frontend-v2/
   go.mod          — separate module (graalgo-frontend-v2)
   parser/         — stage 1: go/parser wrapper
   checker/        — stage 2: go/types wrapper, real importer
@@ -120,9 +139,10 @@ internal/frontend/v2/
   testdata/       — corpus inputs for differential testing vs v1
 ```
 
-v2 is a separate Go module so it can be built and tested independently of
-v1. It lives under `internal/frontend/` (not a new top-level dir) because
-it *is* the frontend — just the next generation.
+v2 is a separate Go module so it can be built and tested independently
+of v1. Since 2026-11-01 it lives under `research/` (not
+`internal/frontend/`): it is a research program, not the next
+generation of the shipped frontend, until the §4 gate passes.
 
 ## 6. Open questions
 

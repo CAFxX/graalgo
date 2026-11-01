@@ -41,13 +41,12 @@ Related: [Makefile](../Makefile) (root build entry point),
     [VENDORING.md](../internal/frontend/VENDORING.md). Sibling trees in the
     same directory:
     - [p3frontend/](../internal/frontend/p3frontend/) — separate module (own
-      `go.mod`): the phase-3 importer/loader
-      ([loader.go](../internal/frontend/p3frontend/loader.go),
-      [importer.go](../internal/frontend/p3frontend/importer.go),
-      [flatten.go](../internal/frontend/p3frontend/flatten.go),
-      [export.go](../internal/frontend/p3frontend/export.go),
-      [asm.go](../internal/frontend/p3frontend/asm.go)) with its own test
-      suite.
+      `go.mod`), test-only since 2026-11-01 (lane D, review P1-4): a
+      drift harness ([drift_test.go](../internal/frontend/p3frontend/drift_test.go))
+      pinning v1's `synth_*.go` packages against real gc 1.27.1. It
+      contains no frontend code: the phase-3 importer/loader/flattener/
+      exporter and their parallel synthetic mirrors were deleted (see
+      [Frontend consolidation decision](#frontend-consolidation-decision-2026-11-01)).
     - [go/](../internal/frontend/go/) — vendored pristine go1.27.1
       `src/go/*`; load-bearing via the `build.sh` overlay, intentional per
       [VENDORING.md](../internal/frontend/VENDORING.md).
@@ -60,14 +59,11 @@ Related: [Makefile](../Makefile) (root build entry point),
       [types/](../internal/frontend/types/),
       [desugar/](../internal/frontend/desugar/) — empty placeholders for the
       planned package split (blocked by an exporter/desugar import cycle).
-    - [v2/](../internal/frontend/v2/) — separate module (own `go.mod`): the
-      frontend v2 rewrite (parser → checker → emitter stages plus the
-      Go→Java binary interface in
-      [encode/](../internal/frontend/v2/encode/), decoded by
-      [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
-      in the Java backend; wire contract pinned by
-      `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side and
-      `BinaryDecoderTest` on the Java side; `make test-v2` runs its suite).
+    - Research track (moved out 2026-11-01, lane D, review P1-4): the
+      frontend v2 rewrite now lives at
+      [research/frontend-v2/](../research/frontend-v2/) (own `go.mod`),
+      not under `internal/frontend/` — see
+      [Frontend consolidation decision](#frontend-consolidation-decision-2026-11-01).
   - The IR is the `frontend/v1` JSON wire format: specified in
     [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by
@@ -199,7 +195,10 @@ Related: [Makefile](../Makefile) (root build entry point),
   (`GG-*.yaml`); the [req](../tools/req/) CLI walks up to find it. Moves
   deferred (see the old → new mapping).
 - [research/](../research/) — active research tracks:
-  [phase5-opt-survey/](../research/phase5-opt-survey/) (Phase-5 work).
+  [phase5-opt-survey/](../research/phase5-opt-survey/) (Phase-5 work) and
+  [frontend-v2/](../research/frontend-v2/) (the frontend rewrite; moved
+  out of the product tree 2026-11-01, lane D — see
+  [Frontend consolidation decision](#frontend-consolidation-decision-2026-11-01)).
   Finished studies are archived under
   [docs/arch/research/](arch/research/).
 
@@ -265,6 +264,66 @@ new locations.
 6. **Every file/dir named in a doc is a link.** Relative paths, resolvable
    from the doc's own directory, mechanically checked by
    [.github/scripts/check_markdown_links.py](../.github/scripts/check_markdown_links.py).
+
+## Frontend consolidation decision (2026-11-01)
+
+Independent review 2026-11-01 (P1-4) found three frontends maintained
+in parallel with only one shipping. Lane D decided, per frontend
+("keep all three" was not an option):
+
+1. **v1 ships (unchanged).** [internal/frontend/](../internal/frontend/)
+   (`export.go`, `synth_machinery.go`, `synth_*.go`) is the product
+   frontend: it is what `cmd/graalgo/` drives via the `gofrontend`
+   binary, including multi-file programs (`ExportFiles`). No second
+   compilation path exists.
+2. **v2 is research, not a cutover candidate.** At 18/60 handled AST
+   node kinds, with no method declarations, no generics, no
+   multi-package import resolution, no differential corpus run, and no
+   product caller on either side (the Go driver is standalone; the
+   Java `NodeFactoryV2` was uncalled), wiring v2 would have meant
+   shipping a second, 30%-complete frontend. It moved to
+   [research/frontend-v2/](../research/frontend-v2/) and left the
+   per-push gate (`make test-v2` still exists for manual runs, but
+   `make all` no longer runs it). Re-entry into the product tree
+   requires the parity gate in [docs/arch/frontend-v2.md](arch/frontend-v2.md)
+   §4 (differential parity on the corpus, then independent review of
+   the cutover) — not a date, not a lane's say-so. The v2 emitter's
+   known-wrong rune columns (review P2-1) were fixed as part of the
+   move (source lines threaded parser → emitter; pinned by
+   `research/frontend-v2/emit/positions_test.go`). On the Java side,
+   the uncalled MVP `NodeFactoryV2` was deleted; `BinaryDecoder` and
+   its golden test stay as the pinned Go→Java wire contract the
+   research track still produces.
+3. **p3frontend is NOT promoted and NOT a frontend anymore.** Promotion
+   was rejected: the product already compiles multi-package programs
+   through v1, and p3frontend's flattening path was strictly weaker
+   (it rejected `func init()`, failed stdlib imports with scope
+   errors, and existed only because the Phase-1 exporter was frozen —
+   a freeze that no longer holds, since `export.go` is actively
+   edited). Instead the module shrank to what it actually was: a
+   drift-test harness. Its importer, loader, flattener, exporter, asm
+   inventory, all 12+ parallel synthetic signature mirrors, and the
+   dead-path tests (differentials through `ExportDir`, loader and
+   asm tests, `testdata/`) were deleted. What survives is
+   [p3frontend/drift_test.go](../internal/frontend/p3frontend/drift_test.go),
+   which pins v1's synthetics directly against real gc 1.27.1 (no
+   mirrors: the test importer resolves synthetic dependencies from
+   v1's own sources). Two packages are deliberately not pinned —
+   `encoding/xml` (divergent io abstraction) and `encoding/json`
+   (predates the gc 1.27 json API) — with the reasons and findings
+   recorded in `drift_test.go`'s NOTE comments for their owning lanes;
+   excluding them is honest scoping, not a silent gap. Deleted with
+   reasons, not salvaged: the asm
+   inventory's source of truth remains
+   [tools/stdlib-fork/asm-inventory-go1.27.1.json](../tools/stdlib-fork/asm-inventory-go1.27.1.json)
+   (the Go embedding had no product consumer and its generator path
+   was stale); the sync drift pin died with the retired synthetic
+   sync (real sync ships now); the loader's build-tag oracle test died
+   with the loader (product file selection lives in v1's
+   `diskimport.go`, which is constraint-aware via `go/build`).
+   The phase-3 design docs (`DESIGN.md`, `SYNC_DESIGN.md`) were deleted
+   with the code they described; the history stays in
+   [docs/arch/phases/phase3/](arch/phases/phase3/).
 
 ## What's intentionally NOT in the repo
 

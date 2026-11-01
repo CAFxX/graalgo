@@ -16,10 +16,13 @@ import java.util.Map;
 /**
  * Decodes the v2 Go→Java binary interface format.
  *
- * <p>The v2 frontend (Go) encodes the in-memory {@code Document} into a
- * compact binary format (see {@code internal/frontend/v2/encode/encode.go}).
- * This decoder reconstructs the generic structure (maps, lists, strings,
- * longs) which {@link NodeFactoryV2} then converts into Truffle nodes.
+ * <p>The v2 frontend (Go, research track at {@code research/frontend-v2/})
+ * encodes the in-memory {@code Document} into a compact binary format
+ * (see {@code research/frontend-v2/encode/encode.go}). This decoder
+ * reconstructs the generic structure (maps, lists, strings, longs);
+ * converting it into Truffle nodes is future cutover work (the MVP
+ * NodeFactoryV2 was deleted 2026-11-01 as uncalled dead code, lane D),
+ * not something this decoder does.
  *
  * <p>Format (all integers are unsigned varints, strings are UTF-8):
  * <pre>
@@ -51,7 +54,7 @@ public final class BinaryDecoder {
     /**
      * Current wire format version. Bump on any incompatible change, in
      * lockstep with the Go encoder's formatVersion
-     * (internal/frontend/v2/encode/encode.go).
+     * (research/frontend-v2/encode/encode.go).
      */
     private static final long FORMAT_VERSION = 1;
 

@@ -4,7 +4,7 @@
 # and under graalgo-sync-run. Compares stdout bytes and exit codes.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7).
+# the runner's own stderr filter).
 set -uo pipefail
 cd "$(dirname "$0")"
 

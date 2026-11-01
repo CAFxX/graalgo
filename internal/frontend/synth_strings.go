@@ -49,14 +49,18 @@
 // Deliberate, documented divergences (inexpressible signatures — the
 // parameter types live in unavailable packages; the P3-M5
 // Context.Deadline omission precedent). The drift test
-// (internal/frontend/p3frontend/strings_test.go) pins each absence on
+// (internal/frontend/p3frontend/drift_test.go) pins each absence on
 // BOTH sides. Re-test when the named wave lands:
 //   - ToUpperSpecial/ToLowerSpecial/ToTitleSpecial (unicode.SpecialCase)
 //     — needs the unicode package.
-//   - Replacer.WriteString, Reader.WriteTo (io.Writer) — needs io.
 //   - Lines, SplitAfterSeq, FieldsSeq, FieldsFuncSeq
 //     (iter.Seq[string]) — needs iter (SplitSeq has landed; the rest
 //     follow the same pattern when needed).
+//
+// Declared with panic bodies, not absent: Replacer.WriteString and
+// Reader.WriteTo (io.Writer) — their signatures landed with io, but
+// the bodies need 2-result interface dispatch (WS D); re-test when
+// WS D lands.
 package main
 
 // syntheticStringsSource is the P3-M7 synthetic `strings` package.

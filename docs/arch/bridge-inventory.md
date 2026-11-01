@@ -109,14 +109,19 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 142 generated `synth_*.go` (synthetic stdlib; `p3frontend` mirrors RETIRED 2026-11-01)
 
 - **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
-  `synth_*.go` mirrors under
-  [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
+  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. The 12+ `synth_*.go` mirrors formerly under
+  [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) were
+  RETIRED 2026-11-01 (lane D, review P1-4): they existed only to serve
+  p3frontend's own importer, a parallel bridge universe, and the
+  product never imported them. The drift pin they provided now lives
+  in [p3frontend/drift_test.go](../../internal/frontend/p3frontend/drift_test.go),
+  which compares v1's synthetics directly against real gc 1.27.1 with
+  no mirrors in between.
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).
@@ -124,8 +129,8 @@ deliverable until the design lands.
   forces the synthetic (the 2026-10-15 directive: only packages that
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
-  mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
+  mirrors are already gone (retired 2026-11-01, lane D — the explicit
+  retire decision this entry used to defer). In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
   `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
   general disk mechanism"), `real-nethttp` (`net`/`net/http`),
   `real-reflect2` (`reflect`).

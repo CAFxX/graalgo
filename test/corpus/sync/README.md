@@ -46,5 +46,5 @@ The cap-1 leg (`testMutexCapOne`) is the same program as `sy01` run with
 ```
 
 The differential runner filters the known JVM `Unsafe` warnings on
-stderr (harness noise, cf. `p3frontend/DESIGN.md` §7) and compares the
+stderr (harness noise, filtered by the runner) and compares the
 first remaining stderr line for panic programs.

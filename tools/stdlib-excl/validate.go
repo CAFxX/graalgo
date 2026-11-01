@@ -295,8 +295,9 @@ func crossCheckPin(repoRoot, ver string) error {
 }
 
 // goBinary returns the Go toolchain binary used to answer `go env GOROOT`
-// (and for the `go` invocations in measure). Discovery order mirrors the
-// p3frontend loader (internal/frontend/p3frontend/loader.go): the explicit
+// (and for the `go` invocations in measure). Discovery order (formerly
+// shared with the p3frontend loader, deleted 2026-11-01 with the lane D
+// frontend consolidation; the order itself is kept): the explicit
 // STDLIB_EXCL_GO override, then $GO (exported by the CI workflows for the
 // Makefiles), then `go` on PATH, then the legacy ~/tools/go/bin/go layout.
 // The legacy path alone broke CI (run 41211913011): GHA runners install go

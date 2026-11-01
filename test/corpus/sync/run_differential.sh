@@ -5,7 +5,7 @@
 # codes, and — for panic programs — the first stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). sy01 also runs with --gmp=1 (the cap-1 leg of
+# the runner's own stderr filter). sy01 also runs with --gmp=1 (the cap-1 leg of
 # SyncStressTest; the in-flight cap is a launcher flag).
 set -uo pipefail
 cd "$(dirname "$0")"

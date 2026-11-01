@@ -72,7 +72,7 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 `go run` masks the exit code) and under `P3SyncMain`, and byte-compares
 stdout, exit codes, and (for panic programs) the first stderr line.
 Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
-cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
+filtered by the runner). Modeled exactly on
 `corpus/timectx/run_differential.sh` (same phases, same comparisons);
 only the program discovery (per-package dirs, `[0-9][0-9]_*.go` glob,
 `.timing` marker) is wave-1 specific.

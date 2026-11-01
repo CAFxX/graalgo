@@ -5,7 +5,7 @@
 # codes, and — for panic programs — the first stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs print fixed strings
+# the runner's own stderr filter). Timing-sensitive programs print fixed strings
 # only (never measured durations).
 set -uo pipefail
 cd "$(dirname "$0")"

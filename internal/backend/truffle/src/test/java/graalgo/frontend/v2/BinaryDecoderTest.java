@@ -8,9 +8,9 @@ import java.util.Map;
  * Cross-language contract tests for the v2 Go→Java binary interface.
  *
  * <p>The GOLDEN hex vectors below were produced by the Go encoder
- * ({@code internal/frontend/v2/encode}, {@code TestEncodeIntContract} and
+ * ({@code research/frontend-v2/encode}, {@code TestEncodeIntContract} and
  * {@code TestEncodeGoldenDoc}): run
- * {@code cd internal/frontend/v2 && go test ./encode/ -v} to regenerate.
+ * {@code cd research/frontend-v2 && go test ./encode/ -v} to regenerate.
  * Every integer width is zigzag-encoded by the Go encoder and un-zigzagged
  * here; decoded values are the original 64-bit patterns as signed longs.
  *

@@ -7,7 +7,7 @@
 # stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Programs are single-goroutine; one --gmp=1
+# the runner's own stderr filter). Programs are single-goroutine; one --gmp=1
 # run each (the sync corpus's gmp sweep covers the scheduler).
 set -uo pipefail
 cd "$(dirname "$0")"

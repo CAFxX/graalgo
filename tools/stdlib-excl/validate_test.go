@@ -362,8 +362,9 @@ func TestResolveStdlibTreePinSkewFailsLoud(t *testing.T) {
 // Toolchain discovery must not hardcode the developer-machine layout: CI
 // run 41211913011 failed with `fork/exec $HOME/tools/go/bin/go: no such
 // file` even though $GO and a PATH go both existed on the runner. The
-// order pinned here mirrors the p3frontend loader: STDLIB_EXCL_GO, $GO,
-// PATH go, legacy ~/tools/go/bin/go.
+// order pinned here follows the former p3frontend loader order (that
+// loader was deleted 2026-11-01, lane D; the order is kept):
+// STDLIB_EXCL_GO, $GO, PATH go, legacy ~/tools/go/bin/go.
 func TestGoBinaryDiscovery(t *testing.T) {
 	fakeHome := t.TempDir() // no tools/ here, like a CI runner HOME
 	binDir := t.TempDir()

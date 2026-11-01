@@ -86,7 +86,7 @@ time after M7 remediation completes.
 `go run` masks the exit code) and under `P3SyncMain`, and byte-compares
 stdout, exit codes, and (for panic programs) the first stderr line.
 Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
-cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
+filtered by the runner). Modeled exactly on
 `corpus/wave1/run_wave.sh` (same phases, same comparisons), except the
 repo root resolves from the script's own path instead of a hardcoded
 default.
