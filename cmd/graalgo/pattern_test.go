@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -191,6 +192,58 @@ func TestResolveTestDirsDotDotDot(t *testing.T) {
 	}
 	if _, err := resolveTestDirs([]string{"./assets/..."}); err == nil || !strings.Contains(err.Error(), "matched no packages") {
 		t.Fatalf("assets pattern: err = %v, want 'matched no packages'", err)
+	}
+}
+
+// TestExpandPatternDirsMatchesGoList is the gc differential for the
+// walk: the directories expandPatternDirs returns for a pattern must
+// equal the package directories `go list` reports for the same pattern
+// on the same tree. It skips when no gc toolchain is on PATH (the
+// resolver unit tests above still pin the expected sets).
+func TestExpandPatternDirsMatchesGoList(t *testing.T) {
+	root := patternFixture(t)
+	chdir(t, root)
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go toolchain on PATH; gc differential skipped")
+	}
+	for _, pat := range []string{"./...", "./sub/..."} {
+		prefix, isPattern, err := splitPattern(pat)
+		if err != nil || !isPattern {
+			t.Fatalf("splitPattern(%q): prefix=%q isPattern=%v err=%v", pat, prefix, isPattern, err)
+		}
+		got, err := expandPatternDirs(prefix, pat)
+		if err != nil {
+			t.Fatalf("expandPatternDirs(%q): %v", pat, err)
+		}
+		cmd := exec.Command(goBin, "list", "-f", "{{.Dir}}", pat)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list %s: %v", pat, err)
+		}
+		var want []string
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			rel, err := filepath.Rel(root, line)
+			if err != nil {
+				t.Fatalf("rel(%q): %v", line, err)
+			}
+			want = append(want, rel)
+		}
+		// expandPatternDirs spells the pattern root as given
+		// ("."/"./sub") while go list reports it as "." after
+		// relativizing; normalize both sides through Clean.
+		norm := func(ds []string) string {
+			var cleaned []string
+			for _, d := range ds {
+				cleaned = append(cleaned, filepath.Clean(d))
+			}
+			return strings.Join(cleaned, "|")
+		}
+		if norm(got) != norm(want) {
+			t.Fatalf("pattern %s: expandPatternDirs = %v, go list = %v", pat, got, want)
+		}
 	}
 }
 
