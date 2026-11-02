@@ -1,6 +1,7 @@
 package vet
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,13 @@ func runVetOnSrc(t *testing.T, src string) string {
 		t.Fatal(err)
 	}
 	ds, err := Run([]string{path})
-	if err != nil {
+	// As in runVetOnModule: AST-level analyzer tests tolerate a
+	// *TypeCheckError in the fixture (e.g. the discarded-append fixture,
+	// which gc itself rejects); any other error is fatal. The
+	// loud-failure contract for production callers is covered by
+	// typecheck_test.go and cmdVet, not by this helper.
+	var tce *TypeCheckError
+	if err != nil && !errors.As(err, &tce) {
 		t.Fatal(err)
 	}
 	var msgs []string

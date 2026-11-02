@@ -1,6 +1,7 @@
 package vet
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,16 @@ func runVetOnModule(t *testing.T, goMod string, files map[string]string, targets
 	}
 	_ = targets
 	ds, err := Run(paths)
-	if err != nil {
+	// These helpers exercise AST-level analyzers, so a type-checking
+	// failure in the fixture is tolerated here — but ONLY a
+	// *TypeCheckError, and only in tests. Fixtures that cannot
+	// type-check at all (import "C" under importer.Default; a discarded
+	// append, which gc itself rejects) still produce analyzer
+	// diagnostics worth asserting. Production callers (cmdVet) must NOT
+	// tolerate it: see typecheck_test.go, which calls Run directly and
+	// requires the error, and cmdVet, which fails loudly on it.
+	var tce *TypeCheckError
+	if err != nil && !errors.As(err, &tce) {
 		t.Fatal(err)
 	}
 	var msgs []string
@@ -54,7 +64,7 @@ var _ = cmp.Compare(1, 2)
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src22})
@@ -126,7 +136,7 @@ package p
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src})
@@ -138,7 +148,7 @@ var _ = x509.OIDFromInts([]uint64{1, 2})
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src2})

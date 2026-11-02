@@ -2,19 +2,30 @@ package driver
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
+// validWireJSON is a minimal well-formed frontend/v1 document: the
+// shape Emit requires (protocol version, generator version, package
+// name and files). It is deliberately not a real frontend dump — Emit
+// checks the shape, not the full contract.
+const validWireJSON = `{"frontend":"v1","generator":{"tool":"gofrontend","version":"0.7.0","goroot":"go1.27.1"},"package":{"name":"main","files":["main.go"],"lang":"go1.27"},"types":[],"objects":[],"funcs":[],"globals":[]}`
+
 // TestEmitProducesBinary verifies that Emit produces a real executable
 // binary (not a shell script) embedding the frontend output.
 func TestEmitProducesBinary(t *testing.T) {
-	// Minimal fake frontend JSON. Emit does not validate the content;
-	// it only packages it.
-	wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
+	// Minimal fake frontend JSON in the frontend/v1 shape Emit
+	// requires (see validWireJSON); content beyond the shape is not
+	// validated here.
+	wireJSON := []byte(validWireJSON)
 
 	out := filepath.Join(t.TempDir(), "prog")
 	err := Emit(Artifact{
@@ -147,7 +158,7 @@ func TestEmitBinaryRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wireJSON := []byte(`{"frontend":"v1"}`)
+	wireJSON := []byte(validWireJSON)
 	out := filepath.Join(tmpDir, "prog")
 	if err := Emit(Artifact{
 		OutputPath:  out,
@@ -193,6 +204,128 @@ func TestEmitBinaryRuns(t *testing.T) {
 	// User args forwarded.
 	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
 		t.Errorf("user args not forwarded: %v", args)
+	}
+}
+
+// TestEmitRejectsTruncatedWireJSON: R15 — truncated, wrong-version,
+// and wrong-shape wire JSON must fail the build in Emit, never ship
+// as an artifact that fails only at run time.
+func TestEmitRejectsTruncatedWireJSON(t *testing.T) {
+	cases := []struct {
+		name string
+		wire string
+	}{
+		{"truncated mid-object", `{"frontend":"v1","gener`},
+		{"truncated mid-array", `{"frontend":"v1","generator":{"tool":"gofrontend","version":"0.7.0"},"package":{"name":"main","files":["main.go"`},
+		{"empty object", `{}`},
+		{"wrong version", `{"frontend":"v2","generator":{"version":"0.7.0"},"package":{"name":"main","files":["main.go"]}}`},
+		{"missing generator version", `{"frontend":"v1","generator":{},"package":{"name":"main","files":["main.go"]}}`},
+		{"missing package name", `{"frontend":"v1","generator":{"version":"0.7.0"},"package":{"files":["main.go"]}}`},
+		{"package without files", `{"frontend":"v1","generator":{"version":"0.7.0"},"package":{"name":"main","files":[]}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Emit(Artifact{
+				OutputPath:  filepath.Join(t.TempDir(), "prog"),
+				GraalgoRoot: "/opt/graalgo",
+				WireJSON:    []byte(tc.wire),
+			})
+			if err == nil {
+				t.Fatalf("Emit with %s wire JSON succeeded, want error", tc.name)
+			}
+			if !strings.Contains(err.Error(), "frontend output") {
+				t.Errorf("Emit error = %v, want it to mention frontend output", err)
+			}
+		})
+	}
+}
+
+// TestLauncherSourceQuotesRoot: R14 — a root containing a quote,
+// backslash, or newline must render as a valid Go string literal
+// holding exactly that root, never as injected source.
+func TestLauncherSourceQuotesRoot(t *testing.T) {
+	roots := []string{
+		`/tmp/a"b\c`,
+		"/tmp/with\nnewline",
+		`/tmp/${HOME}/x`,
+		"/opt/graalgo",
+	}
+	for _, root := range roots {
+		src := launcherSource(root)
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, "launcher.go", src, 0)
+		if err != nil {
+			t.Fatalf("launcherSource(%q) does not parse: %v\n%s", root, err, src)
+		}
+		var got string
+		found := false
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || len(vs.Names) == 0 || vs.Names[0].Name != "graalgoRoot" {
+					continue
+				}
+				lit, ok := vs.Values[0].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("graalgoRoot is not a string literal in %q", root)
+				}
+				got, err = strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("launcherSource(%q): graalgoRoot const not found", root)
+		}
+		if got != root {
+			t.Errorf("launcherSource(%q): literal decodes to %q", root, got)
+		}
+	}
+}
+
+// TestEmitWithQuotedRoot: R14 end to end — Emit must succeed (i.e.
+// the generated launcher must compile) when the root contains a quote
+// and a backslash; with raw %s interpolation the generated source
+// would not compile.
+func TestEmitWithQuotedRoot(t *testing.T) {
+	root := `/tmp/a"b\c`
+	out := filepath.Join(t.TempDir(), "prog")
+	if err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: root,
+		WireJSON:    []byte(validWireJSON),
+	}); err != nil {
+		t.Fatalf("Emit with quoted root: %v", err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(root)) {
+		t.Errorf("artifact does not bake in the quoted root %q", root)
+	}
+}
+
+// TestParseGoVersionOutput: P2 item 14 — the toolchain version check
+// parses `go version` output, including release candidates, and
+// rejects garbage loudly instead of defaulting to an assumed version.
+func TestParseGoVersionOutput(t *testing.T) {
+	major, minor, version, err := parseGoVersionOutput("go version go1.27.1 linux/amd64")
+	if err != nil || major != 1 || minor != 27 || version != "1.27.1" {
+		t.Errorf("go1.27.1: got %d.%d %q, %v", major, minor, version, err)
+	}
+	major, minor, _, err = parseGoVersionOutput("go version go1.27rc1 linux/amd64")
+	if err != nil || major != 1 || minor != 27 {
+		t.Errorf("go1.27rc1: got %d.%d, %v", major, minor, err)
+	}
+	if _, _, _, err := parseGoVersionOutput("not a version"); err == nil {
+		t.Error("garbage version output: got nil error, want error")
 	}
 }
 

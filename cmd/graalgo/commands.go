@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"go/build"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +44,9 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
+	// -tags is forwarded, never dropped: it reaches the backend via
+	// tagsEnv and filters the package-form file list below.
+	var tags string
 	if len(flagArgs) > 0 {
 		bf, err := parseBuildFlags(flagArgs)
 		if err != nil {
@@ -57,6 +63,7 @@ func cmdRun(root string, args []string) int {
 			fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
 			return 1
 		}
+		tags = bf.tags
 	}
 
 	if len(rest) == 0 {
@@ -83,7 +90,9 @@ func cmdRun(root string, args []string) int {
 		// its own flag).
 		runArgs := append(append([]string{}, progFiles...), "--")
 		runArgs = append(runArgs, progArgs...)
-		return graalgoRunProgram(root, runArgs)
+		// Explicit files are always included (go run semantics); the
+		// tags still reach the backend for imported packages.
+		return graalgoRunProgramEnv(root, runArgs, tagsEnv(tags))
 	}
 
 	// Package (directory or import path): find its main package files.
@@ -104,23 +113,111 @@ func cmdRun(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo run: no non-test Go files in %s\n", target)
 		return 1
 	}
+	pkgFiles, err = filterFilesByBuildTags(pkgFiles, tags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
+		return 1
+	}
 	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	if code := graalgoRunEnv(root, append([]string{"--check"}, pkgFiles...), tagsEnv(tags)); code != 0 {
 		return code
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
-	return graalgoRunProgram(root, runArgs)
+	return graalgoRunProgramEnv(root, runArgs, tagsEnv(tags))
+}
+
+// tagsEnv carries build tags to a backend invocation via the
+// GRAALGO_BUILD_TAGS environment variable — the channel the frontend's
+// disk-import path already honors (internal/frontend/diskimport.go).
+// Tags are not passed as backend argv: the backend rejects unknown
+// flags, so an invented --tags argv flag would break every tagged
+// build. The value is appended after the inherited environment, so a
+// driver-supplied value wins over any user-exported GRAALGO_BUILD_TAGS
+// (Go exec keeps the last duplicate key). Tags are not a
+// privilege-conferring signal, so the env channel is appropriate here
+// (unlike --test-package-dir, which deliberately stays on argv).
+func tagsEnv(tags string) []string {
+	if tags == "" {
+		return nil
+	}
+	return []string{"GRAALGO_BUILD_TAGS=" + tags}
+}
+
+// filterFilesByBuildTags drops files whose build constraints are not
+// satisfied with the given tags, using go/build — the same mechanism
+// `go build` uses for file selection. With no tags the file list is
+// returned unchanged, so untagged builds keep their exact current file
+// set (including files constrained only by GOOS/GOARCH, which the
+// driver historically passes through). An error reading a file's
+// constraints, or a tag set that excludes every file, is a loud error,
+// never a silent empty build.
+func filterFilesByBuildTags(files []string, tags string) ([]string, error) {
+	if tags == "" {
+		return files, nil
+	}
+	ctxt := build.Default
+	ctxt.BuildTags = strings.Fields(tags)
+	var kept []string
+	for _, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			return nil, fmt.Errorf("build tags: %s: %v", f, err)
+		}
+		ok, err := ctxt.MatchFile(filepath.Dir(abs), filepath.Base(abs))
+		if err != nil {
+			return nil, fmt.Errorf("build tags: %s: %v", f, err)
+		}
+		if ok {
+			kept = append(kept, f)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("build tags %q exclude all files", tags)
+	}
+	return kept, nil
+}
+
+// groupFilesByPackage partitions files by package clause, so a directory
+// holding both a package and its external test package (package foo
+// plus package foo_test) is vetted as two packages, not one. Files
+// sharing a clause (including internal _test.go files in the same
+// package) stay together. A file whose package clause cannot be parsed
+// is a loud error.
+func groupFilesByPackage(files []string) ([][]string, error) {
+	fset := token.NewFileSet()
+	byName := map[string][]string{}
+	var order []string
+	for _, f := range files {
+		parsed, err := parser.ParseFile(fset, f, nil, parser.PackageClauseOnly)
+		if err != nil {
+			return nil, fmt.Errorf("vet: parse %s: %v", f, err)
+		}
+		name := parsed.Name.Name
+		if _, ok := byName[name]; !ok {
+			order = append(order, name)
+		}
+		byName[name] = append(byName[name], f)
+	}
+	groups := make([][]string, 0, len(order))
+	for _, name := range order {
+		groups = append(groups, byName[name])
+	}
+	return groups, nil
 }
 
 // buildFlags holds the parsed `go build` flags that the driver recognizes.
 // Unrecognized flags are rejected; recognized-but-unsupported flags produce
 // a clear "not yet supported" error naming the flag.
 type buildFlags struct {
-	output  string   // -o: output binary path
-	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
-	tags    string   // -tags: build tags (accepted; backend honors via go/build)
-	pkgs    []string // remaining package/file args
+	output  string // -o: output binary path
+	ldflags string // -ldflags: linker flags (forwarded; -X needs backend)
+	tags    string // -tags: build tags. Forwarded to the backend run
+	// via GRAALGO_BUILD_TAGS (the channel the frontend's disk-import
+	// path honors) and applied to the top-level package files by the
+	// driver itself (filterFilesByBuildTags), since the backend
+	// compiles exactly the files it is given. Never silently dropped.
+	pkgs []string // remaining package/file args
 }
 
 // parseBuildFlags separates build flags from package args, following `go`
@@ -213,6 +310,11 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
 		return 1
 	}
+	pkgFiles, err = filterFilesByBuildTags(pkgFiles, bf.tags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 1
+	}
 	// Frontend gate: run the frontend once, capturing its output for the
 	// artifact. This both validates the program and produces the IR that
 	// the artifact embeds, so the artifact never re-runs the frontend.
@@ -224,8 +326,8 @@ func cmdBuild(root string, args []string) int {
 	wirePath := wireFile.Name()
 	wireFile.Close()
 	defer os.Remove(wirePath)
-	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
-	if code := graalgoRun(root, emitArgs); code != 0 {
+	emitArgs, emitEnv := backendCheckArgs(bf.tags, wirePath, pkgFiles)
+	if code := graalgoRunEnv(root, emitArgs, emitEnv); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
 		return 1
 	}
@@ -255,6 +357,16 @@ func cmdBuild(root string, args []string) int {
 // Runs the frontend translation check (--check) over the named packages,
 // then runs the static analyzers in internal/vet and reports diagnostics
 // in the same style as `go vet`.
+// backendCheckArgs builds the backend invocation for a frontend gate
+// run that captures wire JSON: the argv for the --emit-wire/--check run
+// plus the environment carrying the build tags (see tagsEnv). Unit
+// tests assert this invocation so a -tags regression (parsed but never
+// forwarded, R01) cannot recur silently.
+func backendCheckArgs(tags, wirePath string, files []string) (args, env []string) {
+	args = append([]string{"--emit-wire=" + wirePath, "--check"}, files...)
+	return args, tagsEnv(tags)
+}
+
 func cmdVet(root string, args []string) int {
 	files, err := resolveFiles(args)
 	if err != nil {
@@ -270,16 +382,35 @@ func cmdVet(root string, args []string) int {
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
+	// Run the analyzers per package clause, never over a mixed-clause
+	// file list as one package: a directory holding package foo plus
+	// its external test package (foo_test) previously failed the
+	// single Check, and the analyzers then ran over degraded type
+	// information while the driver printed a clean verdict (R02).
+	groups, err := groupFilesByPackage(files)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	for _, d := range ds {
+	var allDs []vet.Diagnostic
+	degraded := false
+	for _, g := range groups {
+		ds, err := vet.Run(g)
+		if err != nil {
+			// Loud, and never followed by "no issues found": a
+			// type-checking failure means type-dependent analyzers
+			// ran degraded, so a clean diagnostic list proves
+			// nothing. Other groups still run so one bad package
+			// does not hide the rest.
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			degraded = true
+		}
+		allDs = append(allDs, ds...)
+	}
+	for _, d := range vet.SortDiagnostics(allDs) {
 		fmt.Printf("%s: %s\n", d.Pos, d.Message)
 	}
-	if len(ds) > 0 {
+	if degraded || len(allDs) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")

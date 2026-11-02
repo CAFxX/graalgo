@@ -6,6 +6,7 @@ package driver
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,6 +51,12 @@ func Emit(a Artifact) error {
 	if a.GraalgoRoot == "" {
 		return fmt.Errorf("no graalgo root")
 	}
+	// R15: never package unvalidated wire JSON into a shipped binary.
+	// A truncated or corrupt frontend output must fail the build here,
+	// not produce an artifact that fails only at run time.
+	if err := validateWireJSON(a.WireJSON); err != nil {
+		return err
+	}
 
 	// Compress the JSON. Frontend output can be large (100MB+ for big
 	// programs); JSON compresses well with gzip.
@@ -75,22 +82,34 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("cannot write payload: %v", err)
 	}
 
-	// Generate the launcher source.
-	src := fmt.Sprintf(launcherTemplate, a.GraalgoRoot)
+	// Generate the launcher source (root quoted, never interpolated raw).
+	src := launcherSource(a.GraalgoRoot)
 	srcPath := filepath.Join(tmpDir, "launcher.go")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		return fmt.Errorf("cannot write launcher source: %v", err)
 	}
 
 	// Minimal go.mod so `go build` works in module mode. The launcher has
-	// no external dependencies (stdlib only).
-	goMod := "module graalgo-artifact\n\ngo 1.21\n"
+	// no external dependencies (stdlib only). The language version
+	// tracks the pinned toolchain (go1.27.1); Emit version-checks the
+	// selected toolchain against it below instead of letting `go build`
+	// fail with a confusing go.mod error.
+	goMod := "module graalgo-artifact\n\ngo 1.27\n"
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		return fmt.Errorf("cannot write go.mod: %v", err)
 	}
 
-	// Compile the launcher to a real binary.
+	// Compile the launcher to a real binary. The toolchain is pinned,
+	// not taken unchecked from PATH: a go older than the launcher
+	// go.mod's language version fails here with a clear error.
 	goBin := findGoBinary()
+	major, minor, version, err := goToolchainVersion(goBin)
+	if err != nil {
+		return err
+	}
+	if major < 1 || (major == 1 && minor < 27) {
+		return fmt.Errorf("artifact toolchain %s is go %s, need go 1.27 or later", goBin, version)
+	}
 	cmd := exec.Command(goBin, "build", "-o", a.OutputPath, ".")
 	cmd.Dir = tmpDir
 	// Don't inherit GOFLAGS that might break the build; keep it hermetic.
@@ -108,10 +127,92 @@ func Emit(a Artifact) error {
 	return nil
 }
 
+// wireHeader is the minimal frontend/v1 shape Emit requires before it
+// will package wire JSON into a binary: the protocol version, the
+// generator that produced it, and the package it describes. This is a
+// shape check, not a full validation (the full contract lives in
+// docs/frontend-v1.md and tools/validate_frontend_v1.py); it exists to
+// reject truncated or corrupt output, which previously sailed through
+// on an emptiness check alone.
+type wireHeader struct {
+	Frontend  string `json:"frontend"`
+	Generator struct {
+		Version string `json:"version"`
+	} `json:"generator"`
+	Package struct {
+		Name  string   `json:"name"`
+		Files []string `json:"files"`
+	} `json:"package"`
+}
+
+// validateWireJSON rejects wire JSON that is not a well-formed
+// frontend/v1 document. A truncated write (e.g. a backend killed
+// mid-emit) fails json.Valid; a valid JSON value of the wrong shape
+// (empty object, a different protocol version, a document with no
+// package) fails the shape checks.
+func validateWireJSON(wire []byte) error {
+	if !json.Valid(wire) {
+		return fmt.Errorf("invalid frontend output: not valid JSON")
+	}
+	var h wireHeader
+	if err := json.Unmarshal(wire, &h); err != nil {
+		return fmt.Errorf("invalid frontend output: %v", err)
+	}
+	if h.Frontend != "v1" {
+		return fmt.Errorf("invalid frontend output: unsupported frontend version %q (want \"v1\")", h.Frontend)
+	}
+	if h.Generator.Version == "" {
+		return fmt.Errorf("invalid frontend output: missing generator version")
+	}
+	if h.Package.Name == "" {
+		return fmt.Errorf("invalid frontend output: missing package name")
+	}
+	if len(h.Package.Files) == 0 {
+		return fmt.Errorf("invalid frontend output: package has no files")
+	}
+	return nil
+}
+
+// launcherSource renders the launcher Go source with the graalgo root
+// baked in. The root is emitted with %q (a quoted Go string literal),
+// never %s: a root containing a quote, backslash, or newline must
+// produce a valid literal, never injected source in a file that is
+// then compiled and executed.
+func launcherSource(graalgoRoot string) string {
+	return fmt.Sprintf(launcherTemplate, graalgoRoot)
+}
+
+// goToolchainVersion runs `go version` for the given binary and parses
+// its version. The returned version string is the raw "1.27.1" part
+// (without the "go" prefix) for error messages.
+func goToolchainVersion(goBin string) (major, minor int, version string, err error) {
+	out, err := exec.Command(goBin, "version").Output()
+	if err != nil {
+		return 0, 0, "", fmt.Errorf("cannot run %s version: %v", goBin, err)
+	}
+	return parseGoVersionOutput(string(out))
+}
+
+// parseGoVersionOutput parses `go version` output, e.g.
+// "go version go1.27.1 linux/amd64".
+func parseGoVersionOutput(out string) (major, minor int, version string, err error) {
+	fields := strings.Fields(out)
+	if len(fields) < 3 {
+		return 0, 0, "", fmt.Errorf("cannot parse go version output %q", out)
+	}
+	version = strings.TrimPrefix(fields[2], "go")
+	// Sscanf on "1.27rc1" yields major=1, minor=27; that is fine —
+	// a release candidate of 1.27 satisfies a 1.27 floor.
+	if _, err := fmt.Sscanf(version, "%d.%d", &major, &minor); err != nil {
+		return 0, 0, "", fmt.Errorf("cannot parse go version %q", version)
+	}
+	return major, minor, version, nil
+}
+
 // launcherTemplate is the Go source for the artifact binary. The
 // frontend output is embedded via //go:embed from wire.json.gz (written
-// alongside this file at build time). %s is the graalgo root baked in
-// at build time.
+// alongside this file at build time). %q is the graalgo root baked in
+// at build time, as a quoted string literal (see launcherSource).
 const launcherTemplate = `// Code generated by graalgo build. DO NOT EDIT.
 package main
 
@@ -131,7 +232,7 @@ var wireGz []byte
 
 // graalgoRoot is the installation this artifact was built against.
 // GRAALGO_HOME at run time takes precedence.
-const graalgoRoot = "%s"
+const graalgoRoot = %q
 
 func main() {
 	os.Exit(run())
@@ -183,7 +284,7 @@ func run() int {
 	}
 
 	// argv[0] for the Go program is the artifact's own absolute path,
-	// matching `+"`go build`"+` binaries.
+	// matching ` + "`go build`" + ` binaries.
 	argv0, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		argv0 = os.Args[0]

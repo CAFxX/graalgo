@@ -198,8 +198,18 @@ func isGraalgoRoot(dir string) bool {
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
 func graalgoRun(root string, args []string) int {
+	return graalgoRunEnv(root, args, nil)
+}
+
+// graalgoRunEnv is graalgoRun with extra environment variables appended
+// after the inherited environment (so a driver-supplied value wins over
+// a user-exported one with the same key). Used for build tags
+// (GRAALGO_BUILD_TAGS); privilege-conferring signals still travel as
+// argv flags, never via this path.
+func graalgoRunEnv(root string, args []string, extraEnv []string) int {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.Command(runner, args...)
+	cmd.Env = append(os.Environ(), extraEnv...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -225,7 +235,11 @@ func graalgoRun(root string, args []string) int {
 // prints no such line for its own build failures. Disambiguating needs
 // a backend exit-code convention change.
 func graalgoRunProgram(root string, args []string) int {
-	code := graalgoRun(root, args)
+	return graalgoRunProgramEnv(root, args, nil)
+}
+
+func graalgoRunProgramEnv(root string, args []string, extraEnv []string) int {
+	code := graalgoRunEnv(root, args, extraEnv)
 	if code != 0 {
 		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
 		return 1

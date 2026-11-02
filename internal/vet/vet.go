@@ -26,9 +26,28 @@ type Pass struct {
 	Fset  *token.FileSet
 	Files []*ast.File
 	Info  *types.Info
-	// Pkg is the type-checked package (may be nil if checking failed).
+	// Pkg is the type-checked package (nil when type checking failed;
+	// see TypeCheckError, returned alongside any diagnostics).
 	Pkg *types.Package
 }
+
+// TypeCheckError reports that go/types failed while checking the files
+// passed to Run. Diagnostics computed from partial type information may
+// still be returned alongside it, but callers must never present a run
+// that produced a TypeCheckError as a clean bill of health: analyzers
+// that depend on type information silently degrade on partial info
+// (e.g. printf returns early when Info.Types is empty), so a clean
+// diagnostic list over failed type information is not "no issues found".
+type TypeCheckError struct {
+	Err error
+}
+
+func (e *TypeCheckError) Error() string {
+	return "vet: type checking failed: " + e.Err.Error()
+}
+
+// Unwrap lets callers inspect the underlying types error.
+func (e *TypeCheckError) Unwrap() error { return e.Err }
 
 // registered analyzers, in the order they run.
 var analyzers []*Analyzer
@@ -43,9 +62,14 @@ func Analyzers() []*Analyzer {
 }
 
 // Run analyzes the named Go source files and returns sorted diagnostics.
-// It parses with comments (for directive checks) and type-checks on a
-// best-effort basis: if type checking fails, analyzers still run on the
-// AST with whatever type info was gathered.
+// It parses with comments (for directive checks) and type-checks the
+// files as a single package: callers must pass files that share one
+// package clause (see cmdVet's grouping for directories that mix a
+// package with its external test package). Analyzers still run when
+// type checking fails, so partial diagnostics are not lost, but the
+// failure is returned as a *TypeCheckError alongside them — never
+// swallowed. A caller that prints "no issues found" when Run returns a
+// nil diagnostic list but a non-nil error is lying about the run.
 func Run(paths []string) ([]Diagnostic, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
@@ -76,15 +100,21 @@ func Run(paths []string) ([]Diagnostic, error) {
 		IgnoreFuncBodies:         false,
 		DisableUnusedImportCheck: true,
 	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
-	// Type errors are tolerated: analyzers use best-effort info.
-
+	pkg, checkErr := conf.Check("vetpkg", fset, files, info)
+	// Type errors are NOT tolerated silently: analyzers run on the
+	// partial info (so real diagnostics are not lost), but the failure
+	// is reported to the caller, which must fail loudly rather than
+	// print a clean verdict over degraded type information.
 	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
 	var out []Diagnostic
 	for _, a := range analyzers {
 		out = append(out, a.Run(pass)...)
 	}
-	return SortDiagnostics(out), nil
+	out = SortDiagnostics(out)
+	if checkErr != nil {
+		return out, &TypeCheckError{Err: checkErr}
+	}
+	return out, nil
 }
 
 // position returns the source position of n.
