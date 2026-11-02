@@ -6976,6 +6976,20 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// DEFER-TIMEOP (review 2026-11-02 D0): calls that lower to a non-call
+	// wire node cannot reach buildDefer as-is (it requires call.fun).
+	// The "timeop" lowering (Timer/Ticker Stop/Reset) is wrapped in a
+	// funclit below, with its operands passed as arguments so they are
+	// evaluated at defer-statement time (Go semantics), not at return
+	// time. Every other non-call lowering keeps failing loudly, but now
+	// with a named frontend error instead of the backend's opaque
+	// "missing required key fun".
+	if call.Kind == "timeop" {
+		return e.exportTimeOpDefer(s, call)
+	}
+	if call.Kind != "call" && call.Kind != "ifacemethod" {
+		return nil, fmt.Errorf("gofrontend: defer of %q call lowering is not supported in defer position (buildDefer requires a call node)", call.Kind)
+	}
 	// P3-M9: deferred interface method calls (e.g. `defer hash.Reset()`)
 	// export as ifacemethod nodes, which the Java buildDefer does not
 	// understand (it requires call.fun). Wrap in a funclit so the defer
@@ -6994,6 +7008,201 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 		})
 	}
 	return e.node("defer", s, map[string]any{"call": call}), nil
+}
+
+// timeOpOperands extracts a "timeop" wire node's fields: the op name, the
+// receiver and (for Reset) duration operand nodes in Go evaluation order
+// (receiver first, then arguments), plus the optional result type field
+// carried verbatim into the rebuilt node.
+func timeOpOperands(call *Node) (op string, recv, dur *Node, hasDur bool, typ any, hasType bool, err error) {
+	op, _ = call.Fields["op"].(string)
+	if op == "" {
+		return "", nil, nil, false, nil, false, fmt.Errorf("gofrontend: timeop node without op")
+	}
+	recv, _ = call.Fields["recv"].(*Node)
+	if recv == nil {
+		return "", nil, nil, false, nil, false, fmt.Errorf("gofrontend: timeop node without recv")
+	}
+	if d, ok := call.Fields["duration"]; ok {
+		dur, _ = d.(*Node)
+		if dur == nil {
+			return "", nil, nil, false, nil, false, fmt.Errorf("gofrontend: timeop duration is not a node")
+		}
+		hasDur = true
+	}
+	typ, hasType = call.Fields["type"]
+	return op, recv, dur, hasDur, typ, hasType, nil
+}
+
+// timeOpParam defines a synthetic funclit parameter of the given type and
+// returns its param node and a matching ident node (the exportCloseDeferGo
+// precedent: defVar with param=true, type id from the Go type).
+func (e *exporter) timeOpParam(c *ast.CallExpr, seq int, role string, typ types.Type) (param, ident *Node, err error) {
+	name := fmt.Sprintf("__timeop_%s_%d", role, seq)
+	pv := types.NewParam(token.NoPos, nil, name, typ)
+	pid, err := e.defVar(pv, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	ptid, err := e.typeID(typ)
+	if err != nil {
+		return nil, nil, err
+	}
+	param = e.node("param", c, map[string]any{"name": name, "obj": pid, "type": ptid})
+	ident = e.node("ident", c, map[string]any{"name": name, "obj": pid, "type": ptid})
+	return param, ident, nil
+}
+
+// rebuildTimeOp rebuilds a "timeop" node from replacement operand nodes,
+// preserving the op and the optional result type field.
+func rebuildTimeOp(c *ast.CallExpr, e *exporter, op string, recv, dur *Node, hasDur bool, typ any, hasType bool) *Node {
+	fields := map[string]any{"op": op, "recv": recv}
+	if hasDur {
+		fields["duration"] = dur
+	}
+	if hasType {
+		fields["type"] = typ
+	}
+	return e.node("timeop", c, fields)
+}
+
+// exportTimeOpDefer desugars `defer tmr.Stop()` / `defer ticker.Stop()` /
+// `defer tmr.Reset(d)` (DEFER-TIMEOP) through a funclit, following the
+// exportCloseDeferGo precedent: the funclit takes the timeop operands as
+// parameters, and the deferred call passes the original operand nodes as
+// arguments. DeferNode evaluates the deferred call's arguments at the
+// defer statement (Go semantics), so a receiver (or Reset duration)
+// reassigned after the defer statement cannot redirect the deferred op;
+// the funclit body runs the rebuilt timeop at return/unwind time. The
+// result (Timer.Stop/Reset bool) is discarded, as in the bare statement
+// position (the body is an exprstmt, not a return).
+func (e *exporter) exportTimeOpDefer(s *ast.DeferStmt, call *Node) (*Node, error) {
+	c := s.Call
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: timeop defer is not a selector call")
+	}
+	op, recv, dur, hasDur, typ, hasType, err := timeOpOperands(call)
+	if err != nil {
+		return nil, err
+	}
+	recvT, ok := e.info.Types[sel.X]
+	if !ok || recvT.Type == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for timeop receiver")
+	}
+	e.chanSeq++
+	seq := e.chanSeq
+	recvParam, recvIdent, err := e.timeOpParam(c, seq, "recv", recvT.Type)
+	if err != nil {
+		return nil, err
+	}
+	params := []*Node{recvParam}
+	args := []*Node{recv}
+	durIdent := (*Node)(nil)
+	if hasDur {
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("gofrontend: timeop Reset defer takes 1 argument")
+		}
+		durT, ok := e.info.Types[c.Args[0]]
+		if !ok || durT.Type == nil {
+			return nil, fmt.Errorf("gofrontend: no type info for timeop Reset duration")
+		}
+		var durParam *Node
+		durParam, durIdent, err = e.timeOpParam(c, seq, "dur", durT.Type)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, durParam)
+		args = append(args, dur)
+	}
+	inner := rebuildTimeOp(c, e, op, recvIdent, durIdent, hasDur, typ, hasType)
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": params, "results": []*Node{}, "body": body,
+	})
+	wrapped := e.node("call", c, map[string]any{
+		"fun": funclit, "args": args, "type": nil,
+	})
+	return e.node("defer", s, map[string]any{"call": wrapped}), nil
+}
+
+// exportTimeOpGo desugars `go tmr.Stop()` / `go ticker.Stop()` /
+// `go tmr.Reset(d)` (DEFER-TIMEOP) through hoisted temps plus a zero-arg
+// funclit, following the exportCloseDeferGo go-branch precedent: the
+// receiver (and Reset duration) are evaluated into temps at go-statement
+// time in the spawning goroutine (Go semantics — the temps are never
+// reassigned, so the spawned funclit capturing them by reference sees
+// the go-time values), and the funclit body runs the rebuilt timeop in
+// the new goroutine. The result is discarded via exprstmt.
+func (e *exporter) exportTimeOpGo(s *ast.GoStmt, call *Node) (*Node, error) {
+	c := s.Call
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: timeop go statement is not a selector call")
+	}
+	op, recv, dur, hasDur, typ, hasType, err := timeOpOperands(call)
+	if err != nil {
+		return nil, err
+	}
+	recvT, ok := e.info.Types[sel.X]
+	if !ok || recvT.Type == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for timeop receiver")
+	}
+	e.chanSeq++
+	seq := e.chanSeq
+	hoist := func(role string, operand *Node, operandType types.Type) (tempIdent *Node, vardecl *Node, err error) {
+		name := fmt.Sprintf("__timeop_go_%s_%d", role, seq)
+		tv := types.NewVar(token.NoPos, nil, name, operandType)
+		oid, err := e.defVar(tv, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		tid, err := e.typeID(operandType)
+		if err != nil {
+			return nil, nil, err
+		}
+		vardecl = e.node("vardecl", s, map[string]any{
+			"names": []string{name}, "objs": []int{oid},
+			"define": true, "type": nil, "values": []*Node{operand},
+		})
+		tempIdent = e.node("ident", c, map[string]any{"name": name, "obj": oid, "type": tid})
+		return tempIdent, vardecl, nil
+	}
+	recvIdent, recvDecl, err := hoist("recv", recv, recvT.Type)
+	if err != nil {
+		return nil, err
+	}
+	stmts := []*Node{recvDecl}
+	durIdent := (*Node)(nil)
+	if hasDur {
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("gofrontend: timeop Reset go statement takes 1 argument")
+		}
+		durT, ok := e.info.Types[c.Args[0]]
+		if !ok || durT.Type == nil {
+			return nil, fmt.Errorf("gofrontend: no type info for timeop Reset duration")
+		}
+		var durDecl *Node
+		durIdent, durDecl, err = hoist("dur", dur, durT.Type)
+		if err != nil {
+			return nil, err
+		}
+		stmts = append(stmts, durDecl)
+	}
+	inner := rebuildTimeOp(c, e, op, recvIdent, durIdent, hasDur, typ, hasType)
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	wrapped := e.node("call", c, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
+	stmts = append(stmts, e.node("gostmt", s, map[string]any{"call": wrapped}))
+	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 
 // exportDeferMultiResultCall desugars `defer f_mr(args)` where f_mr is a
@@ -7054,6 +7263,17 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	call, err := e.exportCall(s.Call)
 	if err != nil {
 		return nil, err
+	}
+	// DEFER-TIMEOP (review 2026-11-02 D0): same shape as defer above, for
+	// the go statement (GoStatementNode.build requires call.fun). The
+	// "timeop" lowering is wrapped with its operands hoisted to temps
+	// evaluated at go-statement time (Go semantics); every other
+	// non-call lowering fails loudly with a named frontend error.
+	if call.Kind == "timeop" {
+		return e.exportTimeOpGo(s, call)
+	}
+	if call.Kind != "call" {
+		return nil, fmt.Errorf("gofrontend: go of %q call lowering is not supported in go position (GoStatementNode requires a call node)", call.Kind)
 	}
 	// P3-M5 (WS E): `go f(args)` with args desugars through a funclit.
 	// GoStatementNode (P2-M1) only builds zero-arg spawns; the function

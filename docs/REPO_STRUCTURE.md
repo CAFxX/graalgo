@@ -170,9 +170,10 @@ Related: [Makefile](../Makefile) (root build entry point),
     (`go1.27.1.json`); `make snapshot-check` fails on drift. See
     [test/snapshots/README.md](../test/snapshots/README.md).
   - [regression/](../test/regression/) — regression tests for fixed
-    package-level bugs (`pkg031/` covers the PKG-031 strings.Repeat hang);
-    run through the graalgo driver + backend via `make test-regression`
-    (in `make all`, hence per-push CI).
+    package-level bugs (`pkg031/` covers the PKG-031 strings.Repeat hang;
+    `pkg049/` covers defer/go of Timer/Ticker Stop/Reset, review
+    2026-11-02 D0); run through the graalgo driver + backend via
+    `make test-regression` (in `make all`, hence per-push CI).
 - [docs/](../docs/)
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
   - [arch/](../docs/arch/) — architecture documentation, consolidated from
