@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"go/build"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/CAFxX/graalgo/internal/driver"
@@ -144,20 +147,37 @@ func tagsEnv(tags string) []string {
 	return []string{"GRAALGO_BUILD_TAGS=" + tags}
 }
 
+// splitBuildTags splits a -tags / GRAALGO_BUILD_TAGS value the way `go`
+// splits its -tags flag: commas and whitespace are both separators, so
+// "mytag,other" and "mytag other" select the same tag set. Treating
+// the raw string as one tag (strings.Fields alone) silently builds the
+// wrong variant for comma-separated input: a //go:build mytag file is
+// dropped in favour of its !mytag alternative.
+func splitBuildTags(tags string) []string {
+	return strings.Fields(strings.ReplaceAll(tags, ",", " "))
+}
+
 // filterFilesByBuildTags drops files whose build constraints are not
 // satisfied with the given tags, using go/build — the same mechanism
 // `go build` uses for file selection. With no tags the file list is
 // returned unchanged, so untagged builds keep their exact current file
 // set (including files constrained only by GOOS/GOARCH, which the
-// driver historically passes through). An error reading a file's
-// constraints, or a tag set that excludes every file, is a loud error,
-// never a silent empty build.
+// driver historically passes through). With tags, go/build evaluates
+// the file's full constraint set against the host GOOS/GOARCH, so a
+// file for another GOOS is dropped — the tagged/untagged asymmetry is
+// deliberate: untagged builds preserve the historical pass-through
+// set, tagged builds select what `go build` would select for the host.
+// purego is always seeded, matching the frontend disk-import path
+// (internal/frontend/diskimport.go), which always enables purego so
+// pure-Go fallbacks win over assembly stubs graalgo cannot process.
+// An error reading a file's constraints, or a tag set that excludes
+// every file, is a loud error, never a silent empty build.
 func filterFilesByBuildTags(files []string, tags string) ([]string, error) {
 	if tags == "" {
 		return files, nil
 	}
 	ctxt := build.Default
-	ctxt.BuildTags = strings.Fields(tags)
+	ctxt.BuildTags = append(splitBuildTags(tags), "purego")
 	var kept []string
 	for _, f := range files {
 		abs, err := filepath.Abs(f)
@@ -392,29 +412,130 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	var allDs []vet.Diagnostic
-	degraded := false
-	for _, g := range groups {
-		ds, err := vet.Run(g)
-		if err != nil {
-			// Loud, and never followed by "no issues found": a
-			// type-checking failure means type-dependent analyzers
-			// ran degraded, so a clean diagnostic list proves
-			// nothing. Other groups still run so one bad package
-			// does not hide the rest.
-			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-			degraded = true
+	marked, degraded := runVetGroups(groups)
+	for _, m := range marked {
+		if m.degraded {
+			fmt.Printf("%s: %s [degraded: type checking failed for this package]\n", m.d.Pos, m.d.Message)
+		} else {
+			fmt.Printf("%s: %s\n", m.d.Pos, m.d.Message)
 		}
-		allDs = append(allDs, ds...)
 	}
-	for _, d := range vet.SortDiagnostics(allDs) {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
-	}
-	if degraded || len(allDs) > 0 {
+	if degraded || len(marked) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")
 	return 0
+}
+
+// markedDiagnostic is a vet diagnostic plus whether it came from a
+// group whose type checking failed. Diagnostics over failed type
+// information are printed marked, never silently clean: type-dependent
+// analyzers degrade on partial info, so an unmarked diagnostic from a
+// degraded group would overstate what vet actually established.
+type markedDiagnostic struct {
+	d        vet.Diagnostic
+	degraded bool
+}
+
+// packageClauseName returns the package clause of a file, parsing the
+// clause only (no full parse, no type checking).
+func packageClauseName(path string) (string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+	if err != nil {
+		return "", err
+	}
+	return f.Name.Name, nil
+}
+
+// packageMapImporter resolves imports from a map of already-checked
+// packages first, falling back to the default importer for everything
+// else. It is how an external test package resolves its package under
+// test: that package was just checked from source in this same vet
+// run, so no compiled export data exists for importer.Default() to
+// find under a module-path import.
+type packageMapImporter struct {
+	pkgs     map[string]*types.Package
+	fallback types.Importer
+}
+
+func (m packageMapImporter) Import(path string) (*types.Package, error) {
+	if pkg, ok := m.pkgs[path]; ok {
+		return pkg, nil
+	}
+	return m.fallback.Import(path)
+}
+
+// runVetGroups checks each package-clause group and returns its
+// diagnostics in source order, marked where type checking failed, plus
+// whether any group failed (degraded). The run is never followed by a
+// clean verdict when degraded: a type-checking failure means
+// type-dependent analyzers ran degraded, so a clean diagnostic list
+// proves nothing. Other groups still run so one bad package does not
+// hide the rest.
+//
+// Ordering is deliberate. Non-test groups are checked first with the
+// default importer and, when clean, registered by import path (derived
+// from the enclosing go.mod via importPathForDir). External test
+// groups (clause ending in _test) are then checked with an importer
+// that resolves the package under test to its already-checked package,
+// falling back to importer.Default() for everything else. Checking a
+// test group alone with importer.Default() is the VETO false-fail: a
+// module-path import of the package under test has no compiled export
+// data, so a clean directory exits 1. Skipping the test group instead
+// would reintroduce the R02 false-pass, so the group is always
+// checked. Splitting the phases (rather than trusting group order)
+// means a test group listed before its package still resolves.
+func runVetGroups(groups [][]string) ([]markedDiagnostic, bool) {
+	checked := map[string]*types.Package{}
+	var marked []markedDiagnostic
+	degraded := false
+	check := func(g []string, imp types.Importer) {
+		pkg, ds, err := vet.Check(g, imp)
+		if err != nil {
+			// Loud, and never followed by "no issues found".
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			degraded = true
+		} else if pkg != nil && len(g) > 0 {
+			// Register only clean packages (see vet.Check): a
+			// partial package must not become another group's import.
+			checked[importPathForDir(filepath.Dir(g[0]))] = pkg
+		}
+		for _, d := range ds {
+			marked = append(marked, markedDiagnostic{d: d, degraded: err != nil})
+		}
+	}
+	var testGroups [][]string
+	for _, g := range groups {
+		name := ""
+		if len(g) > 0 {
+			if n, err := packageClauseName(g[0]); err == nil {
+				name = n
+			}
+		}
+		if strings.HasSuffix(name, "_test") {
+			testGroups = append(testGroups, g)
+		} else {
+			check(g, importer.Default())
+		}
+	}
+	for _, g := range testGroups {
+		check(g, packageMapImporter{pkgs: checked, fallback: importer.Default()})
+	}
+	sort.SliceStable(marked, func(i, j int) bool {
+		a, b := marked[i].d, marked[j].d
+		if a.Pos.Filename != b.Pos.Filename {
+			return a.Pos.Filename < b.Pos.Filename
+		}
+		if a.Pos.Line != b.Pos.Line {
+			return a.Pos.Line < b.Pos.Line
+		}
+		if a.Pos.Column != b.Pos.Column {
+			return a.Pos.Column < b.Pos.Column
+		}
+		return a.Message < b.Message
+	})
+	return marked, degraded
 }
 
 // cmdFmt implements `graalgo fmt [packages]`.

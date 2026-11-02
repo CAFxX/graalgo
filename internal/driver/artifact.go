@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -131,7 +132,7 @@ func Emit(a Artifact) error {
 // will package wire JSON into a binary: the protocol version, the
 // generator that produced it, and the package it describes. This is a
 // shape check, not a full validation (the full contract lives in
-// docs/frontend-v1.md and tools/validate_frontend_v1.py); it exists to
+// docs/arch/frontend-v1.md and tools/validate_frontend_v1.py); it exists to
 // reject truncated or corrupt output, which previously sailed through
 // on an emptiness check alone.
 type wireHeader struct {
@@ -194,16 +195,29 @@ func goToolchainVersion(goBin string) (major, minor int, version string, err err
 }
 
 // parseGoVersionOutput parses `go version` output, e.g.
-// "go version go1.27.1 linux/amd64".
+// "go version go1.27.1 linux/amd64". A development toolchain prints
+// "go version devel go1.28-... os/arch": the version token is the
+// fourth field there, and rejecting it (VETO finding 5, P2) would
+// refuse a toolchain newer than the floor it is meant to satisfy.
 func parseGoVersionOutput(out string) (major, minor int, version string, err error) {
 	fields := strings.Fields(out)
 	if len(fields) < 3 {
 		return 0, 0, "", fmt.Errorf("cannot parse go version output %q", out)
 	}
-	version = strings.TrimPrefix(fields[2], "go")
+	versionTok := fields[2]
+	if versionTok == "devel" {
+		if len(fields) < 4 {
+			return 0, 0, "", fmt.Errorf("cannot parse go version output %q", out)
+		}
+		version = "devel " + fields[3]
+		versionTok = fields[3]
+	} else {
+		version = strings.TrimPrefix(versionTok, "go")
+	}
 	// Sscanf on "1.27rc1" yields major=1, minor=27; that is fine —
-	// a release candidate of 1.27 satisfies a 1.27 floor.
-	if _, err := fmt.Sscanf(version, "%d.%d", &major, &minor); err != nil {
+	// a release candidate of 1.27 satisfies a 1.27 floor. The same
+	// holds for a devel suffix ("1.28-abc" yields 1, 28).
+	if _, err := fmt.Sscanf(strings.TrimPrefix(versionTok, "go"), "%d.%d", &major, &minor); err != nil {
 		return 0, 0, "", fmt.Errorf("cannot parse go version %q", version)
 	}
 	return major, minor, version, nil
@@ -307,24 +321,44 @@ func run() int {
 }
 `
 
+// goBinaryCandidates returns the preference-ordered toolchain
+// candidates for findGoBinary, given the driver's runtime GOROOT, the
+// user's home directory, and the PATH-resolved go ("" when PATH has
+// none). Separated out so tests can pin the ordering without depending
+// on the toolchain running the test binary.
+func goBinaryCandidates(goroot, home, pathGo string) []string {
+	var cands []string
+	if goroot != "" {
+		cands = append(cands, filepath.Join(goroot, "bin", "go"))
+	}
+	if home != "" {
+		cands = append(cands, filepath.Join(home, "tools", "go", "bin", "go"))
+	}
+	if pathGo != "" {
+		cands = append(cands, pathGo)
+	}
+	return cands
+}
+
 // findGoBinary locates the Go toolchain for compiling the artifact
-// launcher. It prefers the toolchain that built the driver itself
-// (via GOROOT), then PATH, then the well-known install location.
+// launcher. Preference order is deliberate: (1) the toolchain that
+// built the driver itself, via runtime.GOROOT() — which honors a $GOROOT
+// set at process start, so the old env-GOROOT case is subsumed, not
+// dropped; (2) the project's pinned toolchain at ~/tools/go; (3) PATH.
+// PATH is last on purpose: a stale system go on PATH must not shadow
+// the pinned toolchain (VETO finding 5, P2). Whatever wins still
+// passes Emit's go >= 1.27 floor check, so a too-old toolchain fails
+// loudly there instead of producing a subtly wrong launcher.
 func findGoBinary() string {
-	// If the driver was built with a specific GOROOT, use its go binary.
-	if goroot := os.Getenv("GOROOT"); goroot != "" {
-		cand := filepath.Join(goroot, "bin", "go")
+	pathGo, err := exec.LookPath("go")
+	if err != nil {
+		pathGo = ""
+	}
+	home, _ := os.UserHomeDir()
+	for _, cand := range goBinaryCandidates(runtime.GOROOT(), home, pathGo) {
 		if fi, err := os.Stat(cand); err == nil && fi.Mode()&0o111 != 0 {
 			return cand
 		}
-	}
-	if p, err := exec.LookPath("go"); err == nil {
-		return p
-	}
-	// Well-known install location used by this project's toolchain.
-	cand := filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
-	if fi, err := os.Stat(cand); err == nil && fi.Mode()&0o111 != 0 {
-		return cand
 	}
 	// Last resort: let exec fail with a clear message.
 	return "go"

@@ -324,8 +324,41 @@ func TestParseGoVersionOutput(t *testing.T) {
 	if err != nil || major != 1 || minor != 27 {
 		t.Errorf("go1.27rc1: got %d.%d, %v", major, minor, err)
 	}
+	// VETO finding 5 (P2): a devel toolchain ("go version devel
+	// go1.28-...") must parse — it is newer than the floor, not
+	// unparseable — instead of being rejected by Sscanf on "devel".
+	major, minor, _, err = parseGoVersionOutput("go version devel go1.28-abc123 linux/amd64")
+	if err != nil || major != 1 || minor != 28 {
+		t.Errorf("devel go1.28: got %d.%d, %v", major, minor, err)
+	}
+	if _, _, _, err := parseGoVersionOutput("go version devel linux/amd64"); err == nil {
+		t.Error("devel without a version token: got nil error, want error")
+	}
 	if _, _, _, err := parseGoVersionOutput("not a version"); err == nil {
 		t.Error("garbage version output: got nil error, want error")
+	}
+}
+
+// TestGoBinaryCandidatesOrder: VETO finding 5 (P2) — the toolchain
+// "pin" must prefer the toolchain that built the driver, then the
+// project's pinned ~/tools/go, and only then PATH, so a stale system
+// go on PATH cannot shadow the pinned toolchain.
+func TestGoBinaryCandidatesOrder(t *testing.T) {
+	got := goBinaryCandidates("/build/goroot", "/home/u", "/usr/bin/go")
+	want := []string{"/build/goroot/bin/go", "/home/u/tools/go/bin/go", "/usr/bin/go"}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidates[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if got := goBinaryCandidates("", "", "/usr/bin/go"); len(got) != 1 || got[0] != "/usr/bin/go" {
+		t.Errorf("PATH-only candidates = %v, want [/usr/bin/go]", got)
+	}
+	if got := goBinaryCandidates("", "", ""); len(got) != 0 {
+		t.Errorf("empty candidates = %v, want []", got)
 	}
 }
 

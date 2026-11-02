@@ -71,21 +71,35 @@ func Analyzers() []*Analyzer {
 // swallowed. A caller that prints "no issues found" when Run returns a
 // nil diagnostic list but a non-nil error is lying about the run.
 func Run(paths []string) ([]Diagnostic, error) {
+	_, ds, err := Check(paths, importer.Default())
+	return ds, err
+}
+
+// Check is Run plus the type-checked package, with a caller-supplied
+// importer: cmdVet uses it so an external test package can resolve
+// its package under test to the package already checked from the same
+// directory, which importer.Default() cannot do for a module-path
+// import of not-yet-compiled source. The returned package is
+// usable as an import for a later check only when err is nil: on a
+// type-checking failure the package is partial, and handing a partial
+// package to another group would let its errors leak into — or mask
+// errors in — that group's diagnostics.
+func Check(paths []string, imp types.Importer) (*types.Package, []Diagnostic, error) {
 	fset := token.NewFileSet()
 	var files []*ast.File
 	for _, path := range paths {
 		src, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("vet: %v", err)
+			return nil, nil, fmt.Errorf("vet: %v", err)
 		}
 		f, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
 		if err != nil {
-			return nil, fmt.Errorf("vet: parse %s: %v", path, err)
+			return nil, nil, fmt.Errorf("vet: parse %s: %v", path, err)
 		}
 		files = append(files, f)
 	}
 	if len(files) == 0 {
-		return nil, fmt.Errorf("vet: no files")
+		return nil, nil, fmt.Errorf("vet: no files")
 	}
 
 	info := &types.Info{
@@ -96,7 +110,7 @@ func Run(paths []string) ([]Diagnostic, error) {
 		Scopes:     make(map[ast.Node]*types.Scope),
 	}
 	conf := types.Config{
-		Importer:                 importer.Default(),
+		Importer:                 imp,
 		IgnoreFuncBodies:         false,
 		DisableUnusedImportCheck: true,
 	}
@@ -112,9 +126,9 @@ func Run(paths []string) ([]Diagnostic, error) {
 	}
 	out = SortDiagnostics(out)
 	if checkErr != nil {
-		return out, &TypeCheckError{Err: checkErr}
+		return pkg, out, &TypeCheckError{Err: checkErr}
 	}
-	return out, nil
+	return pkg, out, nil
 }
 
 // position returns the source position of n.

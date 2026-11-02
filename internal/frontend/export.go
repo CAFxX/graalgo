@@ -2,7 +2,7 @@
 //
 // Architecture (PLAN.md D1): the vendored go/* packages (see VENDORING.md)
 // type-check one single-file package; this file walks the typed AST and
-// emits the frontend/v1 JSON document described in ../docs/frontend-v1.md.
+// emits the frontend/v1 JSON document described in ../docs/arch/frontend-v1.md.
 //
 // Scope of this revision (M4 control flow + composite types, WS E):
 //   - exactly one input file, no imports (import overlay arrives with WS G)
@@ -24,7 +24,7 @@
 // Anything outside this scope fails fast with an explicit error naming the
 // workstream that extends the scope. There are no silently dropped nodes,
 // except *ast.EmptyStmt which the exporter normalizes away (documented in
-// docs/frontend-v1.md).
+// docs/arch/frontend-v1.md).
 //
 // D1 falsifier watch (GG-0012): this file uses only long-stable go/* APIs
 // (parser.ParseFile, types.Config.Check, Info.{Types,Defs,Uses}). If a future
@@ -55,7 +55,7 @@ import (
 )
 
 // frontendVersion is the JSON protocol version emitted. Additive-only changes
-// keep "v1"; any breaking change bumps to "v2" (docs/frontend-v1.md §8).
+// keep "v1"; any breaking change bumps to "v2" (docs/arch/frontend-v1.md §8).
 const frontendVersion = "v1"
 
 // langVersion is the Go language version assumed when type-checking.
@@ -64,7 +64,7 @@ const frontendVersion = "v1"
 const langVersion = "go1.27"
 
 // ---------------------------------------------------------------------------
-// JSON model (field-for-field contract: docs/frontend-v1.md).
+// JSON model (field-for-field contract: docs/arch/frontend-v1.md).
 // ---------------------------------------------------------------------------
 
 // Doc is the root of a frontend/v1 document.
@@ -128,7 +128,7 @@ type ObjectEnt struct {
 }
 
 // Node is one frontend/v1 AST node. Kind selects the Fields schema;
-// the contract per kind is docs/frontend-v1.md, enforced by
+// the contract per kind is docs/arch/frontend-v1.md, enforced by
 // tools/validate_frontend_v1.py.
 type Node struct {
 	Kind   string         `json:"kind"`
@@ -6651,7 +6651,7 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	switch s := s.(type) {
 	case *ast.EmptyStmt:
-		return nil, nil // normalized away (documented in docs/frontend-v1.md)
+		return nil, nil // normalized away (documented in docs/arch/frontend-v1.md)
 	case *ast.BlockStmt:
 		return e.exportBlock(s)
 	case *ast.DeclStmt:
@@ -6665,7 +6665,7 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		case token.TYPE:
 			// Local type declarations are runtime no-ops (the type
 			// table carries the types); normalized away like EmptyStmt
-			// (documented in docs/frontend-v1.md). Each spec's declared
+			// (documented in docs/arch/frontend-v1.md). Each spec's declared
 			// (possibly named) type is registered eagerly so later
 			// references resolve to stable ids.
 			for _, spec := range gd.Specs {
@@ -8074,7 +8074,7 @@ func (e *exporter) exprType(x ast.Expr) (int, error) {
 // folded: -, ^, !, + are exact on the low 64 bits / booleans, so the factory
 // evaluates them without divergence. "value" is empty (no single source
 // literal); "const" carries go/constant ExactString. Additive producer
-// behavior — the wire format is unchanged (docs/frontend-v1.md).
+// behavior — the wire format is unchanged (docs/arch/frontend-v1.md).
 func (e *exporter) foldedConst(x ast.Expr, v constant.Value) (*Node, error) {
 	t, err := e.exprType(x)
 	if err != nil {
@@ -8490,7 +8490,7 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 
 // exportCall exports a call expression: either a Go conversion T(x) (the
 // call target denotes a *types.TypeName), emitted as a "convert" node
-// (M3, WS D — new node kind, additive per docs/frontend-v1.md §8), a call
+// (M3, WS D — new node kind, additive per docs/arch/frontend-v1.md §8), a call
 // to runtime.Goexit (M5, WS F — the Phase-1 Goexit trigger), a call to a
 // builtin function, a call of a function literal, or a call through a
 // func-valued variable (M5, WS F — deferred calls and recursion). Other
