@@ -21,6 +21,9 @@
 #
 # Compile order: the runtime module builds first; this module then compiles
 # the stubs against runtime/out/classes; interop builds against both.
+# At test/run time the order reverses in one respect: the launcher needs
+# interop/out/classes on its classpath (ServiceLoader discovery of the
+# Phase-3 wire-kind builders) — see INTEROP_CLASSES below.
 #
 # Pinned toolchain: Oracle GraalVM 25.0.4.1.1 LTS (Truffle jars in lib/),
 # JDK 25.0.4+7.1 at ~/tools/graalvm-jdk-25 (see lib/LIB.md + lib/SHA256SUMS.txt).
@@ -36,6 +39,18 @@ GO_BIN_DIR := $(dir $(GO))
 
 RUNTIME := ../runtime
 RUNTIME_CLASSES := $(RUNTIME)/out/classes
+
+# Test/run-time dependency: graalgo.launcher.Main discovers the Phase-3
+# wire-kind builders (ifacemethod, syncop, ...) via ServiceLoader from the
+# interop module (graalgo.p3sync.launcher.P3KindRegistrations). The
+# launcher's classpath MUST therefore include interop/out/classes, or any
+# program whose frontend JSON contains a Phase-3 wire kind dies with
+# "unsupported expression kind" even though the builder exists. This bit
+# the full-suite job when real fmt (no longer shadowed by a synthetic
+# stub) started emitting ifacemethod nodes: the test classpath below
+# lacked interop, so ServiceLoader found no registrars at all.
+INTEROP := ../interop
+INTEROP_CLASSES := $(INTEROP)/out/classes
 
 LIB := $(wildcard lib/*.jar)
 CP  := $(subst $(eval) ,:,$(strip $(LIB)))
@@ -115,20 +130,28 @@ $(OUT_SMOKE)/.built: $(SRC_SMOKE) lib/SHA256SUMS.txt
 
 # graalgo-run: frontend + Truffle AST execution for one Go file.
 # (graalgo.launcher.Main compiles in the runtime module's joint round.)
-run: main
-	$(JAVA) $(JAVA_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.launcher.Main $(ARGS)
+# The interop classes join the classpath so the ServiceLoader-discovered
+# Phase-3 wire kinds resolve (see INTEROP_CLASSES above).
+run: main $(INTEROP_CLASSES)/.built
+	$(JAVA) $(JAVA_FLAGS) -cp "$(RUNTIME_CLASSES):$(INTEROP_CLASSES):$(OUT_MAIN):$(CP)" graalgo.launcher.Main $(ARGS)
+
+$(INTEROP_CLASSES)/.built:
+	$(MAKE) -C $(INTEROP) main
 
 # The differential test runner (graalgo.test.Runner) exercises the launcher
 # too, so the runtime classes join the test classpath (shadow order:
-# replacements before stubs).
-test: main $(OUT_TEST)/.built
+# replacements before stubs). The interop classes MUST join it as well:
+# the in-process launcher discovers Phase-3 wire kinds via ServiceLoader,
+# and without interop on the classpath every fmt-using corpus program dies
+# with "unsupported expression kind ifacemethod" (see INTEROP_CLASSES).
+test: main $(INTEROP_CLASSES)/.built $(OUT_TEST)/.built
 	mkdir -p out/test-tmp
 	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the differential
 	# tests would fill it. GOTMPDIR covers go; -Djava.io.tmpdir covers Java
 	# (Java ignores the TMPDIR env var for java.io.tmpdir).
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(P1_DIR_PROP) $(JAVA_FLAGS) \
-	-cp "$(OUT_TEST):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner
+	-cp "$(OUT_TEST):$(RUNTIME_CLASSES):$(INTEROP_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
