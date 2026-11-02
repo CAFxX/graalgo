@@ -60,6 +60,35 @@ func TestEmitProducesBinary(t *testing.T) {
 	}
 }
 
+// TestEmitQuotedRoot is the regression test for a baked-in root
+// containing characters that would break an unquoted Go string
+// literal: " and \ are both legal in a Unix path, and GRAALGO_HOME
+// is user-controlled. The launcher must still compile, and the
+// baked-in constant must equal the root exactly.
+func TestEmitQuotedRoot(t *testing.T) {
+	roots := []string{
+		filepath.Join(t.TempDir(), `a"b\c`),
+		filepath.Join(t.TempDir(), "a\nb"),
+	}
+	for _, root := range roots {
+		out := filepath.Join(t.TempDir(), "prog")
+		if err := Emit(Artifact{OutputPath: out, GraalgoRoot: root, WireJSON: []byte("{}")}); err != nil {
+			t.Fatalf("Emit with root %q: %v", root, err)
+		}
+		data, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+			t.Errorf("root %q: artifact is not an ELF binary", root)
+		}
+		// The compiled string constant holds the root verbatim.
+		if !bytes.Contains(data, []byte(root)) {
+			t.Errorf("root %q: artifact does not contain the root verbatim", root)
+		}
+	}
+}
+
 func TestEmitNoOutput(t *testing.T) {
 	err := Emit(Artifact{GraalgoRoot: "/x", WireJSON: []byte("{}")})
 	if err == nil || !strings.Contains(err.Error(), "output") {

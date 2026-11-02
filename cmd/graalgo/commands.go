@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +43,7 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
+	var tags []string
 	if len(flagArgs) > 0 {
 		bf, err := parseBuildFlags(flagArgs)
 		if err != nil {
@@ -57,6 +60,10 @@ func cmdRun(root string, args []string) int {
 			fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
 			return 1
 		}
+		// -tags is honored, not merely accepted: the driver selects
+		// the package's files with it and forwards it to the backend
+		// for imported packages (graalgoRunWithTags).
+		tags = splitTags(bf.tags)
 	}
 
 	if len(rest) == 0 {
@@ -77,19 +84,19 @@ func cmdRun(root string, args []string) int {
 			progFiles = append(progFiles, rest[i])
 			i++
 		}
-		progArgs = rest[i:]
+		progArgs = stripProgSeparator(rest[i:])
 		// Program args are separated from the launcher's own flags by
 		// "--" (the launcher treats every bare "-..." before "--" as
 		// its own flag).
 		runArgs := append(append([]string{}, progFiles...), "--")
 		runArgs = append(runArgs, progArgs...)
-		return graalgoRunProgram(root, runArgs)
+		return graalgoRunProgramWithTags(root, runArgs, tags)
 	}
 
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
 	// the package build).
-	files, err := resolveFiles([]string{target})
+	files, err := resolveFilesTags([]string{target}, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -105,12 +112,25 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	if code := graalgoRunWithTags(root, append([]string{"--check"}, pkgFiles...), tags); code != 0 {
 		return code
 	}
+	progArgs = stripProgSeparator(progArgs)
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
-	return graalgoRunProgram(root, runArgs)
+	return graalgoRunProgramWithTags(root, runArgs, tags)
+}
+
+// stripProgSeparator consumes one leading "--" from the program
+// arguments, as `go run` does: `graalgo run main.go -- -x` passes
+// "-x" (not "--" then "-x") to the program. The driver adds its own
+// "--" separator when invoking the backend, so a forwarded "--" would
+// otherwise reach the program as a spurious extra argument.
+func stripProgSeparator(args []string) []string {
+	if len(args) > 0 && args[0] == "--" {
+		return args[1:]
+	}
+	return args
 }
 
 // buildFlags holds the parsed `go build` flags that the driver recognizes.
@@ -119,7 +139,7 @@ func cmdRun(root string, args []string) int {
 type buildFlags struct {
 	output  string   // -o: output binary path
 	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
-	tags    string   // -tags: build tags (accepted; backend honors via go/build)
+	tags    string   // -tags: build tags (driver selects files with them; forwarded to the backend for imports via GRAALGO_BUILD_TAGS)
 	pkgs    []string // remaining package/file args
 }
 
@@ -197,7 +217,8 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	tags := splitTags(bf.tags)
+	files, err := resolveFilesTags(bf.pkgs, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -225,7 +246,7 @@ func cmdBuild(root string, args []string) int {
 	wireFile.Close()
 	defer os.Remove(wirePath)
 	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
-	if code := graalgoRun(root, emitArgs); code != 0 {
+	if code := graalgoRunWithTags(root, emitArgs, tags); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
 		return 1
 	}
@@ -250,40 +271,93 @@ func cmdBuild(root string, args []string) int {
 	return 0
 }
 
-// cmdVet implements `graalgo vet [packages]`.
+// cmdVet implements `graalgo vet [build flags] [packages]`.
 //
 // Runs the frontend translation check (--check) over the named packages,
 // then runs the static analyzers in internal/vet and reports diagnostics
 // in the same style as `go vet`.
+//
+// Each package is checked as a whole, not file by file: a multi-file
+// package checked one file at a time spuriously fails on symbols
+// declared in sibling files. And files are grouped by their declared
+// package before both --check and vet.Run, so a package's internal
+// test files (package foo) are checked with it while its external
+// test files (package foo_test) are checked as a separate package —
+// go/types cannot check foo and foo_test files as one package, and
+// feeding them together yields spurious diagnostics from the broken
+// type information.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	bf, err := parseBuildFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+		return 2
+	}
+	tags := splitTags(bf.tags)
+	files, err := resolveFilesTags(bf.pkgs, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	groups := partitionByPackage(files)
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	for _, group := range groups {
+		if code := graalgoRunWithTags(root, append([]string{"--check"}, group...), tags); code != 0 {
 			failed = true
 		}
 	}
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
+	// Run the analyzers over each package group separately.
+	var all []vet.Diagnostic
+	for _, group := range groups {
+		ds, err := vet.Run(group)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			return 1
+		}
+		all = append(all, ds...)
 	}
-	for _, d := range ds {
+	all = vet.SortDiagnostics(all)
+	for _, d := range all {
 		fmt.Printf("%s: %s\n", d.Pos, d.Message)
 	}
-	if len(ds) > 0 {
+	if len(all) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")
 	return 0
+}
+
+// partitionByPackage groups files by (directory, declared package
+// name), preserving first-appearance order of groups and files within
+// a group. Files whose package clause cannot be parsed (missing file,
+// syntax error) group under the empty package name for their
+// directory; the --check pass then reports the real error.
+func partitionByPackage(files []string) [][]string {
+	fset := token.NewFileSet()
+	type key struct {
+		dir string
+		pkg string
+	}
+	var order []key
+	groups := map[key][]string{}
+	for _, f := range files {
+		pkgName := ""
+		if parsed, err := parser.ParseFile(fset, f, nil, parser.PackageClauseOnly); err == nil {
+			pkgName = parsed.Name.Name
+		}
+		k := key{dir: filepath.Dir(f), pkg: pkgName}
+		if _, ok := groups[k]; !ok {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], f)
+	}
+	var out [][]string
+	for _, k := range order {
+		out = append(out, groups[k])
+	}
+	return out
 }
 
 // cmdFmt implements `graalgo fmt [packages]`.
