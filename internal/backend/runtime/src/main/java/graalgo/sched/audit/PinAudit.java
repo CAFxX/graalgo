@@ -42,6 +42,11 @@ import jdk.jfr.consumer.RecordingFile;
  *       suite ({@code graalgo.sched.SchedTestRunner}) in a child JVM with
  *       the pin event enabled. This covers the channel/select/timer/GC
  *       paths that have no Go-source form yet (Java-translated corpus).</li>
+ *   <li>Every child JVM's merged stdout/stderr is captured (never
+ *       discarded): on a non-zero child exit the report carries the exit
+ *       code plus the child's FAIL lines (or its last 20 lines when it
+ *       printed none), so a CI failure names the failing test instead of
+ *       only {@code testsFailed=true}.</li>
  *   <li>{@code --allow}: allowlist file, one {@code &lt;thread-prefix&gt;|&lt;frame-substring&gt;}
  *       per line. A pin matching an entry is EXPECTED (budgeted). The
  *       default (no file) allows nothing.</li>
@@ -116,13 +121,17 @@ public final class PinAudit {
                 s.filter(p -> p.toString().endsWith(".go")).sorted().forEach(programsList::add);
             }
         }
+        List<String> childFailures = new ArrayList<>();
         for (Path prog : programsList) {
             programs++;
             Path jfr = work.resolve("p" + programs + ".jfr");
+            Path childLog = work.resolve("p" + programs + ".child.log");
             int exit = runChild(jfr, gmp,
-                    new String[]{"--gmp=" + gmp, prog.toString()});
+                    new String[]{"--gmp=" + gmp, prog.toString()}, childLog);
             if (exit != 0) {
                 skipped.add(prog + " (exit " + exit + ")");
+                childFailures.add("### " + prog + " (exit " + exit + ")\n"
+                        + excerptBlock(childFailureExcerpt(childLog)));
             }
             try {
                 AuditResult r = readPins(jfr, prog.toString(), allow);
@@ -142,9 +151,12 @@ public final class PinAudit {
         if (runTests) {
             programs++;
             Path jfr = work.resolve("tests.jfr");
-            int exit = runChild(jfr, gmp, new String[]{"__TESTS__"});
+            Path childLog = work.resolve("tests.child.log");
+            int exit = runChild(jfr, gmp, new String[]{"__TESTS__"}, childLog);
             if (exit != 0) {
                 skipped.add("SchedTestRunner (exit " + exit + ")");
+                childFailures.add("### SchedTestRunner (exit " + exit + ")\n"
+                        + excerptBlock(childFailureExcerpt(childLog)));
                 // Reviewer1 P1-1: the --tests leg is the pin-relevant
                 // coverage; a non-zero exit means the suite did not run
                 // clean, so PASS would be vacuous.
@@ -189,6 +201,15 @@ public final class PinAudit {
                 .append(unreadable.size()).append("\n");
         for (String s : unreadable) {
             md.append("  - ").append(s).append("\n");
+        }
+        if (!childFailures.isEmpty()) {
+            md.append("\n## Failing child output\n\n");
+            md.append("Child stdout/stderr excerpts for every non-zero child "
+                    + "exit (FAIL lines plus the summary line, else the "
+                    + "last 20 lines of child output):\n\n");
+            for (String s : childFailures) {
+                md.append(s).append("\n");
+            }
         }
         md.append("- Pin events total: ").append(pins.size())
                 .append(" (expected ").append(expected)
@@ -246,7 +267,50 @@ public final class PinAudit {
      * Runs one child JVM with the pin event enabled. {@code mainArgs[0] ==
      * "__TESTS__"} selects the test runner instead of SchedMain.
      */
-    private static int runChild(Path jfr, int gmp, String[] mainArgs)
+    /**
+     * Failure excerpt from a captured child log: the child's FAIL lines plus
+     * its summary line; when the child printed no FAIL lines (crash, hang
+     * kill, corpus program), its last 20 lines instead. Package-visible for
+     * tests. Never throws: an unreadable log reports itself.
+     */
+    static List<String> childFailureExcerpt(Path childLog) {
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(childLog, StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            return List.of("<child log unreadable: " + e.getMessage() + ">");
+        }
+        List<String> excerpt = new ArrayList<>();
+        for (String l : lines) {
+            if (l.startsWith("FAIL ")) {
+                excerpt.add(l);
+            }
+        }
+        if (!lines.isEmpty()) {
+            String summary = lines.get(lines.size() - 1);
+            if (summary.contains("failures") && !excerpt.contains(summary)) {
+                excerpt.add(summary);
+            }
+        }
+        if (excerpt.isEmpty()) {
+            int from = Math.max(0, lines.size() - 20);
+            excerpt.addAll(lines.subList(from, lines.size()));
+        }
+        if (excerpt.isEmpty()) {
+            excerpt.add("<child produced no output>");
+        }
+        return excerpt;
+    }
+
+    private static String excerptBlock(List<String> excerpt) {
+        StringBuilder b = new StringBuilder();
+        for (String l : excerpt) {
+            b.append("- `").append(l.replace("`", "'")).append("`\n");
+        }
+        return b.toString();
+    }
+
+    private static int runChild(Path jfr, int gmp, String[] mainArgs, Path childLog)
             throws IOException, InterruptedException {
         String java = System.getProperty("java.home") + "/bin/java";
         String cp = System.getProperty("java.class.path");
@@ -279,8 +343,11 @@ public final class PinAudit {
             cmd.addAll(List.of(mainArgs));
         }
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        // Capture, never discard: a non-zero child exit with discarded
+        // output is undiagnosable (the 2026-11-02 CI pin-audit failure
+        // named no failing test). stderr merges into the same log.
+        pb.redirectOutput(childLog.toFile());
+        pb.redirectErrorStream(true);
         Process p = pb.start();
         boolean done = p.waitFor(5, TimeUnit.MINUTES);
         if (!done) {

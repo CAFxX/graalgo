@@ -180,7 +180,7 @@ check: main $(OUT_TEST)/.built
 	-Dpinaudit.test.cp="$(TEST_CP)" \
 	-cp "$(RUN_CP)" graalgo.sched.audit.PinAudit --tests --gmp 2 \
 	> out/test-tmp/pin-smoke.log 2>&1; \
-	rc=$$?; tail -3 out/test-tmp/pin-smoke.log; exit $$rc
+	rc=$$?; if [ $$rc -ne 0 ]; then cat out/test-tmp/pin-smoke.log; else tail -3 out/test-tmp/pin-smoke.log; fi; exit $$rc
 
 # P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
 # suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
