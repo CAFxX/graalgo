@@ -301,23 +301,49 @@ func parseModulePath(modData []byte) string {
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
 func buildableGoFiles(dir string) []string {
-	ctxt := build.Default
+	return buildableGoFilesWithContext(dir, build.Default)
+}
+
+// buildableGoFilesWithContext is buildableGoFiles under ctxt instead of
+// build.Default. The context is the seam through which forwarded -tags
+// (N1) flow: a caller that knows the user's tags passes a context
+// carrying them, so constraint filtering honours -tags rather than
+// only the default context. The primary path is unchanged: ImportDir
+// under ctxt, whose GoFiles/TestGoFiles/XTestGoFiles are exactly the
+// files `go test` would use.
+//
+// When ImportDir fails (no buildable files, mixed packages, ...), the
+// fallback must NOT return every *.go file: that hands the backend
+// mutually exclusive, build-gated files that redeclare each other's
+// symbols — a file-selection artifact, not a real error in the
+// package. Instead each file is classified by filename suffix and
+// //go:build evaluation under ctxt, via MatchFile — the same
+// classification ImportDir itself uses. A file MatchFile cannot
+// classify (unreadable, malformed constraints) is passed through so
+// the backend reports the real error, rather than being silently
+// dropped.
+func buildableGoFilesWithContext(dir string, ctxt build.Context) []string {
 	pkg, err := ctxt.ImportDir(dir, 0)
-	if err != nil {
-		// Not importable (no go.mod context, etc.): fall back to all
-		// files and let the backend report real errors.
-		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-		return all
+	if err == nil {
+		var out []string
+		for _, f := range pkg.GoFiles {
+			out = append(out, filepath.Join(dir, f))
+		}
+		for _, f := range pkg.TestGoFiles {
+			out = append(out, filepath.Join(dir, f))
+		}
+		for _, f := range pkg.XTestGoFiles {
+			out = append(out, filepath.Join(dir, f))
+		}
+		return out
 	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.go"))
 	var out []string
-	for _, f := range pkg.GoFiles {
-		out = append(out, filepath.Join(dir, f))
-	}
-	for _, f := range pkg.TestGoFiles {
-		out = append(out, filepath.Join(dir, f))
-	}
-	for _, f := range pkg.XTestGoFiles {
-		out = append(out, filepath.Join(dir, f))
+	for _, f := range matches {
+		match, err := ctxt.MatchFile(dir, filepath.Base(f))
+		if err != nil || match {
+			out = append(out, f)
+		}
 	}
 	return out
 }

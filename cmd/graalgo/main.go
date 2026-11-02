@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -190,6 +191,12 @@ func isGraalgoRoot(dir string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// backendRun invokes the backend launcher. It is a variable, not a direct
+// call, so driver tests can stub the backend and assert the driver's
+// invocation shape (one --check per package over the whole file list)
+// without a JVM. Production code never reassigns it.
+var backendRun = graalgoRun
+
 // graalgoRun invokes internal/backend/graalgo-sync-run with the given args,
 // wiring stdio through. Returns the process exit code.
 //
@@ -276,4 +283,86 @@ func resolveFiles(args []string) ([]string, error) {
 		return nil, fmt.Errorf("no Go files matched")
 	}
 	return files, nil
+}
+
+// packageOperand is one package's worth of operands: the files of a
+// single package, kept separate from every other package's files. `go
+// build` and `go vet` operate per package; flattening operands into one
+// list (the old resolveFiles shape) either fails loudly when the
+// operands declare different package names, or silently merges
+// same-named packages from different directories into a chimera
+// artifact named after the first directory.
+type packageOperand struct {
+	// name identifies the operand for output naming and error
+	// messages: the directory argument, the first .go file, or ""
+	// for the no-argument (current directory) case.
+	name  string
+	files []string
+}
+
+// displayName renders the operand for error messages.
+func (p packageOperand) displayName() string {
+	if p.name == "" {
+		return "current directory"
+	}
+	return p.name
+}
+
+// resolvePackages turns package/file arguments into one file list per
+// package, mirroring how `go build`/`go vet` treat their operands:
+// each directory is its own package, and a list of .go files is a
+// single (command-line-arguments) package. Per-package file sets are
+// preserved here so that later constraint-aware filtering (N2) filters
+// within a package and never becomes the step that merges packages.
+func resolvePackages(args []string) ([]packageOperand, error) {
+	if len(args) == 0 {
+		matches, err := filepath.Glob("*.go")
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
+			return nil, fmt.Errorf("no Go files in current directory")
+		}
+		return []packageOperand{{files: matches}}, nil
+	}
+	var pkgs []packageOperand
+	var fileArgs []string
+	for _, a := range args {
+		if a == "./..." {
+			return nil, fmt.Errorf("./... not yet supported")
+		}
+		fi, err := os.Stat(a)
+		if err != nil {
+			// Maybe a .go file that doesn't exist yet (typo) — let
+			// the backend report the error.
+			if filepath.Ext(a) == ".go" {
+				fileArgs = append(fileArgs, a)
+				continue
+			}
+			return nil, fmt.Errorf("no such file or directory: %s", a)
+		}
+		if fi.IsDir() {
+			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
+			if err != nil {
+				return nil, err
+			}
+			pkgs = append(pkgs, packageOperand{name: a, files: matches})
+			continue
+		}
+		fileArgs = append(fileArgs, a)
+	}
+	if len(fileArgs) > 0 {
+		if len(pkgs) > 0 {
+			return nil, fmt.Errorf("cannot mix .go file operands with package operands: %s", strings.Join(fileArgs, " "))
+		}
+		pkgs = append(pkgs, packageOperand{name: fileArgs[0], files: fileArgs})
+	}
+	total := 0
+	for _, p := range pkgs {
+		total += len(p.files)
+	}
+	if total == 0 {
+		return nil, fmt.Errorf("no Go files matched")
+	}
+	return pkgs, nil
 }

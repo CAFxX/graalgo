@@ -44,6 +44,16 @@ func Emit(a Artifact) error {
 	if a.OutputPath == "" {
 		return fmt.Errorf("no output path")
 	}
+	// Resolve the output path against the caller's working directory
+	// BEFORE compiling in the temp build dir: `go build -o` with a
+	// relative path resolves against the build command's directory, so
+	// a relative OutputPath would land in the temp dir and be deleted
+	// with it — default-name builds either failed at the chmod below
+	// or "succeeded" while chmodding a same-named source directory.
+	outPath, err := filepath.Abs(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve output path: %v", err)
+	}
 	if len(a.WireJSON) == 0 {
 		return fmt.Errorf("no frontend output to embed")
 	}
@@ -91,7 +101,7 @@ func Emit(a Artifact) error {
 
 	// Compile the launcher to a real binary.
 	goBin := findGoBinary()
-	cmd := exec.Command(goBin, "build", "-o", a.OutputPath, ".")
+	cmd := exec.Command(goBin, "build", "-o", outPath, ".")
 	cmd.Dir = tmpDir
 	// Don't inherit GOFLAGS that might break the build; keep it hermetic.
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
@@ -102,8 +112,8 @@ func Emit(a Artifact) error {
 	}
 
 	// go build sets the executable bit, but ensure it (umask-safe).
-	if err := os.Chmod(a.OutputPath, 0o755); err != nil {
-		return fmt.Errorf("cannot chmod %s: %v", a.OutputPath, err)
+	if err := os.Chmod(outPath, 0o755); err != nil {
+		return fmt.Errorf("cannot chmod %s: %v", outPath, err)
 	}
 	return nil
 }

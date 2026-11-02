@@ -197,54 +197,85 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	pkgs, err := resolvePackages(bf.pkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
 	}
-	// _test.go files are not part of the package build, like `go build`.
-	var pkgFiles []string
-	for _, f := range files {
-		if !strings.HasSuffix(f, "_test.go") {
-			pkgFiles = append(pkgFiles, f)
+	if len(pkgs) > 1 && bf.output != "" {
+		fmt.Fprintf(os.Stderr, "graalgo build: -o %s cannot be used when building multiple packages\n", bf.output)
+		return 2
+	}
+	// Build each package separately, like `go build`: one frontend
+	// invocation and one artifact per package, named after that
+	// package. Merging operands into a single invocation either
+	// failed on differing package names or silently merged same-named
+	// packages into a chimera artifact. A failure in one package is
+	// reported and the remaining packages are still attempted.
+	failed := false
+	for _, pkg := range pkgs {
+		// _test.go files are not part of the package build, like `go build`.
+		var pkgFiles []string
+		for _, f := range pkg.files {
+			if !strings.HasSuffix(f, "_test.go") {
+				pkgFiles = append(pkgFiles, f)
+			}
+		}
+		if len(pkgFiles) == 0 {
+			fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files in %s\n", pkg.displayName())
+			failed = true
+			continue
+		}
+		// Frontend gate: run the frontend once, capturing its output
+		// for the artifact. This both validates the program and
+		// produces the IR that the artifact embeds, so the artifact
+		// never re-runs the frontend.
+		wireFile, err := os.CreateTemp("", "graalgo-wire-*.json")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo build: cannot create temp file: %v\n", err)
+			failed = true
+			continue
+		}
+		wirePath := wireFile.Name()
+		wireFile.Close()
+		emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
+		code := backendRun(root, emitArgs)
+		if code != 0 {
+			fmt.Fprintf(os.Stderr, "graalgo build: build failed for %s\n", pkg.displayName())
+			os.Remove(wirePath)
+			failed = true
+			continue
+		}
+		wireJSON, err := os.ReadFile(wirePath)
+		os.Remove(wirePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo build: cannot read frontend output: %v\n", err)
+			failed = true
+			continue
+		}
+		outArg := bf.output
+		if len(pkgs) > 1 {
+			// -o with multiple packages is rejected above, so each
+			// artifact takes its own package's default name.
+			outArg = ""
+		}
+		out, err := driver.DefaultOutputName(outArg, []string{pkg.name})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+			failed = true
+			continue
+		}
+		if err := driver.Emit(driver.Artifact{
+			OutputPath:  out,
+			GraalgoRoot: root,
+			WireJSON:    wireJSON,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+			failed = true
+			continue
 		}
 	}
-	if len(pkgFiles) == 0 {
-		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
-		return 1
-	}
-	// Frontend gate: run the frontend once, capturing its output for the
-	// artifact. This both validates the program and produces the IR that
-	// the artifact embeds, so the artifact never re-runs the frontend.
-	wireFile, err := os.CreateTemp("", "graalgo-wire-*.json")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo build: cannot create temp file: %v\n", err)
-		return 1
-	}
-	wirePath := wireFile.Name()
-	wireFile.Close()
-	defer os.Remove(wirePath)
-	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
-	if code := graalgoRun(root, emitArgs); code != 0 {
-		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
-		return 1
-	}
-	wireJSON, err := os.ReadFile(wirePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo build: cannot read frontend output: %v\n", err)
-		return 1
-	}
-	out, err := driver.DefaultOutputName(bf.output, bf.pkgs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
-		return 2
-	}
-	if err := driver.Emit(driver.Artifact{
-		OutputPath:  out,
-		GraalgoRoot: root,
-		WireJSON:    wireJSON,
-	}); err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+	if failed {
 		return 1
 	}
 	return 0
@@ -256,30 +287,43 @@ func cmdBuild(root string, args []string) int {
 // then runs the static analyzers in internal/vet and reports diagnostics
 // in the same style as `go vet`.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	pkgs, err := resolvePackages(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	// Vet each package separately, like `go vet`: the frontend gate
+	// is ONE --check over the whole package (cross-file references
+	// only resolve when the files are checked together — per-file
+	// checks false-fail ordinary multi-file packages with
+	// "undefined:" errors), followed by the analyzers over that
+	// package's files. A failure in one package is reported and the
+	// remaining packages are still vetted.
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	for _, pkg := range pkgs {
+		if len(pkg.files) == 0 {
+			fmt.Fprintf(os.Stderr, "graalgo vet: no Go files in %s\n", pkg.displayName())
+			failed = true
+			continue
+		}
+		if code := backendRun(root, append([]string{"--check"}, pkg.files...)); code != 0 {
+			failed = true
+			continue
+		}
+		ds, err := vet.Run(pkg.files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			failed = true
+			continue
+		}
+		for _, d := range ds {
+			fmt.Printf("%s: %s\n", d.Pos, d.Message)
+		}
+		if len(ds) > 0 {
 			failed = true
 		}
 	}
 	if failed {
-		return 1
-	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
-	}
-	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
-	}
-	if len(ds) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")
