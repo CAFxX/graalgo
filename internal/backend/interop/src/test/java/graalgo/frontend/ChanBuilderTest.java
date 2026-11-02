@@ -104,7 +104,7 @@ public final class ChanBuilderTest {
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"bool\",\"name\":\"bool\"}}"
             + "]";
 
-    private static final String POS = "{\"line\":1,\"col\":1,\"len\":1}";
+    private static final String POS = "{\"file\":0,\"line\":1,\"col\":1,\"len\":1}";
 
     private NodeFactory factory;
     private NodeFactory.BuildCtx ctx;
@@ -729,5 +729,147 @@ public final class ChanBuilderTest {
         } catch (FrontendException fe) {
             assertTrue(fe.getMessage().contains("not declared"), "rejection message");
         }
+    }
+
+    // ---------- select + break/continue (review T2, 2026-11-02) ----------
+
+    /** {@code m = <value>} as a wire fragment (marker assignments in the tests below). */
+    private String assignInt(int obj, String name, String value) {
+        return "{\"kind\":\"assign\",\"pos\":" + POS + ",\"fields\":{\"tok\":\"=\","
+                + "\"lhs\":[" + ident(obj, name, T_INT) + "],"
+                + "\"rhs\":[" + basiclit(value, T_INT) + "]}}";
+    }
+
+    /** A "branch" wire fragment: {@code break} / {@code continue}, optionally labeled. */
+    private String branch(String op, String label) {
+        String l = label == null ? "" : ",\"label\":\"" + label + "\"";
+        return "{\"kind\":\"branch\",\"pos\":" + POS + ",\"fields\":{\"op\":\"" + op + "\"" + l + "}}";
+    }
+
+    /** A select with one never-ready recv case plus a default whose body is {@code stmts}. */
+    private String defaultSelect(int chObj, String... stmts) {
+        return selectStmt(
+                selectCase("recv", ",\"chan\":" + ident(chObj, "ch", T_CHAN_INT)
+                        + ",\"body\":" + blockNode()),
+                selectCase("default", ",\"body\":" + blockNode(stmts)));
+    }
+
+    /** Unlabeled break in a select case body exits the select (not the caller). */
+    public void testSelectBreakExitsSelect() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            int mObj = declareObj("m", T_INT, FrameSlotKind.Long);
+            GoStmtNode sel = buildStmt(defaultSelect(chObj,
+                    assignInt(mObj, "m", "1"), branch("break", null), assignInt(mObj, "m", "2")));
+            FrameDescriptor fd = ctx.frames.build();
+            int chSlot = slotOf(chObj), mSlot = slotOf(mObj);
+            GoChan ch = (GoChan) makechan(null, T_INT).executeObject(newFrame());
+            inGoroutineFrame(fd, f -> {
+                f.setObject(chSlot, ch);
+                f.setLong(mSlot, 0L);
+                sel.executeVoid(f); // must NOT throw: the break exits the select
+                assertEq(1L, f.getLong(mSlot), "body ran up to the break, not past it");
+            });
+        });
+    }
+
+    /** Labeled break to the select itself exits the select (label consumed at build). */
+    public void testSelectLabeledBreakToSelectExits() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            int mObj = declareObj("m", T_INT, FrameSlotKind.Long);
+            String labeled = "{\"kind\":\"labeled\",\"pos\":" + POS + ",\"fields\":{\"label\":\"Sel\","
+                    + "\"stmt\":" + defaultSelect(chObj,
+                            assignInt(mObj, "m", "1"), branch("break", "Sel"),
+                            assignInt(mObj, "m", "2")) + "}}";
+            GoStmtNode sel = buildStmt(labeled);
+            FrameDescriptor fd = ctx.frames.build();
+            int chSlot = slotOf(chObj), mSlot = slotOf(mObj);
+            GoChan ch = (GoChan) makechan(null, T_INT).executeObject(newFrame());
+            inGoroutineFrame(fd, f -> {
+                f.setObject(chSlot, ch);
+                f.setLong(mSlot, 0L);
+                sel.executeVoid(f); // must NOT throw: break Sel exits the select
+                assertEq(1L, f.getLong(mSlot), "body ran up to the break, not past it");
+            });
+        });
+    }
+
+    /** Labeled break to an OUTER construct propagates through an unlabeled select. */
+    public void testSelectLabeledBreakThroughUnlabeledSelect() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            int mObj = declareObj("m", T_INT, FrameSlotKind.Long);
+            GoStmtNode sel = buildStmt(defaultSelect(chObj,
+                    assignInt(mObj, "m", "1"), branch("break", "Outer")));
+            FrameDescriptor fd = ctx.frames.build();
+            int chSlot = slotOf(chObj), mSlot = slotOf(mObj);
+            GoChan ch = (GoChan) makechan(null, T_INT).executeObject(newFrame());
+            inGoroutineFrame(fd, f -> {
+                f.setObject(chSlot, ch);
+                f.setLong(mSlot, 0L);
+                try {
+                    sel.executeVoid(f);
+                    assertTrue(false, "break Outer must propagate past the select");
+                } catch (BreakSignal b) {
+                    assertTrue("Outer".equals(b.label()), "signal label preserved");
+                    assertEq(1L, f.getLong(mSlot), "body ran up to the break");
+                }
+            });
+        });
+    }
+
+    /** Labeled break to an OUTER construct propagates through a labeled select too. */
+    public void testSelectLabeledBreakThroughLabeledSelect() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            int mObj = declareObj("m", T_INT, FrameSlotKind.Long);
+            String labeled = "{\"kind\":\"labeled\",\"pos\":" + POS + ",\"fields\":{\"label\":\"Sel\","
+                    + "\"stmt\":" + defaultSelect(chObj,
+                            assignInt(mObj, "m", "1"), branch("break", "Outer")) + "}}";
+            GoStmtNode sel = buildStmt(labeled);
+            FrameDescriptor fd = ctx.frames.build();
+            int chSlot = slotOf(chObj), mSlot = slotOf(mObj);
+            GoChan ch = (GoChan) makechan(null, T_INT).executeObject(newFrame());
+            inGoroutineFrame(fd, f -> {
+                f.setObject(chSlot, ch);
+                f.setLong(mSlot, 0L);
+                try {
+                    sel.executeVoid(f);
+                    assertTrue(false, "break Outer must propagate past the select");
+                } catch (BreakSignal b) {
+                    assertTrue("Outer".equals(b.label()), "signal label preserved");
+                    assertEq(1L, f.getLong(mSlot), "body ran up to the break");
+                }
+            });
+        });
+    }
+
+    /** `continue` in a select case body propagates to the enclosing loop (never swallowed). */
+    public void testSelectContinuePropagates() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            int mObj = declareObj("m", T_INT, FrameSlotKind.Long);
+            GoStmtNode sel = buildStmt(defaultSelect(chObj,
+                    assignInt(mObj, "m", "1"), branch("continue", null)));
+            FrameDescriptor fd = ctx.frames.build();
+            int chSlot = slotOf(chObj), mSlot = slotOf(mObj);
+            GoChan ch = (GoChan) makechan(null, T_INT).executeObject(newFrame());
+            inGoroutineFrame(fd, f -> {
+                f.setObject(chSlot, ch);
+                f.setLong(mSlot, 0L);
+                try {
+                    sel.executeVoid(f);
+                    assertTrue(false, "continue must propagate past the select");
+                } catch (ContinueSignal c) {
+                    assertEq(1L, f.getLong(mSlot), "body ran up to the continue");
+                }
+            });
+        });
     }
 }

@@ -5,10 +5,12 @@ import com.oracle.truffle.api.nodes.Node;
 
 import graalgo.frontend.AssignNode;
 import graalgo.frontend.BlockNode;
+import graalgo.frontend.BreakSignal;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.GoStmtNode;
 import graalgo.frontend.Json;
+import graalgo.frontend.LabelTarget;
 import graalgo.frontend.NodeFactory;
 import graalgo.runtime.ChanOps;
 import graalgo.values.GoKind;
@@ -31,6 +33,13 @@ import graalgo.values.GoKind;
  *       {@link ChanOps#selectRecvValue}/{@link ChanOps#selectRecvOk}.
  *   <li>The chosen case's body (a statement list) executes.
  * </ol>
+ *
+ * <p>{@code break} in a case body exits the select (gc semantics: {@code
+ * break} terminates the innermost {@code for}, {@code switch}, or {@code
+ * select}): an unlabeled break, or a break labeled with this select's own
+ * label, is caught here; a break labeled for an outer construct and
+ * {@code continue} propagate to that construct (mirror
+ * {@link graalgo.frontend.SwitchNode}).
  *
  * <p>Nil-channel cases are <em>dropped</em> before {@code selectGo} (a
  * nil Go channel evaluates to Java {@code null}, which the Phase-2
@@ -56,7 +65,7 @@ import graalgo.values.GoKind;
  *
  * <p>verifies: GG-0017 (chan slice)
  */
-public final class SelectNode extends GoStmtNode {
+public final class SelectNode extends GoStmtNode implements LabelTarget {
 
     /** One case: operands, pre-built target assignments, and the body. */
     static final class SelectCaseNode extends Node {
@@ -84,8 +93,16 @@ public final class SelectNode extends GoStmtNode {
     @Children
     private final SelectCaseNode[] cases;
 
+    /** This select's own label, installed by {@link #build} (null when unlabeled). */
+    private String label;
+
     private SelectNode(SelectCaseNode[] cases) {
         this.cases = cases;
+    }
+
+    @Override
+    public void setLabel(String label) {
+        this.label = label;
     }
 
     @Override
@@ -142,8 +159,17 @@ public final class SelectNode extends GoStmtNode {
                 c.okAssign.executeVoid(frame);
             }
         }
-        // Phase 4: the chosen case's body.
-        c.body.executeVoid(frame);
+        // Phase 4: the chosen case's body. A break in the body exits the
+        // select (mirror SwitchNode); BreakSignal only — ContinueSignal
+        // must keep propagating to the enclosing loop.
+        try {
+            c.body.executeVoid(frame);
+        } catch (BreakSignal b) {
+            if (b.matches(label)) {
+                return;
+            }
+            throw b;
+        }
     }
 
     /**
@@ -156,6 +182,12 @@ public final class SelectNode extends GoStmtNode {
             NodeFactory factory) {
         Json.Object f = node.object("fields", "select");
         String path = "select.fields";
+        // Consume the pending label BEFORE building the cases (mirror
+        // buildSwitch): a labeled select's label belongs on this node, and
+        // labeled statements inside the case bodies must not overwrite or
+        // clear it before it is read.
+        String label = ctx.pendingLabel;
+        ctx.pendingLabel = null;
         Json.Array caseArr = f.array("cases", path);
         SelectCaseNode[] cases = new SelectCaseNode[caseArr.size()];
         for (int i = 0; i < caseArr.size(); i++) {
@@ -168,7 +200,11 @@ public final class SelectNode extends GoStmtNode {
             }
             cases[i] = buildCase(co.object("fields", cpath), cpath + ".fields", ctx, factory);
         }
-        return new SelectNode(cases);
+        SelectNode stmt = new SelectNode(cases);
+        if (label != null) {
+            stmt.setLabel(label);
+        }
+        return stmt;
     }
 
     private static SelectCaseNode buildCase(Json.Object c, String cpath,
