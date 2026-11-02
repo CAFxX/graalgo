@@ -14,8 +14,11 @@ import java.math.BigInteger;
  * <ul>
  *   <li>float→int64/int: NaN, ±Inf, or out of [-2^63, 2^63) →
  *       {@code 0x8000000000000000}; else truncation toward zero.</li>
- *   <li>float→uint64/uint/uintptr: NaN, negative, or ≥ 2^64 →
- *       {@code 0x8000000000000000}; else truncation toward zero.</li>
+ *   <li>float→uint64/uint/uintptr: gc converts via int64 (truncation
+ *       toward zero, saturating to {@code 0x8000000000000000} outside
+ *       int64 range) then reinterprets the bits as uint64: negatives
+ *       in [-2^63, -1] wrap (e.g. -1.5 → all-ones bits), (-1, 0) → 0;
+ *       only NaN or ≥ 2^64 → {@code 0x8000000000000000}.</li>
  *   <li>float→int32: NaN, ±Inf, or out of [-2^31, 2^31) → {@code 0x80000000};
  *       else truncation toward zero.</li>
  *   <li>float→uint32: via the int64 conversion, then low 32 bits.</li>
@@ -50,10 +53,18 @@ public final class GoConvert {
 
     /** float64 → uint64/uint/uintptr, gc/amd64 mirror. */
     public static long floatToUint64(double d) {
-        if (Double.isNaN(d) || d <= -1.0 || d >= TWO_POW_64) {
+        // gc converts via int64 (truncation toward zero, saturating to
+        // MIN outside int64 range) and reinterprets the bits as uint64:
+        // negatives in [-2^63, -1] wrap (e.g. -1.5 -> all-ones bits),
+        // (-1, 0) truncates to 0, and only NaN / >= 2^64 yield MIN here
+        // (below -2^63 reaches MIN via Java's saturating cast below).
+        if (Double.isNaN(d) || d >= TWO_POW_64) {
             return Long.MIN_VALUE; // bit pattern 0x8000000000000000
         }
         if (d < TWO_POW_63) {
+            // Includes all negatives: Java's (long) cast truncates toward
+            // zero and saturates below -2^63 to MIN, matching gc exactly.
+            // +Inf is already excluded above; -Inf saturates to MIN here.
             return (long) d;
         }
         // d in [2^63, 2^64): d - 2^63 is exact (Sterbenz), then re-bias.

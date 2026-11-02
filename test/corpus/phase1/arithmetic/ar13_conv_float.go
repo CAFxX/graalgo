@@ -25,6 +25,21 @@ func main() {
 	r := float64(float32(0.1))
 	s := float32(0.1 + 0.2)
 	w := float64(-(1 << 70))
+	// Negative float -> uint64: gc converts via int64 then reinterprets
+	// the bits, so these wrap (or saturate below -2^63) instead of
+	// yielding 0x8000000000000000 for every negative value.
+	neg1 := -1.5
+	uneg1 := uint64(neg1)
+	neg2 := -2.5
+	uneg2 := uint64(neg2)
+	neg3 := -2147483649.0
+	uneg3 := uint64(neg3)
+	neg32 := float32(-1.5)
+	uneg32 := uint64(neg32)
+	negMin := -9223372036854775808.0
+	unegMin := uint64(negMin)
+	negBig := -9.3e18
+	unegBig := uint64(negBig)
 	a = a
 	b = b
 	c = c
@@ -43,6 +58,18 @@ func main() {
 	r = r
 	s = s
 	w = w
+	neg1 = neg1
+	uneg1 = uneg1
+	neg2 = neg2
+	uneg2 = uneg2
+	neg3 = neg3
+	uneg3 = uneg3
+	neg32 = neg32
+	uneg32 = uneg32
+	negMin = negMin
+	unegMin = unegMin
+	negBig = negBig
+	unegBig = unegBig
 }
 
-// observe: a b c d e f g h j k m n o p q r s w
+// observe: a b c d e f g h j k m n o p q r s w neg1 uneg1 neg2 uneg2 neg3 uneg3 neg32 uneg32 negMin unegMin negBig unegBig
