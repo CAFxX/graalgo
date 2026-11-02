@@ -8,6 +8,13 @@ package graalgo.runtime;
  * {@link UnsupportedOperationException} with a Phase-2/3 message until
  * implemented. File descriptors are plain ints; the poller descriptor
  * is an opaque long handle.
+ *
+ * <p>NOTE (review 2026-11-02, R08): this is the frozen stub surface
+ * only — the live netpoller is {@code graalgo.p3net.GoNetpoll}
+ * (interop module, {@code internal/poll} linknames, since P3-M9).
+ * This class still throws by design, has no production callers, and
+ * must not be un-deleted into a second live poller; see the runtime
+ * module's {@code Netpoll} javadoc for the full decision record.
  */
 public final class Netpoll {
     private Netpoll() {}

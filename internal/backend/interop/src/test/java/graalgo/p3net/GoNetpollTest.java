@@ -1,5 +1,11 @@
 package graalgo.p3net;
 
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.spi.SelectorProvider;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -214,6 +220,109 @@ public final class GoNetpollTest {
             GoNetpoll.pollServerInit();
             assertEq(0, GoNetpoll.descCount(), "no descs");
             assertTrue(GoNetpoll.lastPollerError() == null, "poller healthy");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * Review 2026-11-02 P2: pollOpen failure returns the null cookie 0
+     * (never a valid id — ids start at 1) with a nonzero errno, and 0
+     * is never a registered desc. A -1 sentinel was rejected: the
+     * internal/poll fork guards every use on {@code runtimeCtx == 0}
+     * and would misroute -1 into requireDesc's throw.
+     */
+    public void testPollOpenFailureIsNullCookieWithErrno() {
+        SchedulerCore prev = setup();
+        try {
+            long ctx = GoNetpoll.pollOpen(0L); // unknown cookie: no channel
+            assertEq(0, ctx, "pollOpen failure returns null cookie 0");
+            assertTrue(GoNetpoll.pollOpenErrno() != 0, "errno set on failure");
+            assertTrue(GoNetpoll.descForTest(0) == null, "0 is never a registered desc");
+            assertTrue(!GoNetpoll.pollerBroken(), "open failure is not a poller failure");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /** Selector whose select() always fails — drives the pollLoop failure policy. */
+    private static final class FailingSelector extends Selector {
+        @Override
+        public boolean isOpen() {
+            return true;
+        }
+
+        @Override
+        public SelectorProvider provider() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Set<SelectionKey> keys() {
+            return Set.of();
+        }
+
+        @Override
+        public Set<SelectionKey> selectedKeys() {
+            return Set.of();
+        }
+
+        @Override
+        public int selectNow() throws IOException {
+            throw new IOException("boom");
+        }
+
+        @Override
+        public int select(long timeout) throws IOException {
+            throw new IOException("boom");
+        }
+
+        @Override
+        public int select() throws IOException {
+            throw new IOException("boom");
+        }
+
+        @Override
+        public Selector wakeup() {
+            return this;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * Review 2026-11-02 R09: a persistently failing selector must not
+     * hot-spin. Driving the private pollLoop with a failing selector,
+     * 10 consecutive failures must end the loop (with backoff, ~3.3 s),
+     * mark the poller broken, count the failures, and make later
+     * pollOpen fail fast with EIO instead of registering a desc
+     * nobody will ever wake.
+     */
+    public void testPollerTerminalFailureBacksOffAndFailsFast() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            Method loop = GoNetpoll.class.getDeclaredMethod("pollLoop", Selector.class);
+            loop.setAccessible(true);
+            Thread t = new Thread(() -> {
+                try {
+                    loop.invoke(null, new FailingSelector());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, "test-failing-poller");
+            t.setDaemon(true);
+            t.start();
+            t.join(30000);
+            assertTrue(!t.isAlive(), "pollLoop exits after repeated failures, not spin");
+            assertTrue(GoNetpoll.pollerBroken(), "poller marked broken");
+            assertTrue(GoNetpoll.totalPollerFailures() >= 10,
+                    "failures counted: " + GoNetpoll.totalPollerFailures());
+            assertTrue(GoNetpoll.lastPollerError() != null, "last failure recorded");
+            long ctx = GoNetpoll.pollOpen(0L);
+            assertEq(0, ctx, "pollOpen fails fast on broken poller");
+            assertEq(GoOs.EIO, GoNetpoll.pollOpenErrno(), "broken-poller errno is EIO");
         } finally {
             teardown(prev);
         }

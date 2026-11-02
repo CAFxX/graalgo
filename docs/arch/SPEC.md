@@ -441,6 +441,17 @@ released while blocked, re-acquired via `wakeFifo` on readiness); the JDK's
 internal poller handles readiness. This is the entire Loom value proposition
 and the lowest-risk path.
 
+[SUPERSEDED for the live path — review 2026-11-02, R08 / P3-M9:] the
+P3-M9 netpoller (`graalgo.p3net.GoNetpoll`, `internal/poll` linknames)
+re-introduced a readiness poller, because real guest `net` code runs
+through `internal/poll` (deadlines, unblock, close-vs-wait semantics
+that blocking NIO alone does not express). The runtime-module
+netpoller-deletion gate was updated in the same era to guard only code
+references inside the runtime module. `graalgo.runtime.Netpoll` remains
+a throwing frozen surface, not the live poller. GG-0018's deletion
+stands only as Phase-2 history, not as a description of the current
+system; the live polling model is the P3-M9 one.
+
 **Channels** = Java objects (lock, circular buffer over a typed array, two
 wait-queues of scheduler-parked virtual threads); **select** ports
 `runtime/select.go` logic (lock channels in address order, poll, park one
@@ -923,13 +934,18 @@ user-space scheduler cannot close → kill trigger.
 handle table nor an isolated FFM-arena raw-address mode can cover → re-scope
 the v1 semantics.
 
-### 7.4 Netpoller — deleted
+### 7.4 Netpoller — deleted (Phase 2; superseded by P3-M9)
 
 **Closure:** §3.5 / GG-0018 `[DECIDED]` — blocking NIO on virtual threads
 replaces the event loop. **Falsifier:** the Phase-2 differential run of the
 `net`/`os/signal` suites against the §3.5 scheduler shows edge-triggered or
 signal-delivery semantics that blocking NIO cannot express → adapt instead of
 delete (scoped workaround, not a program kill).
+
+**Outcome (review 2026-11-02, R08):** the falsifier's adapt branch was
+taken in P3-M9 — the live netpoller is `graalgo.p3net.GoNetpoll`
+(`internal/poll` linknames); deletion is no longer the live model (see
+the §3.5 supersession note).
 
 ### 7.5 cgo→Panama — authorship and platform list
 

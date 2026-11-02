@@ -17,10 +17,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.jfr.ParkReason;
+import graalgo.p3log.P3Log;
 import graalgo.p3os.GoOs;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
@@ -91,6 +93,18 @@ import graalgo.sched.SchedulerCore;
  * <p>Like {@link GoOs}, state is per-program-run; {@link #resetForTest}
  * tears it down for tests (closes the selector, stopping the poller
  * thread; the next {@code runtime_pollServerInit} starts a fresh one).
+ *
+ * <p>Polling ownership (review 2026-11-02, R08): this class IS the
+ * live netpoller. The Phase-2 GG-0018 deletion (the throwing
+ * {@code graalgo.runtime.Netpoll} surface, "no readiness-based
+ * poller") was superseded by this P3-M9 re-integration: real
+ * {@code internal/poll} guest code reaches this poller through the
+ * linknames registered in {@code LinknameIntrinsics}, never through
+ * {@code graalgo.runtime.Netpoll}, which survives only as a frozen
+ * signature surface with no production callers. Do not "re-delete"
+ * this class to satisfy the stale GG-0018 wording; the decision
+ * record is in that class's javadoc and in {@code docs/arch/SPEC.md}
+ * §3.5.
  */
 public final class GoNetpoll {
     private GoNetpoll() {}
@@ -195,6 +209,31 @@ public final class GoNetpoll {
     /** Last poller-thread failure, for tests (no stdout/stderr in library code). */
     private static volatile Throwable lastPollerError;
 
+    /**
+     * Poller-loop failure policy (review 2026-11-02, R09): the outer
+     * pollLoop catch used to record the failure and re-enter
+     * {@code select()} immediately, so a persistently failing selector
+     * hot-spun while parked waiters hung silently. Now each outer-loop
+     * failure is counted; consecutive failures back off exponentially
+     * (10 ms, doubling, capped at 1 s); the first failure and the
+     * terminal failure are logged via {@link P3Log} (stderr printing
+     * is rejected by the interop debug-leftover gate); after
+     * {@code MAX_CONSECUTIVE_POLLER_FAILURES} consecutive failures the
+     * poller is terminally broken: parked waiters are woken with
+     * {@code POLL_ERR_NOT_POLLABLE}, the loop exits, and the broken
+     * flag stays sticky — later {@code pollOpen}/{@code pollWait} fail
+     * fast instead of parking on a dead poller. There is no
+     * auto-restart: a dead selector has no live registrations to
+     * resume from, so recovery is a fresh process. {@code resetForTest}
+     * clears all of this.
+     */
+    private static final int MAX_CONSECUTIVE_POLLER_FAILURES = 10;
+    private static final long POLLER_BACKOFF_INITIAL_MS = 10;
+    private static final long POLLER_BACKOFF_MAX_MS = 1000;
+    private static final AtomicLong totalPollerFailures = new AtomicLong(0);
+    private static final AtomicInteger consecutivePollerFailures = new AtomicInteger(0);
+    private static volatile boolean pollerBroken;
+
     /** Test hook: tears down all poller state (closes the selector). */
     public static synchronized void resetForTest() {
         INIT.set(false);
@@ -206,6 +245,9 @@ public final class GoNetpoll {
         REG_Q.clear();
         NEXT_CTX.set(1);
         lastPollerError = null;
+        totalPollerFailures.set(0);
+        consecutivePollerFailures.set(0);
+        pollerBroken = false;
         if (sel != null && sel.isOpen()) {
             try {
                 sel.close();
@@ -218,6 +260,21 @@ public final class GoNetpoll {
     /** Test hook: the last unexpected poller-thread failure, if any. */
     public static Throwable lastPollerError() {
         return lastPollerError;
+    }
+
+    /** Total outer pollLoop failures since start (or last resetForTest). */
+    public static long totalPollerFailures() {
+        return totalPollerFailures.get();
+    }
+
+    /** Consecutive outer pollLoop failures (0 after any successful select). */
+    public static int consecutivePollerFailures() {
+        return consecutivePollerFailures.get();
+    }
+
+    /** True once the poller loop has given up (sticky until resetForTest). */
+    public static boolean pollerBroken() {
+        return pollerBroken;
     }
 
     /**
@@ -238,8 +295,11 @@ public final class GoNetpoll {
     // Linkname targets.
     // ------------------------------------------------------------------
 
-    /** internal/poll.runtime_pollServerInit */
+    /** internal/poll.runtime_pollServerInit (no-op once the poller is terminally broken). */
     public static void pollServerInit() {
+        if (pollerBroken) {
+            return; // Terminal state (R09): no restart from a dead selector.
+        }
         if (INIT.compareAndSet(false, true)) {
             try {
                 Selector sel = Selector.open();
@@ -258,8 +318,25 @@ public final class GoNetpoll {
         }
     }
 
-    /** internal/poll.runtime_pollOpen — ctx cookie, 0 on failure. */
+    /**
+     * internal/poll.runtime_pollOpen — ctx cookie, 0 on failure.
+     *
+     * <p>0 is the null cookie, not a valid id: ids are issued from
+     * {@code NEXT_CTX} starting at 1, so 0 can never be a registered
+     * desc (review 2026-11-02 P2: a -1 sentinel was rejected — the
+     * {@code internal/poll} fork guards every use on
+     * {@code runtimeCtx == 0} and would misroute -1 into
+     * {@code requireDesc}'s throw; 0 + errno is the contract the fork
+     * already implements). On failure the errno is in
+     * {@code pollOpenErrno()} on this thread.
+     */
     public static long pollOpen(Object fdArg) {
+        if (pollerBroken) {
+            // Fail fast on a dead poller instead of registering a desc
+            // nobody will ever wake (R09 terminal state).
+            LAST_OPEN_ERRNO.set(GoOs.EIO);
+            return 0;
+        }
         pollServerInit();
         long cookie = ((Number) fdArg).longValue();
         SelectableChannel ch = GoNet.selectableChannel(cookie);
@@ -620,6 +697,12 @@ public final class GoNetpoll {
         if (err != POLL_NO_ERROR) {
             return err;
         }
+        if (pollerBroken) {
+            // Dead poller: nobody will wake a newly parked waiter.
+            // Fail fast (after checkErr, so closing/timeout keep their
+            // precise codes) instead of parking forever.
+            return POLL_ERR_NOT_POLLABLE;
+        }
         Runnable hook = preClaimHookForTest;
         if (hook != null) {
             hook.run();
@@ -797,6 +880,7 @@ public final class GoNetpoll {
                 drainRegistrations();
                 int n = sel.select();
                 drainRegistrations();
+                consecutivePollerFailures.set(0);
                 if (n > 0) {
                     Set<SelectionKey> keys = sel.selectedKeys();
                     for (Iterator<SelectionKey> it = keys.iterator(); it.hasNext();) {
@@ -819,11 +903,44 @@ public final class GoNetpoll {
             } catch (ClosedSelectorException e) {
                 return; // resetForTest: shut down.
             } catch (Throwable t) {
-                // Never let the poller thread die: every parked waiter
-                // would hang forever. Record and continue (no stderr in
-                // library code — the phase-3 debug-leftover gate).
+                // Never let the poller thread die silently: count the
+                // failure, log the first and the terminal one (R09),
+                // back off, and give up loudly after repeated failures
+                // instead of hot-spinning with parked waiters hanging.
                 lastPollerError = t;
+                long total = totalPollerFailures.incrementAndGet();
+                int consecutive = consecutivePollerFailures.incrementAndGet();
+                if (consecutive == 1) {
+                    P3Log.warn(GoNetpoll.class,
+                            "graalgo-netpoll: poller failure (1): " + t);
+                }
+                if (consecutive >= MAX_CONSECUTIVE_POLLER_FAILURES) {
+                    pollerBroken = true;
+                    P3Log.warn(GoNetpoll.class,
+                            "graalgo-netpoll: poller FAILED TERMINALLY after "
+                            + consecutive + " consecutive failures ("
+                            + total + " total), last: " + t
+                            + "; parked waiters woken with NOT_POLLABLE");
+                    failAllWaiters();
+                    return;
+                }
+                long backoffMs = Math.min(POLLER_BACKOFF_MAX_MS,
+                        POLLER_BACKOFF_INITIAL_MS << (consecutive - 1));
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
             }
+        }
+    }
+
+    /** Wakes every parked waiter with NOT_POLLABLE (terminal poller failure). */
+    private static void failAllWaiters() {
+        for (PollDesc pd : DESCS.values()) {
+            wakeWith(pd, MODE_READ, POLL_ERR_NOT_POLLABLE);
+            wakeWith(pd, MODE_WRITE, POLL_ERR_NOT_POLLABLE);
         }
     }
 
