@@ -25,12 +25,16 @@ import (
 // The fix rewrites Repeat as a direct O(n) doubling copy within a single
 // backing array, avoiding Builder.String() in the hot loop.
 //
-// This test is deliberately synchronous: an earlier version used a
+// This test is deliberately synchronous. An earlier version used a
 // goroutine + time.After watchdog to turn the pre-fix hang into a test
-// failure, but timer channels do not fire under graalgo (PKG-048: select
-// on time.After hangs forever), so the guarded version hangs instead of
-// failing. Failability rests on the outer timeout (`timeout 600` in the
-// test-regression Makefile target).
+// failure, but at the time timer channels were believed not to fire
+// under graalgo (PKG-048: select on time.After hangs forever). That
+// claim is stale: verified 2026-11-02 on HEAD 06d19598 that select on
+// time.After, plain receive on time.After, time.NewTimer, and the
+// goroutine-watchdog shape all fire under graalgo, matching gc, and
+// the claim is pinned by test/regression/pkg048. The test is kept
+// synchronous as written; failability still rests on the outer timeout
+// (`timeout 600` in the test-regression Makefile target).
 //
 // Sizing and failability: 5,000,000 repetitions of the 12-byte unit = 60MB.
 // Pre-fix, the O(n^2) loop performs ~220GB of redundant full-buffer copies
