@@ -14,8 +14,11 @@ import graalgo.runtime.GoroutineState;
 import graalgo.runtime.PanicException;
 import graalgo.safepoint.Safepoint;
 import java.util.List;
+import graalgo.values.GoBox;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
+import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 
 /**
  * Root node for a compiled function literal (M5, WS F).
@@ -66,6 +69,91 @@ public final class GoFuncRootNode extends RootNode {
      * {@link RangeFuncNode}).
      */
     private final int rangeStashSlot;
+    /**
+     * M0: post-defer pair-repack spec for a pair-transformed
+     * multi-result function, or null when this function is not
+     * pair-transformed (single-result functions keep the old path: the
+     * named result slot IS the result slot, so no repack applies).
+     */
+    private final MRRepack mrRepack;
+
+    /**
+     * M0: re-packs a pair-transformed function's named results into its
+     * pair result after deferred calls have run.
+     *
+     * <p>The exporter packs the pair AT the return statement, before
+     * defers run; a deferred closure then writes the named-result LOCAL
+     * slots, which the old root never re-read (it returned the stale
+     * pair). After the unwind, each named field is re-read from its
+     * local slot — unwrapping a GoBox cell when the result's address
+     * was taken — and written into the pair, using the same carrier
+     * conversion as composite-literal construction
+     * ({@link Boxing#toLongBits} / {@link Boxing#copyForAssign}).
+     * Unnamed/blank fields (slot -1) are never written by a defer (no
+     * name to write through), so their return-time packed values stand;
+     * on the recovered-panic path they stay at the entry zero value.
+     * Return-value expressions are still evaluated exactly once, at the
+     * return statement, by the unchanged ReturnNode/pair-literal path;
+     * only WHEN the named fields are committed to the pair changes.
+     */
+    public static final class MRRepack {
+        private final GoStructDescriptor descriptor;
+        private final int[] slots; // per pair field; -1 = unnamed/blank
+        private final GoKind[] kinds; // per pair field (the field's kind)
+        private final boolean[] boxed; // per pair field (slot holds a GoBox cell)
+
+        public MRRepack(GoStructDescriptor descriptor, int[] slots, GoKind[] kinds, boolean[] boxed) {
+            this.descriptor = descriptor;
+            this.slots = slots.clone();
+            this.kinds = kinds.clone();
+            this.boxed = boxed.clone();
+        }
+
+        void repack(VirtualFrame frame, int resultSlot, boolean resultBoxed) {
+            if (resultSlot < 0) {
+                return;
+            }
+            Object cur = resultBoxed
+                    ? ((GoBox) frame.getObject(resultSlot)).value
+                    : Boxing.readSlot(frame, resultSlot, GoKind.STRUCT);
+            GoStruct pair;
+            if (cur instanceof GoStruct gs) {
+                pair = gs;
+            } else if (cur == null) {
+                // Defensive: the entry prologue always zero-initializes
+                // the result slot, so a null pair means the slot was
+                // never initialized; rebuild the zero pair rather than
+                // dropping the named results.
+                pair = GoStruct.zero(descriptor);
+                if (resultBoxed) {
+                    ((GoBox) frame.getObject(resultSlot)).value = pair;
+                } else {
+                    Boxing.setSlot(frame, resultSlot, GoKind.STRUCT, pair);
+                }
+            } else {
+                throw new FrontendException("MRRepack: pair result slot holds "
+                        + cur.getClass().getSimpleName() + ", not a GoStruct");
+            }
+            for (int i = 0; i < slots.length; i++) {
+                if (slots[i] < 0) {
+                    continue;
+                }
+                GoStructDescriptor.Field f = descriptor.field(i);
+                Object v;
+                if (boxed[i]) {
+                    GoBox cell = (GoBox) frame.getObject(slots[i]);
+                    v = cell == null ? Boxing.zero(f.kind(), f.structDesc()) : cell.value;
+                } else {
+                    v = Boxing.readSlot(frame, slots[i], kinds[i]);
+                }
+                if (f.inLongs()) {
+                    pair.setLong(i, Boxing.toLongBits(f.kind(), v));
+                } else {
+                    pair.setObject(i, Boxing.copyForAssign(f.kind(), v));
+                }
+            }
+        }
+    }
 
     public GoFuncRootNode(FrameDescriptor descriptor, GoStmtNode body,
                           int closureSlot, int[] paramSlots, GoKind[] paramKinds,
@@ -100,6 +188,15 @@ public final class GoFuncRootNode extends RootNode {
                           int closureSlot, int[] paramSlots, GoKind[] paramKinds,
                           int resultSlot, GoKind resultKind, String funcName, int[] snapSlots,
                           boolean resultBoxed, int rangeStashSlot) {
+        this(descriptor, body, closureSlot, paramSlots, paramKinds, resultSlot, resultKind,
+                funcName, snapSlots, resultBoxed, rangeStashSlot, null);
+    }
+
+    /** Fullest constructor (M0: pair-transformed functions pass a repack spec). */
+    public GoFuncRootNode(FrameDescriptor descriptor, GoStmtNode body,
+                          int closureSlot, int[] paramSlots, GoKind[] paramKinds,
+                          int resultSlot, GoKind resultKind, String funcName, int[] snapSlots,
+                          boolean resultBoxed, int rangeStashSlot, MRRepack mrRepack) {
         super((TruffleLanguage<?>) null, descriptor);
         this.body = body;
         this.closureSlot = closureSlot;
@@ -111,6 +208,7 @@ public final class GoFuncRootNode extends RootNode {
         this.funcName = funcName;
         this.snapSlots = snapSlots;
         this.rangeStashSlot = rangeStashSlot;
+        this.mrRepack = mrRepack;
     }
 
     /**
@@ -222,12 +320,16 @@ public final class GoFuncRootNode extends RootNode {
                     adoptRangeDefers(chain, frame, mark);
                     chain.unwindReturning(mark);
                 }
+                // M0: commit post-defer named-result values into the pair.
+                repackMR(frame);
                 return readResult(frame, resultSlot, resultKind, r.value, resultBoxed);
             }
             if (chain != null) {
                 adoptRangeDefers(chain, frame, mark);
                 chain.unwindReturning(mark);
             }
+            // M0: same repack on the fallthrough path.
+            repackMR(frame);
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (PanicException p) {
             PanicException rest;
@@ -241,6 +343,10 @@ public final class GoFuncRootNode extends RootNode {
                 throw rest;
             }
             // Recovered: resume after the chain with the result slot.
+            // M0: a recovered panic never packed a pair, so the repack
+            // also supplies the recovered named results (unnamed fields
+            // stay at the entry zero value).
+            repackMR(frame);
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (Goexit g) {
             if (chain != null) {
@@ -275,6 +381,13 @@ public final class GoFuncRootNode extends RootNode {
             @SuppressWarnings("unchecked")
             List<DeferredCall> calls = (List<DeferredCall>) stash;
             chain.adoptRangeDefers(mark, calls);
+        }
+    }
+
+    /** M0 repack, no-op for non-pair-transformed functions. */
+    private void repackMR(VirtualFrame frame) {
+        if (mrRepack != null) {
+            mrRepack.repack(frame, resultSlot, resultBoxed);
         }
     }
 

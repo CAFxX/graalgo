@@ -3033,6 +3033,10 @@ type exporter struct {
 	// __select_blank_*, __close_*); keeps the names unique across
 	// selects/ranges/closes in one export.
 	chanSeq int
+	// M0: separate sequence counter for the explicit-return temps
+	// (__m0ret_*). Sharing chanSeq would renumber the __p5mr_* temps
+	// emitted later in the same export, churning unrelated goldens.
+	mrRetSeq int
 	// P3-M5 (WS E, ADR-0005): synthetic time/context package state.
 	// synthGlobals holds the synthetic packages' package-level globals
 	// in declaration order (exported during importSyntheticPackage;
@@ -3095,6 +3099,66 @@ type exporter struct {
 	// its own execution (tracked via length), so nested statements flush
 	// correctly.
 	mrHoistPre []*Node
+}
+
+// mrResultObjs returns, aligned with sig's results in pair-field order,
+// the object id of each named result's body local (the id shared with
+// prependMRNamedResultDecls' vardecls), or -1 for unnamed/blank positions.
+// The backend carries this list on the wire as funcdecl/funclit
+// "mrResults" and, after deferred calls run, re-packs the then-current
+// named-result locals into the pair — deferred writes to named results
+// must survive the return (M0: the pair packed at the return statement
+// predates the defers, so without the repack those writes are silently
+// discarded). Unnamed/blank positions are never written by a defer (no
+// name to write through), so their return-time packed values stand.
+func (e *exporter) mrResultObjs(sig *types.Signature) ([]int, error) {
+	results := sig.Results()
+	out := make([]int, results.Len())
+	for i := 0; i < results.Len(); i++ {
+		rv := results.At(i)
+		name := rv.Name()
+		if name == "" || name == "_" {
+			out[i] = -1
+			continue
+		}
+		oid, ok := e.objIDs[rv]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: named result %q has no obj id (exporter bug)", name)
+		}
+		out[i] = oid
+	}
+	return out, nil
+}
+
+// assignMRReturnValues appends, to e.mrHoistPre (flushed by exportStmt
+// into a block before the return), one plain assignment per named result
+// position: namedLocal = values[i]. Unnamed/blank positions are skipped.
+// Callers must pass values that are safe to read repeatedly — temp idents
+// or unpacked selector reads of an already-evaluated temp. Side-effecting
+// expressions must be hoisted into temps first (see the explicit-return
+// path), or they would evaluate twice (once in the assignment, once in
+// the pair literal).
+func (e *exporter) assignMRReturnValues(s *ast.ReturnStmt, sigResults *types.Tuple, values []*Node) error {
+	for i, v := range values {
+		rv := sigResults.At(i)
+		name := rv.Name()
+		if name == "" || name == "_" {
+			continue
+		}
+		oid, ok := e.objIDs[rv]
+		if !ok {
+			return fmt.Errorf("gofrontend: named result %q has no obj id (exporter bug)", name)
+		}
+		tid, err := e.typeID(rv.Type())
+		if err != nil {
+			return err
+		}
+		local := e.node("ident", s, map[string]any{"name": name, "obj": oid, "type": tid})
+		e.mrHoistPre = append(e.mrHoistPre, e.node("assign", s, map[string]any{
+			"tok": "=", "lhs": []*Node{local}, "rhs": []*Node{v},
+		}))
+	}
+	return nil
 }
 
 // userMRInfo describes a user-defined multi-result function transformed
@@ -6106,6 +6170,15 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if len(results) > 0 {
 		fields["results"] = results
 	}
+	// M0: pair-transformed functions carry the named-result locals so
+	// the backend can re-pack them into the pair after defers run.
+	if mrInfo != nil {
+		mrObjs, err := e.mrResultObjs(mrInfo.origSig)
+		if err != nil {
+			return nil, err
+		}
+		fields["mrResults"] = mrObjs
+	}
 	return e.node("funcdecl", fd, fields), nil
 }
 
@@ -6556,6 +6629,14 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	if len(results) > 0 {
 		fields["results"] = results
 	}
+	// M0: same post-defer repack marking as exportFuncDecl.
+	if mrInfo != nil {
+		mrObjs, err := e.mrResultObjs(mrInfo.origSig)
+		if err != nil {
+			return nil, err
+		}
+		fields["mrResults"] = mrObjs
+	}
 	return e.node("funcdecl", fd, fields), nil
 }
 
@@ -6775,6 +6856,23 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 						if err != nil {
 							return nil, err
 						}
+						// M0: the unpacked values are pure reads of the
+						// hoisted temp (already evaluated once above),
+						// so they may also be assigned to the named
+						// locals here: gc assigns a return's values to
+						// the named results before defers run, and the
+						// backend's post-defer repack reads those
+						// locals. Without this, an explicit return
+						// through a multi-result call leaves stale
+						// locals that the repack would copy over the
+						// packed values. Guarded on length: a
+						// forwarder-shaped unpacking (single node for
+						// several results) keeps its pre-existing form.
+						if sigResults := mr.origSig.Results(); len(unpacked) == sigResults.Len() {
+							if err := e.assignMRReturnValues(s, sigResults, unpacked); err != nil {
+								return nil, err
+							}
+						}
 						pairNode := e.node("complit", s, map[string]any{
 							"type":      pairTypeID,
 							"keyed":     true,
@@ -6802,6 +6900,59 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 			pairTypeID, err := e.typeID(mr.pairType)
 			if err != nil {
 				return nil, err
+			}
+			// M0: gc assigns an explicit return's values to the named
+			// results before defers run, and the backend's post-defer
+			// repack reads those locals — so the return must assign
+			// them too, or the repack would overwrite the packed
+			// values with stale locals (e.g. `return side(1),
+			// side(2)` with a defer setting x came back `99 0`
+			// instead of `99 2`). Evaluate every expression exactly
+			// once, in order, into fresh temps (phase 1), then assign
+			// the temps to the named locals (phase 2 — gc's
+			// evaluate-all-then-assign order, so a later expression
+			// reading a named result sees its pre-return value),
+			// then pack the temps (phase 3). Unnamed/blank positions
+			// keep their packed values (no name to write through). A
+			// length mismatch (not a valid typed program) keeps the
+			// pre-existing packing form.
+			sigResults := mr.origSig.Results()
+			if len(results) == sigResults.Len() {
+				var pairVals []*Node
+				var assignVals []*Node
+				for i, r := range results {
+					tid, err := e.typeID(sigResults.At(i).Type())
+					if err != nil {
+						return nil, err
+					}
+					e.mrRetSeq++
+					tmpName := fmt.Sprintf("__m0ret_%d", e.mrRetSeq)
+					tmpVar := types.NewVar(token.NoPos, nil, tmpName, sigResults.At(i).Type())
+					tmpID, err := e.defVar(tmpVar, false)
+					if err != nil {
+						return nil, err
+					}
+					e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", s, map[string]any{
+						"names": []string{tmpName}, "objs": []int{tmpID},
+						"define": true, "type": nil, "values": []*Node{r},
+					}))
+					pairVals = append(pairVals, e.node("ident", s, map[string]any{
+						"name": tmpName, "obj": tmpID, "type": tid,
+					}))
+					assignVals = append(assignVals, e.node("ident", s, map[string]any{
+						"name": tmpName, "obj": tmpID, "type": tid,
+					}))
+				}
+				if err := e.assignMRReturnValues(s, sigResults, assignVals); err != nil {
+					return nil, err
+				}
+				pairNode := e.node("complit", s, map[string]any{
+					"type":      pairTypeID,
+					"keyed":     true,
+					"values":    pairVals,
+					"fieldkeys": mr.pairFields,
+				})
+				return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
 			}
 			pairNode := e.node("complit", s, map[string]any{
 				"type":      pairTypeID,
@@ -11546,9 +11697,18 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	return e.node("funclit", l, map[string]any{
+	funclitFields := map[string]any{
 		"params": params, "results": results, "body": body, "type": tid,
-	}), nil
+	}
+	// M0: same post-defer repack marking as exportFuncDecl.
+	if mrInfo != nil {
+		mrObjs, err := e.mrResultObjs(sig)
+		if err != nil {
+			return nil, err
+		}
+		funclitFields["mrResults"] = mrObjs
+	}
+	return e.node("funclit", l, funclitFields), nil
 }
 
 // exportSignatureVars emits one kind:"param" node per *types.Var in a

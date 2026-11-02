@@ -711,6 +711,64 @@ public final class NodeFactory {
      * literals inside may capture this function's variables via the usual
      * parent chain.
      */
+    /**
+     * M0: builds the post-defer pair-repack spec for a pair-transformed
+     * multi-result function from its wire {@code "mrResults"} field
+     * (object ids of the named-result locals in pair-field order, -1 for
+     * unnamed/blank positions), or null when the function is not
+     * pair-transformed. Must run AFTER the body is built: the
+     * named-result locals' frame slots exist in {@code ctx.objSlots}
+     * only once their prepended vardecls have been built. Field kinds
+     * come from the pair struct descriptor (field order is result
+     * order); whether a local slot holds a GoBox cell comes from the
+     * function's boxed set (address-taken locals).
+     */
+    private GoFuncRootNode.MRRepack buildMRRepack(Json.Object f, String path, BuildCtx ctx,
+                                                  int resultTypeId) {
+        Json.Value mrV = f.opt("mrResults");
+        if (mrV == null) {
+            return null;
+        }
+        if (!(mrV instanceof Json.Array arr)) {
+            throw new FrontendException(path + ": mrResults must be an array");
+        }
+        if (resultTypeId < 0) {
+            throw new FrontendException(path + ": mrResults without a result type");
+        }
+        GoStructDescriptor desc = structDescriptorFor(ctx, resultTypeId, path);
+        if (arr.size() != desc.fields().size()) {
+            throw new FrontendException(path + ": mrResults length " + arr.size()
+                    + " does not match pair field count " + desc.fields().size());
+        }
+        int[] slots = new int[arr.size()];
+        GoKind[] kinds = new GoKind[arr.size()];
+        boolean[] boxed = new boolean[arr.size()];
+        for (int i = 0; i < arr.size(); i++) {
+            Json.Value v = arr.get(i);
+            if (!(v instanceof Json.Num n)) {
+                throw new FrontendException(path + ".mrResults[" + i + "]: must be an integer");
+            }
+            long lv = n.asLong(path + ".mrResults[" + i + "]");
+            kinds[i] = desc.field(i).kind();
+            if (lv < 0) {
+                slots[i] = -1;
+                boxed[i] = false;
+                continue;
+            }
+            if (lv > Integer.MAX_VALUE) {
+                throw new FrontendException(path + ".mrResults[" + i + "]: out of int range");
+            }
+            int oid = (int) lv;
+            Integer slot = ctx.objSlots.get(oid);
+            if (slot == null) {
+                throw new FrontendException(path + ".mrResults[" + i + "]: unknown object id " + oid);
+            }
+            slots[i] = slot;
+            boxed[i] = ctx.boxed.contains(oid);
+        }
+        return new GoFuncRootNode.MRRepack(desc, slots, kinds, boxed);
+    }
+
     private GoFuncRootNode buildNamedFunc(Json.Object fn, Json.Object f, BuildCtx ctx) {
         String path = "funcdecl.fields";
         String funcName = f.string("name", path);
@@ -781,9 +839,12 @@ public final class NodeFactory {
         entryStmts.add(body);
         GoStmtNode entry = entryStmts.size() == 1 ? body
                 : new BlockNode(entryStmts.toArray(new GoStmtNode[0]));
+        // M0: resolve the repack spec after the body build (named-result
+        // locals' slots exist only now).
+        GoFuncRootNode.MRRepack mrRepack = buildMRRepack(f, path, ctx, resultTypeId);
         GoFuncRootNode root = new GoFuncRootNode(ctx.frames.build(), entry, closureSlot,
                 paramSlots, paramKinds, resultSlot, resultKind, funcName, null,
-                ctx.resultBoxed, ctx.rangeStashSlot);
+                ctx.resultBoxed, ctx.rangeStashSlot, mrRepack);
         root.setSourceSection(sectionFor(fn, "funcdecl"));
         return root;
     }
@@ -4110,9 +4171,12 @@ public final class NodeFactory {
                     snapSlots[i] = t[2];
                 }
             }
+            // M0: resolve the repack spec after the body build (named-result
+            // locals' slots exist only now).
+            GoFuncRootNode.MRRepack mrRepack = buildMRRepack(f, path, fctx, fctx.resultTypeId);
             root = new GoFuncRootNode(frames.build(), entry, closureSlot,
                     paramSlots, paramKinds, fctx.resultSlot, fctx.resultKind, fctx.funcName,
-                    snapSlots, fctx.resultBoxed, fctx.rangeStashSlot);
+                    snapSlots, fctx.resultBoxed, fctx.rangeStashSlot, mrRepack);
             root.setSourceSection(sectionFor(node, "funclit"));
             RootCallTarget target = root.getCallTarget();
             // Does the body capture? The hasCapture flag is set when CapReadNode
