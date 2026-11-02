@@ -16,6 +16,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -214,7 +215,10 @@ public final class GoNetpoll {
      * pollLoop catch used to record the failure and re-enter
      * {@code select()} immediately, so a persistently failing selector
      * hot-spun while parked waiters hung silently. Now each outer-loop
-     * failure is counted; consecutive failures back off exponentially
+     * failure is counted; only a select returning ready keys resets the
+     * consecutive count (a wakeup-only return does not — fix-up F4, so a
+     * flapping selector cannot evade terminal by interleaving wakeups);
+     * consecutive failures back off exponentially
      * (10 ms, doubling, capped at 1 s); the first failure and the
      * terminal failure are logged via {@link P3Log} (stderr printing
      * is rejected by the interop debug-leftover gate); after
@@ -267,7 +271,7 @@ public final class GoNetpoll {
         return totalPollerFailures.get();
     }
 
-    /** Consecutive outer pollLoop failures (0 after any successful select). */
+    /** Consecutive outer pollLoop failures (0 after a select reporting ready keys; wakeup-only returns do not reset — see F4 in pollLoop). */
     public static int consecutivePollerFailures() {
         return consecutivePollerFailures.get();
     }
@@ -338,6 +342,12 @@ public final class GoNetpoll {
             return 0;
         }
         pollServerInit();
+        if (pollerBroken) {
+            // Terminal transition landed during pollServerInit (fix-up
+            // F2): fail fast before creating a desc nobody will wake.
+            LAST_OPEN_ERRNO.set(GoOs.EIO);
+            return 0;
+        }
         long cookie = ((Number) fdArg).longValue();
         SelectableChannel ch = GoNet.selectableChannel(cookie);
         if (ch == null) {
@@ -365,8 +375,32 @@ public final class GoNetpoll {
             return 0;
         }
         sel.wakeup();
+        // Bounded wait with a terminal re-check (fix-up F2): an
+        // unbounded task.get() here blocks forever if the poller thread
+        // exits between the pollerBroken check above and this wait —
+        // no thread ever drains REG_Q again. Poll in 100 ms slices so a
+        // terminal transition is observed promptly; while the poller is
+        // alive (even backoff-sleeping between failures) keep waiting,
+        // so a slow-but-live registration is not failed spuriously.
+        // On the terminal path the task is cancelled before the desc is
+        // dropped (same P2-7 discipline as the interrupt path), so no
+        // half-registered desc survives in DESCS/BY_SOCK for the fork
+        // to use later, and the channel is never registered.
         try {
-            pd.key = task.get();
+            for (;;) {
+                try {
+                    pd.key = task.get(100, TimeUnit.MILLISECONDS);
+                    break;
+                } catch (java.util.concurrent.TimeoutException te) {
+                    if (pollerBroken) {
+                        task.cancel(false);
+                        dropDesc(pd);
+                        LAST_OPEN_ERRNO.set(GoOs.EIO);
+                        return 0;
+                    }
+                    // Poller alive but slow: keep waiting.
+                }
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             // Cancel the registration task before dropping the desc: it
@@ -718,12 +752,23 @@ public final class GoNetpoll {
         // netpollblock re-checks the same way). If the re-check fails,
         // withdraw — but only if no waker has claimed us in the
         // meantime (result CAS); if a waker won, we must park and
-        // consume its wakeup.
+        // consume its wakeup. The terminal-poller check belongs here
+        // too, with the same CAS discipline (fix-up F1): a poller that
+        // went terminal between the pre-claim pollerBroken check and
+        // the claim already ran failAllWaiters over an empty slot, so
+        // without this re-check the waiter would park on a dead
+        // selector forever. Closing/timeout keep priority (checked
+        // first), matching the pre-claim order.
         err = ignoreTimeout ? checkErrNoTimeout(pd, mode) : checkErr(pd, mode);
         if (err != POLL_NO_ERROR && w.result.compareAndSet(null, WITHDRAWN)) {
             slot(pd, mode).compareAndSet(w, null);
             clearInterest(pd, mode);
             return err;
+        }
+        if (pollerBroken && w.result.compareAndSet(null, WITHDRAWN)) {
+            slot(pd, mode).compareAndSet(w, null);
+            clearInterest(pd, mode);
+            return POLL_ERR_NOT_POLLABLE;
         }
         // The park releases the in-flight slot; wakeup re-enters via the
         // drainer's WAKE lane (unpark). The result CAS above/below is the
@@ -880,7 +925,19 @@ public final class GoNetpoll {
                 drainRegistrations();
                 int n = sel.select();
                 drainRegistrations();
-                consecutivePollerFailures.set(0);
+                // Fix-up F4: only a select that reports ready keys counts
+                // as a success for the consecutive-failure streak. A
+                // wakeup-only return (n == 0 — registration, close, or
+                // interest wakeup) proves the selector answered a wakeup,
+                // not that it can still deliver IO; resetting on it let a
+                // flapping selector (9 failures, 1 wakeup, repeat) evade
+                // the terminal threshold forever. A healthy poller never
+                // throws, so this cannot terminal a working selector;
+                // a selector that throws 10 times without delivering a
+                // single ready key is terminal even if wakeups intervene.
+                if (n > 0) {
+                    consecutivePollerFailures.set(0);
+                }
                 if (n > 0) {
                     Set<SelectionKey> keys = sel.selectedKeys();
                     for (Iterator<SelectionKey> it = keys.iterator(); it.hasNext();) {
@@ -929,7 +986,25 @@ public final class GoNetpoll {
                 try {
                     Thread.sleep(backoffMs);
                 } catch (InterruptedException ie) {
+                    // Fix-up F5: an interrupted backoff is a poller death,
+                    // not a quiet exit — the old code returned with
+                    // pollerBroken false and waiters unwoken, the exact
+                    // silent-death mode R09 was written to eliminate.
+                    // Treat it as terminal (same flag + wakeup as the
+                    // failure-count path). No production interrupter
+                    // exists: pollerThread is private, never exposed or
+                    // interrupted anywhere in the tree (only the two
+                    // caller-thread interrupt restorations in pollOpen /
+                    // migrateSocketChannel touch interrupts), so this
+                    // cannot fire spuriously in production.
                     Thread.currentThread().interrupt();
+                    pollerBroken = true;
+                    P3Log.warn(GoNetpoll.class,
+                            "graalgo-netpoll: poller FAILED TERMINALLY "
+                            + "(interrupted during backoff after "
+                            + consecutive + " consecutive failures)"
+                            + "; parked waiters woken with NOT_POLLABLE");
+                    failAllWaiters();
                     return;
                 }
             }

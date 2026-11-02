@@ -313,16 +313,209 @@ public final class GoNetpollTest {
                 }
             }, "test-failing-poller");
             t.setDaemon(true);
+            long startNanos = System.nanoTime();
             t.start();
             t.join(30000);
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
             assertTrue(!t.isAlive(), "pollLoop exits after repeated failures, not spin");
+            // Backoff timing bound (fix-up F3): 10 ms doubling capped at
+            // 1 s over the first 9 failures sums to ~3.27 s. A version
+            // with the sleep removed would finish in milliseconds and
+            // fail this bound; 2000 ms leaves scheduling slack.
+            assertTrue(elapsedMs >= 2000,
+                    "backoff elapsed too short (sleep removed?): " + elapsedMs + " ms");
             assertTrue(GoNetpoll.pollerBroken(), "poller marked broken");
             assertTrue(GoNetpoll.totalPollerFailures() >= 10,
                     "failures counted: " + GoNetpoll.totalPollerFailures());
             assertTrue(GoNetpoll.lastPollerError() != null, "last failure recorded");
+            // pollServerInit is a no-op once terminal (fix-up F3).
+            GoNetpoll.pollServerInit();
+            assertTrue(GoNetpoll.pollerBroken(), "pollServerInit no-op on broken poller");
             long ctx = GoNetpoll.pollOpen(0L);
             assertEq(0, ctx, "pollOpen fails fast on broken poller");
             assertEq(GoOs.EIO, GoNetpoll.pollOpenErrno(), "broken-poller errno is EIO");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * Fix-up F1/F3: a waiter straddling the terminal transition must be
+     * woken with NOT_POLLABLE, not park forever. The pre-claim hook
+     * holds the waiter after the pre-claim pollerBroken check but before
+     * the slot claim; the failing pollLoop then goes terminal while the
+     * slot is still empty, so failAllWaiters wakes nothing. On lane D's
+     * tip the released waiter claimed the slot, re-checked only
+     * closing/timeout, and parked forever (this test's waiter-result
+     * deadline fails there); with the post-claim pollerBroken re-check
+     * it returns NOT_POLLABLE without parking. Also asserts the
+     * pollWait fail-fast path and the pollServerInit no-op on the same
+     * terminal state.
+     *
+     * <p>Setup uses an unbound UDP socket (socket + pollOpen only, no
+     * bind/listen/accept): a datagram channel with no packets never
+     * reports ready, so the waiter genuinely parks, and the test does
+     * not depend on the GoNet.java:199 [I-&gt;[B address-parsing path,
+     * which is broken on this HEAD by a pre-existing mismatch owned by
+     * another lane (it fails listenLoopback-based tests before any
+     * netpoll code runs — see the targeted-run note in the fix-up
+     * report). An unbound TCP socket was tried first and proved
+     * unsuitable: the healthy poller woke the waiter with NO_ERROR
+     * between claim and re-check (the waker-wins CAS path working as
+     * designed), so the straddle could not be isolated with it.
+     */
+    public void testTerminalBeforeClaimReturnsNotPollable() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long cs = GoNet.socket(2, 2, 0); // AF_INET, SOCK_DGRAM
+            assertTrue(cs >= 16, "socket cookie: " + cs);
+            long sctx = GoNetpoll.pollOpen(cs);
+            assertTrue(sctx != 0, "pollOpen, errno=" + GoNetpoll.pollOpenErrno());
+            CountDownLatch inHook = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            GoNetpoll.preClaimHookForTest = () -> {
+                inHook.countDown();
+                try {
+                    if (!release.await(30, TimeUnit.SECONDS)) {
+                        throw new AssertionError("hook release timed out");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            };
+            AtomicLong res = new AtomicLong(-99);
+            AtomicReference<Throwable> err = new AtomicReference<>();
+            sched.spawn(() -> {
+                try {
+                    res.set(GoNetpoll.pollWait(sctx, (long) 'r'));
+                } catch (Throwable t) {
+                    err.set(t);
+                }
+            });
+            assertTrue(inHook.await(30, TimeUnit.SECONDS), "waiter reached pre-claim hook");
+            // Terminal transition while the waiter is held pre-claim:
+            // failAllWaiters sees an empty slot and wakes nothing.
+            Method loop = GoNetpoll.class.getDeclaredMethod("pollLoop", Selector.class);
+            loop.setAccessible(true);
+            Thread t = new Thread(() -> {
+                try {
+                    loop.invoke(null, new FailingSelector());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, "test-failing-poller-straddle");
+            t.setDaemon(true);
+            t.start();
+            t.join(30000);
+            assertTrue(!t.isAlive(), "failing pollLoop exits");
+            assertTrue(GoNetpoll.pollerBroken(), "poller marked broken before release");
+            release.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (res.get() == -99 && err.get() == null
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            GoNetpoll.preClaimHookForTest = null;
+            if (err.get() != null) {
+                throw new AssertionError("waiter threw", err.get());
+            }
+            assertTrue(res.get() != -99, "waiter parked forever: terminal-straddle race");
+            assertEq(GoNetpoll.POLL_ERR_NOT_POLLABLE, res.get(),
+                    "terminal-before-claim result");
+            // pollWait fail-fast on the same terminal state (no park).
+            long fast = onGoroutine(sched, () -> GoNetpoll.pollWait(sctx, (long) 'r'));
+            assertEq(GoNetpoll.POLL_ERR_NOT_POLLABLE, fast, "pollWait fail-fast after terminal");
+            GoNetpoll.pollServerInit();
+            assertTrue(GoNetpoll.pollerBroken(), "pollServerInit no-op on broken poller");
+            closeSock(cs, sctx);
+        } finally {
+            GoNetpoll.preClaimHookForTest = null;
+            teardown(prev);
+        }
+    }
+
+    /** Selector that throws, returns one wakeup-only 0, then throws forever. */
+    private static final class FlappingSelector extends Selector {
+        private final AtomicLong calls = new AtomicLong(0);
+
+        @Override
+        public boolean isOpen() {
+            return true;
+        }
+
+        @Override
+        public SelectorProvider provider() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Set<SelectionKey> keys() {
+            return Set.of();
+        }
+
+        @Override
+        public Set<SelectionKey> selectedKeys() {
+            return Set.of();
+        }
+
+        @Override
+        public int selectNow() throws IOException {
+            throw new IOException("boom");
+        }
+
+        @Override
+        public int select(long timeout) throws IOException {
+            throw new IOException("boom");
+        }
+
+        @Override
+        public int select() throws IOException {
+            long c = calls.incrementAndGet();
+            if (c <= 9 || c >= 11) {
+                throw new IOException("boom");
+            }
+            return 0; // call 10: a wakeup-only success between failures
+        }
+
+        @Override
+        public Selector wakeup() {
+            return this;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    /**
+     * Fix-up F4: a wakeup-only select return must not reset the
+     * consecutive-failure streak. With 9 throws, one 0-return, then
+     * throws, the poller must go terminal at exactly 10 total failures.
+     * On lane D's tip the 0-return reset the streak, so terminal came
+     * only at 19 total failures (9 + 10) — this exact-count assertion
+     * fails there (proven in a pre-fix copy run: want 10 got 19).
+     */
+    public void testFlappingSelectorGoesTerminalAtTenFailures() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            Method loop = GoNetpoll.class.getDeclaredMethod("pollLoop", Selector.class);
+            loop.setAccessible(true);
+            Thread t = new Thread(() -> {
+                try {
+                    loop.invoke(null, new FlappingSelector());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, "test-flapping-poller");
+            t.setDaemon(true);
+            t.start();
+            t.join(30000);
+            assertTrue(!t.isAlive(), "flapping pollLoop exits, not evade terminal");
+            assertTrue(GoNetpoll.pollerBroken(), "poller marked broken");
+            assertEq(10, GoNetpoll.totalPollerFailures(),
+                    "wakeup-only return must not reset the streak");
         } finally {
             teardown(prev);
         }

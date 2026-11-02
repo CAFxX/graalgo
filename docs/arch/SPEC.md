@@ -452,6 +452,18 @@ a throwing frozen surface, not the live poller. GG-0018's deletion
 stands only as Phase-2 history, not as a description of the current
 system; the live polling model is the P3-M9 one.
 
+[OPERATOR NOTE — terminal poller failure, review 2026-11-02 fix-up:]
+if the live poller's selector fails persistently (10 consecutive
+failures with no ready-key select in between, or an interrupt during
+backoff), the poller does NOT restart itself: it wakes parked waiters
+with NOT_POLLABLE, marks itself terminally broken, and later
+`pollOpen`/`pollWait` fail fast (EIO / NOT_POLLABLE) instead of
+parking on a dead selector. The only signal is two `P3Log.warn` lines
+(first failure, terminal failure). There is no in-process recovery:
+the supervisor must start a fresh process. Guest network operations
+in the meantime fail fast with real Go errors, never hang — but no
+new network IO will succeed in the affected process.
+
 **Channels** = Java objects (lock, circular buffer over a typed array, two
 wait-queues of scheduler-parked virtual threads); **select** ports
 `runtime/select.go` logic (lock channels in address order, poll, park one
