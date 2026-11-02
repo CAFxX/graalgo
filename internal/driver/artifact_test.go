@@ -60,6 +60,75 @@ func TestEmitProducesBinary(t *testing.T) {
 	}
 }
 
+// TestEmitExoticRoot is a regression test for the P1-6 driver-artifact
+// defect: GraalgoRoot used to be interpolated into the generated launcher
+// source with %s inside a double-quoted literal, so a root containing a
+// double-quote, backslash, or newline produced invalid Go source and Emit
+// failed for exactly those installations. Each root below must still
+// produce a compilable launcher whose baked-in root decodes back to the
+// original value.
+func TestEmitExoticRoot(t *testing.T) {
+	roots := []struct {
+		name string
+		root string
+	}{
+		// Space, double-quote, and backslash in one root.
+		{"quote-backslash-space", `/tmp/gra algo"with\backslash`},
+		// Newline in the root.
+		{"newline", "/tmp/gra\nalgo"},
+	}
+	for _, tc := range roots {
+		t.Run(tc.name, func(t *testing.T) {
+			root := tc.root
+			wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
+
+			out := filepath.Join(t.TempDir(), "prog")
+			if err := Emit(Artifact{
+				OutputPath:  out,
+				GraalgoRoot: root,
+				WireJSON:    wireJSON,
+			}); err != nil {
+				t.Fatalf("Emit with exotic root: %v", err)
+			}
+
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+				t.Errorf("artifact is not an ELF binary (first bytes: %q)", data[:min(32, len(data))])
+			}
+			// The baked-in root must survive code generation verbatim:
+			// the generated literal decodes to the original root value.
+			if !bytes.Contains(data, []byte(root)) {
+				t.Errorf("artifact does not bake in the exotic root %q verbatim", root)
+			}
+
+			// Running the artifact with GRAALGO_HOME unset must fall
+			// back to the baked-in root and report exactly that root
+			// in its backend lookup failure — proving the literal
+			// decoded to the original value, not to a truncated or
+			// re-escaped variant.
+			env := make([]string, 0, len(os.Environ()))
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(kv, "GRAALGO_HOME=") {
+					env = append(env, kv)
+				}
+			}
+			cmd := exec.Command(out)
+			cmd.Env = env
+			stderr, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("artifact run unexpectedly succeeded: %s", stderr)
+			}
+			want := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
+			if !bytes.Contains(stderr, []byte(want)) {
+				t.Errorf("artifact run stderr = %q, want it to name backend path %q", stderr, want)
+			}
+		})
+	}
+}
+
 func TestEmitNoOutput(t *testing.T) {
 	err := Emit(Artifact{GraalgoRoot: "/x", WireJSON: []byte("{}")})
 	if err == nil || !strings.Contains(err.Error(), "output") {
