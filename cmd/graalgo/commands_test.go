@@ -504,7 +504,11 @@ func TestGroupFilesByPackageParseError(t *testing.T) {
 	}
 }
 
-func TestResolveFiles(t *testing.T) {
+// TestResolveFilesUnconstrained is the fmt expansion: a bare *.go glob
+// with no constraint filtering (see resolveFilesUnconstrained). It is
+// the only expansion cmdFmt may use; the constrained-expansion tests
+// live in resolve_test.go.
+func TestResolveFilesUnconstrained(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package p\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -521,33 +525,33 @@ func TestResolveFiles(t *testing.T) {
 	}
 
 	chdir(t, dir)
-	files, err := resolveFiles(nil)
+	files, err := resolveFilesUnconstrained(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) != 1 || files[0] != "a.go" {
 		t.Errorf("no-arg resolve = %v, want [a.go]", files)
 	}
-	files, err = resolveFiles([]string{"sub"})
+	files, err = resolveFilesUnconstrained([]string{"sub"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) != 1 || !strings.HasSuffix(files[0], "c.go") {
 		t.Errorf("dir resolve = %v, want [sub/c.go]", files)
 	}
-	files, err = resolveFiles([]string{"missing.go"})
+	files, err = resolveFilesUnconstrained([]string{"missing.go"})
 	if err != nil || len(files) != 1 {
 		t.Errorf("missing .go passthrough = %v, %v, want [missing.go] nil", files, err)
 	}
-	if _, err := resolveFiles([]string{"missing-dir"}); err == nil {
+	if _, err := resolveFilesUnconstrained([]string{"missing-dir"}); err == nil {
 		t.Error("missing non-go path: got nil error, want error")
 	}
-	if _, err := resolveFiles([]string{"./..."}); err == nil {
+	if _, err := resolveFilesUnconstrained([]string{"./..."}); err == nil {
 		t.Error("./...: got nil error, want not-yet-supported error")
 	}
 	empty := t.TempDir()
 	chdir(t, empty)
-	if _, err := resolveFiles(nil); err == nil {
+	if _, err := resolveFilesUnconstrained(nil); err == nil {
 		t.Error("empty dir, no args: got nil error, want error")
 	}
 }

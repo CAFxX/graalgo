@@ -101,12 +101,16 @@ func cmdRun(root string, args []string) int {
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
 	// the package build).
-	// Directory expansion is constraint-aware (resolveFilesTags), but
-	// tags stay empty here: cmdRun does not retain -tags — the run
-	// -tags forwarding belongs to the R01 remediation lane, which must
-	// pass its tags into this call when it lands rather than adding a
-	// second filter. Platform (GOOS/GOARCH) filtering still applies.
-	files, err := resolveFilesTags([]string{target}, "")
+	// Directory expansion is constraint-aware (resolveFilesTags) and
+	// the retained -tags (Lane A: bf.tags from parseBuildFlags, also
+	// forwarded to the backend via tagsEnv) MUST reach it here, before
+	// any filtering: ImportDir with empty tags drops the requested
+	// variant file outright, so the filterFilesByBuildTags call below
+	// — which can only keep files it is given — could never restore
+	// it. Passing "" here was the vetoed commit's run regression:
+	// `run -tags mytag dir` silently ran the !mytag alternative.
+	// Platform (GOOS/GOARCH) filtering still applies.
+	files, err := resolveFilesTags([]string{target}, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -121,6 +125,9 @@ func cmdRun(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo run: no non-test Go files in %s\n", target)
 		return 1
 	}
+	// Second, per-file check on the already tag-selected list (same
+	// pattern as cmdBuild); it must NOT be the only tag handling —
+	// selection happens in resolveFilesTags above, this only re-checks.
 	pkgFiles, err = filterFilesByBuildTags(pkgFiles, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
@@ -558,7 +565,10 @@ func runVetGroups(groups [][]string) ([]markedDiagnostic, bool) {
 //
 // Formats the Go source files using gofmt from the stock toolchain.
 func cmdFmt(root string, args []string) int {
-	files, err := resolveFiles(args)
+	// Unconstrained expansion only: fmt must see every file in a
+	// directory, including tag-gated and other-platform files (see
+	// resolveFilesUnconstrained). Never resolveFilesTags here.
+	files, err := resolveFilesUnconstrained(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo fmt: %v\n", err)
 		return 1
