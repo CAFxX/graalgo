@@ -417,7 +417,14 @@ func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 // One driver per package (not per file) so the output matches `go test`:
 // a single PASS/FAIL summary and per-test === RUN / --- PASS lines in
 // file order. Verbosity is baked into the driver at synthesis time.
-func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool) (string, error) {
+//
+// fileMode is `go test` file mode: only the listed files make up the
+// package, so helpers from unlisted sibling test files are NOT inlined
+// (in directory mode they are, since they are part of the package's
+// test binary). Inlining them in file mode would let a selected test
+// use a helper `go test` file mode leaves undefined, and could fail
+// the driver build on helpers referencing unlisted sources.
+func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool, fileMode bool) (string, error) {
 	// Import collection preserves every distinct (name, path) form: a
 	// package can be imported plain in one test file and dot-imported
 	// in another (unicode does exactly this), and collapsing to one
@@ -552,24 +559,27 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// siblings (e.g. math's export_s390x_test.go, constrained to s390x
 	// by its filename suffix) whose helpers reference build-excluded
 	// sources (hasVX from arith_s390x.go) and fail to compile on this
-	// platform (PKG-037).
+	// platform (PKG-037). In file mode there are no siblings: the
+	// package is exactly the listed files.
 	var sibUnits []srcUnit
-	buildable := make(map[string]bool)
-	for _, f := range buildableGoFiles(dir) {
-		buildable[f] = true
-	}
-	siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
-	for _, sib := range siblings {
-		if selectedFiles[sib] || !buildable[sib] {
-			continue
+	if !fileMode {
+		buildable := make(map[string]bool)
+		for _, f := range buildableGoFiles(dir) {
+			buildable[f] = true
 		}
-		sibSet := token.NewFileSet()
-		sibAST, err := parser.ParseFile(sibSet, sib, nil, 0)
-		if err != nil {
-			continue
+		siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+		for _, sib := range siblings {
+			if selectedFiles[sib] || !buildable[sib] {
+				continue
+			}
+			sibSet := token.NewFileSet()
+			sibAST, err := parser.ParseFile(sibSet, sib, nil, 0)
+			if err != nil {
+				continue
+			}
+			testPkgNames = append(testPkgNames, sibAST.Name.Name)
+			sibUnits = append(sibUnits, srcUnit{sib, sibAST, sibSet})
 		}
-		testPkgNames = append(testPkgNames, sibAST.Name.Name)
-		sibUnits = append(sibUnits, srcUnit{sib, sibAST, sibSet})
 	}
 
 	// The package's own sources are inlined only when some test file

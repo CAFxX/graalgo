@@ -29,7 +29,24 @@ func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in.
 	importPkgNameCache = map[string]string{}
-	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false, false)
+	if err != nil {
+		t.Fatalf("synthesizeTestDriver: %v", err)
+	}
+	defer os.Remove(driver)
+	src, err := os.ReadFile(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(src)
+}
+
+// synthDriverFileMode is synthDriver for `go test` file mode: only the
+// listed files make up the package, so sibling helpers are not inlined.
+func synthDriverFileMode(t *testing.T, dir string, ftList []fileTests, srcFiles []string) string {
+	t.Helper()
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false, true)
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}
@@ -964,5 +981,56 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestFileModeSkipsSiblingHelpers is the regression test for the file-mode
+// half of Q1: in `go test` file mode the package is exactly the listed
+// files, so helpers from unlisted sibling test files must not be inlined.
+// (Directory mode keeps inlining them: they belong to the package's test
+// binary there.) The sibling helper below references an undefined name,
+// so inlining it would also break the driver build — its absence from the
+// file-mode driver is the assertion, its presence in the directory-mode
+// driver is the control.
+func TestFileModeSkipsSiblingHelpers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/filemode\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package filemode\n")
+	writeFile(t, root, "a_test.go", `package filemode
+
+import "testing"
+
+func helperA() int { return 1 }
+
+func TestA(t *testing.T) {
+	if helperA() != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "b_test.go", `package filemode
+
+func helperB() int { return undefinedName }
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ftList := []fileTests{{file: testFile, tests: tests}}
+	srcFiles := []string{filepath.Join(root, "p.go")}
+
+	// Directory mode: the sibling helper is inlined.
+	if src := synthDriver(t, root, ftList, srcFiles); !strings.Contains(src, "helperB") {
+		t.Errorf("directory-mode driver did not inline the sibling helper:\n%s", src)
+	}
+	// File mode: the sibling helper is not inlined, the selected file's
+	// own helper still is.
+	src := synthDriverFileMode(t, root, ftList, srcFiles)
+	if strings.Contains(src, "helperB") {
+		t.Errorf("file-mode driver inlined an unlisted sibling's helper:\n%s", src)
+	}
+	if !strings.Contains(src, "helperA") {
+		t.Errorf("file-mode driver lost the selected file's own helper:\n%s", src)
 	}
 }
