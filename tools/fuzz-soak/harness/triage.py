@@ -18,8 +18,11 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: harness/triage.py -> fuzz-soak -> tools -> repo.
+# GR may be overridden (run_soak.sh exports it); otherwise derive it from
+# this file's location, never from a stale worktree name.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def diff_result(gofile, workdir):
@@ -61,8 +64,14 @@ def minimize(prog_path, out_path, workdir):
         with open(tmp, "w") as f:
             f.write(src)
         # Must still build under gc (else not a valid reduction).
+        # Rely on the inherited PATH (run_soak.sh puts the soak Go
+        # toolchain first); only fall back to the legacy ~/tools/go
+        # layout when no go is on PATH at all.
         env = dict(os.environ)
-        env["PATH"] = os.path.expanduser("~/tools/go/bin") + ":" + env.get("PATH", "")
+        if shutil.which("go", path=env.get("PATH", "")) is None:
+            legacy = os.path.expanduser("~/tools/go/bin")
+            if os.path.isfile(os.path.join(legacy, "go")):
+                env["PATH"] = legacy + ":" + env.get("PATH", "")
         r = subprocess.run(["go", "build", "-o", os.devnull, tmp],
                            capture_output=True, env=env)
         if r.returncode != 0:

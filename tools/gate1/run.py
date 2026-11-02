@@ -12,11 +12,49 @@ Usage: run.py <package> [--goroot PATH] [--graalgo-run PATH] [--out DIR]
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _goroot_from_go_bin(go_bin):
+    """GOROOT reported by a go binary, or None when it cannot answer."""
+    try:
+        p = subprocess.run([go_bin, "env", "GOROOT"], capture_output=True,
+                           text=True, timeout=30)
+    except Exception:
+        return None
+    if p.returncode == 0 and p.stdout.strip():
+        return p.stdout.strip()
+    return None
+
+
+def resolve_goroot(explicit=None):
+    """Resolve the Go toolchain root.
+
+    Discovery order mirrors tools/stdlib-excl/validate.go goBinary()
+    (and the p3frontend loader): the explicit --goroot override, then
+    $GO (the binary the CI workflows export for the Makefiles), then
+    `go` on PATH, then the legacy ~/tools/go layout. A $GO/PATH binary
+    that cannot answer `go env GOROOT` falls through to the next source
+    instead of silently pointing at a wrong tree.
+    """
+    if explicit:
+        return explicit
+    candidates = []
+    if os.environ.get("GO"):
+        candidates.append(os.environ["GO"])
+    path_go = shutil.which("go")
+    if path_go:
+        candidates.append(path_go)
+    for go_bin in candidates:
+        goroot = _goroot_from_go_bin(go_bin)
+        if goroot:
+            return goroot
+    return os.path.expanduser("~/tools/go")
 
 def run_cmd(cmd, env=None, timeout=300):
     try:
@@ -30,14 +68,14 @@ def main():
     if len(sys.argv) < 2:
         sys.exit("usage: run.py <package> [--goroot PATH] [--graalgo-run PATH] [--out DIR]")
     pkg = sys.argv[1]
-    goroot = os.path.expanduser("~/tools/go")
+    goroot_arg = None
     graalgo_run = None
     outdir = None
     args = sys.argv[2:]
     i = 0
     while i < len(args):
         if args[i] == "--goroot":
-            goroot = args[i+1]; i += 2
+            goroot_arg = args[i+1]; i += 2
         elif args[i] == "--graalgo-run":
             graalgo_run = args[i+1]; i += 2
         elif args[i] == "--out":
@@ -45,10 +83,12 @@ def main():
         else:
             i += 1
 
+    goroot = resolve_goroot(goroot_arg)
+
     if graalgo_run is None:
-        # Default: phase1 graalgo-run in this repo (HERE=tools/gate1)
+        # Default: the backend launcher in this repo (HERE=tools/gate1).
         repo = os.path.abspath(os.path.join(HERE, "..", ".."))
-        graalgo_run = os.path.join(repo, "phases", "phase1", "graalgo-run")
+        graalgo_run = os.path.join(repo, "internal", "backend", "graalgo-run")
 
     workdir = outdir or tempfile.mkdtemp(prefix=f"gate1-{pkg}-")
     os.makedirs(workdir, exist_ok=True)

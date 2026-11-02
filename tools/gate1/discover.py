@@ -11,7 +11,45 @@ import ast
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+
+
+def _goroot_from_go_bin(go_bin):
+    """GOROOT reported by a go binary, or None when it cannot answer."""
+    try:
+        p = subprocess.run([go_bin, "env", "GOROOT"], capture_output=True,
+                           text=True, timeout=30)
+    except Exception:
+        return None
+    if p.returncode == 0 and p.stdout.strip():
+        return p.stdout.strip()
+    return None
+
+
+def resolve_goroot(explicit=None):
+    """Resolve the Go toolchain root.
+
+    Discovery order mirrors tools/stdlib-excl/validate.go goBinary()
+    (and the p3frontend loader), shared with run.py: the explicit
+    --goroot override, then $GO, then `go` on PATH, then the legacy
+    ~/tools/go layout. A binary that cannot answer `go env GOROOT`
+    falls through to the next source.
+    """
+    if explicit:
+        return explicit
+    candidates = []
+    if os.environ.get("GO"):
+        candidates.append(os.environ["GO"])
+    path_go = shutil.which("go")
+    if path_go:
+        candidates.append(path_go)
+    for go_bin in candidates:
+        goroot = _goroot_from_go_bin(go_bin)
+        if goroot:
+            return goroot
+    return os.path.expanduser("~/tools/go")
 
 def find_test_files(goroot, pkg):
     pkgdir = os.path.join(goroot, "src", pkg)
@@ -56,9 +94,10 @@ def main():
     if len(sys.argv) < 2:
         sys.exit("usage: discover.py <package> [--goroot PATH]")
     pkg = sys.argv[1]
-    goroot = os.path.expanduser("~/tools/go")
+    goroot = None
     if "--goroot" in sys.argv:
         goroot = sys.argv[sys.argv.index("--goroot") + 1]
+    goroot = resolve_goroot(goroot)
 
     files = find_test_files(goroot, pkg)
     result = {"package": pkg, "goroot": goroot, "files": []}
