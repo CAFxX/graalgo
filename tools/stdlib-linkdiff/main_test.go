@@ -320,9 +320,12 @@ func TestProvidedExtraction(t *testing.T) {
 		"graalgo.tls.newClientEngine",
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
-		"reflect.TypeOf", "encoding/json.Marshal", "crypto/sha256.New",
-		"net/http.Get", "syscall.Getenv", "maps.Clone",
-		"internal/reflectlite.TypeOf",
+		// reflect, net/http and internal/reflectlite are NOT here:
+		// their synthetic sources were retired and the real packages
+		// now compile from GOROOT via the disk importer, so no
+		// synthetic source provides them (see TestSyntheticShadowSet).
+		"encoding/json.Marshal", "crypto/sha256.New",
+		"syscall.Getenv", "maps.Clone",
 	}
 	for _, w := range want {
 		if !provided.has(w) {

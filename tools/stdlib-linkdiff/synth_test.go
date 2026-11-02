@@ -28,7 +28,11 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 	if len(reg.Sources) < 100 {
 		t.Fatalf("registry resolved %d sources, want >= 100", len(reg.Sources))
 	}
-	for _, path := range []string{"os", "net/http", "reflect", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
+	// net/http and reflect were retired from syntheticSources (real
+	// packages now compile from GOROOT via the disk importer —
+	// synth_machinery.go); net and crypto/tls are synthetic packages
+	// that still resolve through the registry.
+	for _, path := range []string{"os", "net", "crypto/tls", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
 		src, ok := reg.Sources[path]
 		if !ok {
 			t.Errorf("registry missing source for %q", path)
@@ -41,8 +45,11 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 			t.Errorf("source for %q lacks provenance (const/file)", path)
 		}
 	}
-	// Every overlay-switch path backed by the registry must resolve to
+	// Every shadowed path backed by the registry must resolve to
 	// a non-empty source: the map<->const wiring must not rot.
+	// (Shadowed = syntheticSources keys + dedicatedSyntheticStubs keys;
+	// the builder-synthesized dedicated stubs, runtime/unsafe, have no
+	// registry source and are skipped by the inMap check below.)
 	for path := range reg.Shadowed {
 		if _, inMap := reg.Sources[path]; !inMap {
 			continue // builder-synthesized (runtime/fmt/sync/...) or unsafe
@@ -55,14 +62,22 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 
 func TestSyntheticShadowSet(t *testing.T) {
 	reg := testRegistry(t)
-	for _, path := range []string{"os", "runtime", "fmt", "sync", "sync/atomic", "time", "context",
-		"net/http", "reflect", "internal/poll", "syscall", "encoding/json"} {
+	// Shadowed = syntheticSources keys + dedicatedSyntheticStubs keys
+	// (runtime, unsafe) per export.go's general overlay lookup.
+	for _, path := range []string{"os", "runtime", "unsafe", "time", "context",
+		"internal/poll", "syscall", "encoding/json", "crypto/sha256"} {
 		if !reg.Shadowed[path] {
 			t.Errorf("shadow set missing overlaid package %q", path)
 		}
 	}
-	// Not overlaid: their real-stdlib files are still compiled.
-	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo"} {
+	// Not overlaid: their real-stdlib files are compiled (from disk).
+	// fmt, sync, sync/atomic still appear in the PROVIDED set via the
+	// p3frontend mirrors, but the frontend overlay resolves them from
+	// disk — provided ≠ shadowed. reflect, net/http and
+	// internal/reflectlite synthetic sources were retired in the same
+	// way (synth_machinery.go retirement comments).
+	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo",
+		"fmt", "sync", "sync/atomic", "reflect", "net/http"} {
 		if reg.Shadowed[path] {
 			t.Errorf("shadow set wrongly contains non-overlaid package %q", path)
 		}
