@@ -328,7 +328,7 @@ public final class TypeparamDifferentialTest {
                 "--jobs", "4"));
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().put("GOTOOLCHAIN", "local");
-        pb.environment().put("DH_GO", ToolPaths.stockGo().getParent().getParent().toString());
+        pb.environment().put("DH_GO", ToolPaths.stockGoRoot().toString());
         pb.environment().put("REPO_DIR", repoDir().toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         Process p = pb.start();
@@ -451,8 +451,12 @@ public final class TypeparamDifferentialTest {
     // missing detail (defaults to "").
 
     public void testReadExclusionsEdgeCases() throws IOException {
-        Path fixture = repoRoot().resolve("tools").resolve("diffharness")
-                .resolve("testdata").resolve("exclusions-edge.yaml");
+        // Post-reorganization location (AGENTS.md: the harness moved from
+        // tools/diffharness/ to test/differential/); diffharnessDir() is
+        // the one resolver for it, never a hardcoded second copy of the
+        // path — the hardcoded tools/ form broke the scheduled full-suite
+        // run 41441646157.
+        Path fixture = diffharnessDir().resolve("testdata").resolve("exclusions-edge.yaml");
         Map<String, String[]> got = readExclusions(fixture);
         Map<String, String[]> want = Map.of(
                 "a.go", new String[]{"deferred-parity", "\"canonical order\""},
