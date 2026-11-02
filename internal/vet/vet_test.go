@@ -21,8 +21,7 @@ func main() {
 	fmt.Printf("%d %d", 1)
 	s := string(65)
 	_ = s
-	var f func()
-	if f == nil {
+	if helperFunc == nil {
 		fmt.Println("nil")
 	}
 	x := true
@@ -33,6 +32,8 @@ func main() {
 	return
 	fmt.Println("unreachable")
 }
+
+func helperFunc() {}
 
 func leaky() {
 	ctx, cancel := context.WithCancel(context.Background())

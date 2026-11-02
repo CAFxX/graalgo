@@ -67,9 +67,10 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 	return out
 }
 
-// Comparing a func value to nil is always false (except for a nil
-// func variable, which is useless to compare). go vet flags
-// comparisons where one side is a func type and the other is nil.
+// Comparing a declared function to nil is always false: a function
+// declaration (or literal) can never hold nil. A variable of function
+// type is different — nil is its zero value — so comparing one to nil
+// is meaningful and must not be flagged.
 func runNilFunc(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -78,8 +79,8 @@ func runNilFunc(pass *Pass) []Diagnostic {
 			if !ok || (be.Op != token.EQL && be.Op != token.NEQ) {
 				return true
 			}
-			if isNil(pass, be.X) && isFuncType(pass, be.Y) ||
-				isNil(pass, be.Y) && isFuncType(pass, be.X) {
+			if isNil(pass, be.X) && isFuncDecl(pass, be.Y) ||
+				isNil(pass, be.Y) && isFuncDecl(pass, be.X) {
 				out = append(out, Diagnostic{
 					pass.position(be),
 					"comparison of function to nil is always " + constBool(be.Op == token.NEQ),
@@ -96,13 +97,33 @@ func isNil(pass *Pass, e ast.Expr) bool {
 	return ok && tv.IsNil()
 }
 
-func isFuncType(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
-	if !ok || tv.Type == nil {
-		return false
+func isFuncDecl(pass *Pass, e ast.Expr) bool {
+	// Parenthesized expressions denote the same value.
+	for {
+		if p, ok := e.(*ast.ParenExpr); ok {
+			e = p.X
+			continue
+		}
+		break
 	}
-	_, ok = tv.Type.Underlying().(*types.Signature)
-	return ok
+	switch e := e.(type) {
+	case *ast.Ident:
+		// A declared function, or a use of one.
+		_, ok := pass.Info.Uses[e].(*types.Func)
+		return ok
+	case *ast.SelectorExpr:
+		// A package-level function or a method value: neither can
+		// ever be nil. (A struct field or variable of function type
+		// resolves to *types.Var and is correctly excluded.)
+		_, ok := pass.Info.Uses[e.Sel].(*types.Func)
+		return ok
+	case *ast.FuncLit:
+		// A literal is never nil.
+		return true
+	}
+	// Anything else (calls, conversions, index expressions, ...) can
+	// yield a nil function value, so it must not be flagged.
+	return false
 }
 
 func constBool(b bool) string {

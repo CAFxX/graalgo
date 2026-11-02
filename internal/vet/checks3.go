@@ -367,8 +367,14 @@ func runSlog(pass *Pass) []Diagnostic {
 			if strings.HasSuffix(sel.Sel.Name, "Context") {
 				start = 2 // skip ctx, msg
 			}
+			if sel.Sel.Name == "Log" {
+				start = 3 // skip ctx, level, msg
+			}
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
+			}
+			if len(args) < start {
+				return true // malformed call; nothing to pair-check
 			}
 			rest := args[start:]
 			if len(rest)%2 != 0 {

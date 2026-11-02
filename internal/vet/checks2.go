@@ -361,7 +361,7 @@ func runLoopClosure(pass *Pass) []Diagnostic {
 				continue
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				var loopVar *ast.Ident
+				var loopVars []*ast.Ident
 				var body *ast.BlockStmt
 				switch l := n.(type) {
 				case *ast.RangeStmt:
@@ -369,11 +369,13 @@ func runLoopClosure(pass *Pass) []Diagnostic {
 						// Range variables are per-iteration in Go 1.22+.
 						return true
 					}
-					// For = (assignment to outer var), check closures.
-					if l.Key != nil {
-						if id, ok := l.Key.(*ast.Ident); ok {
-							loopVar = id
-						}
+					// For = (assignment to outer vars), check closures
+					// over both the key and the value.
+					if id, ok := l.Key.(*ast.Ident); ok {
+						loopVars = append(loopVars, id)
+					}
+					if id, ok := l.Value.(*ast.Ident); ok {
+						loopVars = append(loopVars, id)
 					}
 					body = l.Body
 				case *ast.ForStmt:
@@ -382,34 +384,59 @@ func runLoopClosure(pass *Pass) []Diagnostic {
 						// Per-iteration in Go 1.22+.
 						return true
 					}
+					// For = (assignment to outer vars in the init),
+					// the classic pre-1.22 capture case: extract the
+					// assigned variables as loop variables.
+					if assign, ok := l.Init.(*ast.AssignStmt); ok && assign.Tok == token.ASSIGN {
+						for _, lhs := range assign.Lhs {
+							if id, ok := lhs.(*ast.Ident); ok {
+								loopVars = append(loopVars, id)
+							}
+						}
+					}
 					body = l.Body
 				}
-				if loopVar == nil || body == nil {
+				if len(loopVars) == 0 || body == nil {
 					return true
 				}
-				// Look for func literals referencing loopVar.
+				// Objects the loop variables denote, for identity
+				// matching against references inside closures.
+				objs := make(map[types.Object]bool)
+				names := make(map[string]bool)
+				for _, lv := range loopVars {
+					names[lv.Name] = true
+					if obj := pass.Info.Defs[lv]; obj != nil {
+						objs[obj] = true
+					}
+					if obj := pass.Info.Uses[lv]; obj != nil {
+						objs[obj] = true
+					}
+				}
+				// Look for func literals referencing a loop variable.
 				ast.Inspect(body, func(m ast.Node) bool {
 					lit, ok := m.(*ast.FuncLit)
 					if !ok {
 						return true
 					}
-					refs := false
+					matched := ""
 					ast.Inspect(lit.Body, func(p ast.Node) bool {
-						if id, ok := p.(*ast.Ident); ok && id.Name == loopVar.Name {
-							if obj := pass.Info.Uses[id]; obj != nil {
-								if obj == pass.Info.Defs[loopVar] || obj == pass.Info.Uses[loopVar] {
-									refs = true
-								}
-							} else {
-								refs = true // no type info; syntactic match
+						id, ok := p.(*ast.Ident)
+						if !ok || !names[id.Name] {
+							return true
+						}
+						if obj := pass.Info.Uses[id]; obj != nil {
+							if objs[obj] {
+								matched = id.Name
 							}
+						} else {
+							matched = id.Name // no type info; syntactic match
 						}
 						return true
 					})
-					if refs {
+					if matched != "" {
 						out = append(out, Diagnostic{
 							pass.position(lit),
-							"loop variable " + loopVar.Name + " captured by func literal",
+							"loop variable " + matched + " captured by func literal",
 						})
 					}
 					return true

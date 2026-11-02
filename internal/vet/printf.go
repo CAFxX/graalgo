@@ -93,11 +93,12 @@ func isTestingT(fn *types.Func) bool {
 }
 
 type printfVerb struct {
-	text      string
-	verb      rune
-	indexed   bool
-	argIndex  int
-	starWidth bool
+	text          string
+	verb          rune
+	indexed       bool
+	argIndex      int
+	starWidth     bool
+	starPrecision bool
 }
 
 // checkPrintfFormat validates args against the format string verbs.
@@ -122,14 +123,25 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 				"missing argument for " + v.text})
 			continue
 		}
+		// Star arguments precede the value argument in consumption
+		// order (width, then precision), so skip them before
+		// validating the value.
+		if v.starWidth {
+			argIdx++
+		}
+		if v.starPrecision {
+			argIdx++
+		}
+		if argIdx >= len(args) {
+			out = append(out, Diagnostic{pos,
+				"missing argument for " + v.text})
+			continue
+		}
 		if msg := checkVerbArg(pass, v, args[argIdx]); msg != "" {
 			out = append(out, Diagnostic{pass.position(args[argIdx]),
 				v.text + ": " + msg})
 		}
 		argIdx++
-		if v.starWidth {
-			argIdx++
-		}
 	}
 	return out
 }
@@ -174,6 +186,7 @@ func parsePrintfVerbs(format string) []printfVerb {
 		if i < len(format) && format[i] == '.' {
 			i++
 			if i < len(format) && format[i] == '*' {
+				v.starPrecision = true
 				i++
 			} else {
 				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
