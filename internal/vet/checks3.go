@@ -94,64 +94,136 @@ func isValidErrorsAsTarget(t types.Type) bool {
 
 // unmarshal checks that values passed to encoding/json.Unmarshal,
 // encoding/xml.Unmarshal, etc. are pointers (or maps/slices/interfaces).
+// The same check applies to Decoder.Decode methods (encoding/json,
+// encoding/xml, encoding/gob), whose value is the first argument.
+// Note: encoding/gob has no package-level Unmarshal function, and
+// gob.NewDecoder takes a single reader argument, so there is no
+// gob entry in unmarshalFuncs below.
 func runUnmarshal(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	unmarshalFuncs := []struct{ pkg, name string }{
 		{"encoding/json", "Unmarshal"},
 		{"encoding/xml", "Unmarshal"},
-		{"encoding/gob", "NewDecoder"},
+	}
+	// Decoder.Decode methods: the value is the first (and only) argument.
+	decodeMethods := []struct{ pkg, recv, name string }{
+		{"encoding/json", "Decoder", "Decode"},
+		{"encoding/xml", "Decoder", "Decode"},
+		{"encoding/gob", "Decoder", "Decode"},
+	}
+	checkValue := func(valueArg ast.Expr, op string) {
+		tv, ok := pass.Info.Types[valueArg]
+		if !ok || tv.Type == nil {
+			return
+		}
+		t := tv.Type
+		// OK: pointer, map, slice, interface.
+		switch t.Underlying().(type) {
+		case *types.Pointer, *types.Map, *types.Slice, *types.Interface:
+			return
+		}
+		out = append(out, Diagnostic{
+			pass.position(valueArg),
+			"unmarshal: passing non-pointer value to " + op,
+		})
 	}
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 {
+			if !ok || len(call.Args) == 0 {
 				return true
 			}
-			isUnmarshal := false
-			for _, uf := range unmarshalFuncs {
-				if pass.isPkgFunc(call, uf.pkg, uf.name) {
-					isUnmarshal = true
-					break
+			// Package-level unmarshal functions: value is arg 1.
+			if len(call.Args) >= 2 {
+				for _, uf := range unmarshalFuncs {
+					if pass.isPkgFunc(call, uf.pkg, uf.name) {
+						checkValue(call.Args[1], uf.name)
+						return true
+					}
 				}
 			}
-			if !isUnmarshal {
-				return true
+			// Decoder.Decode methods: value is arg 0.
+			for _, dm := range decodeMethods {
+				if pass.isPkgMethod(call, dm.pkg, dm.recv, dm.name) {
+					checkValue(call.Args[0], dm.name)
+					return true
+				}
 			}
-			// Second arg (the value) should be a pointer.
-			v := call.Args[1]
-			tv, ok := pass.Info.Types[v]
-			if !ok || tv.Type == nil {
-				return true
-			}
-			t := tv.Type
-			// OK: pointer, map, slice, interface.
-			switch t.Underlying().(type) {
-			case *types.Pointer, *types.Map, *types.Slice, *types.Interface:
-				return true
-			}
-			out = append(out, Diagnostic{
-				pass.position(v),
-				"unmarshal: passing non-pointer value to Unmarshal",
-			})
 			return true
 		})
 	}
 	return out
 }
 
+// isPkgMethod reports whether call is a call to the method (recv).name
+// declared in package pkgPath, resolved via type info. It matches
+// (*encoding/json.Decoder).Decode but not an unrelated type's Decode,
+// which a bare function-name match would conflate.
+func (p *Pass) isPkgMethod(call *ast.CallExpr, pkgPath, recvName, methodName string) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != methodName {
+		return false
+	}
+	obj := p.Info.Uses[sel.Sel]
+	fn, ok := obj.(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return false
+	}
+	recv := sig.Recv().Type()
+	if ptr, ok := recv.(*types.Pointer); ok {
+		recv = ptr.Elem()
+	}
+	named, ok := recv.(*types.Named)
+	return ok && named.Obj() != nil && named.Obj().Name() == recvName
+}
+
 // unusedresult checks for unused results of calls to pure functions
 // like strings.Replace, fmt.Sprintf, etc.
 func runUnusedResult(pass *Pass) []Diagnostic {
 	// Functions whose results should not be discarded.
+	// strings/bytes coverage mirrors upstream vet's unusedresult list
+	// for the pure string/byte helpers (constructors such as
+	// strings.NewReader are intentionally excluded: discarding a
+	// freshly built value is not a lost computation).
 	pureFuncs := map[string]bool{
 		"fmt.Sprintf": true, "fmt.Sprint": true, "fmt.Sprintln": true,
 		"strings.Replace": true, "strings.ReplaceAll": true,
 		"strings.ToUpper": true, "strings.ToLower": true,
 		"strings.Trim": true, "strings.TrimSpace": true,
-		"strings.Split": true, "strings.Join": true,
-		"bytes.Replace": true, "bytes.ToUpper": true, "bytes.ToLower": true,
-		"strconv.Itoa": true, "strconv.FormatInt": true, "strconv.FormatFloat": true,
+		"strings.TrimPrefix": true, "strings.TrimSuffix": true,
+		"strings.TrimLeft": true, "strings.TrimRight": true,
+		"strings.TrimFunc": true,
+		"strings.Split":    true, "strings.SplitN": true,
+		"strings.SplitAfter": true, "strings.SplitAfterN": true,
+		"strings.Join": true, "strings.Repeat": true,
+		"strings.Fields": true, "strings.FieldsFunc": true,
 		"strings.Contains": true, "strings.HasPrefix": true, "strings.HasSuffix": true,
+		"strings.Index": true, "strings.LastIndex": true,
+		"strings.IndexByte": true, "strings.IndexAny": true, "strings.IndexFunc": true,
+		"strings.Count": true, "strings.EqualFold": true, "strings.Compare": true,
+		"strings.Map": true, "strings.Clone": true, "strings.ToValidUTF8": true,
+		"strings.Cut": true, "strings.CutPrefix": true, "strings.CutSuffix": true,
+		"bytes.Replace": true, "bytes.ReplaceAll": true,
+		"bytes.ToUpper": true, "bytes.ToLower": true,
+		"bytes.Trim": true, "bytes.TrimSpace": true,
+		"bytes.TrimPrefix": true, "bytes.TrimSuffix": true,
+		"bytes.TrimLeft": true, "bytes.TrimRight": true,
+		"bytes.TrimFunc": true,
+		"bytes.Split":    true, "bytes.SplitN": true,
+		"bytes.SplitAfter": true, "bytes.SplitAfterN": true,
+		"bytes.Join": true, "bytes.Repeat": true,
+		"bytes.Fields": true, "bytes.FieldsFunc": true,
+		"bytes.Contains": true, "bytes.HasPrefix": true, "bytes.HasSuffix": true,
+		"bytes.Index": true, "bytes.LastIndex": true,
+		"bytes.IndexByte": true, "bytes.IndexAny": true, "bytes.IndexFunc": true,
+		"bytes.Count": true, "bytes.EqualFold": true, "bytes.Compare": true,
+		"bytes.Map": true, "bytes.Clone": true, "bytes.ToValidUTF8": true,
+		"bytes.Cut": true, "bytes.CutPrefix": true, "bytes.CutSuffix": true,
+		"strconv.Itoa": true, "strconv.FormatInt": true, "strconv.FormatFloat": true,
 	}
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -251,6 +323,16 @@ func runTimeFormat(pass *Pass) []Diagnostic {
 }
 
 func isTimeType(t types.Type) bool {
+	// Unwrap pointers: (*time.Time).Format must be checked just like
+	// (time.Time).Format, since Format has a value receiver and is
+	// callable on pointer values.
+	for {
+		ptr, ok := t.(*types.Pointer)
+		if !ok {
+			break
+		}
+		t = ptr.Elem()
+	}
 	named, ok := t.(*types.Named)
 	if !ok {
 		return false
@@ -333,11 +415,15 @@ func runAppends(pass *Pass) []Diagnostic {
 // slog checks for invalid structured logging calls:
 // - odd number of args (not key-value pairs)
 // - non-string keys
+// Arguments of type slog.Attr (including calls such as slog.String
+// that produce one) are not key-value pairs and are skipped before
+// pair-checking, as in real slog calls.
 func runSlog(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	slogFuncs := map[string]bool{
 		"Info": true, "Debug": true, "Warn": true, "Error": true,
-		"Log": true, "InfoContext": true, "DebugContext": true,
+		"Log": true, "LogContext": true,
+		"InfoContext": true, "DebugContext": true,
 		"WarnContext": true, "ErrorContext": true, "LogAttrs": true,
 	}
 	for _, f := range pass.Files {
@@ -362,15 +448,33 @@ func runSlog(pass *Pass) []Diagnostic {
 			}
 			// Args after msg should be key-value pairs.
 			// For *Context variants, first arg is ctx.
+			// Log/LogContext take (ctx, level, msg, args...), so
+			// three leading arguments are skipped, not one/two.
 			args := call.Args
 			start := 1 // skip msg
-			if strings.HasSuffix(sel.Sel.Name, "Context") {
-				start = 2 // skip ctx, msg
+			switch sel.Sel.Name {
+			case "Log", "LogContext":
+				start = 3 // skip ctx, level, msg
+			default:
+				if strings.HasSuffix(sel.Sel.Name, "Context") {
+					start = 2 // skip ctx, msg
+				}
 			}
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
 			}
-			rest := args[start:]
+			if len(args) < start {
+				return true // malformed call; nothing to pair-check
+			}
+			// Skip slog.Attr arguments: they are single values, not
+			// key-value pairs, and may be mixed with real pairs.
+			rest := make([]ast.Expr, 0, len(args)-start)
+			for _, arg := range args[start:] {
+				if isSlogAttr(pass, arg) {
+					continue
+				}
+				rest = append(rest, arg)
+			}
 			if len(rest)%2 != 0 {
 				out = append(out, Diagnostic{
 					pass.position(call),
@@ -395,4 +499,26 @@ func runSlog(pass *Pass) []Diagnostic {
 		})
 	}
 	return out
+}
+
+// isSlogAttr reports whether arg has type log/slog.Attr. This covers
+// Attr values, Attr variables, composite literals, and calls that
+// produce an Attr (slog.String, slog.Int, slog.Any, slog.Group, ...),
+// since all of them carry the Attr type in the type info.
+func isSlogAttr(pass *Pass, arg ast.Expr) bool {
+	tv, ok := pass.Info.Types[arg]
+	if !ok || tv.Type == nil {
+		return false
+	}
+	t := tv.Type
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj != nil && obj.Pkg() != nil &&
+		obj.Pkg().Path() == "log/slog" && obj.Name() == "Attr"
 }

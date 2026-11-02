@@ -302,6 +302,199 @@ func f() {
 	}
 }
 
+// V7: slog.Attr arguments are single values, not key-value pairs,
+// and must not be pair-checked.
+func TestSlogAttr(t *testing.T) {
+	valid := `package main
+
+import "log/slog"
+
+func f() {
+	slog.Info("msg", slog.String("k", "v")) // good: single Attr
+	slog.Info("msg", slog.String("a", "1"), slog.Int("b", 2)) // good: two Attrs
+	slog.Info("msg", slog.String("k", "v"), "key", "value") // good: Attr mixed with pairs
+	attr := slog.Any("k", 42)
+	slog.Info("msg", attr) // good: Attr variable
+	slog.Info("msg", slog.Group("g", slog.String("k", "v"))) // good: Group produces an Attr
+}
+`
+	if joined := runVetOnSrc(t, valid); strings.Contains(joined, "slog ") {
+		t.Errorf("false positive on valid slog.Attr calls:\n%s", joined)
+	}
+
+	invalid := `package main
+
+import "log/slog"
+
+func f() {
+	slog.Info("msg", slog.String("k", "v"), "dangling") // bad: odd after skipping Attr
+	slog.Info("msg", slog.String("k", "v"), 123, "value") // bad: non-string key after Attr
+}
+`
+	joined := runVetOnSrc(t, invalid)
+	if !strings.Contains(joined, "odd number") {
+		t.Errorf("expected slog odd-args diagnostic after Attr skip, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "should be a string") {
+		t.Errorf("expected slog key diagnostic after Attr skip, got:\n%s", joined)
+	}
+}
+
+// V8: Log takes (ctx, level, msg, args...), so a valid call with no
+// pairs must not be flagged from the level argument. This covers both
+// the package function slog.Log and the method (*Logger).Log.
+// Note: log/slog has no LogContext function (verified against the
+// go1.27.1 stdlib source: only Debug/Info/Warn/Error have *Context
+// variants; Log already takes ctx). The LogContext map entry is
+// therefore inert, and a LogContext call is left to the compiler's
+// "undefined" error; the analyzer must simply not crash on it.
+func TestSlogLogOffsets(t *testing.T) {
+	valid := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f(ctx context.Context, logger *slog.Logger) {
+	slog.Log(ctx, slog.LevelInfo, "msg") // good: no pairs
+	logger.Log(ctx, slog.LevelInfo, "msg", "k", "v") // good: one pair
+}
+`
+	if joined := runVetOnSrc(t, valid); strings.Contains(joined, "slog ") {
+		t.Errorf("false positive on valid Log calls:\n%s", joined)
+	}
+
+	invalid := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f(ctx context.Context, logger *slog.Logger) {
+	slog.Log(ctx, slog.LevelInfo, "msg", "k") // bad: odd pairs
+	logger.Log(ctx, slog.LevelInfo, "msg", 42, "v") // bad: non-string key
+}
+`
+	joined := runVetOnSrc(t, invalid)
+	if !strings.Contains(joined, "odd number") {
+		t.Errorf("expected slog odd-args diagnostic for Log, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "should be a string") {
+		t.Errorf("expected slog key diagnostic for Logger.Log, got:\n%s", joined)
+	}
+
+	// Undefined LogContext calls must not crash the analyzer and must
+	// not produce a slog diagnostic (the compiler reports them).
+	undefined := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f(ctx context.Context, logger *slog.Logger) {
+	slog.LogContext(ctx, slog.LevelInfo, "msg")
+	logger.LogContext(ctx, slog.LevelInfo, "msg", "k", "v")
+}
+`
+	if joined := runVetOnSrc(t, undefined); strings.Contains(joined, "slog ") {
+		t.Errorf("unexpected slog diagnostic for undefined LogContext calls:\n%s", joined)
+	}
+}
+
+// P2-D11: Decoder.Decode methods are checked like Unmarshal, and the
+// dead gob.NewDecoder entry no longer exists.
+func TestUnmarshalDecode(t *testing.T) {
+	src := `package main
+
+import (
+	"bytes"
+	"encoding/gob"
+	"encoding/json"
+	"encoding/xml"
+)
+
+func f(data []byte) {
+	var m map[string]interface{}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.Decode(&m) // good: pointer
+	var s struct{ X int }
+	dec.Decode(s) // bad: non-pointer
+	gdec := gob.NewDecoder(bytes.NewReader(data))
+	gdec.Decode(&s) // good: pointer
+	gdec.Decode(s) // bad: non-pointer
+	xdec := xml.NewDecoder(bytes.NewReader(data))
+	xdec.Decode(s) // bad: non-pointer
+	_ = gob.NewDecoder(bytes.NewReader(data)) // not an unmarshal value: no diagnostic
+}
+`
+	joined := runVetOnSrc(t, src)
+	count := strings.Count(joined, "non-pointer")
+	if count != 3 {
+		t.Errorf("expected exactly 3 unmarshal Decode diagnostics, got %d:\n%s", count, joined)
+	}
+}
+
+// P2-D12: extended strings/bytes pure-function coverage.
+func TestUnusedResultExtended(t *testing.T) {
+	src := `package main
+
+import (
+	"bytes"
+	"strings"
+)
+
+func f() {
+	strings.TrimPrefix("x", "y") // bad: discarded
+	strings.TrimSuffix("x", "y") // bad: discarded
+	strings.Repeat("x", 2) // bad: discarded
+	strings.Fields("a b") // bad: discarded
+	strings.EqualFold("a", "b") // bad: discarded
+	bytes.TrimPrefix([]byte("x"), []byte("y")) // bad: discarded
+	bytes.Repeat([]byte("x"), 2) // bad: discarded
+	bytes.Fields([]byte("a b")) // bad: discarded
+	bytes.EqualFold([]byte("a"), []byte("b")) // bad: discarded
+}
+`
+	joined := runVetOnSrc(t, src)
+	for _, want := range []string{
+		"result of strings.TrimPrefix call not used",
+		"result of strings.TrimSuffix call not used",
+		"result of strings.Repeat call not used",
+		"result of strings.Fields call not used",
+		"result of strings.EqualFold call not used",
+		"result of bytes.TrimPrefix call not used",
+		"result of bytes.Repeat call not used",
+		"result of bytes.Fields call not used",
+		"result of bytes.EqualFold call not used",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected unusedresult diagnostic %q, got:\n%s", want, joined)
+		}
+	}
+}
+
+// P2-D15: (*time.Time).Format is checked like (time.Time).Format.
+func TestTimeFormatPointerReceiver(t *testing.T) {
+	src := `package main
+
+import "time"
+
+func f(t time.Time, pt *time.Time) {
+	_ = pt.Format("2006-02-01") // bad: pointer receiver
+	_ = t.Format("2006-02-01") // bad: value receiver
+	_ = pt.Format("2006-01-02") // good
+}
+`
+	joined := runVetOnSrc(t, src)
+	count := strings.Count(joined, "2006-02-01 should be 2006-01-02")
+	if count != 2 {
+		t.Errorf("expected 2 timeformat diagnostics (value + pointer receiver), got %d:\n%s", count, joined)
+	}
+}
+
 func TestStdMethods(t *testing.T) {
 	src := `package main
 
