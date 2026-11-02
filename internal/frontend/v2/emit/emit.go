@@ -482,10 +482,17 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		// Explicit methods only under "methods"; embedded interfaces
 		// (and type-set elements) under "embedded", so a backend can
 		// tell what this interface declares from what it inherits.
-		// "complete" reports whether the method set is fully described
-		// (false for interfaces still under construction, which the
-		// checker never hands the emitter — but a consumer must not
-		// assume completeness silently).
+		// "complete" is tt.IsMethodSet(): true exactly when the
+		// method list is the whole interface. It is false for any
+		// interface carrying type-set restrictions — a union term
+		// (~int | ~string), or an embedded constraint interface —
+		// even after successful checking: probed constraint
+		// interfaces report complete:false from a fully checked
+		// package, so false never means "still under construction".
+		// Backend rule for complete:false: the "methods" list is NOT
+		// the full contract — consult "embedded" (unions and embedded
+		// constraints) to decide which types satisfy the interface;
+		// method-set-only dispatch is wrong for it.
 		methods := []any{}
 		for i := 0; i < tt.NumExplicitMethods(); i++ {
 			m := tt.ExplicitMethod(i)
@@ -508,10 +515,76 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"complete": tt.IsMethodSet(),
 			},
 		}
-	default:
+	case *types.Union:
+		// A type set, never a scalar: each term carries its type and
+		// whether it admits underlying types (tilde). Labelling a
+		// union "basic" would let a backend dispatch on kind and
+		// treat ~int | ~string as a single scalar type.
+		terms := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			term := tt.Term(i)
+			terms = append(terms, map[string]any{
+				"type":  e.typeID(term.Type()),
+				"tilde": term.Tilde(),
+			})
+		}
 		return map[string]any{
-			"kind":   "basic",
-			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
+			"kind":   "union",
+			"detail": map[string]any{"terms": terms},
+		}
+	case *types.TypeParam:
+		// A generic type parameter (e.g. the T in struct{ V T } or a
+		// constraint bound). Its constraint is itself a type (usually
+		// an interface) in this table.
+		var constraint any
+		if tt.Constraint() != nil {
+			constraint = e.typeID(tt.Constraint())
+		}
+		name := ""
+		if tt.Obj() != nil {
+			name = tt.Obj().Name()
+		}
+		return map[string]any{
+			"kind": "typeparam",
+			"detail": map[string]any{
+				"name":       name,
+				"constraint": constraint,
+				"index":      tt.Index(),
+			},
+		}
+	case *types.Alias:
+		// An alias (type A = int) is not its RHS: it has its own
+		// identity (its object name) and a right-hand-side type.
+		// go1.27 materialises aliases as *types.Alias; describing one
+		// as "basic" would erase the alias and misdirect any consumer
+		// resolving by name.
+		var rhs any
+		if tt.Rhs() != nil {
+			rhs = e.typeID(tt.Rhs())
+		}
+		args := []any{}
+		if tt.TypeArgs() != nil {
+			for i := 0; i < tt.TypeArgs().Len(); i++ {
+				args = append(args, e.typeID(tt.TypeArgs().At(i)))
+			}
+		}
+		return map[string]any{
+			"kind": "alias",
+			"detail": map[string]any{
+				"name": tt.Obj().Name(),
+				"rhs":  rhs,
+				"args": args,
+			},
+		}
+	default:
+		// No type may be mislabelled "basic": every go/types type kind
+		// has an explicit case above, so reaching here means a future
+		// toolchain added a kind. Emit it as "unknown" — a distinct
+		// kind a backend must reject explicitly — never as a scalar
+		// it is not.
+		return map[string]any{
+			"kind":   "unknown",
+			"detail": map[string]any{"name": t.String(), "class": "unknown"},
 		}
 	}
 }

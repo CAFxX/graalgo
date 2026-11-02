@@ -356,17 +356,24 @@ func Plain() {}
 	if recv["name"] != "t" || recv["obj"] == nil || recv["type"] == nil {
 		t.Fatalf("Named recv = %#v", recv)
 	}
-	// Unnamed receiver: empty name, no object, but a type.
+	// Unnamed receiver: empty name, but a real object and a type. The
+	// receiver HAS a *types.Var (name ""), just no ident, so it is
+	// declared for symmetry with unnamed parameters — recv.obj is an
+	// object id for both forms, never nil-for-unnamed.
 	unnamed := funcNode(t, doc, "Unnamed")
 	urecv := nodeFields(t, unnamed["recv"])
 	if urecv["name"] != "" {
 		t.Fatalf("Unnamed recv name = %q, want empty", urecv["name"])
 	}
-	if urecv["obj"] != nil {
-		t.Fatalf("Unnamed recv obj = %#v, want nil", urecv["obj"])
+	if urecv["obj"] == nil {
+		t.Fatalf("Unnamed recv obj = %#v, want an object id", urecv["obj"])
 	}
 	if urecv["type"] == nil {
 		t.Fatalf("Unnamed recv has no type")
+	}
+	urecvObj, ok := doc.Objects[urecv["obj"].(int)].(map[string]any)
+	if !ok || urecvObj["kind"] != "var" || urecvObj["name"] != "" {
+		t.Fatalf("Unnamed recv object = %#v, want kind var with empty name", doc.Objects[urecv["obj"].(int)])
 	}
 	// Plain function: recv nil.
 	plain := funcNode(t, doc, "Plain")
@@ -435,5 +442,84 @@ func TestDescribeObjectKinds(t *testing.T) {
 	}
 	if m["kind"] != "builtin" {
 		t.Fatalf("Builtin description kind = %v, want builtin", m["kind"])
+	}
+}
+
+func TestForwardGlobalAndConstValues(t *testing.T) {
+	doc := emitDoc(t, `package demo
+
+var B = A
+var A = 41
+
+const M1, M2 = 1, 2
+const S1, S2 = "a", "b"
+const T int = 5
+const TS string = "hi"
+
+func main() {}
+`)
+	// Forward reference: B is declared before A but initialised from
+	// it. The two-pass declaration in emitDocument is what makes the
+	// value ident resolve to A's object instead of failing or
+	// dangling.
+	globals := globalsByKind(t, doc, "globalvar")
+	if len(globals) != 2 {
+		t.Fatalf("found %d globalvar nodes, want 2", len(globals))
+	}
+	bFields := nodeFields(t, globals[0])
+	if len(bFields["names"].([]string)) != 1 || bFields["names"].([]string)[0] != "B" {
+		t.Fatalf("first globalvar names = %v, want [B]", bFields["names"])
+	}
+	bValues, ok := bFields["values"].([]any)
+	if !ok || len(bValues) != 1 {
+		t.Fatalf("B values has %d entries, want 1", len(bValues))
+	}
+	bIdent, ok := bValues[0].(map[string]any)
+	if !ok || bIdent["kind"] != "ident" {
+		t.Fatalf("B value kind = %v, want ident", bValues[0])
+	}
+	aFields := nodeFields(t, globals[1])
+	aObjs, ok := aFields["objs"].([]any)
+	if !ok || len(aObjs) != 1 {
+		t.Fatalf("A objs has %d entries, want 1", len(aObjs))
+	}
+	if nodeFields(t, bIdent)["obj"] != aObjs[0] {
+		t.Fatalf("B value ident obj = %v, want A's object id %v",
+			nodeFields(t, bIdent)["obj"], aObjs[0])
+	}
+	if nodeFields(t, bIdent)["name"] != "A" {
+		t.Fatalf("B value ident name = %v, want A", nodeFields(t, bIdent)["name"])
+	}
+	if typeEntry(t, doc, nodeFields(t, bIdent)["type"])["kind"] != "basic" {
+		t.Fatalf("B value ident type is not basic")
+	}
+	aValues := aFields["values"].([]any)
+	if len(aValues) != 1 || aValues[0].(map[string]any)["kind"] != "basiclit" {
+		t.Fatalf("A values = %#v, want one basiclit", aValues)
+	}
+
+	// Multi-value consts and typed consts: constvals records the
+	// evaluated value per name via go/types ExactString, for string
+	// and typed constants as well as plain integers.
+	consts := globalsByKind(t, doc, "globalconst")
+	if len(consts) != 4 {
+		t.Fatalf("found %d globalconst nodes, want 4", len(consts))
+	}
+	wantVals := [][]string{
+		{"1", "2"},
+		{`"a"`, `"b"`},
+		{"5"},
+		{`"hi"`},
+	}
+	for i, want := range wantVals {
+		got, ok := nodeFields(t, consts[i])["constvals"].([]any)
+		if !ok || len(got) != len(want) {
+			t.Fatalf("const %d constvals = %v, want %v", i, nodeFields(t, consts[i])["constvals"], want)
+		}
+		for j, w := range want {
+			if got[j] != w {
+				t.Fatalf("const %d constvals[%d] = %v, want %s", i, j, got[j], w)
+			}
+		}
 	}
 }

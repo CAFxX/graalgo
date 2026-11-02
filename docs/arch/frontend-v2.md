@@ -78,6 +78,12 @@ reaches differential parity on the corpus.
 - **Legitimate lowerings only**: language-level desugaring that `go/types`
   itself does not do but which the backend requires (e.g., multi-result
   handling — but done as a general mechanism, not per-package).
+- **Node-kind contract**: the authoritative enumeration of the emitted
+  `Document`'s node kinds, type-table kinds, label-nil semantics, and
+  `complete` semantics lives in
+  [PROGRESS.md](../../internal/frontend/v2/PROGRESS.md) ("Node-kind
+  contract for the v2 Document"), not in this design doc — this doc
+  states the pipeline shape only.
 
 ## 3. What v2 does NOT do
 

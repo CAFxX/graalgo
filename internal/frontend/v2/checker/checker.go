@@ -58,10 +58,11 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 	imp := importer.Default()
 
 	// Deterministic file order: pkg.Files is a Go map, and ranging over
-	// it directly would make the order of reported diagnostics vary run
-	// to run for multi-file packages. Files are checked sorted by name,
-	// the same order the emitter visits them in, so diagnostics come out
-	// in a stable, reproducible order.
+	// it directly would vary which file's error surfaces first run to
+	// run for multi-file packages. types.Config.Check returns only the
+	// first error, so sorting by name does not order a diagnostic
+	// list — it pins WHICH error is first (and matches the order the
+	// emitter visits files in), keeping failures reproducible.
 	names := make([]string, 0, len(pkg.Files))
 	for name := range pkg.Files {
 		names = append(names, name)

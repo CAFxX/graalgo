@@ -121,6 +121,48 @@ func findOneKind(t *testing.T, n any, kind string) map[string]any {
 	return found[0]
 }
 
+// typeEntry resolves a type-table id to its entry map.
+func typeEntry(t *testing.T, doc *Document, id any) map[string]any {
+	t.Helper()
+	i, ok := id.(int)
+	if !ok || i < 0 || i >= len(doc.Types) {
+		t.Fatalf("bad type id %#v", id)
+	}
+	m, ok := doc.Types[i].(map[string]any)
+	if !ok {
+		t.Fatalf("type %d is not an entry: %#v", i, doc.Types[i])
+	}
+	return m
+}
+
+// objectEntry resolves an object-table id to its entry map.
+func objectEntry(t *testing.T, doc *Document, id any) map[string]any {
+	t.Helper()
+	i, ok := id.(int)
+	if !ok || i < 0 || i >= len(doc.Objects) {
+		t.Fatalf("bad object id %#v", id)
+	}
+	m, ok := doc.Objects[i].(map[string]any)
+	if !ok {
+		t.Fatalf("object %d is not an entry: %#v", i, doc.Objects[i])
+	}
+	return m
+}
+
+// guardIdent finds the ident node named name under n, failing unless
+// exactly one exists (builtin idents like len carry no obj and are
+// filtered out by the name match).
+func guardIdent(t *testing.T, n any, name string) map[string]any {
+	t.Helper()
+	for _, id := range findKind(n, "ident") {
+		if nodeFields(t, id)["name"] == name {
+			return id
+		}
+	}
+	t.Fatalf("no ident named %q under %#v", name, n)
+	return nil
+}
+
 func TestGoDeferSend(t *testing.T) {
 	doc := emitDoc(t, `package main
 
@@ -267,6 +309,18 @@ func h(x any) int {
 	y := x.(int)
 	return y
 }
+
+func nm(x any) int {
+	switch v := x.(type) {
+	case nil:
+		return 0
+	case int, string:
+		_ = v
+		return 1
+	default:
+		return -1
+	}
+}
 `)
 	// Guarded switch: guard node carries the variable name and the
 	// switched expression; the guard variable itself has no object.
@@ -300,6 +354,68 @@ func h(x any) int {
 	// Default case flagged explicitly.
 	if nodeFields(t, cases[2])["default"] != true {
 		t.Fatalf("last case default = %v, want true", nodeFields(t, cases[2])["default"])
+	}
+	// Per-clause guard objects: in `case int:` v has type int; in
+	// `case []byte:` v has type []byte. The guard variable has a
+	// different object per clause — asserting the object type pins
+	// that per-clause resolution, not just the case type list.
+	intIdent := guardIdent(t, cases[0], "v")
+	intType := typeEntry(t, doc, nodeFields(t, intIdent)["type"])
+	if intType["kind"] != "basic" || intType["detail"].(map[string]any)["name"] != "int" {
+		t.Fatalf("case int v type = %#v, want basic int", intType)
+	}
+	byteIdent := guardIdent(t, cases[1], "v")
+	byteType := typeEntry(t, doc, nodeFields(t, byteIdent)["type"])
+	if byteType["kind"] != "slice" {
+		t.Fatalf("case []byte v type kind = %v, want slice", byteType["kind"])
+	}
+	elem := typeEntry(t, doc, byteType["detail"].(map[string]any)["elem"])
+	// go/types names the element "byte" (the alias as written), not
+	// "uint8", even though both are the same basic kind.
+	if elem["kind"] != "basic" || elem["detail"].(map[string]any)["name"] != "byte" {
+		t.Fatalf("case []byte v elem = %#v, want basic byte", elem)
+	}
+
+	// `case nil:` is a value, not a type expression: its list entry is
+	// an ident resolving to the nil object, never a typeexpr node.
+	// `case int, string:` carries one typeexpr per type.
+	nm := funcNode(t, doc, "nm")
+	nts := findOneKind(t, nm["body"], "typeswitch")
+	nmCases, ok := nodeFields(t, nts)["body"].([]any)
+	if !ok || len(nmCases) != 3 {
+		t.Fatalf("nm typeswitch body has %d cases, want 3", len(nmCases))
+	}
+	nilCase := nodeFields(t, nmCases[0])
+	nilList, ok := nilCase["list"].([]any)
+	if !ok || len(nilList) != 1 {
+		t.Fatalf("nil case list has %d entries, want 1", len(nilList))
+	}
+	nilEntry, ok := nilList[0].(map[string]any)
+	if !ok || nilEntry["kind"] != "ident" {
+		t.Fatalf("nil case entry kind = %v, want ident (a value, not typeexpr)", nilEntry["kind"])
+	}
+	nilObj := objectEntry(t, doc, nodeFields(t, nilEntry)["obj"])
+	if nilObj["kind"] != "nil" {
+		t.Fatalf("nil case ident object kind = %v, want nil", nilObj["kind"])
+	}
+	multiCase := nodeFields(t, nmCases[1])
+	multiList, ok := multiCase["list"].([]any)
+	if !ok || len(multiList) != 2 {
+		t.Fatalf("multi-type case list has %d entries, want 2", len(multiList))
+	}
+	wantMulti := []string{"int", "string"}
+	for i, want := range wantMulti {
+		entry, ok := multiList[i].(map[string]any)
+		if !ok || entry["kind"] != "typeexpr" {
+			t.Fatalf("multi-type case entry %d kind = %v, want typeexpr", i, entry["kind"])
+		}
+		ty := typeEntry(t, doc, nodeFields(t, entry)["type"])
+		if ty["kind"] != "basic" || ty["detail"].(map[string]any)["name"] != want {
+			t.Fatalf("multi-type case entry %d type = %#v, want basic %s", i, ty, want)
+		}
+	}
+	if nodeFields(t, nmCases[2])["default"] != true {
+		t.Fatalf("nm last case default = %v, want true", nodeFields(t, nmCases[2])["default"])
 	}
 
 	// Unguarded switch (`switch x.(type)`): guard var nil.

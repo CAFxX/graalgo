@@ -98,3 +98,107 @@ for the design.
   graalgo compiles the v2 Go code (which uses go/parser, go/ast, go/types)
   to JVM bytecode, so it runs in-process and calls NodeFactoryV2 directly
   (no inter-process binary transfer).
+
+## 2026-11-02 — Node-kind contract for the v2 Document (veto fix-up)
+
+This section is the live contract for what `emit.Emit` puts in
+`*Document` (`internal/frontend/v2/emit/emit.go`). The design doc
+(`docs/arch/frontend-v2.md`) does not enumerate node kinds — it states
+the pipeline shape and disclaims the v1 JSON wire format — so this
+section, not the design doc, is what the next backend lane builds
+against. The Document is in-memory (`map[string]any` nodes, `Types` /
+`Objects` tables, `Funcs`, `Globals`); for transfer to Java it is
+encoded by `encode/` (see `encode/encode.go` for the binary spec), never
+as JSON.
+
+### Statement / declaration node kinds (`node.kind` → fields)
+
+- `funcdecl` {name, sig, recv, params, results, body, pkgpath}.
+  `recv` is nil for plain functions; for methods it is
+  {name, obj, type} where `obj` is always an object id — an unnamed
+  receiver has name `""` but still has a `*types.Var` object, so
+  `recv.obj` is never nil-for-unnamed.
+- `go` {call}, `defer` {call} — the call node, not the keyword alone.
+- `send` {chan, value}.
+- `switch` {init, tag, body}: `init`/`tag` are nil when absent
+  (`switch {` has tag nil); `body` is a list of `case` nodes.
+- `typeswitch` {init, guard, body}: `guard` is a `typeswitchguard`
+  node, never an assign — go/types records no single object for a
+  type-switch guard variable (it has a different type per clause).
+- `typeswitchguard` {var, x}: `var` is the guard variable name, or nil
+  for an unguarded switch (`switch x.(type)`).
+- `select` {body}: a list of `comm` nodes.
+- `comm` {comm, default, body}: `comm` is the send / receive-assign /
+  bare-receive statement node, or nil for the default clause
+  (`default` true marks it).
+- `case` {list, default, body}: `default` is true exactly when the
+  clause list is empty. `case nil:` is NOT default — its list holds
+  one `ident` node resolving to the nil object. In a type switch, a
+  type in the list is a `typeexpr` node, not a value expression.
+- `labeled` {label, stmt}, `branch` {tok, label}: `tok` is
+  break/continue/goto/fallthrough; `label` is the label string, or nil
+  for an unlabelled branch.
+- `typeexpr` {type}: a type-table id for a type appearing in type
+  position (type-switch case, type assertion target).
+- `globalvar` {names, objs, type, values}, `globalconst` (same, plus
+  `constvals`: one go/types `ExactString` per name, so repeated const
+  specs and iota chains carry values the AST does not),
+  `globaltype` {name, obj, type, alias} (`alias` true for `type A = T`).
+
+### Label-nil rule
+
+Nil in a label/var/init/tag/comm slot means "absent by syntax"
+(unlabelled branch, unguarded switch, no init/tag, default select
+clause) — never "unknown" or "missing data". A consumer must not invent
+a label, a guard object, or a default case from nil; the explicit
+`default` flags exist so it does not have to infer them.
+
+### Type-table kinds (`Types` entry kind → detail)
+
+- `basic` {name, class, untyped}, `pointer` {elem}, `slice` {elem},
+  `array` {len, elem}, `map` {key, elem}, `chan` {dir, elem}
+  (dir: both/send/recv), `signature` {params, results, variadic}.
+- `named` {name, underlying, methods, ptrMethods}: `methods` is the
+  value method set, `ptrMethods` the pointer-only remainder (methods
+  callable via `*T` but not `T`; value-receiver methods appear once,
+  under `methods`).
+- `struct` {fields}: each {name, type, tag, embedded, offset}
+  (`offset` is currently always 0 — a known placeholder, not a real
+  layout).
+- `interface` {empty, methods, embedded, complete}: `methods` are the
+  explicit methods only; `embedded` holds embedded interfaces and
+  type-set elements (unions) by type id. `complete` is
+  `IsMethodSet()`: true exactly when the method list is the whole
+  interface. It is false for any interface carrying type-set
+  restrictions (a union term, or an embedded constraint interface),
+  even after successful checking — false never means "still under
+  construction". Backend rule for `complete: false`: the `methods`
+  list is NOT the full contract; consult `embedded` (unions) to decide
+  which types satisfy the interface. Method-set-only dispatch is wrong
+  for it.
+- `union` {terms}: each term {type, tilde} — `tilde` true admits
+  underlying types (`~int`), false admits only the exact type.
+  A union is never `basic`.
+- `typeparam` {name, constraint, index}: a generic type parameter;
+  `constraint` is a type-table id (usually an interface).
+- `alias` {name, rhs, args}: an alias declaration's own identity plus
+  its right-hand-side type id (`args` empty for non-generic aliases).
+- `unknown` {name, class: "unknown"}: a loud marker for a go/types
+  kind with no case yet — a backend must reject it explicitly, never
+  treat it as a scalar. No current go/types kind produces it.
+
+### Java-side status (do not assume)
+
+`NodeFactoryV2` implements a subset of these kinds and fails loudly
+(`FrontendException`) on the rest; it currently discards branch labels
+(builds `BranchNode(op, null)`) — Java label handling is a separate
+follow-up lane, not done by this diff. A backend built on this contract
+must not assume labels reach execution yet.
+
+### Loudly rejected (compile error, not silent)
+
+`EmptyStmt`, `StarExpr` (including ordinary pointer dereference `*p` —
+the largest remaining emitter gap, a follow-up candidate),
+`FuncLit`, `Ellipsis`, generic `IndexListExpr`. Pinned in
+`emit/negative_test.go`. Generic type/function type parameters are not
+yet in the type table (pre-existing gap, out of scope here).

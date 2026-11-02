@@ -51,28 +51,34 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 
 	// Methods carry their receiver; plain functions carry recv nil, so a
-	// consumer can tell a method from a same-named function. A named
-	// receiver declares its object; an unnamed receiver has no object,
-	// only a name ("") and a type, both from the signature.
+	// consumer can tell a method from a same-named function. The
+	// receiver object is always declared, named or not: an unnamed
+	// receiver still HAS a *types.Var object (its name is just ""), it
+	// merely has no ident — exactly like an unnamed parameter, which
+	// emitFieldVars also declares. Declaring it keeps recv.obj uniform
+	// (an object id, never nil-for-unnamed) so a consumer resolves the
+	// receiver the same way for both forms. The node's position is the
+	// receiver name when named, else the receiver field.
 	var recv any
 	if fd.Recv != nil {
 		rv := sig.Recv()
 		if rv == nil {
 			return nil, fmt.Errorf("emit: method %s has no receiver in signature", fd.Name.Name)
 		}
-		var robj any
-		var recvNode ast.Node = fd.Recv.List[0]
+		if len(fd.Recv.List) == 0 {
+			return nil, fmt.Errorf("emit: method %s has an empty receiver list", fd.Name.Name)
+		}
+		rid, err := e.declareParam(rv)
+		if err != nil {
+			return nil, err
+		}
+		recvNode := ast.Node(fd.Recv.List[0])
 		if len(fd.Recv.List[0].Names) > 0 {
-			rid, err := e.declareParam(rv)
-			if err != nil {
-				return nil, err
-			}
-			robj = rid
 			recvNode = fd.Recv.List[0].Names[0]
 		}
 		recv = e.node("recv", recvNode, map[string]any{
 			"name": rv.Name(),
-			"obj":  robj,
+			"obj":  rid,
 			"type": e.typeID(rv.Type()),
 		})
 	}
