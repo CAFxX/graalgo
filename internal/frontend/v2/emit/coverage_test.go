@@ -2,8 +2,9 @@
 //
 // This test enumerates every concrete AST node type in go/ast via reflection
 // and verifies each one is either:
-//   (a) HANDLED — the emitter produces output for it, or
-//   (b) FAILS LOUDLY — the emitter returns an "unsupported" error.
+//
+//	(a) HANDLED — the emitter produces output for it, or
+//	(b) FAILS LOUDLY — the emitter returns an "unsupported" error.
 //
 // There is no silent (c): a node kind that is silently dropped or
 // mis-emitted. If go/ast gains a new node type, this test fails until the
@@ -27,28 +28,42 @@ import (
 // This list is checked mechanically against go/ast — it cannot drift.
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
-	"FuncDecl": true, // emitFuncDecl
+	"FuncDecl":  true, // emitFuncDecl (incl. receiver, results)
+	"GenDecl":   true, // top-level var/const/type → Globals; import skipped
+	"TypeSpec":  true, // globaltype node
+	"ValueSpec": true, // globalvar/globalconst/vardecl specs
 
 	// Statements.
-	"AssignStmt": true,
-	"BlockStmt":  true,
-	"BranchStmt": true,
-	"DeclStmt":   true, // var only; const/type decls fail loudly
-	"ExprStmt":   true,
-	"ForStmt":    true,
-	"IfStmt":     true,
-	"IncDecStmt": true,
-	"RangeStmt":  true,
-	"ReturnStmt": true,
+	"AssignStmt":     true,
+	"BlockStmt":      true,
+	"BranchStmt":     true, // incl. label field
+	"DeclStmt":       true, // var only, per-spec groups; local const/type fail loudly
+	"DeferStmt":      true,
+	"ExprStmt":       true,
+	"ForStmt":        true,
+	"GoStmt":         true,
+	"IfStmt":         true,
+	"IncDecStmt":     true,
+	"LabeledStmt":    true,
+	"RangeStmt":      true, // incl. = targets (Uses) and non-ident targets (expr)
+	"ReturnStmt":     true,
+	"SelectStmt":     true,
+	"SendStmt":       true,
+	"SwitchStmt":     true,
+	"TypeSwitchStmt": true,
 
 	// Expressions.
-	"BasicLit":     true,
-	"BinaryExpr":   true,
-	"CallExpr":     true,
-	"Ident":        true,
-	"ParenExpr":    true,
-	"SelectorExpr": true,
-	"UnaryExpr":    true,
+	"BasicLit":       true,
+	"BinaryExpr":     true,
+	"CallExpr":       true, // incl. conversions as "convert" nodes
+	"FuncLit":        true,
+	"Ident":          true,
+	"IndexListExpr":  true, // generic instantiation → "indexlist"
+	"ParenExpr":      true,
+	"SelectorExpr":   true,
+	"StarExpr":       true, // dereference in value position
+	"TypeAssertExpr": true,
+	"UnaryExpr":      true,
 
 	// Type expressions handled via go/types (not AST switch).
 	// These appear as types, not as standalone emitExpr cases:
@@ -93,31 +108,20 @@ var nonNodeTypes = map[string]string{
 // "unsupported" error. The negative test below proves each one fails.
 var loudlyRejected = map[string]bool{
 	// Statements not yet implemented.
-	"BadStmt":       true,
-	"DeferStmt":     true,
-	"EmptyStmt":     true,
-	"GoStmt":        true,
-	"LabeledStmt":   true,
-	"SelectStmt":    true,
-	"SendStmt":      true,
-	"SwitchStmt":    true,
-	"TypeSwitchStmt": true,
+	"BadStmt":   true,
+	"EmptyStmt": true,
 	// Expressions not yet implemented.
-	"BadExpr":        true,
-	"CompositeLit":   true,
-	"Ellipsis":       true,
-	"FuncLit":        true,
-	"IndexExpr":      true,
-	"IndexListExpr":  true, // generics instantiation
-	"KeyValueExpr":   true,
-	"SliceExpr":      true,
-	"StarExpr":       true,
-	"TypeAssertExpr": true,
+	"BadExpr":      true,
+	"CompositeLit": true, // NOTE: stale entry — emitCompositeLit exists;
+	// it is left here only because the 2026-11-02 lane's scope is the
+	// decl/emit findings; see its report for this pre-existing drift.
+	"Ellipsis":  true,
+	"IndexExpr": true, // NOTE: stale entry — emitIndex exists (index
+	// and generic instantiation); same scope note as CompositeLit.
+	"KeyValueExpr": true,
+	"SliceExpr":    true, // NOTE: stale entry — emitSlice exists; same note.
 	// Declarations not yet implemented.
-	"BadDecl":   true,
-	"GenDecl":   true, // top-level; const/type/var handled selectively
-	"TypeSpec":  true,
-	"ValueSpec": true,
+	"BadDecl": true,
 	// Clauses (only appear inside switch/select).
 	"CaseClause": true,
 	"CommClause": true,

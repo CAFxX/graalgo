@@ -7,6 +7,10 @@
 //
 // If a construct starts being handled, its test moves to the positive
 // suite. The coverage matrix (coverage_test.go) tracks the classification.
+// (2026-11-02: Defer/Go/Send/Select/Switch/TypeSwitch/Labeled stmts and
+// Star/FuncLit/TypeAssert/IndexList exprs moved to decls_regression_test.go
+// when the rev251102-v2-emit-decls lane implemented them; only EmptyStmt
+// and Ellipsis remain loudly rejected here.)
 package emit
 
 import (
@@ -28,83 +32,6 @@ type negativeCase struct {
 
 var negativeCases = []negativeCase{
 	{
-		name: "DeferStmt",
-		src: `package main
-func main() { defer println("x") }
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "GoStmt",
-		src: `package main
-func main() { go println("x") }
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "SendStmt",
-		src: `package main
-func send(c chan int) { c <- 1 }
-func main() {}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "SelectStmt",
-		src: `package main
-func sel(c chan int) {
-	select {
-	case x := <-c:
-		println(x)
-	default:
-	}
-}
-func main() {}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "SwitchStmt",
-		src: `package main
-func main() {
-	x := 1
-	switch x {
-	case 1:
-		println("one")
-	default:
-		println("other")
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "TypeSwitchStmt",
-		src: `package main
-func main() {
-	var x any = 1
-	switch v := x.(type) {
-	case int:
-		println(v)
-	default:
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "LabeledStmt",
-		src: `package main
-func main() {
-outer:
-	for i := 0; i < 3; i++ {
-		break outer
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
 		name: "EmptyStmt",
 		src: `package main
 func main() {
@@ -114,38 +41,6 @@ func main() {
 }
 `,
 		want: "unsupported stmt",
-	},
-	{
-		name: "StarExpr",
-		src: `package main
-func main() {
-	x := 42
-	p := &x
-	println(*p)
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "TypeAssertExpr",
-		src: `package main
-func main() {
-	var x any = 42
-	y := x.(int)
-	println(y)
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "FuncLit",
-		src: `package main
-func main() {
-	f := func(x int) int { return x * 2 }
-	println(f(21))
-}
-`,
-		want: "unsupported expr",
 	},
 	{
 		name: "Ellipsis",
@@ -161,14 +56,6 @@ func main() {
 	s := []int{1, 2, 3}
 	println(sum(s...))
 }
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "IndexListExpr_generics",
-		src: `package main
-func id[T any](x T) T { return x }
-func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
