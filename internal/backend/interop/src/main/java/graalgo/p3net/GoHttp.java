@@ -7,7 +7,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,20 +15,35 @@ import java.util.List;
  *
  * <p>Per program-owner directive (2026-10-10): prefer delegating to Java's HTTP
  * facilities where semantics match, rather than reimplementing in Go.
- * The Go synthetic net/http Transport.RoundTrip delegates here via the
- * {@code graalgo.http.client.do} linkname intrinsic.
+ * The Go synthetic net/http Transport.RoundTrip used to delegate here via
+ * the {@code graalgo.http.client.do} linkname intrinsic; the synthetic
+ * package was retired (real net/http from GOROOT is used now), so at
+ * HEAD this intrinsic has no live Go caller and no Go-side timeout to
+ * honour: real net/http runs its own Go code. A future caller must pass
+ * any timeout it needs explicitly via a new argument — never restore a
+ * hardcoded default here.
  *
  * <p>Semantics: java.net.http.HttpClient provides a clean semantic match for
  * Go's http.Client transaction model (request → response with status,
  * headers, body). The Go side retains the http.Request/Response types,
  * header canonicalization, and cookie handling.
+ *
+ * <p>Timeouts: none is set by default, deliberately. Go's
+ * {@code http.Client.Timeout} defaults to 0 (no timeout), and a request
+ * whose context carries no deadline waits indefinitely — so a hardcoded
+ * per-request timeout broke slow and streaming responses (long-poll, SSE)
+ * at 30 s. The connect timeout is likewise unset by default: it is a
+ * transport property (gc's DefaultTransport dials with a 30 s timeout),
+ * not a client default, and with no live caller there is nothing to plumb
+ * it from. When a caller is wired, it must plumb the Go Transport dial
+ * timeout as the connect timeout and the Go Client.Timeout as the total
+ * timeout, rather than hardcoding either value here.
  */
 public final class GoHttp {
 
     private GoHttp() {}
 
     private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
@@ -55,30 +69,7 @@ public final class GoHttp {
         String m = toJavaString(method);
         String u = toJavaString(urlStr);
         try {
-            HttpRequest.Builder rb = HttpRequest.newBuilder()
-                    .uri(URI.create(u))
-                    .timeout(Duration.ofSeconds(30));
-            byte[] bodyBytes = toByteArray(body);
-            HttpRequest.BodyPublisher pub;
-            if (bodyBytes == null || bodyBytes.length == 0) {
-                pub = HttpRequest.BodyPublishers.noBody();
-            } else {
-                pub = HttpRequest.BodyPublishers.ofByteArray(bodyBytes);
-            }
-            rb.method(m, pub);
-            // Headers: flat pairs
-            if (headers instanceof GoSlice) {
-                GoSlice hs = (GoSlice) headers;
-                Object[] harr = (Object[]) hs.array();
-                for (int i = 0; i + 1 < hs.len(); i += 2) {
-                    String k = toJavaString(harr[hs.offset() + i]);
-                    String v = toJavaString(harr[hs.offset() + i + 1]);
-                    if (k != null) {
-                        rb.header(k, v == null ? "" : v);
-                    }
-                }
-            }
-            HttpRequest req = rb.build();
+            HttpRequest req = buildRequest(m, u, headers, body);
             HttpResponse<byte[]> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
             int status = resp.statusCode();
             // Collect headers first to count them.
@@ -115,6 +106,37 @@ public final class GoHttp {
             return goByteSlice(new byte[24]);
             // status=0, headerCount=0, bodyLen=0 (all zeros already).
         }
+    }
+
+    /**
+     * Builds the {@link HttpRequest} for {@link #clientDo}. Package-visible
+     * for tests: it is the single place a request timeout could be set,
+     * and by design none is — see the class javadoc on timeouts.
+     */
+    static HttpRequest buildRequest(String method, String urlStr, Object headers, Object body) {
+        HttpRequest.Builder rb = HttpRequest.newBuilder()
+                .uri(URI.create(urlStr));
+        byte[] bodyBytes = toByteArray(body);
+        HttpRequest.BodyPublisher pub;
+        if (bodyBytes == null || bodyBytes.length == 0) {
+            pub = HttpRequest.BodyPublishers.noBody();
+        } else {
+            pub = HttpRequest.BodyPublishers.ofByteArray(bodyBytes);
+        }
+        rb.method(method, pub);
+        // Headers: flat pairs
+        if (headers instanceof GoSlice) {
+            GoSlice hs = (GoSlice) headers;
+            Object[] harr = (Object[]) hs.array();
+            for (int i = 0; i + 1 < hs.len(); i += 2) {
+                String k = toJavaString(harr[hs.offset() + i]);
+                String v = toJavaString(harr[hs.offset() + i + 1]);
+                if (k != null) {
+                    rb.header(k, v == null ? "" : v);
+                }
+            }
+        }
+        return rb.build();
     }
 
     private static void writeI64(java.io.ByteArrayOutputStream out, long v) {
