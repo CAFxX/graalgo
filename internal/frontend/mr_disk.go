@@ -540,9 +540,92 @@ func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter 
 		if stmt.Body != nil {
 			for _, cc := range stmt.Body.List {
 				if ccc, ok := cc.(*ast.CaseClause); ok {
-					hoistNestedMRInBlock(&ast.BlockStmt{List: ccc.Body}, specByName, counter)
-					// Copy back (BlockStmt was a view).
-					ccc.Body = (&ast.BlockStmt{List: ccc.Body}).List
+					// Keep the wrapper: hoistNestedMRInBlock writes
+					// its output to the block it is given, so the
+					// hoisted temps must be read back from this same
+					// block. (A fresh wrapper here would discard them
+					// while the rewritten expressions still reference
+					// the temps — REVIEW-2026-11-02-15 F1.)
+					b := &ast.BlockStmt{List: ccc.Body}
+					hoistNestedMRInBlock(b, specByName, counter)
+					ccc.Body = b.List
+				}
+			}
+		}
+		return stmt
+	case *ast.TypeSwitchStmt:
+		if stmt.Init != nil {
+			var p []ast.Stmt
+			stmt.Init = hoistNestedMRInStmt(stmt.Init, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Assign != nil {
+			var p []ast.Stmt
+			stmt.Assign = hoistNestedMRInStmt(stmt.Assign, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Body != nil {
+			for _, cc := range stmt.Body.List {
+				if ccc, ok := cc.(*ast.CaseClause); ok {
+					b := &ast.BlockStmt{List: ccc.Body}
+					hoistNestedMRInBlock(b, specByName, counter)
+					ccc.Body = b.List
+				}
+			}
+		}
+		return stmt
+	case *ast.SelectStmt:
+		if stmt.Body != nil {
+			for _, cc := range stmt.Body.List {
+				if ccc, ok := cc.(*ast.CommClause); ok {
+					if ccc.Comm != nil {
+						var p []ast.Stmt
+						ccc.Comm = hoistNestedMRInStmt(ccc.Comm, specByName, counter, &p)
+						// Comm expressions are evaluated once, in
+						// source order, on entering the select, so
+						// temps hoisted out of a comm clause bubble
+						// before the whole select, in clause order.
+						*pre = append(*pre, p...)
+					}
+					b := &ast.BlockStmt{List: ccc.Body}
+					hoistNestedMRInBlock(b, specByName, counter)
+					ccc.Body = b.List
+				}
+			}
+		}
+		return stmt
+	case *ast.LabeledStmt:
+		var p []ast.Stmt
+		stmt.Stmt = hoistNestedMRInStmt(stmt.Stmt, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		return stmt
+	case *ast.SendStmt:
+		var p []ast.Stmt
+		stmt.Chan = hoistNestedMRExpr(stmt.Chan, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		var p2 []ast.Stmt
+		stmt.Value = hoistNestedMRExpr(stmt.Value, specByName, counter, &p2)
+		*pre = append(*pre, p2...)
+		return stmt
+	case *ast.DeclStmt:
+		if gd, ok := stmt.Decl.(*ast.GenDecl); ok && gd.Tok == token.VAR {
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, e := range vs.Values {
+					// Skip direct MR calls (the export desugar
+					// handles multi-value declarations); hoist only
+					// nested ones, mirroring AssignStmt.
+					if call, ok := unparen(e).(*ast.CallExpr); ok {
+						if id, ok := call.Fun.(*ast.Ident); ok && specByName[id.Name] != nil {
+							continue
+						}
+					}
+					var p []ast.Stmt
+					vs.Values[i] = hoistNestedMRExpr(e, specByName, counter, &p)
+					*pre = append(*pre, p...)
 				}
 			}
 		}
