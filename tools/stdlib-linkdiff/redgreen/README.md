@@ -1,7 +1,8 @@
 # redgreen/ — frozen red-green evidence (2026-10-06)
 
 These four files are committed evidence, not inputs: nothing reads them
-(no Makefile, workflow, script, or test references this directory).
+(no Makefile, workflow, script, or test *reads* this directory;
+`main_test.go` cites it in comments as evidence only).
 
 - `green.log`, `green-rerun.log` — the green leg: `go test` for
   `graalgo/tools/stdlib-linkdiff` passing.

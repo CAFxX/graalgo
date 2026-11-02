@@ -40,9 +40,31 @@ else
 fi
 
 echo "=== Verifying v2 still builds ==="
-GO_BIN="${GO:-$HOME/tools/go/bin/go}"
-[ -x "$GO_BIN" ] || GO_BIN=go
+# A GO env value that is not executable is a configuration error, not a
+# reason to silently fall back to PATH go (which may be a different
+# toolchain): fail loudly. Only when GO is unset do we fall back from
+# the pinned path to PATH go.
+if [ -n "${GO:-}" ]; then
+  GO_BIN="$GO"
+  if [ ! -x "$GO_BIN" ]; then
+    echo "merge-master.sh: GO='$GO' is not executable; refusing to fall back to PATH go" >&2
+    exit 1
+  fi
+else
+  GO_BIN="$HOME/tools/go/bin/go"
+  [ -x "$GO_BIN" ] || GO_BIN=go
+fi
 cd internal/frontend/v2
-nice -n 10 "$GO_BIN" test ./... 2>&1 | tail -5
+# Capture the test exit code BEFORE the pipe: a pipeline's exit status is
+# tail's, so piping straight to tail would mask a go test failure.
+V2TEST_LOG="$(mktemp)"
+trap 'rm -f "$V2TEST_LOG"' EXIT INT TERM
+rc=0
+nice -n 10 "$GO_BIN" test ./... > "$V2TEST_LOG" 2>&1 || rc=$?
+tail -5 "$V2TEST_LOG"
+if [ "$rc" -ne 0 ]; then
+  echo "merge-master.sh: v2 tests FAILED (exit $rc; last 5 lines shown above)" >&2
+  exit "$rc"
+fi
 
 echo "=== Done. Log the merge in PROGRESS.md ==="
