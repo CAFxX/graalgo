@@ -81,6 +81,17 @@ func TestEmitNoRoot(t *testing.T) {
 	}
 }
 
+// TestEmitDirectoryOutput verifies the D0 fix: Emit must fail loudly
+// when the output path is an existing directory, never return nil while
+// no artifact exists at the requested path.
+func TestEmitDirectoryOutput(t *testing.T) {
+	dir := t.TempDir()
+	err := Emit(Artifact{OutputPath: dir, GraalgoRoot: "/x", WireJSON: []byte("{}")})
+	if err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Errorf("Emit with directory output = %v, want directory error", err)
+	}
+}
+
 func TestDefaultOutputName(t *testing.T) {
 	// Explicit -o wins.
 	if got, err := DefaultOutputName("custom", nil); err != nil || got != "custom" {

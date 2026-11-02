@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -39,10 +40,9 @@ func main() {
 	switch cmd {
 	case "help", "-h", "--help":
 		if len(args) > 0 {
-			helpFor(args[0])
-		} else {
-			usage()
+			os.Exit(helpFor(args[0]))
 		}
+		usage()
 		return
 	case "version", "-v", "--version":
 		fmt.Printf("graalgo version %s\n", version)
@@ -95,7 +95,7 @@ Use "graalgo help <command>" for more information about a command.
 `)
 }
 
-func helpFor(cmd string) {
+func helpFor(cmd string) int {
 	switch cmd {
 	case "run":
 		fmt.Printf(`usage: graalgo run [build flags] [package] [arguments...]
@@ -136,8 +136,11 @@ report likely mistakes.
 Format the Go source files in the named packages using gofmt.
 `)
 	default:
-		fmt.Printf("graalgo: unknown command %q\n", cmd)
+		fmt.Fprintf(os.Stderr, "graalgo: unknown command %q\n", cmd)
+		fmt.Fprintf(os.Stderr, "Run 'graalgo help' for usage.\n")
+		return 2
 	}
+	return 0
 }
 
 // findGraalgoRoot locates the graalgo installation root: the directory
@@ -236,6 +239,13 @@ func graalgoRunProgram(root string, args []string) int {
 // resolveFiles turns package/file arguments into a list of .go files.
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
+// Repeated files are deduplicated (first spelling wins), so
+// `graalgo vet . file.go` does not report every diagnostic twice.
+// Filesystem-looking operands that do not exist fail with "no such
+// file or directory"; anything else (a bare word, an import path, a
+// pattern) fails with an explicit unsupported-operand error instead
+// of a misleading filesystem error, since resolveFiles only
+// understands filesystem paths.
 func resolveFiles(args []string) ([]string, error) {
 	if len(args) == 0 {
 		matches, err := filepath.Glob("*.go")
@@ -248,6 +258,13 @@ func resolveFiles(args []string) ([]string, error) {
 		return matches, nil
 	}
 	var files []string
+	seen := map[string]bool{}
+	add := func(f string) {
+		if key := filepath.Clean(f); !seen[key] {
+			seen[key] = true
+			files = append(files, f)
+		}
+	}
 	for _, a := range args {
 		if a == "./..." {
 			return nil, fmt.Errorf("./... not yet supported")
@@ -257,20 +274,28 @@ func resolveFiles(args []string) ([]string, error) {
 			// Maybe a .go file that doesn't exist yet (typo) — let
 			// the backend report the error.
 			if filepath.Ext(a) == ".go" {
-				files = append(files, a)
+				add(a)
 				continue
 			}
-			return nil, fmt.Errorf("no such file or directory: %s", a)
+			if strings.Contains(a, "...") {
+				return nil, fmt.Errorf("package patterns are not supported: %s", a)
+			}
+			if strings.HasPrefix(a, "./") || strings.HasPrefix(a, "../") || strings.HasPrefix(a, "/") {
+				return nil, fmt.Errorf("no such file or directory: %s", a)
+			}
+			return nil, fmt.Errorf("package patterns and import paths are not supported: %s", a)
 		}
 		if fi.IsDir() {
 			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, matches...)
+			for _, m := range matches {
+				add(m)
+			}
 			continue
 		}
-		files = append(files, a)
+		add(a)
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no Go files matched")

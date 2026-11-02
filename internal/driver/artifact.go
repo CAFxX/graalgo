@@ -50,6 +50,15 @@ func Emit(a Artifact) error {
 	if a.GraalgoRoot == "" {
 		return fmt.Errorf("no graalgo root")
 	}
+	// A directory output is never a valid artifact path: `go build
+	// -o <dir>` would write inside the directory, and chmod on the
+	// directory would succeed, silently reporting success with no
+	// artifact at the requested path. Callers that want gc's
+	// "write inside the directory" behaviour must resolve the
+	// directory to a file path first (cmdBuild does).
+	if fi, err := os.Stat(a.OutputPath); err == nil && fi.IsDir() {
+		return fmt.Errorf("output path %s is a directory", a.OutputPath)
+	}
 
 	// Compress the JSON. Frontend output can be large (100MB+ for big
 	// programs); JSON compresses well with gzip.
@@ -99,6 +108,18 @@ func Emit(a Artifact) error {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("cannot compile artifact binary: %v\n%s", err, stderr.String())
+	}
+
+	// Verify the build actually produced a regular file at the
+	// requested path. `go build -o <dir>` writes inside the directory
+	// instead, and chmod on a directory succeeds — without this check
+	// Emit would return nil while no artifact exists at OutputPath.
+	fi, err := os.Stat(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot stat artifact output %s: %v", a.OutputPath, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("artifact output %s is not a regular file", a.OutputPath)
 	}
 
 	// go build sets the executable bit, but ensure it (umask-safe).

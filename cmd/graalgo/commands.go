@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,8 +108,11 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
+	// A build failure exits 1, like the file branch (via
+	// graalgoRunProgram) and like `go run` — not the backend's raw
+	// --check code.
 	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
-		return code
+		return 1
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
@@ -164,10 +170,23 @@ func parseBuildFlags(args []string) (buildFlags, error) {
 				return bf, err
 			}
 			bf.tags = v
-		case "-a", "-x", "-work", "-n":
-			// Accepted and ignored: -a (rebuild all) is a no-op without
-			// a build cache; -x/-work/-n are go-command diagnostics that
-			// have no meaning for the Truffle backend.
+		case "--":
+			// Flag terminator: everything after it is a package/file
+			// argument, even if it starts with "-".
+			bf.pkgs = append(bf.pkgs, args[i+1:]...)
+			return bf, nil
+		case "-n":
+			// -n is dry-run ("print the commands but do not run
+			// them"). Silently executing would do exactly what the
+			// user asked not to happen, so reject it loudly rather
+			// than accepting-and-ignoring it like the other
+			// diagnostics flags below.
+			return bf, fmt.Errorf("flag -n: dry-run mode is not supported")
+		case "-a", "-x", "-work":
+			// Accepted and ignored: -a (rebuild all) is a no-op
+			// without a build cache; -x/-work are go-command
+			// diagnostics that have no meaning for the Truffle
+			// backend (their output is not produced).
 		default:
 			return bf, fmt.Errorf("unknown flag %q", a)
 		}
@@ -213,6 +232,30 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
 		return 1
 	}
+	// A build emits an executable artifact, so the package must be a
+	// main package with a func main. `go build` on a library package
+	// produces no executable; graalgo rejects it loudly instead of
+	// emitting a launcher that can never be a library. (Files with
+	// syntax errors defer to the frontend gate below.)
+	if err := requireMainPackage(pkgFiles); err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 1
+	}
+	// Resolve the output path before the frontend gate so a bad -o
+	// (e.g. an existing directory) fails fast instead of after a
+	// full compile.
+	out, err := resolveDirectoryOutput(bf.output, bf.pkgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 2
+	}
+	if out == "" {
+		out, err = driver.DefaultOutputName("", bf.pkgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+			return 2
+		}
+	}
 	// Frontend gate: run the frontend once, capturing its output for the
 	// artifact. This both validates the program and produces the IR that
 	// the artifact embeds, so the artifact never re-runs the frontend.
@@ -234,11 +277,6 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: cannot read frontend output: %v\n", err)
 		return 1
 	}
-	out, err := driver.DefaultOutputName(bf.output, bf.pkgs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
-		return 2
-	}
 	if err := driver.Emit(driver.Artifact{
 		OutputPath:  out,
 		GraalgoRoot: root,
@@ -250,13 +288,69 @@ func cmdBuild(root string, args []string) int {
 	return 0
 }
 
+// resolveDirectoryOutput mirrors `go build`'s -o rule for an existing
+// directory: executables are written inside that directory under the
+// package's default name, not at the directory path itself. It returns
+// "" when no -o was given (the caller falls back to
+// DefaultOutputName). A non-directory -o passes through unchanged.
+func resolveDirectoryOutput(output string, pkgs []string) (string, error) {
+	if output == "" {
+		return "", nil
+	}
+	fi, err := os.Stat(output)
+	if err != nil {
+		// Nonexistent path: a plain file output (a missing parent
+		// directory fails later, at Emit, with the build error).
+		return output, nil
+	}
+	if !fi.IsDir() {
+		return output, nil
+	}
+	def, err := driver.DefaultOutputName("", pkgs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(output, def), nil
+}
+
+// requireMainPackage checks that files form a main package containing
+// func main. A nil return means "main package, or undecidable here"
+// (unparseable files are left for the frontend gate to report).
+func requireMainPackage(files []string) error {
+	fset := token.NewFileSet()
+	mainFound := false
+	for _, f := range files {
+		pf, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			return nil
+		}
+		if pf.Name.Name != "main" {
+			return fmt.Errorf("package %s is not a main package: graalgo build emits an executable artifact, use graalgo vet to check a library package", pf.Name.Name)
+		}
+		for _, d := range pf.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "main" {
+				mainFound = true
+			}
+		}
+	}
+	if !mainFound {
+		return fmt.Errorf("package main has no func main: graalgo build emits an executable artifact")
+	}
+	return nil
+}
+
 // cmdVet implements `graalgo vet [packages]`.
 //
 // Runs the frontend translation check (--check) over the named packages,
 // then runs the static analyzers in internal/vet and reports diagnostics
 // in the same style as `go vet`.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	operands, err := splitCommandArgs("vet", args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+		return 2
+	}
+	files, err := resolveFiles(operands)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
@@ -277,20 +371,44 @@ func cmdVet(root string, args []string) int {
 		return 1
 	}
 	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", d.Pos, d.Message)
 	}
 	if len(ds) > 0 {
 		return 1
 	}
-	fmt.Println("vet: no issues found")
 	return 0
+}
+
+// splitCommandArgs separates flag-like arguments from file/package
+// operands for commands that accept no flags (vet, fmt). A "--"
+// terminator ends flag scanning: everything after it is an operand.
+// Any other "-..." argument is a clear flag error, not a bogus
+// "no such file" path error from resolveFiles.
+func splitCommandArgs(cmd string, args []string) ([]string, error) {
+	var operands []string
+	for i, a := range args {
+		if a == "--" {
+			operands = append(operands, args[i+1:]...)
+			return operands, nil
+		}
+		if strings.HasPrefix(a, "-") && a != "-" {
+			return nil, fmt.Errorf("flag %s: graalgo %s does not accept flags", a, cmd)
+		}
+		operands = append(operands, a)
+	}
+	return operands, nil
 }
 
 // cmdFmt implements `graalgo fmt [packages]`.
 //
 // Formats the Go source files using gofmt from the stock toolchain.
 func cmdFmt(root string, args []string) int {
-	files, err := resolveFiles(args)
+	operands, err := splitCommandArgs("fmt", args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo fmt: %v\n", err)
+		return 2
+	}
+	files, err := resolveFiles(operands)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo fmt: %v\n", err)
 		return 1
