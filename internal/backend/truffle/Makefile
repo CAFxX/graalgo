@@ -89,7 +89,7 @@ P1_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
 # self-attack if deeper adversarial recursion lands.
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main test smoke smoke-test clean check
+.PHONY: all main test smoke smoke-test clean check javatest javatest-regen
 
 all: main
 
@@ -134,17 +134,29 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
 	touch $(OUT_TEST)/.built
 
-# placeholder grep gate (done-gate 5): fails on TODO/FIXME/stub markers in src,
-# plus the gofrontend check (gofmt/vet/tests/vendoring diff gate).
-check:
-	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
-		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
-	@echo "placeholder gate clean"
-	@echo "== debug-leftover grep gate (src/main only) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \
-		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
-	@echo "debug-leftover gate clean"
+# Java wire-format test (review 2026-11-02, R20): NodeFactoryTest lives under
+# internal/frontend/javatest/ — outside src/test/java, so the differential
+# Runner never picks it up. This target compiles it against the joint
+# runtime classes and runs it; it first verifies the goldens match the
+# current exporter (regen-goldens.sh --check), so a stale golden fails
+# loudly instead of testing an old wire format. Regenerate goldens with
+# `make javatest-regen` and commit the result.
+JAVATEST_DIR := ../../../internal/frontend/javatest
+JAVATEST_OUT := out/javatest-classes
+javatest: main $(GOFRONTEND)
+	$(JAVATEST_DIR)/regen-goldens.sh --check --gofrontend $(GOFRONTEND)
+	mkdir -p $(JAVATEST_OUT)
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(JAVATEST_OUT) $(JAVATEST_DIR)/NodeFactoryTest.java
+	$(JAVA) $(JAVA_FLAGS) -cp "$(JAVATEST_OUT):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" NodeFactoryTest $(JAVATEST_DIR)
+javatest-regen: $(GOFRONTEND)
+	$(JAVATEST_DIR)/regen-goldens.sh --gofrontend $(GOFRONTEND)
+
+# placeholder + debug-leftover grep gates (done-gate 5) live in the shared
+# ../check-gates.sh (no exclusions in this module); plus the gofrontend
+# check (gofmt/vet/tests/vendoring diff gate).
+# javatest is a prerequisite: the wire-format test is per-push CI via `make check`.
+check: javatest
+	$(CURDIR)/../check-gates.sh src
 	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="
 	cd $(GO_FRONTEND_DIR) && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh check
 

@@ -32,6 +32,11 @@ for the design.
 
 ## Master merge log
 
+- 2026-11-02 (lane H): `merge-master.sh` rewritten repo-relative — no more
+  hardcoded worktree path or `main-tree` remote; upstream remote is
+  `GRAALGO_UPSTREAM_REMOTE` (default `github`, else `origin`), Go is the
+  pinned toolchain (`GO` env, else `~/tools/go/bin/go`).
+
 - 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,
   PKG-011 cell identity, bug-038/041/042 fixes). Clean merge, no conflicts.
   Standing order: merge master at least hourly.

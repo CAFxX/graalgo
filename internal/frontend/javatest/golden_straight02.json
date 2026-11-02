@@ -2,7 +2,7 @@
   "frontend": "v1",
   "generator": {
     "tool": "gofrontend",
-    "version": "0.1.0",
+    "version": "0.7.0",
     "goroot": "go1.27.1"
   },
   "package": {
@@ -13,6 +13,14 @@
     "lang": "go1.27"
   },
   "types": [
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
     {
       "kind": "signature",
       "detail": {
@@ -40,100 +48,140 @@
   ],
   "objects": [
     {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
       "kind": "var",
       "name": "a",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "b",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "c",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "d",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "e",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "f",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "g",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "h",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "i",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "j",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "k",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "m",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "n",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "p",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "q",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "sum",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     }
   ],
   "funcs": [
@@ -163,9 +211,9 @@
                 "pos": {
                   "file": 0,
                   "line": 8,
-                  "col": 2,
-                  "off": 272,
-                  "len": 14
+                  "col": 6,
+                  "off": 276,
+                  "len": 10
                 },
                 "fields": {
                   "define": false,
@@ -173,9 +221,9 @@
                     "a"
                   ],
                   "objs": [
-                    0
+                    1
                   ],
-                  "type": 1,
+                  "type": 2,
                   "values": [
                     {
                       "kind": "basiclit",
@@ -188,7 +236,9 @@
                       },
                       "fields": {
                         "const": "20",
-                        "type": 1,
+                        "f32bits": 1101004800,
+                        "f64bits": 4626322717216342016,
+                        "type": 2,
                         "value": "20"
                       }
                     }
@@ -200,9 +250,9 @@
                 "pos": {
                   "file": 0,
                   "line": 9,
-                  "col": 2,
-                  "off": 288,
-                  "len": 9
+                  "col": 6,
+                  "off": 292,
+                  "len": 5
                 },
                 "fields": {
                   "define": false,
@@ -210,9 +260,9 @@
                     "b"
                   ],
                   "objs": [
-                    1
+                    2
                   ],
-                  "type": 1,
+                  "type": 2,
                   "values": []
                 }
               },
@@ -238,8 +288,8 @@
                       },
                       "fields": {
                         "name": "b",
-                        "obj": 1,
-                        "type": 1
+                        "obj": 2,
+                        "type": 2
                       }
                     }
                   ],
@@ -255,7 +305,7 @@
                       },
                       "fields": {
                         "op": "+",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -267,8 +317,8 @@
                           },
                           "fields": {
                             "name": "a",
-                            "obj": 0,
-                            "type": 1
+                            "obj": 1,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -282,7 +332,9 @@
                           },
                           "fields": {
                             "const": "22",
-                            "type": 1,
+                            "f32bits": 1102053376,
+                            "f64bits": 4626885667169763328,
+                            "type": 2,
                             "value": "22"
                           }
                         }
@@ -314,8 +366,8 @@
                     },
                     "fields": {
                       "name": "b",
-                      "obj": 1,
-                      "type": 1
+                      "obj": 2,
+                      "type": 2
                     }
                   }
                 }
@@ -342,8 +394,8 @@
                       },
                       "fields": {
                         "name": "b",
-                        "obj": 1,
-                        "type": 1
+                        "obj": 2,
+                        "type": 2
                       }
                     }
                   ],
@@ -359,7 +411,9 @@
                       },
                       "fields": {
                         "const": "1",
-                        "type": 1,
+                        "f32bits": 1065353216,
+                        "f64bits": 4607182418800017408,
+                        "type": 2,
                         "value": "1"
                       }
                     }
@@ -382,7 +436,7 @@
                     "c"
                   ],
                   "objs": [
-                    2
+                    3
                   ],
                   "type": null,
                   "values": [
@@ -397,7 +451,7 @@
                       },
                       "fields": {
                         "op": "*",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "paren",
                           "pos": {
@@ -408,7 +462,7 @@
                             "len": 7
                           },
                           "fields": {
-                            "type": 1,
+                            "type": 2,
                             "x": {
                               "kind": "binary",
                               "pos": {
@@ -420,7 +474,7 @@
                               },
                               "fields": {
                                 "op": "-",
-                                "type": 1,
+                                "type": 2,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -432,8 +486,8 @@
                                   },
                                   "fields": {
                                     "name": "b",
-                                    "obj": 1,
-                                    "type": 1
+                                    "obj": 2,
+                                    "type": 2
                                   }
                                 },
                                 "y": {
@@ -447,7 +501,9 @@
                                   },
                                   "fields": {
                                     "const": "2",
-                                    "type": 1,
+                                    "f32bits": 1073741824,
+                                    "f64bits": 4611686018427387904,
+                                    "type": 2,
                                     "value": "2"
                                   }
                                 }
@@ -466,7 +522,9 @@
                           },
                           "fields": {
                             "const": "2",
-                            "type": 1,
+                            "f32bits": 1073741824,
+                            "f64bits": 4611686018427387904,
+                            "type": 2,
                             "value": "2"
                           }
                         }
@@ -490,7 +548,7 @@
                     "d"
                   ],
                   "objs": [
-                    3
+                    4
                   ],
                   "type": null,
                   "values": [
@@ -505,7 +563,7 @@
                       },
                       "fields": {
                         "op": "-",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -517,8 +575,8 @@
                           },
                           "fields": {
                             "name": "c",
-                            "obj": 2,
-                            "type": 1
+                            "obj": 3,
+                            "type": 2
                           }
                         }
                       }
@@ -541,7 +599,7 @@
                     "e"
                   ],
                   "objs": [
-                    4
+                    5
                   ],
                   "type": null,
                   "values": [
@@ -556,7 +614,7 @@
                       },
                       "fields": {
                         "op": "/",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -568,12 +626,12 @@
                           },
                           "fields": {
                             "name": "d",
-                            "obj": 3,
-                            "type": 1
+                            "obj": 4,
+                            "type": 2
                           }
                         },
                         "y": {
-                          "kind": "unary",
+                          "kind": "basiclit",
                           "pos": {
                             "file": 0,
                             "line": 15,
@@ -582,23 +640,11 @@
                             "len": 2
                           },
                           "fields": {
-                            "op": "-",
-                            "type": 1,
-                            "x": {
-                              "kind": "basiclit",
-                              "pos": {
-                                "file": 0,
-                                "line": 15,
-                                "col": 12,
-                                "off": 361,
-                                "len": 1
-                              },
-                              "fields": {
-                                "const": "4",
-                                "type": 2,
-                                "value": "4"
-                              }
-                            }
+                            "const": "-4",
+                            "f32bits": -1065353216,
+                            "f64bits": -4607182418800017408,
+                            "type": 2,
+                            "value": ""
                           }
                         }
                       }
@@ -621,7 +667,7 @@
                     "f"
                   ],
                   "objs": [
-                    5
+                    6
                   ],
                   "type": null,
                   "values": [
@@ -636,7 +682,7 @@
                       },
                       "fields": {
                         "op": "%",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -648,8 +694,8 @@
                           },
                           "fields": {
                             "name": "e",
-                            "obj": 4,
-                            "type": 1
+                            "obj": 5,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -663,7 +709,9 @@
                           },
                           "fields": {
                             "const": "3",
-                            "type": 1,
+                            "f32bits": 1077936128,
+                            "f64bits": 4613937818241073152,
+                            "type": 2,
                             "value": "3"
                           }
                         }
@@ -687,7 +735,7 @@
                     "g"
                   ],
                   "objs": [
-                    6
+                    7
                   ],
                   "type": null,
                   "values": [
@@ -702,7 +750,7 @@
                       },
                       "fields": {
                         "op": "\u0026",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -714,8 +762,8 @@
                           },
                           "fields": {
                             "name": "f",
-                            "obj": 5,
-                            "type": 1
+                            "obj": 6,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -729,7 +777,9 @@
                           },
                           "fields": {
                             "const": "7",
-                            "type": 1,
+                            "f32bits": 1088421888,
+                            "f64bits": 4619567317775286272,
+                            "type": 2,
                             "value": "7"
                           }
                         }
@@ -753,7 +803,7 @@
                     "h"
                   ],
                   "objs": [
-                    7
+                    8
                   ],
                   "type": null,
                   "values": [
@@ -768,7 +818,7 @@
                       },
                       "fields": {
                         "op": "|",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -780,8 +830,8 @@
                           },
                           "fields": {
                             "name": "g",
-                            "obj": 6,
-                            "type": 1
+                            "obj": 7,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -795,7 +845,9 @@
                           },
                           "fields": {
                             "const": "8",
-                            "type": 1,
+                            "f32bits": 1090519040,
+                            "f64bits": 4620693217682128896,
+                            "type": 2,
                             "value": "8"
                           }
                         }
@@ -819,7 +871,7 @@
                     "i"
                   ],
                   "objs": [
-                    8
+                    9
                   ],
                   "type": null,
                   "values": [
@@ -834,7 +886,7 @@
                       },
                       "fields": {
                         "op": "^",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -846,8 +898,8 @@
                           },
                           "fields": {
                             "name": "h",
-                            "obj": 7,
-                            "type": 1
+                            "obj": 8,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -861,7 +913,9 @@
                           },
                           "fields": {
                             "const": "3",
-                            "type": 1,
+                            "f32bits": 1077936128,
+                            "f64bits": 4613937818241073152,
+                            "type": 2,
                             "value": "3"
                           }
                         }
@@ -885,7 +939,7 @@
                     "j"
                   ],
                   "objs": [
-                    9
+                    10
                   ],
                   "type": null,
                   "values": [
@@ -900,7 +954,7 @@
                       },
                       "fields": {
                         "op": "\u003c\u003c",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -912,8 +966,8 @@
                           },
                           "fields": {
                             "name": "i",
-                            "obj": 8,
-                            "type": 1
+                            "obj": 9,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -927,7 +981,9 @@
                           },
                           "fields": {
                             "const": "2",
-                            "type": 2,
+                            "f32bits": 1073741824,
+                            "f64bits": 4611686018427387904,
+                            "type": 3,
                             "value": "2"
                           }
                         }
@@ -951,7 +1007,7 @@
                     "k"
                   ],
                   "objs": [
-                    10
+                    11
                   ],
                   "type": null,
                   "values": [
@@ -966,7 +1022,7 @@
                       },
                       "fields": {
                         "op": "\u003e\u003e",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -978,8 +1034,8 @@
                           },
                           "fields": {
                             "name": "j",
-                            "obj": 9,
-                            "type": 1
+                            "obj": 10,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -993,7 +1049,9 @@
                           },
                           "fields": {
                             "const": "1",
-                            "type": 2,
+                            "f32bits": 1065353216,
+                            "f64bits": 4607182418800017408,
+                            "type": 3,
                             "value": "1"
                           }
                         }
@@ -1017,7 +1075,7 @@
                     "m"
                   ],
                   "objs": [
-                    11
+                    12
                   ],
                   "type": null,
                   "values": [
@@ -1032,7 +1090,7 @@
                       },
                       "fields": {
                         "op": "^",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -1044,8 +1102,8 @@
                           },
                           "fields": {
                             "name": "k",
-                            "obj": 10,
-                            "type": 1
+                            "obj": 11,
+                            "type": 2
                           }
                         }
                       }
@@ -1068,7 +1126,7 @@
                     "n"
                   ],
                   "objs": [
-                    12
+                    13
                   ],
                   "type": null,
                   "values": [
@@ -1083,7 +1141,7 @@
                       },
                       "fields": {
                         "op": "\u0026^",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -1095,8 +1153,8 @@
                           },
                           "fields": {
                             "name": "k",
-                            "obj": 10,
-                            "type": 1
+                            "obj": 11,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -1110,7 +1168,9 @@
                           },
                           "fields": {
                             "const": "15",
-                            "type": 1,
+                            "f32bits": 1097859072,
+                            "f64bits": 4624633867356078080,
+                            "type": 2,
                             "value": "15"
                           }
                         }
@@ -1134,7 +1194,7 @@
                     "p"
                   ],
                   "objs": [
-                    13
+                    14
                   ],
                   "type": null,
                   "values": [
@@ -1149,7 +1209,7 @@
                       },
                       "fields": {
                         "op": "+",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -1161,8 +1221,8 @@
                           },
                           "fields": {
                             "name": "n",
-                            "obj": 12,
-                            "type": 1
+                            "obj": 13,
+                            "type": 2
                           }
                         }
                       }
@@ -1185,7 +1245,7 @@
                     "q"
                   ],
                   "objs": [
-                    14
+                    15
                   ],
                   "type": null,
                   "values": [
@@ -1200,8 +1260,8 @@
                       },
                       "fields": {
                         "name": "p",
-                        "obj": 13,
-                        "type": 1
+                        "obj": 14,
+                        "type": 2
                       }
                     }
                   ]
@@ -1229,8 +1289,8 @@
                       },
                       "fields": {
                         "name": "q",
-                        "obj": 14,
-                        "type": 1
+                        "obj": 15,
+                        "type": 2
                       }
                     }
                   ],
@@ -1246,7 +1306,9 @@
                       },
                       "fields": {
                         "const": "1",
-                        "type": 1,
+                        "f32bits": 1065353216,
+                        "f64bits": 4607182418800017408,
+                        "type": 2,
                         "value": "1"
                       }
                     }
@@ -1269,7 +1331,7 @@
                     "sum"
                   ],
                   "objs": [
-                    15
+                    16
                   ],
                   "type": null,
                   "values": [
@@ -1284,7 +1346,7 @@
                       },
                       "fields": {
                         "op": "+",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "binary",
                           "pos": {
@@ -1296,7 +1358,7 @@
                           },
                           "fields": {
                             "op": "+",
-                            "type": 1,
+                            "type": 2,
                             "x": {
                               "kind": "binary",
                               "pos": {
@@ -1308,7 +1370,7 @@
                               },
                               "fields": {
                                 "op": "+",
-                                "type": 1,
+                                "type": 2,
                                 "x": {
                                   "kind": "binary",
                                   "pos": {
@@ -1320,7 +1382,7 @@
                                   },
                                   "fields": {
                                     "op": "+",
-                                    "type": 1,
+                                    "type": 2,
                                     "x": {
                                       "kind": "binary",
                                       "pos": {
@@ -1332,7 +1394,7 @@
                                       },
                                       "fields": {
                                         "op": "+",
-                                        "type": 1,
+                                        "type": 2,
                                         "x": {
                                           "kind": "binary",
                                           "pos": {
@@ -1344,7 +1406,7 @@
                                           },
                                           "fields": {
                                             "op": "+",
-                                            "type": 1,
+                                            "type": 2,
                                             "x": {
                                               "kind": "binary",
                                               "pos": {
@@ -1356,7 +1418,7 @@
                                               },
                                               "fields": {
                                                 "op": "+",
-                                                "type": 1,
+                                                "type": 2,
                                                 "x": {
                                                   "kind": "binary",
                                                   "pos": {
@@ -1368,7 +1430,7 @@
                                                   },
                                                   "fields": {
                                                     "op": "+",
-                                                    "type": 1,
+                                                    "type": 2,
                                                     "x": {
                                                       "kind": "binary",
                                                       "pos": {
@@ -1380,7 +1442,7 @@
                                                       },
                                                       "fields": {
                                                         "op": "+",
-                                                        "type": 1,
+                                                        "type": 2,
                                                         "x": {
                                                           "kind": "binary",
                                                           "pos": {
@@ -1392,7 +1454,7 @@
                                                           },
                                                           "fields": {
                                                             "op": "+",
-                                                            "type": 1,
+                                                            "type": 2,
                                                             "x": {
                                                               "kind": "binary",
                                                               "pos": {
@@ -1404,7 +1466,7 @@
                                                               },
                                                               "fields": {
                                                                 "op": "+",
-                                                                "type": 1,
+                                                                "type": 2,
                                                                 "x": {
                                                                   "kind": "binary",
                                                                   "pos": {
@@ -1416,7 +1478,7 @@
                                                                   },
                                                                   "fields": {
                                                                     "op": "+",
-                                                                    "type": 1,
+                                                                    "type": 2,
                                                                     "x": {
                                                                       "kind": "binary",
                                                                       "pos": {
@@ -1428,7 +1490,7 @@
                                                                       },
                                                                       "fields": {
                                                                         "op": "+",
-                                                                        "type": 1,
+                                                                        "type": 2,
                                                                         "x": {
                                                                           "kind": "binary",
                                                                           "pos": {
@@ -1440,7 +1502,7 @@
                                                                           },
                                                                           "fields": {
                                                                             "op": "+",
-                                                                            "type": 1,
+                                                                            "type": 2,
                                                                             "x": {
                                                                               "kind": "ident",
                                                                               "pos": {
@@ -1452,8 +1514,8 @@
                                                                               },
                                                                               "fields": {
                                                                                 "name": "a",
-                                                                                "obj": 0,
-                                                                                "type": 1
+                                                                                "obj": 1,
+                                                                                "type": 2
                                                                               }
                                                                             },
                                                                             "y": {
@@ -1467,8 +1529,8 @@
                                                                               },
                                                                               "fields": {
                                                                                 "name": "b",
-                                                                                "obj": 1,
-                                                                                "type": 1
+                                                                                "obj": 2,
+                                                                                "type": 2
                                                                               }
                                                                             }
                                                                           }
@@ -1484,8 +1546,8 @@
                                                                           },
                                                                           "fields": {
                                                                             "name": "c",
-                                                                            "obj": 2,
-                                                                            "type": 1
+                                                                            "obj": 3,
+                                                                            "type": 2
                                                                           }
                                                                         }
                                                                       }
@@ -1501,8 +1563,8 @@
                                                                       },
                                                                       "fields": {
                                                                         "name": "d",
-                                                                        "obj": 3,
-                                                                        "type": 1
+                                                                        "obj": 4,
+                                                                        "type": 2
                                                                       }
                                                                     }
                                                                   }
@@ -1518,8 +1580,8 @@
                                                                   },
                                                                   "fields": {
                                                                     "name": "e",
-                                                                    "obj": 4,
-                                                                    "type": 1
+                                                                    "obj": 5,
+                                                                    "type": 2
                                                                   }
                                                                 }
                                                               }
@@ -1535,8 +1597,8 @@
                                                               },
                                                               "fields": {
                                                                 "name": "f",
-                                                                "obj": 5,
-                                                                "type": 1
+                                                                "obj": 6,
+                                                                "type": 2
                                                               }
                                                             }
                                                           }
@@ -1552,8 +1614,8 @@
                                                           },
                                                           "fields": {
                                                             "name": "g",
-                                                            "obj": 6,
-                                                            "type": 1
+                                                            "obj": 7,
+                                                            "type": 2
                                                           }
                                                         }
                                                       }
@@ -1569,8 +1631,8 @@
                                                       },
                                                       "fields": {
                                                         "name": "h",
-                                                        "obj": 7,
-                                                        "type": 1
+                                                        "obj": 8,
+                                                        "type": 2
                                                       }
                                                     }
                                                   }
@@ -1586,8 +1648,8 @@
                                                   },
                                                   "fields": {
                                                     "name": "i",
-                                                    "obj": 8,
-                                                    "type": 1
+                                                    "obj": 9,
+                                                    "type": 2
                                                   }
                                                 }
                                               }
@@ -1603,8 +1665,8 @@
                                               },
                                               "fields": {
                                                 "name": "j",
-                                                "obj": 9,
-                                                "type": 1
+                                                "obj": 10,
+                                                "type": 2
                                               }
                                             }
                                           }
@@ -1620,8 +1682,8 @@
                                           },
                                           "fields": {
                                             "name": "k",
-                                            "obj": 10,
-                                            "type": 1
+                                            "obj": 11,
+                                            "type": 2
                                           }
                                         }
                                       }
@@ -1637,8 +1699,8 @@
                                       },
                                       "fields": {
                                         "name": "m",
-                                        "obj": 11,
-                                        "type": 1
+                                        "obj": 12,
+                                        "type": 2
                                       }
                                     }
                                   }
@@ -1654,8 +1716,8 @@
                                   },
                                   "fields": {
                                     "name": "n",
-                                    "obj": 12,
-                                    "type": 1
+                                    "obj": 13,
+                                    "type": 2
                                   }
                                 }
                               }
@@ -1671,8 +1733,8 @@
                               },
                               "fields": {
                                 "name": "p",
-                                "obj": 13,
-                                "type": 1
+                                "obj": 14,
+                                "type": 2
                               }
                             }
                           }
@@ -1688,8 +1750,8 @@
                           },
                           "fields": {
                             "name": "q",
-                            "obj": 14,
-                            "type": 1
+                            "obj": 15,
+                            "type": 2
                           }
                         }
                       }
@@ -1719,8 +1781,8 @@
                       },
                       "fields": {
                         "name": "sum",
-                        "obj": 15,
-                        "type": 1
+                        "obj": 16,
+                        "type": 2
                       }
                     }
                   ],
@@ -1736,8 +1798,8 @@
                       },
                       "fields": {
                         "name": "sum",
-                        "obj": 15,
-                        "type": 1
+                        "obj": 16,
+                        "type": 2
                       }
                     }
                   ],
@@ -1779,14 +1841,14 @@
                       },
                       "fields": {
                         "name": "sum",
-                        "obj": 15,
-                        "type": 1
+                        "obj": 16,
+                        "type": 2
                       }
                     }
                   ],
                   "rhs": [
                     {
-                      "kind": "unary",
+                      "kind": "basiclit",
                       "pos": {
                         "file": 0,
                         "line": 30,
@@ -1795,23 +1857,11 @@
                         "len": 2
                       },
                       "fields": {
-                        "op": "-",
-                        "type": 1,
-                        "x": {
-                          "kind": "basiclit",
-                          "pos": {
-                            "file": 0,
-                            "line": 30,
-                            "col": 9,
-                            "off": 634,
-                            "len": 1
-                          },
-                          "fields": {
-                            "const": "1",
-                            "type": 2,
-                            "value": "1"
-                          }
-                        }
+                        "const": "-1",
+                        "f32bits": -1082130432,
+                        "f64bits": -4616189618054758400,
+                        "type": 2,
+                        "value": ""
                       }
                     }
                   ],
@@ -1822,9 +1872,12 @@
           }
         },
         "name": "main",
+        "obj": 0,
         "params": [],
-        "sig": 0
+        "pkgpath": "main",
+        "sig": 1
       }
     }
-  ]
+  ],
+  "globals": []
 }

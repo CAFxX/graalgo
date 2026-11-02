@@ -21,3 +21,7 @@ test/differential/diffharness
 tools/fuzz/work/
 .gocache/
 .tmp/
+
+# generated differential run outputs (test/differential/run.sh OUTDIR):
+# mutants, reports, logs — never source (run.sh regenerates them)
+test/differential/test-results/

@@ -128,14 +128,16 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
 check: main $(OUT_TEST)/.built
-	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
-		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
-	@echo "placeholder gate clean"
-	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
-		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
-	@echo "debug-leftover gate clean"
+	$(CURDIR)/../check-gates.sh src \
+		--debug-exclude 'src/main/java/graalgo/launcher/Main.java' \
+		--debug-exclude 'src/main/java/graalgo/sched/launcher/SchedMain.java' \
+		--debug-exclude 'src/main/java/graalgo/sched/SchedulerCore.java' \
+		--debug-exclude 'src/main/java/graalgo/sched/Drainer.java' \
+		--debug-exclude 'src/main/java/graalgo/runtime/TimerHeap.java' \
+		--debug-exclude 'src/main/java/graalgo/runtime/GcInterop.java' \
+		--debug-exclude 'src/main/java/graalgo/sched/SchedTrace.java' \
+		--debug-exclude 'src/main/java/graalgo/sched/launcher/GcTrace.java' \
+		--debug-exclude 'src/main/java/graalgo/sched/audit/PinAudit.java'
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3; updated P3-M9) =="
 	@# P3-M9: the netpoller was re-integrated (phase3 graalgo.p3net.GoNetpoll), so the
 	@# P2-M3 deletion premise no longer holds. This disjunct now guards against

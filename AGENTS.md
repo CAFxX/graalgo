@@ -65,11 +65,10 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
 - Fixes are **structural, never name-keyed**: fix the mechanism, never
   special-case a package, symbol, or test name. A fix that only works for
   the failing case is not a fix.
-- **Upstream Go is never modified.** [stdlib/patches/](stdlib/patches/)
-  holds minimal diffs against upstream sources when a package cannot
-  compile unmodified — the fix still goes into graalgo, with the patch
-  documenting what unblocks the real sources (see
-  [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) §Principles).
+- **Upstream Go is never modified.** Fixes go into graalgo, never into
+  vendored upstream sources (see
+  [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) §Principles; no patch
+  directory exists — zero patches are currently needed).
 - Synthetic stdlib packages are honest workarounds, not destinations: each
   implementation (in [internal/frontend/](internal/frontend/) as `synth_*.go`)
   states why it is synthetic and what root-cause fix retires it. The full

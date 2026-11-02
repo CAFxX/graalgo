@@ -34,10 +34,12 @@
 //
 // Omitted (io and reflect are not in M7 scope — NOT OK per the wave-1
 // import rules, so the exact gc signatures cannot even be declared):
-//   func Read(r io.Reader, order ByteOrder, data any) error
-//   func Write(w io.Writer, order ByteOrder, data any) error
-//   func ReadUvarint(r io.ByteReader) (uint64, error)
-//   func ReadVarint(r io.ByteReader) (int64, error)
+//
+//	func Read(r io.Reader, order ByteOrder, data any) error
+//	func Write(w io.Writer, order ByteOrder, data any) error
+//	func ReadUvarint(r io.ByteReader) (uint64, error)
+//	func ReadVarint(r io.ByteReader) (int64, error)
+//
 // Re-test trigger: when io lands (P3-M8), declare these with exact gc
 // signatures and implement them over the synthetic core. This omission
 // is deliberate and loud — never silent (the p3frontend drift test

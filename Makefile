@@ -17,8 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#   `make all` = generate + build + snapshot-check + check + test-v2
+#                + test-p3frontend + test-ci + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -31,6 +31,9 @@
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
+#     test-v2   frontend v2 module suite (parser/checker/emitter/encoder)
+#     test-p3frontend
+#               p3frontend module suite (importer/loader + drift tests)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -119,7 +122,7 @@ gen-synth:
 # Force-regenerate the gofrontend binary and overlay.json from the
 # vendored frontend sources (internal/frontend/*.go + internal/frontend/go overlay).
 generate: gen-synth
-	cd internal/frontend && ./build.sh build
+	cd internal/frontend && GO="$(GO)" ./build.sh build
 
 build:
 	$(MAKE) -C internal/backend/truffle main
@@ -136,6 +139,14 @@ check:
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
+
+# Dev-tool smoke tests (tools/fuzz + tools/mutation unit/smoke tests).
+# Not per-push CI: the tools have no backend dependency in their smoke
+# paths, and the nightly fuzz-soak workflow runs this target (Layer 4),
+# so a broken tool fails there instead of on every push.
+tools-smoke:
+	cd tools/fuzz && GOTOOLCHAIN=local $(GO) test ./...
+	cd tools/mutation && GOTOOLCHAIN=local $(GO) test ./...
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
@@ -206,16 +217,19 @@ test-v2:
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
-#   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
+#   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes);
+#     exits 1 if ANY package fails (per-package verdicts in tools/gate1/.tmp/*/verdict.txt)
 #   make gate1 PKG=foo — single package trial
 GATE1_PKGS ?= strconv errors sort strings bytes
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@fail=0; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || { echo "gate1 $$pkg FAILED"; fail=1; }; \
+	done; \
+	if [ "$$fail" -ne 0 ]; then echo "Gate 1 pilot FAILED. See tools/gate1/.tmp/*/verdict.txt"; exit 1; fi
 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build
@@ -237,7 +251,7 @@ test: build
 # [test/snapshots/README.md](test/snapshots/README.md) for the format.
 #
 # Backend: the product launcher P3SyncMain via
-# [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
+# [test/differential/backends-p3.json](test/differential/backends-p3.json)
 # (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
 # channel/scheduler support, so recording against it enshrines build
 # failures as the baseline and leaves P3SyncMain regressions invisible to
@@ -269,7 +283,7 @@ SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 # Override with `make snapshot-check SNAPSHOT_JOBS=N`.
 SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
 # The diffharness resolves the graalgo backend launcher as
-# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
+# ${PHASE1_DIR}/graalgo-run (see test/differential/backends.json); the
 # product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
 # Both wrappers now live in internal/backend/.
 snapshot: build

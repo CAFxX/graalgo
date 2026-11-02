@@ -2,7 +2,7 @@
   "frontend": "v2",
   "generator": {
     "tool": "gofrontend",
-    "version": "0.1.0",
+    "version": "0.7.0",
     "goroot": "go1.27.1"
   },
   "package": {
@@ -22,6 +22,14 @@
       }
     },
     {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
       "kind": "basic",
       "detail": {
         "class": "int",
@@ -32,22 +40,36 @@
   ],
   "objects": [
     {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
       "kind": "var",
       "name": "x",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "y",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     },
     {
       "kind": "var",
       "name": "z",
-      "type": 1,
-      "param": false
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
     }
   ],
   "funcs": [
@@ -87,7 +109,7 @@
                     "x"
                   ],
                   "objs": [
-                    0
+                    1
                   ],
                   "type": null,
                   "values": [
@@ -102,7 +124,9 @@
                       },
                       "fields": {
                         "const": "6",
-                        "type": 1,
+                        "f32bits": 1086324736,
+                        "f64bits": 4618441417868443648,
+                        "type": 2,
                         "value": "6"
                       }
                     }
@@ -124,7 +148,7 @@
                     "y"
                   ],
                   "objs": [
-                    1
+                    2
                   ],
                   "type": null,
                   "values": [
@@ -139,7 +163,7 @@
                       },
                       "fields": {
                         "op": "+",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -151,8 +175,8 @@
                           },
                           "fields": {
                             "name": "x",
-                            "obj": 0,
-                            "type": 1
+                            "obj": 1,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -166,7 +190,9 @@
                           },
                           "fields": {
                             "const": "1",
-                            "type": 1,
+                            "f32bits": 1065353216,
+                            "f64bits": 4607182418800017408,
+                            "type": 2,
                             "value": "1"
                           }
                         }
@@ -190,7 +216,7 @@
                     "z"
                   ],
                   "objs": [
-                    2
+                    3
                   ],
                   "type": null,
                   "values": [
@@ -205,7 +231,7 @@
                       },
                       "fields": {
                         "op": "*",
-                        "type": 1,
+                        "type": 2,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -217,8 +243,8 @@
                           },
                           "fields": {
                             "name": "x",
-                            "obj": 0,
-                            "type": 1
+                            "obj": 1,
+                            "type": 2
                           }
                         },
                         "y": {
@@ -232,8 +258,8 @@
                           },
                           "fields": {
                             "name": "y",
-                            "obj": 1,
-                            "type": 1
+                            "obj": 2,
+                            "type": 2
                           }
                         }
                       }
@@ -263,8 +289,8 @@
                       },
                       "fields": {
                         "name": "z",
-                        "obj": 2,
-                        "type": 1
+                        "obj": 3,
+                        "type": 2
                       }
                     }
                   ],
@@ -280,8 +306,8 @@
                       },
                       "fields": {
                         "name": "z",
-                        "obj": 2,
-                        "type": 1
+                        "obj": 3,
+                        "type": 2
                       }
                     }
                   ],
@@ -292,9 +318,12 @@
           }
         },
         "name": "main",
+        "obj": 0,
         "params": [],
-        "sig": 0
+        "pkgpath": "main",
+        "sig": 1
       }
     }
-  ]
+  ],
+  "globals": []
 }

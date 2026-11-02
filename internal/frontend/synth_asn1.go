@@ -20,15 +20,17 @@
 //
 // Marshal/Unmarshal cover the DER subset implementable without
 // reflect, via type switches:
-//   Marshal: nil (error), bool, Flag, signed ints, []byte, string
-//     (PrintableString/UTF8String), BitString, ObjectIdentifier,
-//     Enumerated, RawValue, RawContent.
-//   Scalar types gc rejects without reflect (float32/64, complex64/128,
-//     uint..uintptr) return StructuralError{"unknown Go type: <T>"}
-//     exactly like gc, instead of panicking.
-//   Unmarshal: *RawValue (full TLV), *bool, *int..*int64, *[]byte,
-//     *string (Printable/UTF8/IA5/Numeric/T61/BMP strings), *BitString,
-//     *ObjectIdentifier, *Enumerated, *Flag.
+//
+//	Marshal: nil (error), bool, Flag, signed ints, []byte, string
+//	  (PrintableString/UTF8String), BitString, ObjectIdentifier,
+//	  Enumerated, RawValue, RawContent.
+//	Scalar types gc rejects without reflect (float32/64, complex64/128,
+//	  uint..uintptr) return StructuralError{"unknown Go type: <T>"}
+//	  exactly like gc, instead of panicking.
+//	Unmarshal: *RawValue (full TLV), *bool, *int..*int64, *[]byte,
+//	  *string (Printable/UTF8/IA5/Numeric/T61/BMP strings), *BitString,
+//	  *ObjectIdentifier, *Enumerated, *Flag.
+//
 // Structs, slices (other than []byte), maps, big.Int, time.Time and
 // named types need reflect (or math/big, or wall-clock decomposition)
 // and fail fast — fail fast, never silently. MarshalWithParams and

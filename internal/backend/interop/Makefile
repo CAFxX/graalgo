@@ -92,14 +92,9 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # contract, not a debug leftover. Any other System.out/err.println still
 # fails the gate.
 check: main $(OUT_TEST)/.built
-	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
-		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
-	@echo "placeholder gate clean"
-	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v -F 'System.err.println("fatal error: '; then \
-		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
-	@echo "debug-leftover gate clean"
+	$(CURDIR)/../check-gates.sh src \
+		--debug-exclude 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' \
+		--debug-exclude-fixed 'System.err.println("fatal error: '
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
 	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
 		GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \

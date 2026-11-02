@@ -12,10 +12,12 @@ on:
   push:
     paths:
       - 'internal/frontend/**'
+      - 'internal/backend/**'
       - 'test/differential/**'
   pull_request:
     paths:
       - 'internal/frontend/**'
+      - 'internal/backend/**'
       - 'test/differential/**'
   workflow_dispatch:
 

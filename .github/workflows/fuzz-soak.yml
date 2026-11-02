@@ -48,6 +48,11 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
+      - name: Dev-tool smoke tests (tools/fuzz + tools/mutation)
+        # Nightly-only by design: these tools are not per-push CI, but an
+        # untested, uninvoked tool rots silently (review 2026-11-02, P2-20).
+        run: make tools-smoke
+
       - name: Layer 4a — generative soak (seeded programs, differential)
         env:
           GO_BIN_DIR: "${{ github.workspace }}/.go-bin"

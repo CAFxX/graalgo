@@ -18,6 +18,7 @@ package main
 //   - internal/godebug: local shim pinning default values.
 //   - path.Join: local __urlPathJoin (lexical clean, no FS).
 //   - the badSetPath linkname is dropped (external back-compat hack).
+//
 // Cross-package multi-result calls (strconv.Atoi/ParseUint,
 // netip.ParseAddr) desugar via the existing tables (loud on failure).
 // Known D4-stub divergence: fmt.Errorf %w flattens (no wrap chain); the

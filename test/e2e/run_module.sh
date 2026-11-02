@@ -15,6 +15,11 @@
 #   TMPDIR    scratch (default <probe-dir>/.tmp, created)
 #
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
+#
+# NOTE (2026-11-02, lane H): NOT CI-gated. This script still targets the
+# retired phases/ backend layout (see test/e2e/README.md status) and must
+# be updated to internal/backend/graalgo-run before it runs again or
+# enters CI; wiring it in as-is would add a red job, not a gate.
 set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"

@@ -53,13 +53,20 @@ Related: [Makefile](../Makefile) (root build entry point),
       [VENDORING.md](../internal/frontend/VENDORING.md).
     - [javatest/](../internal/frontend/javatest/) — `NodeFactoryTest.java`
       plus `golden_*`/`bad*` fixtures (Java wire-format tests living under
-      the Go module dir).
-    - [tools/](../internal/frontend/tools/) — `probe/` and
-      `validate_frontend_v1.py` (wire-format validation).
-    - [parser/](../internal/frontend/parser/),
-      [types/](../internal/frontend/types/),
-      [desugar/](../internal/frontend/desugar/) — empty placeholders for the
-      planned package split (blocked by an exporter/desugar import cycle).
+      the Go module dir). Gated by `make -C internal/backend/truffle javatest`
+      (a `make check` prerequisite, hence per-push CI); goldens are regenerated
+      from the current exporter by
+      [`javatest/regen-goldens.sh`](../internal/frontend/javatest/regen-goldens.sh).
+    - [tools/](../internal/frontend/tools/) —
+      `validate_frontend_v1.py` (wire-format validation; the orphan `probe/`
+      scratch program was deleted 2026-11-02 — it asserted nothing).
+    - (Removed 2026-11-02: the `parser/`/`types/`/`desugar/` placeholder
+      dirs held only `.gitkeep` files. The old "blocked by an exporter/desugar
+      import cycle" claim was unverifiable as stated — exporter and desugar
+      live in the same `package main`, so no separate desugar package exists
+      to cycle with — and the v2 rewrite below already implements
+      parser → checker → emitter. Do not revive the v1 split without writing
+      down the actual cycle.)
     - [v2/](../internal/frontend/v2/) — separate module (own `go.mod`): the
       frontend v2 rewrite (parser → checker → emitter stages plus the
       Go→Java binary interface in
@@ -154,9 +161,6 @@ Related: [Makefile](../Makefile) (root build entry point),
     [`internal/frontend/gen_synth_adapt/`](../internal/frontend/gen_synth_adapt/).
     The full generator→output mapping lives in the `GENERATED_SYNTH` block in
     the [`Makefile`](../Makefile); CI fails on any drift.
-  - [patches/](../stdlib/patches/) — minimal diffs against upstream
-    [go/](https://go.dev/dl/) sources. Empty where the real sources compile
-    unmodified.
 - [test/](../test/) — organized by what each suite proves, not by which phase
   wrote it.
   - [corpus/](../test/corpus/) — differential corpus programs (moved here
@@ -164,8 +168,15 @@ Related: [Makefile](../Makefile) (root build entry point),
   - [differential/](../test/differential/) — the differential harness: run
     each corpus program under graalgo and under `gc`, byte-compare outputs.
     Moved here from `tools/diffharness/` (2026-10-13).
-  - [e2e/](../test/e2e/) — end-to-end: real published Go modules compiled
-    as-published (e.g. `github.com/google/uuid`), output matching `go run`.
+  - [differential/corpus/](../test/differential/corpus/) — the snapshot corpus
+    that `make snapshot`/`snapshot-check` actually records — distinct from
+    [corpus/](../test/corpus/) above (the differential corpus programs).
+  - [e2e/](../test/e2e/) — end-to-end: one pilot module compiled
+    as-published (`github.com/google/uuid`, 8 cases), output matching `go run`.
+    The harness ([`run_module.sh`](../test/e2e/run_module.sh)) is NOT gated: it still targets the retired
+    `phases/` backend layout (see [`test/e2e/README.md`](../test/e2e/README.md)
+    status) and must be
+    updated to the current backend before it runs again or enters CI.
   - [snapshots/](../test/snapshots/) — committed behavior snapshots
     (`go1.27.1.json`); `make snapshot-check` fails on drift. See
     [test/snapshots/README.md](../test/snapshots/README.md).
@@ -186,7 +197,7 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [tools/](../tools/) — developer tooling (not the product):
   [stdlib-fork/](../tools/stdlib-fork/) and
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
-  tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
+  tooling), [stdlib-vendor/](../tools/stdlib-vendor/) (stdlib vendoring), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
   [torture/](../tools/torture/) (scheduler torture),
@@ -274,10 +285,11 @@ new locations.
 - **Experiment logs (`hidden_files/`)** — per-run evidence belongs in commit
   messages (which are permanent and searchable), not in untracked scratch
   directories. Must never reappear (see [AGENTS.md](../AGENTS.md)).
-- **Vendored copies of upstream Go** —
-  [stdlib/patches/](../stdlib/patches/) holds *diffs* against upstream Go
-  sources, never forks of the sources themselves. Upstream Go is never
-  modified; fixes go into graalgo.
+- **Vendored copies of upstream Go** — upstream Go is never modified;
+  fixes go into graalgo, never into vendored sources and never as forks of
+  them. (No patch directory exists: zero patches are currently needed —
+  the real sources compile unmodified — and no patch-applying consumer
+  exists, so a future patch needs its consumer designed first.)
 - **Research-era working notes** — wave run logs, per-commit scratch,
   speculative drafts. Consolidated into [docs/arch/](../docs/arch/) and
   [docs/dev/](../docs/dev/), or deleted.

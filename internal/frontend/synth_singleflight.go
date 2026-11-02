@@ -16,6 +16,7 @@ package main
 //     naming the retest trigger (WS D: multi-result func-value
 //     invocation). They are never emitted (multi-result decls are
 //     skipped); call sites fail fast with the named M9 scope error.
+//
 // No M9 corpus program pins singleflight (it is net/http infrastructure);
 // the fail-fast is loud, never silent.
 const syntheticSingleflightSource = `package singleflight

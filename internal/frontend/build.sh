@@ -12,6 +12,20 @@
 set -eu
 cd "$(dirname "$0")"
 
+# Pinned toolchain (R24): Makefiles export GO (the pinned go1.27.1); the
+# truffle Makefile instead prepends the pinned dir to PATH. Honor GO when
+# it names an executable, then fail fast unless `go version` is go1.27.1:
+# a silently different toolchain would build a different gofrontend.
+if [ -n "${GO:-}" ] && [ -x "$GO" ]; then
+  PATH="$(dirname "$GO"):$PATH"
+  export PATH
+fi
+GO_VER="$(go version 2>/dev/null | awk '{print $3}')"
+if [ "$GO_VER" != "go1.27.1" ]; then
+  echo "build.sh: requires go1.27.1, found '${GO_VER:-none}' (set GO to the pinned toolchain)" >&2
+  exit 1
+fi
+
 GOROOT_DIR="$(go env GOROOT)"
 python3 - "$GOROOT_DIR" "$PWD/go" > overlay.json <<'EOF'
 import json, os, sys
@@ -36,9 +50,26 @@ case "${1:-build}" in
   vet)   exec go vet $OV . ;;
   test)  exec go test $OV . ;;
   check)
-    echo "== gofmt (excluding vendored tree) ==" >&2
-    if gofmt -l main.go export.go export_test.go | grep .; then
-      echo "gofmt: dirty files above" >&2; exit 1
+    echo "== gofmt (excluding vendored tree + generator-owned synth files) ==" >&2
+    # *.go matches only this directory, so the vendored ./go/ tree (a
+    # subdirectory) is never matched. Generator-owned synth files (the
+    # run_gen_synth.py outputs, listed mechanically below) keep the
+    # generator's formatting and are pinned by CI's git-diff drift gate,
+    # not by gofmt; every other top-level *.go file is gofmt-gated here.
+    # (The old gate checked exactly 3 files while claiming the whole-tree
+    # scope above. On the old tree 18 synth files were gofmt-dirty: 17
+    # hand-maintained sources, now gofmt-formatted, and 1 generator output
+    # (synth_compress_bzip2.go), which stays dirty and is excluded here.)
+    GEN_FILES="$(grep -o 'synth_[A-Za-z0-9_]*\.go' run_gen_synth.py | sort -u | tr '\n' ' ')"
+    DIRTY=""
+    for f in *.go; do
+      case " $GEN_FILES " in
+        *" $f "*) ;;
+        *) if [ -n "$(gofmt -l "$f" 2>/dev/null)" ]; then DIRTY="$DIRTY $f"; fi ;;
+      esac
+    done
+    if [ -n "$DIRTY" ]; then
+      echo "gofmt: dirty files:$DIRTY" >&2; exit 1
     fi
     echo "== go vet ==" >&2
     go vet $OV .

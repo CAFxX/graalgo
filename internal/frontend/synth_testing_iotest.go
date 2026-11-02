@@ -345,4 +345,3 @@ func NewReadLogger(prefix string, r io.Reader) io.Reader {
 }
 
 `
-

@@ -37,8 +37,10 @@ The short version:
 - [internal/](internal/) — the implementation: `frontend/` (Go source → IR),
   `ir/`, `backend/` (`truffle/`, `runtime/`, `interop/`), `driver/` (build
   orchestration).
-- [stdlib/](stdlib/) — stdlib support: `synthetic/` (documented
-  workarounds), `patches/` (minimal diffs vs upstream Go).
+- [stdlib/](stdlib/) — stdlib support: synthetic package implementations in
+  [internal/frontend/](internal/frontend/) (`synth_*.go`), vendoring in
+  [tools/stdlib-vendor/](tools/stdlib-vendor/); zero upstream patches
+  currently needed (no `patches/` dir — see [stdlib/README.md](stdlib/README.md)).
 - [test/](test/) — `corpus/`, `differential/` (run vs `gc`, byte-compare),
   `e2e/` (real published modules), `snapshots/` (behavior baselines).
 - [docs/](docs/) — `arch/`, `dev/`, `spec/`, and the map itself.
