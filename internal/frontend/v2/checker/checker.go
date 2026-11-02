@@ -13,6 +13,7 @@ import (
 	"go/importer"
 	"go/token"
 	"go/types"
+	"sort"
 )
 
 // Result is the output of stage 2.
@@ -56,9 +57,19 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 	// stdlib, not a synthetic copy.
 	imp := importer.Default()
 
+	// Deterministic file order: pkg.Files is a Go map, and ranging over
+	// it directly would make the order of reported diagnostics vary run
+	// to run for multi-file packages. Files are checked sorted by name,
+	// the same order the emitter visits them in, so diagnostics come out
+	// in a stable, reproducible order.
+	names := make([]string, 0, len(pkg.Files))
+	for name := range pkg.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	files := make([]*ast.File, 0, len(pkg.Files))
-	for _, f := range pkg.Files {
-		files = append(files, f)
+	for _, name := range names {
+		files = append(files, pkg.Files[name])
 	}
 
 	tconf := &types.Config{

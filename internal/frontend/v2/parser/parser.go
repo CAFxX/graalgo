@@ -26,8 +26,9 @@ type Result struct {
 }
 
 // ParseFiles parses the named Go source files, which must all declare the
-// same package. Each file is parsed independently with go/parser; the
-// resulting *ast.Files are assembled into one *ast.Package.
+// same package. It is the file-reading wrapper around ParseSources: files
+// are read from disk, then parsed by the same in-memory path, so the two
+// entry points cannot drift apart.
 func ParseFiles(filenames []string) (*Result, error) {
 	if len(filenames) == 0 {
 		return nil, fmt.Errorf("parser: no input files")
@@ -47,7 +48,7 @@ func ParseFiles(filenames []string) (*Result, error) {
 		sources[abs] = string(src)
 		absFiles = append(absFiles, abs)
 	}
-	pkg, err := parseSources(fset, sources)
+	pkg, err := ParseSources(fset, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +56,9 @@ func ParseFiles(filenames []string) (*Result, error) {
 }
 
 // ParseSources parses multiple in-memory sources as one package.
-// Each entry maps a filename to its source text.
+// Each entry maps a filename to its source text. This is the in-memory
+// entry point of stage 1 (used by ParseFiles above and by tests); it is
+// public API for embedders that already hold source text, not dead code.
 func ParseSources(fset *token.FileSet, sources map[string]string) (*ast.Package, error) {
 	return parseSources(fset, sources)
 }

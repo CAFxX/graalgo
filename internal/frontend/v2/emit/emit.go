@@ -62,7 +62,9 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// Emit order: types and objects are populated lazily as nodes are
 	// emitted (ids registered before description, so recursion works).
 	// We do two passes: first declare all top-level funcs and globals
-	// (assigning object ids), then emit bodies.
+	// (assigning object ids), then emit bodies and global declarations.
+	// A global initializer may reference a later global or function, so
+	// declaring everything first is what makes those references resolve.
 	//
 	// Deterministic emission order (V2-12): pkg.Files is a Go map, so
 	// ranging over it directly would make function order and type/object
@@ -70,23 +72,44 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// declarations sorted by source position, so the same package always
 	// produces the same document — a prerequisite for reproducible builds
 	// and snapshot testing.
-	decls := sortedFuncDecls(pkg)
+	decls := sortedTopDecls(pkg)
 
-	var funcs []any
-	for _, fd := range decls {
-		obj := e.info.Info.Defs[fd.Name]
-		if obj == nil {
-			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
+	for _, d := range decls {
+		switch decl := d.(type) {
+		case *ast.FuncDecl:
+			obj := e.info.Info.Defs[decl.Name]
+			if obj == nil {
+				return nil, fmt.Errorf("emit: no object for func %s", decl.Name.Name)
+			}
+			if _, err := e.declareObject(obj); err != nil {
+				return nil, err
+			}
+		case *ast.GenDecl:
+			if err := e.declareTopGenDecl(decl); err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("emit: unsupported top-level decl %T", d)
 		}
-		e.declareObject(obj)
 	}
 
-	for _, fd := range decls {
-		fn, err := e.emitFuncDecl(fd)
-		if err != nil {
-			return nil, err
+	var funcs []any
+	globals := []any{}
+	for _, d := range decls {
+		switch decl := d.(type) {
+		case *ast.FuncDecl:
+			fn, err := e.emitFuncDecl(decl)
+			if err != nil {
+				return nil, err
+			}
+			funcs = append(funcs, fn)
+		case *ast.GenDecl:
+			gs, err := e.emitTopGenDecl(decl)
+			if err != nil {
+				return nil, err
+			}
+			globals = append(globals, gs...)
 		}
-		funcs = append(funcs, fn)
 	}
 
 	baseNames := make([]string, len(e.files))
@@ -108,40 +131,33 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Types:   e.types,
 		Objects: e.objects,
 		Funcs:   funcs,
-		Globals: []any{},
+		Globals: globals,
 	}, nil
 }
 
-// sortedFuncDecls returns every top-level function declaration in the
-// package in deterministic order: files sorted by name, then declarations
-// sorted by source position. Non-function declarations are skipped, as in
-// the original emission loop. Sorting is structural — by filename and
-// token position — never keyed on any package, symbol, or test name.
-func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
+// sortedTopDecls returns every top-level declaration in the package in
+// deterministic order: files sorted by name, then declarations sorted by
+// source position (so interleaved funcs and GenDecls keep source order).
+// Sorting is structural — by filename and token position — never keyed on
+// any package, symbol, or test name.
+func sortedTopDecls(pkg *ast.Package) []ast.Decl {
 	names := make([]string, 0, len(pkg.Files))
 	for name := range pkg.Files {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	var decls []*ast.FuncDecl
+	var decls []ast.Decl
 	for _, name := range names {
 		file := pkg.Files[name]
-		var fds []*ast.FuncDecl
-		for _, d := range file.Decls {
-			fd, ok := d.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fds = append(fds, fd)
-		}
+		ds := append([]ast.Decl(nil), file.Decls...)
 		// Positions from one *ast.File share the same FileSet base, so
 		// token.Pos comparison is a total source-position order within the
 		// file. go/parser already produces Decls in source order; this sort
 		// states the contract explicitly instead of relying on that
 		// implementation detail.
-		sort.SliceStable(fds, func(i, j int) bool { return fds[i].Pos() < fds[j].Pos() })
-		decls = append(decls, fds...)
+		sort.SliceStable(ds, func(i, j int) bool { return ds[i].Pos() < ds[j].Pos() })
+		decls = append(decls, ds...)
 	}
 	return decls
 }
@@ -184,30 +200,48 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
-// declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+// declareParam assigns an object id for a function-scope variable
+// (parameter, result, or receiver).
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		// Roll back the reservation so a failed declaration leaves no
+		// nil hole in the object table.
+		delete(e.objIDs, obj)
+		e.objects = e.objects[:len(e.objects)-1]
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
-	typ := e.typeID(obj.Type())
+// describeObject describes one go/types object. Every object kind
+// go/types can produce has an explicit case; anything else is an error,
+// never a mislabelled "var" — a constant, type name, or package name
+// described as a variable would silently corrupt downstream dispatch.
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
+	// Not every object kind has a type: package names and labels do not.
+	// typeID(nil) would panic, so only resolve the type when one exists.
+	var typ any
+	if obj.Type() != nil {
+		typ = e.typeID(obj.Type())
+	}
 	switch o := obj.(type) {
 	case *types.Var:
 		return map[string]any{
@@ -215,20 +249,80 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any 
 			"name":  o.Name(),
 			"type":  typ,
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
 			"type": typ,
-		}
-	default:
-		return map[string]any{
-			"kind": "var",
+		}, nil
+	case *types.Const:
+		m := map[string]any{
+			"kind": "const",
 			"name": o.Name(),
 			"type": typ,
 		}
+		if o.Val() != nil {
+			m["value"] = o.Val().ExactString()
+		}
+		return m, nil
+	case *types.TypeName:
+		return map[string]any{
+			"kind": "type",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	case *types.PkgName:
+		m := map[string]any{
+			"kind": "package",
+			"name": o.Name(),
+			"type": typ,
+		}
+		if o.Imported() != nil {
+			m["path"] = o.Imported().Path()
+		}
+		return m, nil
+	case *types.Label:
+		return map[string]any{
+			"kind": "label",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	case *types.Nil:
+		return map[string]any{
+			"kind": "nil",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	case *types.Builtin:
+		return map[string]any{
+			"kind": "builtin",
+			"name": o.Name(),
+			"type": typ,
+		}, nil
+	default:
+		// Defensive only: go1.27's types.Object carries unexported
+		// methods (order/setType/setOrder/setParent/sameId), so no
+		// implementation outside go/types can reach this branch — but
+		// if a future toolchain ever opens the interface, an unknown
+		// kind must fail here rather than be mislabelled "var".
+		return nil, fmt.Errorf("emit: unsupported object %T (%s)", obj, obj.Name())
 	}
+}
+
+// declareMethodObject declares a method *types.Func object for a type
+// table entry. describeType has no error return (type ids are assigned
+// lazily throughout emission), so this helper is the one place where a
+// declaration failure inside type description surfaces. A *types.Func
+// always describes successfully — the Func case has no failure mode — so
+// an error here means an internal invariant broke, not that user input
+// was rejected; failing loudly beats emitting a dangling method entry.
+func (e *Emitter) declareMethodObject(obj *types.Func) int {
+	id, err := e.declareObject(obj)
+	if err != nil {
+		panic(fmt.Sprintf("emit: internal error describing method %s: %v", obj.Name(), err))
+	}
+	return id
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
@@ -318,12 +412,54 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			},
 		}
 	case *types.Named:
+		// The method set is what a backend dispatches on, so it must be
+		// populated, not empty. "methods" is the value method set;
+		// "ptrMethods" is the pointer-only remainder: methods callable
+		// via *T but not via T, identified precisely by a pointer
+		// receiver (value-receiver methods appear in both sets, so
+		// they are listed once, under "methods").
+		methods := []any{}
+		ms := types.NewMethodSet(tt)
+		for i := 0; i < ms.Len(); i++ {
+			m := ms.At(i)
+			fn, ok := m.Obj().(*types.Func)
+			if !ok {
+				continue
+			}
+			methods = append(methods, map[string]any{
+				"name": fn.Name(),
+				"obj":  e.declareMethodObject(fn),
+				"sig":  e.typeID(fn.Type()),
+			})
+		}
+		ptrMethods := []any{}
+		pms := types.NewMethodSet(types.NewPointer(tt))
+		for i := 0; i < pms.Len(); i++ {
+			m := pms.At(i)
+			fn, ok := m.Obj().(*types.Func)
+			if !ok {
+				continue
+			}
+			sig, ok := fn.Type().(*types.Signature)
+			if !ok || sig.Recv() == nil {
+				continue
+			}
+			if _, isPtr := sig.Recv().Type().(*types.Pointer); !isPtr {
+				continue
+			}
+			ptrMethods = append(ptrMethods, map[string]any{
+				"name": fn.Name(),
+				"obj":  e.declareMethodObject(fn),
+				"sig":  e.typeID(fn.Type()),
+			})
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
 				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				"methods":    methods,
+				"ptrMethods": ptrMethods,
 			},
 		}
 	case *types.Struct:
@@ -343,12 +479,33 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{"fields": fields},
 		}
 	case *types.Interface:
+		// Explicit methods only under "methods"; embedded interfaces
+		// (and type-set elements) under "embedded", so a backend can
+		// tell what this interface declares from what it inherits.
+		// "complete" reports whether the method set is fully described
+		// (false for interfaces still under construction, which the
+		// checker never hands the emitter — but a consumer must not
+		// assume completeness silently).
+		methods := []any{}
+		for i := 0; i < tt.NumExplicitMethods(); i++ {
+			m := tt.ExplicitMethod(i)
+			methods = append(methods, map[string]any{
+				"name": m.Name(),
+				"obj":  e.declareMethodObject(m),
+				"sig":  e.typeID(m.Type()),
+			})
+		}
+		embedded := []any{}
+		for i := 0; i < tt.NumEmbeddeds(); i++ {
+			embedded = append(embedded, e.typeID(tt.EmbeddedType(i)))
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"methods":  methods,
+				"embedded": embedded,
+				"complete": tt.IsMethodSet(),
 			},
 		}
 	default:

@@ -46,6 +46,6 @@ func main() {
 		os.Exit(2)
 	}
 	_ = token.NoPos
-	fmt.Printf("package %s: %d funcs, %d types, %d objects\n",
-		doc.Package["name"], len(doc.Funcs), len(doc.Types), len(doc.Objects))
+	fmt.Printf("package %s: %d funcs, %d globals, %d types, %d objects\n",
+		doc.Package["name"], len(doc.Funcs), len(doc.Globals), len(doc.Types), len(doc.Objects))
 }

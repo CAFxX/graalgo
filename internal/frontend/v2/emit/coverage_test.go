@@ -2,8 +2,9 @@
 //
 // This test enumerates every concrete AST node type in go/ast via reflection
 // and verifies each one is either:
-//   (a) HANDLED — the emitter produces output for it, or
-//   (b) FAILS LOUDLY — the emitter returns an "unsupported" error.
+//
+//	(a) HANDLED — the emitter produces output for it, or
+//	(b) FAILS LOUDLY — the emitter returns an "unsupported" error.
 //
 // There is no silent (c): a node kind that is silently dropped or
 // mis-emitted. If go/ast gains a new node type, this test fails until the
@@ -28,27 +29,41 @@ import (
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
 	"FuncDecl": true, // emitFuncDecl
+	"GenDecl":  true, // top-level var/const/type → Document.Globals; imports skipped (checker-owned)
 
 	// Statements.
-	"AssignStmt": true,
-	"BlockStmt":  true,
-	"BranchStmt": true,
-	"DeclStmt":   true, // var only; const/type decls fail loudly
-	"ExprStmt":   true,
-	"ForStmt":    true,
-	"IfStmt":     true,
-	"IncDecStmt": true,
-	"RangeStmt":  true,
-	"ReturnStmt": true,
+	"AssignStmt":     true,
+	"BlockStmt":      true,
+	"BranchStmt":     true,
+	"CaseClause":     true, // inside switch/typeswitch bodies
+	"CommClause":     true, // inside select bodies
+	"DeclStmt":       true, // var only; const/type decls fail loudly
+	"DeferStmt":      true,
+	"ExprStmt":       true,
+	"ForStmt":        true,
+	"GoStmt":         true,
+	"IfStmt":         true,
+	"IncDecStmt":     true,
+	"LabeledStmt":    true,
+	"RangeStmt":      true,
+	"ReturnStmt":     true,
+	"SelectStmt":     true,
+	"SendStmt":       true,
+	"SwitchStmt":     true,
+	"TypeSwitchStmt": true,
 
 	// Expressions.
-	"BasicLit":     true,
-	"BinaryExpr":   true,
-	"CallExpr":     true,
-	"Ident":        true,
-	"ParenExpr":    true,
-	"SelectorExpr": true,
-	"UnaryExpr":    true,
+	"BasicLit":       true,
+	"BinaryExpr":     true,
+	"CallExpr":       true,
+	"CompositeLit":   true,
+	"Ident":          true,
+	"IndexExpr":      true,
+	"ParenExpr":      true,
+	"SelectorExpr":   true,
+	"SliceExpr":      true,
+	"TypeAssertExpr": true,
+	"UnaryExpr":      true,
 
 	// Type expressions handled via go/types (not AST switch).
 	// These appear as types, not as standalone emitExpr cases:
@@ -93,34 +108,19 @@ var nonNodeTypes = map[string]string{
 // "unsupported" error. The negative test below proves each one fails.
 var loudlyRejected = map[string]bool{
 	// Statements not yet implemented.
-	"BadStmt":       true,
-	"DeferStmt":     true,
-	"EmptyStmt":     true,
-	"GoStmt":        true,
-	"LabeledStmt":   true,
-	"SelectStmt":    true,
-	"SendStmt":      true,
-	"SwitchStmt":    true,
-	"TypeSwitchStmt": true,
+	"BadStmt":   true,
+	"EmptyStmt": true,
 	// Expressions not yet implemented.
-	"BadExpr":        true,
-	"CompositeLit":   true,
-	"Ellipsis":       true,
-	"FuncLit":        true,
-	"IndexExpr":      true,
-	"IndexListExpr":  true, // generics instantiation
-	"KeyValueExpr":   true,
-	"SliceExpr":      true,
-	"StarExpr":       true,
-	"TypeAssertExpr": true,
-	// Declarations not yet implemented.
+	"BadExpr":       true,
+	"Ellipsis":      true,
+	"FuncLit":       true,
+	"IndexListExpr": true, // generics instantiation
+	"KeyValueExpr":  true, // standalone; inside composite literals it is handled
+	"StarExpr":      true,
+	// Declarations not yet implemented as standalone nodes.
 	"BadDecl":   true,
-	"GenDecl":   true, // top-level; const/type/var handled selectively
-	"TypeSpec":  true,
-	"ValueSpec": true,
-	// Clauses (only appear inside switch/select).
-	"CaseClause": true,
-	"CommClause": true,
+	"TypeSpec":  true, // consumed by the top-level GenDecl walk
+	"ValueSpec": true, // consumed by the top-level GenDecl walk
 }
 
 // allASTNodes returns the sorted list of concrete struct type names in

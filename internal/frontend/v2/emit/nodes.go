@@ -31,24 +31,50 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
 	}
-	sig := e.typeID(fn.Type())
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("emit: %s type is not a signature", fd.Name.Name)
+	}
+	sigID := e.typeID(fn.Type())
 
-	params := []any{}
-	if fd.Type.Params != nil {
-		for _, field := range fd.Type.Params.List {
-			for _, name := range field.Names {
-				pobj := e.info.Info.Defs[name]
-				if pobj == nil {
-					continue
-				}
-				pid := e.declareParam(pobj)
-				params = append(params, e.node("param", name, map[string]any{
-					"name": name.Name,
-					"obj":  pid,
-					"type": e.typeID(pobj.Type()),
-				}))
-			}
+	// Parameters and results come from the signature tuples, matched to
+	// AST fields by position. The tuple is authoritative: it contains
+	// unnamed parameters and results too, which have no ident for a
+	// Defs lookup — walking AST names alone silently dropped them.
+	params, err := e.emitFieldVars(fd.Type.Params, sig.Params(), "param")
+	if err != nil {
+		return nil, err
+	}
+	results, err := e.emitFieldVars(fd.Type.Results, sig.Results(), "result")
+	if err != nil {
+		return nil, err
+	}
+
+	// Methods carry their receiver; plain functions carry recv nil, so a
+	// consumer can tell a method from a same-named function. A named
+	// receiver declares its object; an unnamed receiver has no object,
+	// only a name ("") and a type, both from the signature.
+	var recv any
+	if fd.Recv != nil {
+		rv := sig.Recv()
+		if rv == nil {
+			return nil, fmt.Errorf("emit: method %s has no receiver in signature", fd.Name.Name)
 		}
+		var robj any
+		var recvNode ast.Node = fd.Recv.List[0]
+		if len(fd.Recv.List[0].Names) > 0 {
+			rid, err := e.declareParam(rv)
+			if err != nil {
+				return nil, err
+			}
+			robj = rid
+			recvNode = fd.Recv.List[0].Names[0]
+		}
+		recv = e.node("recv", recvNode, map[string]any{
+			"name": rv.Name(),
+			"obj":  robj,
+			"type": e.typeID(rv.Type()),
+		})
 	}
 
 	var body any
@@ -66,12 +92,226 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 	fields := map[string]any{
 		"name":    fn.Name(),
-		"sig":     sig,
+		"sig":     sigID,
+		"recv":    recv,
 		"params":  params,
+		"results": results,
 		"body":    body,
 		"pkgpath": pkgpath,
 	}
 	return e.node("funcdecl", fd, fields), nil
+}
+
+// emitFieldVars emits one parameter or result list. AST fields and the
+// signature tuple are walked in lockstep: a field with N names consumes
+// N tuple entries; a field with no names (unnamed parameter/result)
+// consumes one tuple entry whose object has no ident. A mismatch between
+// the AST list and the tuple is a checker/emitter inconsistency and fails
+// loudly instead of emitting a short list.
+func (e *Emitter) emitFieldVars(fl *ast.FieldList, tuple *types.Tuple, kind string) ([]any, error) {
+	out := []any{}
+	if fl == nil {
+		return out, nil
+	}
+	i := 0
+	for _, field := range fl.List {
+		if len(field.Names) == 0 {
+			if i >= tuple.Len() {
+				return nil, fmt.Errorf("emit: %s %d has no signature entry", kind, i)
+			}
+			v := tuple.At(i)
+			vid, err := e.declareParam(v)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, e.node(kind, field.Type, map[string]any{
+				"name": v.Name(),
+				"obj":  vid,
+				"type": e.typeID(v.Type()),
+			}))
+			i++
+			continue
+		}
+		for _, name := range field.Names {
+			if i >= tuple.Len() {
+				return nil, fmt.Errorf("emit: %s %q has no signature entry", kind, name.Name)
+			}
+			v := tuple.At(i)
+			vid, err := e.declareParam(v)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, e.node(kind, name, map[string]any{
+				"name": name.Name,
+				"obj":  vid,
+				"type": e.typeID(v.Type()),
+			}))
+			i++
+		}
+	}
+	return out, nil
+}
+
+// declareTopGenDecl declares every named object of a top-level GenDecl:
+// each var/const name and each type name. Imports declare nothing: the
+// imported package names are the checker's business, not emitted objects.
+func (e *Emitter) declareTopGenDecl(gd *ast.GenDecl) error {
+	switch gd.Tok {
+	case token.IMPORT:
+		return nil
+	case token.VAR, token.CONST:
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				return fmt.Errorf("emit: top-level %s holds %T, want *ast.ValueSpec", gd.Tok, spec)
+			}
+			for _, name := range vs.Names {
+				if obj := e.info.Info.Defs[name]; obj != nil {
+					if _, err := e.declareObject(obj); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	case token.TYPE:
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				return fmt.Errorf("emit: top-level type holds %T, want *ast.TypeSpec", spec)
+			}
+			if obj := e.info.Info.Defs[ts.Name]; obj != nil {
+				if _, err := e.declareObject(obj); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("emit: unsupported top-level decl %s", gd.Tok)
+	}
+}
+
+// emitTopGenDecl emits one top-level GenDecl as Document.Globals entries,
+// one node per spec, in source order. Imports emit nothing (see
+// declareTopGenDecl); any other token is an error, never a silent skip.
+func (e *Emitter) emitTopGenDecl(gd *ast.GenDecl) ([]any, error) {
+	switch gd.Tok {
+	case token.IMPORT:
+		return nil, nil
+	case token.VAR, token.CONST:
+		kind := "globalvar"
+		isConst := gd.Tok == token.CONST
+		if isConst {
+			kind = "globalconst"
+		}
+		var out []any
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				return nil, fmt.Errorf("emit: top-level %s holds %T, want *ast.ValueSpec", gd.Tok, spec)
+			}
+			n, err := e.emitGlobalValueSpec(vs, kind, isConst)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, n)
+		}
+		return out, nil
+	case token.TYPE:
+		var out []any
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				return nil, fmt.Errorf("emit: top-level type holds %T, want *ast.TypeSpec", spec)
+			}
+			var oid any
+			obj := e.info.Info.Defs[ts.Name]
+			if obj != nil {
+				id, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				oid = id
+			} else {
+				oid = -1
+			}
+			var typ any
+			if obj != nil && obj.Type() != nil {
+				typ = e.typeID(obj.Type())
+			}
+			out = append(out, e.node("globaltype", ts, map[string]any{
+				"name":  ts.Name.Name,
+				"obj":   oid,
+				"type":  typ,
+				"alias": ts.Assign.IsValid(),
+			}))
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported top-level decl %s", gd.Tok)
+	}
+}
+
+// emitGlobalValueSpec emits one top-level var or const spec. The shape
+// mirrors the local vardecl node (names, objs, type, values) so a
+// consumer handles globals and locals uniformly. For consts, "constvals"
+// additionally records the evaluated constant for every name: repeated
+// const specs (`b;` after `a = iota`) carry no Values in the AST, and
+// their values live only in go/types — without constvals a consumer
+// would have to re-derive iota itself.
+func (e *Emitter) emitGlobalValueSpec(vs *ast.ValueSpec, kind string, isConst bool) (map[string]any, error) {
+	names := []string{}
+	objs := []any{}
+	for _, name := range vs.Names {
+		names = append(names, name.Name)
+		if obj := e.info.Info.Defs[name]; obj != nil {
+			oid, err := e.declareObject(obj)
+			if err != nil {
+				return nil, err
+			}
+			objs = append(objs, oid)
+		} else {
+			objs = append(objs, -1)
+		}
+	}
+	var typ any
+	if vs.Type != nil {
+		if tv, ok := e.info.Info.Types[vs.Type]; ok && tv.Type != nil {
+			typ = e.typeID(tv.Type)
+		}
+	}
+	if typ == nil && len(vs.Names) > 0 {
+		if obj := e.info.Info.Defs[vs.Names[0]]; obj != nil && obj.Type() != nil {
+			typ = e.typeID(obj.Type())
+		}
+	}
+	values := []any{}
+	for _, v := range vs.Values {
+		vn, err := e.emitExpr(v)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, vn)
+	}
+	fields := map[string]any{
+		"names":  names,
+		"objs":   objs,
+		"type":   typ,
+		"values": values,
+	}
+	if isConst {
+		constvals := []any{}
+		for _, name := range vs.Names {
+			if c, ok := e.info.Info.Defs[name].(*types.Const); ok && c.Val() != nil {
+				constvals = append(constvals, c.Val().ExactString())
+			} else {
+				constvals = append(constvals, nil)
+			}
+		}
+		fields["constvals"] = constvals
+	}
+	return e.node(kind, vs, fields), nil
 }
 
 func (e *Emitter) emitBlock(b *ast.BlockStmt) (map[string]any, error) {
@@ -124,10 +364,249 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 			"x":   x,
 		}), nil
 	case *ast.BranchStmt:
-		return e.node("branch", s, map[string]any{"tok": st.Tok.String()}), nil
+		// The label is the whole point of a labelled branch: break L,
+		// continue L, and goto L must be distinguishable from their
+		// unlabelled forms, which carry label nil.
+		var label any
+		if st.Label != nil {
+			label = st.Label.Name
+		}
+		return e.node("branch", s, map[string]any{
+			"tok":   st.Tok.String(),
+			"label": label,
+		}), nil
+	case *ast.GoStmt:
+		call, err := e.emitCall(st.Call)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("go", s, map[string]any{"call": call}), nil
+	case *ast.DeferStmt:
+		call, err := e.emitCall(st.Call)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("defer", s, map[string]any{"call": call}), nil
+	case *ast.SendStmt:
+		ch, err := e.emitExpr(st.Chan)
+		if err != nil {
+			return nil, err
+		}
+		value, err := e.emitExpr(st.Value)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("send", s, map[string]any{"chan": ch, "value": value}), nil
+	case *ast.SwitchStmt:
+		return e.emitSwitch(st)
+	case *ast.TypeSwitchStmt:
+		return e.emitTypeSwitch(st)
+	case *ast.SelectStmt:
+		return e.emitSelect(st)
+	case *ast.LabeledStmt:
+		inner, err := e.emitStmt(st.Stmt)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("labeled", s, map[string]any{
+			"label": st.Label.Name,
+			"stmt":  inner,
+		}), nil
 	default:
 		return nil, fmt.Errorf("emit: unsupported stmt %T", s)
 	}
+}
+
+// emitSwitch emits a switch statement: optional init, optional tag (nil
+// for `switch {`), and one "case" node per clause. A clause with an empty
+// list is the default clause, flagged explicitly so a consumer need not
+// infer it from list emptiness (which would also match `case nil:` —
+// that clause has a one-element list holding the nil ident).
+func (e *Emitter) emitSwitch(st *ast.SwitchStmt) (map[string]any, error) {
+	var init any
+	if st.Init != nil {
+		in, err := e.emitStmt(st.Init)
+		if err != nil {
+			return nil, err
+		}
+		init = in
+	}
+	var tag any
+	if st.Tag != nil {
+		tn, err := e.emitExpr(st.Tag)
+		if err != nil {
+			return nil, err
+		}
+		tag = tn
+	}
+	body, err := e.emitCaseBody(st.Body)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("switch", st, map[string]any{
+		"init": init,
+		"tag":  tag,
+		"body": body,
+	}), nil
+}
+
+// emitTypeSwitch emits a type switch. The guard gets its own node kind,
+// not an ordinary assign: go/types deliberately records no single object
+// for a type-switch guard variable (Defs maps it to nil — the variable
+// has a different type in each clause), so emitting it as an assign
+// would either fail on the guard ident or invent an object that does
+// not exist. Per-case uses of the guard variable resolve through
+// go/types Uses to their per-clause objects like any other ident.
+func (e *Emitter) emitTypeSwitch(st *ast.TypeSwitchStmt) (map[string]any, error) {
+	var init any
+	if st.Init != nil {
+		in, err := e.emitStmt(st.Init)
+		if err != nil {
+			return nil, err
+		}
+		init = in
+	}
+	guard, err := e.emitTypeSwitchGuard(st.Assign)
+	if err != nil {
+		return nil, err
+	}
+	body, err := e.emitCaseBody(st.Body)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("typeswitch", st, map[string]any{
+		"init":  init,
+		"guard": guard,
+		"body":  body,
+	}), nil
+}
+
+// emitTypeSwitchGuard emits a type-switch guard: `v := x.(type)` or
+// `x.(type)`. The guard variable is recorded by name only — it has no
+// single object (see emitTypeSwitch) — and the switched expression is
+// emitted as "x". Anything else in guard position is malformed and fails.
+func (e *Emitter) emitTypeSwitchGuard(assign ast.Stmt) (map[string]any, error) {
+	switch a := assign.(type) {
+	case *ast.AssignStmt:
+		if len(a.Lhs) != 1 || len(a.Rhs) != 1 {
+			return nil, fmt.Errorf("emit: malformed type switch guard: want one LHS and one RHS")
+		}
+		ta, ok := a.Rhs[0].(*ast.TypeAssertExpr)
+		if !ok || ta.Type != nil {
+			return nil, fmt.Errorf("emit: type switch guard is not x.(type)")
+		}
+		id, ok := a.Lhs[0].(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf("emit: type switch guard LHS is not an ident")
+		}
+		x, err := e.emitExpr(ta.X)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("typeswitchguard", a, map[string]any{
+			"var": id.Name,
+			"x":   x,
+		}), nil
+	case *ast.ExprStmt:
+		ta, ok := a.X.(*ast.TypeAssertExpr)
+		if !ok || ta.Type != nil {
+			return nil, fmt.Errorf("emit: type switch guard is not x.(type)")
+		}
+		x, err := e.emitExpr(ta.X)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("typeswitchguard", a, map[string]any{
+			"var": nil,
+			"x":   x,
+		}), nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported type switch guard %T", assign)
+	}
+}
+
+// emitCaseBody emits the clause list of a switch/select body. Every
+// element must be the clause kind for that statement; anything else is
+// a malformed AST and fails loudly.
+func (e *Emitter) emitCaseBody(body *ast.BlockStmt) ([]any, error) {
+	clauses := []any{}
+	for _, stmt := range body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			return nil, fmt.Errorf("emit: switch body holds %T, want *ast.CaseClause", stmt)
+		}
+		list := []any{}
+		for _, expr := range cc.List {
+			// Type-switch case lists hold type expressions (`case int:`,
+			// `case []byte:`), not value expressions. go/types marks
+			// them IsType(); emitting them through emitExpr would fail
+			// on type syntax, so they become typeexpr nodes carrying
+			// the resolved type id. (In a checked program a plain
+			// switch case is never a type, so this branch cannot
+			// misfire there; `case nil:` is a value and takes the
+			// emitExpr path.)
+			if tv, ok := e.info.Info.Types[expr]; ok && tv.IsType() {
+				list = append(list, e.node("typeexpr", expr, map[string]any{
+					"type": e.typeID(tv.Type),
+				}))
+				continue
+			}
+			en, err := e.emitExpr(expr)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, en)
+		}
+		stmts := []any{}
+		for _, s := range cc.Body {
+			sn, err := e.emitStmt(s)
+			if err != nil {
+				return nil, err
+			}
+			stmts = append(stmts, sn)
+		}
+		clauses = append(clauses, e.node("case", cc, map[string]any{
+			"list":    list,
+			"default": len(cc.List) == 0,
+			"body":    stmts,
+		}))
+	}
+	return clauses, nil
+}
+
+// emitSelect emits a select statement: one "comm" node per clause. The
+// comm is the communication statement (send, receive-assign, or bare
+// receive); a default clause has comm nil.
+func (e *Emitter) emitSelect(st *ast.SelectStmt) (map[string]any, error) {
+	clauses := []any{}
+	for _, stmt := range st.Body.List {
+		cc, ok := stmt.(*ast.CommClause)
+		if !ok {
+			return nil, fmt.Errorf("emit: select body holds %T, want *ast.CommClause", stmt)
+		}
+		var comm any
+		if cc.Comm != nil {
+			cn, err := e.emitStmt(cc.Comm)
+			if err != nil {
+				return nil, err
+			}
+			comm = cn
+		}
+		body := []any{}
+		for _, s := range cc.Body {
+			sn, err := e.emitStmt(s)
+			if err != nil {
+				return nil, err
+			}
+			body = append(body, sn)
+		}
+		clauses = append(clauses, e.node("comm", cc, map[string]any{
+			"comm":    comm,
+			"default": cc.Comm == nil,
+			"body":    body,
+		}))
+	}
+	return e.node("select", st, map[string]any{"body": clauses}), nil
 }
 
 func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
@@ -152,7 +631,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -183,7 +664,11 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
 			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				objs = append(objs, oid)
 			} else {
 				objs = append(objs, -1)
 			}
@@ -287,14 +772,22 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+				kid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				key = kid
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+				vid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				value = vid
 			}
 		}
 	}
@@ -352,9 +845,35 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		return e.emitIndex(ex)
 	case *ast.SliceExpr:
 		return e.emitSlice(ex)
+	case *ast.TypeAssertExpr:
+		return e.emitTypeAssert(ex)
 	default:
 		return nil, fmt.Errorf("emit: unsupported expr %T", x)
 	}
+}
+
+// emitTypeAssert emits a type assertion. For `x.(type)` — legal only as a
+// type-switch guard — the asserted type is nil by definition: each case
+// supplies it, so the node carries type nil rather than inventing one.
+// For `x.(T)`, the type is the resolved type id; a missing type entry for
+// a non-nil asserted type is a checker/emitter inconsistency and fails.
+func (e *Emitter) emitTypeAssert(t *ast.TypeAssertExpr) (map[string]any, error) {
+	x, err := e.emitExpr(t.X)
+	if err != nil {
+		return nil, err
+	}
+	var typ any
+	if t.Type != nil {
+		tv, ok := e.info.Info.Types[t.Type]
+		if !ok || tv.Type == nil {
+			return nil, fmt.Errorf("emit: no type for asserted type %v", t.Type)
+		}
+		typ = e.typeID(tv.Type)
+	}
+	return e.node("typeassert", t, map[string]any{
+		"x":    x,
+		"type": typ,
+	}), nil
 }
 
 func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) {
@@ -472,7 +991,10 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -480,7 +1002,10 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -583,7 +1108,11 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					tid, err := e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
+					oid = tid
 				}
 				_ = pkgname
 				return e.node("pkgref", s, map[string]any{
