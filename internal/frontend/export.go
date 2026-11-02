@@ -581,7 +581,17 @@ func syntheticRuntimePackage() *types.Package {
 	return pkg
 }
 
-type overlayImporter struct{}
+// overlayImporter resolves imports for type-checking: dedicated
+// synthetic stubs, any package with a synthetic source, then disk
+// packages, then the fail importer. stack is the disk-build ancestry
+// for cycle detection (lane F, P2-10): buildDiskPackage checks a
+// package with stack plus that package's path, so getDiskPackage can
+// tell a re-entrant (cyclic) import from independent concurrency.
+// User and synthetic checks use a nil stack; their cycles surface
+// through the disk legs, which always carry one.
+type overlayImporter struct {
+	stack []string
+}
 
 // dedicatedSyntheticStubs maps the two import paths with dedicated
 // synthetic constructors (not in syntheticSources) to their builders.
@@ -600,7 +610,7 @@ func isDedicatedSyntheticStub(path string) bool {
 	return ok
 }
 
-func (overlayImporter) Import(path string) (*types.Package, error) {
+func (o overlayImporter) Import(path string) (*types.Package, error) {
 	// The 2 packages with dedicated synthetic constructors (not in
 	// syntheticSources). sync and sync/atomic now resolve from disk (real packages).
 	if isDedicatedSyntheticStub(path) {
@@ -617,7 +627,7 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	// local disk (module cache/GOPATH) through the general overlay. A path
 	// that resolves nowhere keeps the pre-existing WS G scope error;
 	// a path that resolves but fails to build reports the real failure.
-	if dp, err := getDiskPackage(path); err == nil {
+	if dp, err := getDiskPackage(path, o.stack); err == nil {
 		return dp.pkg, nil
 	} else if !errors.Is(err, errDiskNotFound) {
 		return nil, fmt.Errorf("gofrontend: import %q: %v", path, err)
@@ -950,11 +960,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	_, _ = etaExpandMRFuncValues(files, info, pkg, false)
 
 	e := &exporter{
-		fset:    fset,
-		src:     srcs[0], // fallback for single-file paths; multi-file uses srcByFile
-		info:    info,
-		pkg:     pkg,
-		typeIDs: make(map[types.Type]int),
+		fset:     fset,
+		src:      srcs[0], // fallback for single-file paths; multi-file uses srcByFile
+		info:     info,
+		pkg:      pkg,
+		userFset: fset,
+		pkgFsets: map[*types.Package]*token.FileSet{pkg: fset},
+		typeIDs:  make(map[types.Type]int),
 		// P3-M9 (WS H): type parameters canonicalized by TypeName object.
 		// go/types mints fresh *types.TypeParam per occurrence; without
 		// this, F-bounded constraints (P Point[P]) recurse infinitely
@@ -2936,9 +2948,17 @@ type exporter struct {
 	srcByFile map[*token.File][]byte
 	info      *types.Info
 	pkg       *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
-	types     []TypeEnt
-	typeList  []types.Type // parallel to types: the go/types type per id (P3-M3)
-	typeIDs   map[types.Type]int
+	// Lane F (R12): FileSets for type-parameter declaration keys
+	// (resolveByIdentity). userFset is the input package's FileSet,
+	// captured at construction: e.fset is swapped during walks and is
+	// not it. pkgFsets maps every merged package to its FileSet; it is
+	// populated at construction (user package) and at import time
+	// (importSyntheticPackage), with a lazy cache scan in fsetForPkg.
+	userFset *token.FileSet
+	pkgFsets map[*types.Package]*token.FileSet
+	types    []TypeEnt
+	typeList []types.Type // parallel to types: the go/types type per id (P3-M3)
+	typeIDs  map[types.Type]int
 	// P3-M9 (WS H): canonical IDs for type parameters by TypeName.
 	// Different *types.TypeParam objects denoting the same parameter
 	// must share one wire ID, or F-bounded constraints recurse forever.
@@ -3184,19 +3204,137 @@ func (s *typeSubst) resolve(tp *types.TypeParam) (types.Type, *typeSubst) {
 	return nil, nil
 }
 
-// resolveByName resolves a type parameter by name through the subst chain.
-// P3-M9 (generics isNaN fix): go/types TypeParam object identity is not
-// stable across the synthetic package's type-checking passes, so the nested
-// call's T (from e.info.Instances) may not pointer-match the T in subst.bind
-// (from fi.sig.TypeParams()). Match by name instead.
-func resolveByName(s *typeSubst, name string) types.Type {
+// resolveByIdentity resolves a type parameter through the subst chain by
+// declaration identity, never by bare name (lane F, review 2026-11-02 R12).
+// Name matching is unsound: go/types gives a generic type's own type
+// parameters and its methods' receiver type parameters distinct objects
+// with the same name (verified: Box[T]'s T vs Box[T]-receiver T are
+// different *types.TypeParam with different declaration positions), and a
+// chain can hold two same-named parameters with different bindings, where
+// innermost-first name lookup returns the wrong frame's binding (a
+// silently wrong monomorphisation). Two tiers, in order:
+//
+//  1. Pointer identity (existing resolve): exact within one check. Every
+//     bind key / query pair produced by a single package check is
+//     pointer-identical (verified for plain generic functions and for
+//     method receiver parameters).
+//  2. Declaration key (typeParamDeclKey): the declaring package path plus
+//     the parameter identifier's file and offset plus its name plus a
+//     non-recursive constraint kind. File+offset is FileSet-independent
+//     for identical source (token.Position.Offset is file-relative, and
+//     synthetic filenames are the import path + ".go"), so the same
+//     declaration checked twice — the case the old name matching was
+//     bridging — still matches, while two distinct declarations never
+//     share a key: they differ in position, and the package path in the
+//     key keeps same-named parameters from different packages apart.
+//     A parameter with no usable position (synthesized, token.NoPos) or
+//     from a package whose FileSet is unknown gets no key and falls back
+//     to tier 1 only; it is never resolved by name. A miss in both tiers
+//     returns nil so the caller fails loudly with "unbound type
+//     parameter" instead of binding the wrong type.
+func (e *exporter) resolveByIdentity(s *typeSubst, tp *types.TypeParam) types.Type {
+	if c, _ := s.resolve(tp); c != nil {
+		return c
+	}
+	qk, ok := e.typeParamDeclKey(tp)
+	if !ok {
+		return nil
+	}
 	for ss := s; ss != nil; ss = ss.parent {
-		for tp, c := range ss.bind {
-			if tp.Obj().Name() == name {
+		for k, c := range ss.bind {
+			if kk, ok := e.typeParamDeclKey(k); ok && kk == qk {
 				return c
 			}
 		}
 	}
+	return nil
+}
+
+// typeParamDeclKey returns the stable declaration key for tp, or false
+// when no stable key is available (no position, or the declaring
+// package's FileSet is unknown). Keys are unique per declaration: the
+// identifier position is unique within its file, and the package path
+// separates same-named parameters from different packages. The
+// constraint kind is a shallow, non-recursive discriminator (a named
+// constraint by qualified name, anything else by its go/types kind) —
+// it is never rendered in full, so F-bounded constraints cannot recurse
+// here. Safety note: even if a key were computed against the wrong
+// FileSet, a false match is impossible — the key still separates
+// declarations (positions are injective within a FileSet, package paths
+// separate packages); the worst case is a missed match, which fails
+// loudly via the unbound-type-parameter path.
+func (e *exporter) typeParamDeclKey(tp *types.TypeParam) (string, bool) {
+	obj := tp.Obj()
+	if obj == nil || obj.Pos() == token.NoPos {
+		return "", false
+	}
+	pkg := obj.Pkg()
+	var pkgPath string
+	if pkg != nil {
+		pkgPath = pkg.Path()
+	}
+	fset := e.fsetForPkg(pkg)
+	if fset == nil {
+		return "", false
+	}
+	pos := fset.Position(obj.Pos())
+	if !pos.IsValid() || pos.Filename == "" {
+		return "", false
+	}
+	return pkgPath + "\x00" + pos.Filename + "\x00" + strconv.Itoa(pos.Offset) +
+		"\x00" + obj.Name() + "\x00" + constraintKind(tp), true
+}
+
+// constraintKind is the shallow constraint discriminator for
+// typeParamDeclKey: named constraints by qualified name, anything else
+// by its go/types kind. Never a full type rendering.
+func constraintKind(tp *types.TypeParam) string {
+	c := tp.Constraint()
+	if c == nil {
+		return "nil"
+	}
+	if n, ok := c.(*types.Named); ok && n.Obj() != nil {
+		return "named:" + qualifiedName(n.Obj())
+	}
+	return fmt.Sprintf("%T", c)
+}
+
+// fsetForPkg returns the FileSet that type-checked pkg, or nil when
+// unknown. The exporter records its own package at construction and
+// every synthetic/disk package at import time (importSyntheticPackage);
+// packages resolved but not yet merged are found by scanning the
+// synthetic/disk caches. Dedicated signature-only stubs (runtime, fmt,
+// unsafe) are rebuilt per import and live in no cache, so they miss
+// here — their type parameters never enter a subst chain (no bodies),
+// and tier-1 pointer identity still applies to them.
+func (e *exporter) fsetForPkg(pkg *types.Package) *token.FileSet {
+	if pkg == nil {
+		return nil
+	}
+	if e.pkgFsets != nil {
+		if fset, ok := e.pkgFsets[pkg]; ok {
+			return fset
+		}
+	}
+	if pkg == e.pkg && e.userFset != nil {
+		return e.userFset
+	}
+	synthMu.Lock()
+	for _, sp := range synthCache {
+		if sp.pkg == pkg {
+			synthMu.Unlock()
+			return sp.fset
+		}
+	}
+	synthMu.Unlock()
+	diskMu.Lock()
+	for _, sp := range diskCache {
+		if sp.pkg == pkg {
+			diskMu.Unlock()
+			return sp.fset
+		}
+	}
+	diskMu.Unlock()
 	return nil
 }
 
@@ -4035,7 +4173,7 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 						// would be Point->Point (still a typeparam), leaking
 						// "typeparam" kinds into the type table.
 						if tp, ok := ta.(*types.TypeParam); ok {
-							if resolved := resolveByName(e.subst, tp.Obj().Name()); resolved != nil {
+							if resolved := e.resolveByIdentity(e.subst, tp); resolved != nil {
 								ta = resolved
 							}
 						}
@@ -4422,7 +4560,7 @@ func (e *exporter) indexDiskMethodOnDemand(recvObj types.Object, mname string) *
 	if !isDiskImportable(pkgPath) {
 		return nil
 	}
-	sp, err := getDiskPackage(pkgPath)
+	sp, err := getDiskPackage(pkgPath, nil)
 	if err != nil {
 		return nil
 	}
@@ -4824,7 +4962,7 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 			name += "[" + strings.Join(pretty, ", ") + "]"
 		}
 		if !isConcreteKey(key) {
-			return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of method %s", mname)
+			return nil, fmt.Errorf("%w in instantiation of method %s", errUnboundTypeParam, mname)
 		}
 		return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
 			rawTargsForEmit: rawTargs}, nil
@@ -4852,7 +4990,7 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	}
 	c, scope := subst.resolve(tp)
 	if c == nil {
-		return nil, fmt.Errorf("gofrontend: unbound type parameter %s in method call", tp.Obj().Name())
+		return nil, fmt.Errorf("%w %s in method call", errUnboundTypeParam, tp.Obj().Name())
 	}
 	cn := derefNamed(c)
 	if cn == nil {
@@ -4945,7 +5083,7 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 		name += "[" + strings.Join(pretty, ", ") + "]"
 	}
 	if !isConcreteKey(key) {
-		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of method %s", mname)
+		return nil, fmt.Errorf("%w in instantiation of method %s", errUnboundTypeParam, mname)
 	}
 	return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
 		rawTargsForEmit: rawTargs}, nil
@@ -5101,7 +5239,7 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		name += "[" + strings.Join(pretty, ", ") + "]"
 	}
 	if !isConcreteKey(key) {
-		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of method %s", mname)
+		return nil, fmt.Errorf("%w in instantiation of method %s", errUnboundTypeParam, mname)
 	}
 	return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
 		rawTargsForEmit: rawTargs, recvPath: path, recvAddrOf: recvAddrOf}, nil
@@ -5255,7 +5393,8 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 			// this is not a true root — it's a nested call inside a generic
 			// template that inTemplate missed (pointer mismatch). Skip it;
 			// the fixpoint will find it when the outer generic is instantiated.
-			if strings.Contains(err.Error(), "unbound type parameter") {
+			// Lane F (P2-11): typed sentinel, not a substring match.
+			if errors.Is(err, errUnboundTypeParam) {
 				continue
 			}
 			return err
@@ -5305,13 +5444,22 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 	return nil
 }
 
+// errUnboundTypeParam is the typed sentinel for "a generic instantiation
+// still mentions an unbound type parameter" (lane F, review 2026-11-02
+// P2-11). Callers that treat this case as "not monomorphizable here"
+// (skip-and-mark) must test errors.Is(err, errUnboundTypeParam), never
+// substring-match the message: a substring match fires on any wrapped
+// error that merely mentions the phrase. Every producer below wraps
+// this sentinel with %w, keeping every error string byte-identical.
+var errUnboundTypeParam = errors.New("gofrontend: unbound type parameter")
+
 // newFuncInstantiation builds the instantiation record for a generic
 // function template with the given type arguments (factored out of
 // enumerateInstantiations so the method-table drain can reuse it).
 func (e *exporter) newFuncInstantiation(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) (*instantiation, error) {
 	key := instKeyForFunc(fi, targs, subst)
 	if !isConcreteKey(key) {
-		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of %s", fi.obj.Name())
+		return nil, fmt.Errorf("%w in instantiation of %s", errUnboundTypeParam, fi.obj.Name())
 	}
 	sub2 := &typeSubst{parent: subst, bind: bindParams(fi.sig.TypeParams(), targs)}
 	return &instantiation{
@@ -5417,7 +5565,8 @@ func (e *exporter) buildMethodTableInst(t types.Type, sel *types.Selection, mobj
 		// exporter bug.
 		inst, err := e.newFuncInstantiation(fi, recvTargs, e.subst)
 		if err != nil {
-			if strings.Contains(err.Error(), "unbound type parameter") {
+			// Lane F (P2-11): typed sentinel, not a substring match.
+			if errors.Is(err, errUnboundTypeParam) {
 				return nil, nil
 			}
 			return nil, err
@@ -5759,14 +5908,15 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			// call's type args. When Less[float64] calls isNaN(x) with x: T,
 			// ii.TypeArgs contains T (unbound). Substitute T -> float64 first,
 			// otherwise newFuncInst fails with "unbound type parameter".
-			// Note: go/types object identity for TypeParams is not stable
-			// across the synthetic package's type-checking passes, so we
-			// match by name, not by pointer.
+			// Lane F (R12): resolve by declaration identity
+			// (resolveByIdentity: pointer, else declaration key) — never
+			// by bare name, which conflates distinct same-named
+			// parameters in nested generic scopes.
 			targs := typeList(ii.TypeArgs)
 			if subst != nil {
 				for i, ta := range targs {
 					if tp, ok := ta.(*types.TypeParam); ok {
-						if resolved := resolveByName(subst, tp.Obj().Name()); resolved != nil {
+						if resolved := e.resolveByIdentity(subst, tp); resolved != nil {
 							targs[i] = resolved
 						}
 					}
@@ -5828,13 +5978,13 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			if !ok || !fi.isTemplate || fi.recv != nil {
 				return true
 			}
-			// P3-M9 (generics isNaN fix): apply outer substitution by name
-			// (see CallExpr case above).
+			// P3-M9 (generics isNaN fix): apply outer substitution by
+			// declaration identity (see CallExpr case above).
 			targs2 := typeList(ii.TypeArgs)
 			if subst != nil {
 				for i, ta := range targs2 {
 					if tp, ok := ta.(*types.TypeParam); ok {
-						if resolved := resolveByName(subst, tp.Obj().Name()); resolved != nil {
+						if resolved := e.resolveByIdentity(subst, tp); resolved != nil {
 							targs2[i] = resolved
 						}
 					}
@@ -11905,7 +12055,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 			// const/var access (e.g., uuid.RFC4122). General: any
 			// disk-built package resolves here; the synthetic list
 			// above is for overlay packages.
-			if _, derr := getDiskPackage(pkgName.Imported().Path()); derr == nil {
+			if _, derr := getDiskPackage(pkgName.Imported().Path(), nil); derr == nil {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

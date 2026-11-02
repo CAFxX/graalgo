@@ -2128,7 +2128,7 @@ func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 			return fi, true
 		}
 	}
-	if sp, err := getDiskPackage(fn.Pkg().Path()); err == nil && sp != nil {
+	if sp, err := getDiskPackage(fn.Pkg().Path(), nil); err == nil && sp != nil {
 		if obj, ok := sp.pkg.Scope().Lookup(spec.helper).(*types.Func); ok {
 			if fi, ok := e.funcByObj[obj]; ok {
 				return fi, true
@@ -2184,7 +2184,7 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 	if sig.Results().Len() != len(spec.pairFields) {
 		return nil
 	}
-	sp, err := getDiskPackage(pkgPath)
+	sp, err := getDiskPackage(pkgPath, nil)
 	if err != nil {
 		return nil
 	}
@@ -2261,7 +2261,7 @@ func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) 
 	if sig.Results().Len() != len(spec.pairFields) {
 		return nil
 	}
-	sp, err := getDiskPackage(pkgPath)
+	sp, err := getDiskPackage(pkgPath, nil)
 	if err != nil {
 		return nil
 	}

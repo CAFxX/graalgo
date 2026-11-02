@@ -90,7 +90,7 @@ type PackageRef struct {
 type refKind int
 
 const (
-	kindSynthetic refKind = iota // "runtime"/"fmt"/"sync"/"time"/"context"/"errors"/"sort": resolved by the frozen overlay
+	kindSynthetic refKind = iota // mirrored synthetic package: exactly the syntheticMirrors keys (importer.go)
 	kindStdlib                   // $GOROOT/src/<path>: resolvable, not compilable in M1
 	kindLocal                    // module-local package: flattened
 )
@@ -425,25 +425,23 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // mode (the importing package's directory); results are cached by
 // (fromDir, path) because resolution is anchored at fromDir — the same
 // path can resolve differently (or fail) from different modules.
-// "runtime"/"fmt"/"sync" resolve to synthetic markers; stdlib paths resolve to
-// their GOROOT directory (proving the mapping — compiling them is a scope
-// error raised by the importer); module-path-prefixed imports resolve to
-// directories; anything else is an error. "time" and "context" resolve to
-// synthetic markers (never GOROOT): the phase-1 exporter type-checks them
-// against its synthetic time/context packages (ADR-0005), so the p3frontend
-// mirror must not see the real GOROOT sources. "errors" and "sort" resolve
-// to synthetic markers likewise (P3-M7 wave 1: real-Go synthetic packages
-// in internal/frontend/synth_errors.go / synth_sort.go). The 8
-// encoding/* primitives (m7-wenc-core) resolve to synthetic markers
-// likewise.
+// Paths with a mirrored synthetic package (syntheticMirrors in
+// importer.go) resolve to synthetic markers (never GOROOT): the phase-1
+// exporter type-checks them against its synthetic packages, so the
+// p3frontend mirror must not see the real GOROOT sources. The synthetic
+// set is exactly the mirror table's keys — never a second list (lane F,
+// review 2026-11-02 R13: the old loader list omitted io, sync/atomic
+// and unsafe, which the importer served; both kinds skip LoadClosure
+// and are kept as import specs in flattened output, so classifying
+// those three synthetic is behavior-preserving). Other stdlib paths
+// resolve to their GOROOT directory (proving the mapping — compiling
+// them is a scope error raised by the importer);
+// module-path-prefixed imports resolve to directories; anything else is
+// an error.
 func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
-	switch path {
-	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings",
-		"encoding/xml", "encoding/csv", "encoding/gob", "strconv", "encoding/json",
-		"encoding/base32", "encoding/base64", "encoding/hex", "encoding/binary",
-		"encoding/ascii85", "encoding/pem", "encoding/asn1", "encoding":
+	if isSyntheticMirror(path) {
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
 	}
 	anchor, err := filepath.Abs(fromDir)

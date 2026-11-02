@@ -2804,7 +2804,7 @@ func (e *exporter) classifyUserIfaceMultiResultCall(selection *types.Selection) 
 	// practice).
 	oneBased := false
 	if f.Pkg() != nil {
-		if _, err := getDiskPackage(f.Pkg().Path()); err == nil {
+		if _, err := getDiskPackage(f.Pkg().Path(), nil); err == nil {
 			oneBased = true
 		}
 	}
@@ -2989,7 +2989,7 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 		fi = sfi
 	} else {
 		var helperFn *types.Func
-		if dsp, derr := getDiskPackage(helperPkg); derr == nil {
+		if dsp, derr := getDiskPackage(helperPkg, nil); derr == nil {
 			// WS G (P3-M9, BUG-MODPROBE-005): disk-package
 			// pair-returning __-helper.
 			helperObj := dsp.pkg.Scope().Lookup(helperName)
@@ -3431,7 +3431,7 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 	if plan.isDisk {
 		// WS G (P3-M9): disk-built package (transformDiskMultiResult).
 		var err error
-		sp, err = getDiskPackage(plan.helperPkg)
+		sp, err = getDiskPackage(plan.helperPkg, nil)
 		if err != nil {
 			return nil, err
 		}

@@ -21,7 +21,10 @@ import (
 // exactly the four primitives, each method present with a pointer
 // receiver and exact gc 1.27.1 parameter/result types.
 func TestSyncSyntheticSignatures(t *testing.T) {
-	pkg := syntheticSyncPackage()
+	pkg, err := syntheticSyncPackage()
+	if err != nil {
+		t.Fatalf("syntheticSyncPackage failed: %v", err)
+	}
 	if pkg.Name() != "sync" || pkg.Path() != "sync" {
 		t.Fatalf("package name/path = %s/%s, want sync/sync", pkg.Name(), pkg.Path())
 	}
@@ -180,7 +183,10 @@ func TestSyncMirrorMatchesRealGorootSync(t *testing.T) {
 		t.Fatalf("source-import of real sync package: %v", err)
 	}
 	qf := func(p *types.Package) string { return p.Name() }
-	mirror := syntheticSyncPackage()
+	mirror, err := syntheticSyncPackage()
+	if err != nil {
+		t.Fatalf("syntheticSyncPackage failed: %v", err)
+	}
 	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once"} {
 		realNamed := namedTypeOf(t, real, prim)
 		mirrorNamed := namedTypeOf(t, mirror, prim)
@@ -399,7 +405,10 @@ func TestSyncFormerScopeErrorsNowCompile(t *testing.T) {
 // no less (a missing method would be a confusing type error; an extra one
 // would silently widen the surface).
 func TestSyncMethodSetComplete(t *testing.T) {
-	pkg := syntheticSyncPackage()
+	pkg, err := syntheticSyncPackage()
+	if err != nil {
+		t.Fatalf("syntheticSyncPackage failed: %v", err)
+	}
 	var got []string
 	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once"} {
 		named := pkg.Scope().Lookup(prim).(*types.TypeName).Type().(*types.Named)

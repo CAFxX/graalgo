@@ -41,8 +41,23 @@ var (
 	diskMu       sync.Mutex
 	diskCache    = map[string]*syntheticPackage{}
 	diskDirCache = map[string]string{} // import path -> resolved source dir
-	diskBuilding = map[string]bool{}   // cycle guard for recursive imports
+	// diskInFlight tracks disk packages currently being built, for
+	// single-flight coalescing (lane F, review 2026-11-02 P2-10).
+	diskInFlight = map[string]*diskBuild{}
 )
+
+// diskBuild is one in-flight disk package build. done closes when the
+// build finishes (success or failure); pkg/err then hold its outcome.
+// waitsFor links a build to the build it is currently waiting for, so
+// the cycle walk (diskCycleDetected) can tell a true import cycle
+// (which must fail) from independent concurrency (which must wait).
+type diskBuild struct {
+	path     string
+	done     chan struct{}
+	pkg      *syntheticPackage
+	err      error
+	waitsFor *diskBuild
+}
 
 // goModCache returns the local module cache directory.
 func goModCache() string {
@@ -235,42 +250,143 @@ func isDiskImportable(importPath string) bool {
 // import path, building and caching it on first use. Recursive imports
 // (a disk package importing another disk package) work: the type-check
 // below runs outside diskMu, so the overlay importer's recursive call
-// cannot deadlock. Import cycles are illegal Go; the in-progress guard
-// turns them into an error instead of infinite recursion.
-func getDiskPackage(importPath string) (*syntheticPackage, error) {
+// cannot deadlock on the mutex.
+//
+// stack is the importing check's disk-build ancestry (outermost first),
+// threaded through overlayImporter; nil for checks with no disk
+// ancestry (user/synthetic packages). It serves two purposes:
+//
+//   - True import cycles fail fast: a path already on the stack is a
+//     re-entrant import of a package whose build is an ancestor of this
+//     check — illegal Go, reported as an import cycle (message kept
+//     byte-identical to the old guard's).
+//   - Independent concurrency coalesces: a path being built by another
+//     goroutine is waited on, not failed. The old code returned a
+//     spurious "import cycle" to a concurrent caller for a path that
+//     was merely in flight. Waiting is safe because a deadlock cycle
+//     would have to pass through the waiter's own ancestry, which
+//     diskCycleDetected checks before waiting: if the in-flight
+//     build's wait chain leads back to the requester's stack, the
+//     request is a true cycle (e.g. two goroutines building the two
+//     halves of an A<->B cycle) and fails instead of deadlocking.
+//     Waiters receive the builder's outcome (package or build error),
+//     never a synthesized cycle error.
+func getDiskPackage(importPath string, stack []string) (*syntheticPackage, error) {
 	diskMu.Lock()
 	if sp, ok := diskCache[importPath]; ok {
 		diskMu.Unlock()
 		return sp, nil
 	}
-	if diskBuilding[importPath] {
-		diskMu.Unlock()
-		return nil, fmt.Errorf("gofrontend: import cycle involving %q", importPath)
+	for _, p := range stack {
+		if p == importPath {
+			diskMu.Unlock()
+			return nil, fmt.Errorf("gofrontend: import cycle involving %q", importPath)
+		}
 	}
-	diskBuilding[importPath] = true
+	if rec, ok := diskInFlight[importPath]; ok {
+		if diskCycleDetected(stack, rec, diskInFlight) {
+			diskMu.Unlock()
+			return nil, fmt.Errorf("gofrontend: import cycle involving %q", importPath)
+		}
+		// Record the wait edge on this goroutine's innermost build
+		// (nil-stack callers have no build, so no edge is possible
+		// and none is needed: they cannot be part of a cycle).
+		var owner *diskBuild
+		if len(stack) > 0 {
+			owner = diskInFlight[stack[len(stack)-1]]
+			if owner != nil {
+				owner.waitsFor = rec
+			}
+		}
+		diskMu.Unlock()
+		<-rec.done
+		diskMu.Lock()
+		if owner != nil && owner.waitsFor == rec {
+			owner.waitsFor = nil
+		}
+		diskMu.Unlock()
+		return rec.pkg, rec.err
+	}
+	rec := &diskBuild{path: importPath, done: make(chan struct{})}
+	diskInFlight[importPath] = rec
 	diskMu.Unlock()
 
-	sp, err := buildDiskPackage(importPath)
+	sp, err := buildDiskPackage(importPath, stack)
 
 	diskMu.Lock()
-	delete(diskBuilding, importPath)
-	if err != nil {
-		diskMu.Unlock()
-		return nil, err
+	rec.pkg, rec.err = sp, err
+	if err == nil {
+		diskCache[importPath] = sp
 	}
-	if prev, ok := diskCache[importPath]; ok {
-		diskMu.Unlock()
-		return prev, nil
-	}
-	diskCache[importPath] = sp
+	// Close before deleting: a caller arriving in between waits on
+	// the closed channel and reads this outcome, instead of
+	// starting a duplicate build.
+	close(rec.done)
+	delete(diskInFlight, importPath)
 	diskMu.Unlock()
-	return sp, nil
+	return rec.pkg, rec.err
+}
+
+// diskCycleDetected reports whether waiting for start's build would
+// deadlock: it follows start's waitsFor chain and reports true when
+// the chain reaches a build on the requester's own ancestry stack —
+// i.e. the requester's build transitively waits for itself. A chain
+// that leaves the in-flight map (a build that finished, or a stale
+// edge left by a completed wait) terminates the walk without a cycle:
+// only a live chain back to the requester counts. Callers hold diskMu;
+// inflight is the diskInFlight map (a parameter, not the global, so
+// the logic is unit-testable without goroutines).
+func diskCycleDetected(stack []string, start *diskBuild, inflight map[string]*diskBuild) bool {
+	inStack := make(map[string]bool, len(stack))
+	for _, p := range stack {
+		inStack[p] = true
+	}
+	seen := make(map[*diskBuild]bool)
+	for cur := start; cur != nil; {
+		if seen[cur] {
+			return false
+		}
+		seen[cur] = true
+		// Stale record: it left the in-flight map, so the chain it
+		// belonged to is gone.
+		if inflight[cur.path] != cur {
+			return false
+		}
+		next := cur.waitsFor
+		if next == nil {
+			return false
+		}
+		// Liveness before membership: a stale edge to a finished
+		// (or since rebuilt) build must end the walk, not report a
+		// cycle merely because the finished path shares a name with
+		// an ancestor on the requester's stack.
+		if inflight[next.path] != next {
+			return false
+		}
+		if inStack[next.path] {
+			return true
+		}
+		cur = next
+	}
+	return false
+}
+
+// appendDiskStack returns stack plus path, on a fresh backing array
+// (append would alias the caller's array and corrupt its ancestry).
+func appendDiskStack(stack []string, path string) []string {
+	out := make([]string, len(stack)+1)
+	copy(out, stack)
+	out[len(stack)] = path
+	return out
 }
 
 // buildDiskPackage parses and type-checks the third-party package at its
 // resolved source directory, returning it in the syntheticPackage shape so
-// the export machinery consumes it unchanged.
-func buildDiskPackage(importPath string) (*syntheticPackage, error) {
+// the export machinery consumes it unchanged. stack is the caller's
+// disk-build ancestry; this build's check runs with stack plus
+// importPath, so a cyclic import fails in getDiskPackage instead of
+// recursing (lane F, P2-10).
+func buildDiskPackage(importPath string, stack []string) (*syntheticPackage, error) {
 	dir, err := resolveDiskPackageDir(importPath)
 	if err != nil {
 		return nil, err
@@ -331,7 +447,7 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// __-helper + stub shape BEFORE type-checking, so call sites
 	// type-check against the stub's original signature.
 	mrSpecs := transformDiskMultiResult(importPath, files)
-	conf := types.Config{Importer: overlayImporter{}}
+	conf := types.Config{Importer: overlayImporter{stack: appendDiskStack(stack, importPath)}}
 	pkg, err := conf.Check(importPath, fset, files, info)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: type error in %q: %w", importPath, err)
@@ -359,7 +475,7 @@ func (e *exporter) importedPackage(p string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[p]; ok {
 		return getSyntheticPackage(p), nil
 	}
-	return getDiskPackage(p)
+	return getDiskPackage(p, nil)
 }
 
 // importPkgTree merges path and its transitive dependencies into the
@@ -407,5 +523,5 @@ func resolvePkgTree(path string) (*syntheticPackage, error) {
 	if isDedicatedSyntheticStub(path) {
 		return nil, nil
 	}
-	return getDiskPackage(path)
+	return getDiskPackage(path, nil)
 }

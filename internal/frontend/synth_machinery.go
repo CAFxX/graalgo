@@ -949,6 +949,16 @@ type synthGroup struct {
 // later by exportSyntheticBodies). Intrinsics are skipped. The exporter's
 // per-file state is swapped for the duration.
 func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
+	// Lane F (R12): record the package's FileSet for type-parameter
+	// declaration keys before the idempotency return, so packages
+	// resolved but merged later still resolve (fsetForPkg also scans
+	// the caches as a fallback).
+	if e.pkgFsets == nil {
+		e.pkgFsets = make(map[*types.Package]*token.FileSet)
+	}
+	if sp.pkg != nil && sp.fset != nil {
+		e.pkgFsets[sp.pkg] = sp.fset
+	}
 	// P3-M8: idempotent — skip if already imported (prevents duplicate
 	// globals when e.g. errors is imported both directly and via io).
 	if e.importedSynthetic[sp.path] {

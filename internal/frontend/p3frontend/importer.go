@@ -12,16 +12,10 @@ import (
 )
 
 // Importer is a types.Importer that graduates the frozen overlayImporter:
-//   - "runtime" and "fmt" resolve to synthetic packages with the exact
-//     frozen signatures (reimplemented here from the freeze spec —
-//     export.go's overlayImporter is unexported and frozen, so it cannot
-//     be reused, only matched);
-//   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
-//     exact frozen signatures (four primitives + the defined-but-out-of-
-//     scope methods, so the same named scope errors fire);
-//   - "errors" and "sort" resolve to the synthetic P3-M7 wave-1 packages
-//     (real-Go implementations; fail-fast members keep exact gc 1.27.1
-//     signatures);
+//   - import paths listed in syntheticMirrors resolve to mirrored
+//     synthetic packages with the exact frozen signatures (reimplemented
+//     here from the freeze spec — export.go's overlayImporter is
+//     unexported and frozen, so it cannot be reused, only matched);
 //   - module-local packages are type-checked from source with go/types,
 //     recursively, with results cached by import path;
 //   - stdlib packages resolve (proving the GOROOT mapping) but fail with
@@ -52,6 +46,77 @@ func NewImporter(l *Loader, mainDir string, fset *token.FileSet) *Importer {
 	}
 }
 
+// syntheticMirror is one mirrored synthetic package (lane F, review
+// 2026-11-02 R13). deps are imported — and therefore cached — before
+// building, in order. dep is the one dependency whose package object
+// the builder needs (bytes needs io, context needs time); it is
+// imported (cached) first and passed to build. encoding/pem's build
+// uses no base64 type, but the phase-1 pem source imports base64, so
+// the mirror graph keeps the base64 cache entry via deps
+// (TestEncCoreImporterReturnsMirror pins it). The table is the SINGLE
+// enumeration of the mirror set: Import consults it, and
+// Loader.ResolveImport classifies a path synthetic exactly when it is
+// a table key — so adding a mirror is one table entry, never a switch
+// case plus a loader case that can drift (the old switch and the old
+// loader list already disagreed on io, sync/atomic and unsafe).
+// Builders that can fail on internal inconsistency return an error;
+// Import propagates it as a type-check error instead of crashing.
+// The table holds data and plain builders only — no closure may call
+// Import, or package initialization cycles (table -> Import -> table).
+type syntheticMirror struct {
+	deps  []string
+	dep   string
+	build func(dep *types.Package) (*types.Package, error)
+}
+
+// plain adapts a self-contained mirror builder to the table.
+func plain(build func() *types.Package) func(*types.Package) (*types.Package, error) {
+	return func(*types.Package) (*types.Package, error) { return build(), nil }
+}
+
+var syntheticMirrors = map[string]syntheticMirror{
+	"runtime":     {build: plain(syntheticRuntimePackage)},
+	"fmt":         {build: plain(syntheticFmtPackage)},
+	"sync":        {build: func(*types.Package) (*types.Package, error) { return syntheticSyncPackage() }},
+	"sync/atomic": {build: plain(syntheticAtomicPackage)},
+	"time":        {build: plain(syntheticTimePackage)},
+	"context": {dep: "time", build: func(d *types.Package) (*types.Package, error) {
+		return syntheticContextPackage(d), nil
+	}},
+	"errors": {build: plain(syntheticErrorsPackage)},
+	"sort":   {build: plain(syntheticSortPackage)},
+	"io":     {build: plain(syntheticIoPackage)},
+	"bytes": {dep: "io", build: func(d *types.Package) (*types.Package, error) {
+		return syntheticBytesPackage(d), nil
+	}},
+	"strings":          {build: plain(syntheticStringsPackage)},
+	"unsafe":           {build: plain(syntheticUnsafePackage)},
+	"math":             {build: plain(syntheticMathPackage)},
+	"encoding/xml":     {build: plain(syntheticXmlPackage)},
+	"encoding/csv":     {build: plain(syntheticCsvPackage)},
+	"encoding/gob":     {build: plain(syntheticGobPackage)},
+	"strconv":          {build: plain(syntheticStrconvPackage)},
+	"encoding/json":    {build: plain(syntheticJsonPackage)},
+	"encoding/base32":  {build: plain(syntheticBase32Package)},
+	"encoding/base64":  {build: plain(syntheticBase64Package)},
+	"encoding/hex":     {build: plain(syntheticHexPackage)},
+	"encoding/binary":  {build: plain(syntheticBinaryPackage)},
+	"encoding/ascii85": {build: plain(syntheticAscii85Package)},
+	"encoding/pem": {
+		deps:  []string{"encoding/base64"},
+		build: plain(syntheticPemPackage),
+	},
+	"encoding/asn1": {build: plain(syntheticAsn1Package)},
+	"encoding":      {build: plain(syntheticEncodingPackage)},
+}
+
+// isSyntheticMirror reports whether path has a mirrored synthetic
+// package. Loader.ResolveImport uses this — never a second list.
+func isSyntheticMirror(path string) bool {
+	_, ok := syntheticMirrors[path]
+	return ok
+}
+
 // Import implements types.Importer.
 func (imp *Importer) Import(path string) (*types.Package, error) {
 	if pkg, ok := imp.pkgs[path]; ok {
@@ -63,166 +128,24 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 			return nil, fmt.Errorf("p3frontend: import cycle: %s", strings.Join(cycle, " -> "))
 		}
 	}
-	switch path {
-	case "runtime":
-		pkg := syntheticRuntimePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "fmt":
-		pkg := syntheticFmtPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync":
-		pkg := syntheticSyncPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync/atomic":
-		pkg := syntheticAtomicPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "time":
-		pkg := syntheticTimePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "context":
-		// Context references time.Time/time.Duration: ensure the
-		// synthetic time package is built and cached first.
-		timePkg, ok := imp.pkgs["time"]
-		if !ok {
-			timePkg = syntheticTimePackage()
-			imp.pkgs["time"] = timePkg
+	if m, ok := syntheticMirrors[path]; ok {
+		for _, dep := range m.deps {
+			if _, err := imp.Import(dep); err != nil {
+				return nil, err
+			}
 		}
-		pkg := syntheticContextPackage(timePkg)
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "errors":
-		// P3-M7 (wave 1): synthetic errors package (real-Go New/Is/Unwrap/
-		// Join/AsType; As fail-fast). Self-contained: no synthetic
-		// dependencies.
-		pkg := syntheticErrorsPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sort":
-		// P3-M7 (wave 1): synthetic sort package (real-Go pdqsort/stable/
-		// search; Find/Slice/SliceStable/SliceIsSorted fail-fast).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticSortPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "io":
-		// P3-M10: synthetic io package (minimal: Reader/Writer only;
-		// see synth_io.go). Required by bytes/strings (P3-M8).
-		pkg := syntheticIoPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "bytes":
-		// P3-M7 (wave 1): synthetic bytes package (synth_bytes.go).
-		// Requires the synthetic io package for io.Reader/io.Writer
-		// (P3-M8).
-		ioPkg, err := imp.Import("io")
+		var depPkg *types.Package
+		if m.dep != "" {
+			var err error
+			depPkg, err = imp.Import(m.dep)
+			if err != nil {
+				return nil, err
+			}
+		}
+		pkg, err := m.build(depPkg)
 		if err != nil {
 			return nil, err
 		}
-		pkg := syntheticBytesPackage(ioPkg)
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "strings":
-		// P3-M7 (wave 1): synthetic strings package (synth_strings.go).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticStringsPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "unsafe":
-		pkg := syntheticUnsafePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "math":
-		// P3-M7 (wave 1): synthetic math package (real-Go ports +
-		// bit-conversion/Sqrt/FMA intrinsics; see synth_math.go).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticMathPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/xml":
-		// P3-M7 (wave 1): synthetic encoding/xml (see synth_xml.go).
-		// Self-contained: no synthetic->synthetic imports.
-		pkg := syntheticXmlPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/csv":
-		// P3-M7 (wave 1): synthetic encoding/csv (see synth_enc_csv_gob.go).
-		pkg := syntheticCsvPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/gob":
-		// P3-M7 (wave 1): synthetic encoding/gob (see synth_enc_csv_gob.go).
-		pkg := syntheticGobPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "strconv":
-		// P3-M7 (wave 1): synthetic strconv (see synth_strconv.go).
-		pkg := syntheticStrconvPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/json":
-		// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
-		pkg := syntheticJsonPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/base32":
-		// P3-M7 (wave 1): synthetic encoding/base32 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticBase32Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/base64":
-		// P3-M7 (wave 1): synthetic encoding/base64 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticBase64Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/hex":
-		// P3-M7 (wave 1): synthetic encoding/hex (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticHexPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/binary":
-		// P3-M7 (wave 1): synthetic encoding/binary (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticBinaryPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/ascii85":
-		// P3-M7 (wave 1): synthetic encoding/ascii85 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticAscii85Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/pem":
-		// P3-M7 (wave 1): synthetic encoding/pem (m7-wenc-core).
-		// Imports synthetic encoding/base64: ensure the base64 mirror is
-		// built and cached first (the context->time precedent).
-		base64Pkg, ok := imp.pkgs["encoding/base64"]
-		if !ok {
-			base64Pkg = syntheticBase64Package()
-			imp.pkgs["encoding/base64"] = base64Pkg
-		}
-		_ = base64Pkg
-		pkg := syntheticPemPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding/asn1":
-		// P3-M7 (wave 1): synthetic encoding/asn1 (m7-wenc-core).
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticAsn1Package()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "encoding":
-		// P3-M7 (wave 1): synthetic top-level encoding (m7-wenc-core):
-		// the six marshaling interfaces only.
-		// Self-contained: no synthetic dependencies.
-		pkg := syntheticEncodingPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
 	}
@@ -396,25 +319,32 @@ var syncMethodSpecs = map[string][]struct {
 // (internal/frontend/export.go's syntheticSyncPackage, reimplemented
 // — the frozen original is unexported, so this is matched, not reused).
 // All methods have pointer receivers with exact gc 1.27.1 signatures.
-func syntheticSyncPackage() *types.Package {
+//
+// Lane F (P2-12): this returns an error instead of panicking on
+// internal table drift. syncMethodSpecs is data and typeOf is its
+// interpreter; a spec naming a type typeOf does not know (e.g. a
+// future edit adds a param type without extending the switch) is a
+// frontend bug, but it must surface as a type-check error through
+// Import, not crash the whole frontend with a panic.
+func syntheticSyncPackage() (*types.Package, error) {
 	pkg := types.NewPackage("sync", "sync")
 	emptyStruct := types.NewStruct(nil, nil)
-	typeOf := func(spec string) types.Type {
+	typeOf := func(spec string) (types.Type, error) {
 		name := spec
 		if i := strings.Index(spec, ":"); i >= 0 {
 			name = spec[i+1:]
 		}
 		switch name {
 		case "int":
-			return types.Typ[types.Int]
+			return types.Typ[types.Int], nil
 		case "bool":
-			return types.Typ[types.Bool]
+			return types.Typ[types.Bool], nil
 		case "func()":
-			return types.NewSignatureType(nil, nil, nil, nil, nil, false)
+			return types.NewSignatureType(nil, nil, nil, nil, nil, false), nil
 		case "Locker":
-			return syncLockerInterface(pkg)
+			return syncLockerInterface(pkg), nil
 		}
-		panic("unknown sync param type " + spec)
+		return nil, fmt.Errorf("p3frontend: unknown sync param type %q (syncMethodSpecs/typeOf drift)", spec)
 	}
 	names := []string{"Mutex", "RWMutex", "WaitGroup", "Once"}
 	for _, name := range names {
@@ -425,11 +355,19 @@ func syntheticSyncPackage() *types.Package {
 			var params []*types.Var
 			for _, ps := range ms.params {
 				pname := ps[:strings.Index(ps, ":")]
-				params = append(params, types.NewParam(token.NoPos, pkg, pname, typeOf(ps)))
+				pt, err := typeOf(ps)
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, types.NewParam(token.NoPos, pkg, pname, pt))
 			}
 			var results []*types.Var
 			for _, rs := range ms.results {
-				results = append(results, types.NewParam(token.NoPos, pkg, "", typeOf(rs)))
+				rt, err := typeOf(rs)
+				if err != nil {
+					return nil, err
+				}
+				results = append(results, types.NewParam(token.NoPos, pkg, "", rt))
 			}
 			recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
 			sig := types.NewSignatureType(recv, nil, nil,
@@ -438,7 +376,7 @@ func syntheticSyncPackage() *types.Package {
 		}
 	}
 	pkg.MarkComplete()
-	return pkg
+	return pkg, nil
 }
 
 // syncLockerInterface builds the synthesized sync.Locker interface
