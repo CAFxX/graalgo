@@ -4712,10 +4712,6 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4755,13 +4751,25 @@ type methodCall struct {
 func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Selection, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
 	mname := sel.Sel.Name
 	rn := derefNamed(selection.Recv())
-	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
-	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
+	// N3 (review 2026-11-02-12): (*runtime.Func).Name() as a method
+	// reference (method value, or a call routed through methodRefNode)
+	// has no funcdecl to reference — the synthetic runtime overlay
+	// declares the method for type-checking only, and the real
+	// implementation is the "runtimefuncname" wire node that only
+	// direct calls lower to (exportCall's runtimeStackMethod branch).
+	// The old panicMsg marker made this worse than an error in both
+	// directions: methodRefNode emitted a guest panic for a program
+	// that type-checks, and methodValueNode dereferenced the marker's
+	// nil decl and crashed the exporter itself. Fail loud at export
+	// time instead, naming the working shape (a direct call).
+	// Direct calls never reach here: exportCall intercepts them first,
+	// and the instantiation enumerators skip runtime-stack methods
+	// (see the runtimeStackMethod guards in enumerateInstantiations
+	// and findNested), so this error fires only for the reference
+	// shapes that cannot lower.
 	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
 		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
+		return nil, scopeErrorf("(*runtime.Func).Name as a method reference is not supported in frontend/v1 scope (WS D): call it directly (fn.Name()) — only direct calls lower to the runtimefuncname wire node")
 	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
@@ -5786,6 +5794,18 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			// P3-M3 (WS D, ADR-0003): interface method calls need no
 			// instantiation (same as the roots loop above).
 			if recvIface(selection.Recv()) != nil {
+				return true
+			}
+			// N3: synthetic runtime stack-inspection methods
+			// ((*Frames).Next, (*Func).Name/Entry/FileLine) lower to
+			// intrinsic wire nodes, never through resolveMethodCall/
+			// methodIndex — the same skip enumerateInstantiations'
+			// roots loop already has. Without it, a direct
+			// fn.Name() call inside a generic template would hit
+			// resolveMethodCall's method-reference scope error
+			// during enumeration even though the call itself
+			// exports fine via exportCall.
+			if _, isRt := runtimeStackMethod(selection); isRt {
 				return true
 			}
 			var mtargs []types.Type
@@ -9849,17 +9869,6 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
 	if err != nil {
 		return nil, err
-	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a

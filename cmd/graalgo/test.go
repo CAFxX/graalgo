@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"go/build"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -300,24 +299,9 @@ func parseModulePath(modData []byte) string {
 
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
+// It is buildableGoFilesWithTags (main.go) with no extra build tags;
+// the two share one implementation so `test` and `build`/`run`/`vet`
+// can never disagree about which files belong to a package.
 func buildableGoFiles(dir string) []string {
-	ctxt := build.Default
-	pkg, err := ctxt.ImportDir(dir, 0)
-	if err != nil {
-		// Not importable (no go.mod context, etc.): fall back to all
-		// files and let the backend report real errors.
-		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-		return all
-	}
-	var out []string
-	for _, f := range pkg.GoFiles {
-		out = append(out, filepath.Join(dir, f))
-	}
-	for _, f := range pkg.TestGoFiles {
-		out = append(out, filepath.Join(dir, f))
-	}
-	for _, f := range pkg.XTestGoFiles {
-		out = append(out, filepath.Join(dir, f))
-	}
-	return out
+	return buildableGoFilesWithTags(dir, "")
 }

@@ -123,6 +123,94 @@ func main() {
 	}
 }
 
+// TestRuntimeFuncNameMethodValueFailsLoud (N3, review 2026-11-02-12):
+// (*runtime.Func).Name() called directly — via runtime.Callers /
+// FuncForPC, the shape stack printers use — lowers to the
+// "runtimefuncname" wire node (the backend's GoFuncInfo handle already
+// carries the name), and the exported JSON contains no panic stub.
+// The same method taken as a METHOD VALUE (g := fn.Name) cannot lower:
+// there is no funcdecl to reference, and the old panicMsg marker made
+// the exporter crash with a nil-pointer dereference on exactly this
+// shape (and emitted a guest panic on the methodref call path). A
+// method value must now fail at export time with a loud scope error
+// naming the working shape (a direct call) — never a crash, never a
+// guest panic for a program that type-checks.
+func TestRuntimeFuncNameMethodValueFailsLoud(t *testing.T) {
+	// Direct call via Callers/FuncForPC: works, no panic stub.
+	direct := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	fn := runtime.FuncForPC(pcs[0])
+	_, _ = n, fn
+	if fn != nil {
+		_ = fn.Name()
+	}
+}
+`
+	out, err := ExportFile(writeSyncProg(t, direct))
+	if err != nil {
+		t.Fatalf("direct fn.Name(): ExportFile: %v", err)
+	}
+	if !strings.Contains(out, `"kind": "runtimefuncname"`) {
+		t.Errorf("direct fn.Name(): exported JSON missing runtimefuncname node")
+	}
+	if strings.Contains(out, "not implemented (no PC-to-function table)") {
+		t.Errorf("direct fn.Name(): exported JSON still contains the old panic stub")
+	}
+
+	// Method value: loud export error, not an exporter crash.
+	value := `package main
+
+import "runtime"
+
+func main() {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	fn := runtime.FuncForPC(pcs[0])
+	_, _ = n, fn
+	if fn != nil {
+		g := fn.Name
+		_ = g()
+	}
+}
+`
+	if _, err := ExportFile(writeSyncProg(t, value)); err == nil {
+		t.Errorf("method value fn.Name: expected export error, got success")
+	} else if !strings.Contains(err.Error(), "method reference") || !strings.Contains(err.Error(), "Name") {
+		t.Errorf("method value fn.Name: error %q does not name the method-reference scope limit", err.Error())
+	}
+
+	// Direct call inside a generic function: the instantiation
+	// enumerator must skip runtime-stack methods (findNested guard),
+	// so a generic body calling fn.Name() still exports.
+	generic := `package main
+
+import "runtime"
+
+func show[T any](v T) string {
+	var pcs [8]uintptr
+	n := runtime.Callers(1, pcs[:])
+	fn := runtime.FuncForPC(pcs[0])
+	_, _, _ = n, fn, v
+	if fn != nil {
+		return fn.Name()
+	}
+	return ""
+}
+
+func main() {
+	_ = show(1)
+}
+`
+	if _, err := ExportFile(writeSyncProg(t, generic)); err != nil {
+		t.Errorf("fn.Name() inside generic function: ExportFile: %v", err)
+	}
+}
+
 // TestRuntimeStackFailFast: the multi-result members (Caller, Next,
 // FileLine) outside an N-target assignment fail fast and loud: a bare
 // statement reaches the exporter's named multi-result scope error, and a
