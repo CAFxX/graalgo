@@ -65,6 +65,33 @@ func TestNewTimerSelectFires(t *testing.T) {
 	}
 }
 
+// TestSelectAfterReadyThenTimeout mirrors
+// test/corpus/phase2/timers/tm11_select_after_both.go, which the tree
+// previously ran only as a hand Java translation
+// (TimerDifferentialTest.testTm11SelectAfterBoth): a buffered channel
+// delivers a ready value to the first select, then the same channel is
+// empty for the second select, which must take the time.After branch.
+// Verified 2026-11-02 that the Go program itself prints "value fast"
+// then "timeout" under both graalgo and gc.
+func TestSelectAfterReadyThenTimeout(t *testing.T) {
+	ch := make(chan string, 1)
+	ch <- "fast"
+	select {
+	case v := <-ch:
+		if v != "fast" {
+			t.Fatalf("first select value = %q, want %q", v, "fast")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("first select took the timeout branch despite a ready value")
+	}
+	select {
+	case v := <-ch:
+		t.Fatalf("second select took the value branch with %q, want timeout", v)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: channel empty, timeout fires.
+	}
+}
+
 // TestWatchdogTimeAfterFires is the goroutine-watchdog shape from the
 // pkg031 history: a worker that never reports must be caught by a
 // time.After watchdog in main. Under the stale PKG-048 claim this test
