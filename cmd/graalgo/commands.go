@@ -101,7 +101,12 @@ func cmdRun(root string, args []string) int {
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
 	// the package build).
-	files, err := resolveFiles([]string{target})
+	// Directory expansion is constraint-aware (resolveFilesTags), but
+	// tags stay empty here: cmdRun does not retain -tags — the run
+	// -tags forwarding belongs to the R01 remediation lane, which must
+	// pass its tags into this call when it lands rather than adding a
+	// second filter. Platform (GOOS/GOARCH) filtering still applies.
+	files, err := resolveFilesTags([]string{target}, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -314,7 +319,14 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	// Directory expansion honours -tags (bf.tags is already parsed
+	// above): with tags, ImportDir excludes files gated by other tags,
+	// and without tags it excludes all tag-gated files — so a tagged
+	// build must pass its tags here, or its own variant file would be
+	// silently dropped. Forwarding the tags to the backend for
+	// *imported* packages is the R01 lane's job (tagsEnv); this call
+	// only selects the top-level package's files.
+	files, err := resolveFilesTags(bf.pkgs, bf.tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -388,7 +400,11 @@ func backendCheckArgs(tags, wirePath string, files []string) (args, env []string
 }
 
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	// Vet takes no -tags flag, so directory expansion uses the
+	// platform defaults only — but it must still be constraint-aware,
+	// or a package directory with platform variants fails on duplicate
+	// declarations before any analyzer runs.
+	files, err := resolveFilesTags(args, "")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1

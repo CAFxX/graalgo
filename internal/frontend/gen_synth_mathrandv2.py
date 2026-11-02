@@ -16,15 +16,18 @@
 #     - goarch.BigEndian branches take the LE path (documented).
 #     All other chacha8rand logic (State, Next, Init, Refill, Reseed,
 #     Marshal, Unmarshal) is verbatim.
-#  3. Exported multi-result methods are not emittable and are dropped:
-#     ChaCha8.Read/AppendBinary/MarshalBinary, PCG.AppendBinary/
-#     MarshalBinary, and the 4-result GetNormalDistributionParameters /
+#  3. Exported multi-result methods are served by the Appendix-M
+#     pattern (fail-fast stub keeping gc's exact signature, plus a
+#     single-result __-helper carrying gc's body, desugared via the
+#     mrdesugar_m5.go table): ChaCha8.Read/AppendBinary/MarshalBinary.
+#     PCG.AppendBinary/MarshalBinary are still dropped (no __-helper
+#     written for them; the same pattern would apply), as are the
+#     4-result GetNormalDistributionParameters /
 #     GetExponentialDistributionParameters (not used by v2 itself).
 #     Unexported multi-result helpers (pcg.next, cutPrefix,
 #     readUint8LengthPrefixed) become single-result pair-struct
 #     functions with rewritten call sites; 2-target bits.* calls inside
 #     the ported sources are rewritten to the __bits* helpers.
-#     Retest trigger: frontend supports multi-result method emission.
 #  4. rand.go / pcg.go / exp.go / normal.go / zipf.go carried verbatim
 #     (pcg.go imports the synthetic internal/byteorder, vendored by the
 #     mathbig worker).//go:linkname runtime_rand runtime.rand -> composed from two
@@ -72,30 +75,15 @@ GOROOT = os.path.join(_graalgo_goroot(), "src", "math", "rand", "v2")
 
 CHACHA = os.path.join(_graalgo_goroot(), "src", "internal", "chacha8rand")
 
-# P3-M9 (tier-5b): minimal ChaCha8 stub for crypto/ecdsa signLegacy, appended
-# verbatim to the generated file (the full ChaCha8 was dropped per Deviation 2
-# in the header; signLegacy only serves non-standard curves).
-CHACHA8_POSTLUDE = '''\
-// P3-M9 (tier-5b): minimal ChaCha8 for crypto/ecdsa signLegacy.
-// The full ChaCha8 was dropped (see Deviation 2 header). signLegacy is
-// only used for non-standard curves; standard curves (P-256/384/521)
-// use signFIPS. This fail-fasts honestly if called.
-
-// ChaCha8 is a ChaCha8-based random number generator (stub).
-type ChaCha8 struct {
-\tseed [32]byte
-}
-
-// NewChaCha8 returns a new ChaCha8 (stub: fail-fast on use).
-func NewChaCha8(seed [32]byte) *ChaCha8 {
-\treturn &ChaCha8{seed: seed}
-}
-
-// Read fail-fasts: ChaCha8 not vendored.
-func (c *ChaCha8) Read(p []byte) (n int, err error) {
-\tpanic("math/rand/v2: ChaCha8.Read not implemented (P3-M9 tier-5b scope-limit: non-standard ECDSA curves); re-test when ChaCha8 lands")
-}
-'''
+# N4 (review 2026-11-02-12): the P3-M9 ChaCha8 stub is gone. The full
+# ChaCha8 now comes from build_chacha8_go() (gc's chacha8.go, with the
+# __chacha8* rewrites), and its multi-result methods are served by the
+# Appendix-M pattern (stub + __-helper + mrdesugar table entry). The
+# stub survived only as long as the P3-M9 scope limits did; deleting it
+# outright was not an option, because crypto/ecdsa's signLegacy uses
+# NewChaCha8 as its io.Reader — deleting the type would break that
+# package's synthetic source instead of fixing the trap.
+CHACHA8_POSTLUDE = ""
 
 HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 //
@@ -104,9 +92,14 @@ HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 // ADR-0007 D5).
 //
 // Value model:
-//   - rand.go, pcg.go, exp.go, normal.go, zipf.go are gc 1.27.1's
-//     implementations ported verbatim (bit-exact by construction for
-//     fixed seeds; ChaCha8 verified byte-identical vs gc).
+//   - rand.go, pcg.go, chacha8.go, exp.go, normal.go, zipf.go are
+//     gc 1.27.1's implementations ported verbatim (bit-exact by
+//     construction for fixed seeds). ChaCha8's output is gc's: the
+//     inlined chacha8rand machinery below is live (its block loop
+//     iterates the 4 lanes, as gc's `for i := range b[0]` does —
+//     the P3-M9 text iterated 16 rows and would panic past lane 3),
+//     and Read/AppendBinary/MarshalBinary are served by __-helpers
+//     carrying gc's bodies (see Deviation 3).
 //   - DEVIATION 1 (documented): //go:linkname runtime_rand runtime.rand
 //     -> composed from two runtime.fastrand linkname calls (runtime.rand
 //     is not in the linkname table). Values differ from gc's
@@ -121,15 +114,21 @@ HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 //     setup's 64-bit stores become direct uint32 stores (same values);
 //     multi-result qr becomes __chacha8Qr returning [4]uint32;
 //     goarch.BigEndian branches take the LE path. All other logic is
-//     verbatim.
-//   - DEVIATION 3 (documented): exported multi-result methods are not
-//     emittable and are dropped: ChaCha8.Read/AppendBinary/MarshalBinary
-//     and PCG.AppendBinary/MarshalBinary. Unexported multi-result
+//     verbatim. These helpers are LIVE: ChaCha8's methods call them
+//     (an earlier P3-M9 generator pass stripped them from the output
+//     while leaving the comments, which is why the stub era's
+//     "verified byte-identical" claim was false for the shipped file).
+//   - DEVIATION 3 (documented): exported multi-result methods keep
+//     gc's exact signatures as fail-fast stubs and are served by
+//     single-result __-helpers desugared via the mrdesugar_m5.go
+//     table (Appendix-M pattern, as for math/rand Rand.Read):
+//     ChaCha8.Read/AppendBinary/MarshalBinary. PCG.AppendBinary/
+//     MarshalBinary are still dropped (no __-helper written for them;
+//     the same pattern would apply). Unexported multi-result
 //     helpers (pcg.next, cutPrefix, readUint8LengthPrefixed) become
 //     single-result pair-struct functions with rewritten call sites;
 //     2-target bits.* calls inside the ported sources are rewritten to
 //     the __bits* helpers.
-//     Retest trigger: frontend supports multi-result method emission.
 //
 // Generated by gen_synth_mathrandv2.py from gc 1.27.1; DO NOT EDIT BY
 // HAND (edit the generator and re-run).
@@ -424,8 +423,18 @@ func __chacha8Block(seed *[4]uint64, buf *[32]uint64, counter uint32) {
 	var b32 [16][4]uint32
 	__chacha8Setup(seed, &b32, counter)
 
-	for i := 0; i < 16; i++ {
-		// Load block i into local variables.
+	// N4: this loop runs over the 4 LANES (b32 is [16 rows][4 lanes]
+	// in gc's interlaced layout; each lane is one ChaCha block), not
+	// the 16 rows — gc loops over b[0] (which has length 4).
+	// (No backticks in this comment: the generated file embeds this
+	// text in a Go raw string literal, which backticks would end.)
+	// The P3-M9 text ran it to 16 and panicked at lane 4 (index [4]
+	// with length 4) on the first NewChaCha8. The helpers never
+	// executed before N4 (ChaCha8 was a stub), so the bad bound
+	// survived unnoticed behind the header's "verified byte-identical"
+	// claim. The write-back loop below correctly runs over the 16 rows.
+	for i := 0; i < 4; i++ {
+		// Load lane i into local variables.
 		b0 := b32[0][i]
 		b1 := b32[1][i]
 		b2 := b32[2][i]
@@ -464,7 +473,7 @@ func __chacha8Block(seed *[4]uint64, buf *[32]uint64, counter uint32) {
 			b3, b4, b9, b14 = q[0], q[1], q[2], q[3]
 		}
 
-		// Store block i back. Add b4..b11 back to the original key
+		// Store lane i back. Add b4..b11 back to the original key
 		// material, like in ChaCha20, to avoid trivial invertibility.
 		b32[0][i] = b0
 		b32[1][i] = b1
@@ -665,10 +674,113 @@ def build_chacha8_go():
         "buf, data, ok = readUint8LengthPrefixed(data)",
         "__rp := __readUint8LengthPrefixed(data); buf, data, ok = __rp.buf, __rp.rest, __rp.ok",
     )
-    # Drop exported multi-result methods (not emittable; see header).
-    src = strip_method(src, "ChaCha8", "Read")
-    src = strip_method(src, "ChaCha8", "AppendBinary")
-    src = strip_method(src, "ChaCha8", "MarshalBinary")
+    # N4: ChaCha8's exported multi-result methods are NOT dropped. Each
+    # keeps its exact gc signature as a fail-fast stub and gains a
+    # single-result __-helper carrying gc's body verbatim except for
+    # the return form (named results -> pair struct). This is the
+    # Appendix-M pattern used by math/rand Rand.Read; call sites
+    # desugar via the mrdesugar_m5.go table entries for
+    # math/rand/v2.ChaCha8 (direct calls and io.Reader / BinaryAppender
+    # / BinaryMarshaler interface dispatch alike). The replacements
+    # assert on gc's verbatim bodies so a toolchain change fails loudly
+    # here instead of silently shipping a diverged helper. The
+    # MarshalBinary helper calls __chacha8AppendBinary directly (not
+    # c.AppendBinary) so no multi-result call remains inside the
+    # synthetic source itself.
+    old_read = """func (c *ChaCha8) Read(p []byte) (n int, err error) {
+\tif c.readLen > 0 {
+\t\tn = copy(p, c.readBuf[len(c.readBuf)-c.readLen:])
+\t\tc.readLen -= n
+\t\tp = p[n:]
+\t}
+\tfor len(p) >= 8 {
+\t\tbyteorder.LEPutUint64(p, c.Uint64())
+\t\tp = p[8:]
+\t\tn += 8
+\t}
+\tif len(p) > 0 {
+\t\tbyteorder.LEPutUint64(c.readBuf[:], c.Uint64())
+\t\tn += copy(p, c.readBuf[:])
+\t\tc.readLen = 8 - len(p)
+\t}
+\treturn
+}"""
+    assert src.count(old_read) == 1, "build_chacha8_go: gc Read body not found verbatim"
+    src = src.replace(old_read, """// N4: ChaCha8.Read is a stub; calls are desugared to __chacha8Read
+// (Appendix M).
+func (c *ChaCha8) Read(p []byte) (n int, err error) {
+\tpanic("math/rand/v2: ChaCha8.Read: multi-result call needs the Appendix M desugar")
+}
+
+type __chacha8ReadPair struct {
+\tn   int
+\terr error
+}
+
+func __chacha8Read(c *ChaCha8, p []byte) __chacha8ReadPair {
+\tvar n int
+\tvar err error
+\tif c.readLen > 0 {
+\t\tn = copy(p, c.readBuf[len(c.readBuf)-c.readLen:])
+\t\tc.readLen -= n
+\t\tp = p[n:]
+\t}
+\tfor len(p) >= 8 {
+\t\tbyteorder.LEPutUint64(p, c.Uint64())
+\t\tp = p[8:]
+\t\tn += 8
+\t}
+\tif len(p) > 0 {
+\t\tbyteorder.LEPutUint64(c.readBuf[:], c.Uint64())
+\t\tn += copy(p, c.readBuf[:])
+\t\tc.readLen = 8 - len(p)
+\t}
+\treturn __chacha8ReadPair{n: n, err: err}
+}""")
+    old_append = """func (c *ChaCha8) AppendBinary(b []byte) ([]byte, error) {
+\tif c.readLen > 0 {
+\t\tb = append(b, "readbuf:"...)
+\t\tb = append(b, uint8(c.readLen))
+\t\tb = append(b, c.readBuf[len(c.readBuf)-c.readLen:]...)
+\t}
+\treturn append(b, __chacha8Marshal(&c.state)...), nil
+}"""
+    assert src.count(old_append) == 1, "build_chacha8_go: gc AppendBinary body not found verbatim"
+    src = src.replace(old_append, """// N4: ChaCha8.AppendBinary is a stub; calls are desugared to
+// __chacha8AppendBinary (Appendix M).
+func (c *ChaCha8) AppendBinary(b []byte) ([]byte, error) {
+\tpanic("math/rand/v2: ChaCha8.AppendBinary: multi-result call needs the Appendix M desugar")
+}
+
+type __chacha8BinaryPair struct {
+\tb   []byte
+\terr error
+}
+
+func __chacha8AppendBinary(c *ChaCha8, b []byte) __chacha8BinaryPair {
+\tif c.readLen > 0 {
+\t\tb = append(b, "readbuf:"...)
+\t\tb = append(b, uint8(c.readLen))
+\t\tb = append(b, c.readBuf[len(c.readBuf)-c.readLen:]...)
+\t}
+\treturn __chacha8BinaryPair{b: append(b, __chacha8Marshal(&c.state)...), err: nil}
+}""")
+    old_marshal = """func (c *ChaCha8) MarshalBinary() ([]byte, error) {
+\t// the maximum length of (chacha8rand.Marshal + c.readBuf + "readbuf:") is 64
+\treturn c.AppendBinary(make([]byte, 0, 64))
+}"""
+    assert src.count(old_marshal) == 1, "build_chacha8_go: gc MarshalBinary body not found verbatim"
+    src = src.replace(old_marshal, """// N4: ChaCha8.MarshalBinary is a stub; calls are desugared to
+// __chacha8MarshalBinary (Appendix M).
+func (c *ChaCha8) MarshalBinary() ([]byte, error) {
+\tpanic("math/rand/v2: ChaCha8.MarshalBinary: multi-result call needs the Appendix M desugar")
+}
+
+func __chacha8MarshalBinary(c *ChaCha8) __chacha8BinaryPair {
+\t// gc's capacity hint: state encoding + readBuf + "readbuf:" is at most 64.
+\tp := __chacha8AppendBinary(c, make([]byte, 0, 64))
+\treturn __chacha8BinaryPair{b: p.b, err: p.err}
+}""")
     assert "chacha8rand" not in src, "chacha8rand refs remain"
     return src
 
@@ -677,41 +789,19 @@ def main():
     parts = [HEADER]
     parts.append(build_rand_go().rstrip() + "\n\n")
     parts.append(build_pcg_go().rstrip() + "\n\n")
-    # P3-M9: ChaCha8 removed (scope-limited; requires & on SelectorExpr).
-    # See 01_chacha8.go.scopelimited for retest trigger.
-    # parts.append(build_chacha8_go().rstrip() + "\n\n")
+    # N4: ChaCha8 is live (see build_chacha8_go): gc's chacha8.go with
+    # the __chacha8* rewrites, its multi-result methods served by
+    # Appendix-M helpers. The P3-M9 scope limit that dropped it
+    # (& on SelectorExpr) no longer blocks it: the helpers' &c.state
+    # call sites export through the frontend's address-of support.
+    parts.append(build_chacha8_go().rstrip() + "\n\n")
     for name in ["exp.go", "normal.go", "zipf.go"]:
         parts.append(build_verbatim(name).rstrip() + "\n\n")
     out = "".join(parts)
     # Remove unused math/bits import (all calls rewritten to __bits*).
     out = out.replace('import "math/bits"\n', '')
-    # P3-M9: Remove ChaCha8 helpers (scope-limited). They are in the HEADER
-    # but the ChaCha8 type/methods are removed. Remove all __chacha8* funcs
-    # and types.
-    # Remove function definitions: func __chacha8XXX(...) ... { ... }
-    # This is complex via regex; instead, we'll filter line by line.
-    lines = out.split('\n')
-    filtered = []
-    skip = 0
-    brace_depth = 0
-    in_chacha8 = False
-    for i, line in enumerate(lines):
-        if not in_chacha8 and re.match(r'^(func|type) __chacha8\w+', line.strip()):
-            in_chacha8 = True
-            brace_depth = 0
-            # Count braces in this line
-            brace_depth += line.count('{') - line.count('}')
-            if brace_depth <= 0 and '{' not in line:
-                # Single line (e.g., type declaration without body)
-                in_chacha8 = False
-            continue
-        if in_chacha8:
-            brace_depth += line.count('{') - line.count('}')
-            if brace_depth <= 0 and '}' in line:
-                in_chacha8 = False
-            continue
-        filtered.append(line)
-    out = '\n'.join(filtered)
+    # N4: the __chacha8* helpers in HEADER are live (ChaCha8's
+    # methods call them); no stripping pass runs over them anymore.
     # Move the __bits* helpers to after the last import (they're currently
     # in HEADER before some imports added by build_*).
     # Extract helpers from out.

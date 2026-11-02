@@ -518,6 +518,16 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}, false},
 	// P3-M9 (tier1c): math/rand.Read (Appendix M).
 	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}, false},
+	// N4 (review 2026-11-02-12): math/rand/v2.ChaCha8 multi-result
+	// methods (Appendix M; pair fields match gc's result order — the
+	// results are unnamed in gc, so the field names are the helper's
+	// own, in order). These entries also wire interface dispatch
+	// (io.Reader / BinaryAppender / BinaryMarshaler) through the itab
+	// to the __-helpers, which is what crypto/ecdsa's signLegacy
+	// needs: it reads from a ChaCha8 held as an io.Reader.
+	{"math/rand/v2", "Read", "ChaCha8", "__chacha8Read", "__chacha8ReadPair", []string{"n", "err"}, false},
+	{"math/rand/v2", "AppendBinary", "ChaCha8", "__chacha8AppendBinary", "__chacha8BinaryPair", []string{"b", "err"}, false},
+	{"math/rand/v2", "MarshalBinary", "ChaCha8", "__chacha8MarshalBinary", "__chacha8BinaryPair", []string{"b", "err"}, false},
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).

@@ -21,9 +21,11 @@ package main
 
 import (
 	"fmt"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -250,16 +252,32 @@ func graalgoRunProgramEnv(root string, args []string, extraEnv []string) int {
 // resolveFiles turns package/file arguments into a list of .go files.
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
+//
+// NOTE: this is the unconstrained form, kept for `fmt` (formatting must
+// see every file in a directory, whatever its build constraints are).
+// `run`, `build`, and `vet` must use resolveFilesTags instead: a bare
+// glob hands the backend mutually exclusive files (foo_linux.go plus
+// foo_windows.go, or two //go:build variants declaring the same symbol)
+// which then fail with duplicate declarations. The test command already
+// solved this with buildableGoFiles; resolveFilesTags is the same
+// mechanism for the other commands.
 func resolveFiles(args []string) ([]string, error) {
+	return resolveFilesTags(args, "")
+}
+
+// resolveFilesTags is resolveFiles with build-constraint-aware directory
+// expansion: directories (and the no-arg current directory) expand
+// through buildableGoFilesWithTags, so only files satisfying the current
+// platform's constraints — plus the requested build tags — are handed
+// to the backend. Explicit .go file arguments are always included
+// unchanged (go semantics: explicit files are not constraint-filtered).
+func resolveFilesTags(args []string, tags string) ([]string, error) {
 	if len(args) == 0 {
-		matches, err := filepath.Glob("*.go")
-		if err != nil {
-			return nil, err
-		}
-		if len(matches) == 0 {
+		files := buildableGoFilesWithTags(".", tags)
+		if len(files) == 0 {
 			return nil, fmt.Errorf("no Go files in current directory")
 		}
-		return matches, nil
+		return files, nil
 	}
 	var files []string
 	for _, a := range args {
@@ -277,11 +295,7 @@ func resolveFiles(args []string) ([]string, error) {
 			return nil, fmt.Errorf("no such file or directory: %s", a)
 		}
 		if fi.IsDir() {
-			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, matches...)
+			files = append(files, buildableGoFilesWithTags(a, tags)...)
 			continue
 		}
 		files = append(files, a)
@@ -290,4 +304,39 @@ func resolveFiles(args []string) ([]string, error) {
 		return nil, fmt.Errorf("no Go files matched")
 	}
 	return files, nil
+}
+
+// buildableGoFilesWithTags returns the .go files in dir that satisfy the
+// current platform's build constraints, plus the requested build tags,
+// using the same rules as `go build` (go/build.ImportDir). The tag
+// argument is the -tags flag value (space-separated); empty means the
+// platform defaults only. On an ImportDir error (not importable), it
+// falls back to all *.go files and lets the backend report real errors
+// — the same fallback the test command's buildableGoFiles has always
+// used. Callers strip _test.go files themselves where the command
+// requires it (build/run), so test files are included here, exactly
+// like buildableGoFiles.
+func buildableGoFilesWithTags(dir string, tags string) []string {
+	ctxt := build.Default
+	if tags != "" {
+		ctxt.BuildTags = strings.Fields(tags)
+	}
+	pkg, err := ctxt.ImportDir(dir, 0)
+	if err != nil {
+		// Not importable (no go.mod context, etc.): fall back to all
+		// files and let the backend report real errors.
+		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		return all
+	}
+	var out []string
+	for _, f := range pkg.GoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.TestGoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.XTestGoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	return out
 }
