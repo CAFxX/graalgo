@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import graalgo.runtime.ChanOps;
 import graalgo.runtime.GoChan;
 import graalgo.runtime.PanicException;
+import graalgo.runtime.SelectOp;
 
 /**
  * P2-M2 channel + select tests (WS B; GG-0017 chan slice).
@@ -578,6 +579,58 @@ public final class ChannelTest {
         });
         assertEquals("send on closed channel", panicVal.get(),
                 "select send-on-closed panics");
+    }
+
+    /**
+     * Sweep-phase poison panics even when another case is enqueued
+     * (P1-1 regression). The close must land between the poll phase
+     * and the block-phase sweep, not before the poll: the test forces
+     * that window deterministically with SelectOp's poll→sweep hook,
+     * which closes the send channel on the selecting goroutine itself
+     * after the poll has seen it open and before the sweep runs. The
+     * sweep then sees the closed send case (poison) plus the enqueued
+     * recv case. Without the fix the select parks on the recv case
+     * forever and this test times out in {@code waitFor}; a test that
+     * closes before the select starts would only exercise the
+     * poll-phase poison path, so the test also asserts the hook fired
+     * — a pass without the hook firing would not cover this fix.
+     * verifies: GG-0017
+     */
+    public void testSelectSweepPoisonWithEnqueuedCasePanics() throws Exception {
+        AtomicReference<Object> panicVal = new AtomicReference<>();
+        AtomicBoolean hookFired = new AtomicBoolean();
+        try {
+            withScheduler(2, () -> {
+                GoChan poisonCh = new GoChan(0, 0L);
+                GoChan stallCh = new GoChan(0, 0L);
+                SelectOp.setPollSweepHookForTest(() -> {
+                    if (hookFired.compareAndSet(false, true)) {
+                        ChanOps.close(poisonCh);
+                    }
+                });
+                sched.spawn(() -> {
+                    try {
+                        ChanOps.selectGo(new ChanOps.SelectCase[]{
+                                new ChanOps.SelectCase(poisonCh, true, 1L),
+                                new ChanOps.SelectCase(stallCh, false, null),
+                        });
+                        panicVal.set("NO_PANIC");
+                    } catch (PanicException pe) {
+                        panicVal.set(pe.goValue().toString());
+                    }
+                });
+                waitFor(() -> panicVal.get() != null,
+                        "select to panic on sweep-phase poison");
+                assertTrue(hookFired.get(),
+                        "hook fired at poll->sweep boundary");
+                assertTrue(stallCh.recvWaitersCount() == 0,
+                        "panicking select removes its enqueued waiter");
+            });
+        } finally {
+            SelectOp.setPollSweepHookForTest(null);
+        }
+        assertEquals("send on closed channel", panicVal.get(),
+                "sweep-phase poison panics despite enqueued case");
     }
 
     // ---------- stress ----------

@@ -53,6 +53,21 @@ public final class SelectOp {
     private volatile boolean resultOk;
     private volatile boolean resultPoison;
 
+    /**
+     * Test-only seam: invoked on the selecting goroutine exactly at the
+     * poll→sweep boundary (after the poll phase and default check, before
+     * the block-phase sweep), so a test can close a channel in that race
+     * window deterministically. Null in production; no production code
+     * sets it. Tests that set it must clear it (set null) afterwards,
+     * or later selects in the same JVM would re-invoke the hook.
+     */
+    private static volatile Runnable pollSweepHookForTest;
+
+    /** Test-only: installs (or clears, with null) {@link #pollSweepHookForTest}. */
+    public static void setPollSweepHookForTest(Runnable hook) {
+        pollSweepHookForTest = hook;
+    }
+
     public SelectOp(ChanOps.SelectCase[] cases) {
         this.cases = cases.clone();
     }
@@ -174,6 +189,10 @@ public final class SelectOp {
             if (defaultIndex >= 0) {
                 return defaultIndex;
             }
+            Runnable hook = pollSweepHookForTest;
+            if (hook != null) {
+                hook.run();
+            }
 
             // ---- Phase 2: block ----
             // Sweep in random order (P2-4: fairness — no systematic
@@ -252,11 +271,20 @@ public final class SelectOp {
                     cleanup(mine);
                 }
             }
+            if (poison) {
+                // Sweep-phase poison: a send case closed between the poll
+                // phase (which saw it open) and this sweep. No case has
+                // already won here (immediate != null and claimedByOther
+                // returned above, matching the poll phase where a ready
+                // case wins over poison), so the select must panic rather
+                // than park on the remaining enqueued cases — parking
+                // would hang (or return another case) where gc panics.
+                // The enqueued waiters are removed first: a panicking
+                // select must not leave stale waiters on other channels.
+                cleanup(mine);
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
+            }
             if (mine.isEmpty()) {
-                if (poison) {
-                    // Every case was a send on a closed channel.
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
-                }
                 // Zero cases: `select {}` blocks forever (gc deadlock).
                 // Park indefinitely; the deadlock detector (P2-M10) owns it.
                 // P2-M6: it genuinely blocks — record with channelId -1
