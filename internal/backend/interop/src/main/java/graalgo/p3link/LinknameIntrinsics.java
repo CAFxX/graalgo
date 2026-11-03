@@ -655,6 +655,18 @@ public final class LinknameIntrinsics {
         Linknames.register("graalgo.os.argv", args -> GoOs.argv(args[0]), 1);
         // P3-M8 (crypto/rand): entropy source.
         Linknames.register("graalgo.os.getrandom", args -> GoOs.getrandom(args[0]), 1);
+        // REVIEW-2026-11-03-16 S8: process spawning (os/exec bring-up).
+        Linknames.register("graalgo.os.executable", args -> GoOs.executable(), 0);
+        Linknames.register("graalgo.os.spawn", args -> GoOs.spawn(args[0], args[1], args[2],
+                args[3], args[4], args[5], args[6], args[7], args[8], args[9]), 10);
+        Linknames.register("graalgo.os.procPid", args -> GoOs.procPid(args[0]), 1);
+        Linknames.register("graalgo.os.procWait", args -> GoOs.procWait(args[0]), 1);
+        Linknames.register("graalgo.os.procExitCode", args -> GoOs.procExitCode(args[0]), 1);
+        Linknames.register("graalgo.os.procSignal", args -> GoOs.procSignal(args[0]), 1);
+        Linknames.register("graalgo.os.procCpuNanos", args -> GoOs.procCpuNanos(args[0]), 1);
+        Linknames.register("graalgo.os.procKill", args -> GoOs.procKill(args[0], args[1]), 2);
+        Linknames.register("graalgo.os.procRelease", args -> GoOs.procRelease(args[0]), 1);
+        Linknames.register("graalgo.os.findProcess", args -> GoOs.findProcess(args[0]), 1);
     }
 
     /**
@@ -722,6 +734,9 @@ public final class LinknameIntrinsics {
         // net.Interface/Interfaces (github.com/google/uuid v1 node IDs).
         Linknames.register("graalgo.net.interfaces",
                 args -> GoNet.interfaces(args[0]), 1);
+        // REVIEW-2026-11-03-16 S7: JVM resolver for net.LookupHost/LookupIP.
+        Linknames.register("graalgo.net.lookupHost",
+                args -> GoNet.lookupHost(args[0], args[1]), 2);
     }
 
     /**

@@ -94,7 +94,10 @@ import graalgo.values.GoString;
  * <p>Environment (os.md §2.4): the JVM has no {@code setenv(2)}, so
  * mutations live in an overlay (+ a removal set + a cleared flag) over
  * {@code System.getenv}. Documented divergence D3: invisible to native
- * code and exec'd children (no {@code os/exec} in M8).
+ * code and to processes spawned outside Go. Children spawned through
+ * {@code os.StartProcess} DO inherit the merged overlay view (S8,
+ * 2026-11-03: the spawn intrinsic installs it as the child's
+ * environment), so D3 is discharged for Go-spawned children.
  *
  * <p>EPIPE/SIGPIPE (R7): on EPIPE the JVM's SIGPIPE disposition is
  * restored to default and one native write is re-driven, so the kernel
@@ -112,8 +115,13 @@ public final class GoOs {
     // Linux errno numbers (amd64 ABI) surfaced through the -errno convention.
     public static final int EPERM = 1;
     public static final int ENOENT = 2;
+    public static final int ESRCH = 3;
+    public static final int EINTR = 4;
     public static final int EIO = 5;
+    public static final int ENOEXEC = 8;
     public static final int EBADF = 9;
+    public static final int ECHILD = 10;
+    public static final int ENOSYS = 38;
     public static final int EACCES = 13;
     public static final int EEXIST = 17;
     public static final int EXDEV = 18;
@@ -252,6 +260,14 @@ public final class GoOs {
 
     private static final ConcurrentHashMap<Long, Handle> HANDLES = new ConcurrentHashMap<>();
     private static final AtomicLong NEXT_COOKIE = new AtomicLong(16);
+    // Process table (S8): declared here, BEFORE the static block below
+    // that calls resetState (which clears it) — static members
+    // initialize in textual order, so a declaration after the block
+    // would NPE on class load. ProcRec itself is defined in the
+    // process-spawning section at the end of this file.
+    private static final ConcurrentHashMap<Long, ProcRec> PROCS =
+            new ConcurrentHashMap<>();
+    private static final AtomicLong NEXT_PROC = new AtomicLong(1);
     private static volatile Path VCWD;
     private static final ConcurrentHashMap<String, String> ENV_OVERLAY = new ConcurrentHashMap<>();
     private static final Set<String> ENV_REMOVED = ConcurrentHashMap.newKeySet();
@@ -376,6 +392,7 @@ public final class GoOs {
     }
 
     private static void resetState(String[] argv) {
+        PROCS.clear();
         HANDLES.clear();
         NEXT_COOKIE.set(16);
         ENV_OVERLAY.clear();
@@ -1727,5 +1744,562 @@ public final class GoOs {
         bb.put(tmp);
         goBufBack(bArg, bb, n);
         return n;
+    }
+
+    // ------------------------------------------------------------------
+    // Process spawning (REVIEW-2026-11-03-16 S8: os/exec bring-up).
+    // The synthetic os package's StartProcess/FindProcess/Wait/Kill/
+    // Signal family is backed by java.lang.ProcessBuilder — host JVM
+    // APIs, no syscalls, no JNI/JNA, same stance as the file surface.
+    //
+    // Calling conventions (os.md §2.3): long returns are negative =
+    // -errno, non-negative = value; string returns are GoString.
+    // A spawned process is a record in PROCS, keyed by a cookie that
+    // is NOT the pid (the Go Process struct carries both: Pid for the
+    // user, cookie for the intrinsics). Cookie 0 is never issued, so
+    // the Go side uses 0 as the "no process" sentinel.
+    //
+    // Stdio redirect kinds (per slot: 0=stdin, 1=stdout, 2=stderr):
+    //   0 = nil file -> /dev/null
+    //   1 = stdio-kind handle -> Redirect.INHERIT (the JVM process's
+    //       fds; note this bypasses Java-level System.out/err rebinds,
+    //       e.g. batch capture — the child writes to the real fd 1/2)
+    //   2 = regular-file handle -> re-opened by path (Redirect.to/from:
+    //       output truncates, offsets start at 0 — NOT the shared open
+    //       file description gc passes; documented divergence)
+    //   3 = pipe handle -> Redirect.PIPE + a pump thread bridging the
+    //       Java process stream and the Go pipe channel (see below)
+    // Anything else (dir, socket, unknown kind) -> -EINVAL, fail fast.
+    // Extra Files entries (index >= 3) are rejected on the Go side;
+    // ProcessBuilder has no extra-fd support, so they cannot be
+    // honored silently.
+    //
+    // Pipe bridging: the Go side passes the CHILD end's cookie. The
+    // peer end is the adjacent cookie (GoOs.pipe() allocates
+    // consecutive (read, write) cookies and never reuses them, so for
+    // a write end w the peer is w-1, for a read end r the peer is
+    // r+1). If the peer handle is absent or not a pipe, spawn fails
+    // with -EINVAL rather than guessing. Pumps are daemon threads:
+    // stdin pump copies peer-source -> process stdin (EOF closes the
+    // child's stdin); stdout/stderr pumps copy process stdout/stderr
+    // -> peer-sink (EOF closes the sink channel, which is what makes
+    // the Go reader see EOF when the child exits — the handle itself
+    // stays in the table, so a later Go write fails loudly instead
+    // of hanging).
+    //
+    // Signals: SIGKILL (9) -> destroyForcibly, SIGTERM (15) ->
+    // destroy; any other signal goes through the `kill` utility
+    // (kill -<sig> <pid>), which is the only way to deliver an
+    // arbitrary signal from the JVM. If `kill` is unavailable, other
+    // signals fail with -ENOSYS (never silently delivered as a
+    // different signal). The delivered signal is recorded so
+    // ProcessState can report it; a child killed by anyone else
+    // reports through its exit code only.
+    //
+    // Environment: a nil env slice inherits the GoOs merged env view
+    // (System.getenv + Setenv overlay, minus removals) — this is what
+    // discharges synthetic-os divergence D3 for Go-spawned children.
+    // A non-nil env slice (even empty) replaces the environment
+    // exactly. argv[0] is NOT honored separately: ProcessBuilder has
+    // no argv0 override, so the child's argv[0] is always `name`
+    // (exact in the normal case argv[0] == name). Bare names are
+    // PATH-resolved by ProcessBuilder, where gc StartProcess would
+    // fail with ENOENT — os/exec users (who LookPath first) are
+    // unaffected.
+    // ------------------------------------------------------------------
+
+    /** One spawned (or found) process. proc is null for foreign
+     * (FindProcess) records, which have only a ProcessHandle or a bare
+     * pid; their exit code is unknowable from the JVM, so Wait on them
+     * fails with -ECHILD (gc would wait a real child; a foreign pid
+     * is not one). */
+    private static final class ProcRec {
+        final Process proc;
+        final ProcessHandle handle;
+        final long pid;
+        volatile int signal;
+        volatile boolean waited;
+        volatile int exitCode;
+        volatile boolean hasExit;
+        volatile long cpuNanos;
+
+        ProcRec(Process proc, long pid) {
+            this.proc = proc;
+            this.handle = null;
+            this.pid = pid;
+        }
+
+        ProcRec(ProcessHandle handle, long pid) {
+            this.proc = null;
+            this.handle = handle;
+            this.pid = pid;
+        }
+
+        ProcRec(long pid) {
+            this.proc = null;
+            this.handle = null;
+            this.pid = pid;
+        }
+    }
+
+    /** Reads a Go []string (GoSlice of GoString) into a Java list.
+     * A null slice reads as an empty list; the caller distinguishes
+     * nil (inherit) from empty (replace) by testing the argument for
+     * null before calling. */
+    private static java.util.List<String> goStrSlice(Object o) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (!(o instanceof GoSlice gs)) {
+            return out;
+        }
+        Object[] arr = (Object[]) gs.array();
+        for (int i = gs.offset(); i < gs.offset() + gs.len(); i++) {
+            Object e = arr[i];
+            if (e instanceof GoString gstr) {
+                out.add(new String(gstr.bytes(), StandardCharsets.UTF_8));
+            } else if (e instanceof String s) {
+                out.add(s);
+            } else if (e != null) {
+                out.add(e.toString());
+            }
+        }
+        return out;
+    }
+
+    /** The merged env view (environ()'s map, factored out): System
+     * getenv unless cleared, overlay applied, removals applied. */
+    private static java.util.Map<String, String> mergedEnvMap() {
+        java.util.Map<String, String> merged = new java.util.LinkedHashMap<>();
+        if (!ENV_CLEARED) {
+            merged.putAll(System.getenv());
+        }
+        merged.putAll(ENV_OVERLAY);
+        for (String k : ENV_REMOVED) {
+            merged.remove(k);
+        }
+        return merged;
+    }
+
+    /** The peer cookie of a pipe end, or -1 when the handle is not a
+     * pipe end with a live complementary peer. */
+    private static long pipePeer(long cookie) {
+        Handle h = HANDLES.get(cookie);
+        if (!(h instanceof ChannelHandle ch) || ch.kind != KIND_PIPE) {
+            return -1;
+        }
+        long peer;
+        if (ch.readable && !ch.writable) {
+            peer = cookie + 1;
+        } else if (ch.writable && !ch.readable) {
+            peer = cookie - 1;
+        } else {
+            return -1;
+        }
+        Handle ph = HANDLES.get(peer);
+        if (!(ph instanceof ChannelHandle pch) || pch.kind != KIND_PIPE) {
+            return -1;
+        }
+        return peer;
+    }
+
+    private static java.nio.channels.Channel pipeChannel(long cookie) {
+        Handle h = HANDLES.get(cookie);
+        return h instanceof ChannelHandle ch ? ch.ch : null;
+    }
+
+    /** Daemon pump: Go pipe source channel -> child stdin. EOF closes
+     * the child's stdin (the child sees EOF, gc parity). */
+    private static Thread pumpToChild(java.nio.channels.Channel src,
+            java.io.OutputStream dst, String name) {
+        Thread t = new Thread(() -> {
+            try {
+                ByteBuffer bb = ByteBuffer.allocate(8192);
+                while (true) {
+                    bb.clear();
+                    int n = ((java.nio.channels.ReadableByteChannel) src).read(bb);
+                    if (n < 0) {
+                        break;
+                    }
+                    if (n == 0) {
+                        continue;
+                    }
+                    bb.flip();
+                    byte[] bytes = new byte[bb.remaining()];
+                    bb.get(bytes);
+                    dst.write(bytes);
+                    dst.flush();
+                }
+            } catch (IOException | RuntimeException ignored) {
+                // Reader closed, child gone, or channel closed: the
+                // pump's job is over; the Go side sees the error on
+                // its own next operation.
+            } finally {
+                try {
+                    dst.close();
+                } catch (IOException ignored) {
+                    // Best effort.
+                }
+            }
+        }, name);
+        t.setDaemon(true);
+        return t;
+    }
+
+    /** Daemon pump: child stdout/stderr -> Go pipe sink channel. EOF
+     * closes the sink channel, which is what delivers EOF to the Go
+     * reader when the child exits. */
+    private static Thread pumpFromChild(java.io.InputStream src,
+            java.nio.channels.Channel dst, String name) {
+        Thread t = new Thread(() -> {
+            try {
+                byte[] buf = new byte[8192];
+                java.nio.channels.WritableByteChannel wch =
+                        (java.nio.channels.WritableByteChannel) dst;
+                while (true) {
+                    int n = src.read(buf);
+                    if (n < 0) {
+                        break;
+                    }
+                    ByteBuffer bb = ByteBuffer.wrap(buf, 0, n);
+                    while (bb.hasRemaining()) {
+                        if (wch.write(bb) < 0) {
+                            break;
+                        }
+                    }
+                }
+            } catch (IOException | RuntimeException ignored) {
+                // Child gone or sink closed: pump done.
+            } finally {
+                try {
+                    dst.close();
+                } catch (IOException ignored) {
+                    // Best effort.
+                }
+            }
+        }, name);
+        t.setDaemon(true);
+        return t;
+    }
+
+    /** Maps a ProcessBuilder start failure to an errno. The JDK
+     * message carries the kernel errno ("error=2, No such file or
+     * directory"), which is the only way to tell ENOENT from EACCES
+     * here; anything unparseable falls back to the generic mapper. */
+    private static int spawnErrno(IOException e) {
+        String m = e.getMessage();
+        if (m != null) {
+            java.util.regex.Matcher mm =
+                    java.util.regex.Pattern.compile("error=(\\d+)").matcher(m);
+            if (mm.find()) {
+                switch (Integer.parseInt(mm.group(1))) {
+                    case 2:
+                        return ENOENT;
+                    case 13:
+                        return EACCES;
+                    case 8:
+                        return ENOEXEC;
+                    default:
+                        break;
+                }
+            }
+        }
+        return errno(e);
+    }
+
+    /** graalgo.os.executable — the launcher-defined executable: argv[0]
+     * (the absolute entry-point path under `graalgo run`, per
+     * P3SyncMain), or empty when no launcher set argv (the Go side
+     * turns empty into an error, never into the JVM binary path). */
+    public static Object executable() {
+        if (ARGV.length == 0) {
+            return GoString.EMPTY;
+        }
+        return GoString.fromUtf8(ARGV[0]);
+    }
+
+    /** graalgo.os.spawn — see the section header. Returns a proc
+     * cookie, or -errno. Arity 10. */
+    public static long spawn(Object nameArg, Object argvArg, Object envArg,
+            Object dirArg, Object stdinKindArg, Object stdinCookieArg,
+            Object stdoutKindArg, Object stdoutCookieArg,
+            Object stderrKindArg, Object stderrCookieArg) {
+        final String name;
+        try {
+            name = goStr(nameArg);
+        } catch (RuntimeException e) {
+            return -EINVAL;
+        }
+        if (name.isEmpty() || name.indexOf('\0') >= 0) {
+            return -ENOENT;
+        }
+        java.util.List<String> argv = goStrSlice(argvArg);
+        java.util.List<String> cmd = new java.util.ArrayList<>();
+        cmd.add(name);
+        for (int i = 1; i < argv.size(); i++) {
+            cmd.add(argv.get(i));
+        }
+        final ProcessBuilder pb = new ProcessBuilder(cmd);
+        // Working directory: the Go side always passes a resolved dir
+        // (attr.Dir, or Getwd() when empty), so resolve() here only
+        // normalizes; a relative dir would resolve against VCWD.
+        try {
+            pb.directory(resolve(goStr(dirArg)).toFile());
+        } catch (RuntimeException e) {
+            return -errno(e);
+        }
+        // Environment: nil slice -> merged GoOs view; non-nil slice
+        // (even empty) -> exactly those entries.
+        java.util.Map<String, String> env = pb.environment();
+        env.clear();
+        if (envArg == null) {
+            env.putAll(mergedEnvMap());
+        } else {
+            for (String kv : goStrSlice(envArg)) {
+                int eq = kv.indexOf('=');
+                if (eq < 0) {
+                    env.put(kv, "");
+                } else {
+                    env.put(kv.substring(0, eq), kv.substring(eq + 1));
+                }
+            }
+        }
+        // Redirects, validated before starting (no partial spawn).
+        long[] kinds = {num(stdinKindArg), num(stdoutKindArg), num(stderrKindArg)};
+        long[] cookies = {num(stdinCookieArg), num(stdoutCookieArg), num(stderrCookieArg)};
+        java.nio.channels.Channel[] pumpSrc = new java.nio.channels.Channel[3];
+        java.nio.channels.Channel[] pumpDst = new java.nio.channels.Channel[3];
+        java.io.File devNull = new java.io.File("/dev/null");
+        for (int slot = 0; slot < 3; slot++) {
+            long kind = kinds[slot];
+            long cookie = cookies[slot];
+            ProcessBuilder.Redirect redir;
+            switch ((int) kind) {
+                case 0:
+                    redir = slot == 0
+                            ? ProcessBuilder.Redirect.from(devNull)
+                            : ProcessBuilder.Redirect.to(devNull);
+                    break;
+                case 1: {
+                    Handle h = HANDLES.get(cookie);
+                    if (!(h instanceof ChannelHandle ch) || ch.kind != KIND_STDIO) {
+                        return -EINVAL;
+                    }
+                    redir = ProcessBuilder.Redirect.INHERIT;
+                    break;
+                }
+                case 2: {
+                    Handle h = HANDLES.get(cookie);
+                    if (!(h instanceof ChannelHandle ch) || ch.path == null
+                            || ch.kind != KIND_REGULAR) {
+                        return -EINVAL;
+                    }
+                    redir = slot == 0
+                            ? ProcessBuilder.Redirect.from(ch.path.toFile())
+                            : ProcessBuilder.Redirect.to(ch.path.toFile());
+                    break;
+                }
+                case 3: {
+                    long peer = pipePeer(cookie);
+                    if (peer < 0) {
+                        return -EINVAL;
+                    }
+                    redir = ProcessBuilder.Redirect.PIPE;
+                    if (slot == 0) {
+                        // Child stdin: parent writes to `cookie`
+                        // (write end); pump from the peer source.
+                        java.nio.channels.Channel src = pipeChannel(peer);
+                        if (src == null) {
+                            return -EINVAL;
+                        }
+                        pumpSrc[slot] = src;
+                    } else {
+                        // Child stdout/stderr: parent reads from
+                        // `cookie` (read end); pump into the peer sink.
+                        java.nio.channels.Channel dst = pipeChannel(peer);
+                        if (dst == null) {
+                            return -EINVAL;
+                        }
+                        pumpDst[slot] = dst;
+                    }
+                    break;
+                }
+                default:
+                    return -EINVAL;
+            }
+            if (slot == 0) {
+                pb.redirectInput(redir);
+            } else if (slot == 1) {
+                pb.redirectOutput(redir);
+            } else {
+                pb.redirectError(redir);
+            }
+        }
+        final Process proc;
+        try {
+            proc = pb.start();
+        } catch (IOException e) {
+            return -spawnErrno(e);
+        }
+        long cookie = NEXT_PROC.getAndIncrement();
+        PROCS.put(cookie, new ProcRec(proc, proc.pid()));
+        // Start pumps after the record exists (pumps never touch PROCS).
+        if (pumpSrc[0] != null) {
+            pumpToChild(pumpSrc[0], proc.getOutputStream(),
+                    "graalgo-proc-pump-stdin-" + cookie).start();
+        }
+        if (pumpDst[1] != null) {
+            pumpFromChild(proc.getInputStream(), pumpDst[1],
+                    "graalgo-proc-pump-stdout-" + cookie).start();
+        }
+        if (pumpDst[2] != null) {
+            pumpFromChild(proc.getErrorStream(), pumpDst[2],
+                    "graalgo-proc-pump-stderr-" + cookie).start();
+        }
+        return cookie;
+    }
+
+    /** graalgo.os.procPid — pid for a proc cookie, or -EBADF. */
+    public static long procPid(Object cookieArg) {
+        ProcRec rec = PROCS.get(num(cookieArg));
+        return rec == null ? -EBADF : rec.pid;
+    }
+
+    /** graalgo.os.procWait — blocks until the process exits; 0 on
+     * success, -ECHILD on a second Wait or a foreign record,
+     * -EINTR if interrupted, -EBADF for an unknown cookie. */
+    public static long procWait(Object cookieArg) {
+        ProcRec rec = PROCS.get(num(cookieArg));
+        if (rec == null) {
+            return -EBADF;
+        }
+        if (rec.proc == null || rec.waited) {
+            return -ECHILD;
+        }
+        try {
+            int code = rec.proc.waitFor();
+            rec.exitCode = code;
+            rec.hasExit = true;
+            rec.waited = true;
+            rec.cpuNanos = rec.proc.info().totalCpuDuration()
+                    .map(java.time.Duration::toNanos).orElse(0L);
+            return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -EINTR;
+        }
+    }
+
+    /** graalgo.os.procExitCode — exit code after a successful Wait. */
+    public static long procExitCode(Object cookieArg) {
+        ProcRec rec = PROCS.get(num(cookieArg));
+        return rec == null || !rec.hasExit ? -EBADF : rec.exitCode;
+    }
+
+    /** graalgo.os.procSignal — signal delivered by us (0 = exited
+     * normally / not yet waited). */
+    public static long procSignal(Object cookieArg) {
+        ProcRec rec = PROCS.get(num(cookieArg));
+        return rec == null ? -EBADF : rec.signal;
+    }
+
+    /** graalgo.os.procCpuNanos — total CPU time after a successful Wait. */
+    public static long procCpuNanos(Object cookieArg) {
+        ProcRec rec = PROCS.get(num(cookieArg));
+        return rec == null || !rec.hasExit ? -EBADF : rec.cpuNanos;
+    }
+
+    /** graalgo.os.procKill — deliver a signal; 0 on success, -errno.
+     * SIGKILL -> destroyForcibly, SIGTERM -> destroy, anything else
+     * -> the `kill` utility. A dead process reports -ESRCH. */
+    public static long procKill(Object cookieArg, Object sigArg) {
+        ProcRec rec = PROCS.get(num(cookieArg));
+        if (rec == null) {
+            return -EBADF;
+        }
+        // A waited record is finished: the Go side maps -ECHILD to
+        // ErrProcessDone (gc: Signal/Kill after Wait is "os: process
+        // already finished", probed 2026-11-03). Without this, destroy
+        // on a dead Process would wrongly succeed.
+        if (rec.waited) {
+            return -ECHILD;
+        }
+        int sig = num32(sigArg);
+        if (sig == 9) {
+            if (rec.proc != null) {
+                rec.proc.destroyForcibly();
+            } else if (rec.handle != null) {
+                rec.handle.destroyForcibly();
+            } else {
+                return killViaUtility(rec.pid, sig);
+            }
+            rec.signal = 9;
+            return 0;
+        }
+        if (sig == 15) {
+            if (rec.proc != null) {
+                rec.proc.destroy();
+            } else if (rec.handle != null) {
+                rec.handle.destroy();
+            } else {
+                return killViaUtility(rec.pid, sig);
+            }
+            rec.signal = 15;
+            return 0;
+        }
+        long r = killViaUtility(rec.pid, sig);
+        if (r == 0) {
+            rec.signal = sig;
+        }
+        return r;
+    }
+
+    /** Delivers an arbitrary signal via `kill -<sig> <pid>`; 0 on
+     * success, -ESRCH if the process is gone, -EPERM if it is alive
+     * but undeliverable, -ENOSYS if no `kill` binary exists. */
+    private static long killViaUtility(long pid, int sig) {
+        final Process k;
+        try {
+            k = new ProcessBuilder("kill", "-" + sig, Long.toString(pid)).start();
+        } catch (IOException e) {
+            return -ENOSYS;
+        }
+        try {
+            int code = k.waitFor();
+            if (code == 0) {
+                return 0;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -EINTR;
+        }
+        boolean alive = ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false);
+        return alive ? -EPERM : -ESRCH;
+    }
+
+    /** graalgo.os.procRelease — drop the record (the process itself
+     * is untouched; pumps keep their own references and end on exit).
+     * 0 on success, -EBADF for an unknown cookie. */
+    public static long procRelease(Object cookieArg) {
+        return PROCS.remove(num(cookieArg)) == null ? -EBADF : 0;
+    }
+
+    /** graalgo.os.findProcess — the cookie for pid: an existing
+     * spawned record if pid is ours, else a foreign record (with a
+     * ProcessHandle when the pid is alive, bare otherwise). Never
+     * fails for a live-or-dead pid: gc's Unix FindProcess likewise
+     * always succeeds, with failures surfacing at Signal/Wait time. */
+    public static long findProcess(Object pidArg) {
+        long pid = num(pidArg);
+        for (java.util.Map.Entry<Long, ProcRec> e : PROCS.entrySet()) {
+            if (e.getValue().pid == pid) {
+                return e.getKey();
+            }
+        }
+        java.util.Optional<ProcessHandle> ph = ProcessHandle.of(pid);
+        ProcRec rec = ph.isPresent()
+                ? new ProcRec(ph.get(), pid)
+                : new ProcRec(pid);
+        long cookie = NEXT_PROC.getAndIncrement();
+        PROCS.put(cookie, rec);
+        return cookie;
     }
 }

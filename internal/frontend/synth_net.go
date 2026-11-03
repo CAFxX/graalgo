@@ -13,8 +13,11 @@ package main
 //     is a plain errors.New without Timeout() — gc-divergent, see below).
 //   - net.Pipe: verbatim port of gc pipe.go (pure Go, channels).
 //   - Socket path: netFD on the trap linknames + internal/poll FD for
-//     deadlines; Dial/Listen/Accept over loopback TCP; UDP via
-//     sendto/recvfrom; DNS funcs are fail-fast (no resolver in M9).
+//     deadlines; Dial/Listen/Accept over TCP (loopback and non-loopback:
+//     the socket layer never restricted dials to loopback — only
+//     hostname resolution did, by accepting IP literals only); UDP via
+//     sendto/recvfrom; DNS via the JVM resolver (graalgo.net.lookupHost
+//     in GoNet.java, 2026-11-03, REVIEW-2026-11-03-16 S7).
 //
 // Adaptations for the v1 frontend (no multi-result functions, WS D):
 // same-package multi-result funcs use the __-form explicitly (pair structs);
@@ -26,7 +29,22 @@ package main
 //   - os.ErrDeadlineExceeded (synthetic os) lacks Timeout()==true; net uses
 //     a local timeoutError{Timeout:true} so net.Conn deadline errors match gc.
 //   - fmt.Errorf %w flattens (D4 stub); net avoids %w.
-//   - AF_UNIX → -EAFNOSUPPORT; unconnected UDP sendto → EPERM (sandbox).
+//   - AF_UNIX → -EAFNOSUPPORT at socket() time; Dial/Listen with a
+//     unix network return an OpError (unknown network), never a panic.
+//   - Resolver: LookupHost/LookupIP return the JVM resolver's answers
+//     (InetAddress.getAllByName: system hosts file + DNS). Order is
+//     the JVM order, not gc's RFC 6724 sort; every lookup failure
+//     surfaces as DNSError with IsNotFound=true (the JVM resolver
+//     does not distinguish NXDOMAIN from a DNS failure, so gc's
+//     IsNotFound vs IsTemporary distinction is unavailable). Empty
+//     host is a DNSError (gc parity: Java would return loopback).
+//   - LookupPort reads /etc/services (numeric services short-circuit).
+//     Unknown service → DNSError, out-of-range numeric port →
+//     AddrError, following the synthetic error formats below.
+//   - DNSError/AddrError text follows the synthetic formats
+//     ("DNS error (name): err", "err (addr)"), not gc's
+//     ("lookup name: err", "address addr: err") — pre-existing
+//     divergence, shared by the Resolve* paths.
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no unsafe).
 const syntheticNetSource = `// Copyright 2009 The Go Authors. All rights reserved.
@@ -40,6 +58,7 @@ import "context"
 import "errors"
 import "internal/poll"
 import "io"
+import "os"
 import "strconv"
 import "strings"
 import "time"
@@ -147,6 +166,10 @@ type DNSError struct {
 	Server      string // server used
 	IsTimeout   bool   // if true, timed out; not all timeouts set this
 	IsTemporary bool   // if true, error is temporary; not all errors set this
+	// IsNotFound is set to true when the requested name was not found.
+	// (2026-11-03 S7: the JVM resolver reports every lookup failure
+	// this way; see the header note.)
+	IsNotFound bool
 }
 
 func (e *DNSError) Error() string {
@@ -642,20 +665,194 @@ type parseCIDRPair struct {
 	err   error
 }
 
-// ---------------------------------------------------------------- DNS fail-fast
+// ---------------------------------------------------------------- DNS
+// Resolver (2026-11-03, REVIEW-2026-11-03-16 S7): the JVM resolver
+// (graalgo.net.lookupHost) backs LookupHost/LookupIP and, through
+// __resolveHostIP, hostname resolution in Dial/Resolve*.
 // LookupHost looks up the given host using the local resolver.
 func LookupHost(host string) ([]string, error) {
-	panic("net.LookupHost: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupHost: unreachable (Appendix-M desugar did not fire)")
+}
+
+type lookupHostPair struct {
+	addrs []string
+	err   error
+}
+
+func __lookupHost(host string) lookupHostPair {
+	if host == "" {
+		return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host, IsNotFound: true}}
+	}
+	buf := make([]byte, 4096)
+	for {
+		r := netLookupHost(host, buf)
+		if r == -1 {
+			return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host, IsNotFound: true}}
+		}
+		if r == -errnoENOMEM {
+			if len(buf) >= 1<<20 {
+				return lookupHostPair{nil, &DNSError{Err: "server misbehaving", Name: host, IsTemporary: true}}
+			}
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		if r <= 0 {
+			return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host, IsNotFound: true}}
+		}
+		dec := decodeLookupHost(buf[:r-1])
+		if !dec.ok {
+			return lookupHostPair{nil, &DNSError{Err: "server misbehaving", Name: host, IsTemporary: true}}
+		}
+		return lookupHostPair{dec.addrs, nil}
+	}
+}
+
+// lookupHostDecode is the single-result decode output for the
+// graalgo.net.lookupHost blob: int32 LE count, then per address int32
+// LE length + address bytes.
+type lookupHostDecode struct {
+	addrs []string
+	ok    bool
+}
+
+func decodeLookupHost(b []byte) lookupHostDecode {
+	rd := &ifaceReader{b: b}
+	n := rd.int32()
+	if n < 0 {
+		return lookupHostDecode{nil, false}
+	}
+	addrs := make([]string, 0, n)
+	for i := int32(0); i < n; i++ {
+		ab := rd.bytes()
+		if !rd.ok() {
+			return lookupHostDecode{nil, false}
+		}
+		addrs = append(addrs, string(ab))
+	}
+	if !rd.ok() || len(rd.b) != 0 {
+		return lookupHostDecode{nil, false}
+	}
+	return lookupHostDecode{addrs, true}
 }
 
 // LookupIP looks up host using the local resolver.
 func LookupIP(host string) ([]IP, error) {
-	panic("net.LookupIP: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupIP: unreachable (Appendix-M desugar did not fire)")
+}
+
+type lookupIPPair struct {
+	ips []IP
+	err error
+}
+
+func __lookupIP(host string) lookupIPPair {
+	lh := __lookupHost(host)
+	if lh.err != nil {
+		return lookupIPPair{nil, lh.err}
+	}
+	ips := make([]IP, 0, len(lh.addrs))
+	for _, s := range lh.addrs {
+		if ip := ParseIP(s); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+	return lookupIPPair{ips, nil}
+}
+
+// __resolveHostIP resolves a hostname for the given network family:
+// "4" networks prefer IPv4, "6" networks prefer IPv6, anything else
+// takes the resolver's first answer. An IP literal short-circuits
+// (no resolver call). Returns nil + DNSError on failure.
+func __resolveHostIP(network, host string) (IP, error) {
+	if ip := ParseIP(host); ip != nil {
+		return ip, nil
+	}
+	lh := __lookupHost(host)
+	if lh.err != nil {
+		return nil, lh.err
+	}
+	var fallback IP
+	for _, s := range lh.addrs {
+		ip := ParseIP(s)
+		if ip == nil {
+			continue
+		}
+		if fallback == nil {
+			fallback = ip
+		}
+		is4 := ip.To4() != nil
+		if network == "tcp4" || network == "udp4" || network == "ip4" {
+			if is4 {
+				return ip, nil
+			}
+		} else if network == "tcp6" || network == "udp6" || network == "ip6" {
+			if !is4 {
+				return ip, nil
+			}
+		} else {
+			return ip, nil
+		}
+	}
+	if fallback != nil {
+		return fallback, nil
+	}
+	return nil, &DNSError{Err: "no such host", Name: host, IsNotFound: true}
 }
 
 // LookupPort looks up the port for the given network and service.
+// Numeric services short-circuit; named services are read from
+// /etc/services (the file gc's pure resolver reads). Unknown service
+// -> DNSError (gc parity for the error type); out-of-range numeric
+// port -> AddrError.
 func LookupPort(network, service string) (int, error) {
-	panic("net.LookupPort: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupPort: unreachable (Appendix-M desugar did not fire)")
+}
+
+type lookupPortPair struct {
+	port int
+	err  error
+}
+
+func __lookupPort(network, service string) lookupPortPair {
+	if p, err := strconv.Atoi(service); err == nil {
+		if p < 0 || p > 65535 {
+			return lookupPortPair{0, &AddrError{Err: "invalid port", Addr: service}}
+		}
+		return lookupPortPair{p, nil}
+	}
+	proto := ""
+	if strings.HasPrefix(network, "tcp") {
+		proto = "tcp"
+	} else if strings.HasPrefix(network, "udp") {
+		proto = "udp"
+	}
+	data, err := os.ReadFile("/etc/services")
+	if err != nil {
+		return lookupPortPair{0, &DNSError{Err: "unknown port", Name: network + "/" + service, IsNotFound: true}}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[0] != service {
+			continue
+		}
+		parts := strings.Split(fields[1], "/")
+		if len(parts) != 2 {
+			continue
+		}
+		if proto != "" && parts[1] != proto {
+			continue
+		}
+		if p, err := strconv.Atoi(parts[0]); err == nil && p >= 0 && p <= 65535 {
+			return lookupPortPair{p, nil}
+		}
+	}
+	return lookupPortPair{0, &DNSError{Err: "unknown port", Name: network + "/" + service, IsNotFound: true}}
 }
 
 // InterfaceAddrs returns a list of the system's unicast interface addresses.
@@ -1820,7 +2017,8 @@ func __listenUDP(network string, laddr *UDPAddr) listenPacketPair {
 }
 
 // ---------------------------------------------------------------------------
-// Address resolution (IP literals only; DNS is fail-fast in M9).
+// Address resolution (IP literals short-circuit; hostnames resolve
+// via the JVM resolver — see the DNS section above).
 // ---------------------------------------------------------------------------
 
 // ResolveIPAddr returns an IP address for the given network and address.
@@ -1854,9 +2052,11 @@ type resolveUDPAddrPair struct {
 }
 
 func __resolveIPAddr(network, address string) resolveIPAddrPair {
-	ip := ParseIP(address)
-	if ip == nil {
-		return resolveIPAddrPair{nil, &DNSError{Err: "no such host", Name: address}}
+	// S7 (2026-11-03): hostnames resolve via the JVM resolver, not
+	// just IP literals — this is what unblocks non-loopback dials.
+	ip, err := __resolveHostIP(network, address)
+	if err != nil {
+		return resolveIPAddrPair{nil, err}
 	}
 	return resolveIPAddrPair{&IPAddr{IP: ip}, nil}
 }
@@ -1873,9 +2073,10 @@ func __resolveTCPAddr(network, address string) resolveTCPAddrPair {
 	}
 	var ip IP
 	if host != "" {
-		ip = ParseIP(host)
-		if ip == nil {
-			return resolveTCPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+		var err error
+		ip, err = __resolveHostIP(network, host)
+		if err != nil {
+			return resolveTCPAddrPair{nil, err}
 		}
 	}
 	return resolveTCPAddrPair{&TCPAddr{IP: ip, Port: p}, nil}
@@ -1893,9 +2094,10 @@ func __resolveUDPAddr(network, address string) resolveUDPAddrPair {
 	}
 	var ip IP
 	if host != "" {
-		ip = ParseIP(host)
-		if ip == nil {
-			return resolveUDPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+		var err error
+		ip, err = __resolveHostIP(network, host)
+		if err != nil {
+			return resolveUDPAddrPair{nil, err}
 		}
 	}
 	return resolveUDPAddrPair{&UDPAddr{IP: ip, Port: p}, nil}
@@ -2168,6 +2370,9 @@ const errnoENOMEM = 12
 
 //go:linkname netInterfaces graalgo.net.interfaces
 func netInterfaces(buf []byte) int64 // bytes written +1, or -errno
+
+//go:linkname netLookupHost graalgo.net.lookupHost
+func netLookupHost(host string, buf []byte) int64 // bytes written +1, -ENOMEM (grow), or -1 (lookup failed)
 
 // Interfaces returns the system's network interfaces.
 func Interfaces() ([]Interface, error) {

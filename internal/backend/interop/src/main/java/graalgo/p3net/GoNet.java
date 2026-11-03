@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import graalgo.p3os.GoOs;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 
 /**
  * Host-side implementation of the {@code graalgo.net.*} linkname
@@ -868,6 +869,59 @@ public final class GoNet {
             }
             int n = goBufPut(bufArg, data);
             return n < 0 ? -GoOs.EINVAL : (long) n + 1;
+    }
+
+    /**
+     * graalgo.net.lookupHost — JVM resolver backing net.LookupHost /
+     * net.LookupIP (REVIEW-2026-11-03-16 S7). Writes a blob into buf and
+     * returns n+1, or -ENOMEM when the blob does not fit (the Go side
+     * grows the buffer and retries, same pattern as interfaces()), or
+     * -1 when resolution fails (the Go side maps every failure to a
+     * DNSError with IsNotFound=true: the JVM resolver does not
+     * distinguish NXDOMAIN from a DNS failure, so gc's IsNotFound vs
+     * IsTemporary distinction is not available here — documented
+     * divergence, not a silent one).
+     *
+     * <p>Blob format (all int32 little-endian): count, then per address
+     * int32 length + address bytes (InetAddress.getHostAddress()).
+     * Order is the JVM resolver's getAllByName order, not gc's RFC 6724
+     * sort; exact duplicates are removed. IP literals resolve without
+     * DNS (getAllByName handles them); "localhost" resolves via the
+     * system hosts file like any other name.
+     */
+    public static long lookupHost(Object hostArg, Object bufArg) {
+        final String host;
+        if (hostArg instanceof GoString gs) {
+            host = new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } else if (hostArg instanceof String s) {
+            host = s;
+        } else {
+            return -GoOs.EINVAL;
+        }
+        final InetAddress[] addrs;
+        try {
+            addrs = InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            return -1;
+        }
+        // Deduplicate, preserving JVM order.
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (InetAddress ia : addrs) {
+            seen.add(ia.getHostAddress());
+        }
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        putI32(baos, seen.size());
+        for (String a : seen) {
+            byte[] b = a.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            putI32(baos, b.length);
+            baos.write(b, 0, b.length);
+        }
+        byte[] data = baos.toByteArray();
+        if (!(bufArg instanceof GoSlice gs) || gs.len() < data.length) {
+            return -ENOMEM;
+        }
+        int n = goBufPut(bufArg, data);
+        return n < 0 ? -GoOs.EINVAL : (long) n + 1;
     }
 
     private static void putI32(java.io.ByteArrayOutputStream out, int v) {

@@ -69,9 +69,13 @@
 //     JVM has no fstat-on-channel); pipe/stdio modes are synthesized
 //     from the handle kind (S_IFIFO/S_IFCHR, size 0).
 //   - D3: Setenv/Unsetenv/Clearenv mutate a GoOs overlay (+ System.getenv
-//     fallback); invisible to native code and exec'd children (no
-//     os/exec in M8, so the only observer is Go code itself, which sees
-//     exact gc semantics).
+//     fallback); invisible to native code and to processes spawned
+//     outside Go. PARTIALLY DISCHARGED 2026-11-03 (REVIEW-2026-11-03-16
+//     S8): children spawned through os.StartProcess DO inherit the
+//     merged overlay view (ProcessBuilder environment), so Go code
+//     that Setenvs and then spawns sees exact gc semantics in the
+//     child; only non-Go-spawned native processes still cannot see
+//     the overlay (the JVM has no setenv(2)).
 //   - D4: ReadFrom is implemented as io.ReadAll + a concrete write
 //     (streaming refinement needs io interface-method desugars —
 //     re-test when the io worker's interface-method entries land);
@@ -236,6 +240,43 @@ func osArgc() int64
 
 //go:linkname osArgv graalgo.os.argv
 func osArgv(i int64) string
+
+// Process spawning (2026-11-03, REVIEW-2026-11-03-16 S8: os/exec
+// bring-up). The graalgo.os.spawn/proc*/findProcess intrinsics are
+// implemented by GoOs.java on ProcessBuilder; see its section header
+// for redirect kinds, pipe bridging, signal delivery, and the
+// documented divergences (argv[0], file-description sharing,
+// PATH resolution of bare names, SysProcAttr).
+//
+//go:linkname osExecutable graalgo.os.executable
+func osExecutable() string
+
+//go:linkname osSpawn graalgo.os.spawn
+func osSpawn(name string, argv []string, env []string, dir string, stdinKind, stdinCookie, stdoutKind, stdoutCookie, stderrKind, stderrCookie int64) int64
+
+//go:linkname osProcPid graalgo.os.procPid
+func osProcPid(cookie int64) int64
+
+//go:linkname osProcWait graalgo.os.procWait
+func osProcWait(cookie int64) int64
+
+//go:linkname osProcExitCode graalgo.os.procExitCode
+func osProcExitCode(cookie int64) int64
+
+//go:linkname osProcSignal graalgo.os.procSignal
+func osProcSignal(cookie int64) int64
+
+//go:linkname osProcCpuNanos graalgo.os.procCpuNanos
+func osProcCpuNanos(cookie int64) int64
+
+//go:linkname osProcKill graalgo.os.procKill
+func osProcKill(cookie int64, sig int64) int64
+
+//go:linkname osProcRelease graalgo.os.procRelease
+func osProcRelease(cookie int64) int64
+
+//go:linkname osFindProcess graalgo.os.findProcess
+func osFindProcess(pid int64) int64
 
 //go:linkname osGetcwd graalgo.os.getcwd
 func osGetcwd() string
@@ -2364,7 +2405,9 @@ func __fileReadAll(f *File) readFilePair {
 }
 
 // ---------------------------------------------------------------------------
-// Fail-fast: SyscallConn, Root, Executable, CopyFS (§6.4, §6.6–§6.8).
+// Fail-fast: SyscallConn, Root, CopyFS (§6.4, §6.6, §6.8).
+// (Executable left this section 2026-11-03, S8: it is implemented
+// via the launcher argv[0]; see its comment below.)
 // (DirFS left this section in P3-M9: the io/fs FS surface landed, so the
 // re-test trigger fired and DirFS is real now, above.)
 // ---------------------------------------------------------------------------
@@ -2450,22 +2493,29 @@ func (r *Root) ReadDir(name string) ([]DirEntry, error) {
 }
 
 // Executable returns the path name for the executable that started the
-// current process. M8: fail-fast (§6.7 — /proc/self/exe is the JVM
-// binary, which is the wrong answer; inventing one is worse).
+// current process. 2026-11-03 (REVIEW-2026-11-03-16 S8): the launcher
+// defines the executable concept — argv[0], the absolute entry-point
+// path under 'graalgo run' (P3SyncMain) — so Executable returns it
+// via the graalgo.os.executable intrinsic. /proc/self/exe is NOT used:
+// it is the JVM binary, the wrong answer. Without a launcher (direct
+// in-process use), Executable returns an error, never a made-up path.
 func Executable() (string, error) {
-	panic("os.Executable: not in M8 scope (/proc/self/exe is the JVM binary — wrong answer; re-test: launcher defines the executable concept)")
+	panic("os.Executable: unreachable (Appendix-M desugar did not fire)")
 }
 
-// __executable is the single-result Appendix-M helper for the
-// multi-result fail-fast Executable (same pattern as __fileSyscallConn
-// above).
+// __executable is the single-result Appendix-M helper for Executable
+// (same pattern as __fileSyscallConn above).
 type executablePair struct {
 	s   string
 	err error
 }
 
 func __executable() executablePair {
-	panic("os.Executable: not in M8 scope (/proc/self/exe is the JVM binary — wrong answer; re-test: launcher defines the executable concept)")
+	s := osExecutable()
+	if s == "" {
+		return executablePair{"", errors.New("os: executable path not available (no launcher argv[0])")}
+	}
+	return executablePair{s, nil}
 }
 
 // DirFS returns a file system (an fs.FS) for the tree of files rooted at
@@ -2602,7 +2652,8 @@ func CopyFS(dir string, fsys fs.FS) error {
 }
 
 // ---------------------------------------------------------------------------
-// Fail-fast: the whole Process family (§6.1).
+// Process family (2026-11-03, REVIEW-2026-11-03-16 S8: the M8 §6.1
+// fail-fast is discharged — see the Process section below).
 // ---------------------------------------------------------------------------
 
 // Signal represents an operating system signal.
@@ -2638,113 +2689,341 @@ type ProcAttr struct {
 	Sys   any
 }
 
-// Process is a process created by StartProcess. M8: the whole family
-// fail-fasts (§6.1 — needs fd extraction for stdio redirect + wait4).
+// Process family (2026-11-03, REVIEW-2026-11-03-16 S8: the M8 §6.1
+// fail-fast is discharged). Backed by the graalgo.os.spawn/proc*
+// intrinsics (GoOs.java on ProcessBuilder). Remaining gaps, all
+// fail-fast with errors (never silent): ProcAttr.Sys != nil
+// (SysProcAttr: setsid/credentials/ptrace have no JVM equivalent),
+// extra Files entries past stderr (no extra-fd support in
+// ProcessBuilder), dir/socket/unknown-kind Files entries, and
+// file-description sharing (file redirects are re-opened by path).
+// ErrProcessDone is returned by Signal/Kill when the process has
+// already been waited on or released (gc, probed 2026-11-03). Wait
+// itself has different errors: a second Wait returns a *SyscallError
+// ("wait: no child processes", ECHILD), and Wait after Release returns
+// bare EINVAL — see __processWait.
+var ErrProcessDone = errors.New("os: process already finished")
+
+// Process is a process created by StartProcess.
 type Process struct {
 	Pid int
+	// cookie is the GoOs proc-table key (0 = no process: a
+	// zero-value Process, or one already released).
+	cookie int64
+	// foreign is set by FindProcess: the record is not our child, so
+	// Wait fails with a "waitid" SyscallError (gc) instead of "wait".
+	foreign bool
 }
 
-// StartProcess starts a new process. M8: fail-fast (§6.1).
+// __procStdioSpec maps one ProcAttr.Files entry to the (kind, cookie)
+// pair the spawn intrinsic expects: 0=nil (/dev/null), 1=stdio
+// (inherit), 2=regular file (re-open by path), 3=pipe (bridge).
+// Anything else is an error (never a silent redirect).
+func __procStdioSpec(f *File) (int64, int64, error) {
+	if f == nil {
+		return 0, 0, nil
+	}
+	if f.closed {
+		return 0, 0, syscall.EBADF
+	}
+	switch f.kind {
+	case kindStdio:
+		return 1, f.handle, nil
+	case kindRegular:
+		return 2, f.handle, nil
+	case kindPipe:
+		return 3, f.handle, nil
+	default:
+		return 0, 0, syscall.EINVAL
+	}
+}
+
+// StartProcess starts a new process.
 func StartProcess(name string, argv []string, attr *ProcAttr) (*Process, error) {
-	panic("os.StartProcess: not in M8 scope (needs fd extraction for stdio redirect + wait4 rusage; re-test: process-spawning milestone / os/exec bring-up)")
+	panic("os.StartProcess: unreachable (Appendix-M desugar did not fire)")
 }
 
-// __startProcess is the single-result Appendix-M helper for the
-// multi-result fail-fast StartProcess (same pattern as __fileSyscallConn
-// above).
+// __startProcess is the single-result Appendix-M helper for
+// StartProcess (same pattern as __fileSyscallConn above).
 type startProcessPair struct {
 	proc *Process
 	err  error
 }
 
 func __startProcess(name string, argv []string, attr *ProcAttr) startProcessPair {
-	panic("os.StartProcess: not in M8 scope (needs fd extraction for stdio redirect + wait4 rusage; re-test: process-spawning milestone / os/exec bring-up)")
+	if attr != nil && attr.Sys != nil {
+		return startProcessPair{nil, errors.New("os: StartProcess with SysProcAttr is not supported")}
+	}
+	dir := ""
+	var env []string
+	var files []*File
+	if attr != nil {
+		dir = attr.Dir
+		env = attr.Env
+		files = attr.Files
+	}
+	if dir == "" {
+		gwd := __getwd()
+		if gwd.err != nil {
+			return startProcessPair{nil, gwd.err}
+		}
+		dir = gwd.s
+	}
+	if len(files) > 3 {
+		for _, f := range files[3:] {
+			if f != nil {
+				return startProcessPair{nil, errors.New("os: StartProcess with extra Files entries is not supported")}
+			}
+		}
+	}
+	var specs [3]int64
+	var cookies [3]int64
+	for i := 0; i < 3; i++ {
+		var f *File
+		if i < len(files) {
+			f = files[i]
+		}
+		kind, cookie, err := __procStdioSpec(f)
+		if err != nil {
+			return startProcessPair{nil, &PathError{Op: "fork/exec", Path: name, Err: err}}
+		}
+		specs[i] = kind
+		cookies[i] = cookie
+	}
+	cookie := osSpawn(name, argv, env, dir, specs[0], cookies[0], specs[1], cookies[1], specs[2], cookies[2])
+	if cookie < 0 {
+		return startProcessPair{nil, newPathError("fork/exec", name, cookie)}
+	}
+	pid := osProcPid(cookie)
+	if pid < 0 {
+		osProcRelease(cookie)
+		return startProcessPair{nil, newPathError("fork/exec", name, pid)}
+	}
+	return startProcessPair{&Process{Pid: int(pid), cookie: cookie}, nil}
 }
 
-// FindProcess looks for a running process by pid. M8: fail-fast (§6.1).
+// FindProcess looks for a running process by pid. Like gc on Unix,
+// it always succeeds for a non-negative pid (even a dead one);
+// failures surface at Signal/Wait time.
 func FindProcess(pid int) (*Process, error) {
-	panic("os.FindProcess: not in M8 scope (re-test: process-spawning milestone)")
+	panic("os.FindProcess: unreachable (Appendix-M desugar did not fire)")
 }
 
-// Signal sends a signal to the Process. M8: fail-fast (§6.1).
+type findProcessPair struct {
+	proc *Process
+	err  error
+}
+
+func __findProcess(pid int) findProcessPair {
+	if pid < 0 {
+		return findProcessPair{nil, errors.New("os: FindProcess with negative pid")}
+	}
+	cookie := osFindProcess(int64(pid))
+	if cookie < 0 {
+		return findProcessPair{nil, newPathError("findprocess", "", cookie)}
+	}
+	return findProcessPair{&Process{Pid: pid, cookie: cookie, foreign: true}, nil}
+}
+
+// __procSignalNum maps an os.Signal to its number: syscall.Signal
+// carries it; the os Interrupt/Kill sentinels map to 2/9. Anything
+// else cannot be delivered (no number exists) and fails fast.
+func __procSignalNum(sig Signal) (int64, error) {
+	if s, ok := sig.(syscall.Signal); ok {
+		return int64(s), nil
+	}
+	if sig == Interrupt {
+		return 2, nil
+	}
+	if sig == Kill {
+		return 9, nil
+	}
+	return 0, errors.New("os: unsupported signal (no signal number)")
+}
+
+// Signal sends a signal to the Process.
 func (p *Process) Signal(sig Signal) error {
-	panic("os.Process.Signal: not in M8 scope (re-test: process-spawning milestone)")
+	num, err := __procSignalNum(sig)
+	if err != nil {
+		return err
+	}
+	if p.cookie == 0 {
+		return ErrProcessDone
+	}
+	r := osProcKill(p.cookie, num)
+	if r < 0 {
+		// ECHILD from procKill means the record was already waited
+		// on (the intrinsic reports it for waited records only) —
+		// gc's ErrProcessDone, not a bare errno.
+		if r == -10 {
+			return ErrProcessDone
+		}
+		return syscall.Errno(-r)
+	}
+	return nil
 }
 
-// Kill causes the Process to exit immediately. M8: fail-fast (§6.1).
+// Kill causes the Process to exit immediately.
 func (p *Process) Kill() error {
-	panic("os.Process.Kill: not in M8 scope (re-test: process-spawning milestone)")
+	return p.Signal(Kill)
 }
 
-// Wait waits until the Process exits. M8: fail-fast (§6.1).
+// Wait waits until the Process exits.
 func (p *Process) Wait() (*ProcessState, error) {
-	panic("os.Process.Wait: not in M8 scope (re-test: process-spawning milestone)")
+	panic("os.Process.Wait: unreachable (Appendix-M desugar did not fire)")
 }
 
-// __processWait is the single-result Appendix-M helper for the
-// multi-result fail-fast (*Process).Wait (same pattern as
-// __fileSyscallConn above).
+// __processWait is the single-result Appendix-M helper for
+// (*Process).Wait (same pattern as __fileSyscallConn above).
 type processWaitPair struct {
 	ps  *ProcessState
 	err error
 }
 
 func __processWait(p *Process) processWaitPair {
-	panic("os.Process.Wait: not in M8 scope (re-test: process-spawning milestone)")
+	if p.cookie == 0 {
+		// Wait after Release (or on a zero Process): gc returns bare
+		// EINVAL (probed 2026-11-03), not ErrProcessDone.
+		return processWaitPair{nil, syscall.EINVAL}
+	}
+	r := osProcWait(p.cookie)
+	if r < 0 {
+		if r == -10 {
+			// ECHILD: second Wait on our child ("wait"), or Wait on
+			// a foreign (FindProcess) record ("waitid") — gc returns
+			// a *SyscallError in both cases (probed 2026-11-03).
+			op := "wait"
+			if p.foreign {
+				op = "waitid"
+			}
+			return processWaitPair{nil, &SyscallError{Syscall: op, Err: syscall.ECHILD}}
+		}
+		return processWaitPair{nil, syscall.Errno(-r)}
+	}
+	exitCode := osProcExitCode(p.cookie)
+	sig := osProcSignal(p.cookie)
+	cpu := osProcCpuNanos(p.cookie)
+	ps := &ProcessState{
+		pid:        p.Pid,
+		exitCode:   int(exitCode),
+		signal:     int(sig),
+		userTime:   time.Duration(cpu),
+		systemTime: 0,
+	}
+	return processWaitPair{ps, nil}
 }
 
-// Release releases any resources associated with the Process.
+// Release releases any resources associated with the Process. The
+// process itself is untouched; later Signal/Kill report ErrProcessDone
+// and Wait returns EINVAL (gc, probed 2026-11-03).
 func (p *Process) Release() error {
-	panic("os.Process.Release: not in M8 scope (re-test: process-spawning milestone)")
+	if p.cookie == 0 {
+		return ErrProcessDone
+	}
+	r := osProcRelease(p.cookie)
+	p.cookie = 0
+	if r < 0 {
+		return syscall.Errno(-r)
+	}
+	return nil
 }
 
-// ProcessState describes a finished process. M8: fail-fast (§6.1).
-type ProcessState struct{}
+// __itoa renders a decimal integer (os avoids a strconv dependency
+// from inside the synthetic package; see __parseUint).
+func __itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	buf := make([]byte, 0, 20)
+	for n > 0 {
+		buf = append([]byte{byte('0' + n%10)}, buf...)
+		n /= 10
+	}
+	if neg {
+		buf = append([]byte{'-'}, buf...)
+	}
+	return string(buf)
+}
+
+// __timevalFromNanos converts nanoseconds to a syscall.Timeval.
+func __timevalFromNanos(ns int64) syscall.Timeval {
+	return syscall.Timeval{Sec: ns / 1000000000, Usec: (ns % 1000000000) / 1000}
+}
+
+// ProcessState describes a finished process.
+type ProcessState struct {
+	pid        int
+	exitCode   int
+	signal     int
+	userTime   time.Duration
+	systemTime time.Duration
+}
 
 // String returns a string representation of the process state.
 func (p *ProcessState) String() string {
-	panic("os.ProcessState.String: not in M8 scope (re-test: process-spawning milestone)")
+	if p.signal != 0 {
+		return "signal: " + syscall.Signal(p.signal).String()
+	}
+	return "exit status " + __itoa(p.exitCode)
 }
 
-// Exited reports whether the program has exited.
+// Exited reports whether the program has exited (as opposed to being
+// killed by a signal).
 func (p *ProcessState) Exited() bool {
-	panic("os.ProcessState.Exited: not in M8 scope (re-test: process-spawning milestone)")
+	return p.signal == 0
 }
 
 // Success reports whether the program exited successfully.
 func (p *ProcessState) Success() bool {
-	panic("os.ProcessState.Success: not in M8 scope (re-test: process-spawning milestone)")
+	return p.signal == 0 && p.exitCode == 0
 }
 
-// Sys returns system-specific exit information. (M8: any —
-// syscall.WaitStatus/Rusage are not in the M8 syscall vocabulary.)
+// Sys returns system-specific exit information: a syscall.WaitStatus
+// (exit code in the high byte when exited, signal number when killed).
 func (p *ProcessState) Sys() any {
-	panic("os.ProcessState.Sys: not in M8 scope (re-test: process-spawning milestone)")
+	if p.signal != 0 {
+		return syscall.WaitStatus(p.signal)
+	}
+	return syscall.WaitStatus(p.exitCode << 8)
 }
 
-// SysUsage returns system-specific resource usage information.
+// SysUsage returns system-specific resource usage information: a
+// *syscall.Rusage. The JVM exposes only total CPU time, so it is
+// reported wholly as user time and system time is zero (documented
+// approximation; see GoOs.procCpuNanos).
 func (p *ProcessState) SysUsage() any {
-	panic("os.ProcessState.SysUsage: not in M8 scope (re-test: process-spawning milestone)")
+	return &syscall.Rusage{
+		Utime: __timevalFromNanos(int64(p.userTime)),
+		Stime: __timevalFromNanos(int64(p.systemTime)),
+	}
 }
 
 // Pid returns the process id.
 func (p *ProcessState) Pid() int {
-	panic("os.ProcessState.Pid: not in M8 scope (re-test: process-spawning milestone)")
+	return p.pid
 }
 
-// ExitCode returns the exit code of the exited process.
+// ExitCode returns the exit code of the exited process, or -1 if the
+// process was killed by a signal.
 func (p *ProcessState) ExitCode() int {
-	panic("os.ProcessState.ExitCode: not in M8 scope (re-test: process-spawning milestone)")
+	if p.signal != 0 {
+		return -1
+	}
+	return p.exitCode
 }
 
 // UserTime returns the user CPU time of the exited process.
 func (p *ProcessState) UserTime() time.Duration {
-	panic("os.ProcessState.UserTime: not in M8 scope (re-test: process-spawning milestone)")
+	return p.userTime
 }
 
 // SystemTime returns the system CPU time of the exited process.
 func (p *ProcessState) SystemTime() time.Duration {
-	panic("os.ProcessState.SystemTime: not in M8 scope (re-test: process-spawning milestone)")
+	return p.systemTime
 }
 `
 

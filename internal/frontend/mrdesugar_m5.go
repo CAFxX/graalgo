@@ -511,8 +511,10 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bufio", "ReadSlice", "Reader", "__bufioReaderReadSlice", "__bufioReaderReadSlicePair", []string{"line", "err"}, false},
 	{"bufio", "ReadBytes", "Reader", "__bufioReaderReadBytes", "__bufioReaderReadBytesPair", []string{"b", "err"}, false},
 	{"bufio", "ReadString", "Reader", "__bufioReaderReadString", "__bufioReaderReadStringPair", []string{"s", "err"}, false},
+	{"bufio", "ReadRune", "Reader", "__bufioReaderReadRune", "__bufioReaderReadRunePair", []string{"r", "size", "err"}, false},
 	{"bufio", "Write", "Writer", "__bufioWriterWrite", "__bufioWriterWritePair", []string{"n", "err"}, false},
 	{"bufio", "WriteString", "Writer", "__bufioWriterWriteString", "__bufioWriterWriteStringPair", []string{"n", "err"}, false},
+	{"bufio", "WriteRune", "Writer", "__bufioWriterWriteRune", "__bufioWriterWriteRunePair", []string{"size", "err"}, false},
 	// P3-M9 (tier-5b): bufio.ScanLines (Appendix M; the 3-result split
 	// function — package-level, so recvType is ""; see synth_bufio.go).
 	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}, false},
@@ -1126,6 +1128,7 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	// export with "multi-result calls need WS D" instead of pinning the
 	// runtime fail-fast (cf. syscall.Syscall → __syscall).
 	{"os", "StartProcess", "", "__startProcess", "", "startProcessPair", []string{"proc", "err"}},
+	{"os", "FindProcess", "", "__findProcess", "", "findProcessPair", []string{"proc", "err"}},
 	{"os", "Wait", "Process", "__processWait", "", "processWaitPair", []string{"ps", "err"}},
 	{"os", "SyscallConn", "File", "__fileSyscallConn", "", "syscallConnPair", []string{"rc", "err"}},
 	{"os", "OpenRoot", "", "__openRoot", "", "openRootPair", []string{"root", "err"}},
@@ -1200,6 +1203,10 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "", "resolveIPAddrPair", []string{"ip", "err"}},
 	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "", "resolveTCPAddrPair", []string{"addr", "err"}},
 	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "", "resolveUDPAddrPair", []string{"addr", "err"}},
+	// REVIEW-2026-11-03-16 S7: JVM resolver (GoNet.lookupHost).
+	{"net", "LookupHost", "", "__lookupHost", "", "lookupHostPair", []string{"addrs", "err"}},
+	{"net", "LookupIP", "", "__lookupIP", "", "lookupIPPair", []string{"ips", "err"}},
+	{"net", "LookupPort", "", "__lookupPort", "", "lookupPortPair", []string{"port", "err"}},
 	{"net", "ParseCIDR", "", "__parseCIDR", "", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
 	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
 	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port", "err"}},
