@@ -291,6 +291,13 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
 	// forcing callers onto their generic paths.
 	ctxt := build.Default
+	// Disk file selection follows the compile target, which
+	// ExportFiles validates to equal the host (target.go). Spell the
+	// target out explicitly rather than relying on build.Default's
+	// fields staying in sync with the frontend's target value.
+	host := HostTarget()
+	ctxt.GOOS = host.GOOS
+	ctxt.GOARCH = host.GOARCH
 	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
 	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
@@ -331,7 +338,14 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// __-helper + stub shape BEFORE type-checking, so call sites
 	// type-check against the stub's original signature.
 	mrSpecs := transformDiskMultiResult(importPath, files)
-	conf := types.Config{Importer: overlayImporter{}}
+	// Type-check with the host target's sizes (target.go), matching the
+	// exporter's sizes for the same target; an unsupported host fails
+	// here rather than type-checking against default sizes.
+	hostSizes, err := HostTarget().Sizes()
+	if err != nil {
+		return nil, err
+	}
+	conf := types.Config{Importer: overlayImporter{}, Sizes: hostSizes}
 	pkg, err := conf.Check(importPath, fset, files, info)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: type error in %q: %w", importPath, err)

@@ -61,6 +61,20 @@ var unixOS = map[string]bool{
 // Loader
 // ---------------------------------------------------------------------------
 
+// supportedGOOS/supportedGOARCH are the only target p3frontend compiles
+// for (REVIEW-2026-11-03-16, P0-4): the frozen synthetic stdlib it
+// mirrors is linux/amd64-only, exactly like internal/frontend's
+// synthetic syscall/os (see internal/frontend/target.go). NewLoader
+// targets the supported target, never the host by silent assumption;
+// Importer.checkRef refuses to type-check when the host differs, so a
+// darwin/arm64 host fails loudly instead of receiving linux/amd64
+// sizes and file selections. Widening this pair requires porting the
+// target-dependent synthetics first — never just adding a value here.
+const (
+	supportedGOOS   = "linux"
+	supportedGOARCH = "amd64"
+)
+
 // Loader selects buildable files and resolves imports. It targets
 // linux/amd64 with the gc toolchain; the release tags cover go1.1 through
 // go1.27 (the pinned go1.27.1 toolchain — no language pinning, GG-0013).
@@ -95,7 +109,8 @@ const (
 	kindLocal                    // module-local package: flattened
 )
 
-// NewLoader builds a Loader targeting linux/amd64. GOROOT resolves in
+// NewLoader builds a Loader targeting the supported target
+// (supportedGOOS/supportedGOARCH above). GOROOT resolves in
 // order: GRAALGO_GOROOT, the GOROOT of the go toolchain discovered via
 // $GO (the binary the CI workflows export for the Makefiles) or `go` on
 // PATH (`go env GOROOT`), then the legacy ~/tools/go-1.27.1 default.
@@ -113,8 +128,8 @@ func NewLoader() *Loader {
 		}
 	}
 	return &Loader{
-		goos:         "linux",
-		goarch:       "amd64",
+		goos:         supportedGOOS,
+		goarch:       supportedGOARCH,
 		goroot:       goroot,
 		resolveCache: map[string]*PackageRef{},
 		moduleCache:  map[string]moduleInfo{},

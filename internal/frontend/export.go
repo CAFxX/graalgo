@@ -246,7 +246,7 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // (callerPair/framesNextPair/funcFileLinePair), exactly like the mrM7
 // Appendix M desugar — except there is no real-Go __-helper (the overlay
 // has no source): the wire node itself is the implementation.
-func syntheticRuntimePackage() *types.Package {
+func syntheticRuntimePackage(target Target) *types.Package {
 	pkg := types.NewPackage("runtime", "runtime")
 	strTyp := types.Typ[types.String]
 	intTyp := types.Typ[types.Int]
@@ -287,12 +287,15 @@ func syntheticRuntimePackage() *types.Package {
 	addFunc("Goexit", nil, nil)
 	// P4 (driver-harden): the build constants and NumCPU. Real modules
 	// (e.g. uuid's tests) read runtime.GOARCH/GOOS and call
-	// runtime.NumCPU. Values match the host (linux/amd64); NumCPU
-	// returns the host count via a wire node (see below).
+	// runtime.NumCPU. The constants come from the compile target
+	// (target.go), which ExportFiles validates before type-checking:
+	// they match the host on a supported host and compilation fails
+	// loudly on any other host, instead of hard-coding linux/amd64.
+	// NumCPU returns the host count via a wire node (see below).
 	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOARCH", strTyp,
-		constant.MakeString("amd64")))
+		constant.MakeString(target.GOARCH)))
 	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOOS", strTyp,
-		constant.MakeString("linux")))
+		constant.MakeString(target.GOOS)))
 	addFunc("NumCPU", nil, tuple(param("", intTyp)))
 	// P4 (driver-harden): GOMAXPROCS. Sets and returns the GOMAXPROCS
 	// value; the backend tracks it as a no-op cell (no real scheduler
@@ -581,12 +584,40 @@ func syntheticRuntimePackage() *types.Package {
 	return pkg
 }
 
-type overlayImporter struct{}
+// overlayImporter resolves imports through the synthetic overlay. It
+// carries the compile target (target.go) so the synthetic runtime
+// package's GOARCH/GOOS constants come from the validated target, not
+// from literals. The zero value means "not specified" and resolves to
+// the host target, which keeps pre-existing zero-value callers (tests,
+// nested synthetic/disk builds) working on a supported host while still
+// failing on an unsupported one.
+type overlayImporter struct {
+	target Target
+}
+
+// resolveTarget returns the importer's target, resolving the zero value
+// to the host target, and validates it as supported. Validation here is
+// a second gate behind ExportFilesWithTarget's entry check: it keeps
+// direct overlayImporter callers (e.g. --check-synthetic, unit tests)
+// from obtaining target-dependent constants on an unsupported host.
+func (imp overlayImporter) resolveTarget() (Target, error) {
+	t := imp.target
+	if t.IsZero() {
+		t = HostTarget()
+	}
+	if err := t.Validate(); err != nil {
+		return Target{}, err
+	}
+	return t, nil
+}
 
 // dedicatedSyntheticStubs maps the two import paths with dedicated
 // synthetic constructors (not in syntheticSources) to their builders.
+// Builders take the compile target; unsafe ignores it (it has no
+// target-dependent members) but shares the table's signature so the
+// runtime builder's target cannot be dropped by accident.
 // sync and sync/atomic now resolve from disk (real packages).
-var dedicatedSyntheticStubs = map[string]func() *types.Package{
+var dedicatedSyntheticStubs = map[string]func(Target) *types.Package{
 	"runtime": syntheticRuntimePackage,
 	"unsafe":  syntheticUnsafePackage,
 }
@@ -600,11 +631,17 @@ func isDedicatedSyntheticStub(path string) bool {
 	return ok
 }
 
-func (overlayImporter) Import(path string) (*types.Package, error) {
+func (imp overlayImporter) Import(path string) (*types.Package, error) {
 	// The 2 packages with dedicated synthetic constructors (not in
 	// syntheticSources). sync and sync/atomic now resolve from disk (real packages).
+	// The target is resolved (and validated) before any stub is built,
+	// so an unsupported host cannot obtain runtime.GOARCH/GOOS at all.
+	target, err := imp.resolveTarget()
+	if err != nil {
+		return nil, err
+	}
 	if isDedicatedSyntheticStub(path) {
-		return dedicatedSyntheticStubs[path](), nil
+		return dedicatedSyntheticStubs[path](target), nil
 	}
 	// General (hunt-special-cases): any package with a synthetic source
 	// resolves via getSyntheticPackage — no per-package switch needed.
@@ -669,6 +706,14 @@ func ExportFile(path string) (string, error) {
 // backend invocation for its own driver, and nothing in the frontend
 // reads the environment for it.
 const testPackageDirFlag = "--test-package-dir="
+
+// targetFlag is the explicit argv flag through which a caller pins the
+// compile target (target.go): --target=GOOS/GOARCH. Like
+// testPackageDirFlag it is a per-invocation argv flag, never an
+// environment variable, and the pinned target must equal the host — a
+// mismatched target fails loudly instead of cross-compiling silently
+// with host-selected disk files (see target.go).
+const targetFlag = "--target="
 
 // importingDir returns the directory the frontend treats as the location
 // of the package being compiled, for Go's internal-visibility rule
@@ -858,7 +903,30 @@ func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 // testPackageDir is the `graalgo test` driver override
 // (testPackageDirFlag): the package dir whose internal-visibility
 // privileges the import gate applies. Empty for ordinary compiles.
+//
+// ExportFiles compiles for the host target (target.go). Use
+// ExportFilesWithTarget to pin an explicit target, which must equal the
+// host; any other target fails before any file is read.
 func ExportFiles(paths []string, testPackageDir string) (string, error) {
+	return ExportFilesWithTarget(paths, testPackageDir, HostTarget())
+}
+
+// ExportFilesWithTarget is ExportFiles for an explicit compile target.
+// The target is validated first, before any input file is read, so an
+// unsupported host or a cross-compilation request fails fast with a
+// named error instead of emitting a document that claims the wrong
+// GOARCH/GOOS or uses the wrong type sizes. The validated target's
+// sizes drive both the go/types check and the exporter's offset
+// computation, so the two can no longer disagree (previously the check
+// used go/types' host default while the exporter hard-coded amd64).
+func ExportFilesWithTarget(paths []string, testPackageDir string, target Target) (string, error) {
+	if err := target.validateForHost(HostTarget()); err != nil {
+		return "", err
+	}
+	sizes, err := target.Sizes()
+	if err != nil {
+		return "", err
+	}
 	if len(paths) == 0 {
 		return "", fmt.Errorf("gofrontend: no input files")
 	}
@@ -913,7 +981,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// when the map is non-nil (verified by probe).
 		Instances: make(map[*ast.Ident]types.Instance),
 	}
-	conf := types.Config{Importer: failImporter{}}
+	conf := types.Config{Importer: failImporter{}, Sizes: sizes}
 	// M5 (WS F): with the "runtime" import present, resolve it via the
 	// synthetic overlay package (runtime.Goexit only).
 	// P3-M2b (WS D, ADR-0002): with the "sync" import present, resolve it
@@ -933,7 +1001,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if needsOverlayImporter(strings.Trim(imp.Path.Value, "\"`"), idir) {
-				conf.Importer = overlayImporter{}
+				conf.Importer = overlayImporter{target: target}
 			}
 		}
 	}
@@ -983,7 +1051,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		synthFuncIDs: make(map[string]*funcDeclInfo),
 		// real-nethttp: linkname stub -> provider aliases.
 		linknameAlias: make(map[*types.Func]*funcDeclInfo),
-		sizes:         types.SizesFor("gc", "amd64"),
+		sizes:         sizes,
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
 		// WS G (P3-M9): track importPkgTree walks for idempotency.

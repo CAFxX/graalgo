@@ -869,7 +869,17 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		Implicits:  make(map[ast.Node]types.Object),
 		Instances:  make(map[*ast.Ident]types.Instance),
 	}
-	conf := types.Config{Importer: overlayImporter{}}
+	// Target sizes come from the validated host target (target.go), not
+	// from go/types' implicit default: the synthetic package's layout
+	// must agree with the exporter's sizes for the same target. On an
+	// unsupported host this panics, matching this function's existing
+	// fail mode for synthetic build failures; ExportFiles validates
+	// before reaching here, and main.go validates --check-synthetic.
+	hostSizes, err := HostTarget().Sizes()
+	if err != nil {
+		panic("gofrontend: " + err.Error())
+	}
+	conf := types.Config{Importer: overlayImporter{}, Sizes: hostSizes}
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())

@@ -3,6 +3,7 @@ package p3frontend
 import (
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -254,6 +255,22 @@ func (imp *Importer) checkRef(ref *PackageRef) (*types.Package, error) {
 	imp.stack = append(imp.stack, ref.ImportPath)
 	defer func() { imp.stack = imp.stack[:len(imp.stack)-1] }()
 
+	// REVIEW-2026-11-03-16, P0-4: the loader targets the supported
+	// linux/amd64 target, never the host by assumption. Refuse to
+	// type-check when the host differs, instead of silently checking
+	// host-selected files against another target's sizes — the same
+	// fail-fast rule as internal/frontend/target.go. A nil loader
+	// (unit tests that never resolve imports) falls back to host
+	// sizes; it cannot reach production, where Import resolves
+	// through the loader first.
+	goos, goarch := build.Default.GOOS, build.Default.GOARCH
+	if imp.loader != nil {
+		goos, goarch = imp.loader.goos, imp.loader.goarch
+		if goos != build.Default.GOOS || goarch != build.Default.GOARCH {
+			return nil, fmt.Errorf("p3frontend: loader target %s/%s does not match host %s/%s: p3frontend supports only linux/amd64; refusing to type-check rather than emitting the wrong target", goos, goarch, build.Default.GOOS, build.Default.GOARCH)
+		}
+	}
+
 	var files []*ast.File
 	for _, f := range ref.Files {
 		src, err := os.ReadFile(filepath.Join(ref.Dir, f))
@@ -273,9 +290,15 @@ func (imp *Importer) checkRef(ref *PackageRef) (*types.Package, error) {
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		Implicits:  make(map[ast.Node]types.Object),
 	}
+	// Sizes derive from the (host-validated) loader target above, not
+	// from a hard-coded architecture literal.
+	sizes := types.SizesFor("gc", goarch)
+	if sizes == nil {
+		return nil, fmt.Errorf("p3frontend: no gc type sizes for target %s/%s", goos, goarch)
+	}
 	conf := types.Config{
 		Importer: imp,
-		Sizes:    types.SizesFor("gc", "amd64"),
+		Sizes:    sizes,
 	}
 	pkg, err := conf.Check(ref.ImportPath, imp.fset, files, info)
 	if err != nil {

@@ -66,8 +66,10 @@ var unsafeBuiltinNames = []string{
 // eight real compiler builtins (shared objects from types.Unsafe's scope —
 // go/types populates it in its universe init, so this must run after the
 // go/types package loads, which is always the case inside the exporter)
-// plus `type Pointer = unsafe.Pointer`.
-func syntheticUnsafePackage() *types.Package {
+// plus `type Pointer = unsafe.Pointer`. It takes the compile target for
+// the shared dedicated-stub table signature (export.go); unsafe has no
+// target-dependent members, so the argument is intentionally unused.
+func syntheticUnsafePackage(_ Target) *types.Package {
 	pkg := types.NewPackage("unsafe", "unsafe")
 	for _, name := range unsafeBuiltinNames {
 		obj := types.Unsafe.Scope().Lookup(name)
