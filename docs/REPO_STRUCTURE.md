@@ -60,14 +60,17 @@ Related: [Makefile](../Makefile) (root build entry point),
       [types/](../internal/frontend/types/),
       [desugar/](../internal/frontend/desugar/) — empty placeholders for the
       planned package split (blocked by an exporter/desugar import cycle).
-    - [v2/](../internal/frontend/v2/) — separate module (own `go.mod`): the
-      frontend v2 rewrite (parser → checker → emitter stages plus the
-      Go→Java binary interface in
-      [encode/](../internal/frontend/v2/encode/), decoded by
-      [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
-      in the Java backend; wire contract pinned by
-      `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side and
-      `BinaryDecoderTest` on the Java side; `make test-v2` runs its suite).
+    - v2 — RETIRED 2026-11-03 (P1-3 remediation for
+      REVIEW-2026-11-03-09): the frontend v2 rewrite (parser → checker →
+      emitter plus the Go→Java binary interface) was removed from the
+      product tree because it had zero product callers and no executable
+      program form, while its emitter covered only a single-package
+      subset. The design record, the decision evidence, the wiring cost,
+      and the recovery pointer (git history at `bfd20e87`) live in
+      [docs/arch/frontend-v2.md](arch/frontend-v2.md). There is no v2
+      module, no `graalgo.frontend.v2` Java package, and no `test-v2`
+      Makefile target anymore; the product frontend is v1 only (see the
+      IR paragraph below).
   - The IR is the `frontend/v1` JSON wire format: specified in
     [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by
