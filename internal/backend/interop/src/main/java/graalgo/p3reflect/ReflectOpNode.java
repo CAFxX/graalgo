@@ -9,6 +9,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.frontend.TypeTable;
 import graalgo.p3reflect.ReflectRefs.Cell;
 import graalgo.p3reflect.ReflectTypes.TypeInfo;
+import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
@@ -125,6 +126,75 @@ public final class ReflectOpNode extends GoExprNode {
             return arg.executeObject(frame);
         }
         throw new FrontendException("cannot box kind " + arg.kind() + " (WS E)");
+    }
+
+    // ------------------------------------------------------------------
+    // Guest panic helpers (rev1103-reflect-panic, P1-1).
+    //
+    // A guest-visible error must surface as a Go panic
+    // (PanicException), never as a raw Java exception: a raw exception
+    // bypasses every defer/recover frame and dies in the launcher as
+    // an internal error with exit 1, while gc panics (recoverable;
+    // uncaught, exit 2). These helpers never return at runtime; they
+    // return RuntimeException only so call sites can write
+    // "throw guestPanic(...)" in statement and switch-expression
+    // positions alike (the trailing AssertionError is for the
+    // compiler, matching IfaceDispatchNode's pattern).
+    // ------------------------------------------------------------------
+
+    /** Throws a guest panic whose value is the given gc-exact string. */
+    private static RuntimeException guestPanic(String msg) {
+        Panic.throwPanic(GoString.fromUtf8(msg));
+        throw new AssertionError("unreachable: Panic.throwPanic returned");
+    }
+
+    /**
+     * Throws a ValueError-shaped panic, rendered as its Error() string
+     * (gc: "reflect: call of reflect.Value.&lt;Method&gt; on &lt;kind&gt;
+     * Value"). The recovered value is the rendered string, not a
+     * *ValueError struct: these kind-default branches are unreachable
+     * through the public API (real reflect and the synthetic layer
+     * check kinds first), so no guest code can observe the difference;
+     * the uncaught rendering is gc-identical.
+     */
+    private static RuntimeException guestValueError(String method, GoKind kind) {
+        return guestPanic("reflect: call of reflect.Value." + method
+                + " on " + kindName(kind) + " Value");
+    }
+
+    /**
+     * reflect.Kind name for a GoKind. D5 collapses int/uint/uintptr to
+     * int64/uint64, so those render as "int64"/"uint64" even for an
+     * int/uint value; that imprecision is confined to the unreachable
+     * kind-default branches above.
+     */
+    private static String kindName(GoKind kind) {
+        return switch (kind) {
+            case BOOL -> "bool";
+            case INT8 -> "int8";
+            case INT16 -> "int16";
+            case INT32 -> "int32";
+            case INT64 -> "int64";
+            case UINT8 -> "uint8";
+            case UINT16 -> "uint16";
+            case UINT32 -> "uint32";
+            case UINT64 -> "uint64";
+            case FLOAT32 -> "float32";
+            case FLOAT64 -> "float64";
+            case COMPLEX64 -> "complex64";
+            case COMPLEX128 -> "complex128";
+            case STRING -> "string";
+            case SLICE -> "slice";
+            case ARRAY -> "array";
+            case MAP -> "map";
+            case STRUCT -> "struct";
+            case POINTER -> "ptr";
+            case INTERFACE -> "interface";
+            case FUNC -> "func";
+            case CHAN -> "chan";
+            case UNSAFE_POINTER -> "unsafe.Pointer";
+            default -> kind.toString().toLowerCase(java.util.Locale.ROOT);
+        };
     }
 
     @Override
@@ -328,7 +398,8 @@ public final class ReflectOpNode extends GoExprNode {
             case INT64, UINT64, FLOAT64 -> 64;
             case COMPLEX64 -> 64;
             case COMPLEX128 -> 128;
-            default -> throw new IllegalStateException("reflect: bits of " + t.kind);
+            default -> throw guestPanic("reflect: Bits of non-arithmetic Type "
+                    + ReflectTypes.typeString(tok));
         };
     }
 
@@ -679,7 +750,7 @@ public final class ReflectOpNode extends GoExprNode {
                 long uint8Tok = ReflectTypes.table().tokForKind(GoKind.UINT8);
                 return ReflectValues.pack(desc, uint8Tok, h, 0);
             }
-            default -> throw new IllegalStateException("reflect: index of " + t.kind);
+            default -> throw guestValueError("Index", t.kind);
         }
     }
 
@@ -768,7 +839,7 @@ public final class ReflectOpNode extends GoExprNode {
                         | (p.flag() & ReflectValues.FLAG_RO);
                 return ReflectValues.pack(desc, t.elem.tok, h, flag);
             }
-            default -> throw new IllegalStateException("reflect: elem of " + t.kind);
+            default -> throw guestValueError("Elem", t.kind);
         }
     }
 
@@ -785,12 +856,12 @@ public final class ReflectOpNode extends GoExprNode {
             case POINTER -> {
                 // Pointer to array.
                 if (t.elem.kind != GoKind.ARRAY) {
-                    throw new IllegalStateException(
+                    throw guestPanic(
                             "reflect: call of reflect.Value.Len on ptr to non-array Value");
                 }
                 yield t.elem.arrayLen;
             }
-            default -> throw new IllegalStateException("reflect: len of " + t.kind);
+            default -> throw guestValueError("Len", t.kind);
         };
     }
 
@@ -804,12 +875,12 @@ public final class ReflectOpNode extends GoExprNode {
             case CHAN -> graalgo.runtime.ChanOps.cap((graalgo.runtime.ChanOps.Chan) d5);
             case POINTER -> {
                 if (t.elem.kind != GoKind.ARRAY) {
-                    throw new IllegalStateException(
+                    throw guestPanic(
                             "reflect: call of reflect.Value.Cap on ptr to non-array Value");
                 }
                 yield t.elem.arrayLen;
             }
-            default -> throw new IllegalStateException("reflect: cap of " + t.kind);
+            default -> throw guestValueError("Cap", t.kind);
         };
     }
 
@@ -1040,7 +1111,7 @@ public final class ReflectOpNode extends GoExprNode {
         if (d5 != null && d5.getClass() == byte[].class) {
             return d5;
         }
-        throw new IllegalStateException("reflect: Bytes of non-byte slice");
+        throw guestPanic("reflect.Value.Bytes of non-byte slice");
     }
 
     // ------------------------------------------------------------------
@@ -1194,7 +1265,7 @@ public final class ReflectOpNode extends GoExprNode {
                 long h = ReflectRefs.intern(new GoString(sub));
                 return ReflectValues.pack(desc, p.typ(), h, flag);
             }
-            default -> throw new IllegalStateException("reflect: slice of " + t.kind);
+            default -> throw guestValueError("Slice", t.kind);
         }
     }
 
@@ -1210,6 +1281,12 @@ public final class ReflectOpNode extends GoExprNode {
             long h = ReflectRefs.intern(sl);
             long sliceTok = sliceTokFor(t.elem.tok);
             return ReflectValues.pack(desc, sliceTok, h, flag);
+        }
+        if (t.kind != GoKind.SLICE) {
+            // Slice3 on a non-array, non-slice value (e.g. string):
+            // without this guard the GoSlice cast below throws a raw
+            // ClassCastException that bypasses recover().
+            throw guestValueError("Slice3", t.kind);
         }
         GoSlice s = (GoSlice) d5;
         GoSlice sl = s.slice3(i, j, k);
@@ -1534,7 +1611,7 @@ public final class ReflectOpNode extends GoExprNode {
         }
         GoSlice s = (GoSlice) c.value;
         if (n < 0) {
-            throw new IllegalStateException("reflect.Value.Grow: negative len");
+            throw guestPanic("reflect.Value.Grow: negative len");
         }
         if (s.len() + n > s.cap()) {
             int newCap = Math.max(s.len() + n, s.cap() * 2);
@@ -1552,7 +1629,7 @@ public final class ReflectOpNode extends GoExprNode {
         }
         GoSlice s = (GoSlice) c.value;
         if (n < 0 || n > s.cap()) {
-            throw new IllegalStateException("reflect: slice length out of range in SetLen");
+            throw guestPanic("reflect: slice length out of range in SetLen");
         }
         c.value = new GoSlice(s.array(), s.offset(), n, s.cap());
     }
@@ -1565,7 +1642,7 @@ public final class ReflectOpNode extends GoExprNode {
         }
         GoSlice s = (GoSlice) c.value;
         if (n < s.len() || n > s.cap()) {
-            throw new IllegalStateException("reflect: slice capacity out of range in SetCap");
+            throw guestPanic("reflect: slice capacity out of range in SetCap");
         }
         c.value = new GoSlice(s.array(), s.offset(), s.len(), n);
     }

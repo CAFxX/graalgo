@@ -143,9 +143,16 @@ public final class ReflectLinknames {
             Linknames.register("reflect.typedslicecopy", args -> typedSliceCopy(
                     tokForTypeArg(args[0], "reflect.typedslicecopy"),
                     (GoStruct) args[1], (GoStruct) args[2]), 3);
+            // rev1103-reflect-panic (P1-1): growslice takes THREE
+            // D5-boxed arguments (t, old, num) — real reflect's
+            // Value.grow calls growslice(t, *p, n), and the lambda
+            // below reads args[0..2]. The arity was 2, so every real
+            // Grow that actually grew died with a FrontendException
+            // (host error, exit 1, bypassing recover) instead of
+            // growing the slice.
             Linknames.register("reflect.growslice", args -> growSlice(
                     tokForTypeArg(args[0], "reflect.growslice"),
-                    (GoStruct) args[1], (int) num(args[2])), 2);
+                    (GoStruct) args[1], (int) num(args[2])), 3);
             Linknames.register("reflect.makechan", args -> makeChan(
                     tokForTypeArg(args[0], "reflect.makechan"), (int) num(args[1])), 1);
             Linknames.register("reflect.makemap", args -> {
@@ -249,9 +256,16 @@ public final class ReflectLinknames {
      * suffices, otherwise a fresh array with the same growth policy as
      * the reflect Append path ({@code ReflectOpNode.reflectAppend}).
      * The result is an unsafeheader.Slice struct with old's descriptor.
+     *
+     * <p>rev1103-reflect-panic (P1-1): {@code t} is the ELEMENT type
+     * (real reflect's Value.grow passes {@code v.typ().Elem()}), not
+     * the slice type — the old code read {@code t.elem.kind}, which
+     * is null for scalar elements (NPE on every real Grow) and the
+     * wrong kind for aggregate elements.
      */
-    private static Object growSlice(long sliceTok, GoStruct old, int num) {
-        ReflectTypes.TypeInfo t = ReflectTypes.table().info(sliceTok);
+    private static Object growSlice(long elemTok, GoStruct old, int num) {
+        ReflectTypes.TypeInfo t = ReflectTypes.table().info(elemTok);
+        GoKind elemKind = t.kind;
         Object[] s = sliceBacking(old);
         Object arr = s[0];
         int off = (Integer) s[1];
@@ -265,10 +279,10 @@ public final class ReflectLinknames {
         int newCap = cap;
         if (newLen > cap) {
             newCap = Math.max(newLen, cap * 2);
-            newArr = ReflectValues.newArray(t.elem.kind, newCap);
+            newArr = ReflectValues.newArray(elemKind, newCap);
             for (int i = 0; i < len; i++) {
-                Object v = ReflectValues.arrayGet(arr, t.elem.kind, off + i);
-                ReflectValues.arraySet(newArr, t.elem.kind, i, v);
+                Object v = ReflectValues.arrayGet(arr, elemKind, off + i);
+                ReflectValues.arraySet(newArr, elemKind, i, v);
             }
             newOff = 0;
             newData = dataField instanceof GoPointer
