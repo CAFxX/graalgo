@@ -6893,10 +6893,22 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
-// isGoschedCall reports whether x is a call to runtime.Gosched (resolved
-// against the synthetic runtime overlay package, not merely named
-// "runtime" — the exportCall interception's package check, mirrored here
-// for the statement-position interceptions below).
+// isPkgNameIdent reports whether id resolves to a package name. This is
+// a structural pre-filter only: it keeps method calls (whose selector X
+// is a value, not a package) out of the package-call gates, and it never
+// consults the identifier spelling, so an aliased import passes it
+// exactly like the canonical spelling.
+func isPkgNameIdent(info *types.Info, id *ast.Ident) bool {
+	_, ok := info.Uses[id].(*types.PkgName)
+	return ok
+}
+
+// isGoschedCall reports whether x is a call to runtime.Gosched, gated on
+// the resolved package PATH ("runtime") — never on the package name or
+// the identifier spelling. A user package named runtime at another path
+// must not match, and runtime imported under an alias must. The
+// isPkgNameIdent pre-filter is structural only (see above) and cannot
+// change the outcome for a genuine package-qualified call.
 func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 	c, ok := unparen(x).(*ast.CallExpr)
 	if !ok {
@@ -6907,11 +6919,11 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if !ok || !isPkgNameIdent(info, pkgIdent) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8557,17 +8569,22 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
-		// local named runtime is not. The structural obj.Pkg().Name()
-		// check below stays as the second gate.
+		// local named runtime is not. P1-3: the second gate is the
+		// resolved package PATH ("runtime"), not the package name — a
+		// user package named runtime at another path must not match.
 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
-					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
+				// Only the real runtime's Goexit intercepts. Any other
+				// package's Goexit (including a user package named
+				// runtime at another path) falls through to the general
+				// call path below — it is an ordinary function, not a
+				// scope error.
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
+					}
+					return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 				}
-				if len(c.Args) != 0 {
-					return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
-				}
-				return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 			}
 		}
 		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
@@ -8581,8 +8598,15 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+		// P1-3: this gate is on the resolved package PATH ("runtime"),
+		// never on the package name or the identifier spelling — a user
+		// package named runtime at another path must not match, and
+		// runtime imported under an alias must. isPkgNameIdent is the
+		// same structural, spelling-blind pre-filter as isGoschedCall's:
+		// it keeps method calls out and cannot change the outcome for a
+		// genuine package-qualified call.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && isPkgNameIdent(e.info, pkgIdent) {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
