@@ -109,14 +109,27 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 130 `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
-  `synth_*.go` mirrors under
+- **What:** 130 non-test files in [internal/frontend/](../../internal/frontend/)
+  matching `synth_*.go`: 126 backing the 128 active registry entries in
+  `syntheticSources` (three multi-entry files plus the `cipher` fragment
+  account for the difference), plus the registry machinery file, the
+  dedicated `unsafe` stub, and 2 dead files (below). The 8
+  `synth_*_test.go` files are tests, not packages. Plus 12 `synth_*.go`
+  mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. Count at 2026-11-03 (P1-2 lane; the previous "142" was stale —
+  it predates the `reflect`/`internal/reflectlite` retirements, and the
+  review's "140" counts the 8 test files). Retired by the P1-2 lane:
+  `cmp`, `structs` (real GOROOT packages via the disk importer; see the
+  P1-2 inventory in the goal's `hidden_files/codebase-review/` working
+  state). Dead files flagged by that inventory, deletion pending:
+  `synth_filepath.go`, `synth_math_rand.go` (referenced by no code).
+  Shrink-only gate: [.github/scripts/check_synth_twins.py](../../.github/scripts/check_synth_twins.py)
+  (registry baseline + mirror/drift-test completeness + unregistered-file
+  check; runs in CI before `make all` and in the Makefile `check` target).
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).

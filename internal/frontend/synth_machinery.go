@@ -119,19 +119,21 @@ var syntheticSources = map[string]string{
 	// registered here under a distinct name so getSyntheticPackage works.
 	// The helperPkg override in m7MultiResultFunc points reflect entries here.
 	"reflect_m7": syntheticReflectSource,
-	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
-	// synth_bytealg.go). internal/bytealg is synthetic-only, like
-	// internal/reflectlite: user imports of internal/* are not admitted by
-	// the import allow-list, but synthetic packages may import it.
+	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_bytealg.go).
+	// internal/bytealg is synthetic-only, like internal/reflectlite: user
+	// imports of internal/* are not admitted by the import allow-list, but
+	// synthetic packages may import it.
+	// RETIRED 2026-11-03 (P1-2 lane): "structs" now resolves from GOROOT
+	// via the disk importer (real package); synth_structs.go deleted.
 	"unique":           syntheticUniqueSource,
-	"structs":          syntheticStructsSource,
 	"internal/bytealg": syntheticBytealgSource,
-	// P3-M9 (wave 3, tier-1a worker): synthetic cmp/slices/maps/unicode
-	// packages (real-Go sources in synth_cmp.go / synth_slices.go /
-	// synth_maps.go / synth_unicode*.go). slices imports synthetic cmp
-	// and iter; maps imports synthetic iter; the unicode packages are
-	// self-contained.
-	"cmp":           syntheticCmpSource,
+	// P3-M9 (wave 3, tier-1a worker): synthetic slices/maps/unicode
+	// packages (real-Go sources in synth_slices.go / synth_maps.go /
+	// synth_unicode*.go). slices imports cmp (now the real GOROOT package
+	// via the disk importer) and synthetic iter; maps imports synthetic
+	// iter; the unicode packages are self-contained.
+	// RETIRED 2026-11-03 (P1-2 lane): "cmp" now resolves from GOROOT via
+	// the disk importer (real package); synth_cmp.go deleted.
 	"slices":        syntheticSlicesSource,
 	"maps":          syntheticMapsSource,
 	"unicode":       syntheticUnicodeSource,
@@ -1873,9 +1875,9 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "math/bits" && path != "math/cmplx" && path != "math/rand" && path != "math/rand/v2" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
 		// P3-M9 (wave 3, math/big): the synthetic math/big package (G-c hard gate).
 		path != "math/big" && path != "internal/byteorder" &&
-		// P3-M9 (tier-1d): leaf utilities unique/structs (+ synthetic-only
-		// internal/bytealg).
-		path != "unique" && path != "structs" && path != "internal/bytealg" &&
+		// P3-M9 (tier-1d): leaf utilities unique (+ synthetic-only
+		// internal/bytealg; structs retired to disk 2026-11-03).
+		path != "unique" && path != "internal/bytealg" &&
 		// P3-M9 (wave 3, tier-1b): synthetic container/* and hash/*
 		// packages (package-level calls lower to direct calls of the
 		// imported synthetic funcdecls).
@@ -1899,7 +1901,7 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		// packages (package-level calls lower to direct calls of the
 		// imported synthetic funcdecls; generic members monomorphize via
 		// enumerateInstantiations like user generics).
-		path != "cmp" && path != "slices" && path != "maps" &&
+		path != "slices" && path != "maps" &&
 		path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
 		// P3-M9: synthetic flag/testing/testing/quick/testing/iotest
 		// (package-level calls — flag.NewFlagSet, testing.Main,
@@ -2283,9 +2285,9 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		// P3-M8 (wave 2): os + io/fs + syscall.
 		p != "os" && p != "io/fs" && p != "syscall" &&
 		p != "reflect" && p != "internal/reflectlite" && p != "iter" &&
-		// P3-M9 (tier-1d): leaf utilities unique/structs (+ synthetic-only
-		// internal/bytealg).
-		p != "unique" && p != "structs" && p != "internal/bytealg" &&
+		// P3-M9 (tier-1d): leaf utilities unique (+ synthetic-only
+		// internal/bytealg; structs retired to disk 2026-11-03).
+		p != "unique" && p != "internal/bytealg" &&
 		// P3-M8 (wave 2): hash + crypto/*.
 		p != "hash" && p != "crypto" &&
 		p != "crypto/aes" && p != "crypto/cipher" && p != "crypto/des" && p != "crypto/hmac" &&
@@ -2387,7 +2389,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 		// P3-M8 (wave 2).
 		milestone = "M8"
 	}
-	if p := fn.Pkg().Path(); p == "unique" || p == "structs" || p == "internal/bytealg" ||
+	if p := fn.Pkg().Path(); p == "unique" || p == "internal/bytealg" ||
 		p == "net" || p == "net/netip" || p == "net/url" || p == "net/textproto" ||
 		p == "internal/poll" || p == "internal/nettrace" || p == "internal/singleflight" ||
 		p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||

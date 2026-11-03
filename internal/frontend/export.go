@@ -1197,9 +1197,8 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	needTesting := false
 	needTestingQuick := false
 	needTestingIotest := false
-	// P3-M9 (tier-1d): leaf utilities unique/structs.
+	// P3-M9 (tier-1d): leaf utility unique.
 	needUnique := false
-	needStructs := false
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			switch strings.Trim(imp.Path.Value, "\"`") {
@@ -1361,10 +1360,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			case "iter":
 				needIter = true
 			// P3-M9 (wave 3, tier-1a worker): direct user imports of the
-			// synthetic cmp/slices/maps/unicode packages. slices pulls in
-			// cmp and iter (its source imports both); maps pulls in iter.
-			case "cmp":
-				needCmp = true
+			// synthetic slices/maps/unicode packages. slices pulls in
+			// cmp (now the real GOROOT package via the disk importer)
+			// and iter (its source imports both); maps pulls in iter.
+			// A direct user import of "cmp" falls through to the
+			// default case below (needDisk -> importPkgTree).
 			case "slices":
 				needSlices = true
 				needCmp = true
@@ -1404,11 +1404,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			// errors, fmt, io, os.
 			case "testing/iotest":
 				needTestingIotest = true
-			// P3-M9 (tier-1d): leaf utilities unique/structs.
+			// P3-M9 (tier-1d): leaf utility unique. ("structs" retired
+			// 2026-11-03, P1-2 lane: a direct user import falls through
+			// to the default case below, like any disk package.)
 			case "unique":
 				needUnique = true
-			case "structs":
-				needStructs = true
 			// P3-M9 (wave 3): direct user imports of synthetic math/big /
 			// math/rand. math/big pulls its full synthetic dependency
 			// closure (bits/rand/byteorder + the M7/M8 packages it uses).
@@ -1872,10 +1872,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M9 (wave 3, tier-1a worker): synthetic cmp package (synth_cmp.go).
-	// Self-contained: no synthetic imports.
+	// P3-M9 (wave 3, tier-1a worker): cmp is now the real GOROOT package
+	// (retired 2026-11-03, P1-2 lane). It has no imports, so importPkgTree
+	// merges exactly the disk package; the call stays so slices/bzip2
+	// flows that need cmp import it before their own package, as before.
 	if needCmp {
-		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+		if err := e.importPkgTree("cmp"); err != nil {
 			return "", err
 		}
 	}
@@ -1885,11 +1887,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M9 (wave 3, tier-1a worker): synthetic slices package
-	// (synth_slices.go). The source imports cmp and iter; both are
-	// imported before slices itself (package-level initializers may call
-	// synthetic functions).
+	// (synth_slices.go). The source imports cmp (now the real GOROOT
+	// package via the disk importer) and iter; both are imported before
+	// slices itself (package-level initializers may call their functions).
 	if needSlices {
-		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+		if err := e.importPkgTree("cmp"); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
@@ -2075,14 +2077,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			}
 		}
 	}
-	// P3-M9 (tier-1d): leaf utilities unique/structs.
+	// P3-M9 (tier-1d): leaf utility unique. ("structs" retired 2026-11-03,
+	// P1-2 lane: direct imports reach it through the needDisk path.)
 	if needUnique {
 		if err := e.importSyntheticPackage(getSyntheticPackage("unique")); err != nil {
-			return "", err
-		}
-	}
-	if needStructs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("structs")); err != nil {
 			return "", err
 		}
 	}
