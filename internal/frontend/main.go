@@ -11,7 +11,10 @@
 // driver belongs to (passed only by `graalgo test` via the backend
 // launcher); the import gate applies Go's internal-visibility rule with
 // that package's privileges. Never read from the environment: a
-// user-exported variable must not confer the privilege.
+// user-exported variable must not confer the privilege. The flag is
+// honored only after verifyTestDriver confirms the inputs are shaped
+// like a synthesized driver for that dir (testdriver_verify.go);
+// bare argv alone no longer confers the privilege (L-L F3).
 // Exit codes: 0 success, 1 usage error, 2 frontend error (details on stderr).
 //
 // Validation mode: gofrontend --check-synthetic <import-path>
@@ -39,7 +42,10 @@ func main() {
 	// internal-visibility rule with that package's privileges. The flag
 	// is extracted from argv here and threaded in-process to
 	// ExportFiles — it is never read from the environment, so a
-	// user-exported variable cannot confer the privilege.
+	// user-exported variable cannot confer the privilege. L-L F3:
+	// before honoring it, the inputs must verify as a synthesized
+	// driver for that dir (verifyTestDriver); otherwise the flag is
+	// rejected, so a bare argv claim confers nothing.
 	var testPackageDir string
 	var rest []string
 	for _, a := range os.Args[1:] {
@@ -63,19 +69,21 @@ func main() {
 			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic: no synthetic source for %q\n", path)
 			os.Exit(2)
 		}
-		// Build the synthetic package. getSyntheticPackage panics on
-		// parse/type errors; recover and report as a clean failure.
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, r)
-					os.Exit(2)
-				}
-			}()
-			sp := getSyntheticPackage(path)
-			fmt.Printf("ok %s (%d decls)\n", path, sp.pkg.Scope().Len())
-		}()
+		// Build the synthetic package. Build failures are errors
+		// (L-L F5), reported as a clean failure, not a panic.
+		sp, err := getSyntheticPackage(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, err)
+			os.Exit(2)
+		}
+		fmt.Printf("ok %s (%d decls)\n", path, sp.pkg.Scope().Len())
 		return
+	}
+	if testPackageDir != "" {
+		if err := verifyTestDriver(rest, testPackageDir); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(2)
+		}
 	}
 	out, err := ExportFiles(rest, testPackageDir)
 	if err != nil {

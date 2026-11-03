@@ -11,14 +11,17 @@ package main
 // Value.Interface of an addressable element, hence fmt %v of slices)
 // and Type.String (nameOff).
 //
-// Scope pins: bodyless METHODS keep the stub (methods bind through
-// method tables, not the symbol table), and a multi-result defaulted
-// declaration keeps the stub too (LinknameRootNode dispatch returns
-// one value and a defaulted declaration never aliases to a compiled
-// provider — internal/cpu.cpuid is that shape).
+// Scope pins (L-L F6): bodyless METHODS fail export (methods bind
+// through method tables, not the symbol table), and a multi-result
+// defaulted declaration fails export too (LinknameRootNode dispatch
+// returns one value and a defaulted declaration never aliases to a
+// compiled provider — internal/cpu.cpuid is that shape, allow-listed
+// in export.go as never-called, not stubbed by default).
 
 import (
 	"encoding/json"
+	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 )
@@ -140,7 +143,11 @@ func main() {
 	}
 }
 
-func TestBodylessMethodStaysUnimplemented(t *testing.T) {
+func TestBodylessMethodFailsExport(t *testing.T) {
+	// L-L F6: a bodyless method with no linkname symbol and no
+	// provider fails export instead of becoming a guest panic stub.
+	// (Previously this pinned the stub form; the stub is now reserved
+	// for the reviewed never-called allow-list.)
 	src := `package main
 
 type T struct{}
@@ -151,38 +158,20 @@ var _ interface{ M() int } = T{}
 
 func main() {}
 `
-	out, err := ExportFile(writeSyncProg(t, src))
-	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	if !strings.Contains(out, "M") {
-		t.Fatalf("export does not mention the method at all")
-	}
-	decls := funcDeclsBySymbol(t, out)
-	found := false
-	for sym, fields := range decls {
-		if strings.HasSuffix(sym, ".M") || strings.Contains(sym, "T).M") {
-			found = true
-			if fields["linkname"] != nil {
-				t.Errorf("bodyless method %s exported with linkname %v; methods must keep the stub",
-					sym, fields["linkname"])
-			}
-			if fields["unimplemented"] != true {
-				t.Errorf("bodyless method %s: unimplemented = %v; want true (stub form)",
-					sym, fields["unimplemented"])
-			}
-		}
-	}
-	if !found {
-		t.Errorf("bodyless method decl not present in export")
+	if _, err := ExportFile(writeSyncProg(t, src)); err == nil {
+		t.Fatal("ExportFile(bodyless method): got nil error, want a no-provider failure")
+	} else if !strings.Contains(err.Error(), "no provider") && !strings.Contains(err.Error(), "no linkname symbol") {
+		t.Fatalf("ExportFile(bodyless method) error = %q, want it to name the missing provider/symbol", err)
 	}
 }
 
-func TestBodylessMultiResultDefaultStaysUnimplemented(t *testing.T) {
+func TestBodylessMultiResultDefaultFailsExport(t *testing.T) {
 	// The internal/cpu.cpuid shape: multi-result, no directive.
 	// Dispatch cannot carry multiple results and a defaulted
-	// declaration never aliases, so the stub form (with its pair
-	// synthesis for callers) must stand.
+	// declaration never aliases — but unless the declaration is on
+	// the reviewed never-called allow-list (internal/cpu's own
+	// decls, not this main-package one), export now fails instead of
+	// emitting a panic stub with pair synthesis for its callers.
 	src := `package main
 
 func pair() (int, int)
@@ -191,21 +180,44 @@ func main() {
 	_ = pair
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
-	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
+	if _, err := ExportFile(writeSyncProg(t, src)); err == nil {
+		t.Fatal("ExportFile(multi-result defaulted decl): got nil error, want a no-provider failure")
+	} else if !strings.Contains(err.Error(), "no provider") {
+		t.Fatalf("ExportFile(multi-result defaulted decl) error = %q, want it to name the missing provider", err)
 	}
-	decls := funcDeclsBySymbol(t, out)
-	fields, ok := decls["main.pair"]
-	if !ok {
-		t.Fatalf("no funcdecl exported for main.pair")
+}
+
+// TestLinknameStubAllowlist pins the allow-list predicate: exactly the
+// reviewed never-called entries pass, and lookalikes do not.
+func TestLinknameStubAllowlist(t *testing.T) {
+	mkFunc := func(pkgPath, name string, recv *types.Named) *funcDeclInfo {
+		pkg := types.NewPackage(pkgPath, pkgPath)
+		var recvVar *types.Var
+		if recv != nil {
+			recvVar = types.NewVar(token.NoPos, pkg, "", recv)
+		}
+		sig := types.NewSignatureType(recvVar, nil, nil, nil, nil, false)
+		return &funcDeclInfo{obj: types.NewFunc(token.NoPos, pkg, name, sig), sig: sig}
 	}
-	if fields["linkname"] != nil {
-		t.Errorf("multi-result defaulted decl exported with linkname %v; want stub form",
-			fields["linkname"])
-	}
-	if fields["unimplemented"] != true {
-		t.Errorf("multi-result defaulted decl: unimplemented = %v; want true (stub form)",
-			fields["unimplemented"])
+	mainPkg := types.NewPackage("main", "main")
+	recvT := types.NewNamed(types.NewTypeName(token.NoPos, mainPkg, "T", types.Typ[types.Int]), types.Typ[types.Int], nil)
+	for _, tc := range []struct {
+		pkgPath string
+		key     string
+		fi      *funcDeclInfo
+		want    bool
+	}{
+		{"internal/cpu", "internal/cpu.cpuid", mkFunc("internal/cpu", "cpuid", nil), true},
+		{"internal/cpu", "internal/cpu.xgetbv", mkFunc("internal/cpu", "xgetbv", nil), true},
+		{"internal/cpu", "internal/cpu.doinit", mkFunc("internal/cpu", "doinit", nil), false},
+		{"main", "main.pair", mkFunc("main", "pair", nil), false},
+		{"main", "main.T.M", mkFunc("main", "M", recvT), false},
+	} {
+		if gotKey := linknameStubKey(tc.pkgPath, tc.fi); gotKey != tc.key {
+			t.Errorf("linknameStubKey = %q, want %q", gotKey, tc.key)
+		}
+		if _, ok := linknameStubAllowed(tc.pkgPath, tc.fi); ok != tc.want {
+			t.Errorf("linknameStubAllowed(%q) = %v, want %v", tc.key, ok, tc.want)
+		}
 	}
 }

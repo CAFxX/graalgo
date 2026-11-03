@@ -1624,8 +1624,19 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	if !ok {
 		return nil
 	}
-	ctxPkg := getSyntheticPackage("context").pkg
-	timePkg := getSyntheticPackage("time").pkg
+	// L-L F5: a synthetic build failure is fail-closed here (no plan)
+	// rather than a panic; the importing program's own type-check
+	// already failed loudly on the same broken source.
+	ctxSp, err := getSyntheticPackage("context")
+	if err != nil {
+		return nil
+	}
+	timeSp, err := getSyntheticPackage("time")
+	if err != nil {
+		return nil
+	}
+	ctxPkg := ctxSp.pkg
+	timePkg := timeSp.pkg
 	named := func(pkg *types.Package, name string) *types.Named {
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {
@@ -1769,7 +1780,11 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		}
 		if f, ok := selection.Obj().(*types.Func); ok {
 			if helper, ok := isXmlTokenMethod(f); ok {
-				xmlPkg := getSyntheticPackage("encoding/xml").pkg
+				xmlSp, err := getSyntheticPackage("encoding/xml")
+				if err != nil {
+					return nil
+				}
+				xmlPkg := xmlSp.pkg
 				nt := named(xmlPkg, "tokenPair")
 				if nt == nil {
 					return nil
@@ -2000,7 +2015,10 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 	if !ok || sig.Results().Len() < 2 {
 		return nil // multi-result desugar only; single results need no plan
 	}
-	sp := getSyntheticPackage(pkgPath)
+	sp, err := getSyntheticPackage(pkgPath)
+	if err != nil {
+		return nil
+	}
 	// Match the FuncDecl by name; for methods also match the receiver's
 	// named type (handles *T receivers and generic instantiations).
 	var wantRecv string
@@ -2251,7 +2269,10 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2410,7 +2431,10 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2462,7 +2486,10 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2515,7 +2542,10 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2573,7 +2603,10 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2624,7 +2657,10 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		if sp == nil {
 			continue
 		}
@@ -2700,7 +2736,10 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		if sp == nil {
 			continue
 		}
@@ -2999,8 +3038,8 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 				return nil, false
 			}
 		} else {
-			sp := getSyntheticPackage(helperPkg)
-			if sp == nil {
+			sp, err := getSyntheticPackage(helperPkg)
+			if err != nil {
 				return nil, false
 			}
 			helperObj := sp.pkg.Scope().Lookup(helperName)
@@ -3089,7 +3128,10 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
 			helperPkg = override
 		}
-		sp := getSyntheticPackage(helperPkg)
+		sp, err := getSyntheticPackage(helperPkg)
+		if err != nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -3436,7 +3478,11 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 			return nil, err
 		}
 	} else {
-		sp = getSyntheticPackage(plan.helperPkg)
+		var err error
+		sp, err = getSyntheticPackage(plan.helperPkg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// P3-M8b: import the synthetic package so its helpers are registered
 	// in funcByObj (idempotent). Without this, synthHelperCallNode fails

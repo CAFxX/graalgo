@@ -116,7 +116,10 @@ func TestD1IoDesugarWiring(t *testing.T) {
 			}
 			// The __-helper exists and the pair struct's fields match
 			// the multi-result signature's results positionally.
-			sp := getSyntheticPackage(want.pkgPath)
+			sp, err := getSyntheticPackage(want.pkgPath)
+			if err != nil {
+				t.Fatalf("getSyntheticPackage(%q): %v", want.pkgPath, err)
+			}
 			hobj := sp.pkg.Scope().Lookup(want.helper)
 			if _, ok := hobj.(*types.Func); !ok {
 				t.Fatalf("helper %s.%s missing from package scope", want.pkgPath, want.helper)

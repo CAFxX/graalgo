@@ -17,7 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
+#   `make all` = generate + build + snapshot-check + check + test-v2
+#                + test-p3frontend + test-frontend + test-ci
 #                + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
@@ -37,6 +38,14 @@
 #               ([test/regression/](test/regression/)): each
 #               test/regression/<pkg>/ dir runs through the graalgo driver
 #               + backend. Per-push: a re-break fails the gate.
+#     test-frontend
+#               the frontend/v1 unit suite ([internal/frontend/](internal/frontend/),
+#               `build.sh test`, ~230 test functions). L-L F7: named
+#               explicitly here instead of only riding inside `check`
+#               (truffle check → build.sh check → go test), so the
+#               suite is a visible per-push gate in its own right and
+#               cannot silently drop out if the check target changes.
+#               (CI runs `make all`, so this is the CI gate too.)
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
 #   `make test` — the full differential suite (phase1 graalgo.test.Runner,
@@ -104,9 +113,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test-frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-p3frontend test-frontend test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -204,6 +213,19 @@ test-v2:
 	mkdir -p $(V2_TMP) && \
 	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
+
+# Frontend v1 module tests: the [internal/frontend](internal/frontend)
+# package's own unit suite (`build.sh test`, i.e. `go test .` under the
+# vendored go/* overlay — NOT plain `go test`, which would resolve
+# go/* from GOROOT instead of the vendored tree). In `all` (hence
+# per-push CI): L-L F7 names the suite explicitly; it previously ran
+# only buried inside `check` (truffle check → build.sh check → go test).
+# /tmp is a 512M shared tmpfs: keep go build/test temps on persistent
+# disk (same pattern as test-v2/test-p3frontend).
+FRONTEND_TMP := $(CURDIR)/internal/frontend/.tmp
+test-frontend: generate
+	mkdir -p $(FRONTEND_TMP) && \
+	cd internal/frontend && TMPDIR="$(FRONTEND_TMP)" GOTMPDIR="$(FRONTEND_TMP)" PATH="$(dir $(GO)):$$PATH" ./build.sh test
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)

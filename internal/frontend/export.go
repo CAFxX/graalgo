@@ -611,7 +611,11 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	// This replaces the 300+ line per-package switch; new synthetic
 	// packages work automatically when added to syntheticSources.
 	if _, ok := syntheticSources[path]; ok {
-		return getSyntheticPackage(path).pkg, nil
+		sp, err := getSyntheticPackage(path)
+		if err != nil {
+			return nil, err
+		}
+		return sp.pkg, nil
 	}
 	// WS G (P3-M9, module-probe lane): third-party imports resolve from
 	// local disk (module cache/GOPATH) through the general overlay. A path
@@ -667,7 +671,10 @@ func ExportFile(path string) (string, error) {
 // never asked for it (`GRAALGO_TEST_PACKAGE_DIR=$GOROOT/src graalgo run`
 // must stay rejected). Only `graalgo test` passes the flag, on the
 // backend invocation for its own driver, and nothing in the frontend
-// reads the environment for it.
+// reads the environment for it. L-L F3: the gofrontend binary honors
+// the flag only after main verifies the inputs as a synthesized driver
+// for that dir (verifyTestDriver in testdriver_verify.go); ExportFiles
+// itself takes the dir as a trusted parameter for in-process callers.
 const testPackageDirFlag = "--test-package-dir="
 
 // importingDir returns the directory the frontend treats as the location
@@ -1579,12 +1586,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	if needTime {
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSyntheticPackageByPath("time"); err != nil {
 			return "", err
 		}
 	}
 	if needContext {
-		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+		if err := e.importSyntheticPackageByPath("context"); err != nil {
 			return "", err
 		}
 	}
@@ -1593,7 +1600,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// fmt.State for fmt.Formatter dispatch. The package is synthetic-only
 	// (never imported by user code) and tiny, so import it unconditionally;
 	// importSyntheticPackage is idempotent.
-	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
+	if err := e.importSyntheticPackageByPath("internal/graalgo/fmtstate"); err != nil {
 		return "", err
 	}
 	// P3-M7 (wave 1): synthetic sort is self-contained (no
@@ -1602,19 +1609,19 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// reflect package); importSyntheticPackage recurses into synthetic
 	// dependencies in post-order, so no manual ordering is needed here.
 	if needErrors {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
 	}
 	if needSort {
-		if err := e.importSyntheticPackage(getSyntheticPackage("sort")); err != nil {
+		if err := e.importSyntheticPackageByPath("sort"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): synthetic bytes package (synth_bytes.go).
 	// Requires m7-errors-sort for the errors dependency.
 	if needBytes {
-		if err := e.importSyntheticPackage(getSyntheticPackage("bytes")); err != nil {
+		if err := e.importSyntheticPackageByPath("bytes"); err != nil {
 			return "", err
 		}
 	}
@@ -1622,7 +1629,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// Self-contained: no synthetic->synthetic imports, so no ordering
 	// constraints.
 	if needMath {
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSyntheticPackageByPath("math"); err != nil {
 			return "", err
 		}
 	}
@@ -1631,10 +1638,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// reconstructed overflow/divide sentinels), so errors must be
 	// imported first.
 	if needMathBits {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+		if err := e.importSyntheticPackageByPath("math/bits"); err != nil {
 			return "", err
 		}
 	}
@@ -1642,49 +1649,49 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// synth_mathcmplx.go). Imports the synthetic math and math/bits
 	// packages, so those (and their deps) must be imported first.
 	if needMathCmplx {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSyntheticPackageByPath("math"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+		if err := e.importSyntheticPackageByPath("math/bits"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/cmplx")); err != nil {
+		if err := e.importSyntheticPackageByPath("math/cmplx"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9: synthetic math/rand (full port, tier1c; imports the synthetic
 	// math package) and internal/byteorder (vendored; no deps).
 	if needMathRand {
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSyntheticPackageByPath("math"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand")); err != nil {
+		if err := e.importSyntheticPackageByPath("math/rand"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic math/rand/v2 (full port; imports synthetic
 	// math, math/bits and internal/byteorder).
 	if needMathRandV2 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+		if err := e.importSyntheticPackageByPath("math"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+		if err := e.importSyntheticPackageByPath("math/bits"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("internal/byteorder")); err != nil {
+		if err := e.importSyntheticPackageByPath("internal/byteorder"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand/v2")); err != nil {
+		if err := e.importSyntheticPackageByPath("math/rand/v2"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic bufio (full port; imports bytes which is
 	// emitted via needBytes).
 	if needBufio {
-		if err := e.importSyntheticPackage(getSyntheticPackage("bufio")); err != nil {
+		if err := e.importSyntheticPackageByPath("bufio"); err != nil {
 			return "", err
 		}
 	}
@@ -1694,27 +1701,27 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// math/bits/slices/strconv/hash/hash/adler32/hash/crc32/time) are
 	// imported by their own need-flags above.
 	if needFlate {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/flate")); err != nil {
+		if err := e.importSyntheticPackageByPath("compress/flate"); err != nil {
 			return "", err
 		}
 	}
 	if needGzip {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/gzip")); err != nil {
+		if err := e.importSyntheticPackageByPath("compress/gzip"); err != nil {
 			return "", err
 		}
 	}
 	if needZlib {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/zlib")); err != nil {
+		if err := e.importSyntheticPackageByPath("compress/zlib"); err != nil {
 			return "", err
 		}
 	}
 	if needLzw {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/lzw")); err != nil {
+		if err := e.importSyntheticPackageByPath("compress/lzw"); err != nil {
 			return "", err
 		}
 	}
 	if needBzip2 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("compress/bzip2")); err != nil {
+		if err := e.importSyntheticPackageByPath("compress/bzip2"); err != nil {
 			return "", err
 		}
 	}
@@ -1729,24 +1736,24 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// import needed.
 	// P3-M9 (tier1c): synthetic path.
 	if needPath {
-		if err := e.importSyntheticPackage(getSyntheticPackage("path")); err != nil {
+		if err := e.importSyntheticPackageByPath("path"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic text/scanner.
 	if needTextScanner {
-		if err := e.importSyntheticPackage(getSyntheticPackage("text/scanner")); err != nil {
+		if err := e.importSyntheticPackageByPath("text/scanner"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (tier1c): synthetic regexp/syntax (scope-limited).
 	if needRegexpSyntax {
-		if err := e.importSyntheticPackage(getSyntheticPackage("regexp/syntax")); err != nil {
+		if err := e.importSyntheticPackageByPath("regexp/syntax"); err != nil {
 			return "", err
 		}
 	}
 	if needByteorder {
-		if err := e.importSyntheticPackage(getSyntheticPackage("internal/byteorder")); err != nil {
+		if err := e.importSyntheticPackageByPath("internal/byteorder"); err != nil {
 			return "", err
 		}
 	}
@@ -1766,47 +1773,47 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// Must come before strings (which imports io for io.EOF).
 	if needIo {
 		// P3-M8: io's error vars use errors.New — import errors first.
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+		if err := e.importSyntheticPackageByPath("io"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): the synthetic strings package (see synth_strings.go).
 	// P3-M8: imports synthetic io (io.EOF), so io must be imported first.
 	if needStrings {
-		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
+		if err := e.importSyntheticPackageByPath("strings"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): synthetic encoding/xml (see synth_xml.go).
 	// Self-contained: no synthetic dependencies.
 	if needXml {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/xml")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/xml"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): encoding/csv + encoding/gob (see synth_enc_csv_gob.go).
 	if needCsv {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/csv")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/csv"); err != nil {
 			return "", err
 		}
 	}
 	if needGob {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/gob")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/gob"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M7 (wave 1): strconv + encoding/json (see synth_strconv.go,
 	// synth_json.go).
 	if needStrconv {
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSyntheticPackageByPath("strconv"); err != nil {
 			return "", err
 		}
 	}
 	if needJson {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/json")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/json"); err != nil {
 			return "", err
 		}
 	}
@@ -1818,42 +1825,42 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// mrdesugar_m5.go). encoding/pem implies encoding/base64 (its bodies
 	// reference base64.CorruptInputError and base64.StdEncoding).
 	if needBase32 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/base32")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/base32"); err != nil {
 			return "", err
 		}
 	}
 	if needBase64 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/base64")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/base64"); err != nil {
 			return "", err
 		}
 	}
 	if needHex {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/hex")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/hex"); err != nil {
 			return "", err
 		}
 	}
 	if needBinary {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/binary")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/binary"); err != nil {
 			return "", err
 		}
 	}
 	if needAscii85 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/ascii85")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/ascii85"); err != nil {
 			return "", err
 		}
 	}
 	if needPem {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/pem")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/pem"); err != nil {
 			return "", err
 		}
 	}
 	if needAsn1 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/asn1")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding/asn1"); err != nil {
 			return "", err
 		}
 	}
 	if needEncoding {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding")); err != nil {
+		if err := e.importSyntheticPackageByPath("encoding"); err != nil {
 			return "", err
 		}
 	}
@@ -1861,26 +1868,26 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// P3-M8 (wave 2): synthetic hash package (synth_crypto_hash.go).
 	// Imports io (needIo block above imports errors first, then io).
 	if needHash {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+		if err := e.importSyntheticPackageByPath("hash"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M8 (wave 2): synthetic iter package (synth_reflect.go).
 	// Self-contained: no synthetic imports.
 	if needIter {
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSyntheticPackageByPath("iter"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (wave 3, tier-1a worker): synthetic cmp package (synth_cmp.go).
 	// Self-contained: no synthetic imports.
 	if needCmp {
-		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+		if err := e.importSyntheticPackageByPath("cmp"); err != nil {
 			return "", err
 		}
 	}
 	if needIter {
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSyntheticPackageByPath("iter"); err != nil {
 			return "", err
 		}
 	}
@@ -1889,23 +1896,23 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// imported before slices itself (package-level initializers may call
 	// synthetic functions).
 	if needSlices {
-		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+		if err := e.importSyntheticPackageByPath("cmp"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSyntheticPackageByPath("iter"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("slices")); err != nil {
+		if err := e.importSyntheticPackageByPath("slices"); err != nil {
 			return "", err
 		}
 	}
 	// P3-M9 (wave 3, tier-1a worker): synthetic maps package
 	// (synth_maps.go). The source imports iter.
 	if needMaps {
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+		if err := e.importSyntheticPackageByPath("iter"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("maps")); err != nil {
+		if err := e.importSyntheticPackageByPath("maps"); err != nil {
 			return "", err
 		}
 	}
@@ -1914,17 +1921,17 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// (utf16 deliberately duplicates the surrogate constants to avoid
 	// depending on package unicode, mirroring gc).
 	if needUnicode {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unicode")); err != nil {
+		if err := e.importSyntheticPackageByPath("unicode"); err != nil {
 			return "", err
 		}
 	}
 	if needUnicodeUtf8 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unicode/utf8")); err != nil {
+		if err := e.importSyntheticPackageByPath("unicode/utf8"); err != nil {
 			return "", err
 		}
 	}
 	if needUnicodeUtf16 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unicode/utf16")); err != nil {
+		if err := e.importSyntheticPackageByPath("unicode/utf16"); err != nil {
 			return "", err
 		}
 	}
@@ -1951,13 +1958,13 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// errors.New) and imports time (time.Time in the FileInfo/DirEntry
 	// signatures), so errors and time are imported first.
 	if needIoFs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSyntheticPackageByPath("time"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+		if err := e.importSyntheticPackageByPath("io/fs"); err != nil {
 			return "", err
 		}
 	}
@@ -1976,19 +1983,19 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// (The needStrconv/needErrors blocks above only ran if the user
 		// imported those packages directly — not for a pure
 		// `import "syscall"` program.)
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSyntheticPackageByPath("time"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+		if err := e.importSyntheticPackageByPath("io/fs"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSyntheticPackageByPath("strconv"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+		if err := e.importSyntheticPackageByPath("syscall"); err != nil {
 			return "", err
 		}
 	}
@@ -1998,7 +2005,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// drives the netpoller via linknames (no internal/poll import: its
 	// FD struct contains sync.Mutex, rejected by the frontend M2 scope).
 	if needNet {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net")); err != nil {
+		if err := e.importSyntheticPackageByPath("net"); err != nil {
 			return "", err
 		}
 	}
@@ -2009,25 +2016,25 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// importSyntheticPackage is idempotent, so overlap with other
 	// need-blocks is safe.
 	if needOs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+		if err := e.importSyntheticPackageByPath("time"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+		if err := e.importSyntheticPackageByPath("io"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+		if err := e.importSyntheticPackageByPath("io/fs"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+		if err := e.importSyntheticPackageByPath("syscall"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSyntheticPackageByPath("strconv"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("os")); err != nil {
+		if err := e.importSyntheticPackageByPath("os"); err != nil {
 			return "", err
 		}
 	}
@@ -2077,12 +2084,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	}
 	// P3-M9 (tier-1d): leaf utilities unique/structs.
 	if needUnique {
-		if err := e.importSyntheticPackage(getSyntheticPackage("unique")); err != nil {
+		if err := e.importSyntheticPackageByPath("unique"); err != nil {
 			return "", err
 		}
 	}
 	if needStructs {
-		if err := e.importSyntheticPackage(getSyntheticPackage("structs")); err != nil {
+		if err := e.importSyntheticPackageByPath("structs"); err != nil {
 			return "", err
 		}
 	}
@@ -2093,22 +2100,22 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// helpers); strconv (imported by crypto); crypto (sha256 calls
 	// crypto.RegisterHash); then crypto/sha256 itself.
 	if needCryptoSha256 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackageByPath("errors"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+		if err := e.importSyntheticPackageByPath("io"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+		if err := e.importSyntheticPackageByPath("hash"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+		if err := e.importSyntheticPackageByPath("strconv"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto")); err != nil {
+		if err := e.importSyntheticPackageByPath("crypto"); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/sha256")); err != nil {
+		if err := e.importSyntheticPackageByPath("crypto/sha256"); err != nil {
 			return "", err
 		}
 	}
@@ -2126,7 +2133,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	if needCryptoSubtle {
-		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/subtle")); err != nil {
+		if err := e.importSyntheticPackageByPath("crypto/subtle"); err != nil {
 			return "", err
 		}
 	}
@@ -2295,17 +2302,17 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// imported by its own need-block above (importSyntheticPackage is
 	// idempotent); list and ring are self-contained.
 	if needContainerHeap {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/heap")); err != nil {
+		if err := e.importSyntheticPackageByPath("container/heap"); err != nil {
 			return "", err
 		}
 	}
 	if needContainerList {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/list")); err != nil {
+		if err := e.importSyntheticPackageByPath("container/list"); err != nil {
 			return "", err
 		}
 	}
 	if needContainerRing {
-		if err := e.importSyntheticPackage(getSyntheticPackage("container/ring")); err != nil {
+		if err := e.importSyntheticPackageByPath("container/ring"); err != nil {
 			return "", err
 		}
 	}
@@ -6238,13 +6245,68 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 //   - LinknameRootNode dispatch returns one value, so a multi-result
 //     declaration can only be served by an aliased provider. A
 //     multi-result DEFAULTED declaration (internal/cpu.cpuid is the
-//     shape) therefore keeps the stub form, with its pair synthesis,
-//     exactly as before this change.
+//     shape) therefore fails export unless it is allow-listed below
+//     as never-called, with its pair synthesis for allow-listed stubs.
 //
 // Scope: plain functions only. A bodyless METHOD without a directive
-// keeps the "unimplemented" stub: methods bind through method tables,
+// has no symbol to dispatch on: methods bind through method tables,
 // not the symbol table, and a method's default symbol would need its
-// receiver type, which the linkname namespace does not carry.
+// receiver type, which the linkname namespace does not carry. It
+// therefore fails export too, unless allow-listed as never-called.
+//
+// L-L F6 — provider-less stubs fail export by default. Emitting a
+// guest panic stub for a bodyless declaration with no provider turns a
+// compile-time gap (gc: link error; graalgo: no provider) into a
+// runtime panic at the call site, and the "never called" safety case is
+// a runtime invariant, not a compile-time proof. The only exceptions
+// are the entries of linknameStubAllowlist, each with a reachability
+// argument showing the declaration cannot execute in any graalgo guest
+// program. Add an entry only with such an argument, reviewed; never
+// add an entry to silence a failure without one.
+var linknameStubAllowlist = map[string]string{
+	// internal/cpu.cpuid / xgetbv (amd64, go1.27.1 cpu_x86.go):
+	// called only from internal/cpu.doinit, which is called only from
+	// internal/cpu.Initialize. Initialize's only caller in GOROOT is
+	// gc's runtime (runtime/proc.go), which graalgo never compiles —
+	// graalgo's runtime is the synthetic stub plus the Java runtime —
+	// and no synthetic or disk package in the graalgo tree calls
+	// Initialize. Go's internal-visibility rule additionally bars user
+	// code from importing internal/cpu at all. The stubs therefore
+	// stand only so doinit's multi-assignments type-check if the
+	// package is ever merged; they cannot execute. If a caller of
+	// Initialize ever appears in the compiled tree, these entries
+	// must be removed and the package given a real provider.
+	"internal/cpu.cpuid":  "reachable only via doinit <- Initialize <- gc runtime (never compiled by graalgo)",
+	"internal/cpu.xgetbv": "reachable only via doinit <- Initialize <- gc runtime (never compiled by graalgo)",
+}
+
+// linknameStubKey identifies a bodyless declaration for the allow-list:
+// "pkgpath.name" for plain functions, "pkgpath.Recv.name" for methods.
+func linknameStubKey(pkgPath string, fi *funcDeclInfo) string {
+	if fi == nil || fi.obj == nil {
+		return pkgPath + ".?"
+	}
+	name := fi.obj.Name()
+	if fi.sig != nil && fi.sig.Recv() != nil {
+		recv := fi.sig.Recv().Type()
+		if pt, ok := recv.(*types.Pointer); ok {
+			recv = pt.Elem()
+		}
+		if nt, ok := recv.(*types.Named); ok && nt.Obj() != nil {
+			return pkgPath + "." + nt.Obj().Name() + "." + name
+		}
+		return pkgPath + ".?." + name
+	}
+	return pkgPath + "." + name
+}
+
+// linknameStubAllowed reports whether this declaration may still be
+// emitted as a panic stub, with its reachability argument.
+func linknameStubAllowed(pkgPath string, fi *funcDeclInfo) (string, bool) {
+	arg, ok := linknameStubAllowlist[linknameStubKey(pkgPath, fi)]
+	return arg, ok
+}
+
 func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	pkgPath := funcPkgPath(e, fi)
@@ -6314,9 +6376,14 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	}
 	if symbol == "" {
 		// Only bodyless methods reach here (plain functions got their
-		// default symbol above): no symbol to dispatch on, so the stub
-		// stands. The multi-result WS D restriction does not apply: no
-		// body is built.
+		// default symbol above): no symbol to dispatch on. L-L F6:
+		// fail export unless the declaration is allow-listed as
+		// never-called (a guest panic stub is not a substitute for a
+		// provider). The multi-result WS D restriction does not
+		// apply: no body is built.
+		if _, ok := linknameStubAllowed(pkgPath, fi); !ok {
+			return nil, scopeErrorf("bodyless method %s has no linkname symbol and no provider; refusing to emit a runtime panic stub (see linknameStubAllowlist)", linknameStubKey(pkgPath, fi))
+		}
 		if err := markUnimplemented(); err != nil {
 			return nil, err
 		}
@@ -6324,8 +6391,12 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		if len(results) > 1 {
 			// Dispatch cannot carry multiple results and a defaulted
 			// declaration never aliases (see the header comment), so
-			// there is no provider for this shape: the stub stands,
-			// with the pair synthesis its callers need.
+			// there is no provider for this shape. L-L F6: fail
+			// export unless allow-listed as never-called, with the
+			// pair synthesis its callers need for allow-listed stubs.
+			if _, ok := linknameStubAllowed(pkgPath, fi); !ok {
+				return nil, scopeErrorf("bodyless multi-result function %s has no provider; refusing to emit a runtime panic stub (see linknameStubAllowlist)", linknameStubKey(pkgPath, fi))
+			}
 			if err := markUnimplemented(); err != nil {
 				return nil, err
 			}
@@ -6347,8 +6418,8 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// are only an error when no provider is found. With a provider,
 		// calls lower directly to it via linknameAlias. Without a
 		// provider, the backend's LinknameRootNode cannot handle
-		// multi-result dispatch, so emit as unimplemented (panic stub)
-		// rather than failing the entire package export. This is
+		// multi-result dispatch, so (L-L F6) export fails unless the
+		// declaration is allow-listed as never-called. This is
 		// general: it applies to any bodyless multi-result linkname,
 		// not just reflect's shims.
 		hasProvider := false
@@ -6362,10 +6433,15 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 		}
 		if len(results) > 1 && !hasProvider {
-			// No provider to alias to: mark unimplemented so the
-			// backend panics if called, instead of failing export.
-			fields["unimplemented"] = true
-			delete(fields, "linkname")
+			// No provider to alias to. L-L F6: fail export unless
+			// allow-listed as never-called; a guest panic stub is
+			// not a substitute for a provider.
+			if _, ok := linknameStubAllowed(pkgPath, fi); !ok {
+				return nil, scopeErrorf("bodyless multi-result linkname %s has no provider; refusing to emit a runtime panic stub (see linknameStubAllowlist)", linknameStubKey(pkgPath, fi))
+			}
+			if err := markUnimplemented(); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return e.node("funcdecl", fd, fields), nil

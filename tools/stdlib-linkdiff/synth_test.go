@@ -107,7 +107,8 @@ func TestSyntheticParseErrorsSurfaced(t *testing.T) {
 	}
 	// The synthetic regexp/syntax source is currently unparseable (a
 	// second import block from stringer output — buildSyntheticPackage
-	// would panic importing it). It must appear on Skipped, never
+	// would fail importing it, L-L F5: an error, not a panic). It must
+	// appear on Skipped, never
 	// vanish silently. If the source is repaired, Skipped shrinks and
 	// this loop simply stops matching.
 	found := false

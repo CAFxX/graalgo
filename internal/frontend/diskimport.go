@@ -285,11 +285,11 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// pure-Go fallbacks (*_generic.go, `|| purego`) over assembly
 	// declarations (`!purego`) using Go's own general mechanism for "no
 	// assembly" — upstream-validated, no per-package lists. Bodyless
-	// functions with no pure-Go fallback (e.g. internal/cpu.cpuid) get
-	// the general "unimplemented" marker (exportLinknameDecl); they are
-	// never invoked because graalgo's runtime does not call
-	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
-	// forcing callers onto their generic paths.
+	// functions with no pure-Go fallback fail export (exportLinknameDecl,
+	// L-L F6) unless allow-listed there as never-called: e.g.
+	// internal/cpu.cpuid is allow-listed because graalgo's runtime does
+	// not call internal/cpu.Initialize and the cpu.X86 feature flags
+	// stay zero, forcing callers onto their generic paths.
 	ctxt := build.Default
 	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
 	bp, err := ctxt.ImportDir(dir, 0)
@@ -357,7 +357,7 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 // returns the exact package importSyntheticPackage merged.
 func (e *exporter) importedPackage(p string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[p]; ok {
-		return getSyntheticPackage(p), nil
+		return getSyntheticPackage(p)
 	}
 	return getDiskPackage(p)
 }
@@ -402,7 +402,7 @@ func (e *exporter) importPkgTree(path string) error {
 // merging, or (nil, nil) for signature-only stubs with no bodies.
 func resolvePkgTree(path string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[path]; ok {
-		return getSyntheticPackage(path), nil
+		return getSyntheticPackage(path)
 	}
 	if isDedicatedSyntheticStub(path) {
 		return nil, nil

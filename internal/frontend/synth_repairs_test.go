@@ -257,7 +257,10 @@ func TestHoistSyntheticImportsEliminatesOrderError(t *testing.T) {
 // builder — the repaired source must parse AND type-check against the
 // overlay importer (this is what panicked for go-cmp).
 func TestSyntheticRegexpSyntaxTypeChecks(t *testing.T) {
-	sp := getSyntheticPackage("regexp/syntax")
+	sp, err := getSyntheticPackage("regexp/syntax")
+	if err != nil {
+		t.Fatalf("getSyntheticPackage(regexp/syntax): %v", err)
+	}
 	if sp.pkg.Name() != "syntax" {
 		t.Fatalf("package name = %q, want syntax", sp.pkg.Name())
 	}

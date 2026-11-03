@@ -110,7 +110,8 @@ type Report struct {
 	// SyntheticParseErrors records embedded synthetic sources that
 	// failed to parse during provided-set extraction or the synthetic
 	// scan. Always emitted (possibly []): a broken synthetic source
-	// would panic the frontend's buildSyntheticPackage on import.
+	// would fail the frontend's buildSyntheticPackage on import
+	// (L-L F5: an error, not a panic).
 	SyntheticParseErrors []string `json:"synthetic_parse_errors"`
 }
 
@@ -454,7 +455,7 @@ func markdownSummary(rep *Report) string {
 		b.WriteString("\n## Synthetic sources that failed to parse\n\n")
 		b.WriteString("These embedded synthetic packages contribute no provided " +
 			"symbols and no scanned linknames in this run; the frontend's " +
-			"buildSyntheticPackage would panic importing them.\n\n")
+			"buildSyntheticPackage would fail importing them.\n\n")
 		for _, pe := range rep.SyntheticParseErrors {
 			fmt.Fprintf(&b, "- %s\n", pe)
 		}
