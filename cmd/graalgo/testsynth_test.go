@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeFile creates dir/name with content, creating parent dirs.
@@ -26,10 +30,19 @@ func writeFile(t *testing.T, dir, name, content string) {
 // driver source.
 func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string) string {
 	t.Helper()
+	return synthDriverVerbose(t, dir, ftList, srcFiles, false)
+}
+
+// synthDriverVerbose is synthDriver with caller-chosen verbosity.
+// Execution tests use verbose drivers so --- PASS/FAIL/SKIP lines are
+// emitted for passing tests too (non-verbose drivers only print
+// failures).
+func synthDriverVerbose(t *testing.T, dir string, ftList []fileTests, srcFiles []string, verbose bool) string {
+	t.Helper()
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in.
 	importPkgNameCache = map[string]string{}
-	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, verbose)
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}
@@ -39,6 +52,64 @@ func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string
 		t.Fatal(err)
 	}
 	return string(src)
+}
+
+// discoverFileTests builds the fileTests entry runPackage would build
+// for one test file (all discovered tests and examples, unfiltered).
+func discoverFileTests(t *testing.T, file string) fileTests {
+	t.Helper()
+	df, err := discoverTestFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fileTests{file: file, tests: df.tests, examples: df.examples}
+}
+
+// goTool locates the gc toolchain for driver-execution tests.
+func goTool(t *testing.T) string {
+	t.Helper()
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	p := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	t.Skip("go toolchain not available for driver-execution tests")
+	return ""
+}
+
+// runDriver compiles and runs generated driver source with gc's go run
+// and returns its combined output and exit code. The driver only uses
+// the standard library, so it runs from its own scratch module.
+func runDriver(t *testing.T, src string) (string, int) {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module driver\n\ngo 1.21\n")
+	writeFile(t, dir, "driver.go", src)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, goTool(t), "run", "driver.go")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), 0
+	}
+	if ee, ok := err.(*exec.ExitError); ok {
+		return string(out), ee.ExitCode()
+	}
+	t.Fatalf("go run driver: %v\n%s", err, out)
+	return "", -1
+}
+
+// mustContain fails unless out contains every listed fragment.
+func mustContain(t *testing.T, out string, frags ...string) {
+	t.Helper()
+	for _, f := range frags {
+		if !strings.Contains(out, f) {
+			t.Errorf("driver output missing %q:\n%s", f, out)
+		}
+	}
 }
 
 // TestParentModuleImportKept is the regression test for the caddyconfig
@@ -965,4 +1036,401 @@ func TestB(t *testing.T) {
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
 	}
+}
+
+// TestDiscoverExcludesTestMain is the regression test for P1-T1: the
+// old 1-param selection picked up TestMain(m *testing.M) as a test,
+// and the generated driver then called it with a *graalgoT argument
+// while testing.M was undefined, so the package could not compile.
+// TestMain is now excluded from tests and reported separately.
+func TestDiscoverExcludesTestMain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/testmain\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package testmain\n")
+	writeFile(t, root, "a_test.go", `package testmain
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestReal(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestReal" {
+		t.Fatalf("discoverTests = %v, want [TestReal]", tests)
+	}
+	df, err := discoverTestFile(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !df.hasTestMain {
+		t.Errorf("discoverTestFile.hasTestMain = false, want true")
+	}
+	// The synthesised driver must call TestMain through graalgoM, never
+	// as a test with a *graalgoT argument.
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, "TestMain(m *graalgoM") {
+		t.Errorf("driver did not rewrite TestMain to *graalgoM:\n%s", src)
+	}
+	if strings.Contains(src, "TestMain(tt)") {
+		t.Errorf("driver calls TestMain as a test:\n%s", src)
+	}
+	if !strings.Contains(src, "TestMain(m)") {
+		t.Errorf("driver main does not call TestMain:\n%s", src)
+	}
+}
+
+// TestDiscoverExamples pins example discovery: Output: and Unordered
+// output: comments, examples without output, and non-examples
+// (parameterised Example functions are not examples under go test).
+func TestDiscoverExamples(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a_test.go", `package ex
+
+func ExampleOut() {
+	println("x")
+	// Output: hello
+	// world
+}
+
+func ExampleUnordered() {
+	println("x")
+	// Unordered output: b
+	// a
+}
+
+func ExamplePlain() {
+	println("x")
+}
+
+func ExampleParam(x int) {}
+`)
+	df, err := discoverTestFile(filepath.Join(root, "a_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(df.examples) != 3 {
+		t.Fatalf("examples = %v, want 3", df.examples)
+	}
+	if df.examples[0].name != "ExampleOut" || !df.examples[0].hasOutput || df.examples[0].output != "hello\nworld" {
+		t.Errorf("ExampleOut = %+v", df.examples[0])
+	}
+	if df.examples[1].name != "ExampleUnordered" || !df.examples[1].hasOutput || !df.examples[1].unordered || df.examples[1].output != "b\na" {
+		t.Errorf("ExampleUnordered = %+v", df.examples[1])
+	}
+	if df.examples[2].name != "ExamplePlain" || df.examples[2].hasOutput {
+		t.Errorf("ExamplePlain = %+v", df.examples[2])
+	}
+}
+
+// TestSynthParseErrorsFail is the regression test for P1-T6: parse
+// failures in sibling test files and package sources used to be
+// silently skipped (continue), dropping init functions and
+// package-level variables without a word. They now fail synthesis
+// naming the file.
+func TestSynthParseErrorsFail(t *testing.T) {
+	// Sibling test file with a syntax error.
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/parseerr\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package parseerr\n")
+	writeFile(t, root, "p_test.go", `package parseerr
+
+import "testing"
+
+func TestOK(t *testing.T) {}
+`)
+	writeFile(t, root, "bad_test.go", "package parseerr\n\nfunc broken( {\n")
+	importPkgNameCache = map[string]string{}
+	_, err := synthesizeTestDriver(root,
+		[]fileTests{{file: filepath.Join(root, "p_test.go"), tests: []string{"TestOK"}}},
+		[]string{filepath.Join(root, "p.go")}, false)
+	if err == nil {
+		t.Fatalf("sibling parse error was silently dropped")
+	}
+	if !strings.Contains(err.Error(), "bad_test.go") {
+		t.Errorf("sibling parse error does not name the file: %v", err)
+	}
+	// Package source file with a syntax error.
+	root2 := t.TempDir()
+	writeFile(t, root2, "go.mod", "module example.com/parseerr2\n\ngo 1.21\n")
+	writeFile(t, root2, "broken.go", "package parseerr2\n\nfunc broken( {\n")
+	writeFile(t, root2, "p_test.go", `package parseerr2
+
+import "testing"
+
+func TestOK(t *testing.T) {}
+`)
+	importPkgNameCache = map[string]string{}
+	_, err = synthesizeTestDriver(root2,
+		[]fileTests{{file: filepath.Join(root2, "p_test.go"), tests: []string{"TestOK"}}},
+		[]string{filepath.Join(root2, "broken.go")}, false)
+	if err == nil {
+		t.Fatalf("source parse error was silently dropped")
+	}
+	if !strings.Contains(err.Error(), "broken.go") {
+		t.Errorf("source parse error does not name the file: %v", err)
+	}
+}
+
+// TestDriverExecPassFailSkip executes a synthesised driver under gc:
+// a passing, a failing, and a skipping test must produce the matching
+// --- PASS/FAIL/SKIP lines and a non-zero exit code.
+func TestDriverExecPassFailSkip(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execpass\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execpass\n")
+	writeFile(t, root, "a_test.go", `package execpass
+
+import "testing"
+
+func TestPass(t *testing.T) {}
+
+func TestFail(t *testing.T) { t.Errorf("boom %d", 42) }
+
+func TestSkip(t *testing.T) { t.Skip("nope") }
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code == 0 {
+		t.Errorf("driver exit code = 0, want non-zero:\n%s", out)
+	}
+	mustContain(t, out, "--- PASS: TestPass", "--- FAIL: TestFail", "--- SKIP: TestSkip", "FAIL")
+
+	// All-pass driver: exit 0 with a PASS summary.
+	root2 := t.TempDir()
+	writeFile(t, root2, "go.mod", "module example.com/execpass2\n\ngo 1.21\n")
+	writeFile(t, root2, "a.go", "package execpass2\n")
+	writeFile(t, root2, "a_test.go", `package execpass2
+
+import "testing"
+
+func TestPass(t *testing.T) {}
+`)
+	src2 := synthDriverVerbose(t, root2,
+		[]fileTests{discoverFileTests(t, filepath.Join(root2, "a_test.go"))},
+		[]string{filepath.Join(root2, "a.go")}, true)
+	out2, code2 := runDriver(t, src2)
+	if code2 != 0 {
+		t.Errorf("all-pass driver exit code = %d, want 0:\n%s", code2, out2)
+	}
+	mustContain(t, out2, "--- PASS: TestPass", "PASS")
+}
+
+// TestDriverExecSubtestSkipFatalFailNow executes a driver whose parent
+// test has subtests that Skip, Fatal, and FailNow. Under go test
+// semantics each stops only its subtest: code after t.Run(...) runs
+// (proven by the "continued" log), the parent fails (failed subtests)
+// but is NOT reported skipped (a skipped subtest alone never skips
+// the parent — the P0-3 corruption this lane's Run recover also fixes
+// for its own execution tests; L-C owns the P0-3 verdict).
+func TestDriverExecSubtestSkipFatalFailNow(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execsub\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execsub\n")
+	writeFile(t, root, "a_test.go", `package execsub
+
+import "testing"
+
+func TestParent(t *testing.T) {
+	t.Run("skippy", func(t *testing.T) { t.Skip("nope") })
+	t.Run("fatal", func(t *testing.T) { t.Fatal("boom") })
+	t.Run("failnow", func(t *testing.T) { t.FailNow() })
+	t.Log("continued")
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code == 0 {
+		t.Errorf("driver exit code = 0, want non-zero:\n%s", out)
+	}
+	mustContain(t, out,
+		"--- SKIP: TestParent/skippy",
+		"--- FAIL: TestParent/fatal",
+		"--- FAIL: TestParent/failnow",
+		"--- FAIL: TestParent",
+		"continued")
+	if strings.Contains(out, "--- SKIP: TestParent ") {
+		t.Errorf("parent wrongly reported SKIP (skipped subtest leaked):\n%s", out)
+	}
+}
+
+// TestDriverExecTestMain executes a driver for a package with TestMain:
+// TestMain must run (the test asserts its setup flag), drive the tests
+// through m.Run(), and must not itself appear as a test result.
+func TestDriverExecTestMain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/exectm\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package exectm\n")
+	writeFile(t, root, "a_test.go", `package exectm
+
+import (
+	"os"
+	"testing"
+)
+
+var setupDone = false
+
+func TestMain(m *testing.M) {
+	setupDone = true
+	os.Exit(m.Run())
+}
+
+func TestChecksSetup(t *testing.T) {
+	if !setupDone {
+		t.Fatal("TestMain did not run")
+	}
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestChecksSetup")
+	if strings.Contains(out, "--- PASS: TestMain") || strings.Contains(out, "=== RUN   TestMain") {
+		t.Errorf("TestMain reported as a test:\n%s", out)
+	}
+}
+
+// TestDriverExecExamples executes a driver with examples: matching
+// output, mismatched output, unordered output, and no output comment.
+// Only the mismatched example may fail.
+func TestDriverExecExamples(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execex\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execex\n")
+	writeFile(t, root, "a_test.go", `package execex
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestDummy(t *testing.T) {}
+
+func ExampleGood() {
+	fmt.Println("hello")
+	// Output: hello
+}
+
+func ExampleBad() {
+	fmt.Println("goodbye")
+	// Output: hello
+}
+
+func ExampleNoOutput() {
+	fmt.Println("anything")
+}
+
+func ExampleUnordered() {
+	fmt.Println("b")
+	fmt.Println("a")
+	// Unordered output: a
+	// b
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code == 0 {
+		t.Errorf("driver exit code = 0, want non-zero (ExampleBad mismatches):\n%s", out)
+	}
+	mustContain(t, out,
+		"--- PASS: ExampleGood",
+		"--- FAIL: ExampleBad",
+		"--- PASS: ExampleNoOutput",
+		"--- PASS: ExampleUnordered")
+}
+
+// TestDriverExecShimMethods executes a driver using the P1-T2 shim
+// methods: Parallel, Deadline, Context, Cleanup, TempDir, Setenv, and
+// Chdir — including cleanup ordering (the second test observes the
+// first test's cleanup effects: TempDir removed, Chdir restored).
+func TestDriverExecShimMethods(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execshim\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execshim\n")
+	writeFile(t, root, "a_test.go", `package execshim
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+var cleaned = false
+var tempDirPath string
+var startDir string
+
+func TestShim(t *testing.T) {
+	t.Parallel()
+	if _, ok := t.Deadline(); ok {
+		t.Fatal("unexpected deadline")
+	}
+	if t.Context() == nil {
+		t.Fatal("nil context")
+	}
+	t.Cleanup(func() { cleaned = true })
+	d := t.TempDir()
+	tempDirPath = d
+	if err := os.WriteFile(filepath.Join(d, "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal("write failed")
+	}
+	startDir, _ = os.Getwd()
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("GRAALGO_EXEC_SHIM_KEY", "v1")
+		if os.Getenv("GRAALGO_EXEC_SHIM_KEY") != "v1" {
+			t.Fatal("setenv not visible")
+		}
+	})
+	// The subtest's Setenv cleanup must have restored the variable.
+	if os.Getenv("GRAALGO_EXEC_SHIM_KEY") != "" {
+		t.Fatal("setenv not restored after subtest")
+	}
+	t.Chdir(d)
+	wd, _ := os.Getwd()
+	if wd != d {
+		t.Fatalf("chdir did not take effect")
+	}
+}
+
+func TestAfter(t *testing.T) {
+	if !cleaned {
+		t.Fatal("cleanup did not run")
+	}
+	if _, err := os.Stat(tempDirPath); err == nil {
+		t.Fatal("tempdir not removed by cleanup")
+	}
+	wd, _ := os.Getwd()
+	if wd != startDir {
+		t.Fatal("chdir not restored by cleanup")
+	}
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestShim", "--- PASS: TestAfter")
 }
