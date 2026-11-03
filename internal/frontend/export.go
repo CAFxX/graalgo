@@ -9107,8 +9107,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 	case "len", "cap":
 		// P3-M5 (WS E, ADR-0005 App C): len(cap)/cap(chan) lower to the
-		// additive "chanlen"/"chancap" nodes — the frozen LenNode rejects
-		// CHAN (WS G). DIV-M3-1: timer channels report 0 via TimerChan.
+		// additive "chanlen"/"chancap" nodes (the builtin LenNode/CapNode
+		// path accepts CHAN too since REVIEW-2026-11-03-16 P0-2; this
+		// lowering is retained unchanged). DIV-M3-1: timer channels
+		// report 0 via TimerChan.
 		// Named channel types match via Underlying (P2-2).
 		if len(c.Args) == 1 {
 			if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {

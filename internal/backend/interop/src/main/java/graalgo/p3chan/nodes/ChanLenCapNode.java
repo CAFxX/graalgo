@@ -13,8 +13,10 @@ import graalgo.values.GoKind;
  * the {@code "chanlen"} / {@code "chancap"} wire nodes (expression kinds).
  *
  * <p>The exporter emits these for {@code len}/{@code cap} applied to a
- * channel, because the frozen {@code LenNode} rejects {@code CHAN}
- * (WS G) — additive wire kinds only, no Phase-1/Phase-2 change.
+ * channel — additive wire kinds only, no Phase-1/Phase-2 change. (The
+ * builtin-call path through {@code LenNode}/{@code CapNode} also accepts
+ * {@code CHAN} since REVIEW-2026-11-03-16 P0-2; the two paths agree via
+ * the same {@code ChanOps} delegation and are both tested.)
  *
  * <p>Semantics via {@link ChanOps#len} / {@link ChanOps#cap}, which call
  * {@code GoChan.buffered()} / {@code GoChan.capacity()}; {@code TimerChan}

@@ -1,0 +1,10 @@
+buf empty: 0 3
+buf two: 2 3
+recv: 1
+buf one: 1 3
+buf closed: 1 3
+recv: 2
+buf drained: 0 3
+unbuf: 0 0
+nil: 0 0
+done

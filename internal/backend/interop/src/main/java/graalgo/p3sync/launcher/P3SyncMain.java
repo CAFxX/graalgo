@@ -334,8 +334,9 @@ public final class P3SyncMain {
             factory.registerExprKind("recv",
                     (node, ctx) -> ChanRecvNode.build(node, ctx, factory));
             // P3-M5 (WS E, ADR-0005 Appendix C): len/cap on channels (the
-            // frozen LenNode rejects CHAN, so the exporter emits additive
-            // chanlen/chancap nodes). Public extension hooks — no
+            // exporter emits additive chanlen/chancap nodes; the builtin
+            // LenNode/CapNode path also accepts CHAN since
+            // REVIEW-2026-11-03-16 P0-2). Public extension hooks — no
             // Phase-1/Phase-2 change.
             factory.registerExprKind("chanlen",
                     (node, ctx) -> ChanLenCapNode.build(node, ctx, factory, false));

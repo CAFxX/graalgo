@@ -104,7 +104,13 @@ public final class ChanBuilderTest {
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"bool\",\"name\":\"bool\"}}"
             + "]";
 
-    private static final String POS = "{\"line\":1,\"col\":1,\"len\":1}";
+    // Pre-existing break repaired by L-B (not a test weakening): the
+    // fix-multifile-run lane (797e9917) made NodeFactory.sectionFor
+    // require pos.file, and updated RtMemStatsBuilderTest's POS but not
+    // this file's — every test in this class failed at build time with
+    // "pos: missing required key file" on master. Mirrors the sibling
+    // file's POS exactly; assertions untouched.
+    private static final String POS = "{\"file\":0,\"line\":1,\"col\":1,\"len\":1}";
 
     private NodeFactory factory;
     private NodeFactory.BuildCtx ctx;
@@ -489,6 +495,133 @@ public final class ChanBuilderTest {
             ChanOps.send(tc, 0L);
             assertEq(0L, chanlen(chId).executeLong(f), "timer chan len after fill");
             assertEq(0L, chancap(chId).executeLong(f), "timer chan cap after fill");
+        });
+    }
+
+    // ---------- len/cap builtins on channels (REVIEW-2026-11-03-16 P0-2) ----------
+
+    /** {@code LenNode} built directly over a channel variable. */
+    private GoExprNode builtinLen(String chanJson) {
+        return new LenNode(buildExpr(chanJson));
+    }
+
+    /** {@code CapNode} built directly over a channel variable. */
+    private GoExprNode builtinCap(String chanJson) {
+        return new CapNode(buildExpr(chanJson));
+    }
+
+    /**
+     * The {@code NodeFactory} builtin-call path for {@code len}/{@code cap}
+     * (the reported failure site: the factory routed every builtin
+     * len/cap through {@code LenNode}/{@code CapNode}, whose constructors
+     * rejected CHAN). A "call" wire node carrying builtin + chan arg.
+     */
+    private GoExprNode factoryBuiltin(String builtin, String chanJson) {
+        return buildExpr("{\"kind\":\"call\",\"pos\":" + POS
+                + ",\"fields\":{\"builtin\":\"" + builtin + "\",\"args\":[" + chanJson + "]}}");
+    }
+
+    /** len/cap builtins on a buffered channel: len tracks sends/recvs, cap is fixed. */
+    public void testBuiltinLenCapBuffered() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), makechan(3, T_INT).executeObject(f));
+            assertEq(0L, builtinLen(chId).executeLong(f), "builtin len empty");
+            assertEq(3L, builtinCap(chId).executeLong(f), "builtin cap buffered");
+            send(chId, basiclit("1", T_INT)).executeVoid(f);
+            send(chId, basiclit("2", T_INT)).executeVoid(f);
+            assertEq(2L, builtinLen(chId).executeLong(f), "builtin len after two sends");
+            assertEq(3L, builtinCap(chId).executeLong(f), "builtin cap unchanged");
+            recv(chId, T_INT).executeObject(f);
+            assertEq(1L, builtinLen(chId).executeLong(f), "builtin len after one recv");
+        });
+    }
+
+    /** len/cap builtins on an unbuffered channel are 0. */
+    public void testBuiltinLenCapUnbuffered() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), makechan(null, T_INT).executeObject(f));
+            assertEq(0L, builtinLen(chId).executeLong(f), "builtin unbuffered len");
+            assertEq(0L, builtinCap(chId).executeLong(f), "builtin unbuffered cap");
+        });
+    }
+
+    /**
+     * len/cap builtins on a closed channel: len is the still-buffered
+     * count draining to 0, cap is unchanged by close (gc parity).
+     */
+    public void testBuiltinLenCapClosed() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), makechan(3, T_INT).executeObject(f));
+            send(chId, basiclit("1", T_INT)).executeVoid(f);
+            send(chId, basiclit("2", T_INT)).executeVoid(f);
+            chanclose(chId).executeVoid(f);
+            assertEq(2L, builtinLen(chId).executeLong(f), "builtin len closed buffered");
+            assertEq(3L, builtinCap(chId).executeLong(f), "builtin cap closed unchanged");
+            recv(chId, T_INT).executeObject(f);
+            assertEq(1L, builtinLen(chId).executeLong(f), "builtin len closed after drain one");
+            recv(chId, T_INT).executeObject(f);
+            assertEq(0L, builtinLen(chId).executeLong(f), "builtin len closed drained");
+            assertEq(3L, builtinCap(chId).executeLong(f), "builtin cap closed drained");
+        });
+    }
+
+    /** gc parity: len/cap builtins of a nil channel are 0 (no blocking). */
+    public void testBuiltinLenCapNil() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), null); // nil channel
+            assertEq(0L, builtinLen(chId).executeLong(f), "builtin nil len");
+            assertEq(0L, builtinCap(chId).executeLong(f), "builtin nil cap");
+        });
+    }
+
+    /** DIV-M3-1 via the builtin path: a filled TimerChan still observes 0/0. */
+    public void testBuiltinLenCapTimerChan() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            TimerChan tc = new TimerChan();
+            f.setObject(slotOf(chObj), tc);
+            assertEq(0L, builtinLen(chId).executeLong(f), "builtin timer len pre-fill");
+            assertEq(0L, builtinCap(chId).executeLong(f), "builtin timer cap pre-fill");
+            ChanOps.send(tc, 0L);
+            assertEq(0L, builtinLen(chId).executeLong(f), "builtin timer len after fill");
+            assertEq(0L, builtinCap(chId).executeLong(f), "builtin timer cap after fill");
+        });
+    }
+
+    /**
+     * The factory builtin-call path itself: before the P0-2 fix this
+     * threw FrontendException at node construction ("channels are
+     * Phase 2"); now it builds and executes like the direct nodes.
+     */
+    public void testBuiltinLenCapViaFactoryCall() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), makechan(2, T_INT).executeObject(f));
+            send(chId, basiclit("7", T_INT)).executeVoid(f);
+            assertEq(1L, factoryBuiltin("len", chId).executeLong(f), "factory len");
+            assertEq(2L, factoryBuiltin("cap", chId).executeLong(f), "factory cap");
         });
     }
 
