@@ -377,6 +377,15 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 					// An ancestor's Fatal/Skip: re-panic with the
 					// same sentinel string so an outer Run or the
 					// top-level recover handles it as that test's.
+					// Run this subtest's cleanups first: the
+					// re-panic unwinds out of Run, so the
+					// sub.runCleanups() below is never reached on
+					// this path, and without this call a subtest
+					// Setenv/Chdir/TempDir leaks into the next
+					// test. Exactly once: runCleanups nils the
+					// list, and this path never reaches the call
+					// below.
+					sub.runCleanups()
 					panic(s)
 				} else {
 					sub.failed = true

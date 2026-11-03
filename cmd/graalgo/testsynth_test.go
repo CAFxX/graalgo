@@ -1557,6 +1557,113 @@ func TestSubAncestorSkip(t *testing.T) {
 	}
 }
 
+// TestDriverExecSubtestAncestorFatalSkipCleanup is the B1 execution
+// test (review REVIEW-2026-11-03-16 fix-up round 2): on the ancestor
+// branch of graalgoT.Run's recover defer, a re-panicked ancestor
+// Fatal/Skip used to unwind straight out of Run, skipping
+// sub.runCleanups() — so a subtest's Cleanup never ran and a subtest's
+// Setenv leaked into the next test, contradicting the shim's
+// documented contract that cleanups run when a test returns including
+// via FailNow/Fatal/Skip panics. The probe is a following top-level
+// test (drivers run tests in declaration order, in one process, so
+// package-level flags and the environment survive across tests): it
+// fails if any ancestor-case cleanup flag is unset or if the probe
+// variable is still set. The nested case pins the cascade: the
+// ancestor Fatal must run both the inner and the outer subtest's
+// cleanups as it re-panics through each Run frame.
+func TestDriverExecSubtestAncestorFatalSkipCleanup(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execancestorcleanup\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package execancestorcleanup\n")
+	testFile := filepath.Join(root, "p_test.go")
+	writeFile(t, root, "p_test.go", `package execancestorcleanup
+
+import (
+	"os"
+	"testing"
+)
+
+var fatalCleanupRan = false
+var skipCleanupRan = false
+var nestedOuterCleanupRan = false
+var nestedInnerCleanupRan = false
+
+func TestAncestorFatalCleanup(t *testing.T) {
+	t.Run("child", func(st *testing.T) {
+		st.Cleanup(func() { fatalCleanupRan = true })
+		st.Setenv("GRAALGO_B1_PROBE", "from-fatal-subtest")
+		t.Fatal("parent fatal from subtest")
+	})
+	t.Log("after ancestor fatal")
+}
+
+func TestAncestorSkipCleanup(t *testing.T) {
+	t.Run("child", func(st *testing.T) {
+		st.Cleanup(func() { skipCleanupRan = true })
+		st.Setenv("GRAALGO_B1_PROBE", "from-skip-subtest")
+		t.Skip("parent skip from subtest")
+	})
+	t.Log("after ancestor skip")
+}
+
+func TestAncestorFatalNestedCleanup(t *testing.T) {
+	t.Run("outer", func(ot *testing.T) {
+		ot.Cleanup(func() { nestedOuterCleanupRan = true })
+		ot.Run("inner", func(it *testing.T) {
+			it.Cleanup(func() { nestedInnerCleanupRan = true })
+			it.Setenv("GRAALGO_B1_PROBE", "from-nested-subtest")
+			t.Fatal("parent fatal from nested subtest")
+		})
+	})
+	t.Log("after ancestor nested fatal")
+}
+
+func TestAfterAncestorCleanup(t *testing.T) {
+	if !fatalCleanupRan {
+		t.Error("ancestor Fatal: subtest Cleanup did not run")
+	}
+	if !skipCleanupRan {
+		t.Error("ancestor Skip: subtest Cleanup did not run")
+	}
+	if !nestedOuterCleanupRan {
+		t.Error("ancestor Fatal (nested): outer subtest Cleanup did not run")
+	}
+	if !nestedInnerCleanupRan {
+		t.Error("ancestor Fatal (nested): inner subtest Cleanup did not run")
+	}
+	if v, ok := os.LookupEnv("GRAALGO_B1_PROBE"); ok {
+		t.Errorf("subtest Setenv leaked into next test: GRAALGO_B1_PROBE=%q", v)
+	}
+}
+`)
+	ft := discoverFileTests(t, testFile)
+	if len(ft.tests) != 4 {
+		t.Fatalf("discovered tests = %v, want 4", ft.tests)
+	}
+	src := synthDriverVerbose(t, root, []fileTests{ft}, []string{filepath.Join(root, "p.go")}, true)
+	out, code := runDriver(t, src)
+	// Two FAILs (the Fatal cases), one SKIP, one PASS: exit 1.
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1; output:\n%s", code, out)
+	}
+	mustContain(t, out,
+		"--- FAIL: TestAncestorFatalCleanup (",
+		"--- SKIP: TestAncestorSkipCleanup (",
+		"--- FAIL: TestAncestorFatalNestedCleanup (",
+		"--- PASS: TestAfterAncestorCleanup (")
+	for _, notWant := range []string{
+		"after ancestor fatal",
+		"after ancestor skip",
+		"after ancestor nested fatal",
+		"did not run",
+		"leaked into next test",
+	} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("driver output contains %q (ancestor cleanup/Setenv not honored):\n%s", notWant, out)
+		}
+	}
+}
+
 // TestDriverExecExamplePanicRestoresStdout is the F2 execution test: a
 // panicking example must not leave stdout redirected into its capture
 // pipe. The TestMain prints a marker after m.Run() returns; under the
