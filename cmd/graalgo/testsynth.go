@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // discoverTests returns the names of TestXxx functions in a _test.go file.
@@ -40,6 +42,111 @@ func discoverTests(path string) ([]string, error) {
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// exampleEntry is one runnable Example function: an Example-prefixed,
+// parameterless, resultless function whose body ends in a // Output: or
+// // Unordered output: comment. Examples without an output comment are
+// NOT runnable: `go test` skips them entirely (its testmain generator
+// drops examples with no output comment, so a no-output example that
+// panics still passes under gc — verified against the reference
+// toolchain). discoverExamples therefore returns only the runnable
+// ones, in declaration order.
+type exampleEntry struct {
+	name      string
+	output    string
+	unordered bool
+}
+
+// isExampleName reports whether name is an Example function name under
+// go/doc's rule (the same rule `go test` uses): exactly "Example", or
+// "Example" followed by a first rune that is not a lowercase letter
+// (so Examplefoo is an ordinary function, not an example).
+func isExampleName(name string) bool {
+	if name == "Example" {
+		return true
+	}
+	if !strings.HasPrefix(name, "Example") {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(name[len("Example"):])
+	return !unicode.IsLower(r)
+}
+
+// discoverExamples returns the runnable Example functions in a _test.go
+// file, in declaration order. A function qualifies only if it has no
+// receiver, no parameters, no results, and a body whose last comment
+// group is an output comment (mirroring go/doc's exampleOutput, which
+// `go test` uses to extract expected output).
+func discoverExamples(path string) ([]exampleEntry, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	var examples []exampleEntry
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Body == nil {
+			continue
+		}
+		if !isExampleName(fn.Name.Name) {
+			continue
+		}
+		if fn.Type.Params != nil && len(fn.Type.Params.List) != 0 {
+			continue
+		}
+		if fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
+			continue
+		}
+		output, unordered, hasOutput := exampleOutput(fn, f.Comments)
+		if !hasOutput {
+			continue
+		}
+		examples = append(examples, exampleEntry{name: fn.Name.Name, output: output, unordered: unordered})
+	}
+	return examples, nil
+}
+
+// exampleOutput extracts the expected output from a function body,
+// mirroring go/doc's exampleOutput: only the LAST comment group fully
+// inside the body counts, and only if it starts (case-insensitively,
+// after leading whitespace) with "output:" or "unordered output:".
+// The returned output is the text after the prefix, with spaces after
+// the colon and a single following newline stripped — exactly the
+// string `go test` compares against (after trimming, at comparison
+// time). A trailing comment outside the body, or a non-output last
+// comment inside it, yields hasOutput=false.
+func exampleOutput(fn *ast.FuncDecl, comments []*ast.CommentGroup) (output string, unordered bool, hasOutput bool) {
+	var last *ast.CommentGroup
+	for _, cg := range comments {
+		if cg.Pos() < fn.Body.Pos() {
+			continue
+		}
+		if cg.End() > fn.Body.End() {
+			break
+		}
+		last = cg
+	}
+	if last == nil {
+		return "", false, false
+	}
+	text := strings.TrimLeft(last.Text(), " \t\n\r\v\f")
+	lower := strings.ToLower(text)
+	switch {
+	case strings.HasPrefix(lower, "unordered output:"):
+		unordered = true
+		text = text[len("unordered output:"):]
+	case strings.HasPrefix(lower, "output:"):
+		text = text[len("output:"):]
+	default:
+		return "", false, false
+	}
+	text = strings.TrimLeft(text, " ")
+	if strings.HasPrefix(text, "\n") {
+		text = text[1:]
+	}
+	return text, unordered, true
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -281,6 +388,122 @@ func twoDigits(n int64) string {
 	}
 	return itoa(n)
 }
+
+// --- graalgo example harness (generated) ---
+// Mirrors testing's example runner (and the synthetic testing package's
+// runExample): capture the example's stdout by swapping os.Stdout for
+// a pipe end drained by a goroutine, then compare the captured output
+// against the // Output: comment. Trimming and the unordered rule match
+// testing.processRunResult (trimmed comparison; unordered compares
+// sorted lines). Only ASCII whitespace is trimmed: example output in
+// practice is ASCII, and the driver must not depend on a strings import
+// the pruning pass may drop.
+func graalgoTrimExampleSpace(s string) string {
+	isSpace := func(c byte) bool {
+		return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
+	}
+	start := 0
+	for start < len(s) && isSpace(s[start]) {
+		start++
+	}
+	end := len(s)
+	for end > start && isSpace(s[end-1]) {
+		end--
+	}
+	return s[start:end]
+}
+
+func graalgoSplitExampleLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			lines = append(lines, s[start:i])
+			start = i + 1
+		}
+	}
+	lines = append(lines, s[start:])
+	return lines
+}
+
+func graalgoSortExampleLines(ss []string) {
+	for i := 1; i < len(ss); i++ {
+		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
+			ss[j], ss[j-1] = ss[j-1], ss[j]
+		}
+	}
+}
+
+func graalgoExampleMatch(got, want string, unordered bool) bool {
+	got = graalgoTrimExampleSpace(got)
+	want = graalgoTrimExampleSpace(want)
+	if !unordered {
+		return got == want
+	}
+	gl := graalgoSplitExampleLines(got)
+	wl := graalgoSplitExampleLines(want)
+	graalgoSortExampleLines(gl)
+	graalgoSortExampleLines(wl)
+	if len(gl) != len(wl) {
+		return false
+	}
+	for i := range gl {
+		if gl[i] != wl[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// graalgoCaptureExample runs f with os.Stdout redirected to a pipe and
+// returns everything f printed, plus a failure detail line ("" on
+// success): "panic: <value>" if f panicked, "runtime.Goexit" if f
+// exited via runtime.Goexit, "os.Pipe failed" if the capture pipe
+// could not be created. The caller restores nothing: stdout is
+// restored here before returning. On pipe failure f is not run —
+// running uncaptured would leak the example's output into the harness
+// output and corrupt the comparison.
+func graalgoCaptureExample(f func()) (out string, failDetail string) {
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", "os.Pipe failed"
+	}
+	os.Stdout = w
+	outC := make(chan string)
+	go func() {
+		var buf string
+		tmp := make([]byte, 4096)
+		for {
+			n, rerr := r.Read(tmp)
+			if n > 0 {
+				buf += string(tmp[:n])
+			}
+			if rerr != nil {
+				break
+			}
+		}
+		r.Close()
+		outC <- buf
+	}()
+	finished := false
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				failDetail = "panic: " + toString(rec)
+			}
+		}()
+		f()
+		finished = true
+	}()
+	w.Close()
+	os.Stdout = stdout
+	out = <-outC
+	if !finished && failDetail == "" {
+		failDetail = "runtime.Goexit"
+	}
+	return out, failDetail
+}
 `
 
 // testShimSource returns the shim with verbosity baked in.
@@ -292,10 +515,12 @@ func testShimSource(verbose bool) string {
 	return strings.Replace(testShimTemplate, "GRAALGO_VERBOSE_PLACEHOLDER", v, 1)
 }
 
-// fileTests groups the selected tests of one _test.go file.
+// fileTests groups the selected tests and runnable examples of one
+// _test.go file.
 type fileTests struct {
-	file  string
-	tests []string
+	file     string
+	tests    []string
+	examples []exampleEntry
 }
 
 // testCallRewrites maps testing.T diagnostic methods to the shim's
@@ -524,8 +749,10 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// whether the sources are inlined at all (see inlineSrc below).
 	type testUnit struct {
 		srcUnit
-		tests   map[string]bool
-		ordered []string
+		tests           map[string]bool
+		ordered         []string
+		examples        map[string]exampleEntry
+		orderedExamples []exampleEntry
 	}
 	var testUnits []testUnit
 	var testPkgNames []string
@@ -542,7 +769,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		for _, t := range ft.tests {
 			testSet[t] = true
 		}
-		testUnits = append(testUnits, testUnit{srcUnit{ft.file, tf, fset}, testSet, ft.tests})
+		exampleSet := make(map[string]exampleEntry)
+		for _, e := range ft.examples {
+			exampleSet[e.name] = e
+		}
+		testUnits = append(testUnits, testUnit{srcUnit{ft.file, tf, fset}, testSet, ft.tests, exampleSet, ft.examples})
 	}
 
 	// Sibling test files (not selected): every non-entry-point
@@ -721,12 +952,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			case *ast.FuncDecl:
 				n := d.Name.Name
 				isTest := tu.tests[n]
+				_, isExample := tu.examples[n]
 				// Skip other entry points (Test/Benchmark/Fuzz/Example).
 				// Methods (Recv != nil) are always inlined — tests use
 				// them (e.g. badRand.Read implementing io.Reader).
 				isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
 					strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")
-				if !isTest && isEntry {
+				if !isTest && !isExample && isEntry {
 					continue
 				}
 				rewriteParam(d)
@@ -817,7 +1049,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits", "graalgoCaptureExample", "graalgoTrimExampleSpace", "graalgoSplitExampleLines", "graalgoSortExampleLines", "graalgoExampleMatch"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -926,7 +1158,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits", "graalgoCaptureExample", "graalgoTrimExampleSpace", "graalgoSplitExampleLines", "graalgoSortExampleLines", "graalgoExampleMatch"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1435,6 +1667,52 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				body.WriteString("\t\t\tfailed++\n")
 				body.WriteString("\t\t}\n")
 			}
+			body.WriteString("\t}\n")
+		}
+	}
+	// Examples run after ALL tests (not interleaved per file), in
+	// file then discovery order — the order testing.M.Run uses.
+	// A panic in an example fails the package but does not abort
+	// the driver: unlike `go test` (which repanics and kills the
+	// test binary), this driver follows its own test convention
+	// of recovering, reporting, and continuing with the remaining
+	// entries. Failures are printed in both modes, like `go test`.
+	for _, tu := range testUnits {
+		for _, ex := range tu.orderedExamples {
+			callName := ex.name
+			if pkgNameErr == nil && tu.f.Name.Name != pkgName {
+				if nn, ok := eRenames[ex.name]; ok {
+					callName = nn
+				}
+			}
+			body.WriteString("\t{\n")
+			if verbose {
+				body.WriteString(fmt.Sprintf("\t\tprintln(\"=== RUN   %s\")\n", ex.name))
+			}
+			body.WriteString("\t\tt0 := time.Now()\n")
+			body.WriteString(fmt.Sprintf("\t\texOut, exFail := graalgoCaptureExample(%s)\n", callName))
+			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
+			body.WriteString(fmt.Sprintf("\t\texPassed := exFail == \"\" && graalgoExampleMatch(exOut, %q, %t)\n", ex.output, ex.unordered))
+			body.WriteString("\t\tif exPassed {\n")
+			if verbose {
+				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", ex.name))
+			}
+			body.WriteString("\t\t} else {\n")
+			body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", ex.name))
+			body.WriteString("\t\t\tif exFail != \"\" {\n")
+			body.WriteString("\t\t\t\tprintln(exFail)\n")
+			body.WriteString("\t\t\t} else {\n")
+			body.WriteString("\t\t\t\tprintln(\"got:\")\n")
+			body.WriteString("\t\t\t\tprintln(graalgoTrimExampleSpace(exOut))\n")
+			if ex.unordered {
+				body.WriteString("\t\t\t\tprintln(\"want (unordered):\")\n")
+			} else {
+				body.WriteString("\t\t\t\tprintln(\"want:\")\n")
+			}
+			body.WriteString(fmt.Sprintf("\t\t\t\tprintln(graalgoTrimExampleSpace(%q))\n", ex.output))
+			body.WriteString("\t\t\t}\n")
+			body.WriteString("\t\t\tfailed++\n")
+			body.WriteString("\t\t}\n")
 			body.WriteString("\t}\n")
 		}
 	}

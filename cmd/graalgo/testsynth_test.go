@@ -26,10 +26,18 @@ func writeFile(t *testing.T, dir, name, content string) {
 // driver source.
 func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string) string {
 	t.Helper()
+	return synthDriverVerbose(t, dir, ftList, srcFiles, false)
+}
+
+// synthDriverVerbose is synthDriver with an explicit verbosity flag:
+// === RUN lines exist only in verbose drivers, so tests asserting on
+// them need this variant.
+func synthDriverVerbose(t *testing.T, dir string, ftList []fileTests, srcFiles []string, verbose bool) string {
+	t.Helper()
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in.
 	importPkgNameCache = map[string]string{}
-	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, verbose)
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}
@@ -964,5 +972,247 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestDiscoverExamples pins Example discovery against go/doc's rules,
+// which `go test` uses: only parameterless, resultless Example-named
+// functions whose body ends in an output comment are runnable. The
+// rest are ordinary functions or documentation-only examples and must
+// not be selected — in particular a no-output example is NOT run by
+// `go test` at all (a panicking no-output example still passes under
+// gc), so selecting it would diverge from gc.
+func TestDiscoverExamples(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/exdisc\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package exdisc\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "p_test.go", `package exdisc
+
+import "fmt"
+
+func ExampleHello() {
+	fmt.Println("hello")
+	// Output: hello
+}
+
+func ExampleHello_multi() {
+	fmt.Println("a")
+	fmt.Println("b")
+	// Output: a
+	// b
+}
+
+func ExampleHello_unordered() {
+	fmt.Println("b")
+	fmt.Println("a")
+	// Unordered output: a
+	// b
+}
+
+func Example() {
+	fmt.Println("pkg")
+	// output: pkg
+}
+
+func ExampleHello_noout() {
+	fmt.Println("never-selected")
+}
+
+func ExampleHello_trailing() {
+	fmt.Println("x")
+	// Output: x
+
+	// trailing note, not an output comment
+}
+
+func ExampleHello_docout() {
+	fmt.Println("y")
+}
+
+// Output: doc
+func ExampleHello_docout2() {
+	fmt.Println("z")
+}
+
+func Examplefoo() {
+	fmt.Println("lowercase-suffix")
+}
+
+func ExampleHello_param(x int) {
+	fmt.Println("param")
+	// Output: param
+}
+
+func ExampleHello_result() int {
+	fmt.Println("result")
+	// Output: result
+	return 0
+}
+`)
+	// ExampleHello_docout2 carries its Output line as a doc comment
+	// above the function, not as the body's last comment: it must
+	// still be excluded, since `go test` only reads the body's last
+	// comment group.
+	got, err := discoverExamples(filepath.Join(root, "p_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []exampleEntry{
+		{name: "ExampleHello", output: "hello\n"},
+		{name: "ExampleHello_multi", output: "a\nb\n"},
+		{name: "ExampleHello_unordered", output: "a\nb\n", unordered: true},
+		{name: "Example", output: "pkg\n"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("discoverExamples = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("discoverExamples[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestExampleDriverRunsSelectedExamples is the end-to-end synthesis
+// check for P1-1: an examples-only file (no Test functions at all)
+// produces a driver that inlines the selected examples, runs each
+// through the capture harness, and reports it with a === RUN line —
+// while an unselected (no-output) example's body is never inlined.
+func TestExampleDriverRunsSelectedExamples(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/exdrv\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package exdrv\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "p_test.go", `package exdrv
+
+import "fmt"
+
+func ExampleHello() {
+	fmt.Println("hello")
+	// Output: hello
+}
+
+func ExampleHello_unordered() {
+	fmt.Println("b")
+	fmt.Println("a")
+	// Unordered output: a
+	// b
+}
+
+func ExampleHello_noout() {
+	fmt.Println("never-inlined")
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	examples, err := discoverExamples(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(examples) != 2 {
+		t.Fatalf("discoverExamples = %v, want 2 examples", examples)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, examples: examples}},
+		[]string{filepath.Join(root, "p.go")})
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
+	}
+	for _, want := range []string{
+		"graalgoCaptureExample(ExampleHello)",
+		"graalgoCaptureExample(ExampleHello_unordered)",
+		"--- FAIL: ExampleHello",
+		"graalgoExampleMatch(exOut,",
+		"func graalgoCaptureExample(",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("driver missing %q:\n%s", want, src)
+		}
+	}
+	// === RUN lines exist only in verbose drivers.
+	verboseSrc := synthDriverVerbose(t, root,
+		[]fileTests{{file: testFile, examples: examples}},
+		[]string{filepath.Join(root, "p.go")}, true)
+	for _, want := range []string{
+		"=== RUN   ExampleHello",
+		"=== RUN   ExampleHello_unordered",
+		"--- PASS: ExampleHello",
+	} {
+		if !strings.Contains(verboseSrc, want) {
+			t.Errorf("verbose driver missing %q:\n%s", want, verboseSrc)
+		}
+	}
+	if strings.Contains(src, "never-inlined") {
+		t.Errorf("driver inlined the unselected no-output example:\n%s", src)
+	}
+}
+
+// TestExampleDriverExternalRename pins the rename interaction for
+// examples: when the external test package declares a helper colliding
+// with a package declaration, the helper is renamed and the example's
+// reference follows the rename, while the example itself keeps its
+// name at both the call site and in the reported === RUN line.
+func TestExampleDriverExternalRename(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/exren\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package exren\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "w_test.go", `package exren
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	// The external file declares a helper named Hello, colliding with
+	// the package's func Hello, and an example using it.
+	writeFile(t, root, "e_test.go", `package exren_test
+
+import "fmt"
+
+func Hello() string { return "ext" }
+
+func ExampleHello() {
+	fmt.Println(Hello())
+	// Output: ext
+}
+`)
+	testsW, err := discoverExamples(filepath.Join(root, "e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(testsW) != 1 || testsW[0].name != "ExampleHello" {
+		t.Fatalf("discoverExamples(e_test.go) = %v", testsW)
+	}
+	tests, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: tests},
+			{file: filepath.Join(root, "e_test.go"), examples: testsW},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	// The colliding helper is renamed and the example's reference
+	// follows it, while the example keeps its own name.
+	if !strings.Contains(src, "func Hello2() string") {
+		t.Errorf("driver did not rename the colliding external helper:\n%s", src)
+	}
+	if !strings.Contains(src, "graalgoCaptureExample(ExampleHello)") {
+		t.Errorf("driver does not call the example:\n%s", src)
+	}
+	verboseSrc := synthDriverVerbose(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: tests},
+			{file: filepath.Join(root, "e_test.go"), examples: testsW},
+		},
+		[]string{filepath.Join(root, "p.go")}, true)
+	if !strings.Contains(verboseSrc, "=== RUN   ExampleHello") {
+		t.Errorf("verbose driver does not report the example name:\n%s", verboseSrc)
+	}
+	if strings.Contains(src, "func ExampleHello2()") {
+		t.Errorf("driver renamed an example that did not collide:\n%s", src)
 	}
 }

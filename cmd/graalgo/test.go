@@ -205,8 +205,14 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
-	// Discover the selected tests of every file, applying the -run
-	// filter (regex, like `go test`).
+	// Discover the selected tests and runnable examples of every file,
+	// applying the -run filter (regex, like `go test`) to both: the
+	// filter matches an example's full name ("ExampleHello"), exactly
+	// as it matches a test's. A file enters ftList when it contributes
+	// at least one selected test or example, so an examples-only
+	// package runs a driver (and does not report "[no tests to run]"),
+	// while a package whose examples all lack output comments — which
+	// `go test` skips — still reports no tests, like `go test`.
 	var ftList []fileTests
 	for _, tf := range runnableTests {
 		tests, err := discoverTests(tf)
@@ -220,8 +226,19 @@ func (r *testRunner) runPackage(dir string) bool {
 				selected = append(selected, t)
 			}
 		}
-		if len(selected) > 0 {
-			ftList = append(ftList, fileTests{file: tf, tests: selected})
+		examples, err := discoverExamples(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		var selectedExamples []exampleEntry
+		for _, e := range examples {
+			if r.runRe == nil || r.runRe.MatchString(e.name) {
+				selectedExamples = append(selectedExamples, e)
+			}
+		}
+		if len(selected) > 0 || len(selectedExamples) > 0 {
+			ftList = append(ftList, fileTests{file: tf, tests: selected, examples: selectedExamples})
 		}
 	}
 
