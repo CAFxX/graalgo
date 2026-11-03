@@ -42,6 +42,12 @@ import graalgo.values.GoStructDescriptor;
  *       (see {@link #pointerHash}), which canonicalizes storage
  *       identity — the same storage always yields the same hash,
  *       distinct storages distinct hashes;</li>
+ *   <li>channel keys hash by a per-channel 64-bit sequence
+ *       (see {@link #chanHash}), the same discipline as pointers:
+ *       a channel's identity <em>is</em> its value, so a 32-bit
+ *       identity hash would collide after ~65k channels and
+ *       exhaust the trie's hash bits (see the {@code GoChan}
+ *       branch of {@link #hash64});</li>
  *   <li>the per-map seed is mixed in with a SplitMix64 finalizer, so
  *       distinct maps distribute independently, as in gc.</li>
  * </ul>
@@ -117,6 +123,40 @@ public final class MapKeyHash {
         }
         return POINTER_HASHES.computeIfAbsent(gp.storageKey(),
                 k -> NEXT_POINTER_HASH.getAndIncrement());
+    }
+
+    /**
+     * Storage-stable 64-bit hashes for channel keys
+     * (REVIEW-2026-11-03-22 NEW-P1-1): the same discipline as
+     * {@link #pointerHash}, applied to channels. A channel's identity
+     * is its whole value, so hashing it from
+     * {@code System.identityHashCode} — a 32-bit value — would cap
+     * the trie-visible hash space at 2^32 and collide (birthday)
+     * after ~65k live channels, panicking HashTrieMap with "ran
+     * out of hash bits" on a valid program. The sequence minted
+     * here is 64-bit, stable across re-evaluations of the same
+     * channel, and unique per channel. Entries are never removed,
+     * matching {@code POINTER_HASHES}: a channel that was ever a
+     * key must keep its hash for the lifetime of the process, or a
+     * later re-hash of the same channel would mint a different
+     * sequence and orphan its trie entries. Neither {@code GoChan}
+     * nor its {@code TimerChan} subclass overrides
+     * {@code equals}/{@code hashCode}, so the table keys channels
+     * by object identity, exactly as Go channel {@code ==} does.
+     * Uniqueness is per key domain (a channel-keyed map only ever
+     * compares channel hashes), so channels mint from their own
+     * counter rather than sharing {@code NEXT_POINTER_HASH};
+     * as with pointers, contention may skip values, and only
+     * uniqueness, not contiguity, matters.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<GoChan, Long> CHAN_HASHES =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicLong NEXT_CHAN_HASH =
+            new java.util.concurrent.atomic.AtomicLong(1);
+
+    private static long chanHash(GoChan chan) {
+        return CHAN_HASHES.computeIfAbsent(chan,
+                k -> NEXT_CHAN_HASH.getAndIncrement());
     }
 
     /** Resolves the key value from the pointer addressing its storage. */
@@ -230,7 +270,15 @@ public final class MapKeyHash {
         }
         if (v instanceof GoChan chan) {
             // Channels are references: the object is the value.
-            return mix64(System.identityHashCode(chan));
+            // The hash is a per-channel 64-bit sequence (see
+            // chanHash) — NOT System.identityHashCode, a 32-bit
+            // value whose collisions would exhaust the trie's hash
+            // bits and panic (the same lesson as the pointer
+            // branch above; REVIEW-2026-11-03-22 NEW-P1-1). The
+            // seed mixing in hash() cannot rescue a 32-bit term:
+            // it is a bijection on a 32-bit domain, so colliding
+            // channels would share a full hash under every seed.
+            return mix64(chanHash(chan));
         }
         if (v instanceof GoBox box) {
             return hash64(box.get(), depth + 1);

@@ -33,6 +33,11 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+        // REVIEW-2026-11-03-22 NEW-P1-1: MapKeyHash was compiled but
+        // never registered here, so its tests never ran under
+        // `make test` — including the channel-key tests for the
+        // 32-bit identity-hash fix. Registering it closes that gap.
+        TESTS.add(graalgo.p3reflect.MapKeyHashTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
