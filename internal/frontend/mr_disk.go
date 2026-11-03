@@ -38,6 +38,13 @@ type diskMRSpec struct {
 	pairType   string // "__parsePair"
 	pairFields []string
 	stub       *ast.FuncDecl // removed after type-check
+	// bodylessUnbound (P1-4): the original declaration had no Go body
+	// and no //go:linkname directive, so the generated __-helper is a
+	// panic stub with no backend provider of any kind — no Go body, no
+	// linkname symbol for LinknameRootNode dispatch, no assembly (graalgo
+	// processes none). A call to it must fail at export time rather than
+	// ship a program that panics only when the call executes.
+	bodylessUnbound bool
 }
 
 var (
@@ -60,8 +67,15 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 			// Body-less declarations (e.g. //go:noescape assembly stubs
 			// like reflect's chanrecv) are included: their call sites
-			// still need desugaring, and the generated __-helper gets a
-			// panic body (the real implementation is a backend intrinsic).
+			// still need desugaring. A body-less declaration with no
+			// //go:linkname directive gets a panic-body __-helper and
+			// is marked bodylessUnbound on its spec: the helper
+			// declaration is emitted (it must exist for
+			// type-checking), but a call to it from the compiled
+			// program's own code fails at export time (P1-4) instead
+			// of shipping a program that panics only when called.
+			// A linkname-bound body-less declaration gets a body-less
+			// __-helper with a synthesized directive instead.
 			if numResults(fd) > 1 {
 				mrNames[fd.Name.Name] = true
 			}
@@ -859,11 +873,16 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	//
 	// Body-less declarations (e.g. //go:noescape assembly stubs like
 	// reflect's chanrecv): there is no body to rewrite. By default the
-	// __-helper gets a fail-fast panic body — the real implementation
-	// is a backend intrinsic. EXCEPTION (fix-redmaster-r42): a
-	// body-less declaration carrying a //go:linkname or //go:linknamestd
-	// directive is served by a backend intrinsic, so its __-helper must
-	// be linkname-bound, not a panic stub. That is possible for the
+	// __-helper gets a fail-fast panic body and the spec is marked
+	// bodylessUnbound (P1-4): the declaration has no provider — no Go
+	// body, no linkname symbol, no assembly — so a call to it from
+	// the program's own code is refused at export time rather than
+	// shipped. The panic body survives only as the emitted helper
+	// declaration for library-internal call sites, where the eager
+	// exporter cannot know reachability (see multiResultHelper).
+	// EXCEPTION (fix-redmaster-r42): a body-less declaration carrying a
+	// //go:linkname or //go:linknamestd directive is served by a backend
+	// intrinsic, so its __-helper must be linkname-bound, not a panic stub. That is possible for the
 	// helper even though it is not possible for the original
 	// multi-result declaration: the helper returns a single pair value,
 	// which LinknameRootNode dispatch can carry. The helper is therefore
@@ -984,6 +1003,11 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 		pairType:   pairType,
 		pairFields: pairFields,
 		stub:       stubDecl,
+		// P1-4: a panic-body helper is unbound exactly when the
+		// original was bodyless and no linkname directive bound the
+		// helper (helperDoc == nil). A bodyless linkname helper has
+		// Body == nil and a synthesized directive, not a panic body.
+		bodylessUnbound: fd.Body == nil && helperDoc == nil,
 	}
 	// The original fd is DISCARDED (replaced by helper+stub). We return
 	// the three new decls; the caller splices them in.
@@ -2194,13 +2218,15 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 	}
 	nt = instantiatePairType(nt, targs)
 	return &mrPlan{
-		kind:        mrM7,
-		helperPkg:   pkgPath,
-		helperName:  spec.helper,
-		tmpType:     nt,
-		pairFields:  spec.pairFields,
-		prependRecv: recvName != "",
-		isDisk:      true,
+		kind:            mrM7,
+		helperPkg:       pkgPath,
+		helperName:      spec.helper,
+		tmpType:         nt,
+		pairFields:      spec.pairFields,
+		prependRecv:     recvName != "",
+		isDisk:          true,
+		bodylessUnbound: spec.bodylessUnbound,
+		diskName:        fn.Name(),
 	}
 }
 

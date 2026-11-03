@@ -1389,6 +1389,14 @@ type mrPlan struct {
 	// The helper lives in a disk-built package, resolved via
 	// getDiskPackage, not getSyntheticPackage.
 	isDisk bool
+	// P1-4: the disk helper is a panic stub for a bodyless declaration
+	// with no linkname binding (diskMRSpec.bodylessUnbound). Emitting a
+	// call to it would ship a program that only fails at run time; the
+	// desugar must refuse it at export time instead.
+	bodylessUnbound bool
+	// P1-4: the original function name for the bodylessUnbound error
+	// (helperName is the synthetic "__"-prefixed helper name).
+	diskName string
 	// tmpType is the helper's single result type (the __p5mr_N temp).
 	tmpType types.Type
 	// For mrWithCancel/mrWithDeadline: the second extraction is a
@@ -3427,6 +3435,37 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 // multiResultHelper resolves a desugar plan's __-helper to its
 // *types.Func in the synthetic package scope.
 func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
+	// P1-4: a disk helper that is a panic stub for a bodyless
+	// declaration with no linkname binding has no provider anywhere:
+	// no Go body, no linkname symbol for LinknameRootNode dispatch, no
+	// assembly (graalgo processes none). Refusing the call here
+	// (export time, named scope error) is the build-time rejection gc
+	// gives as a link error.
+	//
+	// Scope of the refusal (measured, not assumed): it applies only to
+	// calls in the compiled program's own code. Library bodies are
+	// exported eagerly — exportSyntheticBodies emits every funcdecl of
+	// every imported package, reachable or not — so an unbound call
+	// inside a library body may never execute in the shipped program
+	// (internal/cpu.doinit calling cpuid is the standing example:
+	// graalgo never calls internal/cpu.Initialize, so cpuid's panic
+	// helper is dead code in every program importing reflect, which
+	// transitively pulls internal/cpu; a blanket refusal fails a
+	// reflect import-only program at cpuid before it ever reaches
+	// chanrecv). The program's own package is never in
+	// importedSynthetic — that map holds only imported library
+	// packages — so e.pkg membership is exactly the library/program
+	// boundary. Library-internal unbound calls, and interface dispatch
+	// to an unbound concrete method (which resolves through the itab,
+	// not this helper), keep the existing unimplemented tolerance and
+	// remain open until the backend gains those intrinsics or the
+	// exporter gains reachability pruning; they are NOT silently fixed
+	// by this change, and the panic helper declaration itself is still
+	// emitted for them (dead code when uncalled, like an unreferenced
+	// gc assembly stub).
+	if plan.isDisk && plan.bodylessUnbound && (e.pkg == nil || !e.importedSynthetic[e.pkg.Path()]) {
+		return nil, scopeErrorf("call to bodyless multi-result function %s.%s: no Go body and no backend intrinsic (no //go:linkname binding); refusing to emit a call to its panic stub", plan.helperPkg, plan.diskName)
+	}
 	var sp *syntheticPackage
 	if plan.isDisk {
 		// WS G (P3-M9): disk-built package (transformDiskMultiResult).
