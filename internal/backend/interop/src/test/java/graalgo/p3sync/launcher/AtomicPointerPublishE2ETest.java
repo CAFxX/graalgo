@@ -96,6 +96,71 @@ public final class AtomicPointerPublishE2ETest {
     // true (CAS b->a succeeds), false (CAS b->a now fails: current is
     // a), 2 (method round-trip), nil (zero Pointer load).
 
+    /**
+     * F1 (review REJECT on 01d05472): nil-ADDRESS panic, for both
+     * {@code LoadPointer} and {@code StorePointer}. Each probe recovers
+     * the panic and prints the recovered value; gc 1.27.1 prints
+     * {@code runtime error: invalid memory address or nil pointer
+     * dereference} for both (verified by running the same program
+     * under gc). This is deliberately distinct from nil-VALUE load
+     * (a nil pointer stored in a valid address, already covered by
+     * the semantics program's {@code nil} line): a nil address must
+     * panic, never return a nil value. If either op stopped panicking
+     * (e.g. returned nil/0 for a nil address), its probe would print
+     * {@code no-panic} and this test would fail.
+     */
+    private static final String PROG_NILPANIC =
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"sync/atomic\"\n\t\"unsafe\"\n)\n\n"
+            + "func probeLoad() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\t_ = atomic.LoadPointer(nil)\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func probeStore() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\tx := 1\n"
+            + "\tatomic.StorePointer(nil, unsafe.Pointer(&x))\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func main() {\n"
+            + "\tfmt.Println(probeLoad())\n"
+            + "\tfmt.Println(probeStore())\n"
+            + "}\n";
+
+    /**
+     * F2 (review REJECT on 01d05472): {@code StorePointer} evaluates
+     * its address argument before its value argument (Go's
+     * left-to-right call-argument order). Both arguments are
+     * side-effecting helpers that print when evaluated, so the exact
+     * stdout pins the order: a reversed evaluation would print
+     * {@code val} before {@code addr} and fail. The final line pins
+     * that the store itself still took effect (value 42).
+     */
+    private static final String PROG_EVALORDER =
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"sync/atomic\"\n\t\"unsafe\"\n)\n\n"
+            + "var p unsafe.Pointer\n"
+            + "var xv = 42\n\n"
+            + "func addrFn() *unsafe.Pointer {\n"
+            + "\tfmt.Println(\"addr\")\n"
+            + "\treturn &p\n"
+            + "}\n\n"
+            + "func valFn() unsafe.Pointer {\n"
+            + "\tfmt.Println(\"val\")\n"
+            + "\treturn unsafe.Pointer(&xv)\n"
+            + "}\n\n"
+            + "func main() {\n"
+            + "\tatomic.StorePointer(addrFn(), valFn())\n"
+            + "\tfmt.Println(*(*int)(atomic.LoadPointer(&p)))\n"
+            + "}\n";
+
     private static final int REPS = 10;
 
     private static void assertTrue(boolean cond, String msg) {
@@ -154,5 +219,17 @@ public final class AtomicPointerPublishE2ETest {
     public void testPointerOpSemantics() throws Exception {
         checkRepeated("atomicptrsemantics.go", PROG_SEMANTICS,
                 "1\n1\ntrue\nfalse\n2\nnil");
+    }
+
+    /** F1: nil-address LoadPointer and StorePointer both panic with gc's nil-dereference panic. */
+    public void testNilAddressPanics() throws Exception {
+        checkRepeated("atomicptrnilpanic.go", PROG_NILPANIC,
+                "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "runtime error: invalid memory address or nil pointer dereference");
+    }
+
+    /** F2: StorePointer evaluates its address argument before its value argument. */
+    public void testStoreEvaluatesAddressBeforeValue() throws Exception {
+        checkRepeated("atomicptrevalorder.go", PROG_EVALORDER, "addr\nval\n42");
     }
 }
