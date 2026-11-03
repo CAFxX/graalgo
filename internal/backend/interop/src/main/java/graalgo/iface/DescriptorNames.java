@@ -172,7 +172,15 @@ public final class DescriptorNames {
         Json.Object detail = entry.object("detail", path);
         switch (k) {
             case "basic":
-                return "basic:" + kindOf(types, typeId, path).name();
+                // Replica of NodeFactory.structuralKey: must key by the
+                // canonical basic name, not the kind — a GoKind alone
+                // cannot identify a Go type (INT64 is both "int" and
+                // "int64"), and a kind key collapses *int with *int64
+                // (same defect as the factory's, in the fallback-name
+                // path). Single source of truth: canonicalBasicName.
+                return "basic:"
+                        + graalgo.frontend.NodeFactory.canonicalBasicName(
+                                detail.string("name", path));
             case "named":
                 return "named(" + detail.string("name", path) + ")";
             case "struct": {

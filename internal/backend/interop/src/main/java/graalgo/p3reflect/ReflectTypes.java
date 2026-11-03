@@ -2214,7 +2214,15 @@ public final class ReflectTypes {
                 yield sb.append(')').toString();
             }
             case INTERFACE -> "interface{" + String.join(",", t.interfaceMethods) + "}";
-            default -> "basic:" + t.kind;
+            // Basics key by wire name, not kind: GoKind conflates
+            // int/int64, uint/uint64/uintptr, byte/uint8 and rune/
+            // int32 (see kindOrdinal), so a kind key collapsed
+            // ptrTo(int) with ptrTo(int64) and every synthesized
+            // composite over them. basicName is empty only for
+            // synthesized infos with no wire name; keep the kind
+            // fallback there rather than emitting an empty key.
+            default -> "basic:" + (!t.basicName.isEmpty()
+                    ? canonicalBasicName(t.basicName) : t.kind);
         };
     }
 

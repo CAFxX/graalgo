@@ -1615,7 +1615,21 @@ public final class NodeFactory {
         Json.Object detail = entry.object("detail", path);
         switch (k) {
             case "basic":
-                return "basic:" + kindOf(ctx, typeId, path).name();
+                // A GoKind alone cannot identify a Go type (INT64 is
+                // both "int" and "int64"; UINT64 is "uint", "uint64"
+                // and "uintptr"). Keying by kind collapsed *int with
+                // *int64 (and []int with []int64, struct fields, chan
+                // and func params over them): one shared descriptor
+                // whose reflect token resolved to whichever wire id
+                // was recorded last, so reflect.ValueOf(&intVar)
+                // .Elem().Type() read as int64, Set(int) onto an int
+                // target failed, and Set(int64) wrongly succeeded.
+                // Key by the canonical basic name instead — the same
+                // canonicalization typeDescriptorFor's basic branch
+                // uses, so composite identity agrees with basic
+                // identity (rune -> int32, byte -> uint8, untyped ->
+                // default type, as in canonicalBasicName).
+                return "basic:" + canonicalBasicName(detail.string("name", path));
             case "named":
                 return "named(" + detail.string("name", path) + ")";
             case "struct": {
