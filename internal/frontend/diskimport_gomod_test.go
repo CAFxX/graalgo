@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -190,6 +191,188 @@ replace example.com/dep => ./localdep
 	}
 	if dir != filepath.Join(modDir, "localdep") {
 		t.Fatalf("resolved to %s, want the local replace directory", dir)
+	}
+}
+
+// Veto fix B2: a go.sum that exists but cannot be read must fail loudly,
+// never silently downgrade to the sum:absent (no-verification) path.
+// A go.sum that is a directory is unreadable on every platform and for
+// every user (including root, for whom chmod 000 is still readable),
+// so it exercises the non-NotExist read-error branch deterministically.
+func TestDiskImportUnreadableGoSumFailsLoudly(t *testing.T) {
+	modDir := mainModuleDir(t, `module example.com/main
+
+go 1.21
+
+require example.com/dep v1.0.0
+`, "")
+	if err := os.Mkdir(filepath.Join(modDir, "go.sum"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := setDiskModuleContextFromDir(modDir)
+	if err == nil {
+		t.Fatalf("unreadable go.sum (a directory) was silently treated as absent")
+	}
+	if !strings.Contains(err.Error(), "go.sum") {
+		t.Fatalf("unreadable-go.sum error %q does not name go.sum", err)
+	}
+}
+
+// Same B2 branch via permissions; skipped where the test user can still
+// read the file (e.g. root), since chmod 000 does not block root reads.
+func TestDiskImportPermissionDeniedGoSumFailsLoudly(t *testing.T) {
+	modDir := mainModuleDir(t, `module example.com/main
+
+go 1.21
+
+require example.com/dep v1.0.0
+`, "example.com/dep v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n")
+	sumPath := filepath.Join(modDir, "go.sum")
+	if err := os.Chmod(sumPath, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(sumPath, 0o644) })
+	if _, err := os.ReadFile(sumPath); err == nil {
+		t.Skip("test user can still read a chmod-000 go.sum (e.g. running as root); the directory-based test above covers the branch")
+	}
+	_, err := setDiskModuleContextFromDir(modDir)
+	if err == nil {
+		t.Fatalf("permission-denied go.sum was silently treated as absent")
+	}
+	if !strings.Contains(err.Error(), "go.sum") {
+		t.Fatalf("permission-denied go.sum error %q does not name go.sum", err)
+	}
+}
+
+// P2: a go.sum carrying only a go.mod hash for the pinned module must
+// not yield the misleading "disagrees with the download hash" error:
+// a go.mod hash attests no module zip, so it can neither agree nor
+// disagree with the cache ziphash.
+func TestDiskImportGoModOnlyGoSumEntryIsNotDisagreement(t *testing.T) {
+	modCache := t.TempDir()
+	t.Setenv("GOMODCACHE", modCache)
+	cachedModuleDir(t, modCache, "example.com/dep", "v1.0.0", map[string]string{
+		"dep.go": "package dep\n\nfunc OldOnly() {}\n",
+	})
+	writeTestFile(t, filepath.Join(modCache, "cache", "download", "example.com", "dep", "@v", "v1.0.0.ziphash"), "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n")
+	modDir := mainModuleDir(t, `module example.com/main
+
+go 1.21
+
+require example.com/dep v1.0.0
+`, "example.com/dep v1.0.0/go.mod h1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=\n")
+	setModuleContext(t, modDir)
+	_, err := resolveDiskPackageDir("example.com/dep")
+	if err == nil {
+		t.Fatalf("go.mod-only go.sum entry resolved as if verified")
+	}
+	if strings.Contains(err.Error(), "disagrees") {
+		t.Fatalf("go.mod-only entry yielded a disagreement error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "go.mod hash") {
+		t.Fatalf("go.mod-only entry error %q does not explain the missing module hash", err)
+	}
+}
+
+// P2: the resolved cache root is part of the disk cache key, so the
+// same go.mod resolving against a different GOMODCACHE cannot hit
+// entries resolved from the old cache.
+func TestDiskImportCacheKeyIncludesCacheRoot(t *testing.T) {
+	modDir := mainModuleDir(t, `module example.com/main
+
+go 1.21
+
+require example.com/dep v1.0.0
+`, "")
+	ctx, err := loadGoModContext(modDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOMODCACHE", "/tmp/cache-a")
+	keyA := diskCacheKey(ctx, "example.com/dep")
+	t.Setenv("GOMODCACHE", "/tmp/cache-b")
+	keyB := diskCacheKey(ctx, "example.com/dep")
+	if keyA == keyB {
+		t.Fatalf("diskCacheKey identical across cache roots: %q", keyA)
+	}
+	if keyA == diskCacheKey(nil, "example.com/dep") {
+		t.Fatalf("context key collided with the no-context key")
+	}
+}
+
+// Concurrency proof (veto B1 question): two concurrent ExportFiles from
+// different importing modules pinning different versions of the same
+// dependency must each resolve under their own module's pins. The
+// rendezvous gate forces the overlap deterministically: both exports
+// install their context, then both wait at the gate, then both resolve.
+// Without ExportFiles serialization the second install wins, so the
+// first export resolves under the other's pins and fails type-checking
+// (OldOnly is absent from v2.0.0) — verified by running this test with
+// the mutex removed. With serialization the second export blocks at
+// the mutex and never reaches the gate, so the first proceeds alone
+// after its gate timeout and both succeed. The shared cache root is
+// deliberate: GOMODCACHE is process-global env, so concurrent exports
+// in one process always share it; what differs is the go.mod.
+func TestDiskImportConcurrentExportsKeepOwnPins(t *testing.T) {
+	modCache := t.TempDir()
+	t.Setenv("GOMODCACHE", modCache)
+	cachedModuleDir(t, modCache, "example.com/dep", "v1.0.0", map[string]string{
+		"dep.go": "package dep\n\nfunc OldOnly() {}\n",
+	})
+	cachedModuleDir(t, modCache, "example.com/dep", "v2.0.0", map[string]string{
+		"dep.go": "package dep\n\nfunc NewOnly() {}\n",
+	})
+	modA := mainModuleDir(t, `module example.com/maina
+
+go 1.21
+
+require example.com/dep v1.0.0
+`, "example.com/dep v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n")
+	mainA := filepath.Join(modA, "main.go")
+	writeTestFile(t, mainA, "package main\n\nimport \"example.com/dep\"\n\nfunc main() { dep.OldOnly() }\n")
+	modB := mainModuleDir(t, `module example.com/mainb
+
+go 1.21
+
+require example.com/dep v2.0.0
+`, "example.com/dep v2.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n")
+	mainB := filepath.Join(modB, "main.go")
+	writeTestFile(t, mainB, "package main\n\nimport \"example.com/dep\"\n\nfunc main() { dep.NewOnly() }\n")
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	go func() {
+		// Release once both exports reach the gate; if only one ever
+		// arrives (serialized case) the gate's own timeout releases it,
+		// and this coordinator's timeout closes the gate for the late
+		// export instead of leaking a goroutine.
+		n := 0
+		timeout := time.After(3 * time.Second)
+		for n < 2 {
+			select {
+			case <-arrived:
+				n++
+			case <-timeout:
+				close(release)
+				return
+			}
+		}
+		close(release)
+	}()
+	exportTestGate = func() {
+		arrived <- struct{}{}
+		select {
+		case <-release:
+		case <-time.After(2 * time.Second):
+		}
+	}
+	t.Cleanup(func() { exportTestGate = nil })
+	errs := make(chan error, 2)
+	go func() { _, err := ExportFiles([]string{mainA}, ""); errs <- err }()
+	go func() { _, err := ExportFiles([]string{mainB}, ""); errs <- err }()
+	for j := 0; j < 2; j++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent export failed: %v", err)
+		}
 	}
 }
 

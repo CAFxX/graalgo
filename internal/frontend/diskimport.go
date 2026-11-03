@@ -227,18 +227,51 @@ type goModReplace struct {
 // goModContext is the parsed go.mod (plus optional go.sum) of the module
 // being compiled, together with the fingerprint that keys the disk caches.
 type goModContext struct {
-	dir         string // directory containing go.mod
-	goModPath   string
-	goSumPath   string
-	hasGoSum    bool
-	modulePath  string
-	requires    map[string]string
-	replaces    []goModReplace
-	goSum       map[string]map[string]bool // "module@version" -> hashes
+	dir        string // directory containing go.mod
+	goModPath  string
+	goSumPath  string
+	hasGoSum   bool
+	modulePath string
+	requires   map[string]string
+	replaces   []goModReplace
+	// goSum keeps the module-zip hashes and the go.mod hashes DISTINCT:
+	// a go.sum line "module version h1:..." attests the module zip,
+	// while "module version/go.mod h1:..." attests only the go.mod file.
+	// Merging them (as a single hash set) let a go.sum carrying only a
+	// go.mod hash produce a misleading "disagrees with the download
+	// hash" error for the zip; verifyGoSum compares the cache ziphash
+	// against the zip set only, and reports a go.mod-only entry as
+	// missing-module-hash, never as disagreement.
+	goSum       map[string]goSumHashes // "module@version" -> hash sets
 	fingerprint string
 }
 
+// goSumHashes is one go.sum entry's hashes, split by what they attest.
+type goSumHashes struct {
+	zip map[string]bool // "module version h1:..." lines (module zip)
+	mod map[string]bool // "module version/go.mod h1:..." lines (go.mod file)
+}
+
 var diskModuleCtx *goModContext // set by ExportFiles for one export; see below
+
+// diskExportMu serializes ExportFiles: the importing-module context is
+// process-global (diskModuleCtx, restore-on-return), so two concurrent
+// exports would resolve imports under each other's pins. No concurrent
+// caller exists today — the only production caller is the single
+// gofrontend invocation (main.go), and no test in this package uses
+// t.Parallel — but serializing here makes any future concurrent caller
+// correct by construction instead of silently wrong. ExportFiles never
+// re-enters itself (disk packages build via buildDiskPackage, not via
+// ExportFiles), so holding this across the whole export cannot deadlock.
+var diskExportMu sync.Mutex
+
+// exportTestGate, when non-nil, is called by ExportFiles after installing
+// the importing-module context and before resolving any import. Tests
+// use it as a rendezvous to force two exports to overlap at exactly the
+// point where a missing serialization would cross their contexts (see
+// TestDiskImportConcurrentExportsKeepOwnPins). Nil in production, where
+// the call is a single nil check.
+var exportTestGate func()
 
 // currentDiskModuleContext returns the importing-module context for this
 // export, or nil when no go.mod governs the current compile.
@@ -253,12 +286,16 @@ func currentDiskModuleContext() *goModContext {
 // cache entry resolved under another module's pins (or none) in the same
 // process. The fingerprint covers the go.mod path, its requirements and
 // replaces, and the go.sum bytes, so an edited go.mod/go.sum re-resolves
-// instead of hitting a stale entry.
+// instead of hitting a stale entry. The resolved cache root is part of
+// the key too: the same go.mod resolving against a different GOMODCACHE
+// (tests re-point it per test; a user may move the cache) must not hit
+// entries resolved from the old cache.
 func diskCacheKey(ctx *goModContext, importPath string) string {
+	root := goModCache()
 	if ctx == nil {
-		return importPath
+		return root + "\x00" + importPath
 	}
-	return ctx.fingerprint + "\x00" + importPath
+	return root + "\x00" + ctx.fingerprint + "\x00" + importPath
 }
 
 // setDiskModuleContextFromDir loads the go.mod governing dir (walking up
@@ -306,11 +343,21 @@ func loadGoModContext(dir string) (*goModContext, error) {
 			if err != nil {
 				return nil, err
 			}
-			if sumData, err := os.ReadFile(filepath.Join(d, "go.sum")); err == nil {
+			// B2 (veto fix): a go.sum that exists but cannot be read
+			// (permissions, I/O error, a directory in its place) is a
+			// LOUD error, never the sum:absent path. Treating it as
+			// absent would silently downgrade a pinned build to no
+			// verification — indistinguishable from a genuinely absent
+			// go.sum, while an unreadable go.mod is loud in this same
+			// function. Only os.IsNotExist takes the absent path.
+			sumPath := filepath.Join(d, "go.sum")
+			if sumData, err := os.ReadFile(sumPath); err == nil {
 				ctx.hasGoSum = true
-				ctx.goSumPath = filepath.Join(d, "go.sum")
+				ctx.goSumPath = sumPath
 				ctx.goSum = parseGoSum(sumData)
 				ctx.fingerprint += "\x00sum:" + fmt.Sprintf("%x", sha256.Sum256(sumData))
+			} else if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("go.sum at %s: cannot read: %v", sumPath, err)
 			} else {
 				ctx.fingerprint += "\x00sum:absent"
 			}
@@ -323,22 +370,34 @@ func loadGoModContext(dir string) (*goModContext, error) {
 	}
 }
 
-// parseGoSum parses go.sum lines into "module@version" -> hash sets. The
-// "/go.mod" suffix on a version is stripped: both the module-hash line
-// and the go.mod-hash line attest the same module@version.
-func parseGoSum(data []byte) map[string]map[string]bool {
-	out := map[string]map[string]bool{}
+// parseGoSum parses go.sum lines into "module@version" -> hash sets,
+// keeping module-zip hashes and go.mod hashes in separate sets (see the
+// goSum field comment). The "/go.mod" suffix on a version is stripped
+// for the key: both lines attest the same module@version, but what they
+// attest differs.
+func parseGoSum(data []byte) map[string]goSumHashes {
+	out := map[string]goSumHashes{}
 	for _, line := range strings.Split(string(data), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 3 {
 			continue
 		}
+		isMod := strings.HasSuffix(f[1], "/go.mod")
 		ver := strings.TrimSuffix(f[1], "/go.mod")
 		key := f[0] + "@" + ver
-		if out[key] == nil {
-			out[key] = map[string]bool{}
+		entry := out[key]
+		if isMod {
+			if entry.mod == nil {
+				entry.mod = map[string]bool{}
+			}
+			entry.mod[f[2]] = true
+		} else {
+			if entry.zip == nil {
+				entry.zip = map[string]bool{}
+			}
+			entry.zip[f[2]] = true
 		}
-		out[key][f[2]] = true
+		out[key] = entry
 	}
 	return out
 }
@@ -520,15 +579,21 @@ func (ctx *goModContext) verifyGoSum(modulePath, version, modCache string) error
 		return nil
 	}
 	key := modulePath + "@" + version
-	hashes, ok := ctx.goSum[key]
-	if !ok || len(hashes) == 0 {
+	entry, ok := ctx.goSum[key]
+	if !ok || (len(entry.zip) == 0 && len(entry.mod) == 0) {
 		return fmt.Errorf("go.mod at %s requires %s %s, but %s has no entry for it; run 'go mod download %s' to record it instead of building against an unverified version", ctx.goModPath, modulePath, version, ctx.goSumPath, modulePath)
 	}
 	ziphashPath := filepath.Join(modCache, "cache", "download", escapeModulePath(modulePath), "@v", version+".ziphash")
 	if data, err := os.ReadFile(ziphashPath); err == nil {
 		zh := strings.TrimSpace(string(data))
+		// A go.mod-only entry attests no module zip: it cannot agree
+		// or disagree with the download hash, so report it as a
+		// missing module hash — never as a disagreement.
+		if len(entry.zip) == 0 {
+			return fmt.Errorf("go.mod at %s requires %s %s, but %s carries only a go.mod hash for it (no module hash); run 'go mod download %s' to record it instead of building against an unverified version", ctx.goModPath, modulePath, version, ctx.goSumPath, modulePath)
+		}
 		hasH1 := false
-		for h := range hashes {
+		for h := range entry.zip {
 			if strings.HasPrefix(h, "h1:") {
 				hasH1 = true
 				if h == zh {

@@ -866,6 +866,11 @@ func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 // (testPackageDirFlag): the package dir whose internal-visibility
 // privileges the import gate applies. Empty for ordinary compiles.
 func ExportFiles(paths []string, testPackageDir string) (string, error) {
+	// Serialize exports: the importing-module context is process-global
+	// (see diskExportMu in diskimport.go). Without this, two concurrent
+	// exports would resolve imports under each other's go.mod pins.
+	diskExportMu.Lock()
+	defer diskExportMu.Unlock()
 	if len(paths) == 0 {
 		return "", fmt.Errorf("gofrontend: no input files")
 	}
@@ -913,6 +918,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		return "", fmt.Errorf("gofrontend: %v", err)
 	}
 	defer restoreDiskCtx()
+	if exportTestGate != nil {
+		exportTestGate()
+	}
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if err := checkImportAllowed(imp, idir); err != nil {
