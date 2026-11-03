@@ -4712,10 +4712,6 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
-	// panicMsg, when non-empty, marks a synthetic method with no backend
-	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
-	// runtime panic instead of a method call.
-	panicMsg string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4755,14 +4751,6 @@ type methodCall struct {
 func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Selection, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
 	mname := sel.Sel.Name
 	rn := derefNamed(selection.Recv())
-	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
-	// surface exists (synthetic, via AddMethod) but the method is not in
-	// methodIndex. Return a marker methodCall; methodRefNode emits a
-	// runtime panic for it.
-	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
-		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
-		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
-	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
 		if !ok {
@@ -5786,6 +5774,16 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			// P3-M3 (WS D, ADR-0003): interface method calls need no
 			// instantiation (same as the roots loop above).
 			if recvIface(selection.Recv()) != nil {
+				return true
+			}
+			// mrRuntimeStack: the synthetic runtime stack-inspection
+			// methods lower to intrinsic wire nodes, never through
+			// resolveMethodCall/methodIndex (same skip as the roots
+			// loop above). Without it, a stack-inspection call inside
+			// a generic template body would fail enumeration with
+			// "method Name not found on Func" once the panicMsg
+			// marker was deleted (rev20261103-funcname).
+			if _, isRt := runtimeStackMethod(selection); isRt {
 				return true
 			}
 			var mtargs []types.Type
@@ -9850,17 +9848,6 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
-	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
-	// panic so the enclosing body exports; an actual call fails fast.
-	if mc.panicMsg != "" {
-		panicCall := &ast.CallExpr{
-			Fun: ast.NewIdent("panic"),
-			Args: []ast.Expr{
-				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
-			},
-		}
-		return e.exportCall(panicCall)
-	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
 	// named type), dispatch via the constraint interface. The ifacemethod
@@ -9992,6 +9979,24 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 // The "type" field is the method value's static func type (no receiver),
 // from the selector expression's type.
 func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	// rev20261103-funcname (REVIEW-2026-11-03-00 N-P1-1): the synthetic
+	// runtime stack-inspection methods ((*Frames).Next, (*Func).Name/
+	// Entry/FileLine) have no funcdecl — a method value cannot point at
+	// one via the methodref path below (there is no object id to bind),
+	// and resolveMethodCall's former panicMsg marker for Name reached
+	// here with a nil decl and crashed the exporter. The single-result
+	// members eta-expand into a real closure around the intrinsic wire
+	// node (the exportTimeIntrinsicValue precedent); the multi-result
+	// members keep the honest WS D scope error (a method value would
+	// need the pair machinery).
+	if mname, isRt := runtimeStackMethod(selection); isRt {
+		switch mname {
+		case "Name", "Entry":
+			return e.runtimeStackMethodValue(sel, selection, mname, recv, t)
+		default:
+			return nil, scopeErrorf("method value %s is not supported: multi-result runtime stack-inspection method (WS D)", mname)
+		}
+	}
 	var mtargs []types.Type
 	if ii, ok := e.info.Instances[sel.Sel]; ok {
 		mtargs = typeList(ii.TypeArgs)
@@ -10057,6 +10062,90 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 		objID = mc.decl.funcID
 	}
 	return e.node("methodvalue", sel, map[string]any{"obj": objID, "recv": recv, "type": t}), nil
+}
+
+// runtimeStackMethodValue eta-expands a single-result stack-inspection
+// intrinsic in method-value position (e.g. `f := fn.Name`) into a real
+// closure: a zero-arg funclit capturing a temp that holds the receiver.
+// The receiver is evaluated once, when the method value is created (Go
+// semantics), as the argument of the immediately-invoked factory funclit;
+// the factory binds it to __mv_recv and RETURNS the zero-arg closure.
+// The closure body reuses the exact wire node the direct-call path emits
+// (exportCall's runtimeStackMethod interception), so behavior is identical
+// to the call form — but deferred to each invocation of the method value.
+// The outer IIFE shape (funclit with params applied to exported args) is
+// the exportCloseDeferGo precedent; unlike the defer position, the
+// invocation is NOT part of the returned value — the outer call evaluates
+// to the closure itself, typed as the method value's func type t.
+// (An earlier eager shape returned call(fun=funclit(params=[__mv_recv]),
+// args=[recv], type=<string>), an immediately-invoked function whose
+// result — the eagerly-evaluated string — was bound instead of the
+// deferred func() string. The deferred shape pins against that: the
+// factory must RETURN the closure, and the wire node must live inside it.)
+func (e *exporter) runtimeStackMethodValue(sel *ast.SelectorExpr, selection *types.Selection, mname string, recv *Node, t int) (*Node, error) {
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: runtime stack method %s is not a *types.Func (exporter bug)", mname)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 1 {
+		return nil, fmt.Errorf("gofrontend: runtime stack method %s has non-single-result signature (exporter bug)", mname)
+	}
+	resType := sig.Results().At(0).Type()
+	resTid, err := e.typeID(resType)
+	if err != nil {
+		return nil, err
+	}
+	// Mirror exportCall's runtimeStackMethod interception: same wire kind
+	// for the same method, so the value form and the call form agree.
+	kind := "runtimefuncname"
+	if mname == "Entry" {
+		kind = "runtimefuncentry"
+	}
+	// The temp holding the receiver: a fresh *types.Var per expansion
+	// (objIDs is keyed by object identity, so repeated expansions of the
+	// same method value never collide). It is the factory funclit's
+	// parameter — evaluated once as the IIFE argument at creation time,
+	// then captured by the deferred closure.
+	recvType := selection.Recv()
+	pv := types.NewParam(token.NoPos, nil, "__mv_recv", recvType)
+	pid, err := e.defVar(pv, true)
+	if err != nil {
+		return nil, err
+	}
+	ptid, err := e.typeID(recvType)
+	if err != nil {
+		return nil, err
+	}
+	param := e.node("param", sel, map[string]any{"name": "__mv_recv", "obj": pid, "type": ptid})
+	tmpIdent := e.node("ident", sel, map[string]any{"name": "__mv_recv", "obj": pid, "type": ptid})
+	wire := e.node(kind, sel, map[string]any{"f": tmpIdent, "type": resTid})
+	wireRet := e.node("return", sel, map[string]any{"results": []*Node{wire}})
+	wireBody := e.node("block", sel, map[string]any{"stmts": []*Node{wireRet}})
+	// The deferred method value itself: a zero-arg funclit capturing the
+	// temp, typed as the method value's static func type t (the
+	// methodValueNode contract). The factory resolves the ident to the
+	// outer funclit's parameter slot through its general closure-capture
+	// mechanism (CapReadNode over the $closure chain).
+	rv := types.NewParam(token.NoPos, nil, "", resType)
+	result, err := e.exportParamVar(sel, rv)
+	if err != nil {
+		return nil, err
+	}
+	closure := e.node("funclit", sel, map[string]any{
+		"params": []*Node{}, "results": []*Node{result}, "body": wireBody, "type": t,
+	})
+	// The factory funclit: binds recv once, returns the closure. A
+	// desugared factory funclit (the exportGoschedDeferGo precedent): no
+	// "type" field and no results — the GoReturn value carries the closure
+	// to the call site (GoFuncRootNode falls back to the GoReturn value
+	// when there is no result slot).
+	retClosure := e.node("return", sel, map[string]any{"results": []*Node{closure}})
+	factoryBody := e.node("block", sel, map[string]any{"stmts": []*Node{retClosure}})
+	factory := e.node("funclit", sel, map[string]any{
+		"params": []*Node{param}, "results": []*Node{}, "body": factoryBody,
+	})
+	return e.node("call", sel, map[string]any{"fun": factory, "args": []*Node{recv}, "type": t}), nil
 }
 
 // exportMethodCall exports a method call x.M(args) (M6, WS H). The receiver
