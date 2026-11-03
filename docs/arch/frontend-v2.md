@@ -1,6 +1,86 @@
 # frontend/v2 — proper parser → AST pipeline
 
-**Status:** design / in-progress (long-lived parallel track, started 2026-10-15).
+> **RETIRED 2026-11-03 — decision record (P1-3 remediation lane for
+> REVIEW-2026-11-03-09).** Frontend v2 was removed from the product tree
+> (Go module `internal/frontend/v2/`, Java package
+> `graalgo.frontend.v2`, and the `make test-v2` target). This document is
+> retained as the design record and the note of where the work lives: the
+> full code is recoverable from git history at base `bfd20e87`
+> (e.g. `git show bfd20e87:internal/frontend/v2/emit/emit.go`, or
+> `git log -- internal/frontend/v2` for its history). The rest of this
+> document below is the pre-retirement design, kept verbatim as history.
+>
+> **Decision: retire, not wire.** Wiring v2 into a launcher was costed
+> and rejected; the evidence and the wiring cost are recorded here so
+> the decision is not re-litigated without new evidence.
+>
+> Evidence at `bfd20e87` (all verified by repo-wide grep and code
+> reading, 2026-11-03):
+>
+> 1. Zero product callers. `NodeFactoryV2` / `BinaryDecoder` are
+>    referenced only by their own test (`BinaryDecoderTest`) and by the
+>    test `Runner` registration. Both product launchers use the v1
+>    factory only: `internal/backend/runtime/.../launcher/Main.java`
+>    (`new NodeFactory(source)`) and
+>    `internal/backend/interop/.../p3sync/launcher/P3SyncMain.java`.
+>    `make all` ran `test-v2` but had no `build-v2` product step.
+> 2. The Go emitter is a single-package subset, not a second frontend
+>    for real programs. `emitDocument` returns `Globals: []any{}` always;
+>    top-level `GenDecl` (package vars, consts, types) is skipped;
+>    `emitFuncDecl` ignores the method receiver, so methods are not
+>    represented; statements `defer`, `go`, `select`, `switch`,
+>    type-switch, `send`, and labeled statements are rejected, as are
+>    function literals, `*` expressions, type assertions, generic
+>    instantiation (`IndexListExpr`), and `...`. The `PROGRESS.md`
+>    "Next" list — differential test vs gc, methods, package-level
+>    vars and init order, generics, multi-package import resolution —
+>    was entirely unmet.
+> 3. There is no executable program form to wire. The v2 driver only
+>    prints a summary (`package %s: %d funcs...`); `encode-demo`
+>    writes a binary file no launcher reads; and
+>    `NodeFactoryV2.buildProgram` returns a `V2Program` (a function
+>    list with bodies) — no `RootNode`/`CallTarget`, no `main`
+>    lookup, no globals or runtime bootstrap, none of the v1
+>    `Program` API (`root()`, `descriptor()`, `kindsByName()`,
+>    `slotsByName()`) or the `WireKindRegistrar` handling that
+>    `Main.runOne` performs. Wiring is not a flag flip.
+> 4. The track is stale. Last substantive emitter work is 2026-10-16
+>    (V2-12 deterministic emission); the only later touch removed a
+>    println demo (2026-10-29). Its own coverage matrix is
+>    classification-only and has drifted: `coverage_test.go` lists
+>    `CompositeLit`/`IndexExpr`/`SliceExpr` as loudly rejected while
+>    `emit/nodes.go` actually emits them.
+> 5. Baseline before removal: `make test-v2` was green on 2026-11-03
+>    (Go vet + tests). Retirement removes green-but-unshipped code,
+>    not broken code — which is exactly why it was expensive dead
+>    code: it looked alive.
+>
+> Cost of wiring (candidate path would have been `Main.java`
+> / `graalgo-run` only — never both launchers at once): a
+> `gofrontend-v2` build step; a launcher flag plus subprocess binary
+> transfer (or circular compilation of `go/*`, itself still open);
+> `RootNode`/`CallTarget` wrapping, `main` lookup, globals/init, and
+> a `WireKindRegistrar` equivalent; completing the emitter for every
+> rejected construct plus methods, package-level state, and
+> multi-package linking; then the differential corpus
+> (`test/differential/`) and `snapshot-check` gates, both currently
+> v1-only. That is completing the rewrite (multi-week), not wiring —
+> and a flag-gated subset path would ship a frontend that rejects
+> most programs while doubling wire-format maintenance, the exact
+> burden P1-3 complains about.
+>
+> Cost of retiring: deleting 2,724 lines of Go (13 files) and 1,803
+> lines of Java (1,579 main + 224 test), the `test-v2` Makefile
+> target, one `Runner` registration line, and the `REPO_STRUCTURE.md`
+> bullet — with zero product behavior change, because no caller
+> existed. The design above and the git history preserve the work.
+>
+> Revival condition: v2 returns only when it meets its own cutover
+> criteria (differential corpus with zero drift vs gc, a complete
+> emitter, and a launcher path) under a fresh lane — not by
+> re-adding a flag to an incomplete frontend.
+
+**Status (pre-retirement):** design / in-progress (long-lived parallel track, started 2026-10-15).
 **Goal:** Replace the bodge-y v1 frontend with a clean parser → AST → backend
 pipeline. No synthetic packages, no package-name special cases, no stdlib-call
 desugaring, no import overlay, no JSON wire format.
