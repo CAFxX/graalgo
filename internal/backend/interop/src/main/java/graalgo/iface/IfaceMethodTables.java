@@ -8,7 +8,6 @@ import java.util.Map;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
 import graalgo.frontend.TypeTable;
-import graalgo.p3log.P3Log;
 import graalgo.values.GoFunc;
 
 /**
@@ -101,15 +100,27 @@ public final class IfaceMethodTables {
                 } else {
                     f = functions.get(ref.objId);
                     if (f == null) {
-                        // Disk-MR stubs are skipped by the frontend (desugar
-                        // rewrites all calls to the __-helper); the method
-                        // table entry is vestigial. Skip instead of failing.
-                        P3Log.warn(IfaceMethodTables.class,
-                                "ifacemethod: method \"" + m.getKey()
+                        // Restored fail-fast (2026-11-03, review-20261103-
+                        // iface-failfast): d92e11fd replaced this throw
+                        // with warn+skip as a stopgap for disk-MR stubs,
+                        // but fix-redmaster-r40 (96d0cff9) now maps
+                        // disk-MR methods to their pair-returning
+                        // __-helpers at export (methodTableEntries,
+                        // helper-first), so a real disk-MR method never
+                        // reaches here with its stub id. Any id still
+                        // unknown here is therefore an exporter bug or
+                        // corrupt document, not a vestigial stub, and
+                        // must fail loudly at install time instead of
+                        // silently dropping a dispatchable method (the
+                        // table would otherwise install without it and
+                        // fail only later, at itab build, if at all).
+                        // This matches the class javadoc, the
+                        // P3SyncMain "fails fast here" comment, and
+                        // IfaceMethodTablesTest.testMissingObjIdFailsFast.
+                        throw new FrontendException("ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
                                 + "\" refers to unknown function object id " + ref.objId
-                                + " (skipped; likely a disk-MR stub)");
-                        continue;
+                                + " (WS D)");
                     }
                     embMethods = List.of();
                 }
