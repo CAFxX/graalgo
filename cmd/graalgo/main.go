@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -197,12 +198,29 @@ func isGraalgoRoot(dir string) bool {
 // travel as explicit argv flags, never environment variables: env is
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
+// Build tags are not privilege-conferring — they are ordinary build
+// inputs — and travel via GRAALGO_BUILD_TAGS, the channel the frontend's
+// disk importer already reads (internal/frontend/diskimport.go) to
+// select dependency files; see graalgoRunWithTags.
 func graalgoRun(root string, args []string) int {
+	return graalgoRunWithTags(root, args, nil)
+}
+
+// graalgoRunWithTags is graalgoRun with the given -tags forwarded to the
+// backend: the tags are appended to any inherited GRAALGO_BUILD_TAGS
+// value (never silently replacing it) so the frontend applies them to
+// dependency selection alongside the driver's own directory filtering
+// (resolveFilesWithTags). With no tags the child simply inherits the
+// process environment unchanged.
+func graalgoRunWithTags(root string, args []string, tags []string) int {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.Command(runner, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(tags) > 0 {
+		cmd.Env = withBuildTagsEnv(tags)
+	}
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
@@ -211,6 +229,28 @@ func graalgoRun(root string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// withBuildTagsEnv returns the process environment with GRAALGO_BUILD_TAGS
+// set to the inherited value plus tags (space-separated, as the frontend
+// parses it). Used by graalgoRunWithTags; kept as a pure function so
+// tests can assert the merge without spawning a backend.
+func withBuildTagsEnv(tags []string) []string {
+	merged := strings.Join(append(append([]string{}, strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...), tags...), " ")
+	env := os.Environ()
+	for i, e := range env {
+		if strings.HasPrefix(e, "GRAALGO_BUILD_TAGS=") {
+			env[i] = "GRAALGO_BUILD_TAGS=" + merged
+			return env
+		}
+	}
+	return append(env, "GRAALGO_BUILD_TAGS="+merged)
+}
+
+// splitBuildTags splits a -tags value the way `go build` accepts it:
+// comma- and/or space-separated.
+func splitBuildTags(s string) []string {
+	return strings.Fields(strings.ReplaceAll(s, ",", " "))
 }
 
 // graalgoRunProgram invokes the backend for `graalgo run` and emulates
@@ -225,7 +265,11 @@ func graalgoRun(root string, args []string) int {
 // prints no such line for its own build failures. Disambiguating needs
 // a backend exit-code convention change.
 func graalgoRunProgram(root string, args []string) int {
-	code := graalgoRun(root, args)
+	return graalgoRunProgramWithTags(root, args, nil)
+}
+
+func graalgoRunProgramWithTags(root string, args []string, tags []string) int {
+	code := graalgoRunWithTags(root, args, tags)
 	if code != 0 {
 		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
 		return 1
@@ -237,15 +281,25 @@ func graalgoRunProgram(root string, args []string) int {
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
 func resolveFiles(args []string) ([]string, error) {
+	return resolveFilesWithTags(args, nil)
+}
+
+// resolveFilesWithTags is resolveFiles with build-constraint filtering:
+// a directory (or the no-args current directory) expands only to files
+// satisfying the platform constraints plus tags, via go/build — the
+// same file set `go build` would use (see buildableGoFilesWithTags).
+// Explicitly listed .go files are NOT filtered, matching `go run`/`go
+// build`, which compile explicitly named files regardless of their
+// build constraints. A directory whose files are all excluded is an
+// error naming the directory, not a silent empty package (which `go
+// build` would also reject).
+func resolveFilesWithTags(args []string, tags []string) ([]string, error) {
 	if len(args) == 0 {
-		matches, err := filepath.Glob("*.go")
-		if err != nil {
-			return nil, err
+		files := buildableGoFilesWithTags(".", tags)
+		if len(files) == 0 {
+			return nil, fmt.Errorf("no buildable Go files in current directory")
 		}
-		if len(matches) == 0 {
-			return nil, fmt.Errorf("no Go files in current directory")
-		}
-		return matches, nil
+		return files, nil
 	}
 	var files []string
 	for _, a := range args {
@@ -263,11 +317,11 @@ func resolveFiles(args []string) ([]string, error) {
 			return nil, fmt.Errorf("no such file or directory: %s", a)
 		}
 		if fi.IsDir() {
-			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
-			if err != nil {
-				return nil, err
+			dirFiles := buildableGoFilesWithTags(a, tags)
+			if len(dirFiles) == 0 {
+				return nil, fmt.Errorf("no buildable Go files in %s", a)
 			}
-			files = append(files, matches...)
+			files = append(files, dirFiles...)
 			continue
 		}
 		files = append(files, a)

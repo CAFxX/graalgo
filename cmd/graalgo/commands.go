@@ -41,23 +41,26 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
-	if len(flagArgs) > 0 {
-		bf, err := parseBuildFlags(flagArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
-			return 2
-		}
-		if bf.ldflags != "" {
-			fmt.Fprintf(os.Stderr, "graalgo run: -ldflags: not yet supported\n")
-			return 1
-		}
-		// -o is meaningless for `run` (no binary produced); reject
-		// clearly rather than silently ignoring.
-		if bf.output != "" {
-			fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
-			return 1
-		}
+	// -tags is honored, not just accepted: it filters directory
+	// expansion (resolveFilesWithTags) and is forwarded to the backend
+	// for dependency selection (graalgoRunWithTags). Dropping it
+	// silently was REVIEW-2026-11-03 P1-T4.
+	bf, err := parseBuildFlags(flagArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
+		return 2
 	}
+	if bf.ldflags != "" {
+		fmt.Fprintf(os.Stderr, "graalgo run: -ldflags: not yet supported\n")
+		return 1
+	}
+	// -o is meaningless for `run` (no binary produced); reject
+	// clearly rather than silently ignoring.
+	if bf.output != "" {
+		fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
+		return 1
+	}
+	tags := splitBuildTags(bf.tags)
 
 	if len(rest) == 0 {
 		fmt.Fprintf(os.Stderr, "graalgo run: no Go files listed\n")
@@ -81,15 +84,18 @@ func cmdRun(root string, args []string) int {
 		// Program args are separated from the launcher's own flags by
 		// "--" (the launcher treats every bare "-..." before "--" as
 		// its own flag).
+		// Explicit files are compiled regardless of build constraints
+		// (like `go run`), but -tags still reaches the backend for
+		// dependency selection.
 		runArgs := append(append([]string{}, progFiles...), "--")
 		runArgs = append(runArgs, progArgs...)
-		return graalgoRunProgram(root, runArgs)
+		return graalgoRunProgramWithTags(root, runArgs, tags)
 	}
 
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
 	// the package build).
-	files, err := resolveFiles([]string{target})
+	files, err := resolveFilesWithTags([]string{target}, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -105,22 +111,25 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	if code := graalgoRunWithTags(root, append([]string{"--check"}, pkgFiles...), tags); code != 0 {
 		return code
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
-	return graalgoRunProgram(root, runArgs)
+	return graalgoRunProgramWithTags(root, runArgs, tags)
 }
 
 // buildFlags holds the parsed `go build` flags that the driver recognizes.
 // Unrecognized flags are rejected; recognized-but-unsupported flags produce
 // a clear "not yet supported" error naming the flag.
 type buildFlags struct {
-	output  string   // -o: output binary path
-	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
-	tags    string   // -tags: build tags (accepted; backend honors via go/build)
-	pkgs    []string // remaining package/file args
+	output  string // -o: output binary path
+	ldflags string // -ldflags: linker flags (forwarded; -X needs backend)
+	// tags holds -tags: applied to directory expansion via go/build,
+	// and forwarded to the backend via GRAALGO_BUILD_TAGS for
+	// dependency selection; never silently dropped.
+	tags string
+	pkgs []string // remaining package/file args
 }
 
 // parseBuildFlags separates build flags from package args, following `go`
@@ -197,7 +206,8 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	tags := splitBuildTags(bf.tags)
+	files, err := resolveFilesWithTags(bf.pkgs, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -225,7 +235,7 @@ func cmdBuild(root string, args []string) int {
 	wireFile.Close()
 	defer os.Remove(wirePath)
 	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
-	if code := graalgoRun(root, emitArgs); code != 0 {
+	if code := graalgoRunWithTags(root, emitArgs, tags); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
 		return 1
 	}

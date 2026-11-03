@@ -301,9 +301,26 @@ func parseModulePath(modData []byte) string {
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
 func buildableGoFiles(dir string) []string {
+	return buildableGoFilesWithTags(dir, nil)
+}
+
+// buildableGoFilesWithTags is buildableGoFiles plus the given -tags
+// (the same tag set `go build -tags` would apply). The driver reuses it
+// for `run`/`build` directory expansion so tag/OS-gated variants that
+// `go build` would separate are never compiled together (REVIEW-2026-11-03
+// P1-T4). A nil result means constraints excluded every file (a
+// build.NoGoError), not "fall back to all files": falling back there
+// would silently re-include exactly the files the tags excluded.
+func buildableGoFilesWithTags(dir string, tags []string) []string {
 	ctxt := build.Default
+	if len(tags) > 0 {
+		ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), tags...)
+	}
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
+		if _, ok := err.(*build.NoGoError); ok {
+			return nil
+		}
 		// Not importable (no go.mod context, etc.): fall back to all
 		// files and let the backend report real errors.
 		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))

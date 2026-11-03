@@ -209,13 +209,22 @@ test-v2:
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
 #   make gate1 PKG=foo — single package trial
 GATE1_PKGS ?= strconv errors sort strings bytes
+# Every package runs even if an earlier one fails (run.py exits non-zero
+# on any non-PASS verdict), but the target as a whole fails: a previous
+# `|| true` swallowed every failure and printed success unconditionally
+# (REVIEW-2026-11-03 P1-T7). The failing packages are named on stderr.
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@fail=0; failed=""; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || { fail=1; failed="$$failed $$pkg"; }; \
+	done; \
+	if [ "$$fail" -ne 0 ]; then \
+		echo "Gate 1 pilot FAILED for:$$failed. See tools/gate1/.tmp/*/verdict.txt" >&2; \
+		exit 1; \
+	fi
 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build
