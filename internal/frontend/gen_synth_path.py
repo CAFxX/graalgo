@@ -37,16 +37,21 @@ HEADER = '''// P3-M9 (tier1c): synthetic `path` package.
 //
 // Value model:
 //   - path.go is gc 1.27.1's implementation ported verbatim.
-//   - DEVIATION 1 (documented): internal/bytealg is not in the frontend
-//     overlay (tier1d, in progress). bytealg.LastIndexByteString(s, '/')
-//     -> strings.LastIndexByte(s, '/'). Identical semantics.
-//     Retest trigger: internal/bytealg lands in the overlay.
+//   - DEVIATION 1 (documented): bytealg.LastIndexByteString(s, '/')
+//     -> strings.LastIndexByte(s, '/') (and bytealg.IndexByteString
+//     -> strings.IndexByte in match.go). Identical semantics; the
+//     replacement is permanent, not pending on internal/bytealg
+//     landing (it has since landed, but nothing here needs it).
 //   - DEVIATION 2 (documented): Split (2-result) via Appendix M
 //     (__pathSplit helper + pathSplitPair + desugar entry).
-//   - SCOPE-LIMITED (documented): Match, scanChunk, matchChunk, getEsc
-//     (pattern matching) are DROPPED. They involve 3-result functions
-//     and utf8.DecodeRuneInString; the full port awaits unicode/utf8
-//     in the overlay. Retest trigger: unicode/utf8 lands (tier1a).
+//   - Match, scanChunk, matchChunk, getEsc are ported verbatim from
+//     match.go (2026-11-03, REVIEW-2026-11-03-16 S9: the unicode/utf8
+//     retest trigger fired — unicode/utf8 is in the overlay — so the
+//     scope limit is discharged, not carried). The multi-result
+//     functions use the general multi-result machinery (synthetic
+//     bodies are pre-registered by exportSyntheticBodies); the only
+//     adaptation is bytealg.IndexByteString -> strings.IndexByte
+//     (identical semantics, same as DEVIATION 1).
 //     ErrBadPattern IS ported (from match.go): it is a dependency-free
 //     exported var (errors.New only) that consumers of the pattern API
 //     reference directly (e.g. io/fs's Glob reports path.ErrBadPattern;
@@ -63,6 +68,7 @@ const syntheticPathSource = `package path
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // ---- Deviation 2: Appendix M for Split ----
@@ -105,7 +111,15 @@ def main():
     # embedded in a raw-string const.
     decl = m.group(0).replace("`", "'")
     parts.append("// ---- ErrBadPattern, ported from match.go ----\n" + decl + "\n")
-    # Only path.go (match.go is otherwise scope-limited).
+    # match.go in full (minus the ErrBadPattern decl already emitted
+    # above): Match/scanChunk/matchChunk/getEsc, verbatim except the
+    # bytealg -> strings adaptation (identical semantics).
+    msrc = strip_package(strip_imports(msrc))
+    msrc = re.sub(r"(?m)^// ErrBadPattern indicates.*\nvar ErrBadPattern = .*\n",
+                  "", msrc, count=1)
+    msrc = msrc.replace("bytealg.IndexByteString", "strings.IndexByte")
+    msrc = msrc.replace("`", "'")
+    # path.go, then match.go.
     with open(f"{GOROOT}/path.go") as f:
         src = f.read()
     src = strip_package(src)
@@ -136,6 +150,7 @@ def main():
         "\t// P3-M9: Split -> __pathSplit (no multi-result calls in synthetic).\n\treturn Clean(__pathSplit(path).dir)",
     )
     parts.append(src.rstrip() + "\n\n")
+    parts.append(msrc.rstrip() + "\n\n")
     out = "".join(parts)
     # The Split stub sits immediately before Dir's doc comment (not in gc's
     # Split position between Clean and Join).

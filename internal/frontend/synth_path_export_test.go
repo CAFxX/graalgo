@@ -43,3 +43,48 @@ func main() {
 		t.Fatalf("ExportFile: %v", err)
 	}
 }
+
+// TestSyntheticPathMatch is the REVIEW-2026-11-03-16 S9 regression test:
+// path.Match/scanChunk/matchChunk/getEsc were dropped as scope-limited
+// pending unicode/utf8, and the trigger fired when unicode/utf8 landed
+// in the overlay without anyone re-porting them. The port is restored
+// verbatim from gc match.go (bytealg -> strings only). This test pins
+// export of a program that calls the multi-result Match in 2-target
+// assignment and in if-init position, including a non-ASCII class
+// (which exercises utf8.DecodeRuneInString inside matchChunk/getEsc)
+// and a malformed pattern (which exercises the ErrBadPattern path).
+func TestSyntheticPathMatch(t *testing.T) {
+	src := `package main
+
+import (
+	"path"
+)
+
+func main() {
+	matched, err := path.Match("*.go", "main.go")
+	if err != nil {
+		println("err")
+	}
+	if matched {
+		println("match1")
+	}
+	if ok, err := path.Match("[a-c]x", "bx"); err == nil && ok {
+		println("match2")
+	}
+	if ok, err := path.Match("[é-ü]z", "ñz"); err == nil && ok {
+		println("match3")
+	}
+	if _, err := path.Match("[", "x"); err == path.ErrBadPattern {
+		println("badpattern")
+	}
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "synpathmatch.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportFile(p); err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+}
