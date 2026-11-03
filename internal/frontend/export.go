@@ -9180,6 +9180,15 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// P4 (driver-harden): clear lowers to the additive "clear" wire
 		// node — the frozen v1 builtin path rejects it (WS G), but real
 		// modules use it. General: maps and slices per Go 1.21 semantics.
+		// REV-2026-11-03-15 P1-2: the backend zeroes slice elements with
+		// the Go zero value, which is NOT Java null for string, struct,
+		// and complex elements (cf. Boxing.zero/newArray) — so a slice
+		// argument carries its element type id ("elem") on the wire.
+		// Map arguments need no element type. A slice argument whose
+		// element type cannot be resolved here gets no "elem" field,
+		// and the backend fails loudly at build time (statically-known
+		// slice) or at first execution (unknown operand kind) rather
+		// than null-filling.
 		if len(c.Args) != 1 {
 			return nil, scopeErrorf("clear requires exactly one argument")
 		}
@@ -9187,7 +9196,17 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
-		return e.node("clear", c, map[string]any{"x": x}), nil
+		fields := map[string]any{"x": x}
+		if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
+			if sl, ok := tv.Type.Underlying().(*types.Slice); ok {
+				elemTid, err := e.typeID(sl.Elem())
+				if err != nil {
+					return nil, err
+				}
+				fields["elem"] = elemTid
+			}
+		}
+		return e.node("clear", c, fields), nil
 	default:
 		var err error
 		args, err = e.exportCallArgs(c)
