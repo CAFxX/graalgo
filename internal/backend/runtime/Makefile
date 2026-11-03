@@ -97,10 +97,9 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
 test: main $(OUT_TEST)/.built
-	# BRIDGE (test lane): the differential tests resolve corpus/… paths
-	# relative to the module working directory (as in the phase-2 tree).
-	# The ./corpus symlink points at phases/phase2/corpus until the test
-	# code-move lane relocates it to test/corpus/; repoint/remove then.
+	# The differential tests resolve corpus paths via ../../../test/corpus/
+	# (see P1_CORPUS/P2_CORPUS below); the former ./corpus symlink to
+	# phases/phase2/corpus was deleted as dangling in the restructure.
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \

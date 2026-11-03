@@ -20,7 +20,12 @@ import java.nio.file.Path;
 // by every test below).
 public final class MainTest {
 
-    private static final Path CORPUS = Path.of("corpus", "straightline");
+    private static Path repoDir() {
+        return Path.of(System.getProperty("graalgo.repo.dir", "."));
+    }
+
+    private static final Path CORPUS =
+            repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("straightline");
 
     private static String captureStderr(java.util.concurrent.Callable<Integer> r) throws Exception {
         PrintStream old = System.err;
