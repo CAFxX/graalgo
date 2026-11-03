@@ -455,21 +455,25 @@ func TestGofrontendErrorPrefix(t *testing.T) {
 	}
 }
 
-// TestInitRejected verifies methodology P1-3: func init() in the main
-// package or in a flattened dependency is a fail-fast scope error ("not
-// supported in M1"), never a silent divergence (the frozen exporter
-// type-checks init functions but the runtime never executes them).
-func TestInitRejected(t *testing.T) {
+// TestInitAccepted replaces TestInitRejected (deleted 2026-11-03,
+// REVIEW-2026-11-03-00 N-P1-2): the rejection's premise — "the runtime
+// never executes init functions", probed 2026-10-06 — is stale. The
+// 2026-11-03 probe showed the v1 runtime DOES execute init() via the
+// globals Obj==-1 sequence, so Flatten now accepts init() everywhere:
+// main keeps its real inits, dep inits become renamed functions driven
+// by a per-package blank-var runner (see flatten.go). The order proof
+// (gc differential on the flattened program) lives in
+// TestFlattenDepInitOrder; this test pins only the acceptance itself,
+// in both packages, at the MergeDir seam.
+func TestInitAccepted(t *testing.T) {
 	t.Run("main", func(t *testing.T) {
 		dir := t.TempDir()
 		writeFiles(t, dir, map[string]string{
 			"main.go": "package main\n\nfunc init() {}\n\nfunc main() {}\n",
 		})
-		_, err := MergeDir(dir)
-		if err == nil || !strings.Contains(err.Error(), "not supported in M1") {
-			t.Fatalf("expected init scope error, got: %v", err)
+		if _, err := MergeDir(dir); err != nil {
+			t.Fatalf("main init must be accepted, got: %v", err)
 		}
-		t.Logf("main init rejected: %v", err)
 	})
 
 	t.Run("dep", func(t *testing.T) {
@@ -479,11 +483,9 @@ func TestInitRejected(t *testing.T) {
 			"main.go":    "package main\n\nimport _ \"example.com/initdep/dep\"\n\nfunc main() {}\n",
 			"dep/dep.go": "package dep\n\nfunc init() {}\n",
 		})
-		_, err := MergeDir(dir)
-		if err == nil || !strings.Contains(err.Error(), "not supported in M1") {
-			t.Fatalf("expected init scope error, got: %v", err)
+		if _, err := MergeDir(dir); err != nil {
+			t.Fatalf("dep init must be accepted, got: %v", err)
 		}
-		t.Logf("dep init rejected: %v", err)
 	})
 }
 

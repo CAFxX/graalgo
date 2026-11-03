@@ -50,13 +50,6 @@ func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*Pa
 
 	// Scope checks first (fail fast, before any rewriting).
 	allRefs := append(append([]*PackageRef{}, deps...), mainRef)
-	for _, ref := range allRefs {
-		for _, f := range imp.Files(ref.ImportPath) {
-			if err := rejectInitFunc(ref, f); err != nil {
-				return "", err
-			}
-		}
-	}
 	for _, dep := range deps {
 		if dep.PkgName == "main" {
 			return "", fmt.Errorf("p3frontend: dependency %q declares package main", dep.ImportPath)
@@ -90,18 +83,75 @@ func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*Pa
 
 	rw := &rewriter{renames: renames, dropPaths: dropPaths}
 
+	// Synthetic-name allocator for the init runners below. A synthetic
+	// name must not collide with any identifier that can appear in the
+	// merged file: renamed dep identifiers, main's own identifiers, or
+	// an already-allocated synthetic name. Renaming prepends the dep
+	// prefix to a user identifier, so a fixed synthetic scheme (e.g.
+	// prefix+"runInit") could collide with a renamed user identifier of
+	// the same spelling (a dep func literally named "runInit"); appending
+	// "_" until the name is free is deterministic and collision-free.
+	// User identifiers starting with "p3i_" are rejected above, so main's
+	// identifiers can never carry a dep prefix.
+	taken := map[string]bool{}
+	for _, nn := range renames {
+		taken[nn] = true
+	}
+	for _, name := range mainPkg.Scope().Names() {
+		taken[name] = true
+	}
+	allocSynthetic := func(base string) string {
+		nm := base
+		for taken[nm] {
+			nm += "_"
+		}
+		taken[nm] = true
+		return nm
+	}
+
 	merged := &ast.File{Name: ast.NewIdent("main")}
 	var keptImports []*ast.ImportSpec
 	seenImport := map[string]bool{} // path+"\x00"+name -> seen
 
-	emit := func(ref *PackageRef) {
+	// emit appends one package's declarations to the merged file. For a
+	// dependency, its func init() declarations are NOT emitted as init:
+	// a single merged package would run all var initializers before any
+	// init (Go spec, single-package order), but gc runs a package's inits
+	// before the next package's var initializers (package-at-a-time
+	// order). Instead each dep init is renamed to an ordinary function
+	// and a per-package runner, invoked by a blank-var initializer placed
+	// after that dep's declarations, calls them in declaration order.
+	// Blank-var initializers participate in the frozen exporter's
+	// topological var-init loop (stable by declaration order, with
+	// dependencies followed transitively through called function bodies),
+	// so the runner runs after its package's vars and before the next
+	// package's vars — reproducing gc's package-at-a-time order. The
+	// main package keeps its real init() functions: the exporter appends
+	// init calls after all var initializers, which is exactly gc's order
+	// for the main package (last). Probed 2026-11-03 (REVIEW-2026-11-03-00
+	// N-P1-2): the v1 runtime DOES execute init via the globals Obj==-1
+	// sequence; the old "runtime never executes them" rejection was stale.
+	emit := func(ref *PackageRef, isDep bool) {
 		rw.info = imp.Info(ref.ImportPath)
+		var initNames []string
+		prefix := ""
+		if isDep {
+			prefix = prefixFor(ref.ImportPath)
+		}
 		for _, f := range imp.Files(ref.ImportPath) {
 			merged.Comments = append(merged.Comments, retainedComments(f)...)
 			for _, decl := range f.Decls {
 				gd, ok := decl.(*ast.GenDecl)
 				if !ok {
-					merged.Decls = append(merged.Decls, rw.decl(decl))
+					out := rw.decl(decl)
+					if isDep {
+						if fd, ok := out.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "init" {
+							nm := allocSynthetic(fmt.Sprintf("%sinit%d", prefix, len(initNames)))
+							fd.Name.Name = nm
+							initNames = append(initNames, nm)
+						}
+					}
+					merged.Decls = append(merged.Decls, out)
 					continue
 				}
 				if gd.Tok == token.IMPORT {
@@ -127,11 +177,42 @@ func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*Pa
 				merged.Decls = append(merged.Decls, rw.decl(decl))
 			}
 		}
+		if isDep && len(initNames) > 0 {
+			runner := allocSynthetic(prefix + "runInit")
+			body := &ast.BlockStmt{}
+			for _, nm := range initNames {
+				body.List = append(body.List, &ast.ExprStmt{
+					X: &ast.CallExpr{Fun: ast.NewIdent(nm)},
+				})
+			}
+			// The runner returns int so the blank-var initializer below
+			// is a value; the value is discarded (blank identifier).
+			body.List = append(body.List, &ast.ReturnStmt{
+				Results: []ast.Expr{&ast.BasicLit{Kind: token.INT, Value: "0"}},
+			})
+			merged.Decls = append(merged.Decls,
+				&ast.FuncDecl{
+					Name: ast.NewIdent(runner),
+					Type: &ast.FuncType{
+						Params:  &ast.FieldList{},
+						Results: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("int")}}},
+					},
+					Body: body,
+				},
+				&ast.GenDecl{
+					Tok: token.VAR,
+					Specs: []ast.Spec{&ast.ValueSpec{
+						Names:  []*ast.Ident{ast.NewIdent("_")},
+						Values: []ast.Expr{&ast.CallExpr{Fun: ast.NewIdent(runner)}},
+					}},
+				},
+			)
+		}
 	}
 	for _, dep := range deps {
-		emit(dep)
+		emit(dep, true)
 	}
-	emit(mainRef)
+	emit(mainRef, false)
 
 	if len(keptImports) > 0 {
 		sort.Slice(keptImports, func(i, j int) bool {
@@ -184,18 +265,6 @@ func retainedComments(f *ast.File) []*ast.CommentGroup {
 		}
 	}
 	return out
-}
-
-// rejectInitFunc fails fast on func init: the frozen exporter type-checks
-// init functions but the runtime never executes them (probed 2026-10-06),
-// so letting one through would be a silent gc divergence.
-func rejectInitFunc(ref *PackageRef, f *ast.File) error {
-	for _, decl := range f.Decls {
-		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "init" {
-			return fmt.Errorf("p3frontend: package %q: func init() is not supported in M1 (frontend/v1 exports init functions but the runtime never executes them)", ref.ImportPath)
-		}
-	}
-	return nil
 }
 
 // ---------------------------------------------------------------------------

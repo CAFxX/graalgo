@@ -164,8 +164,8 @@ rewrite **shadowing-correct**:
   colliding local type of the same name.
 
 Import specs for flattened packages are dropped (blank imports
-`import _ "x"` are flattened for side effects, then dropped; the M1
-`init()` rule in §4 makes this honest). `runtime`/`fmt` specs are kept and
+`import _ "x"` are flattened for side effects — including `init()`
+side effects, see §4 — then dropped). `runtime`/`fmt` specs are kept and
 deduplicated.
 
 The merged file is one `*ast.File`: `package main`, the kept imports
@@ -192,14 +192,17 @@ ExportDir(dir):
      (a dep named "main", or a main dir not named "main", is a scope error).
   2. LoadClosure(dir) → dependency-ordered local packages.
   3. Type-check every package with p3Importer (records Info).
-  4. Reject any `func init()` in any package — see §4.
-  5. Flatten → merged source bytes (already gofmt'd).
+  4. Flatten → merged source bytes (already gofmt'd). `func init()` is
+     accepted in every package — see §4 for the encoding.
+  5. Write to <tmpdir>/p3merged.go (fixed basename → deterministic
+     `package.files`; the tmpdir itself never enters the document).
+  6. Return frontend.ExportFile(tmpfile).
   6. Write to <tmpdir>/p3merged.go (fixed basename → deterministic
      `package.files`; the tmpdir itself never enters the document).
   7. Return frontend.ExportFile(tmpfile).
 ```
 
-`MergeDir(dir) (string, error)` exposes steps 1–5 for tests that need the
+`MergeDir(dir) (string, error)` exposes steps 1–4 for tests that need the
 merged source (differential runs).
 
 ## 3. Why flattening (and not modifying Phase 1)
@@ -218,24 +221,45 @@ merged source (differential runs).
    which a modified exporter would not be without re-running the whole
    Phase-1 suite.
 
-## 4. Empirical finding: `func init()` is accepted but never executed
+## 4. `func init()`: the 2026-10-06 rejection is stale; init is supported
 
-Probed 2026-10-06 with the frozen toolchain: `gofrontend` type-checks
-`package main` with `func init()` (exit 0; `init` appears as an ordinary
-`funcdecl` in the document), but `graalgo-run` prints `INIT DID NOT RUN`
-where stock gc 1.27.1 prints `INIT RAN` (probe: `/tmp/initprobe2.go`;
-evidence in `hidden_files/m1/`). The launcher only looks up a funcdecl
-named `main`; nothing invokes `init`. This is a **silent gc divergence**,
-so M1 fails fast instead of flattening through it:
+Probed 2026-10-06 with the frozen toolchain, `graalgo-run` printed
+`INIT DID NOT RUN` where stock gc 1.27.1 printed `INIT RAN`, and M1
+failed fast on any `func init()` instead of flattening through it.
+That probe is STALE. Re-probed 2026-11-03 (REVIEW-2026-11-03-00 N-P1-2):
+the v1 runtime DOES execute `init()` — the exporter emits package
+`init()` functions as side-effect-only globals entries (`Obj == -1`,
+`initCallEnt`), which the factory evaluates in sequence before main,
+and a single-file program's markers match gc byte-identically. The
+old `rejectInitFunc` therefore wrongly rejected programs the v1 path
+handles.
 
-- Any `func init()` in the main package or any flattened dependency is a
-  scope error: `p3frontend: package "…": func init() is not supported in
-  M1 (frontend/v1 exports init functions but the runtime never executes
-  them)`.
-- Consequently blank imports are supported only for their (non-init)
-  global-initializer side effects; a blank-imported package containing
-  `init` hits the same error. This is the documented M1 limitation —
-  a clear scope error, never a silent gap.
+But simply deleting the rejection is NOT correct either: flattening
+into one package would run ALL var initializers before ANY init (Go
+spec, single-package order), while gc runs package-at-a-time (dep vars,
+dep inits, main vars, main inits). The encoding in `flatten.go`
+preserves gc order:
+
+- The main package keeps its real `init()` functions: the exporter
+  appends init calls after all var initializers, which is exactly gc's
+  order for the main package (last).
+- Each dependency's `init()` functions are renamed to ordinary
+  functions, and a per-package runner — invoked by a blank-var
+  initializer placed after that dep's declarations — calls them in
+  declaration order. Blank-var initializers participate in the
+  exporter's topological var-init loop (stable by declaration order,
+  dependencies followed transitively through called function bodies),
+  so the runner runs after its package's vars and before the next
+  package's vars.
+- Synthetic runner/init names are allocated collision-free (append
+  `"_"` until free) against renamed dep identifiers and main's own
+  identifiers.
+
+Consequently blank imports are supported for their full side effects,
+including `init()`. Verified by `TestFlattenDepInitOrder` (gc
+differential on the flattened program, including a runner-name
+collision case and a two-file dep) and by a graalgo run of the
+flattened two-package probe printing exactly gc's order.
 
 ## 5. GOROOT vs vendoring (M1 note)
 
@@ -255,7 +279,6 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 | flattened dep named `main` | `p3frontend: dependency "…" declares package main` |
 | unresolvable import | `p3frontend: cannot resolve import "…" (not stdlib, not in module "…")` |
 | compiling a stdlib package | `p3frontend: import "strings": stdlib package compilation lands in the P3-M7+ waves` |
-| `func init()` anywhere | `p3frontend: package "…": func init() not supported in M1 …` |
 | multiple `//go:build` lines | `p3frontend: …: multiple //go:build lines` (mirrors go/build) |
 
 ## 7. Testing
@@ -288,8 +311,14 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 - `TestGofrontendErrorPrefix`: exit-2 stderr surfaces with the frozen
   binary's duplicate `gofrontend: ` wrapper prefix collapsed.
 - `TestDeterministic`: `ExportDir` twice → byte-identical.
-- `TestInitRejected`: `func init()` in main and in a dep → the named
-  "not supported in M1" scope error (never a silent divergence).
+- `TestFlattenDepInitOrder`: a dep with a var initializer + `init()`
+  and a main with its own var initializer + `init()` — the flattened
+  program run under gc must print exactly gc's two-package order (dep
+  vars, dep inits, main vars, main inits, main body); includes a
+  runner-name collision case and a two-file dep. `TestInitAccepted`
+  pins MergeDir acceptance of `init()` in main and in a dep (it
+  replaces `TestInitRejected`, whose 2026-10-06 premise is stale —
+  see §4).
 - `TestStdlibScopeError`: `import "strings"` resolves via `ResolveImport`
   (proving the GOROOT mapping) then fails fast with the "P3-M7+ waves"
   scope error.
