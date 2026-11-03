@@ -196,7 +196,23 @@ func f() {
 	_ = t
 }
 `
-	joined := runVetOnSrc(t, src)
+	// The discarded-append statement is itself a type error ("is not
+	// used"), so Run returns a type-check failure; the appends
+	// diagnostic is still expected alongside it, by design.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.go")
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := Run([]string{path})
+	if err == nil {
+		t.Fatal("expected a type-check failure for the discarded append, got nil")
+	}
+	var msgs []string
+	for _, d := range ds {
+		msgs = append(msgs, d.Message)
+	}
+	joined := strings.Join(msgs, "\n")
 	if !strings.Contains(joined, "is not used") {
 		t.Errorf("expected appends diagnostic, got:\n%s", joined)
 	}

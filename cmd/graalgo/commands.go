@@ -270,14 +270,17 @@ func cmdVet(root string, args []string) int {
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
+	// Run the analyzers, one pass per real package (vet.Run groups the
+	// files and reports a type-check failure as an error). Diagnostics
+	// are printed even when type checking failed; the "no issues found"
+	// verdict below is only reachable when every package type-checked.
 	ds, err := vet.Run(files)
+	for _, d := range ds {
+		fmt.Printf("%s: %s\n", d.Pos, d.Message)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
-	}
-	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
 	}
 	if len(ds) > 0 {
 		return 1

@@ -54,7 +54,7 @@ var _ = cmp.Compare(1, 2)
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src22})
@@ -126,7 +126,7 @@ package p
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src})
@@ -138,7 +138,7 @@ var _ = x509.OIDFromInts([]uint64{1, 2})
 
 import "crypto/x509"
 
-var _ = x509.OIDFromInts([]uint64{1, 2})
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
 `
 	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
 		map[string]string{"p.go": src2})
@@ -179,7 +179,24 @@ func good(i int, p unsafe.Pointer) {
 	C.CBytes([]byte("x"))
 }
 `
-	joined := runVetOnModule(t, "", map[string]string{"p.go": src})
+	// The fixture imports "C", which go/types' importer.Default()
+	// cannot resolve in this harness, so Run returns a type-check
+	// failure; the cgocall diagnostics are still expected alongside
+	// it, by design.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.go")
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := Run([]string{path})
+	if err == nil {
+		t.Fatal("expected a type-check failure for the unresolvable C import, got nil")
+	}
+	var msgs []string
+	for _, d := range ds {
+		msgs = append(msgs, d.Message)
+	}
+	joined := strings.Join(msgs, "\n")
 	n := strings.Count(joined, "possibly passing Go type with embedded pointer to C")
 	if n != 3 {
 		t.Errorf("expected 3 cgocall diagnostics (slice, &slice, struct-with-slice), got %d:\n%s", n, joined)
