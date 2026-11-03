@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """Batch differential fuzzing driver.
 
-1. Builds graalgo Java modules once.
-2. Generates N programs (seed range).
-3. Runs diff_one.sh in parallel.
+1. Builds graalgo once (`make build` at the repo root, which also
+   builds the gofrontend binary the launcher needs).
+2. Generates N programs (seed range) with tools/fuzz-soak/gen/generator.py.
+3. Runs diff_one.sh in parallel (gc vs internal/backend/graalgo-sync-run).
 4. Classifies, dedups, writes results.jsonl + summary.
 
 Usage: run_batch.py --seeds START:END --out DIR [--jobs J] [--gmp N]
+
+Build prerequisites: GRAALVM_HOME must point at a GraalVM JDK 25
+(CI exports it from JAVA_HOME; locally the backend Makefiles default
+to ~/tools/graalvm-jdk-25). This script never reconstructs a classpath:
+the differential leg goes through the graalgo-sync-run wrapper, which
+owns the (load-bearing) classpath order.
 """
 import argparse
 import hashlib
@@ -16,9 +23,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: harness/run_batch.py -> fuzz-soak -> tools -> repo.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,9 +46,11 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build once: all three backend modules (truffle, runtime,
+    # interop) plus the gofrontend binary. The old phases/phase3 build
+    # target is gone with the phases/ tree (removed 2026-10-14).
+    print("== building graalgo (`make build`) ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=1800)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])

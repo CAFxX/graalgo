@@ -1,12 +1,17 @@
-# Layer 4 — fuzz soak (phases/phase3/PLAN.md §5, GG-0037): generative
-# differential fuzzing + native testing.F differential fuzzing, overnight
-# per release.
+# Layer 4 — fuzz soak (docs/arch/phases/phase3/PLAN.md §5, GG-0037):
+# generative differential fuzzing + native testing.F differential
+# fuzzing, overnight per release.
 #
 # Cadence: nightly (the overnight per-release soak) plus manual dispatch.
 # Each run: seeded program generation + differential harness batches
 # (run_soak.sh) and the native testing.F targets with differential replay
 # (fuzz/run_fuzz_native.sh). Minimized divergences become permanent
-# regressions per SPEC §5.4 (phases/phase3/fuzzing/findings/).
+# regressions per SPEC §5.4 (tools/fuzz-soak/findings/).
+#
+# Live layout (2026-11-03 repoint; the phases/ tree was removed
+# 2026-10-14): run_soak.sh builds via `make build` and runs the
+# differential leg through internal/backend/graalgo-sync-run
+# (P3SyncMain). This workflow must never again cite phases/ paths.
 #
 # The continuous adversarial track reserves the same interface:
 # run_soak.sh --seeds A:B runs one bounded batch.

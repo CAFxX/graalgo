@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Layer-4 fuzz soak runner (phases/phase3/PLAN.md §5 layer 4, GG-0037):
-# generative differential fuzzing, overnight per release.
+# Layer-4 fuzz soak runner (docs/arch/phases/phase3/PLAN.md §5 layer 4,
+# GG-0037): generative differential fuzzing, overnight per release.
 #
 # Runs the seeded program generator + differential harness
 # (harness/run_batch.py) in time-bounded batches until HOURS elapse, then
 # minimizes any divergences (harness/triage.py) and archives the findings.
 # Minimized divergences become permanent regressions per SPEC §5.4 (filed
-# under phases/phase3/fuzzing/findings/ with a minimized reproducer).
+# under tools/fuzz-soak/findings/ with a minimized reproducer).
 #
 # This is the OVERNIGHT slot. The CONTINUOUS adversarial track reserves the
 # same interface: `run_soak.sh --seeds A:B` runs one bounded batch (used by
@@ -26,7 +26,7 @@
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Repo root: fuzzing/run_soak.sh -> phase3 -> phases -> repo.
+# Repo root: tools/fuzz-soak/run_soak.sh -> tools -> repo.
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 export GR="${GR:-$REPO_ROOT}"
 export GO_BIN_DIR="${GO_BIN_DIR:-$HOME/tools/go/bin}"
@@ -86,8 +86,16 @@ for r in diverged:
     if not os.path.exists(prog):
         print(f"missing program for {r['file']}; skipping")
         continue
+    # triage.py takes flag arguments and writes ONE minimized file per
+    # program: --prog <failing.go> --out <minimized-file> --workdir <dir>.
+    # (A previous version of this caller passed the program positionally
+    # and the output directory as --out, so triage always errored and no
+    # minimized reproducer was ever written.)
     p = subprocess.run(
-        ["python3", f"{here}/harness/triage.py", prog, "--out", out],
+        ["python3", f"{here}/harness/triage.py",
+         "--prog", prog,
+         "--out", os.path.join(out, os.path.basename(prog)),
+         "--workdir", os.path.join(batchdir, "triage-work")],
         capture_output=True, text=True, timeout=1200)
     print(f"{r['file']}: triage rc={p.returncode}")
     if p.returncode != 0:

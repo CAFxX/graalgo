@@ -16,7 +16,11 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE1_DIR   phase-1 tree with the graalgo-run launcher
+#   PHASE1_DIR   legacy variable name, kept because backends.json
+#                resolves ${PHASE1_DIR}/../../internal/backend/graalgo-run:
+#                the default below AND internal/backend both normalize to
+#                the live launcher. Do NOT "fix" the default to
+#                internal/backend without changing backends.json too.
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
