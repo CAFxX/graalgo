@@ -27,7 +27,8 @@
 // so the exact gc signatures cannot even be declared):
 //   func NewEncoder(w io.Writer) io.WriteCloser
 //   func NewDecoder(r io.Reader) io.Reader
-// Re-test trigger: when io lands (P3-M8), declare these with exact gc
+// Follow-up (the io-landing condition has fired: io is in
+// syntheticSources since P3-M8): declare these with exact gc
 // signatures and implement the streaming encoder/decoder over the
 // synthetic Encode/Decode core. This omission is deliberate and loud —
 // never silent (the p3frontend drift test asserts the omission list).

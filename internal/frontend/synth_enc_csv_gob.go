@@ -1529,8 +1529,9 @@ type Encoder struct {
 //
 // M7 EXTENSION (not in gc 1.27.1): gc's NewEncoder takes an io.Writer;
 // io is out of M7 scope, so this in-memory constructor is provided
-// instead. Re-test trigger: when io lands (P3-M8), add NewEncoder with
-// the exact gc signature.
+// instead. Follow-up (the io-landing condition has fired: io is in
+// syntheticSources since P3-M8): add NewEncoder with the exact gc
+// signature.
 func NewBufferEncoder() *Encoder {
 	gobEnsureReg()
 	return &Encoder{}
@@ -1931,8 +1932,9 @@ type Decoder struct {
 //
 // M7 EXTENSION (not in gc 1.27.1): gc's NewDecoder takes an io.Reader;
 // io is out of M7 scope, so this in-memory constructor is provided
-// instead. Re-test trigger: when io lands (P3-M8), add NewDecoder with
-// the exact gc signature.
+// instead. Follow-up (the io-landing condition has fired: io is in
+// syntheticSources since P3-M8): add NewDecoder with the exact gc
+// signature.
 func NewBufferDecoder(data []byte) *Decoder {
 	gobEnsureReg()
 	return &Decoder{data: data, wire: make(map[int]int)}

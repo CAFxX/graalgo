@@ -15,7 +15,8 @@ const syntheticRandSource = `package rand
 // intrinsic (java.security.SecureRandom; added to the frozen table
 // post-analysis, coordinator decision — the table had no entropy symbol).
 // Int/Prime are omitted (signatures require math/big, deferred to M9+).
-// Re-test trigger: math/big lands (Int/Prime).
+// Follow-up (the math/big-landing condition has fired: math/big is in
+// syntheticSources): implement Int/Prime.
 
 import (
 	"errors"

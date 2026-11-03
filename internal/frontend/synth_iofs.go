@@ -13,9 +13,10 @@
 // constants (+ the String/IsDir/IsRegular/Perm/Type methods, pure Go),
 // the Err* sentinels, the File/ReadDirFile interfaces, and the FS
 // interface stub. Everything else in io/fs (Glob, ReadFile, WalkDir,
-// ReadDirFS, StatFS, Sub, ...) is OUT of M8 scope: it rides on the
-// synthetic os package once that lands (re-test trigger recorded in
-// phases/phase3/hidden_files/m8-analysis/os.md §6.8).
+// ReadDirFS, StatFS, Sub, ...) is OUT of M8 scope: it was to ride on
+// the synthetic os package, which has landed since P3-M8 — the
+// follow-up (implementing those io/fs helpers over synthetic os) is
+// recorded in phases/phase3/hidden_files/m8-analysis/os.md §6.8.
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no
 // unsafe). All functions are single-result, so no Appendix-M desugar

@@ -31,7 +31,8 @@
 // Omitted (io is not in M7 scope — NOT OK per the wave-1 import rules,
 // so the exact gc signature cannot even be declared):
 //   func Encode(out io.Writer, b *Block) error
-// Re-test trigger: when io lands (P3-M8), declare it with the exact gc
+// Follow-up (the io-landing condition has fired: io is in
+// syntheticSources since P3-M8): declare it with the exact gc
 // signature and implement it over the synthetic core. This omission is
 // deliberate and loud — never silent (the p3frontend drift test asserts
 // the omission list).
