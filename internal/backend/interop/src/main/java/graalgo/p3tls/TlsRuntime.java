@@ -33,6 +33,7 @@ import javax.net.ssl.X509TrustManager;
 import java.nio.ByteBuffer;
 import java.security.AlgorithmParameters;
 
+import graalgo.p3log.P3Log;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -76,6 +77,19 @@ public final class TlsRuntime {
      * P3-M9 (x509): GMP=1 handshake deadlock root cause.
      */
     private static final ConcurrentHashMap<Long, byte[]> PENDING =
+            new ConcurrentHashMap<>();
+
+    /**
+     * Last engine failure per handle, recorded when wrap/unwrap/
+     * peerCertificates/connectionState catch an exception (P1-B4). A nil
+     * wrap/unwrap result is ambiguous on its own — a clean peer close
+     * returns the same null — so the Go side reads this immediately
+     * after a nil result via {@link #lastError} to tell a real failure
+     * from a clean close. Consumed on read; removed on {@link #close}.
+     * The Go side's rule is: a nil result with an empty lastError is a
+     * clean close, never a swallowed exception.
+     */
+    private static final ConcurrentHashMap<Long, String> LAST_ERRORS =
             new ConcurrentHashMap<>();
 
     private static final int APP_BUF = 17 * 1024;
@@ -186,6 +200,21 @@ public final class TlsRuntime {
         // []byte is byte[]-backed (D5).
         byte[] arr = b.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
+    }
+
+    /**
+     * Records an engine failure for {@link #lastError} and logs it
+     * (P1-B4: the old code discarded the exception and returned the
+     * clean-close sentinel). Logged through P3Log, the interop module's
+     * sanctioned diagnostic channel, not a raw stderr print (the
+     * interop {@code check} gate rejects ad-hoc stderr printing).
+     * The message format is "<op> failed: <exception>" so the Go side
+     * can surface it as "tls: <op> failed: <exception>".
+     */
+    private static void recordError(long handle, String op, Exception e) {
+        String msg = op + " failed: " + e;
+        LAST_ERRORS.put(handle, msg);
+        P3Log.warn(TlsRuntime.class, "graalgo.tls: engine " + handle + ": " + msg);
     }
 
     /** Splits length-prefixed byte strings (uint32 BE length + data). */
@@ -451,6 +480,10 @@ public final class TlsRuntime {
     /**
      * Wraps application/handshake data into TLS records.
      * graalgo.tls.wrap(handle, plaintext) -> ciphertext (may be empty).
+     * Null on bad handle or engine failure; on failure the exception is
+     * recorded (see {@link #lastError}) — null alone must never be read
+     * as a clean close, it is only the failure/unknown-handle signal and
+     * the Go side resolves it through lastError immediately.
      */
     public static Object wrap(Object handleArg, Object plaintextArg) {
         SSLEngine engine = ENGINES.get(num(handleArg));
@@ -520,13 +553,17 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            recordError(num(handleArg), "wrap", e);
             return null;
         }
     }
 
     /**
      * Unwraps TLS records into application data.
-     * Returns app bytes (may be empty); null if the peer closed or on error.
+     * Returns app bytes (may be empty); null if the peer closed or on
+     * error. The two null cases are distinguished through
+     * {@link #lastError}: a recorded failure means error, an empty
+     * lastError means clean close.
      * graalgo.tls.unwrap(handle, netData) -> appdata | null
      */
     public static Object unwrap(Object handleArg, Object netDataArg) {
@@ -610,6 +647,7 @@ public final class TlsRuntime {
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
+            recordError(handle, "unwrap", e);
             return null;
         }
     }
@@ -653,6 +691,7 @@ public final class TlsRuntime {
             }
             return toGoBytes(out.toByteArray());
         } catch (Exception e) {
+            recordError(num(handleArg), "peerCertificates", e);
             return toGoBytes(new byte[0]);
         }
     }
@@ -673,8 +712,28 @@ public final class TlsRuntime {
             int suite = parseCipherSuite(cipher);
             return ((long) vers << 32) | (suite & 0xFFFFFFFFL);
         } catch (Exception e) {
+            recordError(num(handleArg), "connectionState", e);
             return -1;
         }
+    }
+
+    /**
+     * Last recorded engine failure for this handle, consumed on read.
+     * graalgo.tls.lastError(handle) -> message | "".
+     * The Go side calls this immediately after a nil wrap/unwrap result
+     * (or an empty peer-certificates result): a non-empty message is
+     * the engine failure to report as a Go error; an empty message
+     * means no failure was recorded, so the nil result was a clean
+     * peer close. Consuming on read keeps a failure from being
+     * misattributed to a later, unrelated nil result; callers with no
+     * error return (ConnectionState) drain the record for the same
+     * reason. Unknown handles report empty, like a clean close — a
+     * bad handle is a caller bug the Go side guards separately
+     * (engineHandle == 0), not an engine failure.
+     */
+    public static Object lastError(Object handleArg) {
+        String msg = LAST_ERRORS.remove(num(handleArg));
+        return msg == null ? GoString.EMPTY : GoString.fromUtf8(msg);
     }
 
     private static int parseVersion(String protocol) {
@@ -780,6 +839,7 @@ public final class TlsRuntime {
         long handle = num(handleArg);
         SSLEngine engine = ENGINES.remove(handle);
         PENDING.remove(handle);
+        LAST_ERRORS.remove(handle);
         if (engine != null) {
             try {
                 engine.closeInbound();

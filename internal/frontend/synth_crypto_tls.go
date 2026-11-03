@@ -710,6 +710,9 @@ func peerCertificatesTrap(engineHandle int64) []byte
 //go:linkname connectionStateTrap graalgo.tls.connectionState
 func connectionStateTrap(engineHandle int64) int64
 
+//go:linkname tlsLastErrorTrap graalgo.tls.lastError
+func tlsLastErrorTrap(engineHandle int64) string
+
 // Handshake performs the TLS handshake, driving the Java SSLEngine state
 // machine: shuttling handshake records between the engine and the raw
 // net.Conn until the engine reports FINISHED. Afterwards (client side,
@@ -718,6 +721,40 @@ func connectionStateTrap(engineHandle int64) int64
 // NetConn returns the underlying network connection.
 func (c *Conn) NetConn() net.Conn {
 	return c.conn
+}
+
+// tlsEngineError returns the Java engine failure recorded for this
+// connection, or "" when none is recorded. It must be called immediately
+// after a nil wrap/unwrap result (or an empty peer-certificates result):
+// the record is consumed on read, so a nil result with an empty record
+// is a clean peer close, never a swallowed exception (P1-B4: wrap/unwrap
+// used to return the same null for an engine failure and a clean close,
+// and the exception was discarded).
+func (c *Conn) tlsEngineError() string {
+	if c.engineHandle == 0 {
+		return ""
+	}
+	return tlsLastErrorTrap(c.engineHandle)
+}
+
+// tlsWrapError maps a nil wrap result to its error: the recorded engine
+// failure when one exists, else the historic bare message.
+func (c *Conn) tlsWrapError() error {
+	if msg := c.tlsEngineError(); msg != "" {
+		return fmt.Errorf("tls: %s", msg)
+	}
+	return errors.New("tls: wrap failed")
+}
+
+// tlsUnwrapNilError maps a nil unwrap result during the handshake to its
+// error: the recorded engine failure when one exists, else a clean peer
+// close mid-handshake — which is still an error here, since a
+// close_notify before FINISHED is not a successful handshake.
+func (c *Conn) tlsUnwrapNilError() error {
+	if msg := c.tlsEngineError(); msg != "" {
+		return fmt.Errorf("tls: %s", msg)
+	}
+	return errors.New("tls: peer closed connection during handshake")
 }
 
 func (c *Conn) Handshake() error {
@@ -739,16 +776,12 @@ func (c *Conn) Handshake() error {
 			if err := c.verifyPeer(); err != nil {
 				return err
 			}
-			// P3-M9 (x509): the in-process handshake test prints
-			// "handshake-ok" right after Handshake() returns. The client's
-			// verifyPeer (x509 chain building under Truffle) is slower
-			// than the server's no-op verify, so the server would print
-			// first while gc prints the client first. Brief yield so the
-			// client's prints land first (byte-identical differential).
-			// TODO: replace with proper synchronization or faster verify.
-			if !c.isClient {
-				time.Sleep(10 * time.Second)
-			}
+			// P1-S2: no sleep here. A previous 10s server-side sleep
+			// existed solely so the client's "handshake-ok" print
+			// landed first in the in-process differential test; print
+			// ordering is now the test's job (it synchronises on the
+			// client's handshake prints), not the library's — a
+			// handshake/read deadline under 10s must not stall here.
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
@@ -765,7 +798,7 @@ func (c *Conn) Handshake() error {
 			// toGoBytes maps a Java null to nil and an empty byte
 			// array to a non-nil empty slice, so the two are distinct.
 			if out == nil {
-				return errors.New("tls: wrap failed")
+				return c.tlsWrapError()
 			}
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
@@ -795,7 +828,9 @@ func (c *Conn) Handshake() error {
 			// first — do NOT block on a network read when there is
 			// already input waiting, or the handshake deadlocks.
 			if hasPendingTrap(c.engineHandle) != 0 {
-				_ = unwrapTrap(c.engineHandle, nil)
+				if out := unwrapTrap(c.engineHandle, nil); out == nil {
+					return c.tlsUnwrapNilError()
+				}
 				continue
 			}
 			n, err := c.conn.Read(tmp)
@@ -805,7 +840,9 @@ func (c *Conn) Handshake() error {
 			if n == 0 {
 				continue
 			}
-			_ = unwrapTrap(c.engineHandle, tmp[:n])
+			if out := unwrapTrap(c.engineHandle, tmp[:n]); out == nil {
+				return c.tlsUnwrapNilError()
+			}
 		case engineNeedTask:
 			runTasksTrap(c.engineHandle)
 		default:
@@ -825,6 +862,9 @@ func (c *Conn) verifyPeer() error {
 	}
 	peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
 	if len(peerDERs) == 0 {
+		if msg := c.tlsEngineError(); msg != "" {
+			return fmt.Errorf("tls: %s", msg)
+		}
 		return errors.New("tls: no peer certificates")
 	}
 	leaf, err := x509.ParseCertificate(peerDERs[0])
@@ -857,6 +897,20 @@ func writeAll(conn net.Conn, b []byte) error {
 // ConnectionState returns the negotiated connection parameters.
 func (c *Conn) ConnectionState() ConnectionState {
 	packed := connectionStateTrap(c.engineHandle)
+	if packed == -1 {
+		// The Java error sentinel (bad handle, or the engine threw):
+		// -1 is not a negotiated version/suite. Report zero values
+		// rather than decoding 0xFFFF/0xFFFF, and drop the recorded
+		// failure — ConnectionState has no error return, and the
+		// failure is already logged Java-side, so it must not linger
+		// to be misattributed to a later wrap/unwrap nil result.
+		_ = c.tlsEngineError()
+		cs := ConnectionState{HandshakeComplete: c.handshakeComplete}
+		if c.config != nil {
+			cs.ServerName = c.config.ServerName
+		}
+		return cs
+	}
 	cs := ConnectionState{
 		Version:           uint16(packed >> 32),
 		HandshakeComplete: c.handshakeComplete,
@@ -871,6 +925,11 @@ func (c *Conn) ConnectionState() ConnectionState {
 			cs.PeerCertificates = append(cs.PeerCertificates, cert)
 		}
 	}
+	// Drop any failure the peer-certificates trap recorded: like the
+	// packed == -1 case above, ConnectionState has no error return, and
+	// the failure is already logged Java-side. Leaving it would let a
+	// later nil wrap/unwrap result misreport it as its own failure.
+	_ = c.tlsEngineError()
 	return cs
 }
 
@@ -899,6 +958,12 @@ func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
 		}
 		app := unwrapTrap(c.engineHandle, tmp[:n])
 		if app == nil {
+			// A nil unwrap is a clean peer close (EOF) only when no
+			// engine failure is recorded; a recorded failure is a
+			// real error and must not masquerade as EOF (P1-B4).
+			if msg := c.tlsEngineError(); msg != "" {
+				return __tlsConnReadPair{0, fmt.Errorf("tls: %s", msg)}
+			}
 			return __tlsConnReadPair{0, io.EOF}
 		}
 		if len(app) == 0 {
@@ -926,7 +991,7 @@ func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 	}
 	out := wrapTrap(c.engineHandle, b)
 	if out == nil {
-		return __tlsConnWritePair{0, errors.New("tls: wrap failed")}
+		return __tlsConnWritePair{0, c.tlsWrapError()}
 	}
 	if err := writeAll(c.conn, out); err != nil {
 		return __tlsConnWritePair{0, err}

@@ -793,12 +793,14 @@ public final class LinknameIntrinsics {
     }
 
     /**
-     * Registers the 11 {@code graalgo.tls.*} intrinsics implemented by
+     * Registers the 12 {@code graalgo.tls.*} intrinsics implemented by
      * {@link TlsRuntime} (P3-M9 tier-5, SSLEngine delegation). The Go side
      * (synth_crypto_tls.go) drives the handshake state machine; these traps
      * only implement the cryptographic operations. Engine handles are longs
      * into TlsRuntime's table; []byte arrives as GoSlice; strings as
-     * GoString; ints/bools as Long.
+     * GoString; ints/bools as Long. lastError is the P1-B4 error channel:
+     * a nil wrap/unwrap result is ambiguous alone (clean close vs engine
+     * failure), so the Go side reads lastError immediately to resolve it.
      */
     private static void registerTlsIntrinsics() {
         Linknames.register("graalgo.tls.newClientEngine",
@@ -823,6 +825,8 @@ public final class LinknameIntrinsics {
                 args -> TlsRuntime.peerCertificates(args[0]), 1);
         Linknames.register("graalgo.tls.connectionState",
                 args -> TlsRuntime.connectionState(args[0]), 1);
+        Linknames.register("graalgo.tls.lastError",
+                args -> TlsRuntime.lastError(args[0]), 1);
         Linknames.register("graalgo.tls.close",
                 args -> { TlsRuntime.close(args[0]); return null; }, 1);
     }

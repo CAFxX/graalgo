@@ -95,7 +95,11 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(port string, ready chan<- string) {
+// runServer serves one connection. In in-process mode, clientPrinted is
+// closed by the client once it has printed its handshake lines; the
+// server waits for it before printing its own handshake-ok line (nil in
+// standalone server mode: print immediately, as before).
+func runServer(port string, ready chan<- string, clientPrinted <-chan struct{}) {
 	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
@@ -111,6 +115,15 @@ func runServer(port string, ready chan<- string) {
 	if err := tlsConn.Handshake(); err != nil {
 		panic("server handshake: " + err.Error())
 	}
+	// P1-S2: print ordering is synchronised here, not with a sleep in
+	// the library. gc's client completes its handshake (and prints)
+	// before the server can complete, but graalgo's client verifyPeer is
+	// slower than the server's no-op verify, so without this the server
+	// print lands first. Waiting for the client's handshake prints makes
+	// the order deterministic on both implementations.
+	if clientPrinted != nil {
+		<-clientPrinted
+	}
 	cs := tlsConn.ConnectionState()
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
@@ -125,7 +138,11 @@ func runServer(port string, ready chan<- string) {
 	fmt.Println("server: echo-ok")
 }
 
-func runClient(port string) {
+// runClient dials the server and runs one echo round-trip. In
+// in-process mode, clientPrinted is closed once the handshake lines are
+// printed, releasing the server's handshake-ok print (nil in standalone
+// client mode: no signal).
+func runClient(port string, clientPrinted chan<- struct{}) {
 	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
@@ -135,6 +152,9 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	if clientPrinted != nil {
+		close(clientPrinted)
+	}
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -161,12 +181,12 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(port, ready)
+		go runServer(port, ready, nil)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(port)
+		runClient(port, nil)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -177,8 +197,9 @@ func main() {
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(ephemPort, ready)
+		clientPrinted := make(chan struct{})
+		go runServer(ephemPort, ready, clientPrinted)
 		<-ready
-		runClient(ephemPort)
+		runClient(ephemPort, clientPrinted)
 	}
 }
