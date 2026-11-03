@@ -154,14 +154,47 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	// Recover inside the subtest, mirroring the top-level generated
+	// main's recover: a subtest's Fatal/Skip panic must stop only the
+	// subtest, not abort the parent, lose the subtest's result line,
+	// and mislabel the parent. A Fatal/Skip panic naming an ancestor
+	// (the parent's own Fatal/Skip called from inside the subtest
+	// closure) is re-panicked, not swallowed as this subtest's: only a
+	// panic naming this subtest is this subtest's. A genuine panic is
+	// treated like the top-level driver treats one — the subtest fails
+	// with a "panic: ..." detail line and the parent continues (gc
+	// instead re-panics a genuine subtest panic and aborts the binary;
+	// that is the driver's pre-existing top-level policy, not a new
+	// divergence introduced here).
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s := toString(r)
+				if s == "graalgo test skip: "+sub.name {
+					// Already marked skipped by graalgoSkip*.
+				} else if s == "graalgo test fatal: "+sub.name {
+					// Already marked failed by graalgoFatal*.
+				} else if (len(s) >= 17 && s[:17] == "graalgo test skip") || (len(s) >= 18 && s[:18] == "graalgo test fatal") {
+					// An ancestor's Fatal/Skip: re-panic with the
+					// same sentinel string so an outer Run or the
+					// top-level recover handles it as that test's.
+					panic(s)
+				} else {
+					sub.failed = true
+					sub.logLine("panic: " + s)
+				}
+			}
+		}()
+		f(sub)
+	}()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
 	}
-	if sub.skipped {
-		t.skipped = true
-	}
+	// Do NOT propagate sub.skipped: gc leaves the parent PASS when a
+	// subtest skips (Run returns true, the parent's Skipped() is
+	// false); only the subtest itself reports --- SKIP. Propagating
+	// it made a merely skipped subtest report the parent SKIP.
 	// Subtest result lines are buffered on the parent and flushed after
 	// the parent's own result line, matching go test's ordering. In
 	// non-verbose mode only failures are shown.
@@ -183,6 +216,8 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	}
 	// Bubble up nested subtest results (already indented).
 	t.subresults = append(t.subresults, sub.subresults...)
+	// False only on failure, matching gc: a skipped subtest returns
+	// true, a failed (or panicking) subtest returns false.
 	return !sub.failed
 }
 

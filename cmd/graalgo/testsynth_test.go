@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -964,5 +966,200 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestSubtestSkipFatalExecution is the driver-execution regression test
+// for REVIEW-2026-11-03-16 P0-3 (lane L-C): a subtest's Fatal/Skip used
+// to panic out of graalgoT.Run, so the code after t.Run never ran, the
+// subtest's own --- FAIL/SKIP line was never emitted, and the top-level
+// recover mislabelled the parent (a skipped subtest made the parent
+// report --- SKIP). This test synthesises a verbose driver, runs it
+// with gc's `go run`, and asserts the emitted --- PASS/FAIL/SKIP lines
+// match gc semantics: a skipped subtest returns true and leaves the
+// parent PASS, a fatal subtest returns false and leaves the parent
+// FAIL, a nested skipped subtest skips neither its outer subtest nor
+// the top-level test, and the code after each t.Run runs (proven by
+// the "after ..." log lines, which only print if Run returns). It also
+// pins the two adjacent Run/recover branches: a genuine panic in a
+// subtest fails that subtest (mirroring the top-level driver policy)
+// with the parent continuing, while a Fatal/Skip called on the parent
+// from inside a subtest is re-panicked, not swallowed as the subtest's
+// own, so the parent stops with its own verdict.
+//
+// The driver intentionally contains one failing top-level test
+// (TestSubFatal), so the driver itself exits 1; the assertions below
+// distinguish that expected FAIL from a driver crash by checking the
+// exact result lines, not just the exit code. Run under gc on purpose:
+// the shim is plain Go source, so executing it under gc exercises
+// exactly the Run/recover logic the graalgo backend will execute.
+func TestSubtestSkipFatalExecution(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/subtest\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package subtest\n")
+	testFile := filepath.Join(root, "p_test.go")
+	writeFile(t, root, "p_test.go", `package subtest
+
+import "testing"
+
+func TestSubSkip(t *testing.T) {
+	if ok := t.Run("skipme", func(t *testing.T) { t.Skip("not today") }); !ok {
+		t.Error("Run returned false for a skipped subtest, want true")
+	}
+	if t.Skipped() {
+		t.Error("parent marked skipped by a skipped subtest")
+	}
+	t.Log("after skipped subtest")
+}
+
+func TestSubFatal(t *testing.T) {
+	if ok := t.Run("fatalme", func(t *testing.T) { t.Fatal("fatal subtest") }); ok {
+		t.Error("Run returned true for a fatal subtest, want false")
+	}
+	if !t.Failed() {
+		t.Error("parent not marked failed by a fatal subtest")
+	}
+	t.Log("after fatal subtest")
+}
+
+func TestSubNestedSkip(t *testing.T) {
+	if ok := t.Run("outer", func(t *testing.T) {
+		if ok := t.Run("inner", func(t *testing.T) { t.Skip("inner skip") }); !ok {
+			t.Error("inner Run returned false for a skipped subtest")
+		}
+		if t.Skipped() {
+			t.Error("outer marked skipped by a skipped inner subtest")
+		}
+	}); !ok {
+		t.Error("outer Run returned false, want true")
+	}
+	if t.Skipped() {
+		t.Error("top marked skipped by a skipped nested subtest")
+	}
+}
+
+func TestSubPass(t *testing.T) {
+	if ok := t.Run("passme", func(t *testing.T) { t.Log("subtest log") }); !ok {
+		t.Error("Run returned false for a passing subtest")
+	}
+}
+
+func TestSubPanic(t *testing.T) {
+	if ok := t.Run("subpanic", func(t *testing.T) { panic("kaboom") }); ok {
+		t.Error("Run returned true for a panicking subtest, want false")
+	}
+	if !t.Failed() {
+		t.Error("parent not marked failed by a panicking subtest")
+	}
+	t.Log("after panic subtest")
+}
+
+func TestSubAncestorFatal(t *testing.T) {
+	t.Run("child", func(st *testing.T) {
+		_ = st
+		t.Fatal("parent fatal from subtest")
+	})
+	t.Log("after ancestor fatal")
+}
+
+func TestSubAncestorSkip(t *testing.T) {
+	t.Run("child", func(st *testing.T) {
+		_ = st
+		t.Skip("parent skip from subtest")
+	})
+	t.Log("after ancestor skip")
+}
+`)
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 7 {
+		t.Fatalf("discoverTests = %v, want 7 tests", tests)
+	}
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")}, true)
+	if err != nil {
+		t.Fatalf("synthesizeTestDriver: %v", err)
+	}
+	defer os.Remove(driver)
+	goBin := filepath.Join(runtime.GOROOT(), "bin", "go")
+	cmd := exec.Command(goBin, "run", driver)
+	out, runErr := cmd.CombinedOutput()
+	output := string(out)
+	// The driver must exit 1 because TestSubFatal fails — and only
+	// because of that, which the line assertions below pin down.
+	if runErr == nil {
+		t.Errorf("driver exited 0, want 1 (TestSubFatal must fail); output:\n%s", output)
+	} else if ee, ok := runErr.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+		t.Errorf("driver exit = %v, want exit 1; output:\n%s", runErr, output)
+	}
+	for _, want := range []string{
+		"=== RUN   TestSubSkip",
+		"--- PASS: TestSubSkip (",
+		"--- SKIP: TestSubSkip/skipme (",
+		"after skipped subtest",
+		"--- FAIL: TestSubFatal (",
+		"--- FAIL: TestSubFatal/fatalme (",
+		"after fatal subtest",
+		"--- PASS: TestSubNestedSkip (",
+		"--- PASS: TestSubNestedSkip/outer (",
+		"--- SKIP: TestSubNestedSkip/outer/inner (",
+		"--- PASS: TestSubPass (",
+		"--- PASS: TestSubPass/passme (",
+		// Genuine panic in a subtest: the subtest fails with a
+		// "panic: ..." line (mirroring the top-level driver policy)
+		// and the parent continues.
+		"--- FAIL: TestSubPanic (",
+		"--- FAIL: TestSubPanic/subpanic (",
+		"panic: kaboom",
+		"after panic subtest",
+		// Ancestor Fatal/Skip called from inside a subtest must NOT
+		// be swallowed as the subtest's own: the parent stops, with
+		// its own verdict, and the code after Run does not run.
+		"--- FAIL: TestSubAncestorFatal (",
+		"--- SKIP: TestSubAncestorSkip (",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("driver output missing %q:\n%s", want, output)
+		}
+	}
+	// The P0 regression itself: no parent may be reported SKIP because
+	// of a skipped subtest, and no subtest result line may be lost.
+	for _, notWant := range []string{
+		"--- SKIP: TestSubSkip (",
+		"--- SKIP: TestSubFatal (",
+		"--- SKIP: TestSubNestedSkip (",
+		"--- SKIP: TestSubNestedSkip/outer (",
+		// Ancestor cases: no subtest result line (the panic escaped
+		// Run by design; the === RUN line for the child legitimately
+		// appears) and no code-after-Run log line.
+		"--- FAIL: TestSubAncestorFatal/child (",
+		"--- SKIP: TestSubAncestorFatal/child (",
+		"--- PASS: TestSubAncestorFatal/child (",
+		"--- FAIL: TestSubAncestorSkip/child (",
+		"--- SKIP: TestSubAncestorSkip/child (",
+		"--- PASS: TestSubAncestorSkip/child (",
+		"after ancestor fatal",
+		"after ancestor skip",
+	} {
+		if strings.Contains(output, notWant) {
+			t.Errorf("driver output contains %q (skipped subtest corrupted parent verdict):\n%s", notWant, output)
+		}
+	}
+	// Parent result lines are flushed before their subtest lines.
+	for _, pair := range [][2]string{
+		{"--- PASS: TestSubSkip (", "--- SKIP: TestSubSkip/skipme ("},
+		{"--- FAIL: TestSubFatal (", "--- FAIL: TestSubFatal/fatalme ("},
+	} {
+		pi, si := strings.Index(output, pair[0]), strings.Index(output, pair[1])
+		if pi >= 0 && si >= 0 && pi > si {
+			t.Errorf("parent line %q printed after subtest line %q:\n%s", pair[0], pair[1], output)
+		}
+	}
+	if !strings.Contains(output, "\nFAIL\n") && !strings.HasSuffix(output, "FAIL\n") {
+		t.Errorf("driver output lacks the FAIL summary line:\n%s", output)
 	}
 }
