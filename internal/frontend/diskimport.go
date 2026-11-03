@@ -3,8 +3,12 @@ package main
 // WS G (P3-M9, module-probe lane): general third-party package import.
 //
 // Any import path not claimed by the synthetic overlay resolves from local
-// disk: the module cache ($GOMODCACHE/<path>@<highest version>) first, then
-// GOPATH/src/<path>. The package's .go files are selected
+// disk: when the importing module's go.mod pins the import's module,
+// exactly that version from the module cache (with go.sum verification
+// when a go.sum is present, and a loud error when the pinned version is
+// absent — never a silent upgrade); otherwise the module cache
+// ($GOMODCACHE/<path>@<highest version>) first, then GOPATH/src/<path>.
+// The package's .go files are selected
 // constraint-aware via go/build (GOOS/GOARCH build tags, so e.g.
 // node_js.go is skipped on linux), parsed and type-checked with the same
 // overlayImporter (its own imports resolve recursively through the same
@@ -15,6 +19,7 @@ package main
 // module-specific: this is the general import overlay WS G always owned.
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -76,31 +81,92 @@ func escapeModulePath(p string) string {
 	return sb.String()
 }
 
-// compareSemver compares "v1.6.0"-style versions numerically; a
-// lexicographic fallback orders pseudo-versions deterministically.
+// compareSemver compares "v1.6.0"-style versions per semver precedence
+// (https://semver.org): the numeric core first, then prerelease
+// identifiers — a version without a prerelease outranks the same core
+// with one, numeric prerelease identifiers compare numerically and rank
+// below alphanumeric ones, and a shorter prerelease list that is a prefix
+// of a longer one ranks below it. Build metadata (after "+") is ignored.
+// The previous implementation truncated at "-", so a pseudo-version such
+// as v1.2.3-0.2024… compared as plain v1.2.3 and only a lexicographic
+// fallback ordered it — wrong whenever the prerelease actually decides
+// the order (e.g. v1.2.3-0.2024… must rank BELOW v1.2.3, not equal to
+// it). Used only by the legacy highest-cached-version fallback; pinned
+// go.mod resolution never consults it.
 func compareSemver(a, b string) int {
-	norm := func(v string) []string {
+	split := func(v string) (core []string, pre []string) {
 		v = strings.TrimPrefix(v, "v")
-		if i := strings.Index(v, "-"); i >= 0 {
-			v = v[:i]
-		}
 		if i := strings.Index(v, "+"); i >= 0 {
 			v = v[:i]
 		}
-		return strings.Split(v, ".")
+		if i := strings.Index(v, "-"); i >= 0 {
+			pre = strings.Split(v[i+1:], ".")
+			v = v[:i]
+		}
+		core = strings.Split(v, ".")
+		return core, pre
 	}
-	pa, pb := norm(a), norm(b)
-	for i := 0; i < len(pa) && i < len(pb); i++ {
-		na, ea := strconv.Atoi(pa[i])
-		nb, eb := strconv.Atoi(pb[i])
-		if ea == nil && eb == nil && na != nb {
-			if na < nb {
+	ca, pa := split(a)
+	cb, pb := split(b)
+	for i := 0; i < len(ca) || i < len(cb); i++ {
+		var sa, sb string
+		if i < len(ca) {
+			sa = ca[i]
+		} else {
+			sa = "0"
+		}
+		if i < len(cb) {
+			sb = cb[i]
+		} else {
+			sb = "0"
+		}
+		na, ea := strconv.Atoi(sa)
+		nb, eb := strconv.Atoi(sb)
+		if ea == nil && eb == nil {
+			if na != nb {
+				if na < nb {
+					return -1
+				}
+				return 1
+			}
+			continue
+		}
+		if sa != sb {
+			if sa < sb {
 				return -1
 			}
 			return 1
 		}
-		if pa[i] != pb[i] {
-			if pa[i] < pb[i] {
+	}
+	switch {
+	case len(pa) == 0 && len(pb) == 0:
+		return 0
+	case len(pa) == 0:
+		// A release outranks the same core with a prerelease.
+		return 1
+	case len(pb) == 0:
+		return -1
+	}
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		x, y := pa[i], pb[i]
+		if x == y {
+			continue
+		}
+		nx, ex := strconv.Atoi(x)
+		ny, ey := strconv.Atoi(y)
+		switch {
+		case ex == nil && ey == nil:
+			if nx < ny {
+				return -1
+			}
+			return 1
+		case ex == nil:
+			// Numeric identifiers rank below alphanumeric ones.
+			return -1
+		case ey == nil:
+			return 1
+		default:
+			if x < y {
 				return -1
 			}
 			return 1
@@ -112,21 +178,381 @@ func compareSemver(a, b string) int {
 	case len(pa) > len(pb):
 		return 1
 	}
-	if a < b {
-		return -1
-	}
-	if a > b {
-		return 1
-	}
 	return 0
 }
 
+// ---------------------------------------------------------------------------
+// Importing-module resolution (REVIEW-2026-11-03-16, P1-S6/F4).
+//
+// The importing package's own go.mod — found by walking up from the
+// importing directory (ExportFiles' importingDir, which honours the
+// --test-package-dir flag for test drivers) — is authoritative for every
+// module it requires. The longest required module path that is a prefix
+// of the import path commits the resolution: exactly that version (after
+// replace directives) is used, and any failure — version absent from the
+// module cache, package missing from that version, go.sum entry missing
+// or disagreeing with the cache download hash — is a loud, distinct
+// error, never a silent upgrade to another cached version. Those errors
+// deliberately do NOT wrap errDiskNotFound, so the overlay importer and
+// the import gate report them as genuine failures instead of degrading
+// to the pre-existing "not in frontend/v1 scope" error.
+//
+// When no go.mod is found, or the import's module is not among its
+// requirements, the previous behaviour is preserved unchanged (highest
+// cached version, then GOPATH/src, then GOROOT): the probe harness and
+// go.mod-less compiles keep working, and an unlisted module is not
+// newly rejected. The pinned case is the correctness fix; the unpinned
+// case stays a documented compatibility fallback, not a silent claim of
+// go.mod fidelity.
+//
+// go.sum verification, when a go.sum sits beside the importing go.mod:
+// the pinned module@version must have an entry, and when the module
+// cache carries download metadata (cache/download/<path>/@v/<ver>.ziphash)
+// its hash must match a go.sum h1 entry. No go.sum file means no
+// verification is possible and none is claimed. The extracted module
+// tree itself carries no stored hash to check against, so verification
+// is entry presence plus download-hash agreement, not a full tree hash
+// — stated here so the claim is never overstated.
+// ---------------------------------------------------------------------------
+
+// goModReplace is one parsed replace directive.
+type goModReplace struct {
+	oldPath  string
+	oldVer   string // "" means "all versions of oldPath"
+	newPath  string
+	newVer   string
+	newLocal string // "" unless the replacement is a filesystem path
+}
+
+// goModContext is the parsed go.mod (plus optional go.sum) of the module
+// being compiled, together with the fingerprint that keys the disk caches.
+type goModContext struct {
+	dir         string // directory containing go.mod
+	goModPath   string
+	goSumPath   string
+	hasGoSum    bool
+	modulePath  string
+	requires    map[string]string
+	replaces    []goModReplace
+	goSum       map[string]map[string]bool // "module@version" -> hashes
+	fingerprint string
+}
+
+var diskModuleCtx *goModContext // set by ExportFiles for one export; see below
+
+// currentDiskModuleContext returns the importing-module context for this
+// export, or nil when no go.mod governs the current compile.
+func currentDiskModuleContext() *goModContext {
+	diskMu.Lock()
+	defer diskMu.Unlock()
+	return diskModuleCtx
+}
+
+// diskCacheKey keys a disk resolution by importing-module context, so a
+// package resolved under one module's pins can never be served from a
+// cache entry resolved under another module's pins (or none) in the same
+// process. The fingerprint covers the go.mod path, its requirements and
+// replaces, and the go.sum bytes, so an edited go.mod/go.sum re-resolves
+// instead of hitting a stale entry.
+func diskCacheKey(ctx *goModContext, importPath string) string {
+	if ctx == nil {
+		return importPath
+	}
+	return ctx.fingerprint + "\x00" + importPath
+}
+
+// setDiskModuleContextFromDir loads the go.mod governing dir (walking up
+// from it) and installs it as the current importing-module context,
+// returning a restore function that reinstates the previous context.
+// A malformed go.mod is a loud error, not a silent fallback to
+// no-context resolution. When no go.mod is found the context becomes
+// nil (legacy resolution) and restore still applies.
+func setDiskModuleContextFromDir(dir string) (func(), error) {
+	var ctx *goModContext
+	if dir != "" {
+		var err error
+		ctx, err = loadGoModContext(dir)
+		if err != nil {
+			return nil, err
+		}
+	}
+	diskMu.Lock()
+	prev := diskModuleCtx
+	diskModuleCtx = ctx
+	diskMu.Unlock()
+	return func() {
+		diskMu.Lock()
+		diskModuleCtx = prev
+		diskMu.Unlock()
+	}, nil
+}
+
+// loadGoModContext walks up from dir to the nearest go.mod and parses it
+// (plus a sibling go.sum if present). It returns (nil, nil) when no
+// go.mod is found at or above dir.
+func loadGoModContext(dir string) (*goModContext, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		cand := filepath.Join(d, "go.mod")
+		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			data, err := os.ReadFile(cand)
+			if err != nil {
+				return nil, fmt.Errorf("go.mod at %s: cannot read: %v", cand, err)
+			}
+			ctx, err := parseGoMod(cand, data)
+			if err != nil {
+				return nil, err
+			}
+			if sumData, err := os.ReadFile(filepath.Join(d, "go.sum")); err == nil {
+				ctx.hasGoSum = true
+				ctx.goSumPath = filepath.Join(d, "go.sum")
+				ctx.goSum = parseGoSum(sumData)
+				ctx.fingerprint += "\x00sum:" + fmt.Sprintf("%x", sha256.Sum256(sumData))
+			} else {
+				ctx.fingerprint += "\x00sum:absent"
+			}
+			return ctx, nil
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return nil, nil
+		}
+	}
+}
+
+// parseGoSum parses go.sum lines into "module@version" -> hash sets. The
+// "/go.mod" suffix on a version is stripped: both the module-hash line
+// and the go.mod-hash line attest the same module@version.
+func parseGoSum(data []byte) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 {
+			continue
+		}
+		ver := strings.TrimSuffix(f[1], "/go.mod")
+		key := f[0] + "@" + ver
+		if out[key] == nil {
+			out[key] = map[string]bool{}
+		}
+		out[key][f[2]] = true
+	}
+	return out
+}
+
+// parseGoMod parses the subset of go.mod syntax this resolver needs:
+// module, require (single-line and block), and replace (single-line and
+// block, including version-specific and local-path replacements). Other
+// directives are skipped. Anything malformed in the parsed subset is an
+// error — a half-parsed go.mod must never silently govern resolution.
+func parseGoMod(path string, data []byte) (*goModContext, error) {
+	ctx := &goModContext{goModPath: path, dir: filepath.Dir(path), requires: map[string]string{}}
+	parseRequire := func(f []string) error {
+		if len(f) != 2 {
+			return fmt.Errorf("go.mod at %s: malformed require line %q", path, strings.Join(f, " "))
+		}
+		ctx.requires[f[0]] = f[1]
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	inBlock := "" // "" | "require" | "replace"
+	for _, raw := range lines {
+		line := raw
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if inBlock != "" {
+			if line == ")" {
+				inBlock = ""
+				continue
+			}
+			switch inBlock {
+			case "require":
+				if err := parseRequire(strings.Fields(line)); err != nil {
+					return nil, err
+				}
+			case "replace":
+				if err := ctx.parseReplaceLine(path, line); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		f := strings.Fields(line)
+		switch f[0] {
+		case "module":
+			if len(f) != 2 {
+				return nil, fmt.Errorf("go.mod at %s: malformed module line %q", path, line)
+			}
+			ctx.modulePath = f[1]
+		case "require":
+			if len(f) == 1 {
+				// "require (" handled below via the "(" token.
+				return nil, fmt.Errorf("go.mod at %s: malformed require line %q", path, line)
+			}
+			if f[1] == "(" {
+				inBlock = "require"
+				continue
+			}
+			if err := parseRequire(f[1:]); err != nil {
+				return nil, err
+			}
+		case "replace":
+			if len(f) >= 2 && f[1] == "(" {
+				inBlock = "replace"
+				continue
+			}
+			if err := ctx.parseReplaceLine(path, strings.Join(f[1:], " ")); err != nil {
+				return nil, err
+			}
+		default:
+			// go, toolchain, exclude, retract, etc.: not needed here.
+		}
+	}
+	if inBlock != "" {
+		return nil, fmt.Errorf("go.mod at %s: unterminated %s block", path, inBlock)
+	}
+	// Fingerprint: go.mod path + sorted requirements + replaces. The
+	// go.sum contribution is appended by loadGoModContext.
+	var sb strings.Builder
+	sb.WriteString(path)
+	reqs := make([]string, 0, len(ctx.requires))
+	for m, v := range ctx.requires {
+		reqs = append(reqs, m+"@"+v)
+	}
+	sort.Strings(reqs)
+	for _, r := range reqs {
+		sb.WriteString("\x00")
+		sb.WriteString(r)
+	}
+	for _, rp := range ctx.replaces {
+		sb.WriteString("\x00replace:")
+		sb.WriteString(rp.oldPath + "@" + rp.oldVer + "=>" + rp.newPath + "@" + rp.newVer + rp.newLocal)
+	}
+	ctx.fingerprint = sb.String()
+	return ctx, nil
+}
+
+// parseReplaceLine parses one replace spec (without the leading
+// "replace" keyword): "old [oldver] => new [newver]" or
+// "old [oldver] => local/path".
+func (ctx *goModContext) parseReplaceLine(goModPath, line string) error {
+	parts := strings.Split(line, "=>")
+	if len(parts) != 2 {
+		return fmt.Errorf("go.mod at %s: malformed replace line %q", goModPath, line)
+	}
+	lhs := strings.Fields(strings.TrimSpace(parts[0]))
+	rhs := strings.Fields(strings.TrimSpace(parts[1]))
+	if len(lhs) < 1 || len(lhs) > 2 || len(rhs) < 1 || len(rhs) > 2 {
+		return fmt.Errorf("go.mod at %s: malformed replace line %q", goModPath, line)
+	}
+	r := goModReplace{oldPath: lhs[0]}
+	if len(lhs) == 2 {
+		r.oldVer = lhs[1]
+	}
+	if len(rhs) == 1 && (strings.HasPrefix(rhs[0], "./") || strings.HasPrefix(rhs[0], "../") || filepath.IsAbs(rhs[0])) {
+		r.newLocal = rhs[0]
+		if !filepath.IsAbs(r.newLocal) {
+			r.newLocal = filepath.Join(ctx.dir, r.newLocal)
+		}
+	} else {
+		if len(rhs) != 2 {
+			return fmt.Errorf("go.mod at %s: non-local replace %q needs a version", goModPath, line)
+		}
+		r.newPath, r.newVer = rhs[0], rhs[1]
+	}
+	ctx.replaces = append(ctx.replaces, r)
+	return nil
+}
+
+// pinnedModule applies the context's requirements and replaces to a
+// module path. It reports (modulePath, version, localDir, ok): when ok
+// and localDir != "" the module is replaced by a local directory;
+// when ok and localDir == "" the module must resolve from the cache at
+// exactly version. When !ok the module is not pinned by this go.mod.
+func (ctx *goModContext) pinnedModule(modulePath string) (string, string, string, bool) {
+	ver, ok := ctx.requires[modulePath]
+	if !ok {
+		return "", "", "", false
+	}
+	for _, r := range ctx.replaces {
+		if r.oldPath != modulePath {
+			continue
+		}
+		if r.oldVer != "" && r.oldVer != ver {
+			continue
+		}
+		if r.newLocal != "" {
+			return modulePath, "", r.newLocal, true
+		}
+		return r.newPath, r.newVer, "", true
+	}
+	return modulePath, ver, "", true
+}
+
+// pinnedPrefix returns the longest required module path that is a prefix
+// of importPath (the module itself, or the module plus "/" plus a
+// subpackage), or "" when no requirement governs the import.
+func (ctx *goModContext) pinnedPrefix(importPath string) string {
+	best := ""
+	for m := range ctx.requires {
+		if importPath == m || strings.HasPrefix(importPath, m+"/") {
+			if len(m) > len(best) {
+				best = m
+			}
+		}
+	}
+	return best
+}
+
+// verifyGoSum enforces the go.sum contract for a pinned module@version:
+// with a go.sum present, an entry must exist, and a cache download hash
+// (when the cache carries one) must agree with a go.sum h1 entry.
+func (ctx *goModContext) verifyGoSum(modulePath, version, modCache string) error {
+	if !ctx.hasGoSum {
+		return nil
+	}
+	key := modulePath + "@" + version
+	hashes, ok := ctx.goSum[key]
+	if !ok || len(hashes) == 0 {
+		return fmt.Errorf("go.mod at %s requires %s %s, but %s has no entry for it; run 'go mod download %s' to record it instead of building against an unverified version", ctx.goModPath, modulePath, version, ctx.goSumPath, modulePath)
+	}
+	ziphashPath := filepath.Join(modCache, "cache", "download", escapeModulePath(modulePath), "@v", version+".ziphash")
+	if data, err := os.ReadFile(ziphashPath); err == nil {
+		zh := strings.TrimSpace(string(data))
+		hasH1 := false
+		for h := range hashes {
+			if strings.HasPrefix(h, "h1:") {
+				hasH1 = true
+				if h == zh {
+					return nil
+				}
+			}
+		}
+		if hasH1 {
+			return fmt.Errorf("go.mod at %s requires %s %s, but its go.sum entry disagrees with the module cache download hash in %s; refusing to build against a tampered or mismatched cache entry", ctx.goModPath, modulePath, version, ziphashPath)
+		}
+	}
+	return nil
+}
+
 // resolveDiskPackageDir maps an import path to a source directory on disk.
-// Module cache wins ($GOMODCACHE/<escaped path>@<highest version>); the
-// probe harness pins the cache to the intended version. Falls back to
-// GOPATH/src/<path>, then to the toolchain's GOROOT/src/<path> so plain
-// stdlib packages outside the synthetic overlay (e.g.
-// database/sql/driver) resolve through the same general mechanism.
+// When the importing module's go.mod pins the import's module, exactly
+// that version resolves (see the go.mod section above); failures there
+// are loud errors that deliberately do NOT wrap errDiskNotFound.
+// Otherwise the legacy order applies: module cache
+// ($GOMODCACHE/<escaped path>@<highest version> — the probe harness
+// pins the cache to the intended version), then GOPATH/src/<path>,
+// then the toolchain's GOROOT/src/<path> so plain stdlib packages
+// outside the synthetic overlay (e.g. database/sql/driver) resolve
+// through the same general mechanism.
 // Synthetic-overlay paths never resolve from disk, wherever the call
 // comes from: the disk fallback exists for stdlib outside the overlay
 // and third-party modules. GOROOT must never shadow a synthetic package —
@@ -140,14 +566,27 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 	if _, ok := syntheticSources[importPath]; ok {
 		return "", fmt.Errorf("%w: %q (synthetic overlay)", errDiskNotFound, importPath)
 	}
+	ctx := currentDiskModuleContext()
+	key := diskCacheKey(ctx, importPath)
 	diskMu.Lock()
-	if d, ok := diskDirCache[importPath]; ok {
+	if d, ok := diskDirCache[key]; ok {
 		diskMu.Unlock()
 		return d, nil
 	}
 	diskMu.Unlock()
 
 	resolve := func() (string, error) {
+		// Pinned first: when the importing go.mod governs this import,
+		// the pinned module commits the resolution. No fallback to
+		// another cached version, GOPATH, or GOROOT is attempted from
+		// here — in module mode those are not the importing module's
+		// dependency, and falling back would be the silent upgrade
+		// this fix removes.
+		if ctx != nil {
+			if mod := ctx.pinnedPrefix(importPath); mod != "" {
+				return resolvePinnedDir(ctx, mod, importPath)
+			}
+		}
 		if mc := goModCache(); mc != "" {
 			// P4 (driver-harden): subpackage imports (e.g.
 			// github.com/google/go-cmp/cmp). The module cache stores
@@ -219,9 +658,51 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 		return "", err
 	}
 	diskMu.Lock()
-	diskDirCache[importPath] = dir
+	diskDirCache[key] = dir
 	diskMu.Unlock()
 	return dir, nil
+}
+
+// resolvePinnedDir resolves importPath against exactly the version the
+// importing go.mod pins for module mod (after replaces). Every failure
+// is a loud error that does not wrap errDiskNotFound, so callers report
+// it as a genuine failure rather than a scope error.
+func resolvePinnedDir(ctx *goModContext, mod, importPath string) (string, error) {
+	resolvedPath, ver, localDir, ok := ctx.pinnedModule(mod)
+	if !ok {
+		return "", fmt.Errorf("%w: %q", errDiskNotFound, importPath)
+	}
+	subPath := strings.TrimPrefix(importPath, mod)
+	subPath = strings.TrimPrefix(subPath, "/")
+	if localDir != "" {
+		dir := localDir
+		if subPath != "" {
+			dir = filepath.Join(dir, subPath)
+		}
+		if st, err := os.Stat(dir); err == nil && st.IsDir() {
+			return dir, nil
+		}
+		return "", fmt.Errorf("go.mod at %s replaces %s with %s, but package %q is not there (no directory %s)", ctx.goModPath, mod, localDir, importPath, dir)
+	}
+	mc := goModCache()
+	if mc == "" {
+		return "", fmt.Errorf("go.mod at %s requires %s %s, but no module cache is configured (GOMODCACHE/GOPATH unset and no home directory); cannot resolve %q", ctx.goModPath, resolvedPath, ver, importPath)
+	}
+	modDir := filepath.Join(mc, filepath.FromSlash(escapeModulePath(resolvedPath))+"@"+ver)
+	if st, err := os.Stat(modDir); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("go.mod at %s requires %s %s, but that version is not in the module cache (%s); run 'go mod download %s' to fetch it instead of silently building against another cached version", ctx.goModPath, resolvedPath, ver, mc, resolvedPath)
+	}
+	if err := ctx.verifyGoSum(resolvedPath, ver, mc); err != nil {
+		return "", err
+	}
+	dir := modDir
+	if subPath != "" {
+		dir = filepath.Join(dir, subPath)
+	}
+	if st, err := os.Stat(dir); err == nil && st.IsDir() {
+		return dir, nil
+	}
+	return "", fmt.Errorf("go.mod at %s requires %s %s, but package %q is not in that module version (no directory %s)", ctx.goModPath, resolvedPath, ver, importPath, dir)
 }
 
 // isDiskImportable reports whether importPath resolves to a source
@@ -238,31 +719,35 @@ func isDiskImportable(importPath string) bool {
 // cannot deadlock. Import cycles are illegal Go; the in-progress guard
 // turns them into an error instead of infinite recursion.
 func getDiskPackage(importPath string) (*syntheticPackage, error) {
+	// Keyed by importing-module context (see diskCacheKey): the same
+	// import path may legitimately build from different module versions
+	// under different go.mods in one process.
+	key := diskCacheKey(currentDiskModuleContext(), importPath)
 	diskMu.Lock()
-	if sp, ok := diskCache[importPath]; ok {
+	if sp, ok := diskCache[key]; ok {
 		diskMu.Unlock()
 		return sp, nil
 	}
-	if diskBuilding[importPath] {
+	if diskBuilding[key] {
 		diskMu.Unlock()
 		return nil, fmt.Errorf("gofrontend: import cycle involving %q", importPath)
 	}
-	diskBuilding[importPath] = true
+	diskBuilding[key] = true
 	diskMu.Unlock()
 
 	sp, err := buildDiskPackage(importPath)
 
 	diskMu.Lock()
-	delete(diskBuilding, importPath)
+	delete(diskBuilding, key)
 	if err != nil {
 		diskMu.Unlock()
 		return nil, err
 	}
-	if prev, ok := diskCache[importPath]; ok {
+	if prev, ok := diskCache[key]; ok {
 		diskMu.Unlock()
 		return prev, nil
 	}
-	diskCache[importPath] = sp
+	diskCache[key] = sp
 	diskMu.Unlock()
 	return sp, nil
 }

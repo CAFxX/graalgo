@@ -839,10 +839,17 @@ func needsOverlayImporter(p string, importingDir string) bool {
 
 // checkImportAllowed validates one import against the frontend/v1 import
 // overlay (WS G): admitted (see importAdmitted), or scope error.
+// A pinned go.mod resolution failure is not a scope error: when the
+// import's module is pinned but unresolvable (version absent from the
+// cache, go.sum entry missing or mismatched), the loud pinned error is
+// returned verbatim instead of being masked by the scope error.
 func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 	path := strings.Trim(imp.Path.Value, "\"`")
 	if importAdmitted(path, importingDir) {
 		return nil
+	}
+	if _, err := resolveDiskPackageDir(path); err != nil && !errors.Is(err, errDiskNotFound) {
+		return fmt.Errorf("gofrontend: import %s: %v", imp.Path.Value, err)
 	}
 	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 }
@@ -895,6 +902,17 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// The test driver is the package's own test binary: resolve imports
 	// with the package's privileges (Go's internal-visibility rule).
 	idir := importingDir(paths, testPackageDir)
+	// REVIEW-2026-11-03-16, P1-S6/F4: the importing module's go.mod
+	// governs disk resolution for this whole export (including
+	// transitive disk imports during type-checking and merging). A
+	// malformed go.mod fails the export loudly here, before any import
+	// resolves against the wrong version. The context is restored on
+	// return so a later export in the same process starts clean.
+	restoreDiskCtx, err := setDiskModuleContextFromDir(idir)
+	if err != nil {
+		return "", fmt.Errorf("gofrontend: %v", err)
+	}
+	defer restoreDiskCtx()
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if err := checkImportAllowed(imp, idir); err != nil {

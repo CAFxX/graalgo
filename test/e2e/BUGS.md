@@ -17,7 +17,8 @@ general, never module-specific (hard rule 2).
   needX switch all assumed third-party paths were out of scope.
 - **Fix (general, WS G as always intended):** new
   `internal/frontend/diskimport.go` — third-party import paths resolve
-  from local disk ($GOMODCACHE/<path>@<highest version>, then GOPATH/src);
+  from local disk (the importing module's go.mod pin when one governs
+  the import, else $GOMODCACHE/<path>@<highest version>, then GOPATH/src);
   files selected constraint-aware via go/build (GOOS/GOARCH build tags);
   type-checked with the same overlayImporter (recursive imports work);
   merged through the exact syntheticPackage machinery (per-file source
