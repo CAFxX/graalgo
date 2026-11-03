@@ -147,7 +147,7 @@ public final class ReflectLinknames {
                     tokForTypeArg(args[0], "reflect.growslice"),
                     (GoStruct) args[1], (int) num(args[2])), 2);
             Linknames.register("reflect.makechan", args -> makeChan(
-                    tokForTypeArg(args[0], "reflect.makechan"), (int) num(args[1])), 1);
+                    tokForTypeArg(args[0], "reflect.makechan"), (int) num(args[1])), 2);
             Linknames.register("reflect.makemap", args -> {
                 tokForTypeArg(args[0], "reflect.makemap");
                 return ReflectRefs.intern(new GoMap());
