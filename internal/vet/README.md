@@ -62,10 +62,11 @@ This package implements `go vet`-style static analyzers that run as part of
   once even when a directory holds both a package and its external
   test package (two passes over the same `.s` files).
 - External test passes are checked after the other packages, with an
-  importer fed the packages checked in the same `Run`: a test file can
-  import the package under test by its module import path (derived
-  from the enclosing `go.mod`, or the package clause name outside a
-  module) without installed export data.
+  importer scoped to the test pass's own directory's package under
+  test: a test file can import the package under test by its module
+  import path (derived from the enclosing `go.mod`, or the package
+  clause name outside a module) without installed export data, and
+  never a same-named package from another directory.
 - `asmdecl` and `framepointer` discover `.s` files in the directories
   containing the analyzed Go files.
 - `stdversion` reads the symbol introduction database from

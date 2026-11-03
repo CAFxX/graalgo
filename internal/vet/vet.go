@@ -68,10 +68,12 @@ func Analyzers() []*Analyzer {
 // .s files once per pass, so without deduplication a directory holding
 // both a package and its external test package would report each
 // assembly finding twice. External test passes are checked after the
-// other packages with an importer fed the packages checked in this
-// Run, so a test file can import the package under test by its module
-// import path (or package clause name outside a module) even though
-// that package has no installed export data.
+// other packages with an importer scoped to the test pass's own
+// directory's package under test, so a test file can import the
+// package under test by its module import path (or package clause
+// name outside a module) even though that package has no installed
+// export data — and never a same-named package from another
+// directory, which outside a module would share its import path.
 func Run(paths []string) ([]Diagnostic, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("vet: no files")
@@ -100,8 +102,15 @@ func Run(paths []string) ([]Diagnostic, error) {
 
 	var out []Diagnostic
 	var typeErrs []error
-	// checked holds successfully type-checked packages by import path,
-	// for the test-pass importer below.
+	// checked holds successfully type-checked non-test packages,
+	// keyed by directory and package clause name, for the test-pass
+	// importer below. It is deliberately NOT keyed by import path:
+	// outside a module the import path falls back to the bare package
+	// clause name, so two directories with the same clause would
+	// collide on one key and the second package would silently shadow
+	// the first for every test pass — and a clause colliding with a
+	// stdlib name would shadow the real stdlib import. Keying by
+	// directory keeps each test pass scoped to its own package.
 	checked := make(map[string]*types.Package)
 	check := func(g pkgGroup, imp types.Importer) {
 		info := &types.Info{
@@ -119,8 +128,8 @@ func Run(paths []string) ([]Diagnostic, error) {
 		pkg, checkErr := conf.Check(g.importPath, fset, g.files, info)
 		if checkErr != nil {
 			typeErrs = append(typeErrs, fmt.Errorf("vet: type check failed for package %s in %s: %v", g.name, g.dir, checkErr))
-		} else if pkg != nil {
-			checked[g.importPath] = pkg
+		} else if pkg != nil && !strings.HasSuffix(g.name, "_test") {
+			checked[g.dir+"\x00"+g.name] = pkg
 		}
 		// Analyzers run even when checking failed, on best-effort info.
 		pass := &Pass{Fset: fset, Files: g.files, Info: info, Pkg: pkg}
@@ -133,29 +142,48 @@ func Run(paths []string) ([]Diagnostic, error) {
 	}
 	// An external test package imports the package under test by its
 	// module import path, but importer.Default() resolves only installed
-	// export data, so that import always failed here. Feed the packages
-	// checked above to the test passes' importer instead: a test pass
-	// sees exactly the package under test as checked from source in
-	// this same Run, and everything else still resolves via Default.
+	// export data, so that import always failed here. Feed the package
+	// under test to each test pass's importer instead: a test pass
+	// sees exactly its own directory's package under test as checked
+	// from source in this same Run, and everything else still resolves
+	// via Default. The package under test is the non-test group in the
+	// same directory whose clause is the test group's base name; a
+	// test pass never resolves a same-named package from another
+	// directory, which outside a module shares its import path.
 	// Only successfully checked packages are fed in: if the package
 	// under test itself failed to type-check, the test pass honestly
 	// fails too instead of importing partial type info.
 	for _, g := range testGroups {
-		check(g, checkedImporter{checked: checked, fallback: importer.Default()})
+		base := strings.TrimSuffix(g.name, "_test")
+		var underTest *types.Package
+		var underTestPath string
+		for _, r := range regular {
+			if r.dir == g.dir && r.name == base {
+				underTestPath = r.importPath
+				underTest = checked[r.dir+"\x00"+r.name]
+				break
+			}
+		}
+		check(g, scopedImporter{path: underTestPath, pkg: underTest, fallback: importer.Default()})
 	}
 	return deduplicateDiagnostics(SortDiagnostics(out)), errors.Join(typeErrs...)
 }
 
-// checkedImporter resolves imports from packages already type-checked in
-// this Run before falling back to the default (installed) importer.
-type checkedImporter struct {
-	checked  map[string]*types.Package
+// scopedImporter resolves exactly one import — the package under test
+// for a single external test pass, as checked from source in this Run
+// — before falling back to the default (installed) importer for
+// everything else, including stdlib imports. It never answers for a
+// package from another directory, even one sharing the under-test
+// package's clause name and hence its no-module import path.
+type scopedImporter struct {
+	path     string
+	pkg      *types.Package
 	fallback types.Importer
 }
 
-func (imp checkedImporter) Import(path string) (*types.Package, error) {
-	if pkg, ok := imp.checked[path]; ok {
-		return pkg, nil
+func (imp scopedImporter) Import(path string) (*types.Package, error) {
+	if imp.pkg != nil && path == imp.path {
+		return imp.pkg, nil
 	}
 	return imp.fallback.Import(path)
 }
