@@ -686,6 +686,20 @@ const (
 	engineNeedTask   = 3
 )
 
+// maxConsecutiveEmptyWraps bounds the transitional empty-wrap state in
+// (*Conn).Handshake: a NEED_WRAP step whose drain produces no bytes at all
+// (distinct from a nil/failed wrap, which errors immediately). Stock-JDK
+// probe evidence (see the lane report): across TLS 1.3 / TLS 1.2 /
+// client-auth / version-mismatch / garbage-input handshakes, no genuine
+// empty drain was ever observed — every successful drain produced bytes,
+// and persistent empty wraps occurred only when wrapping in a state this
+// loop never wraps in (NEED_UNWRAP, NEED_TASK), which the status switch
+// gates away. The documented transitional case is "a small number" of
+// empty wraps, so 1000 consecutive empties is orders of magnitude above
+// anything transitional while still failing a stuck handshake after
+// ~1000 1ms yields instead of spinning forever.
+const maxConsecutiveEmptyWraps = 1000
+
 //go:linkname beginHandshakeTrap graalgo.tls.beginHandshake
 func beginHandshakeTrap(engineHandle int64) int64
 
@@ -731,8 +745,16 @@ func (c *Conn) Handshake() error {
 		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
 	}
 	tmp := make([]byte, 1<<14)
+	// emptyWraps counts CONSECUTIVE empty NEED_WRAP drains. It resets on
+	// any non-empty wrap and whenever the engine leaves NEED_WRAP, so
+	// only a genuinely stuck engine — same status, same empty branch,
+	// no peer progress in between — can reach the bound.
+	emptyWraps := 0
 	for {
 		st := engineStatusTrap(c.engineHandle)
+		if st != engineNeedWrap {
+			emptyWraps = 0
+		}
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
@@ -779,6 +801,7 @@ func (c *Conn) Handshake() error {
 				out = append(out, out2...)
 			}
 			if len(out) > 0 {
+				emptyWraps = 0
 				if err := writeAll(c.conn, out); err != nil {
 					return err
 				}
@@ -787,6 +810,16 @@ func (c *Conn) Handshake() error {
 				// wrap produces no bytes (transitional state). Spinning
 				// here starves the peer goroutine on a single worker
 				// (--gmp=1): yield so it can make progress.
+				// But a persistently empty wrap must not spin forever
+				// (the shape b458673f fixed for nil wraps): a stuck
+				// engine re-reads NEED_WRAP forever, so after
+				// maxConsecutiveEmptyWraps consecutive empty drains
+				// this is a failure, not a transition — report it as
+				// a tls: error, never a silent success.
+				emptyWraps++
+				if emptyWraps >= maxConsecutiveEmptyWraps {
+					return errors.New("tls: wrap produced no output")
+				}
 				time.Sleep(time.Millisecond)
 			}
 		case engineNeedUnwrap:
