@@ -39,10 +39,33 @@ A `PhantomReference` action is denied the referent by construction, and the
 original Go object cannot be recovered on a pure JVM heap.
 
 Consequence: finalizers that dereference their argument diverge loudly
-(nil-pointer panic inside the finalizer, reported on stderr by the finalizer
-thread) rather than silently. Finalizers that only perform cleanup keyed by
-captured state (close a handle, decrement a counter, signal via a global)
-behave identically.
+(nil-pointer panic inside the finalizer) rather than silently — and since
+REVIEW-2026-11-03-16 P1-B5 that loudness is fatal, like gc: the finalizer
+thread prints `graalgo: finalizer panicked:` plus the panic and terminates
+the program with exit status 2 (`GcInterop.reportFinalizerPanic`; pinned by
+`GcDifferentialTest.testGc06FinalizerPanicIsFatal`, which previously pinned
+the old survive-and-continue behavior). Previously the program survived a
+panicking finalizer; that half of the divergence is closed. Finalizers that
+only perform cleanup keyed by captured state (close a handle, decrement a
+counter, signal via a global) behave identically.
+
+Design record (P1-B5 "keep a strong referent until invocation"): rejected
+as impossible on the JVM, not deferred. Any strong reference held by the
+finalizer machinery is a GC root, so the object never becomes
+phantom-reachable and the finalizer never fires; a Cleaner/ ReferenceQueue
+action is denied the referent by construction. The only mechanism that
+yields the referent at collection time is a finalizer-guardian cycle via
+`Object.finalize()`, deprecated for removal with no ordering guarantees
+and no supported Truffle/Native Image story — not a basis for the Go
+runtime. The nil argument therefore stands until the value model moves off
+the JVM heap or the JVM gains a supported referent-yielding phantom
+mechanism.
+
+**Re-test trigger:** if either of those happens, re-run the GC differential
+corpus with a finalizer that stores its argument (resurrection case) and
+drop this entry's nil-argument claim; until then, a finalizer that needs
+its argument must be treated as unsupported, and its failure mode is now
+fatal-with-diagnostic rather than silent survival.
 
 ### DIV-M4-2: finalizer runs on a JVM thread, not a goroutine
 

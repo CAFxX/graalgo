@@ -43,7 +43,10 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  *       on a pure JVM. Finalizers that dereference their argument diverge
  *       from gc (loudly, not silently). The finalizer runs on the Cleaner's
  *       JVM thread, not a goroutine: touching scheduler state from a
- *       finalizer body fail-fasts.
+ *       finalizer body fail-fasts. <b>Not divergent:</b> a panicking
+ *       finalizer terminates the program with exit status 2, like gc
+ *       (REVIEW-2026-11-03-16 P1-B5); previously it only printed and the
+ *       program continued. See {@link #reportFinalizerPanic}.
  *   <li>{@code runtime.KeepAlive} — {@link java.lang.ref.Reference#reachabilityFence}.
  *   <li>{@code runtime.GC()} — {@code System.gc()} + poll of GC MXBean
  *       collection counts until they advance, bounded 30 s timeout. If the
@@ -99,8 +102,74 @@ public final class GcInterop {
     private static final java.util.Set<Object> PINNED = new java.util.HashSet<>();
 
     /**
+     * How a panicking finalizer terminates the program. The production
+     * handler exits the JVM with status 2 (gc: a panicking finalizer
+     * crashes the program); the handler is replaceable only so unit tests
+     * can observe the fatal routing without killing the test JVM.
+     * Production code must never replace it.
+     */
+    interface FinalizerFatalHandler {
+        void fatal(Throwable t);
+    }
+
+    private static final FinalizerFatalHandler DEFAULT_FATAL_HANDLER = t -> {
+        System.exit(2);
+    };
+
+    private static volatile FinalizerFatalHandler finalizerFatalHandler = DEFAULT_FATAL_HANDLER;
+
+    /**
+     * Test-only hook: replaces the finalizer-fatal handler. Pass null to
+     * restore the production default (exit status 2). Callers must restore
+     * it in a finally block; a leaked test handler would swallow a real
+     * fatal finalizer panic in later tests.
+     */
+    static void setFinalizerFatalHandlerForTest(FinalizerFatalHandler handler) {
+        finalizerFatalHandler = handler == null ? DEFAULT_FATAL_HANDLER : handler;
+    }
+
+    /**
+     * Reports a panicking finalizer and terminates the program, like gc.
+     *
+     * <p>gc semantics: a panic escaping a finalizer is unrecoverable — the
+     * runtime prints the panic and crashes with exit status 2. The old
+     * graalgo behavior (print to stderr and continue) silently survived a
+     * fatal condition: a program gc would kill kept running. The Cleaner
+     * thread cannot propagate the panic to the main thread (there is no
+     * goroutine to unwind into), so termination here is explicit:
+     * diagnostic first, stderr flushed, then the fatal handler (production:
+     * {@code System.exit(2)}).
+     *
+     * <p>Package-private so unit tests can drive the fatal routing
+     * deterministically without waiting on the Cleaner.
+     */
+    static void reportFinalizerPanic(Throwable t) {
+        System.err.println("graalgo: finalizer panicked: " + t);
+        t.printStackTrace(System.err);
+        System.err.println("graalgo: finalizer panicked, terminating with exit status 2 "
+                + "(gc: a panicking finalizer crashes the program)");
+        System.err.flush();
+        finalizerFatalHandler.fatal(t);
+    }
+
+    /**
      * A cancellable finalizer action. The Cleaner API has no "unregister"
      * (Cleanable.clean() *runs* the action); cancellation is via flag.
+     *
+     * <p>Design note (P1-B5, "keep a strong referent until invocation"):
+     * that design cannot work with a Cleaner or a ReferenceQueue — any
+     * strong reference held by the finalizer machinery is a GC root, so
+     * the object never becomes phantom-reachable and the finalizer never
+     * fires. The only JVM mechanism that yields the referent at
+     * collection time is a finalizer-guardian cycle via
+     * {@code Object.finalize()}, which is deprecated for removal, has no
+     * ordering guarantees, and is not a supported Truffle/Native Image
+     * mechanism — rejected, not deferred silently. The nil argument
+     * (DIV-M4-1) therefore stands until the value model moves off the
+     * JVM heap or the JVM gains a supported referent-yielding phantom
+     * mechanism; what this lane fixes is the survivable half: a finalizer
+     * that dereferences its nil argument (or panics for any other reason)
+     * now kills the program like gc instead of being survived.
      */
     private static final class FinalizerAction implements Runnable {
         final GoFunc fn;
@@ -118,10 +187,7 @@ public final class GcInterop {
             try {
                 GoCalls.invoke(fn, new Object[] { null });
             } catch (Throwable t) {
-                // gc: a panicking finalizer crashes the program. We cannot
-                // crash the host from here; be loud instead.
-                System.err.println("graalgo: finalizer panicked: " + t);
-                t.printStackTrace(System.err);
+                reportFinalizerPanic(t);
             }
         }
     }

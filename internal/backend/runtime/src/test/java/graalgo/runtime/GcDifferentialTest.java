@@ -181,17 +181,32 @@ public final class GcDifferentialTest {
     }
 
     /**
-     * gc06: a finalizer that dereferences its nil argument must be LOUD.
-     * (DIV-M4-1: not silent.) stdout must be "survived"; stderr must contain
-     * the "graalgo: finalizer panicked:" diagnostic. No .expected file —
-     * gc would fatal-crash here, so this is graalgo-specific behavior.
+     * gc06: a finalizer that dereferences its nil argument must be FATAL.
+     * (DIV-M4-1: the nil argument itself remains divergent, but the
+     * outcome now matches gc.) gc crashes with exit status 2 on a
+     * panicking finalizer; since REVIEW-2026-11-03-16 P1-B5 graalgo does
+     * the same instead of printing and continuing (the old test pinned
+     * "survived" stdout — that pinned the bug, not the behavior). The
+     * program must exit 2 with the panic diagnostic on stderr and must
+     * never reach "NOT finalized". No .expected file — the exit code and
+     * stderr assertions below are the expectation.
      */
-    public void testGc06FinalizerPanicIsLoud() throws Exception {
+    public void testGc06FinalizerPanicIsFatal() throws Exception {
         ProcessResult r = runGoFull("gc06_finalizer_panic");
-        assertEquals("survived\n", r.stdout, "gc06 stdout");
+        assertEquals("2", String.valueOf(r.exitCode),
+                "gc06: panicking finalizer must exit with status 2, got stdout:\n"
+                        + r.stdout + "\nstderr:\n" + r.stderr);
+        if (r.stdout.contains("NOT finalized")) {
+            throw new AssertionError(
+                    "gc06: program survived the finalizer panic, stdout:\n" + r.stdout);
+        }
         if (!r.stderr.contains("graalgo: finalizer panicked:")) {
             throw new AssertionError(
                     "gc06: expected loud finalizer-panic diagnostic on stderr, got:\n" + r.stderr);
+        }
+        if (!r.stderr.contains("exit status 2")) {
+            throw new AssertionError(
+                    "gc06: expected fatal-termination diagnostic on stderr, got:\n" + r.stderr);
         }
     }
 

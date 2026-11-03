@@ -122,8 +122,9 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # timer callback must be loud, and letting it kill the timer thread
 # silently would stall every timer with no diagnostic.
 # GcInterop's finalizer-panicked message is excluded on the same grounds:
-# a panicking Go finalizer must be loud (gc crashes the program); letting
-# the finalizer thread die silently would lose the diagnostic.
+# a panicking Go finalizer must be loud and fatal (gc crashes the program
+# with exit status 2; GcInterop.reportFinalizerPanic terminates the program);
+# letting the finalizer thread die silently would lose the diagnostic.
 # SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.

@@ -39,7 +39,9 @@ deliverable until the design lands.
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
   byte-addressed value model (or documented trap contract) resolves
-  `unsafe.Add`. Retires B-6, B-7.
+  `unsafe.Add`; a bubble design (fake clock + bubble-scoped goroutines +
+  deadlock detection) retires the synctest loud-panic contract. Retires
+  B-6, B-7, B-8.
 
 ## Active bridges
 
@@ -175,6 +177,41 @@ deliverable until the design lands.
   through the backend so `runtime.Callers` walks the actual guest stack;
   then delete the synthetic intrinsics.
 - **Phase:** 4.
+
+### B-8. `testing/synctest` bubbles unimplemented — `Run`/`inBubble` panic loud (REVIEW-2026-11-03-16 P1-B3)
+
+- **What:**
+  [Synctest.java](../../internal/backend/interop/src/main/java/graalgo/p3link/Synctest.java)
+  `run`/`inBubble` unconditionally throw a Go panic
+  ("not implemented by graalgo"). Any program using `testing/synctest`
+  (`synctest.Run`, fake time, deadlock detection) cannot run at all. The
+  remaining intrinsics in the same file are NOT part of this entry: with
+  no bubbles, `IsInBubble → false`, `associate → Unbubbled`,
+  `isAssociated → false`, `acquire → nil`, `disassociate`/`release →
+  no-ops, and `Wait → "goroutine is not in a bubble"` are the faithful
+  no-bubble answers for code that never enters a bubble (they are also
+  what makes the real `sync.WaitGroup`'s bubble-tracking branches dead
+  code under graalgo).
+- **Why:** a bubble is not a flag — it is a fake clock plus a
+  bubble-scoped goroutine set plus deadlock detection, all plumbed through
+  the scheduler and timers. Running `f` without a bubble would silently
+  drop exactly the semantics the test is asserting (fake time, deadlock
+  detection), producing confusing passing/failing tests; the loud panic
+  is the honest contract until bubbles exist. This entry records that
+  contract so synctest-using programs are never treated as supported.
+- **Root-cause fix:** needs design — a bubble design (fake time source
+  plumbed through the scheduler's timers, bubble-scoped goroutine set,
+  deadlock detection on bubble exit), then a real `Run`/`inBubble`
+  implementation; delete this entry in the same change.
+- **Tracking requirement (the deliverable until the design lands):**
+  (1) `Run`/`inBubble` must keep failing loud — never silently run `f`
+  without a bubble; (2) no `testing/synctest` program may enter the
+  differential/snapshot corpus with a passing expectation (verified:
+  no such program exists in `test/corpus/` at entry time); (3) when a
+  bubble design lands, a synctest corpus program (at minimum: `Run`
+  with fake-time sleep + `Wait`) must be added and this entry removed
+  in the same change.
+- **Phase:** 4 (needs design).
 
 ## Adjudicated non-bridges
 

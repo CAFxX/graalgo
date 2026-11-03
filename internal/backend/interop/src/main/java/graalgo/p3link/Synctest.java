@@ -45,6 +45,11 @@ import graalgo.values.GoString;
  *       semantics, producing confusing test results. Failing loud is the
  *       honest contract; bubble support is future work.</li>
  * </ul>
+ *
+ * <p>Inventoried as bridge-inventory entry B-8 (REVIEW-2026-11-03-16
+ * P1-B3): synctest-using programs are not supported, and {@code Run} /
+ * {@code inBubble} must keep failing loud — never silently run {@code f}
+ * without a bubble — until a bubble design lands.
  */
 public final class Synctest {
     private Synctest() {}

@@ -1,6 +1,8 @@
 package graalgo.runtime;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import graalgo.values.GoPointer;
@@ -106,6 +108,26 @@ public final class GcInteropTest {
     public void testSetFinalizerRemoveAbsent() {
         GoPointer p = new GoPointer(new Object());
         GcInterop.setFinalizer(p, null); // must not throw
+    }
+
+    /**
+     * A panicking finalizer must reach the fatal handler (gc parity,
+     * REVIEW-2026-11-03-16 P1-B5). The handler is replaced with a
+     * capturing one so this unit test does not kill the test JVM; the
+     * production default (System.exit(2)) is exercised end-to-end by
+     * GcDifferentialTest.testGc06FinalizerPanicIsFatal in a subprocess.
+     */
+    public void testFinalizerPanicIsFatal() {
+        List<Throwable> seen = new ArrayList<>();
+        GcInterop.setFinalizerFatalHandlerForTest(seen::add);
+        try {
+            RuntimeException boom = new RuntimeException("boom");
+            GcInterop.reportFinalizerPanic(boom);
+            assertTrue(seen.size() == 1 && seen.get(0) == boom,
+                    "finalizer panic must reach the fatal handler exactly once");
+        } finally {
+            GcInterop.setFinalizerFatalHandlerForTest(null);
+        }
     }
 
     /** gc(): returns promptly (does not hang) on the normal path. */
