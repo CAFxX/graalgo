@@ -51,6 +51,12 @@ export GRAALGO_HOME=/path/to/graalgo
 - **vet**: Run frontend static checks.
 - **fmt**: Format source files with `gofmt`.
 
+When a command takes a package directory, it expands to only the files
+`go build` would compile for the current platform: files excluded by
+GOOS/GOARCH filename suffixes or `//go:build` lines are left out, like
+the `test` command already did. Explicitly named files are never
+filtered (`graalgo run a.go` compiles `a.go` as listed).
+
 ## Architecture
 
 The driver is a thin Go program ([cmd/graalgo/](./)) that:

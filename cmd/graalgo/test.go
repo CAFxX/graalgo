@@ -299,18 +299,41 @@ func parseModulePath(modData []byte) string {
 }
 
 // buildableGoFiles returns the .go files in dir that satisfy the current
-// platform's build constraints, using the same rules as `go build`.
+// platform's build constraints, using the same rules as `go build`: the
+// files `go build` would compile for this platform (build.Default), i.e.
+// GoFiles, CgoFiles, TestGoFiles, and XTestGoFiles. Files excluded by a
+// filename suffix or a //go:build line land in IgnoredGoFiles and are
+// dropped.
+//
+// The platform is the driver's own platform (build.Default): GOOS/GOARCH
+// environment overrides do not change it, and -tags are not applied here
+// (build.Default carries no extra tags; tag forwarding is separate work).
+//
+// A *build.NoGoError means constraint evaluation succeeded and nothing
+// is buildable (every file excluded, or no .go files at all): that is a
+// definitive empty answer, not a failure, so nil is returned — falling
+// back to the raw glob here would silently re-include the very files
+// the constraints excluded. Any other ImportDir error (mixed packages,
+// a malformed //go:build line, an unreadable directory) means evaluation
+// itself failed: fall back to all files and let the backend report the
+// real error, as before.
 func buildableGoFiles(dir string) []string {
 	ctxt := build.Default
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
-		// Not importable (no go.mod context, etc.): fall back to all
-		// files and let the backend report real errors.
+		if _, ok := err.(*build.NoGoError); ok {
+			return nil
+		}
+		// Not importable (mixed packages, malformed constraint, etc.):
+		// fall back to all files and let the backend report real errors.
 		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
 		return all
 	}
 	var out []string
 	for _, f := range pkg.GoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.CgoFiles {
 		out = append(out, filepath.Join(dir, f))
 	}
 	for _, f := range pkg.TestGoFiles {

@@ -234,14 +234,24 @@ func graalgoRunProgram(root string, args []string) int {
 }
 
 // resolveFiles turns package/file arguments into a list of .go files.
-// With no args, uses *.go in the current directory. Directories are
-// expanded to their *.go files (non-recursive, like a simple package).
+// With no args, uses the buildable *.go files in the current directory.
+// Directories are expanded to their buildable *.go files (non-recursive,
+// like a simple package): files excluded by the current platform's build
+// constraints (GOOS/GOARCH filename suffixes, //go:build lines) are NOT
+// included, matching `go build` — the same buildableGoFiles mechanism
+// the test runner uses. Without this, a package with foo_linux.go and
+// foo_darwin.go (same package name, disjoint symbols) would compile on
+// Linux with the darwin-only code included, or fail on duplicate
+// declarations where `go build` succeeds.
+//
+// Explicitly named files are never filtered: like `go run a.go`, a file
+// listed on the command line compiles as listed, whatever its
+// constraints say. Constraint filtering applies to directory expansion
+// only, and the backend's ExportFiles takes explicit file lists, so it
+// deliberately does no filtering of its own.
 func resolveFiles(args []string) ([]string, error) {
 	if len(args) == 0 {
-		matches, err := filepath.Glob("*.go")
-		if err != nil {
-			return nil, err
-		}
+		matches := buildableGoFiles(".")
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("no Go files in current directory")
 		}
@@ -263,11 +273,7 @@ func resolveFiles(args []string) ([]string, error) {
 			return nil, fmt.Errorf("no such file or directory: %s", a)
 		}
 		if fi.IsDir() {
-			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, matches...)
+			files = append(files, buildableGoFiles(a)...)
 			continue
 		}
 		files = append(files, a)
