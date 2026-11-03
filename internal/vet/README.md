@@ -56,7 +56,16 @@ This package implements `go vet`-style static analyzers that run as part of
   the AST with partial type info, but the failure is returned as an
   error alongside their diagnostics, so `graalgo vet` can never report
   "no issues found" for code that did not type-check.
-- `Run(paths)` returns diagnostics sorted by source position.
+- `Run(paths)` returns diagnostics sorted by source position and
+  deduplicated on identical (position, message), so directory-scoped
+  analyzers (`framepointer`, `asmdecl`) report each assembly finding
+  once even when a directory holds both a package and its external
+  test package (two passes over the same `.s` files).
+- External test passes are checked after the other packages, with an
+  importer fed the packages checked in the same `Run`: a test file can
+  import the package under test by its module import path (derived
+  from the enclosing `go.mod`, or the package clause name outside a
+  module) without installed export data.
 - `asmdecl` and `framepointer` discover `.s` files in the directories
   containing the analyzed Go files.
 - `stdversion` reads the symbol introduction database from

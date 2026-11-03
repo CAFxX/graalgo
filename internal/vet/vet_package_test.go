@@ -3,6 +3,7 @@ package vet
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -167,5 +168,118 @@ func Greet() {
 		if !seen[p] {
 			t.Errorf("no diagnostic from %s", p)
 		}
+	}
+}
+
+// TestRunAsmDiagnosticNotDuplicatedAcrossPasses is the regression test
+// for the REVIEW-2026-11-03-12 veto finding 1: framepointer (and any
+// directory-scoped analyzer) scans the directory's .s files once per
+// pass, so a directory with foo.go + foo_test.go + one violating .s
+// file used to yield the identical framepointer diagnostic twice.
+// Run must report it exactly once.
+func TestRunAsmDiagnosticNotDuplicatedAcrossPasses(t *testing.T) {
+	if runtime.GOARCH != "amd64" || (runtime.GOOS != "linux" && runtime.GOOS != "darwin") {
+		t.Skip("framepointer amd64 assembly fixture only fires on amd64 linux/darwin")
+	}
+	dir := t.TempDir()
+	fooPath := filepath.Join(dir, "foo.go")
+	testPath := filepath.Join(dir, "foo_test.go")
+	asmPath := filepath.Join(dir, "foo_amd64.s")
+	if err := os.WriteFile(fooPath, []byte("package foo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(testPath, []byte("package foo_test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	asmSrc := "TEXT \u00b7clobber(SB),$0-0\n" +
+		"\tMOVQ AX, BP\n" +
+		"\tRET\n"
+	if err := os.WriteFile(asmPath, []byte(asmSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := Run([]string{fooPath, testPath})
+	if err != nil {
+		t.Fatalf("Run(foo + foo_test) returned error, want clean passes: %v", err)
+	}
+	n := 0
+	for _, d := range ds {
+		if d.Message == "frame pointer is clobbered before saving" {
+			n++
+			if d.Pos.Filename != asmPath {
+				t.Errorf("framepointer diagnostic from unexpected file %s", d.Pos.Filename)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("expected exactly 1 framepointer diagnostic, got %d: %v", n, ds)
+	}
+}
+
+// TestRunExternalTestImportsPackageUnderTest is the regression test for
+// the REVIEW-2026-11-03-12 veto finding 2: the standard external-test
+// layout — foo_test.go importing the package under test — must
+// type-check. Previously the test pass used importer.Default(), which
+// resolves only installed export data, so the import failed with
+// "could not import" and vet reported 0 diagnostics, exit 1.
+func TestRunExternalTestImportsPackageUnderTest(t *testing.T) {
+	fooSrc := `package foo
+
+func Greet() string {
+	return "hello"
+}
+`
+	testSrc := func(importPath string) string {
+		return "package foo_test\n\nimport (\n\t\"fmt\"\n\t\"" + importPath + "\"\n)\n\nfunc Check() {\n\t_ = foo.Greet()\n\tfmt.Printf(\"%d\", \"hello\")\n}\n"
+	}
+	cases := []struct {
+		name       string
+		goMod      string // "" = no go.mod: import by package clause name
+		subdir     string // "" = package at the module root
+		importPath string
+	}{
+		{name: "module", goMod: "module example.com/foo\n\ngo 1.21\n", importPath: "example.com/foo"},
+		{name: "module-subdir", goMod: "module example.com/mod\n\ngo 1.21\n", subdir: "pkg", importPath: "example.com/mod/pkg"},
+		{name: "no-module", goMod: "", importPath: "foo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.goMod != "" {
+				if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(tc.goMod), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pkgDir := dir
+			if tc.subdir != "" {
+				pkgDir = filepath.Join(dir, tc.subdir)
+				if err := os.MkdirAll(pkgDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fooPath := filepath.Join(pkgDir, "foo.go")
+			testPath := filepath.Join(pkgDir, "foo_test.go")
+			if err := os.WriteFile(fooPath, []byte(fooSrc), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(testPath, []byte(testSrc(tc.importPath)), 0644); err != nil {
+				t.Fatal(err)
+			}
+			ds, err := Run([]string{fooPath, testPath})
+			if err != nil {
+				t.Fatalf("Run(foo + importing foo_test) returned error, want the package under test importable: %v", err)
+			}
+			// The printf diagnostic in the test file proves the test
+			// pass actually ran its analyzers on resolved type info,
+			// not merely that the import error vanished.
+			found := false
+			for _, d := range ds {
+				if d.Pos.Filename == testPath && strings.Contains(d.Message, "expects integer") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("expected printf diagnostic from %s, got: %v", testPath, ds)
+			}
+		})
 	}
 }

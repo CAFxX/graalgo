@@ -62,6 +62,16 @@ func Analyzers() []*Analyzer {
 // when checking fails, and their diagnostics are returned alongside the
 // error — but a type-check failure is returned as an error, so a caller
 // can never report "no issues found" for code that did not type-check.
+//
+// Diagnostics are returned sorted and deduplicated on identical
+// (position, message): directory-scoped analyzers scan a directory's
+// .s files once per pass, so without deduplication a directory holding
+// both a package and its external test package would report each
+// assembly finding twice. External test passes are checked after the
+// other packages with an importer fed the packages checked in this
+// Run, so a test file can import the package under test by its module
+// import path (or package clause name outside a module) even though
+// that package has no installed export data.
 func Run(paths []string) ([]Diagnostic, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("vet: no files")
@@ -71,10 +81,29 @@ func Run(paths []string) ([]Diagnostic, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i := range groups {
+		groups[i].importPath = moduleImportPath(groups[i].dir, groups[i].name)
+	}
+
+	// Check non-test packages first, then external test packages, so a
+	// test pass can import the package under test (see below). Output
+	// is sorted at the end, so check order never affects diagnostic
+	// order.
+	var regular, testGroups []pkgGroup
+	for _, g := range groups {
+		if strings.HasSuffix(g.name, "_test") {
+			testGroups = append(testGroups, g)
+		} else {
+			regular = append(regular, g)
+		}
+	}
 
 	var out []Diagnostic
 	var typeErrs []error
-	for _, g := range groups {
+	// checked holds successfully type-checked packages by import path,
+	// for the test-pass importer below.
+	checked := make(map[string]*types.Package)
+	check := func(g pkgGroup, imp types.Importer) {
 		info := &types.Info{
 			Types:      make(map[ast.Expr]types.TypeAndValue),
 			Defs:       make(map[*ast.Ident]types.Object),
@@ -83,13 +112,15 @@ func Run(paths []string) ([]Diagnostic, error) {
 			Scopes:     make(map[ast.Node]*types.Scope),
 		}
 		conf := types.Config{
-			Importer:                 importer.Default(),
+			Importer:                 imp,
 			IgnoreFuncBodies:         false,
 			DisableUnusedImportCheck: true,
 		}
-		pkg, checkErr := conf.Check(g.name, fset, g.files, info)
+		pkg, checkErr := conf.Check(g.importPath, fset, g.files, info)
 		if checkErr != nil {
 			typeErrs = append(typeErrs, fmt.Errorf("vet: type check failed for package %s in %s: %v", g.name, g.dir, checkErr))
+		} else if pkg != nil {
+			checked[g.importPath] = pkg
 		}
 		// Analyzers run even when checking failed, on best-effort info.
 		pass := &Pass{Fset: fset, Files: g.files, Info: info, Pkg: pkg}
@@ -97,15 +128,108 @@ func Run(paths []string) ([]Diagnostic, error) {
 			out = append(out, a.Run(pass)...)
 		}
 	}
-	return SortDiagnostics(out), errors.Join(typeErrs...)
+	for _, g := range regular {
+		check(g, importer.Default())
+	}
+	// An external test package imports the package under test by its
+	// module import path, but importer.Default() resolves only installed
+	// export data, so that import always failed here. Feed the packages
+	// checked above to the test passes' importer instead: a test pass
+	// sees exactly the package under test as checked from source in
+	// this same Run, and everything else still resolves via Default.
+	// Only successfully checked packages are fed in: if the package
+	// under test itself failed to type-check, the test pass honestly
+	// fails too instead of importing partial type info.
+	for _, g := range testGroups {
+		check(g, checkedImporter{checked: checked, fallback: importer.Default()})
+	}
+	return deduplicateDiagnostics(SortDiagnostics(out)), errors.Join(typeErrs...)
+}
+
+// checkedImporter resolves imports from packages already type-checked in
+// this Run before falling back to the default (installed) importer.
+type checkedImporter struct {
+	checked  map[string]*types.Package
+	fallback types.Importer
+}
+
+func (imp checkedImporter) Import(path string) (*types.Package, error) {
+	if pkg, ok := imp.checked[path]; ok {
+		return pkg, nil
+	}
+	return imp.fallback.Import(path)
+}
+
+// moduleImportPath derives a group's import path: the enclosing go.mod's
+// module path plus the group's directory relative to the module root,
+// or the package clause name when no go.mod encloses the directory.
+// This is the path a test file in the same directory imports the
+// package under test by, and the path types.Config.Check records on
+// the checked package, so the test pass's importer can match it.
+func moduleImportPath(dir, clause string) string {
+	d := dir
+	for {
+		if data, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "//") {
+					continue
+				}
+				f := strings.Fields(line)
+				if len(f) >= 2 && f[0] == "module" {
+					mod := strings.Trim(f[1], `"`)
+					rel, err := filepath.Rel(d, dir)
+					if err != nil || rel == "." {
+						return mod
+					}
+					return mod + "/" + filepath.ToSlash(rel)
+				}
+			}
+			// A go.mod without a module line is malformed; fall
+			// through to the clause-name fallback rather than
+			// inventing a path.
+			break
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return clause
+}
+
+// deduplicateDiagnostics drops identical (position, message) diagnostics,
+// keeping the first in sorted order. It exists because directory-scoped
+// analyzers (framepointer, asmdecl) scan a directory's .s files once per
+// pass: a directory with both a package and its external test package
+// otherwise reports each assembly finding twice, once per pass, where
+// the pre-per-package vet reported it once. Deduplicating at the Run
+// boundary — rather than skipping directory-scoped analyzers in later
+// passes — preserves per-pass analysis (each pass still sees the .s
+// files with its own type info) and covers any analyzer that can emit
+// the same finding from two passes over one directory.
+func deduplicateDiagnostics(ds []Diagnostic) []Diagnostic {
+	seen := make(map[string]bool, len(ds))
+	out := ds[:0]
+	for _, d := range ds {
+		key := d.Pos.Filename + "\x00" + fmt.Sprint(d.Pos.Line) + "\x00" + fmt.Sprint(d.Pos.Column) + "\x00" + d.Message
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, d)
+	}
+	return out
 }
 
 // pkgGroup is one real package pass: the files of a single package
 // clause in a single directory.
 type pkgGroup struct {
-	dir   string // absolute directory, for error messages and grouping
-	name  string // package clause name (e.g. "foo" or "foo_test")
-	files []*ast.File
+	dir        string // absolute directory, for error messages and grouping
+	name       string // package clause name (e.g. "foo" or "foo_test")
+	files      []*ast.File
+	importPath string // module import path, set by Run (see moduleImportPath)
 }
 
 // groupFilesByPackage parses paths (with comments, for directive checks)
