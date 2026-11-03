@@ -66,6 +66,9 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // REVIEW-2026-11-03-13 P1-3: connectionState pack contract —
+        // unknown halves and bad handles decode to 0, never 65535.
+        TESTS.add(graalgo.p3tls.TlsRuntimeConnectionStateTest.class);
     }
 
     private IfaceTestRunner() {}

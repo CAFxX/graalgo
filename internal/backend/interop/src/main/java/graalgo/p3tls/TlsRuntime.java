@@ -660,24 +660,47 @@ public final class TlsRuntime {
     /**
      * Returns negotiated parameters packed as (version << 32 | cipherSuite).
      * graalgo.tls.connectionState(handle) -> packed
+     *
+     * <p>Contract (shared with the Go side in synth_crypto_tls.go,
+     * {@code ConnectionState}): each 16-bit half is 0 when that half is
+     * unknown or unavailable, and the whole pack is 0 when there is no
+     * engine or an error occurs — matching gc, which reports zero values
+     * for an unnegotiated connection. The internal -1 "unknown" sentinel
+     * from {@link #parseVersion}/{@link #parseCipherSuite} is normalized
+     * to 0 here by {@link #packConnectionState}: a raw -1 half must never
+     * reach the Go side, where the unsigned cast would turn it into
+     * 65535 (a plausible-looking but bogus version/suite).
      */
     public static long connectionState(Object handleArg) {
         SSLEngine engine = ENGINES.get(num(handleArg));
         if (engine == null) {
-            return -1;
+            return 0;
         }
         try {
             String protocol = engine.getSession().getProtocol();
             String cipher = engine.getSession().getCipherSuite();
-            int vers = parseVersion(protocol);
-            int suite = parseCipherSuite(cipher);
-            return ((long) vers << 32) | (suite & 0xFFFFFFFFL);
+            return packConnectionState(parseVersion(protocol), parseCipherSuite(cipher));
         } catch (Exception e) {
-            return -1;
+            return 0;
         }
     }
 
-    private static int parseVersion(String protocol) {
+    /**
+     * Packs a version/suite pair into the connectionState wire format,
+     * mapping the internal -1 "unknown" sentinel in either half to 0 so
+     * the pack decodes to gc's zero values, never to 65535.
+     * Package-private for tests.
+     */
+    static long packConnectionState(int version, int cipherSuite) {
+        long vers = version < 0 ? 0 : version & 0xFFFFL;
+        long suite = cipherSuite < 0 ? 0 : cipherSuite & 0xFFFFL;
+        return (vers << 32) | suite;
+    }
+
+    // Package-private for tests. -1 stays the internal "unknown" sentinel
+    // (never a plausible-but-wrong version); packConnectionState maps it
+    // to 0 before the pack leaves this class.
+    static int parseVersion(String protocol) {
         if (protocol == null) {
             return -1;
         }
@@ -751,7 +774,10 @@ public final class TlsRuntime {
         return m;
     }
 
-    private static int parseCipherSuite(String cipher) {
+    // Package-private for tests. -1 stays the internal "unknown" sentinel
+    // (never a plausible-but-wrong suite ID); packConnectionState maps it
+    // to 0 before the pack leaves this class.
+    static int parseCipherSuite(String cipher) {
         if (cipher == null) {
             return -1;
         }

@@ -854,13 +854,33 @@ func writeAll(conn net.Conn, b []byte) error {
 	return nil
 }
 
+// decodeConnectionStatePacked decodes the graalgo.tls.connectionState
+// pack — (version << 32) | cipherSuite — into the ConnectionState fields.
+// Contract (shared with TlsRuntime.connectionState): a half is 0 when that
+// half is unknown or unavailable, and the whole pack is 0 when there is no
+// engine or an error occurred, matching gc's zero values for an
+// unnegotiated connection. A negative half — the pre-fix Java -1 sentinel,
+// still possible from a stale pack — also maps to 0, so a sentinel can
+// never surface as version/cipher 65535 via the unsigned cast.
+func decodeConnectionStatePacked(packed int64) (version uint16, cipherSuite uint16) {
+	v := packed >> 32
+	if v < 0 {
+		v = 0
+	}
+	s := int64(int32(packed))
+	if s < 0 {
+		s = 0
+	}
+	return uint16(v), uint16(s)
+}
+
 // ConnectionState returns the negotiated connection parameters.
 func (c *Conn) ConnectionState() ConnectionState {
-	packed := connectionStateTrap(c.engineHandle)
+	version, cipherSuite := decodeConnectionStatePacked(connectionStateTrap(c.engineHandle))
 	cs := ConnectionState{
-		Version:           uint16(packed >> 32),
+		Version:           version,
 		HandshakeComplete: c.handshakeComplete,
-		CipherSuite:       uint16(packed),
+		CipherSuite:       cipherSuite,
 	}
 	if c.config != nil {
 		cs.ServerName = c.config.ServerName
