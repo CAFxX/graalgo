@@ -10,13 +10,14 @@
 //
 // Assertions are backend-robust by design: they compare graalgo behavior
 // against gc's contract in forms that hold on both backends.
-// - Name() of a frame must be non-empty and end with the declared
-//   function name (gc qualifies with the package path, e.g.
-//   "funcname.TestFuncNameDirectAndMethodValue"; graalgo reports the
-//   bare wire name — the documented StackTrace.qualifyFuncName
-//   divergence, backend scope, not this lane).
-// - A method value must return exactly what the direct call returns.
-// - Entry() direct and via method value must agree.
+//   - Name() of a frame must be non-empty and end with the declared
+//     function name (gc qualifies with the package path, e.g.
+//     "funcname.TestFuncNameDirectAndMethodValue"; graalgo reports the
+//     bare wire name — the documented StackTrace.qualifyFuncName
+//     divergence, backend scope, not this lane).
+//   - A method value must return exactly what the direct call returns.
+//   - Entry() direct and via method value must agree.
+//
 // Run under gc with `go test`, under graalgo with `graalgo test ./dir`.
 package funcname
 
@@ -76,6 +77,53 @@ func helperName() string {
 		return ""
 	}
 	return frame.Func.Name()
+}
+
+// TestFuncNameInterfaceCall (review-20261103-funcname): calling Name()
+// and Entry() through an interface holding the *runtime.Func must return
+// exactly what the direct calls return. Pre-fix the interface call died
+// at dispatch with "no method table installed for dynamic type
+// \"*runtime.Func\"" (host fatal error) even though the direct call
+// worked — the synthetic Func type carried no itab entry.
+func TestFuncNameInterfaceCall(t *testing.T) {
+	fn := firstFrameFunc(t)
+	direct := fn.Name()
+	var namer interface{ Name() string } = fn
+	if got := namer.Name(); got != direct {
+		t.Fatalf("interface fn.Name() = %q, want direct call %q", got, direct)
+	}
+	entry := fn.Entry()
+	var enter interface{ Entry() uintptr } = fn
+	if got := enter.Entry(); got != entry {
+		t.Fatalf("interface fn.Entry() = %d, want direct call %d", got, entry)
+	}
+}
+
+// TestFuncNameNilReceiver: nil-receiver semantics must match gc exactly
+// (runtime/symtab.go): Name() returns "" for nil, Entry() panics with a
+// nil dereference. Both the direct and the interface forms, and the panic
+// must be recoverable.
+func TestFuncNameNilReceiver(t *testing.T) {
+	var fn *runtime.Func
+	if got := fn.Name(); got != "" {
+		t.Fatalf("direct nil Name() = %q, want empty string (gc)", got)
+	}
+	var namer interface{ Name() string } = fn
+	if got := namer.Name(); got != "" {
+		t.Fatalf("interface nil Name() = %q, want empty string (gc)", got)
+	}
+	mustPanic := func(name string, f func()) {
+		t.Helper()
+		defer func() {
+			if r := recover(); r == nil {
+				t.Errorf("%s on nil *Func: expected panic, got none", name)
+			}
+		}()
+		f()
+	}
+	mustPanic("direct Entry()", func() { _ = fn.Entry() })
+	var enter interface{ Entry() uintptr } = fn
+	mustPanic("interface Entry()", func() { _ = enter.Entry() })
 }
 
 func TestFuncNameHelperFrame(t *testing.T) {

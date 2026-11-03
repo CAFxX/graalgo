@@ -466,6 +466,11 @@ public final class P3SyncMain {
             // objID fails fast here. Installed on every build (even empty)
             // so a previous program's tables can never leak into this run.
             IfaceMethodTable.install(IfaceMethodTables.resolve(doc, program.functions()));
+            // review-20261103-funcname: interface targets for the synthetic
+            // runtime stack-inspection methods (no Go body, so resolve()
+            // installs nothing for *runtime.Func); without them an
+            // interface call i.Name() dies at dispatch.
+            graalgo.rtstack.RtStackIfaceTargets.install();
             // P3-M8 (wave 2, reflect): install the GoRType table (canonical
             // per structural identity) and the unsafe handle table. Installed
             // on every build (even empty) so a previous program's tables can

@@ -6,6 +6,7 @@ import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.runtime.GoFuncInfo;
 import graalgo.values.GoKind;
 
 /**
@@ -14,7 +15,9 @@ import graalgo.values.GoKind;
  * <p>Returns the qualified function name ({@code main} is reported as
  * {@code main.main}, like the panic traceback; other names are the
  * unqualified wire names — the wire carries no package path). A nil
- * {@code *Func} raises gc's nil-dereference panic.
+ * {@code *Func} returns {@code ""}: gc's {@code (*Func).Name()} returns
+ * {@code ""} for a nil receiver (runtime/symtab.go), unlike Entry() and
+ * FileLine(), which panic.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook.
@@ -30,7 +33,8 @@ public final class RuntimeFuncNameNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        return RtStack.goString(RtStack.derefFunc(f.executeObject(frame), this).funcName());
+        GoFuncInfo info = RtStack.funcInfoOrNull(f.executeObject(frame));
+        return RtStack.goString(info == null ? "" : info.funcName());
     }
 
     /**

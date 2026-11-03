@@ -98,6 +98,10 @@ public final class P3KindRegistrations implements WireKindRegistrar {
     public void afterBuild(NodeFactory factory, NodeFactory.Program program) {
         graalgo.iface.IfaceMethodTable.install(
                 graalgo.iface.IfaceMethodTables.resolve(factory.document(), program.functions()));
+        // review-20261103-funcname: same intrinsic interface targets as
+        // P3SyncMain installs (see RtStackIfaceTargets) — the graalgo-run
+        // path builds through this registrar, not P3SyncMain.
+        graalgo.rtstack.RtStackIfaceTargets.install();
         graalgo.p3reflect.ReflectTypes.install(factory.document(), program.functions());
         graalgo.p3link.LinknameIntrinsics.install(factory.document(), program);
     }

@@ -60,9 +60,29 @@ final class RtStack {
     }
 
     /**
+     * Unwraps a {@code *runtime.Func} Go value to its handle, or null
+     * when the value is a nil {@code *Func} (Java null, or a nil
+     * {@link GoPointer}). Unlike {@link #derefFunc}, never panics: gc's
+     * {@code (*Func).Name()} returns {@code ""} for a nil receiver
+     * (runtime/symtab.go), so Name() uses this, not derefFunc.
+     */
+    static GoFuncInfo funcInfoOrNull(Object v) {
+        if (v instanceof GoPointer p && !p.isNil()) {
+            Object r = p.referent();
+            if (r instanceof GoFuncInfo g) {
+                return g;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Unwraps a {@code *runtime.Func} Go value to its handle. A nil
      * {@code *Func} (Java null, or a nil {@link GoPointer}) raises gc's
      * nil-dereference panic, like any method call on a nil pointer.
+     * (Correct for Entry()/FileLine(), whose gc implementations dereference
+     * the receiver unconditionally; NOT for Name(), which returns ""
+     * for nil — see {@link #funcInfoOrNull}.)
      */
     static GoFuncInfo derefFunc(Object v, Node site) {
         GoFuncInfo info = null;
