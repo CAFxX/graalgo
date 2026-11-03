@@ -82,7 +82,11 @@ func discoverTestFile(path string) (discoveredFile, error) {
 			if fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
 				continue
 			}
-			df.examples = append(df.examples, discoverExample(f, fn))
+			ex, err := discoverExample(f, fn)
+			if err != nil {
+				return df, err
+			}
+			df.examples = append(df.examples, ex)
 		}
 	}
 	return df, nil
@@ -94,8 +98,15 @@ func discoverTestFile(path string) (discoveredFile, error) {
 // function body whose first line is the Output: marker. The marker line
 // itself, and a "Output: <text>" first line's trailing text, are not
 // part of the expected output; remaining lines are, joined with "\n".
-func discoverExample(f *ast.File, fn *ast.FuncDecl) discoveredExample {
+// A second, separate Output: comment group in the same body is an
+// error under gc ("there can only be one output comment block per
+// example") and is rejected here instead of being silently ignored
+// while the first block's output is used. Note the distinction: lines
+// after the marker WITHIN the same comment group that happen to read
+// "Output: ..." are literal expected output, not a second block.
+func discoverExample(f *ast.File, fn *ast.FuncDecl) (discoveredExample, error) {
 	ex := discoveredExample{name: fn.Name.Name}
+	found := false
 	for _, cg := range f.Comments {
 		if cg.Pos() < fn.Body.Pos() || cg.End() > fn.Body.End() {
 			continue
@@ -110,25 +121,30 @@ func discoverExample(f *ast.File, fn *ast.FuncDecl) discoveredExample {
 			continue
 		}
 		var rest []string
+		unordered := false
 		switch {
 		case lines[0] == "Output:":
 			rest = lines[1:]
 		case strings.HasPrefix(lines[0], "Output: "):
 			rest = append([]string{strings.TrimPrefix(lines[0], "Output: ")}, lines[1:]...)
 		case lines[0] == "Unordered output:":
-			ex.unordered = true
+			unordered = true
 			rest = lines[1:]
 		case strings.HasPrefix(lines[0], "Unordered output: "):
-			ex.unordered = true
+			unordered = true
 			rest = append([]string{strings.TrimPrefix(lines[0], "Unordered output: ")}, lines[1:]...)
 		default:
 			continue
 		}
+		if found {
+			return ex, fmt.Errorf("example %s: there can only be one output comment block per example", fn.Name.Name)
+		}
+		found = true
+		ex.unordered = unordered
 		ex.hasOutput = true
 		ex.output = strings.Join(rest, "\n")
-		return ex
 	}
-	return ex
+	return ex, nil
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -281,7 +297,16 @@ func (t *graalgoT) TempDir() string {
 // as a cleanup.
 func (t *graalgoT) Setenv(key, value string) {
 	old, existed := os.LookupEnv(key)
-	os.Setenv(key, value)
+	if err := os.Setenv(key, value); err != nil {
+		// gc fails the test ("cannot set environment variable");
+		// silently continuing with the variable unset hid the
+		// failure and let the test assert against a stale env.
+		// The log line carries no file:line (the shim has none);
+		// the fatal sentinel still stops exactly this test.
+		t.failed = true
+		t.logLine("cannot set environment variable: " + err.Error())
+		panic("graalgo test fatal: " + t.name)
+	}
 	t.Cleanup(func() {
 		if existed {
 			os.Setenv(key, old)
@@ -330,14 +355,29 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	// the parent — code after t.Run(...) still runs. A skipped
 	// subtest does NOT mark the parent skipped (go test semantics);
 	// a failed subtest does mark the parent failed.
+	//
+	// Only a panic naming THIS subtest is this subtest's: the
+	// graalgoSkip*/graalgoFatal* helpers already set sub.skipped /
+	// sub.failed before panicking, so the exact-name branches swallow
+	// without re-marking. A Fatal/Skip panic naming an ancestor (the
+	// parent's own Fatal/Skip called from inside the subtest closure)
+	// must NOT be swallowed here — prefix matching misattributed it
+	// to the subtest and let the parent keep executing after t.Run.
+	// It is re-panicked with the same sentinel string so an outer Run
+	// or the top-level recover handles it as that test's.
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				s := toString(r)
-				if len(s) >= 17 && s[:17] == "graalgo test skip" {
-					sub.skipped = true
-				} else if len(s) >= 18 && s[:18] == "graalgo test fatal" {
-					sub.failed = true
+				if s == "graalgo test skip: "+sub.name {
+					// Already marked skipped by graalgoSkip*.
+				} else if s == "graalgo test fatal: "+sub.name {
+					// Already marked failed by graalgoFatal*.
+				} else if (len(s) >= 17 && s[:17] == "graalgo test skip") || (len(s) >= 18 && s[:18] == "graalgo test fatal") {
+					// An ancestor's Fatal/Skip: re-panic with the
+					// same sentinel string so an outer Run or the
+					// top-level recover handles it as that test's.
+					panic(s)
 				} else {
 					sub.failed = true
 					sub.logLine("panic: " + s)
@@ -932,8 +972,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// TestMain tracking for the generated main: whether any inlined
 	// TestMain came from the package under test itself (white-box) or
 	// only from its external test package (which phase B may rename).
-	// gc honours exactly one TestMain; two inlined TestMains (one per
-	// side) redeclare loudly, as gc would reject them.
+	// gc rejects a package with both an internal and an external
+	// TestMain ("multiple definitions of TestMain", setup failed).
+	// The driver used to hide that case: phase B renamed the
+	// external TestMain away and the generated main silently ran only
+	// the white-box one, so the combination is rejected at synthesis
+	// time below, with gc's message. (Two TestMains on the same side
+	// still redeclare at driver compile time, as under gc.)
 	hasTestMain := false
 	testMainWhite := false
 	testMainExt := false
@@ -983,6 +1028,12 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 					continue
 				}
 				rewriteParam(d)
+				// Helpers called from TestMain may take *testing.M
+				// (pointer or bare value); rewrite those too, not
+				// just TestMain's own parameter — otherwise the
+				// helper's testing.M reference survives into a
+				// driver whose testing import is dropped.
+				rewriteTestMainParam(d)
 				rewriteTestCalls(d, tu.fset)
 				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
@@ -1016,6 +1067,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 					}
 				}
 				rewriteParam(d)
+				// As above: helpers called from TestMain may take
+				// *testing.M; rewrite them, not just TestMain.
+				rewriteTestMainParam(d)
 				rewriteTestCalls(d, u.fset)
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
@@ -1025,6 +1079,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				gatherDecl(u.f, u.fset, d)
 			}
 		}
+	}
+
+	// A white-box TestMain plus an external TestMain is rejected by
+	// gc (see the tracking comment above); reject it here rather
+	// than emitting a driver that silently runs only one of them.
+	if testMainWhite && testMainExt {
+		return "", fmt.Errorf("multiple definitions of TestMain")
 	}
 
 	// Phase B (imports): prune unreferenced imports and assign
@@ -1812,6 +1873,17 @@ func graalgoRunTests() int {
 	// the frontend now provides; if the backend ever stops providing
 	// it, the wrapper's panic is recovered by the runner above and
 	// the example fails loudly instead of silently passing.
+	// Two properties of the wrapper shape matter: stdout restoration
+	// and the writer-end close happen in a defer, so a panicking
+	// example cannot strand later output in the abandoned pipe (the
+	// old straight-line restore never ran on panic, leaking the pipe
+	// and letting a later large write block on it filling); and a
+	// reader goroutine drains the pipe concurrently while the example
+	// runs, so output over the 64KB pipe buffer cannot deadlock the
+	// writer (the old read-after-return shape blocked forever past
+	// 64KB). The reader reports through a buffered (size-1) channel,
+	// so on the panic path — where nothing receives — the goroutine
+	// still terminates instead of blocking on the send.
 	anyUnordered := false
 	for _, ex := range wrapperExample {
 		if ex.unordered {
@@ -1876,21 +1948,46 @@ func graalgoExampleLinesEqual(a, b string) bool {
 				body.WriteString(fmt.Sprintf("\t\tt.failed = true\n\t\tt.logLine(\"example %s: cannot capture stdout: \" + err.Error())\n\t\treturn\n\t}\n", ex.name))
 				body.WriteString("\told := os.Stdout\n")
 				body.WriteString("\tos.Stdout = w\n")
+				// Deferred restore + writer close: runs on the panic
+				// path too, so stdout can never stay redirected into
+				// this example's abandoned pipe.
+				body.WriteString("\tdefer func() {\n")
+				body.WriteString("\t\tos.Stdout = old\n")
+				body.WriteString("\t\tw.Close()\n")
+				body.WriteString("\t}()\n")
+				// Concurrent drain: the reader runs while the example
+				// runs, so output larger than the pipe buffer cannot
+				// deadlock the writer. The buffered channel lets the
+				// reader finish (and exit) even when the example
+				// panics and nothing receives its result.
+				body.WriteString("\toutCh := make(chan string, 1)\n")
+				body.WriteString("\tgo func() {\n")
+				body.WriteString("\t\tvar buf [4096]byte\n")
+				body.WriteString("\t\tout := \"\"\n")
+				body.WriteString("\t\tfor {\n")
+				body.WriteString("\t\t\tn, err := r.Read(buf[:])\n")
+				body.WriteString("\t\t\tif n > 0 {\n")
+				body.WriteString("\t\t\t\tout += string(buf[:n])\n")
+				body.WriteString("\t\t\t}\n")
+				body.WriteString("\t\t\tif err != nil {\n")
+				body.WriteString("\t\t\t\tbreak\n")
+				body.WriteString("\t\t\t}\n")
+				body.WriteString("\t\t}\n")
+				body.WriteString("\t\tr.Close()\n")
+				body.WriteString("\t\toutCh <- out\n")
+				body.WriteString("\t}()\n")
 				body.WriteString(fmt.Sprintf("\t%s()\n", callName))
+				// Closing the writer ends the reader's stream; the
+				// deferred close above is then a harmless no-op.
 				body.WriteString("\tw.Close()\n")
 				body.WriteString("\tos.Stdout = old\n")
-				body.WriteString("\tvar buf [4096]byte\n")
-				body.WriteString("\tout := \"\"\n")
-				body.WriteString("\tfor {\n")
-				body.WriteString("\t\tn, err := r.Read(buf[:])\n")
-				body.WriteString("\t\tif n > 0 {\n")
-				body.WriteString("\t\t\tout += string(buf[:n])\n")
-				body.WriteString("\t\t}\n")
-				body.WriteString("\t\tif err != nil {\n")
-				body.WriteString("\t\t\tbreak\n")
-				body.WriteString("\t\t}\n")
-				body.WriteString("\t}\n")
-				body.WriteString("\tr.Close()\n")
+				body.WriteString("\tout := <-outCh\n")
+				if !ex.hasOutput {
+					// No Output: comment: the captured output is
+					// discarded, but the receive above must still
+					// be used or the driver fails to compile.
+					body.WriteString("\t_ = out\n")
+				}
 				if ex.hasOutput {
 					body.WriteString(fmt.Sprintf("\twant := %q\n", ex.output))
 					body.WriteString("\tgot := out\n")
@@ -2263,8 +2360,13 @@ func rewriteParam(fn *ast.FuncDecl) {
 }
 
 // rewriteTestMainParam rewrites *testing.M to *graalgoM everywhere in a
-// TestMain declaration: the parameter list AND any nested function
-// literals. It mirrors rewriteParam, for the M type instead of T.
+// FuncDecl: the parameter list AND any nested function literals. It
+// mirrors rewriteParam, for the M type instead of T. It is applied to
+// TestMain itself and to every other inlined test/sibling FuncDecl,
+// because a helper called from TestMain may take *testing.M. Scope
+// limit (same as rewriteParam for T): only FuncDecls are rewritten —
+// testing.M references in GenDecls (type aliases, struct fields) are
+// left alone and are the caller's responsibility to avoid.
 func rewriteTestMainParam(fn *ast.FuncDecl) {
 	ast.Inspect(fn, func(n ast.Node) bool {
 		if star, ok := n.(*ast.StarExpr); ok {

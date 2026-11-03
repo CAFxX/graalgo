@@ -1134,6 +1134,51 @@ func ExampleParam(x int) {}
 	}
 }
 
+// TestDiscoverDuplicateOutputBlock pins the gc rule (verified against
+// gc 1.27: "there can only be one output comment block per example"):
+// a second, separate Output: comment group in one example body is
+// rejected at discovery time, instead of being silently ignored while
+// the first block's output is used. A single comment group whose later
+// lines happen to read "Output: ..." is NOT a second block: gc treats
+// those lines as literal expected output, and so does discovery.
+func TestDiscoverDuplicateOutputBlock(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "dup_test.go", `package ex
+
+func Hello() {}
+
+func ExampleHello() {
+	Hello()
+	// Output: hi
+	Hello()
+	// Output: bye
+}
+`)
+	if _, err := discoverTestFile(filepath.Join(root, "dup_test.go")); err == nil {
+		t.Errorf("discoverTestFile with two Output: blocks = no error, want rejection")
+	} else if !strings.Contains(err.Error(), "one output comment block") {
+		t.Errorf("discoverTestFile error = %v, want it to name the one-output-block rule", err)
+	}
+
+	writeFile(t, root, "lit_test.go", `package ex
+
+func Hello() {}
+
+func ExampleWorld() {
+	Hello()
+	// Output: hi
+	// Output: bye
+}
+`)
+	df, err := discoverTestFile(filepath.Join(root, "lit_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(df.examples) != 1 || df.examples[0].output != "hi\nOutput: bye" {
+		t.Errorf("single-group literal Output: line = %+v, want output %q", df.examples, "hi\nOutput: bye")
+	}
+}
+
 // TestSynthParseErrorsFail is the regression test for P1-T6: parse
 // failures in sibling test files and package sources used to be
 // silently skipped (continue), dropping init functions and
@@ -1358,6 +1403,358 @@ func ExampleUnordered() {
 		"--- FAIL: ExampleBad",
 		"--- PASS: ExampleNoOutput",
 		"--- PASS: ExampleUnordered")
+}
+
+// TestDriverExecSubtestAncestorFatalSkip is the ancestor Fatal/Skip
+// execution coverage for the vetoed L-F Run recover (F1): L-F matched
+// Fatal/Skip sentinels by prefix, so a parent's Fatal/Skip called from
+// inside a subtest was misattributed to the subtest and the parent
+// kept executing after t.Run. This is the L-C
+// TestSubtestSkipFatalExecution case set, adapted to this lane's
+// driver helpers: a skipped subtest returns true and leaves the parent
+// PASS, a fatal subtest returns false and leaves the parent FAIL, a
+// nested skipped subtest skips neither its outer subtest nor the
+// top-level test, code after each t.Run runs, a genuine subtest panic
+// fails only that subtest, and an ancestor Fatal/Skip re-panics out of
+// Run so the parent stops with its own verdict and the code after Run
+// does NOT run.
+func TestDriverExecSubtestAncestorFatalSkip(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execancestor\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package execancestor\n")
+	testFile := filepath.Join(root, "p_test.go")
+	writeFile(t, root, "p_test.go", `package execancestor
+
+import "testing"
+
+func TestSubSkip(t *testing.T) {
+	if ok := t.Run("skipme", func(t *testing.T) { t.Skip("not today") }); !ok {
+		t.Error("Run returned false for a skipped subtest, want true")
+	}
+	if t.Skipped() {
+		t.Error("parent marked skipped by a skipped subtest")
+	}
+	t.Log("after skipped subtest")
+}
+
+func TestSubFatal(t *testing.T) {
+	if ok := t.Run("fatalme", func(t *testing.T) { t.Fatal("fatal subtest") }); ok {
+		t.Error("Run returned true for a fatal subtest, want false")
+	}
+	if !t.Failed() {
+		t.Error("parent not marked failed by a fatal subtest")
+	}
+	t.Log("after fatal subtest")
+}
+
+func TestSubNestedSkip(t *testing.T) {
+	if ok := t.Run("outer", func(t *testing.T) {
+		if ok := t.Run("inner", func(t *testing.T) { t.Skip("inner skip") }); !ok {
+			t.Error("inner Run returned false for a skipped subtest")
+		}
+		if t.Skipped() {
+			t.Error("outer marked skipped by a skipped inner subtest")
+		}
+	}); !ok {
+		t.Error("outer Run returned false, want true")
+	}
+	if t.Skipped() {
+		t.Error("top marked skipped by a skipped nested subtest")
+	}
+}
+
+func TestSubPass(t *testing.T) {
+	if ok := t.Run("passme", func(t *testing.T) { t.Log("subtest log") }); !ok {
+		t.Error("Run returned false for a passing subtest")
+	}
+}
+
+func TestSubPanic(t *testing.T) {
+	if ok := t.Run("subpanic", func(t *testing.T) { panic("kaboom") }); ok {
+		t.Error("Run returned true for a panicking subtest, want false")
+	}
+	if !t.Failed() {
+		t.Error("parent not marked failed by a panicking subtest")
+	}
+	t.Log("after panic subtest")
+}
+
+func TestSubAncestorFatal(t *testing.T) {
+	t.Run("child", func(st *testing.T) {
+		_ = st
+		t.Fatal("parent fatal from subtest")
+	})
+	t.Log("after ancestor fatal")
+}
+
+func TestSubAncestorSkip(t *testing.T) {
+	t.Run("child", func(st *testing.T) {
+		_ = st
+		t.Skip("parent skip from subtest")
+	})
+	t.Log("after ancestor skip")
+}
+`)
+	ft := discoverFileTests(t, testFile)
+	if len(ft.tests) != 7 {
+		t.Fatalf("discovered tests = %v, want 7", ft.tests)
+	}
+	src := synthDriverVerbose(t, root, []fileTests{ft}, []string{filepath.Join(root, "p.go")}, true)
+	out, code := runDriver(t, src)
+	// The driver must exit 1 because TestSubFatal fails — and only
+	// because of that, which the line assertions below pin down.
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1 (TestSubFatal must fail); output:\n%s", code, out)
+	}
+	mustContain(t, out,
+		"=== RUN   TestSubSkip",
+		"--- PASS: TestSubSkip (",
+		"--- SKIP: TestSubSkip/skipme (",
+		"after skipped subtest",
+		"--- FAIL: TestSubFatal (",
+		"--- FAIL: TestSubFatal/fatalme (",
+		"after fatal subtest",
+		"--- PASS: TestSubNestedSkip (",
+		"--- PASS: TestSubNestedSkip/outer (",
+		"--- SKIP: TestSubNestedSkip/outer/inner (",
+		"--- PASS: TestSubPass (",
+		"--- PASS: TestSubPass/passme (",
+		"--- FAIL: TestSubPanic (",
+		"--- FAIL: TestSubPanic/subpanic (",
+		"panic: kaboom",
+		"after panic subtest",
+		"--- FAIL: TestSubAncestorFatal (",
+		"--- SKIP: TestSubAncestorSkip (")
+	for _, notWant := range []string{
+		"--- SKIP: TestSubSkip (",
+		"--- SKIP: TestSubFatal (",
+		"--- SKIP: TestSubNestedSkip (",
+		"--- SKIP: TestSubNestedSkip/outer (",
+		"--- FAIL: TestSubAncestorFatal/child (",
+		"--- SKIP: TestSubAncestorFatal/child (",
+		"--- PASS: TestSubAncestorFatal/child (",
+		"--- FAIL: TestSubAncestorSkip/child (",
+		"--- SKIP: TestSubAncestorSkip/child (",
+		"--- PASS: TestSubAncestorSkip/child (",
+		"after ancestor fatal",
+		"after ancestor skip",
+	} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("driver output contains %q (ancestor verdict misattributed or parent continued):\n%s", notWant, out)
+		}
+	}
+	for _, pair := range [][2]string{
+		{"--- PASS: TestSubSkip (", "--- SKIP: TestSubSkip/skipme ("},
+		{"--- FAIL: TestSubFatal (", "--- FAIL: TestSubFatal/fatalme ("},
+	} {
+		pi, si := strings.Index(out, pair[0]), strings.Index(out, pair[1])
+		if pi >= 0 && si >= 0 && pi > si {
+			t.Errorf("parent line %q printed after subtest line %q:\n%s", pair[0], pair[1], out)
+		}
+	}
+	if !strings.Contains(out, "\nFAIL\n") && !strings.HasSuffix(out, "FAIL\n") {
+		t.Errorf("driver output lacks the FAIL summary line:\n%s", out)
+	}
+}
+
+// TestDriverExecExamplePanicRestoresStdout is the F2 execution test: a
+// panicking example must not leave stdout redirected into its capture
+// pipe. The TestMain prints a marker after m.Run() returns; under the
+// old wrapper (no deferred restore) that marker vanished into the
+// abandoned pipe, and a later large write could block on the pipe
+// filling. The passing example after the panicking one must still run.
+func TestDriverExecExamplePanicRestoresStdout(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execpanic\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execpanic\n")
+	writeFile(t, root, "a_test.go", `package execpanic
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	fmt.Println("testmain before")
+	m.Run()
+	fmt.Println("testmain after")
+}
+
+func TestDummy(t *testing.T) {}
+
+func ExamplePanics() {
+	panic("example boom")
+}
+
+func ExampleAfter() {
+	fmt.Println("ok")
+	// Output: ok
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code == 0 {
+		t.Errorf("driver exit code = 0, want non-zero (ExamplePanics must fail):\n%s", out)
+	}
+	mustContain(t, out,
+		"testmain before",
+		"testmain after",
+		"--- PASS: TestDummy",
+		"--- FAIL: ExamplePanics",
+		"--- PASS: ExampleAfter")
+}
+
+// TestDriverExecExampleLargeOutput is the F3 execution test: an example
+// printing ~220KB (well over the 64KB pipe buffer) must not deadlock.
+// The old wrapper read the pipe only after the example returned, so
+// the writer blocked on a full pipe forever; the fixed wrapper drains
+// the pipe concurrently while the example runs. The example has no
+// Output: comment, so it only has to run without panicking.
+func TestDriverExecExampleLargeOutput(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execbig\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execbig\n")
+	writeFile(t, root, "a_test.go", `package execbig
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestDummy(t *testing.T) {}
+
+func ExampleBig() {
+	for i := 0; i < 20000; i++ {
+		fmt.Println("0123456789")
+	}
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: ExampleBig")
+}
+
+// TestDriverExecSetenvError pins Setenv error handling: gc fails the
+// test ("cannot set environment variable") when os.Setenv errors, e.g.
+// on a key containing '='. The old shim ignored the error and carried
+// on with the variable unset.
+func TestDriverExecSetenvError(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/execsetenv\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package execsetenv\n")
+	writeFile(t, root, "a_test.go", `package execsetenv
+
+import "testing"
+
+func TestBadSetenv(t *testing.T) {
+	t.Setenv("BAD=KEY", "v")
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code == 0 {
+		t.Errorf("driver exit code = 0, want non-zero (bad Setenv key must fail):\n%s", out)
+	}
+	mustContain(t, out, "--- FAIL: TestBadSetenv", "cannot set environment variable")
+}
+
+// TestTwoTestMainRejected pins the corrected two-TestMain behaviour:
+// gc rejects a package with both a white-box and an external TestMain
+// ("multiple definitions of TestMain", setup failed). The old driver
+// silently renamed the external TestMain away and ran only the
+// white-box one, so synthesis now rejects the combination with the
+// same message instead of emitting a driver.
+func TestTwoTestMainRejected(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/twotm\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package twotm\n")
+	writeFile(t, root, "w_test.go", `package twotm
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	m.Run()
+}
+
+func TestW(t *testing.T) {}
+`)
+	writeFile(t, root, "e_test.go", `package twotm_test
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	m.Run()
+}
+
+func TestE(t *testing.T) {}
+`)
+	importPkgNameCache = map[string]string{}
+	_, err := synthesizeTestDriver(root,
+		[]fileTests{
+			discoverFileTests(t, filepath.Join(root, "w_test.go")),
+			discoverFileTests(t, filepath.Join(root, "e_test.go")),
+		},
+		[]string{filepath.Join(root, "a.go")}, true)
+	if err == nil {
+		t.Fatalf("synthesizeTestDriver with white+external TestMain = no error, want rejection")
+	}
+	if !strings.Contains(err.Error(), "multiple definitions of TestMain") {
+		t.Errorf("synthesizeTestDriver error = %v, want it to name the multiple-TestMain rule", err)
+	}
+}
+
+// TestDriverExecTestMainHelper pins *testing.M rewriting for helpers:
+// a helper called from TestMain may take *testing.M (pointer or bare
+// value). The old driver rewrote the type only in TestMain itself, so
+// a helper's *testing.M parameter survived into a driver whose testing
+// import is dropped, and the driver failed to compile.
+func TestDriverExecTestMainHelper(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/exechm\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package exechm\n")
+	writeFile(t, root, "a_test.go", `package exechm
+
+import "testing"
+
+var setupDone = false
+
+func runSuite(m *testing.M) int {
+	return m.Run()
+}
+
+func runSuiteValue(m testing.M) int {
+	return (&m).Run()
+}
+
+func TestMain(m *testing.M) {
+	setupDone = true
+	runSuite(m)
+	runSuiteValue(*m)
+}
+
+func TestChecksSetup(t *testing.T) {
+	if !setupDone {
+		t.Fatal("TestMain did not run")
+	}
+}
+`)
+	src := synthDriverVerbose(t, root,
+		[]fileTests{discoverFileTests(t, filepath.Join(root, "a_test.go"))},
+		[]string{filepath.Join(root, "a.go")}, true)
+	out, code := runDriver(t, src)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestChecksSetup")
 }
 
 // TestDriverExecShimMethods executes a driver using the P1-T2 shim
