@@ -52,8 +52,17 @@ func ioNamedMethod(t *testing.T, pkg *types.Package, typeName, method string) *t
 	if !ok {
 		t.Fatalf("io.%s is %T, want *types.Named", typeName, obj.Type())
 	}
-	for i := 0; i < named.NumMethods(); i++ {
-		if m := named.Method(i); m.Name() == method {
+	// Enumerate via the underlying interface, not Named.NumMethods():
+	// a programmatically built named interface (the mirror) reports 0
+	// explicit methods through Named, while its underlying *types.Interface
+	// carries the full method set — the same pattern sort_test.go's
+	// ifaceMethodSigs uses.
+	iface, ok := named.Underlying().(*types.Interface)
+	if !ok {
+		t.Fatalf("io.%s underlying is %T, want *types.Interface", typeName, named.Underlying())
+	}
+	for i := 0; i < iface.NumMethods(); i++ {
+		if m := iface.Method(i); m.Name() == method {
 			return m
 		}
 	}
@@ -129,7 +138,7 @@ func TestIoOmissionsPinned(t *testing.T) {
 		"Discard",
 		"EOF", "ErrClosedPipe", "ErrNoProgress", "ErrShortBuffer",
 		"ErrShortWrite", "ErrUnexpectedEOF",
-		"LimitedReader", "LimitReader",
+		"LimitReader", "LimitedReader",
 		"MultiReader", "MultiWriter",
 		"NewOffsetWriter", "NewSectionReader", "NopCloser",
 		"OffsetWriter",

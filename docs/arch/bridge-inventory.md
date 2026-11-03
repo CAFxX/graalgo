@@ -109,7 +109,7 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 130 `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 130 non-test `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
 - **What:** 130 non-test files in [internal/frontend/](../../internal/frontend/)
   matching `synth_*.go`: 126 backing the 128 active registry entries in

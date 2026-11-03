@@ -183,6 +183,12 @@ def check_no_bridges(diff):
             continue
         if re.search(r'addFunc\s*\(|synthetic.*Package\s*\(|registerSynthetic', line):
             # Allow in existing synth files (grandfathered), flag in new contexts
+            # Test files are not new contexts: a drift test calling a
+            # pre-existing mirror builder (e.g. syntheticIoPackage() in
+            # io_test.go) registers nothing — it only reads the already
+            # grandfathered mirror. Same test-file exemption as pattern 2.
+            if "/test" in fname or "test_" in fname or "_test." in fname:
+                continue
             if "synth_" not in fname:
                 # Adjudicated real implementations are not bridges.
                 m = re.search(r'addFunc\s*\(\s*"([^"]+)"', line)

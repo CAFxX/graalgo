@@ -180,7 +180,7 @@ BASELINE_ENTRIES = {
 }
 
 # p3frontend mirror file -> v1 import paths it mirrors (from the mirror
-# functions and headers; 12 files, 20 v1 packages).
+# functions and headers; 12 files, 21 v1 packages).
 MIRRORS = {
     "synth_bytes.go": ["bytes"],
     "synth_enc_core.go": ["encoding/base32", "encoding/base64", "encoding/hex",
