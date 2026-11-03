@@ -698,6 +698,19 @@ func wrapTrap(engineHandle int64, plaintext []byte) []byte
 //go:linkname unwrapTrap graalgo.tls.unwrap
 func unwrapTrap(engineHandle int64, netData []byte) []byte
 
+// Unwrap terminal-state codes (from graalgo.tls.unwrapState). unwrap
+// itself never encodes close vs error in its return value: it returns
+// the app bytes produced (possibly empty) and records the terminal
+// state here. A nil unwrap return means only "bad engine handle".
+const (
+	unwrapStateOK     = 0
+	unwrapStateClosed = 1
+	unwrapStateError  = 2
+)
+
+//go:linkname unwrapStateTrap graalgo.tls.unwrapState
+func unwrapStateTrap(engineHandle int64) int64
+
 //go:linkname hasPendingTrap graalgo.tls.hasPending
 func hasPendingTrap(engineHandle int64) int64
 
@@ -884,14 +897,69 @@ type __tlsConnReadPair struct {
 	err error
 }
 
+// isTransportEOF reports whether a read error is the transport's
+// end-of-stream signal. graalgo's socket layer reports FIN as errEOF
+// (synth_net.go: netFD.read returns a distinct errors.New("EOF") —
+// the net package avoids importing io), NOT io.EOF, and synthetic
+// packages are type-checked per-package, so this file cannot name
+// net's unexported errEOF. The message is the only shared signal
+// (precedent: synth_mime_multipart.go compares err.Error() strings);
+// io.EOF itself also reports "EOF", so this covers both. A bare
+// error with exactly this message on the TLS read path is the FIN
+// signal — OpError-wrapped socket errors carry longer messages.
+func isTransportEOF(err error) bool {
+	return err == io.EOF || err.Error() == "EOF"
+}
+
 func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
 	if c.engineHandle == 0 {
 		return __tlsConnReadPair{0, errors.New("tls: nil engine")}
 	}
 	tmp := make([]byte, 1<<14)
 	for {
+		// A previous unwrap may have delivered bytes and reached the
+		// terminal state in the same call (app data + close_notify, or
+		// app data + corrupt record, in one flight): the bytes were
+		// returned then, so the terminal outcome surfaces now, without
+		// blocking on a network read the peer will never answer.
+		if st := unwrapStateTrap(c.engineHandle); st == unwrapStateClosed {
+			return __tlsConnReadPair{0, io.EOF}
+		} else if st == unwrapStateError {
+			return __tlsConnReadPair{0, errors.New("tls: unwrap failed")}
+		}
 		n, err := c.conn.Read(tmp)
 		if err != nil {
+			// A clean FIN after app data must surface as io.EOF
+			// and a truncated record as io.ErrUnexpectedEOF — but
+			// the transport reports FIN as its own errEOF, not
+			// io.EOF (see isTransportEOF). Without normalizing
+			// here, the FIN case fell through to returning the
+			// raw socket error and the truncated case missed the
+			// ErrUnexpectedEOF branch below.
+			eof := isTransportEOF(err)
+			// Transport EOF (or error) with bytes still parked
+			// Java-side: drain them first. A parked complete record
+			// is delivered; a parked partial record means the stream
+			// was truncated, which is an error, never clean EOF
+			// (gc returns io.ErrUnexpectedEOF for EOF mid-record).
+			if hasPendingTrap(c.engineHandle) != 0 {
+				app := unwrapTrap(c.engineHandle, nil)
+				if len(app) > 0 {
+					m := copy(b, app)
+					return __tlsConnReadPair{m, nil}
+				}
+				if st := unwrapStateTrap(c.engineHandle); st == unwrapStateClosed {
+					return __tlsConnReadPair{0, io.EOF}
+				} else if st == unwrapStateError {
+					return __tlsConnReadPair{0, errors.New("tls: unwrap failed")}
+				}
+				if eof {
+					return __tlsConnReadPair{0, io.ErrUnexpectedEOF}
+				}
+			}
+			if eof {
+				return __tlsConnReadPair{0, io.EOF}
+			}
 			return __tlsConnReadPair{0, err}
 		}
 		if n == 0 {
@@ -899,14 +967,24 @@ func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
 		}
 		app := unwrapTrap(c.engineHandle, tmp[:n])
 		if app == nil {
+			// unwrap returns nil only for a bad engine handle now
+			// (close and unwrap errors return their bytes, possibly
+			// empty, and report via unwrapState): a nil here is an
+			// internal error, never EOF.
+			return __tlsConnReadPair{0, errors.New("tls: unwrap failed")}
+		}
+		if len(app) > 0 {
+			m := copy(b, app)
+			return __tlsConnReadPair{m, nil}
+		}
+		// Empty unwrap: handshake/control records, an incomplete
+		// record awaiting more bytes, or a terminal state with no
+		// bytes produced — only the last reports anything.
+		if st := unwrapStateTrap(c.engineHandle); st == unwrapStateClosed {
 			return __tlsConnReadPair{0, io.EOF}
+		} else if st == unwrapStateError {
+			return __tlsConnReadPair{0, errors.New("tls: unwrap failed")}
 		}
-		if len(app) == 0 {
-			// Handshake/control records only; read more.
-			continue
-		}
-		m := copy(b, app)
-		return __tlsConnReadPair{m, nil}
 	}
 }
 

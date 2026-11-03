@@ -78,6 +78,29 @@ public final class TlsRuntime {
     private static final ConcurrentHashMap<Long, byte[]> PENDING =
             new ConcurrentHashMap<>();
 
+    /**
+     * Terminal unwrap state per engine, reported via {@link #unwrapState}.
+     * Sticky and first-wins: once an unwrap observes the peer's
+     * close_notify or fails, every later read on that engine must
+     * report the same terminal outcome instead of blocking on a
+     * network read the peer will never answer, and a later terminal
+     * event must not overwrite the first (an engine that already
+     * failed and then sees a close_notify still reports ERROR).
+     * Values: 1 = peer closed (clean close_notify seen),
+     * 2 = unwrap error (corrupt record, bad handle, or any other
+     * failure). Absent = no terminal event observed yet. Entries are
+     * removed by {@link #close} with the engine.
+     */
+    private static final ConcurrentHashMap<Long, Integer> UNWRAP_STATE =
+            new ConcurrentHashMap<>();
+
+    /** {@link #unwrapState} code: no terminal unwrap event observed. */
+    static final int UNWRAP_OK = 0;
+    /** {@link #unwrapState} code: the peer's close_notify was processed. */
+    static final int UNWRAP_CLOSED = 1;
+    /** {@link #unwrapState} code: an unwrap failed (protocol error). */
+    static final int UNWRAP_ERROR = 2;
+
     private static final int APP_BUF = 17 * 1024;
     private static final int NET_BUF = 17 * 1024;
 
@@ -526,8 +549,22 @@ public final class TlsRuntime {
 
     /**
      * Unwraps TLS records into application data.
-     * Returns app bytes (may be empty); null if the peer closed or on error.
-     * graalgo.tls.unwrap(handle, netData) -> appdata | null
+     *
+     * <p>Returns the app bytes produced by this call (may be empty).
+     * A null return means only "bad engine handle". Close and error are
+     * NOT encoded in the return value: on close_notify the bytes
+     * produced by this call (including app data that arrived in the
+     * same flight as the close_notify) are returned and the terminal
+     * state is recorded for {@link #unwrapState}; on an unwrap failure
+     * the bytes produced before the failure are likewise returned and
+     * the error state is recorded. Callers must consult
+     * {@link #unwrapState} after an empty result — and before blocking
+     * on the next network read after a non-empty result — to learn
+     * whether the stream ended cleanly, failed, or is still open.
+     * Collapsing close and error into one null (the pre-fix contract)
+     * made the Go side report every protocol error as clean EOF and
+     * discard app bytes produced with the close_notify.
+     * graalgo.tls.unwrap(handle, netData) -> appdata | null (bad handle)
      */
     public static Object unwrap(Object handleArg, Object netDataArg) {
         long handle = num(handleArg);
@@ -535,6 +572,10 @@ public final class TlsRuntime {
         if (engine == null) {
             return null;
         }
+        // Declared outside the try so a failure mid-loop still returns
+        // the app bytes produced before the failure instead of dropping
+        // them with the error (same rule as for close_notify below).
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         try {
             byte[] netData = bytes(netDataArg);
             // Prepend any unconsumed bytes from the previous call: the
@@ -549,8 +590,8 @@ public final class TlsRuntime {
                 input = netData;
             }
             ByteBuffer src = ByteBuffer.wrap(input);
-            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             ByteBuffer dst = ByteBuffer.allocate(APP_BUF);
+            boolean peerClosed = false;
             while (src.hasRemaining()) {
                 SSLEngineResult res = engine.unwrap(src, dst);
                 if (res.getStatus() == SSLEngineResult.Status.BUFFER_OVERFLOW) {
@@ -573,7 +614,15 @@ public final class TlsRuntime {
                 }
                 dst.clear();
                 if (res.getStatus() == SSLEngineResult.Status.CLOSED) {
-                    return null;
+                    // Do NOT return null here: out already holds the app
+                    // bytes this call produced (possibly from a record in
+                    // the same flight as the close_notify), and returning
+                    // null would discard them. Record the terminal state
+                    // and fall through to return those bytes; the caller
+                    // reports EOF on its next read, after delivering them.
+                    UNWRAP_STATE.putIfAbsent(handle, UNWRAP_CLOSED);
+                    peerClosed = true;
+                    break;
                 }
                 // BUFFER_UNDERFLOW: need more net data; return what we have.
                 if (res.getStatus() == SSLEngineResult.Status.BUFFER_UNDERFLOW) {
@@ -601,17 +650,46 @@ public final class TlsRuntime {
             }
             // Buffer any input the engine did not consume, so the next
             // unwrap() (or the status check below) sees it first.
-            int remaining = src.remaining();
-            if (remaining > 0) {
-                byte[] rest = new byte[remaining];
-                src.get(rest);
-                PENDING.put(handle, rest);
+            // After close_notify there is no next unwrap: bytes past the
+            // close_notify are not valid stream data and are dropped
+            // rather than parked.
+            if (!peerClosed) {
+                int remaining = src.remaining();
+                if (remaining > 0) {
+                    byte[] rest = new byte[remaining];
+                    src.get(rest);
+                    PENDING.put(handle, rest);
+                }
             }
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
-            return null;
+            // A failure is a protocol error, never a clean close: record
+            // it and return the bytes produced before the failure (which
+            // may be empty) so the caller can deliver them first and
+            // report the error on its next read. Returning null here
+            // used to make the Go side report every corrupt record as
+            // clean EOF.
+            UNWRAP_STATE.putIfAbsent(handle, UNWRAP_ERROR);
+            return toGoBytes(out.toByteArray());
         }
+    }
+
+    /**
+     * Terminal unwrap state for an engine: {@link #UNWRAP_OK} (no terminal
+     * event), {@link #UNWRAP_CLOSED} (peer's close_notify processed),
+     * {@link #UNWRAP_ERROR} (an unwrap failed). An unknown handle (bad
+     * handle, or an engine already closed) reports
+     * {@link #UNWRAP_ERROR}: it is an internal error, never a clean EOF.
+     * graalgo.tls.unwrapState(handle) -> 0 | 1 | 2
+     */
+    public static long unwrapState(Object handleArg) {
+        long handle = num(handleArg);
+        if (!ENGINES.containsKey(handle)) {
+            return UNWRAP_ERROR;
+        }
+        Integer st = UNWRAP_STATE.get(handle);
+        return st != null ? st : UNWRAP_OK;
     }
 
     /**
@@ -780,6 +858,7 @@ public final class TlsRuntime {
         long handle = num(handleArg);
         SSLEngine engine = ENGINES.remove(handle);
         PENDING.remove(handle);
+        UNWRAP_STATE.remove(handle);
         if (engine != null) {
             try {
                 engine.closeInbound();
