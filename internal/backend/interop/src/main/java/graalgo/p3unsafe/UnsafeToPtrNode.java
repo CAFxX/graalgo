@@ -572,7 +572,31 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 || rootInfo.kind != GoKind.STRUCT) {
             return null;
         }
-        for (ReflectTypes.FieldInfo f : rootInfo.fields) {
+        return structFieldAtIn(gs, rootInfo, byteOffset, targetTok, 0);
+    }
+
+    /**
+     * Struct-field storage resolution with nested-struct descent
+     * (fix-redmaster-fullsuite-r5): a byte offset that lands exactly
+     * on a direct field resolves as before; an offset strictly inside
+     * a struct-typed field descends into that field's struct value and
+     * resolves against the nested layout with the offset rebased, so
+     * {@code (*string)(ptr+8)} over {@code nestedMixed{M mixedPair, N
+     * int}} — offset 8 is {@code M.B}, not a direct field of the outer
+     * struct — addresses {@code B}'s cell instead of trapping in the
+     * array-derivation path. This is the same layout fact reflect's
+     * own field machinery relies on (a nested field's absolute offset
+     * is the sum of the path offsets); only exact field boundaries
+     * resolve, at any depth — mid-field and padding offsets still
+     * return null, and the caller's fieldTok/targetTok check still
+     * rejects a type-mismatched hit. Descent is depth-bounded (8,
+     * matching continuedFieldPointer) and skips containers whose
+     * descriptor name does not cross-check, so a suspect layout falls
+     * back to the loud derivation failure exactly as before.
+     */
+    private FieldHit structFieldAtIn(GoStruct gs, ReflectTypes.TypeInfo info,
+            long byteOffset, long targetTok, int depth) {
+        for (ReflectTypes.FieldInfo f : info.fields) {
             if (f.offset != byteOffset || f.type == null || f.index.length != 1) {
                 continue;
             }
@@ -584,6 +608,38 @@ public final class UnsafeToPtrNode extends GoExprNode {
             return new FieldHit(
                     new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()),
                     f.type.tok, targetTok);
+        }
+        if (depth >= 8) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : info.fields) {
+            if (f.type == null || f.type.kind != GoKind.STRUCT || f.type.fields == null
+                    || f.index.length != 1 || byteOffset <= f.offset
+                    || byteOffset >= f.offset + f.type.size) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                continue;
+            }
+            Object nested = new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()).get();
+            while (true) {
+                if (nested instanceof GoCell cell) {
+                    nested = cell.get();
+                } else if (nested instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                    nested = rc.value;
+                } else {
+                    break;
+                }
+            }
+            if (!(nested instanceof GoStruct nestedGs)) {
+                continue;
+            }
+            FieldHit hit = structFieldAtIn(nestedGs, f.type, byteOffset - f.offset, targetTok, depth + 1);
+            if (hit != null) {
+                return hit;
+            }
         }
         return null;
     }

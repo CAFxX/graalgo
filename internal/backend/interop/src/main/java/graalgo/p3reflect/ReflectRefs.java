@@ -389,6 +389,26 @@ public final class ReflectRefs {
             array = sl.array();
             baseIndex = sl.offset();
         }
+        if (r == array && baseIndex == 0 && byteOffset == 0
+                && array != null && array.getClass().isArray()) {
+            // Single-element carrier arrays (UnsafeTable.intern's scalar
+            // normalization: a bare scalar box interns as a 1-element
+            // array) denote the scalar itself, not array storage. The
+            // kind-dispatched storage read below (UINT8 -> byte[],
+            // UINT16 -> short[]) mismatches the carrier's component
+            // type (int[] for Integer boxes), so reflect Interface()
+            // on INT8/UINT8/INT16/UINT16 array elements trapped with
+            // ClassCastException (toSyntheticValue interns the element
+            // scalar, and this read then mistook the carrier for
+            // storage). deref() already defines the carrier rule;
+            // unwrap here when the unwrapped box is the kind's
+            // canonical box, so a genuine storage/kind mismatch still
+            // falls through to the loud storage read below.
+            Object unwrapped = deref(array);
+            if (unwrapped != array && isCanonicalBoxFor(unwrapped, kind)) {
+                return unwrapped;
+            }
+        }
         if (array == null || !array.getClass().isArray()) {
             throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                     "reflect: cannot read scalar at byte offset " + byteOffset
@@ -588,6 +608,24 @@ public final class ReflectRefs {
             case INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64,
                     FLOAT32, FLOAT64, BOOL, COMPLEX64, COMPLEX128,
                     UNTYPED_INT, UNTYPED_FLOAT, UNTYPED_COMPLEX, UNTYPED_BOOL -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * True when {@code boxed} is the canonical box for {@code kind}
+     * (sub-64-bit ints box as Integer, 64-bit ints as Long — see
+     * Boxing.fromLongBits and ReflectValues.structFieldGet). Used to
+     * recognize scalar-carrier unwraps without masking a genuine
+     * storage/kind mismatch.
+     */
+    private static boolean isCanonicalBoxFor(Object boxed, GoKind kind) {
+        return switch (normalizeKind(kind)) {
+            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> boxed instanceof Integer;
+            case INT64, UINT64 -> boxed instanceof Long;
+            case FLOAT32 -> boxed instanceof Float;
+            case FLOAT64 -> boxed instanceof Double;
+            case BOOL -> boxed instanceof Boolean;
             default -> false;
         };
     }

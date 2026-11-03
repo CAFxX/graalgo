@@ -79,8 +79,23 @@ public final class ReflectLinknames {
                     args -> resolveTypeOff(args[1]), 2);
             Linknames.register(pkg + ".chanlen",
                     args -> (long) ChanOps.len(asChan(args[0], pkg + ".chanlen")), 1);
-            Linknames.register(pkg + ".maplen",
-                    args -> (long) asMap(args[0], pkg + ".maplen").size(), 1);
+            // fix-redmaster-fullsuite-r5: gc len(nil map) is 0, and a
+            // nil map arrives here as a null word or a handle denoting
+            // null (fmt's %v of a nil map reaches maplen through
+            // reflect) — the same nil shape mapclear already accepts
+            // as a no-op. Without this asMap throws "not a map" on the
+            // nil word instead of answering 0.
+            Linknames.register(pkg + ".maplen", args -> {
+                Object ptr = args[0];
+                if (ptr == null) {
+                    return 0L;
+                }
+                if (ptr instanceof Number n
+                        && ReflectRefs.denotedValue(n.longValue(), GoKind.MAP) == null) {
+                    return 0L;
+                }
+                return (long) asMap(ptr, pkg + ".maplen").size();
+            }, 1);
             Linknames.register(pkg + ".ifaceE2I", args -> {
                 ifaceE2I(tokForTypeArg(args[0], pkg + ".ifaceE2I"), args[1], args[2]);
                 return null;
