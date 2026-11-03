@@ -354,14 +354,19 @@ func checkDesugarWiringSynthetic(t *testing.T, want m7StrconvJsonExpect) {
 }
 
 // TestM8AcceptItabWiring pins the two P3-M9 (x509/TLS lane)
-// m8MultiResultFuncs entries that wire net.Listener.Accept interface
-// dispatch: (*crypto/tls.listener).Accept -> __listenerAccept and
+// entries that wire net.Listener.Accept interface dispatch:
+// (*crypto/tls.listener).Accept -> __listenerAccept and
 // (*net.TCPListener).Accept -> __tcpListenerAccept. The second entry was
 // missing, which made __listenerAccept's inner l.Listener.Accept()
 // dispatch fail with 'missing method "Accept" for dynamic type
 // "*net.TCPListener"' (01_handshake legs red in legs-nilmap-fix and
 // legs-verify-fix). Reuses the m7 expectation struct and the shared
-// synthetic-package checker (steps 2-5); step 1 pins the m8 table entry.
+// synthetic-package checker (steps 2-5); step 1 pins the entry.
+// The TCPListener row lives in the m9 table (its canonical home for
+// net methods) since the 2026-11-03 table cleanup deleted the identical
+// m8 duplicate — so step 1 searches both tables: the wiring, not the
+// table, is what's pinned, and a duplicate across tables fails here
+// as well as in TestDesugarTablesResolve.
 func TestM8AcceptItabWiring(t *testing.T) {
 	wants := []m7StrconvJsonExpect{
 		{"crypto/tls", "Accept", "listener", "__listenerAccept", "__listenerAcceptPair", []string{"c", "err"}},
@@ -370,33 +375,45 @@ func TestM8AcceptItabWiring(t *testing.T) {
 	for _, want := range wants {
 		name := want.pkgPath + "." + want.recvType + "." + want.name
 		t.Run(name, func(t *testing.T) {
-			// 1. Exactly one m8MultiResultFuncs entry for
-			//    (pkgPath, name, recvType) with the expected wiring.
-			var got *osMultiResultFunc
+			// 1. Exactly one concrete-table entry for
+			//    (pkgPath, name, recvType) with the expected wiring,
+			//    searched across the m8 and m9 tables (see the test
+			//    header: the TCPListener row lives in m9).
+			var gotHelper, gotPair string
+			var gotFields []string
+			matches := 0
 			for i := range m8MultiResultFuncs {
 				mf := &m8MultiResultFuncs[i]
 				if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
-					if got != nil {
-						t.Fatalf("duplicate m8MultiResultFuncs entry for %s", name)
-					}
-					got = mf
+					matches++
+					gotHelper, gotPair, gotFields = mf.helper, mf.pairType, mf.pairFields
 				}
 			}
-			if got == nil {
-				t.Fatalf("no m8MultiResultFuncs entry for %s", name)
+			for i := range m9MultiResultFuncs {
+				mf := &m9MultiResultFuncs[i]
+				if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
+					matches++
+					gotHelper, gotPair, gotFields = mf.helper, mf.pairType, mf.pairFields
+				}
 			}
-			if got.helper != want.helper {
-				t.Fatalf("table helper = %q, want %q", got.helper, want.helper)
+			if matches == 0 {
+				t.Fatalf("no concrete-table entry for %s", name)
 			}
-			if got.pairType != want.pairType {
-				t.Fatalf("table pairType = %q, want %q", got.pairType, want.pairType)
+			if matches > 1 {
+				t.Fatalf("duplicate concrete-table entries for %s", name)
 			}
-			if len(got.pairFields) != len(want.pairFields) {
-				t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+			if gotHelper != want.helper {
+				t.Fatalf("table helper = %q, want %q", gotHelper, want.helper)
+			}
+			if gotPair != want.pairType {
+				t.Fatalf("table pairType = %q, want %q", gotPair, want.pairType)
+			}
+			if len(gotFields) != len(want.pairFields) {
+				t.Fatalf("table pairFields = %v, want %v", gotFields, want.pairFields)
 			}
 			for i, f := range want.pairFields {
-				if got.pairFields[i] != f {
-					t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+				if gotFields[i] != f {
+					t.Fatalf("table pairFields = %v, want %v", gotFields, want.pairFields)
 				}
 			}
 			// 2-5. Synthetic-package verification (shared checker).

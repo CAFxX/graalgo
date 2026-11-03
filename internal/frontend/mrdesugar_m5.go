@@ -265,11 +265,20 @@ func hasStaticIfaceMREntry(method string) bool {
 // m7MultiResultFuncs is the desugar table for the encoding/* packages
 // (extended P3-M8 to reflect, P3-M9 to math/bits — the mechanism is
 // package-path-keyed, so entries for any synthetic package work).
-// Every entry was verified against the synthetic source it names:
-// helper name, pair struct name, and field names/order match the
-// source's __-helper and pair struct exactly (e.g. base32's AppendDecode
-// desugars through base32DecodeStringPair{b, err} — there is no
-// base32AppendPair).
+// Table integrity is enforced mechanically by
+// TestDesugarTablesResolve in mrdesugar_table_test.go (not by this
+// comment): no duplicate (pkg, method, recv) keys across the concrete
+// tables, every row's helper and pair type declared in the synthetic
+// source the row names (via its helperPkg / m7HelperPkgOverride), the
+// pair struct's fields in order equal to the row's pairFields, and the
+// pair arity equal to the stub method's result count in that source.
+// Rows may name synthetic packages only: a package retired to the disk
+// importer (net/http is the precedent — its rows were deleted in the
+// 2026-11-03 table cleanup because classifyM7MultiResultCall panics in
+// getSyntheticPackage for a package with no synthetic source) is served
+// by the disk-MR transform (transformDiskMultiResult), never by a static
+// row. E.g. base32's AppendDecode desugars through
+// base32DecodeStringPair{b, err} — there is no base32AppendPair.
 //
 // m7HelperPkgOverride maps a package path to the synthetic package
 // holding its M7 __-helpers and pair types. Used when a package was
@@ -560,7 +569,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// P3-M9 (tier-5: archive/mime): synthetic archive/* and mime/* (Appendix M).
 	{"archive/tar", "allowedFormats", "Header", "__tarHeaderallowedFormats", "__tarHeaderallowedFormatsPair", []string{"format", "paxHdrs", "err"}, false},
 	{"archive/tar", "FileInfoHeader", "", "__tarFileInfoHeader", "__tarFileInfoHeaderPair", []string{"f0", "f1"}, false},
-	{"archive/tar", "computeChecksum", "block", "__tarblockcomputeChecksum", "__tarblockcomputeChecksumPair", []string{"f0", "signed"}, false},
+	{"archive/tar", "computeChecksum", "block", "__tarblockcomputeChecksum", "__tarblockcomputeChecksumPair", []string{"unsigned", "signed"}, false},
 	{"archive/tar", "Next", "Reader", "__tarReaderNext", "__tarReaderNextPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "next", "Reader", "__tarReadernext", "__tarReadernextPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "readGNUSparsePAXHeaders", "Reader", "__tarReaderreadGNUSparsePAXHeaders", "__tarReaderreadGNUSparsePAXHeadersPair", []string{"f0", "f1"}, false},
@@ -579,7 +588,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/tar", "mustReadFull", "", "__tarmustReadFull", "__tarmustReadFullPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "tryReadFull", "", "__tartryReadFull", "__tartryReadFullPair", []string{"n", "err"}, false},
 	{"archive/tar", "readSpecialFile", "", "__tarreadSpecialFile", "__tarreadSpecialFilePair", []string{"f0", "f1"}, false},
-	{"archive/tar", "splitUSTARPath", "", "__tarsplitUSTARPath", "__tarsplitUSTARPathPair", []string{"f0", "suffix", "ok"}, false},
+	{"archive/tar", "splitUSTARPath", "", "__tarsplitUSTARPath", "__tarsplitUSTARPathPair", []string{"prefix", "suffix", "ok"}, false},
 	{"archive/tar", "Write", "Writer", "__tarWriterWrite", "__tarWriterWritePair", []string{"f0", "f1"}, false},
 	{"archive/tar", "readFrom", "Writer", "__tarWriterreadFrom", "__tarWriterreadFromPair", []string{"f0", "f1"}, false},
 	{"archive/tar", "Write", "regFileWriter", "__tarregFileWriterWrite", "__tarregFileWriterWritePair", []string{"n", "err"}, false},
@@ -587,7 +596,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/tar", "Write", "sparseFileWriter", "__tarsparseFileWriterWrite", "__tarsparseFileWriterWritePair", []string{"n", "err"}, false},
 	{"archive/tar", "ReadFrom", "sparseFileWriter", "__tarsparseFileWriterReadFrom", "__tarsparseFileWriterReadFromPair", []string{"n", "err"}, false},
 	{"archive/tar", "parsePAXTime", "", "__tarparsePAXTime", "__tarparsePAXTimePair", []string{"f0", "f1"}, false},
-	{"archive/tar", "parsePAXRecord", "", "__tarparsePAXRecord", "__tarparsePAXRecordPair", []string{"f0", "f1", "r", "err"}, false},
+	{"archive/tar", "parsePAXRecord", "", "__tarparsePAXRecord", "__tarparsePAXRecordPair", []string{"k", "v", "r", "err"}, false},
 	{"archive/tar", "formatPAXRecord", "", "__tarformatPAXRecord", "__tarformatPAXRecordPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "OpenReader", "", "__zipOpenReader", "__zipOpenReaderPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "NewReader", "", "__zipNewReader", "__zipNewReaderPair", []string{"f0", "f1"}, false},
@@ -595,18 +604,21 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Open", "File", "__zipFileOpen", "__zipFileOpenPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "OpenRaw", "File", "__zipFileOpenRaw", "__zipFileOpenRawPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "dirReader", "__zipdirReaderRead", "__zipdirReaderReadPair", []string{"f0", "f1"}, false},
+	// No Close rows for checksumReader/openDir: Close is single-result
+	// (error only) with a real body in synth_archive_zip.go, so it
+	// needs no pair desugar; the 2-element pairFields rows that stood
+	// here could never fire (arity check) and named helpers/pairs
+	// that do not exist. TestDesugarTablesResolve pins this shape.
 	{"archive/zip", "Stat", "checksumReader", "__zipchecksumReaderStat", "__zipchecksumReaderStatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "checksumReader", "__zipchecksumReaderRead", "__zipchecksumReaderReadPair", []string{"n", "err"}, false},
-	{"archive/zip", "Close", "checksumReader", "__zipchecksumReaderClose", "__zipchecksumReaderClosePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "readDirectoryEnd", "", "__zipreadDirectoryEnd", "__zipreadDirectoryEndPair", []string{"dir", "baseOffset", "err"}, false},
 	{"archive/zip", "findDirectory64End", "", "__zipfindDirectory64End", "__zipfindDirectory64EndPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "stat", "fileListEntry", "__zipfileListEntrystat", "__zipfileListEntrystatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Open", "Reader", "__zipReaderOpen", "__zipReaderOpenPair", []string{"f0", "f1"}, false},
-	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"f0", "elem", "isDir"}, false},
-	{"archive/zip", "Close", "openDir", "__zipopenDirClose", "__zipopenDirClosePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"dir", "elem", "isDir"}, false},
 	{"archive/zip", "ReadDir", "openDir", "__zipopenDirReadDir", "__zipopenDirReadDirPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Create", "Writer", "__zipWriterCreate", "__zipWriterCreatePair", []string{"f0", "f1"}, false},
-	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"f0", "require"}, false},
+	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"valid", "require"}, false},
 	{"archive/zip", "CreateHeader", "Writer", "__zipWriterCreateHeader", "__zipWriterCreateHeaderPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "CreateRaw", "Writer", "__zipWriterCreateRaw", "__zipWriterCreateRawPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Write", "fileWriter", "__zipfileWriterWrite", "__zipfileWriterWritePair", []string{"f0", "f1"}, false},
@@ -617,9 +629,9 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}, false},
 	{"mime", "ParseMediaType", "", "__mimeParseMediaType", "__mimeParseMediaTypePair", []string{"mediatype", "params", "err"}, false},
 	{"mime", "decode2231Enc", "", "__mimedecode2231Enc", "__mimedecode2231EncPair", []string{"f0", "f1"}, false},
-	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"f0", "rest"}, false},
-	{"mime", "consumeValue", "", "__mimeconsumeValue", "__mimeconsumeValuePair", []string{"f0", "rest"}, false},
-	{"mime", "consumeMediaParam", "", "__mimeconsumeMediaParam", "__mimeconsumeMediaParamPair", []string{"f0", "f1", "rest"}, false},
+	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"token", "rest"}, false},
+	{"mime", "consumeValue", "", "__mimeconsumeValue", "__mimeconsumeValuePair", []string{"value", "rest"}, false},
+	{"mime", "consumeMediaParam", "", "__mimeconsumeMediaParam", "__mimeconsumeMediaParamPair", []string{"param", "value", "rest"}, false},
 	{"mime", "percentHexUnescape", "", "__mimepercentHexUnescape", "__mimepercentHexUnescapePair", []string{"f0", "f1"}, false},
 	{"mime", "Decode", "WordDecoder", "__mimeWordDecoderDecode", "__mimeWordDecoderDecodePair", []string{"f0", "f1"}, false},
 	{"mime", "DecodeHeader", "WordDecoder", "__mimeWordDecoderDecodeHeader", "__mimeWordDecoderDecodeHeaderPair", []string{"f0", "f1"}, false},
@@ -627,7 +639,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"mime", "qDecode", "", "__mimeqDecode", "__mimeqDecodePair", []string{"f0", "f1"}, false},
 	{"mime", "readHexByte", "", "__mimereadHexByte", "__mimereadHexBytePair", []string{"f0", "f1"}, false},
 	{"mime", "fromHex", "", "__mimefromHex", "__mimefromHexPair", []string{"f0", "f1"}, false},
-	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "_"}, false},
+	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "f1"}, false},
 	{"mime/multipart", "newPart", "", "__mpnewPart", "__mpnewPartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "Read", "Part", "__mpPartRead", "__mpPartReadPair", []string{"n", "err"}, false},
 	{"mime/multipart", "Read", "partReader", "__mppartReaderRead", "__mppartReaderReadPair", []string{"f0", "f1"}, false},
@@ -643,28 +655,29 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"mime/quotedprintable", "readHexByte", "", "__qpreadHexByte", "__qpreadHexBytePair", []string{"b", "err"}, false},
 	{"mime/quotedprintable", "Read", "Reader", "__qpReaderRead", "__qpReaderReadPair", []string{"n", "err"}, false},
 	{"mime/quotedprintable", "Write", "Writer", "__qpWriterWrite", "__qpWriterWritePair", []string{"n", "err"}, false},
-	// net/http: package-level funcs (P3-M10 — the M9 net/http drop
-	// omitted these; without them any program importing net/http fails
-	// with the WS D multi-result scope error at the first client call).
-	{"net/http", "NewRequest", "", "__newRequest", "__newRequestPair", []string{"req", "err"}, false},
-	{"net/http", "ReadRequest", "", "__readRequest", "__readRequestPair", []string{"req", "err"}, false},
-	{"net/http", "readLine", "", "__readLine", "__readLinePair", []string{"line", "err"}, false},
-	{"net/http", "readMIMEHeader", "", "__readMIMEHeader", "__readMIMEHeaderPair", []string{"hdr", "err"}, false},
-	{"net/http", "ReadResponse", "", "__readResponse", "__readResponsePair", []string{"resp", "err"}, false},
-	{"net/http", "Get", "", "__httpGet", "__clientDoPair", []string{"resp", "err"}, false},
-	{"net/http", "Head", "", "__httpHead", "__clientDoPair", []string{"resp", "err"}, false},
-	{"net/http", "Post", "", "__httpPost", "__clientDoPair", []string{"resp", "err"}, false},
-	{"net/http", "PostForm", "", "__httpPostForm", "__clientDoPair", []string{"resp", "err"}, false},
-	// net/http: methods.
-	{"net/http", "Do", "Client", "__clientDo", "__clientDoPair", []string{"resp", "err"}, false},
-	{"net/http", "Handler", "ServeMux", "__muxHandler", "__muxHandlerPair", []string{"h", "pattern"}, false},
-	{"net/http", "RoundTrip", "Transport", "__transportRoundTrip", "__clientDoPair", []string{"resp", "err"}, false},
-	{"net/http", "Read", "chunkedReader", "__chunkedRead", "__chunkedReadPair", []string{"n", "err"}, false},
-	{"net/http", "Read", "limitedReadCloser", "__limitedReadCloserRead", "__limitedReadCloserReadPair", []string{"n", "err"}, false},
-	{"net/http", "Write", "responseWriter", "__responseWriterWrite", "__responseWriterWritePair", []string{"n", "err"}, false},
-	{"net/http", "Hijack", "responseWriter", "__rwHijack", "__rwHijackPair", []string{"c", "rw", "err"}, false},
-	// net/http/httptest: methods.
-	{"net/http/httptest", "Write", "ResponseRecorder", "__recorderWrite", "__recorderWritePair", []string{"n", "err"}, false},
+	// No net/http or net/http/httptest rows: the synthetic net/http drop
+	// was retired (P4 bridge-removal — both packages are REAL now, via
+	// the disk importer) and the rows named __-helpers and pair types
+	// that exist nowhere. Worse than dead, they were harmful: a direct
+	// call matching a row (http.Get, Client.Do, ...) reached
+	// classifyM7MultiResultCall before the disk classifier and panicked
+	// in getSyntheticPackage ("no synthetic source for net/http").
+	// The disk-MR transform (transformDiskMultiResult) generates specs
+	// for the real multi-result API (Get/Head/Post/PostForm/NewRequest/
+	// ReadRequest/ReadResponse/Client.Do/ServeMux.Handler/
+	// Transport.RoundTrip/ResponseRecorder.Write, plus the
+	// RoundTripper interface spec), so deleting the rows routes every
+	// call to the disk path. The unexported rows needed no replacement:
+	// chunkedReader lives in net/http/internal, responseWriter in
+	// net/http/internal/http2, and readLine/limitedReadCloser do not
+	// exist in net/http at all; readMIMEHeader is a bodyless
+	// //go:linkname declaration, which the disk transform serves with
+	// its standard bodyless-decl treatment once the static row no
+	// longer makes hasStaticMREntry skip it. Do NOT re-add static rows
+	// for a disk
+	// package: the interface-dispatch row for RoundTripper.RoundTrip was
+	// deleted for the same reason (classifyIfaceMultiResultCall panicked
+	// on it before the disk interface classifier ran).
 }
 
 // m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
@@ -788,8 +801,10 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// desugars via the structural io/Write iface entry).
 	{"crypto/hmac", "Write", "hmac", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
 	// P3-M8b: SHAKE Write/Read (concrete *SHAKE call sites, e.g.
-	// h.Write(in) / h.Read(got) as bare statements).
-	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	// h.Write(in) / h.Read(got) as bare statements). The SHAKE Write
+	// row lives with the other sha3 Write rows earlier in this table;
+	// the identical Write row that stood here was deleted as a
+	// duplicate (TestDesugarTablesResolve fails on duplicate keys).
 	{"crypto/sha3", "Read", "SHAKE", "__hashRead", "hash", "hashReadPair", []string{"n", "err"}},
 	// P3-M9 (tier-5): asymmetric crypto multi-result functions.
 	// Generated by tier5crypto/transform.go from go1.27.1 vendored
@@ -1048,13 +1063,6 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// listener type implements net.Listener; the stub panics and calls
 	// rewrite to __listenerAccept).
 	{"crypto/tls", "Accept", "listener", "__listenerAccept", "", "__listenerAcceptPair", []string{"c", "err"}},
-	// P3-M9 (x509/TLS lane, legs-verify-fix): (*net.TCPListener).Accept
-	// itab wiring. __listenerAccept calls l.Listener.Accept() — an
-	// interface dispatch whose dynamic type is *net.TCPListener; without
-	// this entry multiResultHelperFor misses it and the dispatch fails
-	// with 'missing method "Accept" for dynamic type "*net.TCPListener"'
-	// (01_handshake legs red in legs-nilmap-fix and legs-verify-fix).
-	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
 	// P3-M9 (x509/TLS lane): (*Conn).Read/Write concrete methods.
 	{"crypto/tls", "Read", "Conn", "__tlsConnRead", "", "__tlsConnReadPair", []string{"n", "err"}},
 	{"crypto/tls", "Write", "Conn", "__tlsConnWrite", "", "__tlsConnWritePair", []string{"n", "err"}},
@@ -1207,6 +1215,15 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	// net: interface enumeration (P3-M9 module-probe lane).
 	{"net", "Interfaces", "", "__interfaces", "", "interfacesPair", []string{"ifs", "err"}},
 	// net: methods on TCPListener / Conn (prependRecv).
+	// P3-M9 (x509/TLS lane, legs-verify-fix): (*net.TCPListener).Accept
+	// itab wiring. __listenerAccept calls l.Listener.Accept() — an
+	// interface dispatch whose dynamic type is *net.TCPListener; without
+	// this entry multiResultHelperFor misses it and the dispatch fails
+	// with 'missing method "Accept" for dynamic type "*net.TCPListener"'
+	// (01_handshake legs red in legs-nilmap-fix and legs-verify-fix).
+	// This is the canonical Accept row; the identical row that stood in
+	// the m8 table was deleted as a duplicate (TestDesugarTablesResolve
+	// fails on duplicate keys).
 	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
 	// P3-M9 (x509/TLS lane): (*Dialer).Dial (prependRecv). The method body
 	// calls the 2-result package-level Dial/DialTimeout, which cannot
@@ -1330,17 +1347,6 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}},       // ecdh.Curve.NewPrivateKey
 	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}},         // ecdh.Curve.NewPublicKey
 	{"crypto/ecdh", "ecdh", "__mrnistCurve_ecdhPair", []string{"v0", "v1"}},                         // ecdh.Curve.ecdh (interface method)
-	// P3-M9 (tier-5): elliptic.Curve and ecdh.Curve interface methods.
-	// The concrete helpers are wired via m8MultiResultFuncs +
-	// methodTableEntries; the pair types are positionally identical
-	// across implementations (checked by classifyIfaceMultiResultCall).
-	{"crypto/elliptic", "Add", "__mrnistCurve_AddPair", []string{"v0", "v1"}},                       // elliptic.Curve.Add
-	{"crypto/elliptic", "Double", "__mrnistCurve_DoublePair", []string{"v0", "v1"}},                 // elliptic.Curve.Double
-	{"crypto/elliptic", "ScalarMult", "__mrnistCurve_ScalarMultPair", []string{"v0", "v1"}},         // elliptic.Curve.ScalarMult
-	{"crypto/elliptic", "ScalarBaseMult", "__mrnistCurve_ScalarBaseMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarBaseMult
-	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}},           // ecdh.Curve.GenerateKey
-	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}},       // ecdh.Curve.NewPrivateKey
-	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}},         // ecdh.Curve.NewPublicKey
 	// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): fips140/ecdsa
 	// Point[P] interface multi-result methods, dispatched via the WS H
 	// ifacemethod fallback when called on a type parameter. The pair
@@ -1372,12 +1378,12 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"net", "Accept", "acceptPair", []string{"c", "err"}},
 	{"net", "WriteTo", "writePair", []string{"n", "err"}},
 	{"net", "ReadFrom", "readFromPair", []string{"n", "addr", "err"}},
-	// P3-M10 (tier-5: net/http): RoundTripper.RoundTrip, dispatched via
-	// the itab to the concrete transport's pair-returning __-helper
-	// (wired via the m7MultiResultFuncs entry + methodTableEntries).
-	// Pair fields are positionally identical to the method's results
-	// (checked by classifyIfaceMultiResultCall).
-	{"net/http", "RoundTrip", "__clientDoPair", []string{"resp", "err"}},
+	// No net/http rows here either: RoundTripper.RoundTrip is served by
+	// the disk-MR interface spec (transformDiskMultiResult) now that
+	// net/http is REAL. The static row that stood here named a pair
+	// type in a package with no synthetic source, so
+	// classifyIfaceMultiResultCall panicked on it before the disk
+	// interface classifier ran. See the m7 table note above.
 }
 
 // mrPlan is the desugar plan for one classified call.
