@@ -250,6 +250,12 @@ func cmdBuild(root string, args []string) int {
 	return 0
 }
 
+// frontendCheck is the frontend gate cmdVet runs over a package. It is a
+// variable (not a direct call to graalgoRun) so tests can stub the backend
+// invocation and assert on the exact argument shape; it is initialized
+// to graalgoRun.
+var frontendCheck = graalgoRun
+
 // cmdVet implements `graalgo vet [packages]`.
 //
 // Runs the frontend translation check (--check) over the named packages,
@@ -261,13 +267,18 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			failed = true
-		}
-	}
-	if failed {
+	// Frontend gate: check all package files together, as one unit — the
+	// same shape cmdRun's package path and cmdBuild use. Files are
+	// type-checked together, so cross-file references resolve. The
+	// previous per-file loop rejected valid multi-file packages: a file
+	// calling a symbol declared in another file failed its solo check
+	// ("undefined: ...") before the analyzers ever ran. A single-file
+	// input needs no separate loop: the combined invocation with one
+	// file IS the per-file check. All files stay in the gate (including
+	// _test.go files, unlike cmdBuild): vet.Run tolerates type errors,
+	// so dropping test files from the gate would silently accept broken
+	// test files.
+	if code := frontendCheck(root, append([]string{"--check"}, files...)); code != 0 {
 		return 1
 	}
 	// Run the analyzers over all files as one package.
