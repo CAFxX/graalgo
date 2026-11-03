@@ -304,34 +304,60 @@ func main() {
 	}
 }
 
-// TestRuntimeViewFuncsHonest: newly declared runtime functions that have no
-// backend intrinsic yet fail LOUD at export ("call to unknown function"),
-// never with the view-gap "undefined". Red-green per function: pre-fix the
-// error names "undefined", post-fix it names the honest export error.
+// TestRuntimeUnimplementedFuncsFailAtTypeCheck: REVIEW-2026-11-03-16 L-K
+// (P1-S10) contract reversal. The gc 1.27.1 runtime functions with no
+// backend intrinsic are NOT declared in the synthetic view anymore, so a
+// call fails at type-check time ("undefined: runtime.<name>") instead of
+// type-checking and then failing at export ("call to unknown function").
+// This is the Gosched precedent in reverse: a name enters the declared
+// surface only together with its intrinsic (PKG-040), never ahead of it.
+// The scope audit below pins the full removed set; the call cases pin
+// the failure point for representative members.
 //
-// NOTE (PKG-040, 2026-10-16): runtime.Gosched used to be in this list — it
-// was declared surface with no backend. PKG-040 implemented it for real
-// (frontend lowers to the "runtimegosched" statement wire node, backend
-// GoschedNode yields via SchedulerCore.yieldCurrent), so it now exports
-// successfully and moved out of the honest-error list into the assertion
-// below. This is the expected 038→040 transition, not a weakening: the
-// list still covers every remaining unimplemented declared function.
-func TestRuntimeViewFuncsHonest(t *testing.T) {
+// NOTE (PKG-040, 2026-10-16): runtime.Gosched used to be unimplemented
+// surface — PKG-040 implemented it for real (frontend lowers to the
+// "runtimegosched" statement wire node, backend GoschedNode yields via
+// SchedulerCore.yieldCurrent), so it now exports successfully and stays
+// in the positive assertion below.
+func TestRuntimeUnimplementedFuncsFailAtTypeCheck(t *testing.T) {
 	for _, call := range []string{
 		`runtime.Breakpoint()`,
 		`_ = runtime.NumCgoCall()`,
+		`runtime.LockOSThread()`,
+		`runtime.UnlockOSThread()`,
 	} {
 		src := "package main\n\nimport \"runtime\"\n\nfunc main() {\n\t" + call + "\n}\n"
 		_, err := ExportFile(writeSyncProg(t, src))
 		if err == nil {
-			t.Errorf("%s: expected honest unimplemented error, got success", call)
+			t.Errorf("%s: expected type-check failure, got success", call)
 			continue
 		}
-		if strings.Contains(err.Error(), "undefined") {
-			t.Errorf("%s: view gap, error %q contains \"undefined\"", call, err)
+		if !strings.Contains(err.Error(), "undefined") {
+			t.Errorf("%s: error %q does not fail at type-check (want \"undefined\")", call, err)
 		}
-		if !strings.Contains(err.Error(), "unknown function") {
-			t.Errorf("%s: error %q does not contain %q", call, err, "unknown function")
+		if strings.Contains(err.Error(), "unknown function") {
+			t.Errorf("%s: error %q is the old export-time failure, not type-check", call, err)
+		}
+	}
+
+	// Scope audit: every removed unimplemented function is absent from
+	// the overlay view. Re-adding one requires its intrinsic first
+	// (and updating this pin) — the view must never again declare a
+	// function it cannot lower.
+	pkg, err := overlayImporter{}.Import("runtime")
+	if err != nil {
+		t.Fatalf("overlayImporter.Import(runtime): %v", err)
+	}
+	for _, name := range []string{
+		"AddCleanup", "BlockProfile", "Breakpoint", "CPUProfile",
+		"GoroutineProfile", "LockOSThread", "MemProfile", "MutexProfile",
+		"NumCgoCall", "ReadTrace", "SetBlockProfileRate",
+		"SetCPUProfileRate", "SetCgoTraceback", "SetDefaultGOMAXPROCS",
+		"SetMutexProfileFraction", "StartTrace", "StopTrace",
+		"ThreadCreateProfile", "UnlockOSThread",
+	} {
+		if pkg.Scope().Lookup(name) != nil {
+			t.Errorf("runtime view: unimplemented function %q must not be declared", name)
 		}
 	}
 
@@ -351,11 +377,23 @@ func TestRuntimeViewFuncsHonest(t *testing.T) {
 	}
 }
 
-// TestRuntimeViewCompleteness: mechanical audit pin — every member of gc
-// 1.27.1's documented runtime API (enumerated via `go doc -all runtime`)
-// is declared in the synthetic view, with gc-exact shapes for the Error
-// interface, the record structs, and the method sets. The view is fetched
-// through the real overlay importer, exactly as importing code sees it.
+// TestRuntimeViewCompleteness: mechanical audit pin — every DECLARED
+// member of the synthetic runtime view, with gc-exact shapes for the
+// Error interface, the record structs, and the method sets. The view is
+// fetched through the real overlay importer, exactly as importing code
+// sees it.
+//
+// REVIEW-2026-11-03-16 L-K (P1-S10): the declared function set is
+// deliberately NOT gc's full documented API anymore. The 19 documented
+// functions with no backend intrinsic (AddCleanup, BlockProfile,
+// Breakpoint, CPUProfile, GoroutineProfile, LockOSThread, MemProfile,
+// MutexProfile, NumCgoCall, ReadTrace, SetBlockProfileRate,
+// SetCPUProfileRate, SetCgoTraceback, SetDefaultGOMAXPROCS,
+// SetMutexProfileFraction, StartTrace, StopTrace, ThreadCreateProfile,
+// UnlockOSThread) are absent by design — their absence is pinned by
+// TestRuntimeUnimplementedFuncsFailAtTypeCheck — so calls fail at
+// type-check time instead of at export. A function joins this list only
+// together with its intrinsic.
 func TestRuntimeViewCompleteness(t *testing.T) {
 	pkg, err := overlayImporter{}.Import("runtime")
 	if err != nil {
@@ -367,17 +405,11 @@ func TestRuntimeViewCompleteness(t *testing.T) {
 		"Compiler", "GOARCH", "GOOS",
 		// var
 		"MemProfileRate",
-		// funcs
-		"AddCleanup", "BlockProfile", "Breakpoint", "CPUProfile",
+		// funcs (implemented intrinsics only; see header comment)
 		"Caller", "Callers", "CallersFrames", "FuncForPC",
-		"GC", "GOMAXPROCS", "GOROOT", "Goexit", "GoroutineProfile",
-		"Gosched", "KeepAlive", "LockOSThread", "MemProfile",
-		"MutexProfile", "NumCPU", "NumCgoCall", "NumGoroutine",
-		"ReadMemStats", "ReadTrace", "SetBlockProfileRate",
-		"SetCPUProfileRate", "SetCgoTraceback", "SetDefaultGOMAXPROCS",
-		"SetFinalizer", "SetMutexProfileFraction", "Stack",
-		"StartTrace", "StopTrace", "ThreadCreateProfile",
-		"UnlockOSThread", "Version",
+		"GC", "GOMAXPROCS", "GOROOT", "Goexit",
+		"Gosched", "KeepAlive", "NumCPU", "NumGoroutine",
+		"ReadMemStats", "SetFinalizer", "Stack", "Version",
 		// types
 		"BlockProfileRecord", "Cleanup", "Error", "Frame", "Frames",
 		"Func", "MemProfileRecord", "MemStats", "PanicNilError",
@@ -481,23 +513,11 @@ func TestRuntimeViewCompleteness(t *testing.T) {
 	} else if arr, ok := srFields[0].(*types.Array); !ok || arr.Len() != 32 {
 		t.Errorf("runtime.StackRecord.Stack0: not [32]uintptr")
 	}
-	// AddCleanup is generic over [T, S any] with gc's parameter order.
-	ac, ok := scope.Lookup("AddCleanup").(*types.Func)
-	if !ok {
-		t.Fatalf("runtime.AddCleanup is not a *types.Func")
-	}
-	sig, ok := ac.Type().(*types.Signature)
-	if !ok {
-		t.Fatalf("runtime.AddCleanup type is not a signature")
-	}
-	if sig.TypeParams().Len() != 2 {
-		t.Errorf("runtime.AddCleanup: %d type params, want 2 [T, S]",
-			sig.TypeParams().Len())
-	}
-	if sig.Params().Len() != 3 || sig.Results().Len() != 1 {
-		t.Errorf("runtime.AddCleanup: %d params/%d results, want 3/1",
-			sig.Params().Len(), sig.Results().Len())
-	}
+	// NOTE (REVIEW-2026-11-03-16 L-K, P1-S10): the AddCleanup generic
+	// signature pin lived here while AddCleanup was declared surface;
+	// it is gone with the declaration. If AddCleanup is ever implemented
+	// for real, its gc-exact generic signature ([T, S any], 3 params /
+	// 1 result) must be re-pinned here together with the declaration.
 }
 
 // TestRuntimeGoschedExport: runtime.Gosched() lowers to the additive

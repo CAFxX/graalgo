@@ -217,7 +217,10 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // implements each member as an intrinsic wire node (see exportCall and
 // graalgo.rtstack):
 //   - Goexit (M5, WS F), the build constants GOARCH/GOOS and NumCPU
-//     (P4 driver-harden), GOMAXPROCS (P4 driver-harden), NumGoroutine
+//     (P4 driver-harden), GOMAXPROCS (P4 driver-harden: a real get/set
+//     cell via the runtimegomaxprocs wire node — it round-trips the
+//     save/restore pattern, but it does NOT constrain JVM scheduling;
+//     see GoMaxProcsNode), NumGoroutine
 //     (PKG-023: real implementation over the scheduler's live count),
 //     Gosched (PKG-040: real yield via the scheduler's voluntary-yield
 //     primitive),
@@ -228,16 +231,25 @@ func (failImporter) Import(path string) (*types.Package, error) {
 //     (`go doc -all runtime`): the Error interface (error +
 //     RuntimeError) with the TypeAssertionError/PanicNilError/Pinner/
 //     Cleanup/StackRecord/BlockProfileRecord/MemProfileRecord types and
-//     their gc-exact methods and fields, the Compiler const, the
+//     their gc-exact methods and fields, the Compiler const, and the
 //     MemProfileRate var (materialized as a real doc global with gc's
-//     512*1024 default), and every documented function (AddCleanup,
-//     BlockProfile, Breakpoint, CPUProfile, GoroutineProfile, Gosched,
-//     LockOSThread, MemProfile, MutexProfile, NumCgoCall, ReadTrace,
-//     SetBlockProfileRate, SetCPUProfileRate, SetCgoTraceback,
-//     SetDefaultGOMAXPROCS, SetMutexProfileFraction, StartTrace,
-//     StopTrace, ThreadCreateProfile, UnlockOSThread). Functions without
-//     a backend intrinsic yet keep the honest "call to unknown function"
-//     export error; the view never reports "undefined" for documented API.
+//     512*1024 default). REVIEW-2026-11-03-16 L-K (P1-S10) reversed
+//     PKG-038 for CALLABLE functions: the 19 documented functions with
+//     no backend intrinsic (AddCleanup, BlockProfile, Breakpoint,
+//     CPUProfile, GoroutineProfile, LockOSThread, MemProfile,
+//     MutexProfile, NumCgoCall, ReadTrace, SetBlockProfileRate,
+//     SetCPUProfileRate, SetCgoTraceback, SetDefaultGOMAXPROCS,
+//     SetMutexProfileFraction, StartTrace, StopTrace,
+//     ThreadCreateProfile, UnlockOSThread) are NOT declared, so a call
+//     fails at type-check time ("undefined") instead of type-checking
+//     and then failing at export ("call to unknown function"). A
+//     function joins the declared surface only together with its
+//     intrinsic (the Gosched PKG-040 precedent, in reverse). The
+//     removal is scoped to package-level functions on purpose: every
+//     call to one already failed at export, so no working program
+//     breaks; types and their method sets stay declared because
+//     removing a method would also reject programs that merely use
+//     the type (e.g. in interface position) without calling it.
 //
 // The multi-result members (Caller, (*Frames).Next, (*Func).FileLine) keep
 // their exact multi-result signatures for type-checking; call sites
@@ -494,7 +506,11 @@ func syntheticRuntimePackage() *types.Package {
 	}, nil))
 	addMethod(stackRecord, "Stack", nil, tuple(param("", types.NewSlice(uintptrTyp))))
 	// Type BlockProfileRecord (gc: src/runtime/mprof.go:1040).
-	blockProfileRecord := newNamed("BlockProfileRecord", types.NewStruct([]*types.Var{
+	// No methods, and no declared function consumes it anymore
+	// (BlockProfile/MutexProfile are undeclared per P1-S10) — the type
+	// itself stays in the view for programs that name it, so the
+	// newNamed value is intentionally discarded.
+	_ = newNamed("BlockProfileRecord", types.NewStruct([]*types.Var{
 		newField("Count", types.Typ[types.Int64]),
 		newField("Cycles", types.Typ[types.Int64]),
 		types.NewField(token.NoPos, pkg, "StackRecord", stackRecord, true),
@@ -521,61 +537,19 @@ func syntheticRuntimePackage() *types.Package {
 	// its gc-exact initializer is registered in stubVarInit.
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "MemProfileRate", intTyp))
 
-	// The remaining documented functions, gc-exact signatures. Calls
-	// lower through the general path to the honest "call to unknown
-	// function" export error until a backend intrinsic lands (the
-	// PKG-023 NumGoroutine precedent for adding the real thing).
-	// AddCleanup (gc: src/runtime/mcleanup.go:76):
-	// func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup
-	tpT := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
-	tpS := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "S", nil), anyT)
-	cleanupFnSig := types.NewSignatureType(nil, nil, nil,
-		tuple(param("arg", tpS)), nil, false)
-	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "AddCleanup",
-		types.NewSignatureType(nil, nil, []*types.TypeParam{tpT, tpS},
-			tuple(
-				param("ptr", types.NewPointer(tpT)),
-				param("cleanup", cleanupFnSig),
-				param("arg", tpS),
-			),
-			tuple(param("", cleanup)),
-			false)))
-	// The rest are non-generic; signatures verified against the gc
-	// sources cited per group above.
-	unsafePtrTyp := types.Typ[types.UnsafePointer]
-	int64Typ := types.Typ[types.Int64]
-	addFunc("BlockProfile", tuple(param("p", types.NewSlice(blockProfileRecord))),
-		tuple(param("n", intTyp), param("ok", boolTyp)))
-	addFunc("Breakpoint", nil, nil)
-	addFunc("CPUProfile", nil, tuple(param("", byteSlice)))
-	addFunc("GoroutineProfile", tuple(param("p", types.NewSlice(stackRecord))),
-		tuple(param("n", intTyp), param("ok", boolTyp)))
+	// REVIEW-2026-11-03-16 L-K (P1-S10): the remaining documented
+	// functions are NOT declared (see the header comment): with no
+	// backend intrinsic, declaring one only moved its failure from
+	// type-check time to export time. The undeclared set — re-add a
+	// name only together with its intrinsic:
+	// AddCleanup (gc: src/runtime/mcleanup.go:76),
+	// BlockProfile, Breakpoint, CPUProfile, GoroutineProfile,
+	// LockOSThread, MemProfile, MutexProfile, NumCgoCall, ReadTrace,
+	// SetBlockProfileRate, SetCPUProfileRate, SetCgoTraceback,
+	// SetDefaultGOMAXPROCS, SetMutexProfileFraction, StartTrace,
+	// StopTrace, ThreadCreateProfile, UnlockOSThread.
+	// Gosched IS implemented (PKG-040), so it stays declared.
 	addFunc("Gosched", nil, nil)
-	addFunc("LockOSThread", nil, nil)
-	addFunc("MemProfile",
-		tuple(param("p", types.NewSlice(memProfileRecord)), param("inuseZero", boolTyp)),
-		tuple(param("n", intTyp), param("ok", boolTyp)))
-	addFunc("MutexProfile", tuple(param("p", types.NewSlice(blockProfileRecord))),
-		tuple(param("n", intTyp), param("ok", boolTyp)))
-	addFunc("NumCgoCall", nil, tuple(param("", int64Typ)))
-	addFunc("ReadTrace", nil, tuple(param("", byteSlice)))
-	addFunc("SetBlockProfileRate", tuple(param("rate", intTyp)), nil)
-	addFunc("SetCPUProfileRate", tuple(param("hz", intTyp)), nil)
-	addFunc("SetCgoTraceback",
-		tuple(
-			param("version", intTyp),
-			param("traceback", unsafePtrTyp),
-			param("context", unsafePtrTyp),
-			param("symbolizer", unsafePtrTyp),
-		), nil)
-	addFunc("SetDefaultGOMAXPROCS", nil, nil)
-	addFunc("SetMutexProfileFraction", tuple(param("rate", intTyp)),
-		tuple(param("", intTyp)))
-	addFunc("StartTrace", nil, tuple(param("", errorIface)))
-	addFunc("StopTrace", nil, nil)
-	addFunc("ThreadCreateProfile", tuple(param("p", types.NewSlice(stackRecord))),
-		tuple(param("n", intTyp), param("ok", boolTyp)))
-	addFunc("UnlockOSThread", nil, nil)
 
 	pkg.MarkComplete()
 	return pkg
@@ -6893,6 +6867,17 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
+// isRuntimePkgIdent reports whether id resolves to the runtime package
+// itself (import path "runtime") — regardless of the local import name,
+// and never for a different package that merely shares the name
+// "runtime". REVIEW-2026-11-03-16 L-K (P1-F2): runtime intrinsics key on
+// the import PATH, never the package NAME; this is the single predicate
+// for the qualifier side of every runtime interception gate.
+func isRuntimePkgIdent(info *types.Info, id *ast.Ident) bool {
+	pkgName, ok := info.Uses[id].(*types.PkgName)
+	return ok && pkgName.Imported().Path() == "runtime"
+}
+
 // isGoschedCall reports whether x is a call to runtime.Gosched (resolved
 // against the synthetic runtime overlay package, not merely named
 // "runtime" — the exportCall interception's package check, mirrored here
@@ -6907,11 +6892,11 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if !ok || !isRuntimePkgIdent(info, pkgIdent) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8557,13 +8542,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
-		// local named runtime is not. The structural obj.Pkg().Name()
-		// check below stays as the second gate.
-		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
-			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
-					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
-				}
+		// local named runtime is not. REVIEW-2026-11-03-16 L-K (P1-F2):
+		// both gates are import-PATH gates now, and a non-runtime
+		// Goexit falls through to the general call path instead of the
+		// old scope error: ANY package may declare a Goexit function,
+		// and erroring on it rejected valid programs.
+		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" && isRuntimePkgIdent(e.info, pkg) {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				if len(c.Args) != 0 {
 					return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
 				}
@@ -8581,8 +8566,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+		// REVIEW-2026-11-03-16 L-K (P1-F2): the qualifier gate is the
+		// resolved import PATH (isRuntimePkgIdent), not the identifier
+		// spelling — a local package named "runtime" falls through to
+		// the general call path, and a renamed import of "runtime"
+		// still intercepts (R2-P2-9 precedent).
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && isRuntimePkgIdent(e.info, pkgIdent) {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]

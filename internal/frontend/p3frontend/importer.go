@@ -18,7 +18,18 @@ import (
 //     be reused, only matched);
 //   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
 //     exact frozen signatures (four primitives + the defined-but-out-of-
-//     scope methods, so the same named scope errors fire);
+//     scope methods) for the PRE-FLATTEN type-check only. REVIEW-2026-
+//     11-03-16 L-K (P1-S4/F9 staleness note): this mirror is STALE
+//     against v1 — v1 retired synthetic sync to the real disk package
+//     in 503608ea, so the mirror lacks sync.Map/sync.Pool and every
+//     post-M2b member, and the old "not in M2 scope" errors no longer
+//     fire (see TestSyncFormerScopeErrorsNowCompile). The merged source
+//     keeps the import spec and gofrontend re-resolves sync from disk,
+//     so ExportDir programs still compile — but any program using a
+//     sync member outside the four mirrored primitives fails this
+//     pre-flatten check that v1 would accept. Do not extend this
+//     mirror: the S4/F9 decision (delete p3frontend as a product path,
+//     migrating its drift pins into v1 tests) removes it instead.
 //   - "errors" and "sort" resolve to the synthetic P3-M7 wave-1 packages
 //     (real-Go implementations; fail-fast members keep exact gc 1.27.1
 //     signatures);
