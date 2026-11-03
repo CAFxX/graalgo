@@ -87,3 +87,66 @@ func TestFuncNameHelperFrame(t *testing.T) {
 		t.Fatalf("helper frame Name() = %q, want suffix %q", name, "helperName")
 	}
 }
+
+// TestFuncNameViaInterface is the P1-2 regression test (REVIEW-2026-11-03-10):
+// (*runtime.Func).Name()/Entry() must work through an interface value,
+// the idiomatic shape for passing stack-inspection results around
+// (e.g. a Namer interface). Pre-fix, the interface call lowered to an
+// ifacemethod node whose backend itab had no entry for the synthetic
+// runtime.Func type, so dispatch failed downstream instead of reaching
+// the rtstack nodes that serve direct calls and method values.
+func TestFuncNameViaInterface(t *testing.T) {
+	fn := firstFrameFunc(t)
+	directName := fn.Name()
+	directEntry := fn.Entry()
+	// Direct + concrete method value (already working) as controls.
+	if got := fn.Name; got() != directName {
+		t.Fatalf("method value fn.Name() = %q, want %q", got(), directName)
+	}
+	// Interface dispatch: Name.
+	var namer interface{ Name() string } = fn
+	if got := namer.Name(); got != directName {
+		t.Fatalf("interface namer.Name() = %q, want direct %q", got, directName)
+	}
+	// Interface dispatch: Entry.
+	var enter interface{ Entry() uintptr } = fn
+	if got := enter.Entry(); got != directEntry {
+		t.Fatalf("interface enter.Entry() = %d, want direct %d", got, directEntry)
+	}
+	// One interface carrying both methods.
+	var both interface {
+		Name() string
+		Entry() uintptr
+	} = fn
+	if got := both.Name(); got != directName {
+		t.Fatalf("interface both.Name() = %q, want direct %q", got, directName)
+	}
+	if got := both.Entry(); got != directEntry {
+		t.Fatalf("interface both.Entry() = %d, want direct %d", got, directEntry)
+	}
+}
+
+// NOTE (not a test): a method value taken from an interface-typed
+// receiver (`nameOf := namer.Name`) is deliberately NOT covered here.
+// It fails at export with "method value via interface (P3-M3 scope)"
+// for every type, not just *runtime.Func (verified with a plain user
+// type holding a Name method) — dynamic dispatch deferred to call time
+// is a general P3-M3 limitation, separate from this lane's itab gap,
+// and needs its own lane. Adding such a case to this package would fail
+// the whole package's export and mask the interface-call coverage above.
+
+// TestFuncFileLineViaInterface probes the FileLine pair machinery through
+// an interface: FileLine is multi-result, so its interface shape may share
+// the same table gap or a different (pair-plan) gap. Kept as a probe
+// alongside the Name/Entry gate: it must agree with the direct call.
+func TestFuncFileLineViaInterface(t *testing.T) {
+	fn := firstFrameFunc(t)
+	directFile, directLine := fn.FileLine(fn.Entry())
+	var filer interface {
+		FileLine(uintptr) (string, int)
+	} = fn
+	gotFile, gotLine := filer.FileLine(fn.Entry())
+	if gotFile != directFile || gotLine != directLine {
+		t.Fatalf("interface FileLine() = (%q, %d), want direct (%q, %d)", gotFile, gotLine, directFile, directLine)
+	}
+}

@@ -98,6 +98,11 @@ public final class P3KindRegistrations implements WireKindRegistrar {
     public void afterBuild(NodeFactory factory, NodeFactory.Program program) {
         graalgo.iface.IfaceMethodTable.install(
                 graalgo.iface.IfaceMethodTables.resolve(factory.document(), program.functions()));
+        // REVIEW-2026-11-03-10 P1-2: method-table entries for the
+        // synthetic *runtime.Func type, which has no wire method entries
+        // (its methods are wire-node intrinsics). Must run after the
+        // wholesale install above, which would wipe them.
+        graalgo.rtstack.RtStackItab.install();
         graalgo.p3reflect.ReflectTypes.install(factory.document(), program.functions());
         graalgo.p3link.LinknameIntrinsics.install(factory.document(), program);
     }

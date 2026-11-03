@@ -47,6 +47,8 @@ public final class IfaceTestRunner {
         // (runtimereadmemstats/runtimegoroot/runtimeversion/runtimestack) —
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
+        // REVIEW-2026-11-03-10 P1-2: *runtime.Func interface itab entries.
+        TESTS.add(graalgo.rtstack.RtStackItabTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
         // fix-redmaster-r39: provenance-preserving byte derivation
         // (UnsafeTable.derive) soundness — a derivation can only ever
