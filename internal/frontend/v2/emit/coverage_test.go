@@ -28,6 +28,11 @@ import (
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
 	"FuncDecl": true, // emitFuncDecl
+	"GenDecl":  true, // top-level VAR only, via emitGlobalSpec; CONST
+	// at top level fails loudly (see loudlyRejected) and TYPE/IMPORT
+	// are structural skips documented in sortedTopLevelDecls.
+	"ValueSpec": true, // top-level VAR specs and function-local var
+	// DeclStmts; CONST/TYPE specs fail loudly (see loudlyRejected).
 
 	// Statements.
 	"AssignStmt": true,
@@ -115,9 +120,9 @@ var loudlyRejected = map[string]bool{
 	"TypeAssertExpr": true,
 	// Declarations not yet implemented.
 	"BadDecl":   true,
-	"GenDecl":   true, // top-level; const/type/var handled selectively
+	"GenDecl":   true, // top-level CONST only; VAR handled (see handledNodes)
 	"TypeSpec":  true,
-	"ValueSpec": true,
+	"ValueSpec": true, // CONST/TYPE specs only; VAR specs handled
 	// Clauses (only appear inside switch/select).
 	"CaseClause": true,
 	"CommClause": true,

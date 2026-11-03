@@ -62,7 +62,12 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// Emit order: types and objects are populated lazily as nodes are
 	// emitted (ids registered before description, so recursion works).
 	// We do two passes: first declare all top-level funcs and globals
-	// (assigning object ids), then emit bodies.
+	// (assigning object ids), then emit bodies and initializers.
+	// Globals are emitted into Document.Globals (one entry per
+	// top-level var ValueSpec, via emitGlobalSpec); a top-level var
+	// must never be silently dropped, because a function body may
+	// reference it and emitIdent would otherwise emit a dangling
+	// object id with no definition (P1-4, 2026-11-03 review).
 	//
 	// Deterministic emission order (V2-12): pkg.Files is a Go map, so
 	// ranging over it directly would make function order and type/object
@@ -70,7 +75,10 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// declarations sorted by source position, so the same package always
 	// produces the same document — a prerequisite for reproducible builds
 	// and snapshot testing.
-	decls := sortedFuncDecls(pkg)
+	decls, varSpecs, err := sortedTopLevelDecls(pkg)
+	if err != nil {
+		return nil, err
+	}
 
 	var funcs []any
 	for _, fd := range decls {
@@ -79,6 +87,34 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 		}
 		e.declareObject(obj)
+	}
+
+	// Declare every global var object before emitting any initializer
+	// or body, so forward references (an initializer or a function
+	// referring to a later global) resolve to a stable id.
+	for _, vs := range varSpecs {
+		for _, name := range vs.Names {
+			if obj := e.info.Info.Defs[name]; obj != nil {
+				e.declareObject(obj)
+			}
+		}
+	}
+
+	// Emit globals before function bodies: package-level initialization
+	// conceptually precedes execution, and keeping the two lists in
+	// separate passes preserves the declare-then-emit order above.
+	// Initializer order within Globals is source order (see
+	// sortedTopLevelDecls); dependency-ordered initialization is the
+	// backend's job once it consumes Globals — the emitter preserves
+	// the declarations and their initializer expressions faithfully
+	// but does not reorder them.
+	globals := []any{}
+	for _, vs := range varSpecs {
+		g, err := e.emitGlobalSpec(vs)
+		if err != nil {
+			return nil, err
+		}
+		globals = append(globals, g)
 	}
 
 	for _, fd := range decls {
@@ -108,42 +144,79 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Types:   e.types,
 		Objects: e.objects,
 		Funcs:   funcs,
-		Globals: []any{},
+		Globals: globals,
 	}, nil
 }
 
-// sortedFuncDecls returns every top-level function declaration in the
-// package in deterministic order: files sorted by name, then declarations
-// sorted by source position. Non-function declarations are skipped, as in
-// the original emission loop. Sorting is structural — by filename and
-// token position — never keyed on any package, symbol, or test name.
-func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
+// sortedTopLevelDecls returns every top-level function declaration and
+// every top-level var ValueSpec in the package in deterministic order:
+// files sorted by name, then declarations sorted by source position.
+// Sorting is structural — by filename and token position — never keyed
+// on any package, symbol, or test name.
+//
+// Every top-level declaration kind is classified here; none is silently
+// dropped (P1-4: the previous sortedFuncDecls skipped non-FuncDecls
+// with `continue`, so a package-level var vanished while references to
+// it still emitted):
+//   - FuncDecl → funcs.
+//   - GenDecl VAR → its ValueSpecs, in spec order, for Document.Globals.
+//   - GenDecl IMPORT → skipped by design: imports carry no definition;
+//     resolution is the checker's job (cf. the ImportSpec entry in the
+//     coverage matrix) and no object id depends on the import decl.
+//   - GenDecl TYPE → skipped by design: a named type is not a runtime
+//     definition and is emitted in full through the type table
+//     (e.typeID) whenever it is referenced, so skipping the decl
+//     itself leaves no dangling reference.
+//   - GenDecl CONST → loud error: a const has no runtime slot and its
+//     value is not carried in the object table, so silently skipping
+//     it would leave const references dangling exactly as vars were.
+//     Const emission is a separate, future item, not a silent skip.
+//   - Any other declaration kind → loud error.
+func sortedTopLevelDecls(pkg *ast.Package) ([]*ast.FuncDecl, []*ast.ValueSpec, error) {
 	names := make([]string, 0, len(pkg.Files))
 	for name := range pkg.Files {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	var decls []*ast.FuncDecl
+	var funcs []*ast.FuncDecl
+	var vars []*ast.ValueSpec
 	for _, name := range names {
 		file := pkg.Files[name]
-		var fds []*ast.FuncDecl
-		for _, d := range file.Decls {
-			fd, ok := d.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fds = append(fds, fd)
-		}
+		decls := append([]ast.Decl(nil), file.Decls...)
 		// Positions from one *ast.File share the same FileSet base, so
 		// token.Pos comparison is a total source-position order within the
 		// file. go/parser already produces Decls in source order; this sort
 		// states the contract explicitly instead of relying on that
 		// implementation detail.
-		sort.SliceStable(fds, func(i, j int) bool { return fds[i].Pos() < fds[j].Pos() })
-		decls = append(decls, fds...)
+		sort.SliceStable(decls, func(i, j int) bool { return decls[i].Pos() < decls[j].Pos() })
+		for _, d := range decls {
+			switch dd := d.(type) {
+			case *ast.FuncDecl:
+				funcs = append(funcs, dd)
+			case *ast.GenDecl:
+				switch dd.Tok {
+				case token.VAR:
+					for _, spec := range dd.Specs {
+						vs, ok := spec.(*ast.ValueSpec)
+						if !ok {
+							return nil, nil, fmt.Errorf("emit: unsupported top-level var spec %T", spec)
+						}
+						vars = append(vars, vs)
+					}
+				case token.IMPORT, token.TYPE:
+					// Documented skips above; no definition is lost.
+				case token.CONST:
+					return nil, nil, fmt.Errorf("emit: unsupported top-level const declaration")
+				default:
+					return nil, nil, fmt.Errorf("emit: unsupported top-level declaration %s", dd.Tok)
+				}
+			default:
+				return nil, nil, fmt.Errorf("emit: unsupported top-level declaration %T", d)
+			}
+		}
 	}
-	return decls
+	return funcs, vars, nil
 }
 
 func fileBase(p string) string {

@@ -205,6 +205,55 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 	}), nil
 }
 
+// emitGlobalSpec emits one top-level var ValueSpec as a Document.Globals
+// entry. Shape mirrors the function-local vardecl node (names, objs,
+// explicit type, values) so a backend consumes globals and locals with
+// one convention; the kind distinguishes them ("global" vs "vardecl").
+// One entry per ValueSpec, not per GenDecl: a grouped `var (...)` block
+// may mix specs with different types and initializers, and merging
+// them into one node would lose that per-spec alignment (the local
+// vardecl node merges specs and keeps only one type — acceptable for
+// a single DeclStmt, not carried over here).
+//
+// An uninitialized spec (no values) emits "values": [] — the backend
+// zero-initializes by the declared type, which it reads from the
+// object table via "objs". A blank name (`var _ = ...`) has no object;
+// it keeps the local vardecl convention of obj -1. An initializer
+// expression the emitter cannot handle fails loudly via emitExpr,
+// exactly as in a function body — never silently dropped.
+func (e *Emitter) emitGlobalSpec(vs *ast.ValueSpec) (map[string]any, error) {
+	names := []string{}
+	objs := []any{}
+	var typ any
+	values := []any{}
+	if vs.Type != nil {
+		if tv, ok := e.info.Info.Types[vs.Type]; ok {
+			typ = e.typeID(tv.Type)
+		}
+	}
+	for _, name := range vs.Names {
+		names = append(names, name.Name)
+		if obj := e.info.Info.Defs[name]; obj != nil {
+			objs = append(objs, e.declareObject(obj))
+		} else {
+			objs = append(objs, -1)
+		}
+	}
+	for _, v := range vs.Values {
+		vn, err := e.emitExpr(v)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, vn)
+	}
+	return e.node("global", vs, map[string]any{
+		"names":  names,
+		"objs":   objs,
+		"type":   typ,
+		"values": values,
+	}), nil
+}
+
 func (e *Emitter) emitIf(st *ast.IfStmt) (map[string]any, error) {
 	var init any
 	if st.Init != nil {
