@@ -206,22 +206,32 @@ func (r *testRunner) runPackage(dir string) bool {
 	}
 
 	// Discover the selected tests of every file, applying the -run
-	// filter (regex, like `go test`).
+	// filter (regex, like `go test`). Examples are filtered by the
+	// same regex on their own names. A file is included when it has
+	// a selected test, a selected example, or a TestMain: TestMain
+	// must be synthesised even when -run selects nothing, because
+	// go test still runs it (its m.Run() then runs zero tests).
 	var ftList []fileTests
 	for _, tf := range runnableTests {
-		tests, err := discoverTests(tf)
+		df, err := discoverTestFile(tf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
 			return false
 		}
 		var selected []string
-		for _, t := range tests {
+		for _, t := range df.tests {
 			if r.runRe == nil || r.runRe.MatchString(t) {
 				selected = append(selected, t)
 			}
 		}
-		if len(selected) > 0 {
-			ftList = append(ftList, fileTests{file: tf, tests: selected})
+		var selectedExamples []discoveredExample
+		for _, ex := range df.examples {
+			if r.runRe == nil || r.runRe.MatchString(ex.name) {
+				selectedExamples = append(selectedExamples, ex)
+			}
+		}
+		if len(selected) > 0 || len(selectedExamples) > 0 || df.hasTestMain {
+			ftList = append(ftList, fileTests{file: tf, tests: selected, examples: selectedExamples})
 		}
 	}
 

@@ -17,29 +17,118 @@ import (
 )
 
 // discoverTests returns the names of TestXxx functions in a _test.go file.
+// TestMain is NOT a test: it is reported separately (see discoveredFile)
+// and never returned here, so it can never be called with a *graalgoT
+// argument the way the old 1-param selection did (P1-T1).
 func discoverTests(path string) ([]string, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, 0)
+	df, err := discoverTestFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, err
 	}
-	var tests []string
+	return df.tests, nil
+}
+
+// discoveredExample is one ExampleXxx function in a _test.go file.
+type discoveredExample struct {
+	name      string
+	output    string // expected stdout, without a trailing newline
+	hasOutput bool   // false when the example has no Output: comment
+	unordered bool   // true for "Unordered output:" comments
+}
+
+// discoveredFile describes one _test.go file's entry points: its tests,
+// whether it declares TestMain, and its examples.
+type discoveredFile struct {
+	tests       []string
+	hasTestMain bool
+	examples    []discoveredExample
+}
+
+// discoverTestFile parses one _test.go file and reports its tests,
+// TestMain presence, and examples (with output comments). A function
+// named TestMain is excluded from tests even though it matches the
+// Test* prefix: its parameter is *testing.M, not *testing.T, and the
+// driver synthesises a dedicated graalgoM path for it instead.
+func discoverTestFile(path string) (discoveredFile, error) {
+	var df discoveredFile
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+	if err != nil {
+		return df, fmt.Errorf("parse: %w", err)
+	}
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil {
+		if !ok || fn.Recv != nil || fn.Body == nil {
 			continue
 		}
 		name := fn.Name.Name
-		if !strings.HasPrefix(name, "Test") {
+		if name == "TestMain" {
+			df.hasTestMain = true
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
-		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		if strings.HasPrefix(name, "Test") {
+			// Must take *testing.T (or be a simple TestXxx with one param).
+			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+				continue
+			}
+			df.tests = append(df.tests, name)
 			continue
 		}
-		tests = append(tests, name)
+		if strings.HasPrefix(name, "Example") {
+			// Examples take no parameters and return nothing.
+			if fn.Type.Params != nil && len(fn.Type.Params.List) != 0 {
+				continue
+			}
+			if fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
+				continue
+			}
+			df.examples = append(df.examples, discoverExample(f, fn))
+		}
 	}
-	return tests, nil
+	return df, nil
+}
+
+// discoverExample extracts one example's expected output from the
+// Output: (or Unordered output:) comment inside its body, following
+// gc's rule that the output comment is a comment group within the
+// function body whose first line is the Output: marker. The marker line
+// itself, and a "Output: <text>" first line's trailing text, are not
+// part of the expected output; remaining lines are, joined with "\n".
+func discoverExample(f *ast.File, fn *ast.FuncDecl) discoveredExample {
+	ex := discoveredExample{name: fn.Name.Name}
+	for _, cg := range f.Comments {
+		if cg.Pos() < fn.Body.Pos() || cg.End() > fn.Body.End() {
+			continue
+		}
+		text := cg.Text()
+		lines := strings.Split(text, "\n")
+		// CommentGroup.Text() drops a trailing empty line.
+		for len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		if len(lines) == 0 {
+			continue
+		}
+		var rest []string
+		switch {
+		case lines[0] == "Output:":
+			rest = lines[1:]
+		case strings.HasPrefix(lines[0], "Output: "):
+			rest = append([]string{strings.TrimPrefix(lines[0], "Output: ")}, lines[1:]...)
+		case lines[0] == "Unordered output:":
+			ex.unordered = true
+			rest = lines[1:]
+		case strings.HasPrefix(lines[0], "Unordered output: "):
+			ex.unordered = true
+			rest = append([]string{strings.TrimPrefix(lines[0], "Unordered output: ")}, lines[1:]...)
+		default:
+			continue
+		}
+		ex.hasOutput = true
+		ex.output = strings.Join(rest, "\n")
+		return ex
+	}
+	return ex
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -62,6 +151,7 @@ type graalgoT struct {
 	skipped    bool
 	output     []string // buffered detail lines (flushed on failure when !verbose)
 	subresults []string // buffered subtest result lines (flushed after own result)
+	cleanups   []func() // registered by Cleanup, run LIFO when the test returns
 }
 
 // logLine emits a detail line: immediately in verbose mode, buffered
@@ -147,6 +237,87 @@ func (t *graalgoT) Skipped() bool {
 	return t.skipped
 }
 
+// FailNow marks the test failed and stops it via the same panic
+// mechanism Fatal uses; the enclosing Run/main recover turns it into
+// a --- FAIL line without aborting siblings or the parent test.
+func (t *graalgoT) FailNow() {
+	t.failed = true
+	panic("graalgo test fatal: " + t.name)
+}
+
+// Parallel is a no-op: this driver runs tests sequentially in
+// declaration order. A test that depends on true parallelism (e.g.
+// timing out unless another test runs concurrently) will not behave
+// like under go test; that limitation is declared here, not hidden.
+func (t *graalgoT) Parallel() {}
+
+// Cleanup registers f to run, LIFO, when this test (or subtest)
+// returns — including via FailNow/Fatal/Skip panics, because Run and
+// the generated main run cleanups after recovering.
+func (t *graalgoT) Cleanup(f func()) {
+	t.cleanups = append(t.cleanups, f)
+}
+
+func (t *graalgoT) runCleanups() {
+	for i := len(t.cleanups) - 1; i >= 0; i-- {
+		t.cleanups[i]()
+	}
+	t.cleanups = nil
+}
+
+// TempDir creates a fresh empty directory and registers its removal
+// as a cleanup, mirroring testing.T.TempDir.
+func (t *graalgoT) TempDir() string {
+	dir, err := os.MkdirTemp("", "graalgo-test-")
+	if err != nil {
+		panic("graalgo test tempdir: " + err.Error())
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// Setenv sets an environment variable for the duration of the test
+// and registers restoration of the previous value (or unset state)
+// as a cleanup.
+func (t *graalgoT) Setenv(key, value string) {
+	old, existed := os.LookupEnv(key)
+	os.Setenv(key, value)
+	t.Cleanup(func() {
+		if existed {
+			os.Setenv(key, old)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+}
+
+// Chdir changes the working directory for the duration of the test
+// and registers restoration of the previous directory as a cleanup.
+func (t *graalgoT) Chdir(dir string) {
+	old, err := os.Getwd()
+	if err != nil {
+		panic("graalgo test chdir: " + err.Error())
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic("graalgo test chdir: " + err.Error())
+	}
+	t.Cleanup(func() { os.Chdir(old) })
+}
+
+// Deadline reports that no test timeout is wired into this driver:
+// there is no deadline, matching a go test run without -timeout.
+func (t *graalgoT) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+// Context returns a background context: no timeout or cancellation is
+// wired into this driver, so unlike go test the context is not
+// cancelled when the test ends. Code that depends on post-test
+// cancellation will not observe it here.
+func (t *graalgoT) Context() context.Context {
+	return context.Background()
+}
+
 func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
 	// === RUN lines are never indented, matching go test.
@@ -154,13 +325,31 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	// Recover inside Run, mirroring the top-level recover: a Fatal,
+	// FailNow, or Skip in a subtest stops only that subtest, never
+	// the parent — code after t.Run(...) still runs. A skipped
+	// subtest does NOT mark the parent skipped (go test semantics);
+	// a failed subtest does mark the parent failed.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s := toString(r)
+				if len(s) >= 17 && s[:17] == "graalgo test skip" {
+					sub.skipped = true
+				} else if len(s) >= 18 && s[:18] == "graalgo test fatal" {
+					sub.failed = true
+				} else {
+					sub.failed = true
+					sub.logLine("panic: " + s)
+				}
+			}
+		}()
+		f(sub)
+	}()
+	sub.runCleanups()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
-	}
-	if sub.skipped {
-		t.skipped = true
 	}
 	// Subtest result lines are buffered on the parent and flushed after
 	// the parent's own result line, matching go test's ordering. In
@@ -292,10 +481,14 @@ func testShimSource(verbose bool) string {
 	return strings.Replace(testShimTemplate, "GRAALGO_VERBOSE_PLACEHOLDER", v, 1)
 }
 
-// fileTests groups the selected tests of one _test.go file.
+// fileTests groups the selected tests of one _test.go file, plus the
+// examples selected from it (examples are run as pseudo-tests with
+// output comparison; see the example wrappers emitted by
+// synthesizeTestDriver).
 type fileTests struct {
-	file  string
-	tests []string
+	file     string
+	tests    []string
+	examples []discoveredExample
 }
 
 // testCallRewrites maps testing.T diagnostic methods to the shim's
@@ -524,8 +717,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// whether the sources are inlined at all (see inlineSrc below).
 	type testUnit struct {
 		srcUnit
-		tests   map[string]bool
-		ordered []string
+		tests    map[string]bool
+		ordered  []string
+		examples []discoveredExample
 	}
 	var testUnits []testUnit
 	var testPkgNames []string
@@ -542,7 +736,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		for _, t := range ft.tests {
 			testSet[t] = true
 		}
-		testUnits = append(testUnits, testUnit{srcUnit{ft.file, tf, fset}, testSet, ft.tests})
+		testUnits = append(testUnits, testUnit{srcUnit{ft.file, tf, fset}, testSet, ft.tests, ft.examples})
 	}
 
 	// Sibling test files (not selected): every non-entry-point
@@ -566,7 +760,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		sibSet := token.NewFileSet()
 		sibAST, err := parser.ParseFile(sibSet, sib, nil, 0)
 		if err != nil {
-			continue
+			// A dropped sibling could hold init functions or
+			// package-level variables, so a parse failure here
+			// must fail synthesis naming the file (P1-T6),
+			// never silently change the package under test.
+			return "", fmt.Errorf("parse %s: %w", sib, err)
 		}
 		testPkgNames = append(testPkgNames, sibAST.Name.Name)
 		sibUnits = append(sibUnits, srcUnit{sib, sibAST, sibSet})
@@ -607,18 +805,38 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			sfset := token.NewFileSet()
 			sfAST, err := parser.ParseFile(sfset, sf, nil, 0)
 			if err != nil {
-				continue
+				// As for siblings above: silently dropping a
+				// package source file changes behaviour, so a
+				// parse failure fails synthesis naming the file.
+				return "", fmt.Errorf("parse %s: %w", sf, err)
 			}
 			collectImports(sfAST)
 			units = append(units, srcUnit{sf, sfAST, sfset})
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main uses time and os directly; the shim's
+	// Context method uses context.
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "context")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "context"}] = true
+
+	// Example wrappers are emitted after the gathered declarations,
+	// one per selected example in ftList order, named
+	// graalgoExample0, graalgoExample1, ... so they can never collide
+	// with an example's own name. They are harness bindings: seed the
+	// phase-B protected/taken sets with them below.
+	var exampleWrappers []string // wrapper name, in ftList order
+	var wrapperExample []discoveredExample
+	for _, tu := range testUnits {
+		for _, ex := range tu.examples {
+			exampleWrappers = append(exampleWrappers, fmt.Sprintf("graalgoExample%d", len(exampleWrappers)))
+			wrapperExample = append(wrapperExample, ex)
+		}
+	}
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -711,22 +929,57 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
+	// TestMain tracking for the generated main: whether any inlined
+	// TestMain came from the package under test itself (white-box) or
+	// only from its external test package (which phase B may rename).
+	// gc honours exactly one TestMain; two inlined TestMains (one per
+	// side) redeclare loudly, as gc would reject them.
+	hasTestMain := false
+	testMainWhite := false
+	testMainExt := false
+	// inlineTestMain inlines a TestMain declaration rewritten to take
+	// *graalgoM, and records which side it came from. TestMain bodies
+	// may call m.Run() but nothing else testing-specific: the testing
+	// import is dropped, so other testing package references fail
+	// loudly at driver compile time rather than silently.
+	inlineTestMain := func(f *ast.File, fset *token.FileSet, d *ast.FuncDecl) {
+		rewriteTestMainParam(d)
+		gatherDecl(f, fset, d)
+		hasTestMain = true
+		if pkgNameErr == nil && f.Name.Name != pkgName {
+			testMainExt = true
+		} else {
+			testMainWhite = true
+		}
+	}
+
 	// The test files: selected TestXxx functions (rewritten to *graalgoT
 	// with position-capturing diagnostic calls) plus each file's own
-	// non-test helpers and declarations.
+	// non-test helpers and declarations. Selected ExampleXxx functions
+	// are inlined too, for the example wrappers emitted after phase C;
+	// a TestMain in any selected file is inlined for the TestMain path
+	// of the generated main (never as a test).
 	for _, tu := range testUnits {
 		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- tests from %s ---\n", filepath.Base(tu.path))})
+		exampleSet := make(map[string]bool)
+		for _, ex := range tu.examples {
+			exampleSet[ex.name] = true
+		}
 		for _, decl := range tu.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
 				n := d.Name.Name
+				if d.Recv == nil && n == "TestMain" {
+					inlineTestMain(tu.f, tu.fset, d)
+					continue
+				}
 				isTest := tu.tests[n]
 				// Skip other entry points (Test/Benchmark/Fuzz/Example).
 				// Methods (Recv != nil) are always inlined — tests use
 				// them (e.g. badRand.Read implementing io.Reader).
 				isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
 					strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")
-				if !isTest && isEntry {
+				if !isTest && isEntry && !exampleSet[n] {
 					continue
 				}
 				rewriteParam(d)
@@ -742,11 +995,19 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 
 	// Sibling test files: every non-entry-point declaration (helpers).
+	// A TestMain in a sibling file is still inlined (for the TestMain
+	// path): runPackage normally promotes the TestMain file to a
+	// selected file, but synthesis must not silently drop TestMain
+	// when called directly with a ftList that omits it.
 	for _, u := range sibUnits {
 		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- helpers from %s ---\n", filepath.Base(u.path))})
 		for _, decl := range u.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name.Name == "TestMain" {
+					inlineTestMain(u.f, u.fset, d)
+					continue
+				}
 				if d.Recv == nil {
 					n := d.Name.Name
 					if strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
@@ -817,7 +1078,10 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits", "graalgoM", "graalgoRunTests", "graalgoExampleLinesEqual"} {
+		driverDeclNames[n] = true
+	}
+	for _, n := range exampleWrappers {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -926,7 +1190,10 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits", "graalgoM", "graalgoRunTests", "graalgoExampleLinesEqual"} {
+		protected[n] = true
+	}
+	for _, n := range exampleWrappers {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1373,9 +1640,27 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// Shim + main runner. Per-test output mirrors `go test -v`:
 	// === RUN / --- PASS/FAIL/SKIP with (0.00s) timings, a single
 	// PASS/FAIL summary, and exit code 1 (no panic trace) on failure.
+	//
+	// The runner lives in graalgoRunTests so TestMain can drive it:
+	// graalgoM.Run calls it and records the exit code, and main
+	// either calls TestMain (when the package declares one) or runs
+	// the tests directly. Tests run first, then examples — the order
+	// go test's generated main uses.
 	body.WriteString(testShimSource(verbose))
-	body.WriteString("\nfunc main() {\n")
-	body.WriteString("\tfailed := 0\n")
+	body.WriteString(`
+// --- graalgo test main (generated) ---
+type graalgoM struct {
+	code int
+}
+
+func (m *graalgoM) Run() int {
+	m.code = graalgoRunTests()
+	return m.code
+}
+
+func graalgoRunTests() int {
+	failed := 0
+`)
 	for _, tu := range testUnits {
 		for _, t := range tu.ordered {
 			// If this test file's TestXxx was renamed by phase B (its
@@ -1410,6 +1695,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t\t}()\n")
 			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
 			body.WriteString("\t\t}()\n")
+			// Cleanups run after the test returns (or panics and is
+			// recovered above), before the result line — as in go test.
+			body.WriteString("\t\ttt.runCleanups()\n")
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			if verbose {
 				body.WriteString("\t\tif tt.skipped {\n")
@@ -1438,14 +1726,216 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t}\n")
 		}
 	}
+	// Examples run after all tests, each through its wrapper (which
+	// captures stdout and compares it against the Output: comment).
+	// The display name is the example's own name, as go test prints.
+	// The example wrappers are invoked through the same per-test
+	// block as tests, so their === RUN / --- PASS/FAIL lines, panic
+	// recovery, and cleanup handling are identical. (Wrapper names
+	// are positional: exampleWrappers[i] is the i-th selected example
+	// in ftList order, matching the wrapper definitions emitted below.)
+	{
+		wi := 0
+		for _, tu := range testUnits {
+			for _, ex := range tu.examples {
+				wrapper := exampleWrappers[wi]
+				wi++
+				body.WriteString("\t{\n")
+				body.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", ex.name))
+				if verbose {
+					body.WriteString(fmt.Sprintf("\t\tprintln(\"=== RUN   %s\")\n", ex.name))
+				}
+				body.WriteString("\t\tt0 := time.Now()\n")
+				body.WriteString("\t\tfunc() {\n")
+				body.WriteString("\t\t\tdefer func() {\n")
+				body.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
+				body.WriteString("\t\t\t\t\ts := toString(r)\n")
+				body.WriteString("\t\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
+				body.WriteString("\t\t\t\t\t\ttt.skipped = true\n")
+				body.WriteString("\t\t\t\t\t} else if len(s) >= 18 && s[:18] == \"graalgo test fatal\" {\n")
+				body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
+				body.WriteString("\t\t\t\t\t} else {\n")
+				body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
+				body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + s)\n")
+				body.WriteString("\t\t\t\t\t}\n")
+				body.WriteString("\t\t\t\t}\n")
+				body.WriteString("\t\t\t}()\n")
+				body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", wrapper))
+				body.WriteString("\t\t}()\n")
+				body.WriteString("\t\ttt.runCleanups()\n")
+				body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
+				if verbose {
+					body.WriteString("\t\tif tt.skipped {\n")
+					body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", ex.name))
+					body.WriteString("\t\t} else if tt.failed {\n")
+					body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", ex.name))
+					body.WriteString("\t\t\tfailed++\n")
+					body.WriteString("\t\t} else {\n")
+					body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", ex.name))
+					body.WriteString("\t\t}\n")
+					body.WriteString("\t\tfor _, l := range tt.subresults {\n")
+					body.WriteString("\t\t\tprintln(l)\n")
+					body.WriteString("\t\t}\n")
+				} else {
+					body.WriteString("\t\tif tt.failed {\n")
+					body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", ex.name))
+					body.WriteString("\t\t\tfor _, l := range tt.output {\n")
+					body.WriteString("\t\t\t\tprintln(l)\n")
+					body.WriteString("\t\t\t}\n")
+					body.WriteString("\t\t\tfor _, l := range tt.subresults {\n")
+					body.WriteString("\t\t\t\tprintln(l)\n")
+					body.WriteString("\t\t\t}\n")
+					body.WriteString("\t\t\tfailed++\n")
+					body.WriteString("\t\t}\n")
+				}
+				body.WriteString("\t}\n")
+			}
+		}
+	}
 	body.WriteString("\tif failed > 0 {\n")
 	body.WriteString("\t\tprintln(\"FAIL\")\n")
-	body.WriteString("\t\tos.Exit(1)\n")
+	body.WriteString("\t\treturn 1\n")
 	body.WriteString("\t}\n")
 	if verbose {
 		body.WriteString("\tprintln(\"PASS\")\n")
 	}
+	body.WriteString("\treturn 0\n")
 	body.WriteString("}\n")
+
+	// Example wrappers: run one example with stdout captured through
+	// an os.Pipe, then compare against its Output: comment. An
+	// example without an output comment only has to run without
+	// panicking. Captured output is compared after dropping a single
+	// trailing newline (go test's example runner likewise tolerates
+	// the final newline); any other difference fails the example.
+	// Note the pipe depends on os.Pipe, whose multi-result desugar
+	// the frontend now provides; if the backend ever stops providing
+	// it, the wrapper's panic is recovered by the runner above and
+	// the example fails loudly instead of silently passing.
+	anyUnordered := false
+	for _, ex := range wrapperExample {
+		if ex.unordered {
+			anyUnordered = true
+		}
+	}
+	if anyUnordered {
+		body.WriteString(`
+func graalgoExampleLinesEqual(a, b string) bool {
+	split := func(s string) []string {
+		var lines []string
+		cur := ""
+		for i := 0; i < len(s); i++ {
+			if s[i] == '\n' {
+				lines = append(lines, cur)
+				cur = ""
+			} else {
+				cur += string(s[i])
+			}
+		}
+		if cur != "" {
+			lines = append(lines, cur)
+		}
+		return lines
+	}
+	counts := func(lines []string) map[string]int {
+		m := make(map[string]int)
+		for _, l := range lines {
+			m[l]++
+		}
+		return m
+	}
+	ca := counts(split(a))
+	cb := counts(split(b))
+	if len(ca) != len(cb) {
+		return false
+	}
+	for k, v := range ca {
+		if cb[k] != v {
+			return false
+		}
+	}
+	return true
+}
+`)
+	}
+	{
+		wi := 0
+		for _, tu := range testUnits {
+			for _, ex := range tu.examples {
+				wrapper := exampleWrappers[wi]
+				wi++
+				callName := ex.name
+				if pkgNameErr == nil && tu.f.Name.Name != pkgName {
+					if nn, ok := eRenames[ex.name]; ok {
+						callName = nn
+					}
+				}
+				body.WriteString(fmt.Sprintf("\nfunc %s(t *graalgoT) {\n", wrapper))
+				body.WriteString("\tr, w, err := os.Pipe()\n")
+				body.WriteString("\tif err != nil {\n")
+				body.WriteString(fmt.Sprintf("\t\tt.failed = true\n\t\tt.logLine(\"example %s: cannot capture stdout: \" + err.Error())\n\t\treturn\n\t}\n", ex.name))
+				body.WriteString("\told := os.Stdout\n")
+				body.WriteString("\tos.Stdout = w\n")
+				body.WriteString(fmt.Sprintf("\t%s()\n", callName))
+				body.WriteString("\tw.Close()\n")
+				body.WriteString("\tos.Stdout = old\n")
+				body.WriteString("\tvar buf [4096]byte\n")
+				body.WriteString("\tout := \"\"\n")
+				body.WriteString("\tfor {\n")
+				body.WriteString("\t\tn, err := r.Read(buf[:])\n")
+				body.WriteString("\t\tif n > 0 {\n")
+				body.WriteString("\t\t\tout += string(buf[:n])\n")
+				body.WriteString("\t\t}\n")
+				body.WriteString("\t\tif err != nil {\n")
+				body.WriteString("\t\t\tbreak\n")
+				body.WriteString("\t\t}\n")
+				body.WriteString("\t}\n")
+				body.WriteString("\tr.Close()\n")
+				if ex.hasOutput {
+					body.WriteString(fmt.Sprintf("\twant := %q\n", ex.output))
+					body.WriteString("\tgot := out\n")
+					body.WriteString("\tif len(got) > 0 && got[len(got)-1] == '\\n' {\n")
+					body.WriteString("\t\tgot = got[:len(got)-1]\n")
+					body.WriteString("\t}\n")
+					if ex.unordered {
+						body.WriteString("\tif !graalgoExampleLinesEqual(got, want) {\n")
+					} else {
+						body.WriteString("\tif got != want {\n")
+					}
+					body.WriteString("\t\tt.failed = true\n")
+					body.WriteString(fmt.Sprintf("\t\tt.logLine(\"example %s: output mismatch\")\n", ex.name))
+					body.WriteString("\t\tt.logLine(\"got: \" + got)\n")
+					body.WriteString("\t\tt.logLine(\"want: \" + want)\n")
+					body.WriteString("\t}\n")
+				}
+				body.WriteString("}\n")
+			}
+		}
+	}
+
+	// The generated main: TestMain, when present, drives the run and
+	// its exit code is propagated even if it returns without calling
+	// os.Exit itself (a TestMain that calls os.Exit never reaches
+	// the propagation line). Without TestMain, the tests run directly.
+	if hasTestMain {
+		testMainCall := "TestMain"
+		if !testMainWhite && testMainExt {
+			if nn, ok := eRenames["TestMain"]; ok {
+				testMainCall = nn
+			}
+		}
+		body.WriteString("\nfunc main() {\n")
+		body.WriteString("\tm := &graalgoM{}\n")
+		body.WriteString(fmt.Sprintf("\t%s(m)\n", testMainCall))
+		body.WriteString("\tos.Exit(m.code)\n")
+		body.WriteString("}\n")
+	} else {
+		body.WriteString("\nfunc main() {\n")
+		body.WriteString("\tif code := graalgoRunTests(); code != 0 {\n")
+		body.WriteString("\t\tos.Exit(code)\n")
+		body.WriteString("\t}\n")
+		body.WriteString("}\n")
+	}
 
 	sb.WriteString(body.String())
 
@@ -1770,6 +2260,52 @@ func rewriteParam(fn *ast.FuncDecl) {
 		}
 		return true
 	})
+}
+
+// rewriteTestMainParam rewrites *testing.M to *graalgoM everywhere in a
+// TestMain declaration: the parameter list AND any nested function
+// literals. It mirrors rewriteParam, for the M type instead of T.
+func rewriteTestMainParam(fn *ast.FuncDecl) {
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if star, ok := n.(*ast.StarExpr); ok {
+			if sel, ok := star.X.(*ast.SelectorExpr); ok {
+				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "M" {
+					star.X = &ast.Ident{Name: "graalgoM"}
+				}
+			}
+		}
+		return true
+	})
+	rewriteBareTestingM(fn.Type)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if fl, ok := n.(*ast.FuncLit); ok {
+			rewriteBareTestingM(fl.Type)
+		}
+		return true
+	})
+}
+
+// rewriteBareTestingM replaces testing.M (non-pointer) with graalgoM in
+// a function type's params and results.
+func rewriteBareTestingM(ft *ast.FuncType) {
+	if ft == nil {
+		return
+	}
+	rewriteBareTestingMList(ft.Params)
+	rewriteBareTestingMList(ft.Results)
+}
+
+func rewriteBareTestingMList(fl *ast.FieldList) {
+	if fl == nil {
+		return
+	}
+	for _, f := range fl.List {
+		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "M" {
+				f.Type = &ast.Ident{Name: "graalgoM"}
+			}
+		}
+	}
 }
 
 // rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
