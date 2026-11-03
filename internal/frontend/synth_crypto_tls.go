@@ -752,6 +752,21 @@ func (c *Conn) Handshake() error {
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
+			// wrap() returns nil on failure (bad handle, or the Java
+			// SSLEngine.wrap threw) — and nil is NOT the transitional
+			// empty case below: a failed wrap is an error, not a state
+			// to sleep through. Without this check a persistently
+			// failing wrap spins forever (nil -> 1ms sleep -> NEED_WRAP
+			// -> nil, unbounded), and a transiently failing wrap
+			// (e.g. a version-mismatch flight) falls through to the
+			// alert/NOT_HANDSHAKING path and reports handshake success
+			// on the server side. Mirrors __tlsConnWrite's nil check.
+			// Empty-but-non-nil output still takes the sleep branch:
+			// toGoBytes maps a Java null to nil and an empty byte
+			// array to a non-nil empty slice, so the two are distinct.
+			if out == nil {
+				return errors.New("tls: wrap failed")
+			}
 			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
 			// separately from Finished. If wrap returns a tiny output,
 			// the engine may have more (e.g. Finished) — wrap again
