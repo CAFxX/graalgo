@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"go/build"
 	"os"
@@ -301,9 +302,30 @@ func parseModulePath(modData []byte) string {
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
 func buildableGoFiles(dir string) []string {
+	return buildableGoFilesWithTags(dir, nil)
+}
+
+// buildableGoFilesWithTags is buildableGoFiles with extra build tags
+// (already split, as in splitTags) added to the go/build context, so
+// file selection follows //go:build constraints under -tags exactly
+// like `go build -tags`. Nil tags mean platform defaults only.
+//
+// Error handling distinguishes two cases, and conflating them would
+// defeat the filtering: a *build.NoGoError means the directory was
+// read fine but no file is buildable (e.g. every file's constraints
+// fail under -tags) — that yields an empty list, not a fallback.
+// Any other ImportDir error (unimportable directory, conflicting
+// package names) falls back to all *.go files and lets the backend
+// report the real error, as before.
+func buildableGoFilesWithTags(dir string, tags []string) []string {
 	ctxt := build.Default
+	ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), tags...)
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
+		var noGo *build.NoGoError
+		if errors.As(err, &noGo) {
+			return nil
+		}
 		// Not importable (no go.mod context, etc.): fall back to all
 		// files and let the backend report real errors.
 		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
