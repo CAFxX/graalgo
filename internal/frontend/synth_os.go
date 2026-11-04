@@ -2004,13 +2004,80 @@ func Environ() []string {
 }
 
 // Expand replaces ${var} or $var in the string based on the mapping function.
+//
+// gc-faithful (os/env.go): the shell-name scan from gc's getShellName is
+// inlined here rather than kept as a multi-result helper, so no desugar
+// table entry is needed for it.
 func Expand(s string, mapping func(string) string) string {
-	panic("os.Expand: not in M8 scope (needs multi-result getShellName; re-test: WS D)")
-}
-
-// getShellName returns the name of the shell variable for s.
-func getShellName(s string) (string, int) {
-	panic("os.getShellName: not in M8 scope (multi-result; re-test: WS D)")
+	var buf []byte
+	// ${} is all ASCII, so bytes are fine for this operation.
+	i := 0
+	for j := 0; j < len(s); j++ {
+		if s[j] == '$' && j+1 < len(s) {
+			if buf == nil {
+				buf = make([]byte, 0, 2*len(s))
+			}
+			buf = append(buf, s[i:j]...)
+			// Inline getShellName: scan the variable name starting
+			// at s[j+1]; w is the number of bytes consumed after
+			// the '$', name is the variable name ("" when there is
+			// none or the syntax is bad).
+			rest := s[j+1:]
+			name := ""
+			w := 0
+			if rest[0] == '{' {
+				if len(rest) > 2 && isShellSpecialVar(rest[1]) && rest[2] == '}' {
+					name = rest[1:2]
+					w = 3
+				} else {
+					closed := false
+					for k := 1; k < len(rest); k++ {
+						if rest[k] == '}' {
+							if k == 1 {
+								// Bad syntax; eat "${}".
+								w = 2
+							} else {
+								name = rest[1:k]
+								w = k + 1
+							}
+							closed = true
+							break
+						}
+					}
+					if !closed {
+						// Bad syntax; eat "${".
+						w = 1
+					}
+				}
+			} else if isShellSpecialVar(rest[0]) {
+				name = rest[0:1]
+				w = 1
+			} else {
+				k := 0
+				for k < len(rest) && isAlphaNum(rest[k]) {
+					k++
+				}
+				name = rest[:k]
+				w = k
+			}
+			if name == "" && w > 0 {
+				// Encountered invalid syntax; eat the
+				// characters.
+			} else if name == "" {
+				// Valid syntax, but $ was not followed by a
+				// name. Leave the dollar character untouched.
+				buf = append(buf, s[j])
+			} else {
+				buf = append(buf, mapping(name)...)
+			}
+			j += w
+			i = j + 1
+		}
+	}
+	if buf == nil {
+		return s
+	}
+	return string(buf) + s[i:]
 }
 
 func isShellSpecialVar(c uint8) bool {
