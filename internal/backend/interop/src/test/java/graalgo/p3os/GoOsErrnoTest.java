@@ -40,6 +40,12 @@ public final class GoOsErrnoTest {
     private static final int O_CREAT = 64;
     private static final int O_EXCL = 128;
     private static final int O_TRUNC = 512;
+    private static final int O_NONBLOCK = 2048;
+    private static final int O_DSYNC = 4096;
+    private static final int O_DIRECT = 16384;
+    private static final int O_DIRECTORY = 65536;
+    private static final int O_NOFOLLOW = 131072;
+    private static final int O_CLOEXEC = 524288;
 
     private static Path scratch;
 
@@ -217,6 +223,32 @@ public final class GoOsErrnoTest {
                 "FileSystemException variant");
     }
 
+    public void testErrnoCollapsedReasons() {
+        // R11-GOOS (NEW-P1-12): these four reasons previously collapsed
+        // to EIO; gc distinguishes them. JDK strings verified on this
+        // JDK (GraalVM 25): /dev/full, /sys, RLIMIT_FSIZE, dir open.
+        checkEq(GoOs.ENOSPC,
+                GoOs.errno(new FileSystemException("x", null, "No space left on device")),
+                "FSE no space");
+        checkEq(GoOs.EROFS,
+                GoOs.errno(new FileSystemException("x", null, "Read-only file system")),
+                "FSE read-only fs");
+        checkEq(GoOs.EFBIG,
+                GoOs.errno(new FileSystemException("x", null, "File too large")),
+                "FSE file too large");
+        checkEq(GoOs.EISDIR,
+                GoOs.errno(new FileSystemException("x", null, "Is a directory")),
+                "FSE is a directory");
+        checkEq(GoOs.ENOSPC, GoOs.errno(new IOException("No space left on device")),
+                "IOE no space");
+        checkEq(GoOs.EROFS, GoOs.errno(new IOException("Read-only file system")),
+                "IOE read-only fs");
+        checkEq(GoOs.EFBIG, GoOs.errno(new IOException("File too large")),
+                "IOE file too large");
+        checkEq(GoOs.EISDIR, GoOs.errno(new IOException("Is a directory")),
+                "IOE is a directory");
+    }
+
     public void testErrnoGenericIo() {
         checkEq(GoOs.EIO, GoOs.errno(new IOException("disk exploded")), "generic io error");
     }
@@ -293,6 +325,52 @@ public final class GoOsErrnoTest {
         }
     }
 
+    public void testOpenFlags() throws IOException {
+        // R11-GOOS (NEW-P1-8): flags previously passed through ignored.
+        initScratch();
+        try {
+            String reg = scratch.resolve("f").toString();
+            Files.writeString(Path.of(reg), "hello");
+            String link = scratch.resolve("l").toString();
+            Files.createSymbolicLink(Path.of(link), Path.of(reg));
+            // NOFOLLOW: the link itself is ELOOP, never followed.
+            checkEq(-GoOs.ELOOP,
+                    GoOs.open(gs(link), O_RDONLY | O_NOFOLLOW, 0), "NOFOLLOW symlink");
+            // NOFOLLOW on a non-link is a no-op success.
+            long h = GoOs.open(gs(reg), O_RDONLY | O_NOFOLLOW, 0);
+            check(h >= 16, "NOFOLLOW regular, got " + h);
+            checkEq(0, GoOs.close(h), "close NOFOLLOW");
+            // DIRECTORY: regular -> ENOTDIR, dir -> success.
+            checkEq(-GoOs.ENOTDIR,
+                    GoOs.open(gs(reg), O_RDONLY | O_DIRECTORY, 0), "DIRECTORY regular");
+            long d = GoOs.open(gs(scratch.toString()), O_RDONLY | O_DIRECTORY, 0);
+            checkEq(GoOs.KIND_DIR, GoOs.handleKind(d), "DIRECTORY dir kind");
+            checkEq(0, GoOs.close(d), "close DIRECTORY dir");
+            // DIRECTORY + O_CREAT on missing -> EINVAL, nothing created.
+            String missing = scratch.resolve("m").toString();
+            checkEq(-GoOs.EINVAL,
+                    GoOs.open(gs(missing), O_RDONLY | O_CREAT | O_DIRECTORY, 0),
+                    "DIRECTORY missing+CREAT");
+            check(!Files.exists(Path.of(missing)), "DIRECTORY missing+CREAT creates nothing");
+            // EEXIST precedence (P2 follow-up, zero-risk): dir +
+            // O_CREAT|O_EXCL -> EEXIST, not EISDIR.
+            checkEq(-GoOs.EEXIST,
+                    GoOs.open(gs(scratch.toString()), O_RDONLY | O_CREAT | O_EXCL, 0),
+                    "dir CREAT|EXCL");
+            // Known no-ops succeed on regular files.
+            for (int flags : new int[]{O_DSYNC, O_NONBLOCK, O_DIRECT, O_CLOEXEC}) {
+                long fh = GoOs.open(gs(reg), O_RDONLY | flags, 0);
+                check(fh >= 16, "no-op flag " + flags + ", got " + fh);
+                checkEq(0, GoOs.close(fh), "close no-op flag " + flags);
+            }
+            // Unknown bits fail fast instead of being silently ignored.
+            checkEq(-GoOs.EINVAL,
+                    GoOs.open(gs(reg), O_RDONLY | (1 << 30), 0), "unknown flag bit");
+        } finally {
+            cleanScratch();
+        }
+    }
+
     public void testSeekReadAtWriteAt() throws IOException {
         initScratch();
         try {
@@ -335,6 +413,29 @@ public final class GoOsErrnoTest {
             checkEq(0, GoOs.sync(h), "sync");
             checkEq(0, GoOs.close(h), "close");
             checkEq(-GoOs.ESPIPE, GoOs.readAt(h, buf(1), 0L), "readAt closed");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    public void testTruncateReadOnly() throws IOException {
+        // R11-GOOS (NEW-P1-9): Truncate on an O_RDONLY file is EINVAL
+        // (gc), not a host NonWritableChannelException — including the
+        // size==current path, which previously returned 0.
+        initScratch();
+        try {
+            String name = scratch.resolve("t").toString();
+            Files.writeString(Path.of(name), "hello world");
+            long ro = GoOs.open(gs(name), O_RDONLY, 0);
+            checkEq(-GoOs.EINVAL, GoOs.truncate(ro, 4L), "truncate RDONLY shrink");
+            checkEq(-GoOs.EINVAL, GoOs.truncate(ro, 20L), "truncate RDONLY extend");
+            checkEq(-GoOs.EINVAL, GoOs.truncate(ro, 11L), "truncate RDONLY no-op size");
+            checkEq(0, GoOs.close(ro), "close RDONLY");
+            // A writable handle still truncates both ways.
+            long wr = GoOs.open(gs(name), O_RDWR, 0);
+            checkEq(0, GoOs.truncate(wr, 4L), "truncate RDWR shrink");
+            checkEq(0, GoOs.truncate(wr, 8L), "truncate RDWR extend");
+            checkEq(0, GoOs.close(wr), "close RDWR");
         } finally {
             cleanScratch();
         }
@@ -385,6 +486,49 @@ public final class GoOsErrnoTest {
         }
     }
 
+    public void testTruncatePathKinds() throws IOException {
+        // R11-GOOS (NEW-P1-11): path-based truncate never opens, so a
+        // FIFO cannot block waiting for a reader. The FIFO call runs
+        // on a worker with a bounded wait: a regression to open-first
+        // would hang the suite, so the test fails instead of hanging.
+        initScratch();
+        try {
+            Path fifo = scratch.resolve("fifo");
+            Process mkfifo = new ProcessBuilder("mkfifo", fifo.toString()).start();
+            int rc;
+            try {
+                rc = mkfifo.waitFor();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("mkfifo interrupted", e);
+            }
+            check(rc == 0, "mkfifo exit " + rc);
+            final long[] out = new long[1];
+            Thread t = new Thread(() -> out[0] = GoOs.truncatePath(gs(fifo.toString()), 0L));
+            t.setDaemon(true);
+            t.start();
+            try {
+                t.join(10_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("join interrupted", e);
+            }
+            check(!t.isAlive(), "truncatePath on FIFO must not block");
+            checkEq(-GoOs.EINVAL, out[0], "truncatePath FIFO");
+            // Directory -> EISDIR (gc), missing -> ENOENT, regular -> 0.
+            checkEq(-GoOs.EISDIR,
+                    GoOs.truncatePath(gs(scratch.toString()), 0L), "truncatePath dir");
+            checkEq(-GoOs.ENOENT,
+                    GoOs.truncatePath(gs(scratch.resolve("nope").toString()), 0L),
+                    "truncatePath missing");
+            String f = scratch.resolve("f").toString();
+            Files.writeString(Path.of(f), "hello");
+            checkEq(0, GoOs.truncatePath(gs(f), 0L), "truncatePath regular");
+        } finally {
+            cleanScratch();
+        }
+    }
+
     public void testSymlinkReadlink() throws IOException {
         initScratch();
         try {
@@ -409,6 +553,20 @@ public final class GoOsErrnoTest {
             checkEq(-GoOs.ENOENT,
                     GoOs.readlink(gs(scratch.resolve("nope").toString()), buf(8)),
                     "readlink missing");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    public void testSymlinkNulTarget() throws IOException {
+        // R11-GOOS (NEW-P1-10): a NUL byte in the symlink target is
+        // EINVAL (gc PathError), not a host InvalidPathException.
+        initScratch();
+        try {
+            String link = scratch.resolve("badlink").toString();
+            checkEq(-GoOs.EINVAL,
+                    GoOs.symlink(gs("a\0b"), gs(link)), "symlink NUL target");
+            check(!Files.exists(Path.of(link)), "symlink NUL target creates nothing");
         } finally {
             cleanScratch();
         }

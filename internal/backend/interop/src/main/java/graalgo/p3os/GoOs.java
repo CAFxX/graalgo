@@ -153,6 +153,26 @@ public final class GoOs {
     private static final int O_EXCL = 128;
     private static final int O_SYNC = 1052672;
     private static final int O_TRUNC = 512;
+    // R11-GOOS (NEW-P1-8): flags previously decoded-but-ignored.
+    private static final int O_NOCTTY = 256;
+    private static final int O_NONBLOCK = 2048;
+    private static final int O_DSYNC = 4096;
+    private static final int O_DIRECT = 16384;
+    private static final int O_LARGEFILE = 32768;
+    private static final int O_DIRECTORY = 65536;
+    private static final int O_NOFOLLOW = 131072;
+    private static final int O_NOATIME = 262144;
+    private static final int O_CLOEXEC = 524288;
+    // O_SYNC (04010000) carries the O_DSYNC bit; this is the bit that
+    // distinguishes a real O_SYNC from a lone O_DSYNC.
+    private static final int O_SYNC_BIT = 1048576;
+    // Flags the open path honors or knowingly treats as no-ops (see
+    // open()). Any other bit (e.g. O_PATH, O_TMPFILE) is rejected with
+    // EINVAL rather than silently accepted with wrong semantics.
+    private static final int O_KNOWN_MASK = 3 | O_CREAT | O_EXCL | O_TRUNC
+            | O_APPEND | O_SYNC | O_DSYNC | O_NONBLOCK | O_DIRECT
+            | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC | O_NOCTTY | O_LARGEFILE
+            | O_NOATIME;
 
     // st_mode type bits (for dirNext's type chars).
     private static final int S_IFMT = 0170000;
@@ -463,6 +483,21 @@ public final class GoOs {
                 if (rl.contains("not a directory")) {
                     return ENOTDIR; // e.g. open("file/x") (verified on this JDK)
                 }
+                // R11-GOOS (NEW-P1-12): these four reasons previously
+                // collapsed to EIO; gc distinguishes them (verified on
+                // this JDK: /dev/full, /sys, RLIMIT_FSIZE, dir open).
+                if (rl.contains("no space left on device")) {
+                    return ENOSPC;
+                }
+                if (rl.contains("read-only file system")) {
+                    return EROFS;
+                }
+                if (rl.contains("file too large")) {
+                    return EFBIG;
+                }
+                if (rl.contains("is a directory")) {
+                    return EISDIR;
+                }
             }
             return EIO;
         }
@@ -484,6 +519,22 @@ public final class GoOs {
                 // both as "Too many open files[...]".
                 if (ml.contains("too many open files")) {
                     return ml.contains("in system") ? ENFILE : EMFILE;
+                }
+                // R11-GOOS (NEW-P1-12): same four as the
+                // FileSystemException branch above — the JDK reports
+                // ENOSPC/EFBIG as plain IOExceptions (verified:
+                // /dev/full write, RLIMIT_FSIZE write).
+                if (ml.contains("no space left on device")) {
+                    return ENOSPC;
+                }
+                if (ml.contains("read-only file system")) {
+                    return EROFS;
+                }
+                if (ml.contains("file too large")) {
+                    return EFBIG;
+                }
+                if (ml.contains("is a directory")) {
+                    return EISDIR;
                 }
             }
             return EIO;
@@ -687,14 +738,57 @@ public final class GoOs {
         if ((perm & ~0777L) != 0) {
             return -EINVAL; // setuid/setgid/sticky: fail-fast, never mask (Go side also guards)
         }
+        // R11-GOOS (NEW-P1-8): every flag bit must be accounted for.
+        // Bits outside O_KNOWN_MASK (e.g. O_PATH, O_TMPFILE) carry
+        // semantics this path cannot honor, so fail fast with EINVAL
+        // instead of silently opening something else. The known no-ops
+        // are exact for regular files/dirs: O_CLOEXEC (the handle table
+        // holds no real fds), O_NOCTTY (no controlling terminal),
+        // O_LARGEFILE (a no-op on 64-bit), O_NOATIME (atime bookkeeping
+        // only), and O_NONBLOCK (a no-op for regular files; FIFO open
+        // blocking is a separate pre-existing gap). O_DIRECT falls back
+        // to buffered I/O: functionally correct, only the direct-I/O
+        // guarantee is lost — documented here so it is not mistaken
+        // for support.
+        if ((flags & ~O_KNOWN_MASK) != 0) {
+            return -EINVAL;
+        }
         boolean create = (flags & O_CREAT) != 0;
         boolean excl = (flags & O_EXCL) != 0;
         boolean trunc = (flags & O_TRUNC) != 0;
         boolean append = (flags & O_APPEND) != 0;
-        boolean sync = (flags & O_SYNC) != 0;
+        boolean sync = (flags & O_SYNC_BIT) != 0;
+        boolean dsync = (flags & O_DSYNC) != 0;
+        boolean nofollow = (flags & O_NOFOLLOW) != 0;
+        boolean directory = (flags & O_DIRECTORY) != 0;
         int accmode = flags & 3;
         boolean write = accmode != O_RDONLY;
         try {
+            // EEXIST precedence (gc probe): O_CREAT|O_EXCL on any
+            // existing path — regular, directory, or symlink (even
+            // dangling) — is EEXIST, ahead of the NOFOLLOW and dir
+            // checks below. NOFOLLOW_LINKS so a dangling link counts
+            // as existing.
+            if (create && excl && Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
+                return -EEXIST;
+            }
+            // NOFOLLOW: a symlink itself (dangling or not) is ELOOP,
+            // like gc — never follow it into the dir/file branches.
+            if (nofollow && Files.isSymbolicLink(p)) {
+                return -ELOOP;
+            }
+            // DIRECTORY: the (followed) target must be a directory.
+            // Missing + O_CREAT is EINVAL (gc probe: nothing is
+            // created); missing without O_CREAT falls through to the
+            // open below, which reports ENOENT.
+            if (directory && !Files.isDirectory(p)) {
+                if (Files.exists(p)) {
+                    return -ENOTDIR;
+                }
+                if (create) {
+                    return -EINVAL;
+                }
+            }
             // Stat-kind first: directories get a DirectoryStream handle.
             // P2-1: follow symlinks — a symlink to a directory opens as a
             // directory (gc returns EISDIR on read, not EIO).
@@ -728,6 +822,8 @@ public final class GoOs {
             }
             if (sync) {
                 opts.add(StandardOpenOption.SYNC);
+            } else if (dsync) {
+                opts.add(StandardOpenOption.DSYNC);
             }
             FileChannel ch = FileChannel.open(p, opts);
             if (create) {
@@ -986,6 +1082,12 @@ public final class GoOs {
         if (ch == null || !(ch.ch instanceof FileChannel fc)) {
             return -EINVAL;
         }
+        // R11-GOOS (NEW-P1-9): gc returns EINVAL for Truncate on an
+        // O_RDONLY file — checked here, not via the exception below,
+        // so even the size==current no-op path reports EINVAL.
+        if (!ch.writable) {
+            return -EINVAL;
+        }
         long size = num(sizeArg);
         if (size < 0) {
             return -EINVAL;
@@ -995,6 +1097,12 @@ public final class GoOs {
             return 0;
         } catch (IOException e) {
             return -errno(e);
+        } catch (java.nio.channels.NonWritableChannelException e) {
+            // Belt-and-braces for a handle whose writability changed
+            // under us: NonWritableChannelException is an
+            // IllegalStateException, so the old catches missed it and
+            // it escaped to the host. gc: EINVAL, as above.
+            return -EINVAL;
         } catch (IllegalArgumentException e) {
             return -EINVAL;
         }
@@ -1338,6 +1446,8 @@ public final class GoOs {
         try {
             Files.createSymbolicLink(n, Paths.get(target));
             return 0;
+        } catch (InvalidPathException e) {
+            return -EINVAL; // NUL byte in target (gc: EINVAL PathError)
         } catch (IOException e) {
             return -errno(e);
         } catch (SecurityException e) {
@@ -1443,6 +1553,24 @@ public final class GoOs {
         long size = num(sizeArg);
         if (size < 0) {
             return -EINVAL;
+        }
+        // R11-GOOS (NEW-P1-11): path-based truncate(2) never opens, so
+        // the kind check comes first — opening a FIFO for WRITE would
+        // block (uninterruptibly) waiting for a reader. gc: a FIFO (or
+        // other non-regular file) -> EINVAL, a directory -> EISDIR
+        // (gc probe). A missing path falls through to the open, which
+        // reports ENOENT; symlinks are followed, like gc.
+        try {
+            if (Files.exists(p)) {
+                if (Files.isDirectory(p)) {
+                    return -EISDIR;
+                }
+                if (!Files.isRegularFile(p)) {
+                    return -EINVAL;
+                }
+            }
+        } catch (SecurityException e) {
+            return -EACCES;
         }
         try (FileChannel ch = FileChannel.open(p, StandardOpenOption.WRITE)) {
             ftruncate(ch, size);
