@@ -1256,3 +1256,293 @@ func TestDeadlineContextParallel(t *testing.T) {
 		t.Errorf("subtest FailNow panic propagated instead of ending only the subtest:\n%s", out)
 	}
 }
+
+// TestAliasedAndDotImportDriversRunUnderGC is the L14R P1-1 regression
+// test: tests discovered through an aliased testing import (tt.T) or a
+// dot-import (T) must synthesize to a driver that compiles and runs
+// under gc — the pre-fix rewriteParam only rewrote the literal
+// qualifier "testing", so the driver kept *tt.T / *T while the testing
+// import was dropped, and `go run` failed with "undefined: tt" /
+// "undefined: T". Nested function-literal params are covered too.
+func TestAliasedAndDotImportDriversRunUnderGC(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+		if _, err := os.Stat(goBin); err != nil {
+			t.Skip("go toolchain not on PATH")
+		}
+	}
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/aliasdot\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package aliasdot\n")
+	writeFile(t, root, "a_test.go", `package aliasdot
+
+import tt "testing"
+
+func TestAliased(t *tt.T) {
+	t.Run("sub", func(t *tt.T) {
+		if 1+1 != 2 {
+			t.Fatal("bad")
+		}
+		t.Logf("aliased %d", 1)
+	})
+}
+`)
+	writeFile(t, root, "b_test.go", `package aliasdot
+
+import . "testing"
+
+func TestDot(t *T) {
+	t.Run("sub", func(t *T) {
+		if 2+2 != 4 {
+			t.Fatal("bad")
+		}
+	})
+}
+`)
+	aTests, err := discoverTests(filepath.Join(root, "a_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aTests) != 1 || aTests[0] != "TestAliased" {
+		t.Fatalf("discoverTests (aliased) = %v, want [TestAliased]", aTests)
+	}
+	bTests, err := discoverTests(filepath.Join(root, "b_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bTests) != 1 || bTests[0] != "TestDot" {
+		t.Fatalf("discoverTests (dot) = %v, want [TestDot]", bTests)
+	}
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{
+			{file: filepath.Join(root, "a_test.go"), tests: aTests},
+			{file: filepath.Join(root, "b_test.go"), tests: bTests},
+		},
+		[]string{filepath.Join(root, "a.go")}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(driver)
+	src, err := os.ReadFile(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The rewrite must have reached every testing.T form: the top-level
+	// params and the nested t.Run closures, aliased and dot-imported.
+	// (go/printer renders the rewritten single-param lists with a
+	// trailing comma, as in the existing TestSame assertion above.)
+	for _, want := range []string{
+		"func TestAliased(t *graalgoT,)",
+		"func TestDot(t *graalgoT,)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("driver lacks %q:\n%s", want, src)
+		}
+	}
+	if strings.Count(string(src), "func(t *graalgoT,)") < 2 {
+		t.Errorf("driver lacks both nested *graalgoT closure params:\n%s", src)
+	}
+	cmd := exec.Command(goBin, "run", driver)
+	cmd.Env = append(os.Environ(), "TMPDIR="+root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go run driver: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"--- PASS: TestAliased",
+		"--- PASS: TestAliased/sub",
+		"--- PASS: TestDot",
+		"--- PASS: TestDot/sub",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("driver output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestShadowedTMethodNotRejected is the L14R P1-2 regression test: a
+// *graalgoT parameter shadowed by a block-scope declaration (:=, var,
+// for/if initializers, range clauses, switch initializers) must not
+// have its method calls flagged as unsupported testing.T methods — the
+// pre-fix checker tracked shadowing only for function-literal
+// parameters, so a shadowed time.Time t calling .Format was bogusly
+// rejected.
+func TestShadowedTMethodNotRejected(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/shadow\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package shadow\n")
+	writeFile(t, root, "a_test.go", `package shadow
+
+import (
+	"testing"
+	"time"
+)
+
+func TestShadow(t *testing.T) {
+	// if-initializer shadow: t is time.Time in the condition and body.
+	if t := time.Now(); t.Format("2006") == "" {
+		_ = t
+	}
+	// Block-scope := shadow.
+	{
+		t := time.Now()
+		_ = t.Format("2006")
+	}
+	// Block-scope var shadow.
+	{
+		var t = time.Now()
+		_ = t.Format("2006")
+	}
+	// for-initializer shadow.
+	for t := time.Now(); t.Year() > 3000; {
+		break
+	}
+	// Range-clause shadow.
+	for _, t := range []time.Time{time.Now()} {
+		_ = t.Format("2006")
+	}
+	// switch-initializer shadow.
+	switch t := time.Now(); t.Format("2006") {
+	case "2006":
+	default:
+	}
+	// The outer t is usable again after every shadow ends.
+	t.Log("outer")
+}
+`)
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: []string{"TestShadow"}}},
+		[]string{filepath.Join(root, "a.go")}, false)
+	if err != nil {
+		t.Fatalf("synthesizeTestDriver rejected shadowed calls: %v", err)
+	}
+	defer os.Remove(driver)
+}
+
+// TestShadowedTDoesNotSuppressOuterT pins the scope exit of the P1-2
+// fix: shadowing must not leak past its scope — a genuinely
+// unsupported call on the outer *graalgoT parameter is still rejected,
+// and the error names that call, not the shadowed one.
+func TestShadowedTDoesNotSuppressOuterT(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/shadowout\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package shadowout\n")
+	writeFile(t, root, "a_test.go", `package shadowout
+
+import (
+	"testing"
+	"time"
+)
+
+func TestShadowOuter(t *testing.T) {
+	if t := time.Now(); t.Format("2006") == "" {
+	}
+	t.NoSuchMethod()
+}
+`)
+	importPkgNameCache = map[string]string{}
+	_, err := synthesizeTestDriver(root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: []string{"TestShadowOuter"}}},
+		[]string{filepath.Join(root, "a.go")}, false)
+	if err == nil {
+		t.Fatal("synthesizeTestDriver accepted an unsupported call on the outer t")
+	}
+	if !strings.Contains(err.Error(), "NoSuchMethod") {
+		t.Fatalf("synthesis error = %v, want it to name NoSuchMethod (the outer call), not the shadowed Format", err)
+	}
+}
+
+// TestShadowedTCallNotRewritten pins the rewriteTestCalls half of the
+// P1-2 fix: a diagnostic call on a block-shadowed t must not be
+// rewritten to the shim's position-capturing variant, while a call on
+// the outer *graalgoT parameter still is.
+func TestShadowedTCallNotRewritten(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/shadowrw\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package shadowrw\n")
+	writeFile(t, root, "a_test.go", `package shadowrw
+
+import "testing"
+
+type fakeT struct{}
+
+func (fakeT) Errorf(format string, args ...interface{}) {}
+
+func TestRewriteShadow(t *testing.T) {
+	{
+		t := fakeT{}
+		t.Errorf("x")
+	}
+	t.Logf("outer %d", 1)
+}
+`)
+	src := synthDriver(t, root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: []string{"TestRewriteShadow"}}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, `t.Errorf("x")`) {
+		t.Errorf("driver rewrote the shadowed t.Errorf call:\n%s", src)
+	}
+	if strings.Contains(src, "t.graalgoErrorf(") {
+		t.Errorf("driver rewrote the shadowed call to t.graalgoErrorf:\n%s", src)
+	}
+	if !strings.Contains(src, "graalgoLogf") {
+		t.Errorf("driver lost the outer t.Logf rewrite:\n%s", src)
+	}
+}
+
+// TestSkippedSubtestParentPassesUnderGC is the L14R P1-3 regression
+// test: gc reports "--- PASS: TestParent" with "--- SKIP:
+// TestParent/sub" when only a subtest skips — the pre-fix Run
+// propagated sub.skipped to t.skipped, so the parent line read
+// "--- SKIP: TestParent".
+func TestSkippedSubtestParentPassesUnderGC(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+		if _, err := os.Stat(goBin); err != nil {
+			t.Skip("go toolchain not on PATH")
+		}
+	}
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/skips\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package skips\n")
+	writeFile(t, root, "p_test.go", `package skips
+
+import "testing"
+
+func TestParent(t *testing.T) {
+	t.Run("sub", func(t *testing.T) { t.Skip("nope") })
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(driver)
+	cmd := exec.Command(goBin, "run", driver)
+	cmd.Env = append(os.Environ(), "TMPDIR="+root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go run driver: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--- PASS: TestParent (") {
+		t.Errorf("parent line is not --- PASS:\n%s", out)
+	}
+	if !strings.Contains(string(out), "--- SKIP: TestParent/sub (") {
+		t.Errorf("subtest SKIP line missing:\n%s", out)
+	}
+	if strings.Contains(string(out), "--- SKIP: TestParent (") {
+		t.Errorf("parent line wrongly SKIP:\n%s", out)
+	}
+}

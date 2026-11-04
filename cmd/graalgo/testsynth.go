@@ -377,9 +377,8 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	if sub.failed {
 		t.failed = true
 	}
-	if sub.skipped {
-		t.skipped = true
-	}
+	// A skipped subtest does NOT skip the parent: gc reports
+	// "--- PASS: TestParent" with "--- SKIP: TestParent/sub".
 	// Subtest result lines are buffered on the parent and flushed after
 	// the parent's own result line, matching go test's ordering. In
 	// non-verbose mode only failures are shown.
@@ -558,69 +557,283 @@ func graalgoTParamNames(fl *ast.FieldList) []string {
 	return names
 }
 
+// walkScoped visits every *ast.CallExpr under n in traversal order,
+// tracking Go scoping for *graalgoT parameters: params maps the names
+// currently denoting a *graalgoT value, shadowed maps the names
+// currently shadowed by a non-graalgoT declaration. Function literals
+// get their own scope from their parameter list; block statements,
+// if/for/switch initializers, range clauses, and case/comm clauses
+// contribute their declared names to the shadowed set for their scope.
+// visit may return an error to stop the walk; a nil node is a no-op.
+// Scope tracking is deliberately block-level, not statement-ordered: a
+// name declared anywhere in a block counts as shadowed for the whole
+// block. That over-approximates (a call before the declaration is also
+// suppressed), but the cost of over-suppression is only a later backend
+// compile error for a genuinely unsupported call, while under-tracking
+// rejects valid code outright.
+func walkScoped(n ast.Node, params, shadowed map[string]bool, visit func(call *ast.CallExpr, params, shadowed map[string]bool) error) error {
+	if n == nil {
+		return nil
+	}
+	var err error
+	ast.Inspect(n, func(nd ast.Node) bool {
+		if err != nil {
+			return false
+		}
+		switch x := nd.(type) {
+		case *ast.FuncLit:
+			innerParams := make(map[string]bool, len(params))
+			for k, v := range params {
+				innerParams[k] = v
+			}
+			innerShadowed := make(map[string]bool, len(shadowed))
+			for k, v := range shadowed {
+				innerShadowed[k] = v
+			}
+			if x.Type.Params != nil {
+				for _, field := range x.Type.Params.List {
+					if isGraalgoTParam(field) {
+						for _, nm := range field.Names {
+							innerParams[nm.Name] = true
+							delete(innerShadowed, nm.Name)
+						}
+					} else {
+						for _, nm := range field.Names {
+							innerShadowed[nm.Name] = true
+						}
+					}
+				}
+			}
+			if e := walkScoped(x.Body, innerParams, innerShadowed, visit); e != nil {
+				err = e
+			}
+			return false
+		case *ast.BlockStmt:
+			innerShadowed := addShadowed(shadowed, stmtListDeclNames(x.List))
+			for _, stmt := range x.List {
+				if e := walkScoped(stmt, params, innerShadowed, visit); e != nil {
+					err = e
+					break
+				}
+			}
+			return false
+		case *ast.IfStmt:
+			// The initializer runs in the outer scope; its declarations
+			// cover the condition, body, and else branches.
+			innerShadowed := addShadowed(shadowed, stmtDeclNames(x.Init))
+			if e := walkScoped(x.Init, params, shadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Cond, params, innerShadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Body, params, innerShadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Else, params, innerShadowed, visit); e != nil {
+				err = e
+			}
+			return false
+		case *ast.ForStmt:
+			innerShadowed := addShadowed(shadowed, stmtDeclNames(x.Init))
+			if e := walkScoped(x.Init, params, shadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Cond, params, innerShadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Post, params, innerShadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Body, params, innerShadowed, visit); e != nil {
+				err = e
+			}
+			return false
+		case *ast.RangeStmt:
+			innerShadowed := shadowed
+			if x.Tok == token.DEFINE {
+				var names []string
+				for _, e := range []ast.Expr{x.Key, x.Value} {
+					if id, ok := e.(*ast.Ident); ok && id.Name != "_" {
+						names = append(names, id.Name)
+					}
+				}
+				innerShadowed = addShadowed(shadowed, names)
+			}
+			// The ranged-over expression runs in the outer scope; the
+			// range variables cover only the body.
+			if e := walkScoped(x.X, params, shadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Body, params, innerShadowed, visit); e != nil {
+				err = e
+			}
+			return false
+		case *ast.SwitchStmt:
+			innerShadowed := addShadowed(shadowed, stmtDeclNames(x.Init))
+			if e := walkScoped(x.Init, params, shadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Body, params, innerShadowed, visit); e != nil {
+				err = e
+			}
+			return false
+		case *ast.TypeSwitchStmt:
+			innerShadowed := addShadowed(shadowed, stmtDeclNames(x.Init))
+			if e := walkScoped(x.Init, params, shadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			if e := walkScoped(x.Body, params, innerShadowed, visit); e != nil {
+				err = e
+			}
+			return false
+		case *ast.CaseClause:
+			// Case values run in the switch scope; the clause body's
+			// own declarations cover only that clause.
+			innerShadowed := addShadowed(shadowed, stmtListDeclNames(x.Body))
+			for _, e := range x.List {
+				if e := walkScoped(e, params, shadowed, visit); e != nil {
+					err = e
+					return false
+				}
+			}
+			for _, stmt := range x.Body {
+				if e := walkScoped(stmt, params, innerShadowed, visit); e != nil {
+					err = e
+					break
+				}
+			}
+			return false
+		case *ast.CommClause:
+			innerShadowed := addShadowed(shadowed, stmtDeclNames(x.Comm))
+			if e := walkScoped(x.Comm, params, shadowed, visit); e != nil {
+				err = e
+				return false
+			}
+			for _, stmt := range x.Body {
+				if e := walkScoped(stmt, params, innerShadowed, visit); e != nil {
+					err = e
+					break
+				}
+			}
+			return false
+		case *ast.CallExpr:
+			if e := visit(x, params, shadowed); e != nil {
+				err = e
+			}
+			return true
+		}
+		return true
+	})
+	return err
+}
+
+// stmtDeclNames returns the names declared by s when s is a short-var
+// declaration (:=) or a var declaration. Nil-safe.
+func stmtDeclNames(s ast.Stmt) []string {
+	switch x := s.(type) {
+	case *ast.AssignStmt:
+		if x.Tok != token.DEFINE {
+			return nil
+		}
+		var names []string
+		for _, e := range x.Lhs {
+			if id, ok := e.(*ast.Ident); ok && id.Name != "_" {
+				names = append(names, id.Name)
+			}
+		}
+		return names
+	case *ast.DeclStmt:
+		gd, ok := x.Decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			return nil
+		}
+		var names []string
+		for _, spec := range gd.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok {
+				for _, nm := range vs.Names {
+					if nm.Name != "_" {
+						names = append(names, nm.Name)
+					}
+				}
+			}
+		}
+		return names
+	}
+	return nil
+}
+
+// stmtListDeclNames returns the names declared directly by stmts:
+// short-var declarations (:=) and var declarations.
+func stmtListDeclNames(stmts []ast.Stmt) []string {
+	var names []string
+	for _, stmt := range stmts {
+		names = append(names, stmtDeclNames(stmt)...)
+	}
+	return names
+}
+
+// addShadowed returns a copy of shadowed with names added; when names
+// is empty it returns shadowed unchanged (callers never mutate the
+// returned map in place).
+func addShadowed(shadowed map[string]bool, names []string) map[string]bool {
+	if len(names) == 0 {
+		return shadowed
+	}
+	out := make(map[string]bool, len(shadowed)+len(names))
+	for k, v := range shadowed {
+		out[k] = v
+	}
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
+}
+
 // rewriteTestCalls rewrites t.Errorf-style diagnostic calls on *graalgoT
 // parameters to the shim's position-capturing variants, prepending the
 // call's original file:line. Runs after rewriteParam, so all testing.T
-// params are *graalgoT. Nested function literals get their own scope: a
-// shadowing non-graalgoT param disables rewriting for that name within
-// the literal, while a nested *graalgoT param enables it.
+// params are *graalgoT. Scoping mirrors Go via walkScoped: nested
+// function literals get their own scope (a shadowing non-graalgoT param
+// disables rewriting for that name within the literal), and block-scope
+// declarations (:=, var, for/if/switch initializers, range clauses,
+// case/comm clauses) shadow a *graalgoT parameter within their scope,
+// so a call through a shadowed name is left untouched.
 func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 	params := make(map[string]bool)
 	for _, n := range graalgoTParamNames(fn.Type.Params) {
 		params[n] = true
 	}
-	var walk func(n ast.Node, params, shadowed map[string]bool)
-	walk = func(n ast.Node, params, shadowed map[string]bool) {
-		ast.Inspect(n, func(nd ast.Node) bool {
-			if fl, ok := nd.(*ast.FuncLit); ok {
-				innerParams := make(map[string]bool, len(params))
-				for k, v := range params {
-					innerParams[k] = v
-				}
-				innerShadowed := make(map[string]bool, len(shadowed))
-				for k, v := range shadowed {
-					innerShadowed[k] = v
-				}
-				if fl.Type.Params != nil {
-					for _, field := range fl.Type.Params.List {
-						if isGraalgoTParam(field) {
-							for _, nm := range field.Names {
-								innerParams[nm.Name] = true
-								delete(innerShadowed, nm.Name)
-							}
-						} else {
-							for _, nm := range field.Names {
-								innerShadowed[nm.Name] = true
-							}
-						}
-					}
-				}
-				walk(fl.Body, innerParams, innerShadowed)
-				return false
-			}
-			if call, ok := nd.(*ast.CallExpr); ok {
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				id, ok := sel.X.(*ast.Ident)
-				if !ok || !params[id.Name] || shadowed[id.Name] {
-					return true
-				}
-				rw, ok := testCallRewrites[sel.Sel.Name]
-				if !ok {
-					return true
-				}
-				pos := fset.Position(call.Pos())
-				fl := filepath.Base(pos.Filename) + ":" + strconv.Itoa(pos.Line)
-				lit := &ast.BasicLit{Kind: token.STRING, Value: strconv.Quote(fl)}
-				call.Args = append([]ast.Expr{lit}, call.Args...)
-				sel.Sel.Name = rw
-			}
-			return true
-		})
-	}
-	walk(fn.Body, params, make(map[string]bool))
+	// The visit never returns an error; the return value is ignored.
+	_ = walkScoped(fn.Body, params, make(map[string]bool), func(call *ast.CallExpr, params, shadowed map[string]bool) error {
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return nil
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok || !params[id.Name] || shadowed[id.Name] {
+			return nil
+		}
+		rw, ok := testCallRewrites[sel.Sel.Name]
+		if !ok {
+			return nil
+		}
+		pos := fset.Position(call.Pos())
+		fl := filepath.Base(pos.Filename) + ":" + strconv.Itoa(pos.Line)
+		lit := &ast.BasicLit{Kind: token.STRING, Value: strconv.Quote(fl)}
+		call.Args = append([]ast.Expr{lit}, call.Args...)
+		sel.Sel.Name = rw
+		return nil
+	})
 }
 
 // synthesizeTestDriver builds a single-file Go program that runs the
@@ -646,71 +859,30 @@ var supportedTMethods = map[string]bool{
 // shim does not implement, on parameters rewritten to *graalgoT. It
 // runs after rewriteParam (so params are *graalgoT) and before
 // rewriteTestCalls (so diagnostic calls still carry their testing.T
-// names). Nested function literals get their own scope, mirroring
-// rewriteTestCalls: a shadowing non-graalgoT param disables checking
-// for that name within the literal. One limitation, shared with
-// rewriteTestCalls: a local variable shadowing a *graalgoT param (via
-// :=) is not tracked, so a call through such an alias falls through
-// to the backend compile error instead of this diagnostic.
+// names). Scoping mirrors Go via walkScoped: nested function literals
+// get their own scope, and block-scope declarations shadow a *graalgoT
+// parameter within their scope, so a call through a shadowed name (e.g.
+// a time.Time t calling .Format) is not flagged.
 func checkUnsupportedTMethods(fn *ast.FuncDecl, fset *token.FileSet) error {
 	params := make(map[string]bool)
 	for _, n := range graalgoTParamNames(fn.Type.Params) {
 		params[n] = true
 	}
-	var walk func(n ast.Node, params, shadowed map[string]bool) error
-	walk = func(n ast.Node, params, shadowed map[string]bool) error {
-		var err error
-		ast.Inspect(n, func(nd ast.Node) bool {
-			if err != nil {
-				return false
-			}
-			if fl, ok := nd.(*ast.FuncLit); ok {
-				innerParams := make(map[string]bool, len(params))
-				for k, v := range params {
-					innerParams[k] = v
-				}
-				innerShadowed := make(map[string]bool, len(shadowed))
-				for k, v := range shadowed {
-					innerShadowed[k] = v
-				}
-				if fl.Type.Params != nil {
-					for _, field := range fl.Type.Params.List {
-						if isGraalgoTParam(field) {
-							for _, nm := range field.Names {
-								innerParams[nm.Name] = true
-								delete(innerShadowed, nm.Name)
-							}
-						} else {
-							for _, nm := range field.Names {
-								innerShadowed[nm.Name] = true
-							}
-						}
-					}
-				}
-				if e := walk(fl.Body, innerParams, innerShadowed); e != nil {
-					err = e
-				}
-				return false
-			}
-			if call, ok := nd.(*ast.CallExpr); ok {
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				id, ok := sel.X.(*ast.Ident)
-				if !ok || !params[id.Name] || shadowed[id.Name] {
-					return true
-				}
-				if !supportedTMethods[sel.Sel.Name] {
-					pos := fset.Position(call.Pos())
-					err = fmt.Errorf("unsupported testing.T method %q at %s:%d (graalgo test shim does not implement it)", sel.Sel.Name, filepath.Base(pos.Filename), pos.Line)
-				}
-			}
-			return true
-		})
-		return err
-	}
-	return walk(fn.Body, params, make(map[string]bool))
+	return walkScoped(fn.Body, params, make(map[string]bool), func(call *ast.CallExpr, params, shadowed map[string]bool) error {
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return nil
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok || !params[id.Name] || shadowed[id.Name] {
+			return nil
+		}
+		if !supportedTMethods[sel.Sel.Name] {
+			pos := fset.Position(call.Pos())
+			return fmt.Errorf("unsupported testing.T method %q at %s:%d (graalgo test shim does not implement it)", sel.Sel.Name, filepath.Base(pos.Filename), pos.Line)
+		}
+		return nil
+	})
 }
 
 // synthesizeTestDriver builds a single-file Go program that runs the It extracts the TestXxx function
@@ -1035,7 +1207,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				if !isTest && isEntry {
 					continue
 				}
-				rewriteParam(d)
+				rewriteParam(d, testingImportNames(tu.f))
 				if err := checkUnsupportedTMethods(d, tu.fset); err != nil {
 					return "", err
 				}
@@ -1063,7 +1235,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 						continue
 					}
 				}
-				rewriteParam(d)
+				rewriteParam(d, testingImportNames(u.f))
 				if err := checkUnsupportedTMethods(d, u.fset); err != nil {
 					return "", err
 				}
@@ -2058,54 +2230,72 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 // rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
 // the parameter list AND any nested function literals (e.g. the closure
 // passed to t.Run). Uses an AST walk so no testing.T reference survives.
-func rewriteParam(fn *ast.FuncDecl) {
+// The testing package is resolved through the file's own imports
+// (testingNames, as computed by testingImportNames), so an aliased
+// import (tt.T) and a dot-import (bare T) are rewritten exactly like
+// the plain testing.T form; otherwise the synthesized driver would keep
+// a type from the dropped testing import and fail to compile.
+func rewriteParam(fn *ast.FuncDecl, testingNames map[string]bool) {
 	ast.Inspect(fn, func(n ast.Node) bool {
-		switch t := n.(type) {
-		case *ast.StarExpr:
-			if sel, ok := t.X.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-					t.X = &ast.Ident{Name: "graalgoT"}
-				}
-			}
-		case *ast.SelectorExpr:
-			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
-				// testing.T as a bare type (not pointer): replace the
-				// selector with the graalgoT identifier.
-				// (Handled by replacing the parent; see below.)
+		if t, ok := n.(*ast.StarExpr); ok {
+			if isTestingTExpr(t.X, testingNames) {
+				t.X = &ast.Ident{Name: "graalgoT"}
 			}
 		}
 		return true
 	})
-	// Second pass: replace bare testing.T selector expressions (non-pointer
+	// Second pass: replace bare testing.T expressions (non-pointer
 	// type references) which ast.Inspect can't swap in place.
-	rewriteBareTestingT(fn.Type)
+	rewriteBareTestingT(fn.Type, testingNames)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if fl, ok := n.(*ast.FuncLit); ok {
-			rewriteBareTestingT(fl.Type)
+			rewriteBareTestingT(fl.Type, testingNames)
 		}
 		return true
 	})
+}
+
+// isTestingTExpr reports whether e denotes the testing.T type through
+// the file's testing imports: a qualified <alias>.T for any alias in
+// testingNames, or a bare T under a dot-import (testingNames[""]).
+// Parenthesized forms are unwrapped, matching isTestingTParam's
+// discovery rule, so discovery and rewriting never disagree.
+func isTestingTExpr(e ast.Expr, testingNames map[string]bool) bool {
+	for {
+		paren, ok := e.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		e = paren.X
+	}
+	switch t := e.(type) {
+	case *ast.SelectorExpr:
+		id, ok := t.X.(*ast.Ident)
+		return ok && t.Sel.Name == "T" && testingNames[id.Name]
+	case *ast.Ident:
+		return t.Name == "T" && testingNames[""]
+	}
+	return false
 }
 
 // rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
-// function type's params and results.
-func rewriteBareTestingT(ft *ast.FuncType) {
+// function type's params and results, resolving the qualifier through
+// testingNames (aliased and dot-imported forms included).
+func rewriteBareTestingT(ft *ast.FuncType, testingNames map[string]bool) {
 	if ft == nil {
 		return
 	}
-	rewriteFieldList(ft.Params)
-	rewriteFieldList(ft.Results)
+	rewriteFieldList(ft.Params, testingNames)
+	rewriteFieldList(ft.Results, testingNames)
 }
 
-func rewriteFieldList(fl *ast.FieldList) {
+func rewriteFieldList(fl *ast.FieldList, testingNames map[string]bool) {
 	if fl == nil {
 		return
 	}
 	for _, f := range fl.List {
-		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-				f.Type = &ast.Ident{Name: "graalgoT"}
-			}
+		if isTestingTExpr(f.Type, testingNames) {
+			f.Type = &ast.Ident{Name: "graalgoT"}
 		}
 	}
 }
