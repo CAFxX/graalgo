@@ -60,6 +60,20 @@ import com.sun.management.GarbageCollectionNotificationInfo;
 public final class GcInterop {
     private GcInterop() {}
 
+    /**
+     * Phase-2-only diagnostic: true when THIS class (the Phase-2
+     * replacement) is loaded, absent on the Phase-1 stub. The launchers
+     * call it at startup to fail fast if the classpath order is wrong
+     * (runtime/out/classes must precede truffle/out/classes). NOT part
+     * of the frozen contract — intentionally not covered by
+     * FreezeSignatureTest. (Review 2026-11-04 P1-10: the old guard
+     * checked only Scheduler, so a partial/stale runtime build could
+     * silently load this class's Phase-1 stub instead.)
+     */
+    public static boolean isPhase2() {
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // runtime.SetFinalizer
     // ------------------------------------------------------------------

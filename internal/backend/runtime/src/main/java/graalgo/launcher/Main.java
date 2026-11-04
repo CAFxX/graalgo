@@ -60,7 +60,7 @@ public final class Main {
         // else — including --check and --help. The diffharness build step
         // is --check, so a check placed only before guest execution would
         // leave the build step silently passing with the stub loaded.
-        assertSchedulerOverlay();
+        assertPhase2Overlay();
         boolean check = false;
         boolean dumpVars = false;
         String dumpPoly = null;
@@ -498,29 +498,59 @@ public final class Main {
     }
 
     /**
-     * Fail-fast that the Phase-2 overlay is active (R-01, same shape as
-     * SchedMain and P3SyncMain): the {@code graalgo.runtime.Scheduler} on
-     * the classpath must be the Phase-2 replacement, i.e.
-     * runtime/out/classes precedes truffle/out/classes. With the wrong
-     * order the Phase-1 stub would throw UOE on first use — and worse,
-     * the Phase-1 static {@code GoroutineState} holder would be silently
-     * shared across goroutines. Never silent.
+     * Fail-fast that the Phase-2 overlay is active for ALL 8 same-FQN
+     * shadow classes (R-01, extended by review 2026-11-04 P1-10; same
+     * shape as SchedMain and P3SyncMain): the {@code graalgo.runtime.*}
+     * and {@code graalgo.safepoint.Safepoint} classes on the classpath
+     * must be the Phase-2 replacements, i.e. runtime/out/classes
+     * precedes truffle/out/classes. The old guard checked only
+     * {@code Scheduler}, so a present-but-partial runtime/out/classes
+     * passed while another class silently fell back to its Phase-1
+     * stub — worst case {@code GoroutineState} (one static holder
+     * shared across goroutines) and {@code Safepoint} (no-op: skipped
+     * quantum checks, no error). Never silent.
+     *
+     * <p>Reflection, not direct calls, so the failure names the culprit
+     * class (a direct call's {@code NoSuchMethodError} would not). This
+     * runs once at startup, never on a hot path. Invoking the marker
+     * initializes the overlay class; that is benign (only
+     * {@code GcInterop} has a static block, registering an MXBean
+     * listener).
      *
      * <p>Package-visible so the launcher overlay test can call it
      * directly (same precedent as {@link #isStackOverflowCascade}).
      */
-    static void assertSchedulerOverlay() {
+    static void assertPhase2Overlay() {
+        checkPhase2(graalgo.runtime.Scheduler.class, "Scheduler");
+        checkPhase2(graalgo.runtime.ChanOps.class, "ChanOps");
+        checkPhase2(graalgo.runtime.GcInterop.class, "GcInterop");
+        checkPhase2(graalgo.runtime.GoroutineState.class, "GoroutineState");
+        checkPhase2(graalgo.runtime.Netpoll.class, "Netpoll");
+        checkPhase2(graalgo.runtime.Panic.class, "Panic");
+        checkPhase2(graalgo.safepoint.Safepoint.class, "Safepoint");
+        checkPhase2(graalgo.runtime.Timers.class, "Timers");
+    }
+
+    /** One overlay class's marker check; fails fast naming the culprit. */
+    private static void checkPhase2(Class<?> cls, String simpleName) {
+        boolean isPhase2;
         try {
-            if (!graalgo.runtime.Scheduler.isPhase2()) {
-                throw new IllegalStateException(
-                        "graalgo.runtime.Scheduler.isPhase2() returned false");
-            }
-        } catch (NoSuchMethodError e) {
+            isPhase2 = (boolean) cls.getMethod("isPhase2").invoke(null);
+        } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
-                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
-                    + "overlay; runtime/out/classes must precede truffle/out/classes "
-                    + "on the classpath",
+                    "FATAL: Phase-1 " + simpleName + " stub loaded instead of the Phase-2 "
+                    + "overlay (" + cls.getName() + "); runtime/out/classes must precede "
+                    + "truffle/out/classes on the classpath",
                     e);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "FATAL: cannot verify Phase-2 overlay marker on " + cls.getName(), e);
+        }
+        if (!isPhase2) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 " + simpleName + " stub loaded instead of the Phase-2 "
+                    + "overlay (" + cls.getName() + "); runtime/out/classes must precede "
+                    + "truffle/out/classes on the classpath");
         }
     }
 

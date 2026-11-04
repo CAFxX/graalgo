@@ -26,6 +26,20 @@ package graalgo.runtime;
 public final class Netpoll {
     private Netpoll() {}
 
+    /**
+     * Phase-2-only diagnostic: true when THIS class (the Phase-2
+     * replacement) is loaded, absent on the Phase-1 stub. The launchers
+     * call it at startup to fail fast if the classpath order is wrong
+     * (runtime/out/classes must precede truffle/out/classes). NOT part
+     * of the frozen contract — intentionally not covered by
+     * FreezeSignatureTest. (Review 2026-11-04 P1-10: the old guard
+     * checked only Scheduler, so a partial/stale runtime build could
+     * silently load this class's Phase-1 stub instead.)
+     */
+    public static boolean isPhase2() {
+        return true;
+    }
+
     private static UnsupportedOperationException deleted(String what) {
         return new UnsupportedOperationException(
                 "netpoller deleted per GG-0018 (P2-M3): " + what

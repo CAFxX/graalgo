@@ -25,6 +25,8 @@ public final class IfaceTestRunner {
         TESTS.add(ItabForIntrinsicTest.class);
         TESTS.add(AtomicContentionTest.class);
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
+        // Review 2026-11-04 P1-10: P3SyncMain's all-8-classes overlay guard.
+        TESTS.add(graalgo.p3sync.launcher.P3SyncMainOverlayTest.class);
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);

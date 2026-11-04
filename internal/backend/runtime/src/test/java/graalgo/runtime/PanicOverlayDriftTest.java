@@ -28,7 +28,10 @@ public final class PanicOverlayDriftTest {
 
     /** Additive overlay methods, exempt from the drift check. */
     private static final TreeSet<String> ADDITIVE = new TreeSet<>(List.of(
-            "setPanicNilOldBehavior", "isPanicNilOldBehavior"));
+            "setPanicNilOldBehavior", "isPanicNilOldBehavior",
+            // Review 2026-11-04 P1-10: the Phase-2 marker every overlay
+            // class carries for the launchers' all-8-classes guard.
+            "isPhase2"));
 
     public void testOverlayMatchesPhase1Surface() throws Exception {
         // The frozen Panic surface compiles in the truffle module (see its Makefile:

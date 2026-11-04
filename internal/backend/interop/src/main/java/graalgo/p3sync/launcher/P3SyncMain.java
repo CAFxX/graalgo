@@ -516,7 +516,7 @@ public final class P3SyncMain {
 
         // Install the scheduler and run main as the first goroutine
         // (SchedMain's flow, verbatim).
-        assertSchedulerOverlay();
+        assertPhase2Overlay();
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
@@ -589,23 +589,55 @@ public final class P3SyncMain {
     }
 
     /**
-     * Fail-fast that the Phase-2 overlay is active (P2-D8, same as
-     * SchedMain): the {@code graalgo.runtime.Scheduler} on the classpath
-     * must be the Phase-2 replacement, i.e. phase2/out/classes precedes
-     * phase1/out/classes. Never silent.
+     * Fail-fast that the Phase-2 overlay is active for ALL 8 same-FQN
+     * shadow classes (P2-D8, extended by review 2026-11-04 P1-10; same
+     * shape as Main and SchedMain): the {@code graalgo.runtime.*} and
+     * {@code graalgo.safepoint.Safepoint} classes on the classpath must
+     * be the Phase-2 replacements, i.e. interop/out/classes first, then
+     * runtime/out/classes, then truffle/out/classes. The old guard
+     * checked only {@code Scheduler}, so a present-but-partial
+     * runtime/out/classes passed while another class silently fell back
+     * to its Phase-1 stub — worst case {@code GoroutineState} (one
+     * static holder shared across goroutines) and {@code Safepoint}
+     * (no-op: skipped quantum checks, no error). Never silent.
+     *
+     * <p>Reflection, not direct calls, so the failure names the culprit
+     * class. This runs once at startup, never on a hot path.
+     *
+     * <p>Package-visible so the launcher overlay test can call it
+     * directly (same precedent as Main's guard).
      */
-    private static void assertSchedulerOverlay() {
+    static void assertPhase2Overlay() {
+        checkPhase2(graalgo.runtime.Scheduler.class, "Scheduler");
+        checkPhase2(graalgo.runtime.ChanOps.class, "ChanOps");
+        checkPhase2(graalgo.runtime.GcInterop.class, "GcInterop");
+        checkPhase2(graalgo.runtime.GoroutineState.class, "GoroutineState");
+        checkPhase2(graalgo.runtime.Netpoll.class, "Netpoll");
+        checkPhase2(graalgo.runtime.Panic.class, "Panic");
+        checkPhase2(graalgo.safepoint.Safepoint.class, "Safepoint");
+        checkPhase2(graalgo.runtime.Timers.class, "Timers");
+    }
+
+    /** One overlay class's marker check; fails fast naming the culprit. */
+    private static void checkPhase2(Class<?> cls, String simpleName) {
+        boolean isPhase2;
         try {
-            if (!graalgo.runtime.Scheduler.isPhase2()) {
-                throw new IllegalStateException(
-                        "graalgo.runtime.Scheduler.isPhase2() returned false");
-            }
-        } catch (NoSuchMethodError e) {
+            isPhase2 = (boolean) cls.getMethod("isPhase2").invoke(null);
+        } catch (NoSuchMethodException e) {
             throw new IllegalStateException(
-                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
-                    + "overlay; phase2/out/classes must precede phase1/out/classes "
-                    + "on the classpath",
+                    "FATAL: Phase-1 " + simpleName + " stub loaded instead of the Phase-2 "
+                    + "overlay (" + cls.getName() + "); runtime/out/classes must precede "
+                    + "truffle/out/classes on the classpath",
                     e);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(
+                    "FATAL: cannot verify Phase-2 overlay marker on " + cls.getName(), e);
+        }
+        if (!isPhase2) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 " + simpleName + " stub loaded instead of the Phase-2 "
+                    + "overlay (" + cls.getName() + "); runtime/out/classes must precede "
+                    + "truffle/out/classes on the classpath");
         }
     }
 
