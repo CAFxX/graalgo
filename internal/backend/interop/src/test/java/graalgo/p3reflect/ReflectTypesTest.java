@@ -354,4 +354,123 @@ public void testInvalidTypeWireEntryFailsLoud() {
         }
         assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
     }
+
+    /**
+     * NEW-P1-11 (lane NEW-L10): mixed {@code StructOf} + {@code PtrTo}
+     * concurrency. Before the TOKEN_LOCK fix, both families were
+     * unsynchronized check-then-mint on the same {@code byTok} list
+     * using the same {@code byTok.size()} mint idiom, and guest code
+     * reaches them directly (no dynamic-synthesis lock). Threads
+     * racing the mint window could therefore mint duplicate tokens
+     * for the same type, orphan {@code byTok} entries, or grow the
+     * table by more than one entry per new type.
+     *
+     * <p>Each round uses a fresh struct shape (one int field whose
+     * name carries the round number), so the round must mint exactly
+     * two entries — the struct and the pointer to it — plus, in
+     * round 0 only, the pointer to int. All 16 threads must agree on
+     * all three tokens, every new entry's token must equal its
+     * {@code byTok} index (the duplicate-mint bug breaks exactly
+     * this: two entries claiming one token), and the pointer entry
+     * must point back at the struct entry.
+     *
+     * <p>Race tests are probabilistic: on unfixed code this fails
+     * only when threads overlap in the mint window, which 16
+     * barrier-synchronized threads x 30 fresh rounds makes
+     * overwhelmingly likely (verified by running this test against
+     * the unfixed {@code ReflectTypes} — see the lane commit
+     * message). On fixed code it is deterministic: the lock
+     * serializes every mint, so each round mints exactly the
+     * expected entries.
+     */
+    public void testConcurrentStructOfAndPtrToMintSingleTokens() throws Exception {
+        String doc = "{\"types\": [{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"int\", \"class\": \"int\", \"untyped\": false}}]}";
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        long intTok = table.tokForKind(GoKind.INT64);
+
+        int nThreads = 16;
+        int rounds = 30;
+        for (int round = 0; round < rounds; round++) {
+            String fieldName = "F" + round;
+            int before = table.byTok.size();
+            java.util.concurrent.ConcurrentLinkedQueue<String> failures =
+                    new java.util.concurrent.ConcurrentLinkedQueue<>();
+            java.util.concurrent.atomic.AtomicReference<Long> structTok =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<Long> ptrTok =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<Long> intPtrTok =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.CyclicBarrier start =
+                    new java.util.concurrent.CyclicBarrier(nThreads);
+            java.util.List<Thread> threads = new java.util.ArrayList<>();
+            for (int i = 0; i < nThreads; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        start.await();
+                        long s = ReflectTypes.structOf(
+                                new String[]{fieldName}, new long[]{intTok},
+                                new String[]{""}, new String[]{""},
+                                new boolean[]{false});
+                        if (!structTok.compareAndSet(null, s) && structTok.get() != s) {
+                            failures.add("divergent struct token: " + s
+                                    + " vs " + structTok.get());
+                        }
+                        long p = ReflectTypes.ptrTo(s);
+                        if (!ptrTok.compareAndSet(null, p) && ptrTok.get() != p) {
+                            failures.add("divergent ptr token: " + p
+                                    + " vs " + ptrTok.get());
+                        }
+                        long q = ReflectTypes.ptrTo(intTok);
+                        if (!intPtrTok.compareAndSet(null, q) && intPtrTok.get() != q) {
+                            failures.add("divergent ptr-to-int token: " + q
+                                    + " vs " + intPtrTok.get());
+                        }
+                    } catch (Exception e) {
+                        failures.add("thread failed: " + e);
+                    }
+                }));
+            }
+            for (Thread t : threads) {
+                t.start();
+            }
+            for (Thread t : threads) {
+                t.join();
+            }
+            assertTrue(failures.isEmpty(),
+                    "round " + round + " concurrent mint failed: " + failures);
+            assertTrue(structTok.get() != null && structTok.get() != 0,
+                    "round " + round + " must mint a nonzero struct token");
+            assertTrue(ptrTok.get() != null && ptrTok.get() != 0,
+                    "round " + round + " must mint a nonzero ptr token");
+            assertTrue(intPtrTok.get() != null && intPtrTok.get() != 0,
+                    "round " + round + " must mint a nonzero ptr-to-int token");
+            // Fresh struct + fresh ptr-to-struct every round; ptr-to-int
+            // is fresh only in round 0, deduplicated thereafter.
+            int expectedGrowth = 2 + (round == 0 ? 1 : 0);
+            int grew = table.byTok.size() - before;
+            assertTrue(grew == expectedGrowth,
+                    "round " + round + " must mint exactly " + expectedGrowth
+                            + " table entries, grew by " + grew);
+            for (int i = before; i < table.byTok.size(); i++) {
+                ReflectTypes.TypeInfo info = table.info(i);
+                assertTrue(info != null,
+                        "round " + round + " byTok[" + i + "] must not be null (orphan slot)");
+                assertTrue(info.tok == i,
+                        "round " + round + " byTok[" + i + "] claims token "
+                                + info.tok + " (duplicate mint?)");
+            }
+            ReflectTypes.TypeInfo structInfo = table.info(structTok.get());
+            assertTrue(structInfo.kind == GoKind.STRUCT && structInfo.fields.size() == 1,
+                    "round " + round + " struct entry must be a 1-field struct, got " + structInfo);
+            assertTrue(fieldName.equals(structInfo.fields.get(0).name),
+                    "round " + round + " struct field should be " + fieldName
+                            + ", got " + structInfo.fields.get(0).name);
+            ReflectTypes.TypeInfo ptrInfo = table.info(ptrTok.get());
+            assertTrue(ptrInfo.kind == GoKind.POINTER && ptrInfo.elem.tok == structTok.get(),
+                    "round " + round + " ptr entry must point at the struct token");
+        }
+    }
 }

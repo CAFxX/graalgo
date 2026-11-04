@@ -1219,20 +1219,28 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** Token for []E (synthesized if absent). */
     private static long sliceTokFor(long elemTok) {
-        ReflectTypes.Table table = ReflectTypes.table();
-        TypeInfo elem = table.info(elemTok);
-        String key = "slice:" + elemKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        // Same TOKEN_LOCK as the ReflectTypes family (same package):
+        // this mint shares byTok/keyToTok with sliceOf, so a second
+        // lock here would re-open the duplicate-mint race. The key
+        // scheme is deliberately left as-is (coarse elemKey, not
+        // sliceOf's structural key): unifying keys would change which
+        // types share a token — a behavior change, not a race fix.
+        synchronized (ReflectTypes.TOKEN_LOCK) {
+            ReflectTypes.Table table = ReflectTypes.table();
+            TypeInfo elem = table.info(elemTok);
+            String key = "slice:" + elemKey(elem);
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long tok = table.byTok.size();
+            table.keyToTok.put(key, tok);
+            TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
+                    elem, null, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return tok;
         }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
     }
 
     private static String elemKey(TypeInfo t) {
@@ -1417,39 +1425,45 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** Token for a bound method's func type (receiver stripped). */
     private static long boundMethodTok(ReflectTypes.MethodInfo mi) {
-        ReflectTypes.Table table = ReflectTypes.table();
-        TypeInfo ft = mi.funcType;
-        StringBuilder sb = new StringBuilder("func(");
-        for (int i = 1; i < ft.ins.size(); i++) {
-            if (i > 1) {
-                sb.append(',');
+        // Same TOKEN_LOCK as the ReflectTypes family (see sliceTokFor):
+        // this mint shares byTok/keyToTok with funcOf. Its key scheme
+        // is deliberately left as-is (not funcOf's "func:" scheme):
+        // unifying keys would change which types share a token.
+        synchronized (ReflectTypes.TOKEN_LOCK) {
+            ReflectTypes.Table table = ReflectTypes.table();
+            TypeInfo ft = mi.funcType;
+            StringBuilder sb = new StringBuilder("func(");
+            for (int i = 1; i < ft.ins.size(); i++) {
+                if (i > 1) {
+                    sb.append(',');
+                }
+                sb.append(elemKey(ft.ins.get(i)));
             }
-            sb.append(elemKey(ft.ins.get(i)));
-        }
-        sb.append(")(");
-        for (int i = 0; i < ft.outs.size(); i++) {
-            if (i > 0) {
-                sb.append(',');
+            sb.append(")(");
+            for (int i = 0; i < ft.outs.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(elemKey(ft.outs.get(i)));
             }
-            sb.append(elemKey(ft.outs.get(i)));
+            sb.append(')');
+            if (ft.variadic) {
+                sb.append("...");
+            }
+            String key = sb.toString();
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long tok = table.byTok.size();
+            table.keyToTok.put(key, tok);
+            List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
+            TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
+                    null, null, 0, null, List.of(), List.of(),
+                    List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
+            table.byTok.add(info);
+            return tok;
         }
-        sb.append(')');
-        if (ft.variadic) {
-            sb.append("...");
-        }
-        String key = sb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
-        }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
-        TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
-                null, null, 0, null, List.of(), List.of(),
-                List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
     }
 
     /** __reflect_makefunc. */
