@@ -511,12 +511,30 @@ func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter 
 		if stmt.Cond != nil {
 			var p []ast.Stmt
 			stmt.Cond = hoistNestedMRExpr(stmt.Cond, specByName, counter, &p)
-			*pre = append(*pre, p...)
+			if len(p) > 0 {
+				// Cond temps must be re-evaluated on every
+				// iteration check: wrap them with the rewritten
+				// condition in a func() bool literal call.
+				// Hoisting them to the enclosing block would
+				// evaluate the spread call once before the loop
+				// and read a stale temp on later iterations.
+				// Init is different: it runs once, so its temps
+				// legitimately stay in the enclosing pre-list.
+				stmt.Cond = hoistWrapCond(p, stmt.Cond)
+			}
 		}
 		if stmt.Post != nil {
 			var p []ast.Stmt
 			stmt.Post = hoistNestedMRInStmt(stmt.Post, specByName, counter, &p)
-			*pre = append(*pre, p...)
+			if len(p) > 0 {
+				// Post temps must be re-evaluated on every
+				// iteration: wrap them with the rewritten post
+				// statement in a func() literal call used as a
+				// statement. The post slot stays a single
+				// statement, so continue still runs Post and
+				// break is unaffected.
+				stmt.Post = hoistWrapPost(p, stmt.Post)
+			}
 		}
 		hoistNestedMRInBlock(stmt.Body, specByName, counter)
 		return stmt
@@ -540,12 +558,95 @@ func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter 
 		if stmt.Body != nil {
 			for _, cc := range stmt.Body.List {
 				if ccc, ok := cc.(*ast.CaseClause); ok {
-					hoistNestedMRInBlock(&ast.BlockStmt{List: ccc.Body}, specByName, counter)
-					// Copy back (BlockStmt was a view).
-					ccc.Body = (&ast.BlockStmt{List: ccc.Body}).List
+					// Hoist into a named temp block and copy
+					// back: hoisting into a throwaway block
+					// discards the pre-statements while the
+					// rewritten args still reference them.
+					tmp := &ast.BlockStmt{List: ccc.Body}
+					hoistNestedMRInBlock(tmp, specByName, counter)
+					ccc.Body = tmp.List
 				}
 			}
 		}
+		return stmt
+	case *ast.TypeSwitchStmt:
+		if stmt.Init != nil {
+			var p []ast.Stmt
+			stmt.Init = hoistNestedMRInStmt(stmt.Init, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Assign != nil {
+			var p []ast.Stmt
+			stmt.Assign = hoistNestedMRInStmt(stmt.Assign, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Body != nil {
+			for _, cc := range stmt.Body.List {
+				if ccc, ok := cc.(*ast.CaseClause); ok {
+					tmp := &ast.BlockStmt{List: ccc.Body}
+					hoistNestedMRInBlock(tmp, specByName, counter)
+					ccc.Body = tmp.List
+				}
+			}
+		}
+		return stmt
+	case *ast.SelectStmt:
+		if stmt.Body != nil {
+			for _, cc := range stmt.Body.List {
+				if ccc, ok := cc.(*ast.CommClause); ok {
+					if ccc.Comm != nil {
+						// Comm operands are evaluated once,
+						// in source order, on entering the
+						// select, so comm temps belong in the
+						// enclosing pre-list, in clause order.
+						var p []ast.Stmt
+						ccc.Comm = hoistNestedMRInStmt(ccc.Comm, specByName, counter, &p)
+						*pre = append(*pre, p...)
+					}
+					tmp := &ast.BlockStmt{List: ccc.Body}
+					hoistNestedMRInBlock(tmp, specByName, counter)
+					ccc.Body = tmp.List
+				}
+			}
+		}
+		return stmt
+	case *ast.SendStmt:
+		// Channel first, then value: matches send evaluation order.
+		var p []ast.Stmt
+		stmt.Chan = hoistNestedMRExpr(stmt.Chan, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		var p2 []ast.Stmt
+		stmt.Value = hoistNestedMRExpr(stmt.Value, specByName, counter, &p2)
+		*pre = append(*pre, p2...)
+		return stmt
+	case *ast.DeclStmt:
+		if gd, ok := stmt.Decl.(*ast.GenDecl); ok {
+			for _, spec := range gd.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for i, v := range vs.Values {
+						var p []ast.Stmt
+						vs.Values[i] = hoistNestedMRExpr(v, specByName, counter, &p)
+						*pre = append(*pre, p...)
+					}
+				}
+			}
+		}
+		return stmt
+	case *ast.LabeledStmt:
+		// Pre-statements sit immediately before the labeled
+		// statement in the same block, so they run whenever
+		// control reaches the label by fallthrough (the
+		// realistic shapes: labeled loops/switches/selects
+		// reached by fallthrough and left via break/continue).
+		// Caveat: a goto jumping directly to the label skips
+		// them, so a spread call in a goto-target labeled
+		// statement stays a loud compile error (goto over
+		// declaration), as today it fails at export — it is
+		// not silently miscompiled. Fixing that shape needs
+		// function-wide goto/label analysis, out of scope here.
+		var p []ast.Stmt
+		stmt.Stmt = hoistNestedMRInStmt(stmt.Stmt, specByName, counter, &p)
+		*pre = append(*pre, p...)
 		return stmt
 	case *ast.DeferStmt:
 		var p []ast.Stmt
@@ -562,6 +663,41 @@ func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter 
 		return stmt
 	default:
 		return s
+	}
+}
+
+// hoistWrapCond wraps a rewritten for-condition with its hoisted
+// pre-statements in an immediately-invoked func() bool literal, so the
+// spread calls are re-evaluated on every iteration check. The condition
+// must be bool, so the literal's result type is known without type
+// information. The pre-statements are plain temp assignments
+// (tmp := __helper(...)) that capture enclosing variables normally.
+func hoistWrapCond(pre []ast.Stmt, cond ast.Expr) ast.Expr {
+	body := append(append([]ast.Stmt{}, pre...), &ast.ReturnStmt{Results: []ast.Expr{cond}})
+	return &ast.CallExpr{
+		Fun: &ast.FuncLit{
+			Type: &ast.FuncType{
+				Params:  &ast.FieldList{},
+				Results: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("bool")}}},
+			},
+			Body: &ast.BlockStmt{List: body},
+		},
+	}
+}
+
+// hoistWrapPost wraps a rewritten for-post statement with its hoisted
+// pre-statements in an immediately-invoked func() literal used as a
+// statement, so the spread calls are re-evaluated after every
+// iteration (including after continue, which still executes Post).
+func hoistWrapPost(pre []ast.Stmt, post ast.Stmt) ast.Stmt {
+	body := append(append([]ast.Stmt{}, pre...), post)
+	return &ast.ExprStmt{
+		X: &ast.CallExpr{
+			Fun: &ast.FuncLit{
+				Type: &ast.FuncType{Params: &ast.FieldList{}},
+				Body: &ast.BlockStmt{List: body},
+			},
+		},
 	}
 }
 

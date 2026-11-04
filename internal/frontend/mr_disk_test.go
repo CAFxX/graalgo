@@ -568,3 +568,519 @@ func (p Pair[A, B]) Split() (A, B) {
 }
 `)
 }
+
+// ---- Disk MR hoist: switch/for/unhandled-statement regression tests ----
+// (REVIEW-2026-11-04 P1: hoistNestedMRInStmt drops switch-case temps,
+// hoists for-cond/post temps out of the loop, and ignores TypeSwitch,
+// Select, Send, Decl, and Labeled statements.)
+//
+// Shared snippet decls: f is the multi-result function whose spread call
+// h(f()) must be hoisted; h/check are single-result consumers.
+
+const diskMRHoistHelpers = `
+func f() (int, string) { return 1, "x" }
+func h(a int, b string) int { return a }
+func check(a int, b string) bool { return a > 0 }
+`
+
+// transformDiskMRFile parses src, runs the disk multi-result transform,
+// and returns the rewritten file for AST inspection.
+func transformDiskMRFile(t *testing.T, src string) *ast.File {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	transformDiskMultiResult("example.com/p", []*ast.File{f})
+	return f
+}
+
+// diskMRFuncBody returns the body of the named function in f.
+func diskMRFuncBody(t *testing.T, f *ast.File, name string) *ast.BlockStmt {
+	t.Helper()
+	for _, decl := range f.Decls {
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == name {
+			if fd.Body == nil {
+				t.Fatalf("function %s has no body", name)
+			}
+			return fd.Body
+		}
+	}
+	t.Fatalf("function %s not found", name)
+	return nil
+}
+
+// diskMRFindFor returns the first ForStmt under node, or nil.
+func diskMRFindFor(node ast.Node) *ast.ForStmt {
+	var found *ast.ForStmt
+	ast.Inspect(node, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if x, ok := n.(*ast.ForStmt); ok {
+			found = x
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// diskMRFindSwitch returns the first SwitchStmt under node, or nil.
+func diskMRFindSwitch(node ast.Node) *ast.SwitchStmt {
+	var found *ast.SwitchStmt
+	ast.Inspect(node, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if x, ok := n.(*ast.SwitchStmt); ok {
+			found = x
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// diskMRFindTypeSwitch returns the first TypeSwitchStmt under node, or nil.
+func diskMRFindTypeSwitch(node ast.Node) *ast.TypeSwitchStmt {
+	var found *ast.TypeSwitchStmt
+	ast.Inspect(node, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if x, ok := n.(*ast.TypeSwitchStmt); ok {
+			found = x
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// diskMRFindSelect returns the first SelectStmt under node, or nil.
+func diskMRFindSelect(node ast.Node) *ast.SelectStmt {
+	var found *ast.SelectStmt
+	ast.Inspect(node, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if x, ok := n.(*ast.SelectStmt); ok {
+			found = x
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// diskMRHasCallTo reports whether node contains a call to the bare
+// identifier name (an unrewritten spread call still naming the stub).
+func diskMRHasCallTo(node ast.Node, name string) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == name {
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// diskMRTempAssign reports whether stmts contains a hoisted temp
+// assignment (__mr_arg_N := __f(...)) at that level.
+func diskMRTempAssign(stmts []ast.Stmt) bool {
+	for _, st := range stmts {
+		as, ok := st.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			continue
+		}
+		lid, ok := as.Lhs[0].(*ast.Ident)
+		if !ok || !strings.HasPrefix(lid.Name, "__mr_arg_") {
+			continue
+		}
+		call, ok := as.Rhs[0].(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "__f" {
+			return true
+		}
+	}
+	return false
+}
+
+// diskMRHasTempSel reports whether node references a hoisted temp
+// (__mr_arg_N.fK selector).
+func diskMRHasTempSel(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && strings.HasPrefix(id.Name, "__mr_arg_") {
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// diskMRForCondIIFEBody checks that loop.Cond is an immediately-invoked
+// func() bool literal and returns its body: the hoisted temps must live
+// here (re-evaluated on every iteration check), not before the loop.
+func diskMRForCondIIFEBody(t *testing.T, loop *ast.ForStmt) []ast.Stmt {
+	t.Helper()
+	call, ok := loop.Cond.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("for cond is %T, want IIFE call", loop.Cond)
+	}
+	lit, ok := call.Fun.(*ast.FuncLit)
+	if !ok {
+		t.Fatal("for cond is not an immediately-invoked func literal (temp would be evaluated once before the loop)")
+	}
+	return lit.Body.List
+}
+
+// diskMRForPostIIFEBody checks that loop.Post is an immediately-invoked
+// func() literal used as a statement and returns its body: the hoisted
+// temps must live here (re-evaluated on every iteration), not before
+// the loop. The post slot stays a single statement, so continue/break
+// semantics are unchanged.
+func diskMRForPostIIFEBody(t *testing.T, loop *ast.ForStmt) []ast.Stmt {
+	t.Helper()
+	es, ok := loop.Post.(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("for post is %T, want IIFE ExprStmt", loop.Post)
+	}
+	call, ok := es.X.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("for post expr is %T, want IIFE call", es.X)
+	}
+	lit, ok := call.Fun.(*ast.FuncLit)
+	if !ok {
+		t.Fatal("for post is not an immediately-invoked func literal (temp would be evaluated once before the loop)")
+	}
+	return lit.Body.List
+}
+
+func TestDiskMRHoistSwitchCaseBody(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use(x int) int {
+	switch x {
+	case 1:
+		y := h(f())
+		return y
+	default:
+		return 0
+	}
+}
+`
+	// Pre-fix this fails to type-check: the case-body temp assignment
+	// is dropped while the rewritten args still reference it.
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	sw := diskMRFindSwitch(diskMRFuncBody(t, f, "use"))
+	if sw == nil {
+		t.Fatal("no SwitchStmt found")
+	}
+	var caseBody []ast.Stmt
+	for _, cc := range sw.Body.List {
+		if c, ok := cc.(*ast.CaseClause); ok && len(c.List) > 0 {
+			caseBody = c.Body
+		}
+	}
+	if !diskMRTempAssign(caseBody) {
+		t.Error("switch case body has no hoisted temp assignment")
+	}
+	if diskMRHasCallTo(&ast.BlockStmt{List: caseBody}, "f") {
+		t.Error("switch case body still calls stub f")
+	}
+	if !diskMRHasTempSel(&ast.BlockStmt{List: caseBody}) {
+		t.Error("switch case body has no temp selector use")
+	}
+}
+
+func TestDiskMRHoistForCondPerIteration(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use() int {
+	n := 0
+	for check(f()) {
+		n++
+		if n > 3 {
+			break
+		}
+	}
+	return n
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	if diskMRTempAssign(body.List) {
+		t.Error("for-cond temp hoisted before the loop (evaluated once, stale on later iterations)")
+	}
+	loop := diskMRFindFor(body)
+	if loop == nil {
+		t.Fatal("no ForStmt found")
+	}
+	iifeBody := diskMRForCondIIFEBody(t, loop)
+	if !diskMRTempAssign(iifeBody) {
+		t.Error("for-cond IIFE body has no hoisted temp assignment")
+	}
+	if diskMRHasCallTo(&ast.BlockStmt{List: iifeBody}, "f") {
+		t.Error("for-cond IIFE body still calls stub f")
+	}
+}
+
+func TestDiskMRHoistForPostPerIteration(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use() int {
+	s := 0
+	for i := 0; i < 3; s = h(f()) {
+		_ = i
+	}
+	return s
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	if diskMRTempAssign(body.List) {
+		t.Error("for-post temp hoisted before the loop (evaluated once, stale on later iterations)")
+	}
+	loop := diskMRFindFor(body)
+	if loop == nil {
+		t.Fatal("no ForStmt found")
+	}
+	iifeBody := diskMRForPostIIFEBody(t, loop)
+	if !diskMRTempAssign(iifeBody) {
+		t.Error("for-post IIFE body has no hoisted temp assignment")
+	}
+	if diskMRHasCallTo(&ast.BlockStmt{List: iifeBody}, "f") {
+		t.Error("for-post IIFE body still calls stub f")
+	}
+	foundPost := false
+	for _, st := range iifeBody {
+		if _, ok := st.(*ast.AssignStmt); ok && !diskMRTempAssign([]ast.Stmt{st}) {
+			foundPost = true
+		}
+	}
+	if !foundPost {
+		t.Error("for-post IIFE body lost the original post statement")
+	}
+}
+
+func TestDiskMRHoistForPostExprStmt(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use() int {
+	s := 0
+	for i := 0; i < 3; h(f()) {
+		_ = i
+		s++
+	}
+	return s
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	if diskMRTempAssign(body.List) {
+		t.Error("for-post temp hoisted before the loop (evaluated once, stale on later iterations)")
+	}
+	loop := diskMRFindFor(body)
+	if loop == nil {
+		t.Fatal("no ForStmt found")
+	}
+	iifeBody := diskMRForPostIIFEBody(t, loop)
+	if !diskMRTempAssign(iifeBody) {
+		t.Error("for-post IIFE body has no hoisted temp assignment")
+	}
+	if diskMRHasCallTo(&ast.BlockStmt{List: iifeBody}, "f") {
+		t.Error("for-post IIFE body still calls stub f")
+	}
+}
+
+func TestDiskMRHoistTypeSwitchCaseBody(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use(v any) int {
+	switch v.(type) {
+	case int:
+		y := h(f())
+		return y
+	default:
+		return 0
+	}
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	ts := diskMRFindTypeSwitch(diskMRFuncBody(t, f, "use"))
+	if ts == nil {
+		t.Fatal("no TypeSwitchStmt found")
+	}
+	var caseBody []ast.Stmt
+	for _, cc := range ts.Body.List {
+		if c, ok := cc.(*ast.CaseClause); ok && len(c.List) > 0 {
+			caseBody = c.Body
+		}
+	}
+	if !diskMRTempAssign(caseBody) {
+		t.Error("typeswitch case body has no hoisted temp assignment")
+	}
+	if diskMRHasCallTo(&ast.BlockStmt{List: caseBody}, "f") {
+		t.Error("typeswitch case body still calls stub f")
+	}
+	if !diskMRHasTempSel(&ast.BlockStmt{List: caseBody}) {
+		t.Error("typeswitch case body has no temp selector use")
+	}
+}
+
+func TestDiskMRHoistSelect(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use(ch chan int, done chan int) int {
+	select {
+	case v := <-ch:
+		_ = v
+		y := h(f())
+		return y
+	case done <- h(f()):
+		return 1
+	default:
+		return 0
+	}
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	sel := diskMRFindSelect(body)
+	if sel == nil {
+		t.Fatal("no SelectStmt found")
+	}
+	// Send-clause operands are evaluated once on entering the select,
+	// so the send temp legitimately sits before the select.
+	if !diskMRTempAssign(body.List) {
+		t.Error("select send-clause temp missing before the select")
+	}
+	for _, cc := range sel.Body.List {
+		c, ok := cc.(*ast.CommClause)
+		if !ok {
+			continue
+		}
+		switch comm := c.Comm.(type) {
+		case *ast.SendStmt:
+			if diskMRHasCallTo(comm, "f") {
+				t.Error("select send clause still calls stub f")
+			}
+			if !diskMRHasTempSel(comm) {
+				t.Error("select send clause value has no temp selector")
+			}
+		case *ast.AssignStmt:
+			// Receive clause: body hoisted in place.
+			if !diskMRTempAssign(c.Body) {
+				t.Error("select receive-clause body has no hoisted temp assignment")
+			}
+			if diskMRHasCallTo(&ast.BlockStmt{List: c.Body}, "f") {
+				t.Error("select receive-clause body still calls stub f")
+			}
+		}
+	}
+}
+
+func TestDiskMRHoistSendStmt(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use(ch chan int) {
+	ch <- h(f())
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	if !diskMRTempAssign(body.List) {
+		t.Error("send statement has no hoisted temp assignment before it")
+	}
+	if diskMRHasCallTo(body, "f") {
+		t.Error("send statement still calls stub f")
+	}
+	if !diskMRHasTempSel(body) {
+		t.Error("send statement value has no temp selector")
+	}
+}
+
+func TestDiskMRHoistDeclStmt(t *testing.T) {
+	src := `package p
+` + diskMRHoistHelpers + `
+func use() int {
+	var y = h(f())
+	return y
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	if !diskMRTempAssign(body.List) {
+		t.Error("var decl has no hoisted temp assignment before it")
+	}
+	if diskMRHasCallTo(body, "f") {
+		t.Error("var decl still calls stub f")
+	}
+	if !diskMRHasTempSel(body) {
+		t.Error("var decl value has no temp selector")
+	}
+}
+
+func TestDiskMRHoistLabeledStmt(t *testing.T) {
+	// Labeled loop (break target): the old default case never
+	// descended into the labeled statement at all, so a spread call
+	// inside the loop body was never hoisted. The temp must land
+	// inside the loop body (per iteration), not before the label.
+	// (A spread call in a goto-target labeled simple statement is a
+	// separate known limitation, documented on the LabeledStmt case
+	// in mr_disk.go: a goto jumping to the label skips any
+	// pre-statement, so that shape stays a loud compile error
+	// rather than silently miscompiling.)
+	src := `package p
+` + diskMRHoistHelpers + `
+func use() int {
+	n := 0
+done:
+	for n < 3 {
+		n++
+		if n == 2 {
+			break done
+		}
+		y := h(f())
+		_ = y
+	}
+	return n
+}
+`
+	checkDiskMRClean(t, src)
+	f := transformDiskMRFile(t, src)
+	body := diskMRFuncBody(t, f, "use")
+	if diskMRHasCallTo(body, "f") {
+		t.Error("labeled loop body still calls stub f")
+	}
+	if !diskMRHasTempSel(body) {
+		t.Error("labeled loop body has no temp selector")
+	}
+	loop := diskMRFindFor(body)
+	if loop == nil {
+		t.Fatal("no ForStmt found")
+	}
+	if !diskMRTempAssign(loop.Body.List) {
+		t.Error("labeled loop body has no hoisted temp assignment inside the loop")
+	}
+}
