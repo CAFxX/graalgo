@@ -66,6 +66,8 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // review NEW-P1-1/NEW-P1-2 (2026-11-04): p3reflect memo races.
+        TESTS.add(graalgo.p3reflect.ReflectRaceTest.class);
     }
 
     private IfaceTestRunner() {}

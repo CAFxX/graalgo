@@ -568,10 +568,34 @@ public final class ReflectLinknames {
     private static final java.util.Map<GoStruct, Long> DYN_STRUCT_TOKS =
             new java.util.IdentityHashMap<>();
     private static ReflectTypes.Table dynStructTable;
+    /**
+     * The single lock for dynamic-type synthesis (review NEW-P1-2).
+     * {@link #DYN_STRUCT_TOKS} is a plain {@link java.util.IdentityHashMap},
+     * {@code dynStructTable} is a plain non-volatile field, and the
+     * struct synthesizer mints {@code table.byTok.size()} before
+     * appending — so unsynchronized concurrent {@code StructOf} calls
+     * could mint duplicate tokens and corrupt the memo. Every entry
+     * into dynamic synthesis ({@link #synthesizeDynamicToken}) and
+     * the struct synthesizer itself take this lock; the lock is
+     * re-entrant, so a field type that is itself a dynamic struct
+     * re-enters it on the same thread. Token semantics are unchanged:
+     * the lock only serializes synthesis, it never changes which token
+     * a type gets. Note the scope limit: this serializes the dynamic
+     * synthesizers against each other, not against direct
+     * {@code ReflectTypes} token-family callers ({@code ptrTo} etc.),
+     * which remain unsynchronized in their own right.
+     */
+    private static final Object DYN_SYNTH_LOCK = new Object();
     private static final ThreadLocal<java.util.IdentityHashMap<GoStruct, Boolean>> SYNTHESIZING =
             ThreadLocal.withInitial(java.util.IdentityHashMap::new);
 
     private static long synthesizeDynamicToken(GoStruct header) {
+        synchronized (DYN_SYNTH_LOCK) {
+            return synthesizeDynamicTokenLocked(header);
+        }
+    }
+
+    private static long synthesizeDynamicTokenLocked(GoStruct header) {
         GoStruct ext = null;
         String extName = null;
         GoStruct cur = header.prefixParent();
@@ -648,6 +672,12 @@ public final class ReflectLinknames {
     }
 
     private static long synthesizeDynamicStruct(GoStruct header, GoStruct structType) {
+        synchronized (DYN_SYNTH_LOCK) {
+            return synthesizeDynamicStructLocked(header, structType);
+        }
+    }
+
+    private static long synthesizeDynamicStructLocked(GoStruct header, GoStruct structType) {
         ReflectTypes.Table table = ReflectTypes.table();
         if (table != dynStructTable) {
             DYN_STRUCT_TOKS.clear();

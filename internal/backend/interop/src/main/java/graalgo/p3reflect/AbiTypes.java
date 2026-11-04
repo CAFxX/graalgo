@@ -217,8 +217,16 @@ public final class AbiTypes {
         return ptr;
     }
 
-    /** The type token of a canonical abi shell; 0 when not minted here. */
-    public static long tokForShell(GoStruct shell) {
+    /**
+     * The type token of a canonical abi shell; 0 when not minted here.
+     *
+     * <p>Synchronized on the same (class) lock as {@link #abiPointerForTok}:
+     * {@link #SHELL_TOKS} is a plain {@link IdentityHashMap}, so an
+     * unsynchronized read racing a put/clear from the writer is a data
+     * race (review NEW-P1-1). Every access to the map is now under this
+     * lock.
+     */
+    public static synchronized long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
     }
@@ -898,8 +906,13 @@ public final class AbiTypes {
      * {@link ReflectRefs#denotedValue} with the dynamic type's kind —
      * the same denoted-value read the reflect intrinsics use. A zero
      * Type word with a zero Data word is the nil interface.
+     *
+     * <p>Synchronized on the same (class) lock as {@link #abiPointerForTok},
+     * for the same reason as {@link #tokForShell}: the {@link #SHELL_TOKS}
+     * read below must not race a put/clear from the writer
+     * (review NEW-P1-1).
      */
-    public static GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
+    public static synchronized GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
         Object typeWord = null;
         Object itabWord = null;
         long dataHandle = 0;
