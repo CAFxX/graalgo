@@ -66,7 +66,14 @@ public final class DeferredCall {
         this.callSite = site;
     }
 
-    /** A deferred function-value call. */
+    /**
+     * A deferred function-value call.
+     *
+     * @param func the function value; null is allowed and panics with the
+     *             nil-dereference error when invoked (gc: a nil func value
+     *             panics at unwind, not at the defer statement — see
+     *             NEW-P1-5, REVIEW-2026-11-04-11).
+     */
     public static DeferredCall func(GoFunc func, Object[] args) {
         return new DeferredCall(Kind.FUNC, func, args, null, null);
     }
@@ -103,6 +110,15 @@ public final class DeferredCall {
     public void invoke() {
         switch (kind) {
             case FUNC -> {
+                // NEW-P1-5 (REVIEW-2026-11-04-11): a nil func value
+                // panics here, at unwind time — not at the defer
+                // statement. The value is gc's nil-call panic
+                // (GoCalls.nilFuncCall parity, cf. SyncOpNode), so a
+                // deferred recover() pushed before the nil defer can
+                // recover it, and defers pushed after it run first.
+                if (func == null) {
+                    Panic.throwPanic(GoCalls.nilFuncCall(), null, null, callSite);
+                }
                 // M9 (P1-2): deferred function-value calls are real call
                 // sites; record the compiled target for the polymorphism
                 // histogram when probing is enabled.

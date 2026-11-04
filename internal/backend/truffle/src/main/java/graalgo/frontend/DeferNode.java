@@ -62,6 +62,16 @@ public final class DeferNode extends GoStmtNode {
     public void executeVoid(VirtualFrame frame) {
         DeferredCall dc;
         {
+            // NEW-P1-4 (REVIEW-2026-11-04-11): Go evaluates the deferred
+            // function value BEFORE its arguments (ordinary call
+            // evaluation order, gc-verified); the argument loop used to
+            // run first, so a side effect in the function value ran
+            // after the argument side effects. Builtin defers have no
+            // function value; only their arguments are evaluated.
+            GoFunc f = null;
+            if (builtinName == null) {
+                f = (GoFunc) fn.executeObject(frame);
+            }
             Object[] argVals = new Object[args.length];
             for (int i = 0; i < args.length; i++) {
                 // Go evaluates and copies defer arguments at the defer
@@ -75,16 +85,21 @@ public final class DeferNode extends GoStmtNode {
                 // unwind time; the site is the defer statement (gc's line).
                 dc.setCallSite(this);
             } else {
-                GoFunc f = (GoFunc) fn.executeObject(frame);
-                if (f == null) {
-                    // Deferring a nil func value: gc panics at defer time with
-                    // the nil-dereference panic.
-                    graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference(), null, null, this);
-                }
                 dc = DeferredCall.func(f, argVals);
-                // M9 (P1-2): attach the probe site so the deferred invocation
-                // is recorded in the polymorphism histogram.
-                if (CallSiteProbes.isEnabled()) {
+                if (f == null) {
+                    // NEW-P1-5 (REVIEW-2026-11-04-11): gc does NOT panic
+                    // here. A nil func value is pushed like any other
+                    // deferred call and panics with the nil-dereference
+                    // error only when the call runs at unwind
+                    // (DeferredCall.invoke), so statements after this
+                    // defer still execute and defers pushed later still
+                    // run first (LIFO). The call site is attached so
+                    // the unwind-time panic is attributed to this
+                    // defer statement, as the old defer-time panic was.
+                    dc.setCallSite(this);
+                } else if (CallSiteProbes.isEnabled()) {
+                    // M9 (P1-2): attach the probe site so the deferred invocation
+                    // is recorded in the polymorphism histogram.
                     CallSiteProbes.Site site = probeSite;
                     if (site == null) {
                         site = CallSiteProbes.registerSite(siteName());
