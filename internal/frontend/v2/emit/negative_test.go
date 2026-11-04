@@ -165,10 +165,22 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
-		name: "IndexListExpr_generics",
+		// Single type argument parses as IndexExpr; emitIndex rejects
+		// it as a generic instantiation (a plain index emits — see the
+		// coverage truth test).
+		name: "IndexExpr_generics",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
+`,
+		want: "unsupported expr",
+	},
+	{
+		// Multiple type arguments parse as IndexListExpr.
+		name: "IndexListExpr_generics",
+		src: `package main
+func pair[A, B any](a A, b B) int { return 1 }
+func main() { println(pair[int, string](1, "s")) }
 `,
 		want: "unsupported expr",
 	},

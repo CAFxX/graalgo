@@ -106,6 +106,12 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 		return e.node("return", s, map[string]any{"results": results}), nil
 	case *ast.AssignStmt:
 		return e.emitAssign(st)
+	case *ast.BlockStmt:
+		// A bare block as a statement, not just a func/if/for body.
+		// Found by the coverage truth test: BlockStmt was listed as
+		// handled (emitBlock exists) but a nested block statement hit
+		// the default "unsupported stmt" branch.
+		return e.emitBlock(st)
 	case *ast.DeclStmt:
 		return e.emitDeclStmt(st)
 	case *ast.IfStmt:
