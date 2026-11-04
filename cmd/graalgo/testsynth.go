@@ -64,6 +64,14 @@ type graalgoT struct {
 	subresults []string // buffered subtest result lines (flushed after own result)
 }
 
+// graalgoTestSignal is the panic value for Skip/Fatal control flow.
+// It is a distinct type, classified by type assertion and never by
+// message text, so a user panic can never be mistaken for a skip or a
+// fatal however its message reads.
+type graalgoTestSignal struct {
+	fatal bool
+}
+
 // logLine emits a detail line: immediately in verbose mode, buffered
 // otherwise (flushed after the --- FAIL line, matching go test).
 func (t *graalgoT) logLine(s string) {
@@ -95,13 +103,13 @@ func (t *graalgoT) graalgoError(fileline string, args ...interface{}) {
 func (t *graalgoT) graalgoFatalf(fileline, format string, args ...interface{}) {
 	t.failed = true
 	t.logLine("    " + fileline + ": " + sprintf(format, args...))
-	panic("graalgo test fatal: " + t.name)
+	panic(graalgoTestSignal{fatal: true})
 }
 
 func (t *graalgoT) graalgoFatal(fileline string, args ...interface{}) {
 	t.failed = true
 	t.logLine("    " + fileline + ": " + joinArgs(args...))
-	panic("graalgo test fatal: " + t.name)
+	panic(graalgoTestSignal{fatal: true})
 }
 
 func (t *graalgoT) graalgoLogf(fileline, format string, args ...interface{}) {
@@ -115,18 +123,18 @@ func (t *graalgoT) graalgoLog(fileline string, args ...interface{}) {
 func (t *graalgoT) graalgoSkip(fileline string, args ...interface{}) {
 	t.skipped = true
 	t.logLine("    " + fileline + ": " + joinArgs(args...))
-	panic("graalgo test skip: " + t.name)
+	panic(graalgoTestSignal{})
 }
 
 func (t *graalgoT) graalgoSkipf(fileline, format string, args ...interface{}) {
 	t.skipped = true
 	t.logLine("    " + fileline + ": " + sprintf(format, args...))
-	panic("graalgo test skip: " + t.name)
+	panic(graalgoTestSignal{})
 }
 
 func (t *graalgoT) graalgoSkipNow(fileline string) {
 	t.skipped = true
-	panic("graalgo test skip: " + t.name)
+	panic(graalgoTestSignal{})
 }
 
 func (t *graalgoT) Fail() {
@@ -154,7 +162,29 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	// Recover here so a Fatal/Skip/panic in the subtest ends only
+	// that subtest: its result line is still recorded, its outcome
+	// propagates to the parent below, and Run returns so siblings
+	// still run — matching go test. Without this, the panic unwinds
+	// the whole top-level test function and later siblings never
+	// execute, so a sibling that would have failed is never run.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if sig, ok := r.(graalgoTestSignal); ok {
+					if sig.fatal {
+						sub.failed = true
+					} else {
+						sub.skipped = true
+					}
+				} else {
+					sub.failed = true
+					sub.logLine("panic: " + toString(r))
+				}
+			}
+		}()
+		f(sub)
+	}()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
@@ -1397,26 +1427,40 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\tfunc() {\n")
 			body.WriteString("\t\t\tdefer func() {\n")
 			body.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
-			body.WriteString("\t\t\t\t\ts := toString(r)\n")
-			body.WriteString("\t\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
-			body.WriteString("\t\t\t\t\t\ttt.skipped = true\n")
-			body.WriteString("\t\t\t\t\t} else if len(s) >= 18 && s[:18] == \"graalgo test fatal\" {\n")
-			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
+			body.WriteString("\t\t\t\t\tif sig, ok := r.(graalgoTestSignal); ok {\n")
+			body.WriteString("\t\t\t\t\t\tif sig.fatal {\n")
+			body.WriteString("\t\t\t\t\t\t\ttt.failed = true\n")
+			body.WriteString("\t\t\t\t\t\t} else {\n")
+			body.WriteString("\t\t\t\t\t\t\ttt.skipped = true\n")
+			body.WriteString("\t\t\t\t\t\t}\n")
 			body.WriteString("\t\t\t\t\t} else {\n")
 			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + s)\n")
+			body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + toString(r))\n")
 			body.WriteString("\t\t\t\t\t}\n")
 			body.WriteString("\t\t\t\t}\n")
 			body.WriteString("\t\t\t}()\n")
 			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
 			body.WriteString("\t\t}()\n")
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
+			// One outcome computation shared by both modes: failure
+			// wins over skip, so a test that failed a subtest (or an
+			// assertion) and later skipped reports FAIL and counts
+			// toward the package failure in verbose mode too. The
+			// modes differ only in what they print, never in the
+			// outcome.
+			body.WriteString("\t\toutcome := \"pass\"\n")
+			body.WriteString("\t\tif tt.skipped {\n")
+			body.WriteString("\t\t\toutcome = \"skip\"\n")
+			body.WriteString("\t\t}\n")
+			body.WriteString("\t\tif tt.failed {\n")
+			body.WriteString("\t\t\toutcome = \"fail\"\n")
+			body.WriteString("\t\t}\n")
 			if verbose {
-				body.WriteString("\t\tif tt.skipped {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
-				body.WriteString("\t\t} else if tt.failed {\n")
+				body.WriteString("\t\tif outcome == \"fail\" {\n")
 				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
 				body.WriteString("\t\t\tfailed++\n")
+				body.WriteString("\t\t} else if outcome == \"skip\" {\n")
+				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
 				body.WriteString("\t\t} else {\n")
 				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", t))
 				body.WriteString("\t\t}\n")
@@ -1424,7 +1468,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				body.WriteString("\t\t\tprintln(l)\n")
 				body.WriteString("\t\t}\n")
 			} else {
-				body.WriteString("\t\tif tt.failed {\n")
+				body.WriteString("\t\tif outcome == \"fail\" {\n")
 				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
 				body.WriteString("\t\t\tfor _, l := range tt.output {\n")
 				body.WriteString("\t\t\t\tprintln(l)\n")
