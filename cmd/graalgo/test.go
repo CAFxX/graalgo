@@ -205,6 +205,15 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
+	// TestMain has no runner under graalgo test: warn loudly instead of
+	// silently running the package's tests without its setup.
+	for _, tf := range runnableTests {
+		if hasTestMain(tf) {
+			fmt.Fprintf(os.Stderr, "graalgo test: warning: %s declares TestMain, which graalgo test does not run; tests will run without its setup\n", tf)
+			break
+		}
+	}
+
 	// Discover the selected tests of every file, applying the -run
 	// filter (regex, like `go test`).
 	var ftList []fileTests

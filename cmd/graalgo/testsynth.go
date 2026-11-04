@@ -17,12 +17,23 @@ import (
 )
 
 // discoverTests returns the names of TestXxx functions in a _test.go file.
+//
+// A function counts as a test only if it takes exactly one parameter of
+// type *testing.T, resolved through the file's own imports (so an aliased
+// or dot-imported testing package still resolves). Anything else named
+// TestXxx — a helper taking other arguments, a function taking
+// *testing.B, and TestMain in particular — is not a test and is
+// excluded. TestMain is excluded by name as well as by type (it takes
+// *testing.M): graalgo test has no TestMain runner, so synthesizing it
+// as an ordinary test would drop its setup; runPackage warns about it
+// instead (see hasTestMain).
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
+	testingNames := testingImportNames(f)
 	var tests []string
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -33,13 +44,101 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
+		if name == "TestMain" {
+			continue
+		}
 		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+			continue
+		}
+		field := fn.Type.Params.List[0]
+		// One field binding two names is two parameters, not one.
+		if len(field.Names) > 1 {
+			continue
+		}
+		if !isTestingTParam(field, testingNames) {
 			continue
 		}
 		tests = append(tests, name)
 	}
 	return tests, nil
+}
+
+// testingImportNames returns the local qualifier names that denote the
+// testing package in f: the explicit import name when the import
+// declares one, otherwise the path base ("testing"). A dot-import is
+// recorded under the empty key: it brings T into scope unqualified.
+func testingImportNames(f *ast.File) map[string]bool {
+	names := make(map[string]bool)
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, "\"") != "testing" {
+			continue
+		}
+		if imp.Name != nil {
+			switch imp.Name.Name {
+			case ".":
+				names[""] = true
+			case "_":
+				// Blank import binds no name.
+			default:
+				names[imp.Name.Name] = true
+			}
+		} else {
+			names["testing"] = true
+		}
+	}
+	return names
+}
+
+// isTestingTParam reports whether field declares *testing.T, with the
+// qualifier resolved through testingNames. Accepts *testing.T (or an
+// alias for it), *T under a dot-import, and parenthesized forms;
+// rejects bare testing.T, *testing.M, and any other type.
+func isTestingTParam(field *ast.Field, testingNames map[string]bool) bool {
+	typ := field.Type
+	for {
+		paren, ok := typ.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		typ = paren.X
+	}
+	star, ok := typ.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	inner := star.X
+	for {
+		paren, ok := inner.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		inner = paren.X
+	}
+	switch t := inner.(type) {
+	case *ast.SelectorExpr:
+		id, ok := t.X.(*ast.Ident)
+		return ok && t.Sel.Name == "T" && testingNames[id.Name]
+	case *ast.Ident:
+		return t.Name == "T" && testingNames[""]
+	}
+	return false
+}
+
+// hasTestMain reports whether path declares a top-level TestMain
+// function (any signature). graalgo test cannot run TestMain setup, so
+// runPackage warns when one is present instead of silently dropping it.
+func hasTestMain(path string) bool {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return false
+	}
+	for _, decl := range f.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "TestMain" {
+			return true
+		}
+	}
+	return false
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -62,6 +161,8 @@ type graalgoT struct {
 	skipped    bool
 	output     []string // buffered detail lines (flushed on failure when !verbose)
 	subresults []string // buffered subtest result lines (flushed after own result)
+	cleanups   []func() // registered via Cleanup, run LIFO at test end
+	parallel   bool     // set by Parallel; the driver still runs sequentially
 }
 
 // logLine emits a detail line: immediately in verbose mode, buffered
@@ -141,7 +242,103 @@ func (t *graalgoT) Name() string {
 	return t.name
 }
 
+// Helper is intentionally a no-op: diagnostic calls are rewritten at
+// synthesis time to position-capturing variants (graalgoErrorf et al.),
+// so failure output already carries the caller's file:line without any
+// helper-frame attribution for Helper to provide.
 func (t *graalgoT) Helper() {}
+
+func (t *graalgoT) FailNow() {
+	t.failed = true
+	panic("graalgo test fatal: " + t.name)
+}
+
+func (t *graalgoT) Cleanup(f func()) {
+	t.cleanups = append(t.cleanups, f)
+}
+
+func (t *graalgoT) runCleanups() {
+	for i := len(t.cleanups) - 1; i >= 0; i-- {
+		t.cleanups[i]()
+	}
+	t.cleanups = nil
+}
+
+// Parallel is accepted but does not parallelize: the graalgo test
+// driver runs tests sequentially, so a test calling Parallel runs in
+// sequence like any other test. Tests that synchronize between
+// parallel tests (e.g. one parallel test waiting on another) may
+// deadlock where gc would interleave them; that remains unsupported.
+// Setenv/Chdir refuse to run on a parallel-marked test (like gc)
+// instead of silently racing the shared process state.
+func (t *graalgoT) Parallel() {
+	t.parallel = true
+}
+
+func (t *graalgoT) TempDir() string {
+	dir, err := os.MkdirTemp("", "graalgo-test-*")
+	if err != nil {
+		t.failed = true
+		t.logLine("TempDir: MkdirTemp failed")
+		panic("graalgo test fatal: " + t.name)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+func (t *graalgoT) Setenv(key, value string) {
+	if t.parallel {
+		t.failed = true
+		t.logLine("Setenv called in a parallel test")
+		panic("graalgo test fatal: " + t.name)
+	}
+	prev, ok := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.failed = true
+		t.logLine("Setenv failed")
+		panic("graalgo test fatal: " + t.name)
+	}
+	t.Cleanup(func() {
+		if ok {
+			os.Setenv(key, prev)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+}
+
+func (t *graalgoT) Chdir(dir string) {
+	if t.parallel {
+		t.failed = true
+		t.logLine("Chdir called in a parallel test")
+		panic("graalgo test fatal: " + t.name)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.failed = true
+		t.logLine("Chdir: cannot get working directory")
+		panic("graalgo test fatal: " + t.name)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.failed = true
+		t.logLine("Chdir failed")
+		panic("graalgo test fatal: " + t.name)
+	}
+	t.Cleanup(func() { os.Chdir(old) })
+}
+
+// Deadline reports no deadline: graalgo test has no -timeout flag, so
+// (like a gc run without one) there is never a deadline to report.
+func (t *graalgoT) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+// Context returns a background context. Unlike gc it is never canceled
+// when the test ends: code that observes cancellation only after the
+// test returns will see a live context instead.
+func (t *graalgoT) Context() context.Context {
+	return context.Background()
+}
 
 func (t *graalgoT) Skipped() bool {
 	return t.skipped
@@ -154,7 +351,28 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	f(sub)
+	func() {
+		// A fatal/skip panic in a subtest ends only the subtest: gc
+		// runs subtests in their own goroutine, while the driver runs
+		// them synchronously, so recover here to keep the parent
+		// running. Cleanups run during the unwind, before the result
+		// is computed below. A real panic is re-raised for the
+		// top-level driver wrapper to report.
+		defer func() {
+			if r := recover(); r != nil {
+				s := toString(r)
+				if len(s) >= 17 && s[:17] == "graalgo test skip" {
+					sub.skipped = true
+				} else if len(s) >= 18 && s[:18] == "graalgo test fatal" {
+					sub.failed = true
+				} else {
+					panic(r)
+				}
+			}
+		}()
+		defer sub.runCleanups()
+		f(sub)
+	}()
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
@@ -409,8 +627,93 @@ func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 // selected test functions. It extracts the TestXxx function declarations
 // from the test file (rewritten to take *graalgoT) plus the package's
 // non-test sources.
-// synthesizeTestDriver builds a single-file Go program that runs the
-// selected test functions of a package. It extracts the TestXxx function
+// supportedTMethods is the set of testing.T methods the graalgoT shim
+// implements (directly, or via the position-capturing rewrites in
+// testCallRewrites). A call to any other method on a *graalgoT value is
+// a synthesis-time error, not a confusing backend compile failure.
+var supportedTMethods = map[string]bool{
+	"Fail": true, "Failed": true, "Name": true, "Helper": true,
+	"Skipped": true, "Run": true,
+	"Log": true, "Logf": true, "Error": true, "Errorf": true,
+	"Fatal": true, "Fatalf": true, "Skip": true, "Skipf": true,
+	"SkipNow": true,
+	"FailNow": true, "Cleanup": true, "Parallel": true,
+	"TempDir": true, "Setenv": true, "Chdir": true,
+	"Deadline": true, "Context": true,
+}
+
+// checkUnsupportedTMethods scans fn for calls to testing.T methods the
+// shim does not implement, on parameters rewritten to *graalgoT. It
+// runs after rewriteParam (so params are *graalgoT) and before
+// rewriteTestCalls (so diagnostic calls still carry their testing.T
+// names). Nested function literals get their own scope, mirroring
+// rewriteTestCalls: a shadowing non-graalgoT param disables checking
+// for that name within the literal. One limitation, shared with
+// rewriteTestCalls: a local variable shadowing a *graalgoT param (via
+// :=) is not tracked, so a call through such an alias falls through
+// to the backend compile error instead of this diagnostic.
+func checkUnsupportedTMethods(fn *ast.FuncDecl, fset *token.FileSet) error {
+	params := make(map[string]bool)
+	for _, n := range graalgoTParamNames(fn.Type.Params) {
+		params[n] = true
+	}
+	var walk func(n ast.Node, params, shadowed map[string]bool) error
+	walk = func(n ast.Node, params, shadowed map[string]bool) error {
+		var err error
+		ast.Inspect(n, func(nd ast.Node) bool {
+			if err != nil {
+				return false
+			}
+			if fl, ok := nd.(*ast.FuncLit); ok {
+				innerParams := make(map[string]bool, len(params))
+				for k, v := range params {
+					innerParams[k] = v
+				}
+				innerShadowed := make(map[string]bool, len(shadowed))
+				for k, v := range shadowed {
+					innerShadowed[k] = v
+				}
+				if fl.Type.Params != nil {
+					for _, field := range fl.Type.Params.List {
+						if isGraalgoTParam(field) {
+							for _, nm := range field.Names {
+								innerParams[nm.Name] = true
+								delete(innerShadowed, nm.Name)
+							}
+						} else {
+							for _, nm := range field.Names {
+								innerShadowed[nm.Name] = true
+							}
+						}
+					}
+				}
+				if e := walk(fl.Body, innerParams, innerShadowed); e != nil {
+					err = e
+				}
+				return false
+			}
+			if call, ok := nd.(*ast.CallExpr); ok {
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				id, ok := sel.X.(*ast.Ident)
+				if !ok || !params[id.Name] || shadowed[id.Name] {
+					return true
+				}
+				if !supportedTMethods[sel.Sel.Name] {
+					pos := fset.Position(call.Pos())
+					err = fmt.Errorf("unsupported testing.T method %q at %s:%d (graalgo test shim does not implement it)", sel.Sel.Name, filepath.Base(pos.Filename), pos.Line)
+				}
+			}
+			return true
+		})
+		return err
+	}
+	return walk(fn.Body, params, make(map[string]bool))
+}
+
+// synthesizeTestDriver builds a single-file Go program that runs the It extracts the TestXxx function
 // declarations from the test files (rewritten to take *graalgoT) plus the
 // package's non-test sources.
 //
@@ -614,11 +917,14 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main uses time and os directly, and the shim's
+	// Context method uses context.
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "context")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "context"}] = true
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -730,6 +1036,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 					continue
 				}
 				rewriteParam(d)
+				if err := checkUnsupportedTMethods(d, tu.fset); err != nil {
+					return "", err
+				}
 				rewriteTestCalls(d, tu.fset)
 				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
@@ -755,6 +1064,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 					}
 				}
 				rewriteParam(d)
+				if err := checkUnsupportedTMethods(d, u.fset); err != nil {
+					return "", err
+				}
 				rewriteTestCalls(d, u.fset)
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
@@ -1410,6 +1722,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t\t}()\n")
 			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
 			body.WriteString("\t\t}()\n")
+			// Cleanups run after the test body (and after any
+			// recovered fatal/skip panic), matching gc.
+			body.WriteString("\t\ttt.runCleanups()\n")
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			if verbose {
 				body.WriteString("\t\tif tt.skipped {\n")

@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -964,5 +966,293 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestDiscoverTestsRequiresTestingT is the regression test for P1-21:
+// discovery used to accept any TestXxx with one parameter, including
+// TestMain (which takes *testing.M) and helpers taking other types.
+func TestDiscoverTestsRequiresTestingT(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/discover\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package discover\n")
+	writeFile(t, root, "a_test.go", `package discover
+
+import "testing"
+
+func TestMain(m *testing.M) {}
+
+func TestReal(t *testing.T) {}
+
+func TestUnnamed(*testing.T) {}
+
+func TestWrongType(x int) {}
+
+func TestTwoParams(t, u *testing.T) {}
+
+func TestBench(b *testing.B) {}
+
+func TestNoParam() {}
+`)
+	tests, err := discoverTests(filepath.Join(root, "a_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"TestReal", "TestUnnamed"}
+	if len(tests) != len(want) {
+		t.Fatalf("discoverTests = %v, want %v", tests, want)
+	}
+	for i, w := range want {
+		if tests[i] != w {
+			t.Fatalf("discoverTests = %v, want %v", tests, want)
+		}
+	}
+	if !hasTestMain(filepath.Join(root, "a_test.go")) {
+		t.Errorf("hasTestMain = false for a file declaring TestMain")
+	}
+	// TestMain must not be synthesized either: it is skipped as an
+	// entry point, so the driver never inlines or calls it.
+	src := synthDriver(t, root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	if strings.Contains(src, "TestMain") {
+		t.Errorf("driver synthesized TestMain:\n%s", src)
+	}
+
+	// Aliased and dot-imported testing packages still resolve.
+	writeFile(t, root, "b_test.go", `package discover
+
+import tt "testing"
+
+func TestAliased(x *tt.T) {}
+`)
+	aliased, err := discoverTests(filepath.Join(root, "b_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliased) != 1 || aliased[0] != "TestAliased" {
+		t.Fatalf("discoverTests (aliased import) = %v, want [TestAliased]", aliased)
+	}
+	if hasTestMain(filepath.Join(root, "b_test.go")) {
+		t.Errorf("hasTestMain = true for a file without TestMain")
+	}
+	writeFile(t, root, "c_test.go", `package discover
+
+import . "testing"
+
+func TestDot(x *T) {}
+`)
+	dotted, err := discoverTests(filepath.Join(root, "c_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dotted) != 1 || dotted[0] != "TestDot" {
+		t.Fatalf("discoverTests (dot import) = %v, want [TestDot]", dotted)
+	}
+}
+
+// TestShimImplementsMissingTMethods pins the P1-22 shim surface: every
+// method the review found missing must exist on graalgoT, and Helper's
+// no-op must carry its rationale instead of standing unexplained.
+func TestShimImplementsMissingTMethods(t *testing.T) {
+	shim := testShimSource(false)
+	for _, m := range []string{
+		"func (t *graalgoT) FailNow()",
+		"func (t *graalgoT) Cleanup(",
+		"func (t *graalgoT) Parallel()",
+		"func (t *graalgoT) TempDir() string",
+		"func (t *graalgoT) Setenv(",
+		"func (t *graalgoT) Chdir(",
+		"func (t *graalgoT) Deadline()",
+		"func (t *graalgoT) Context()",
+		"func (t *graalgoT) runCleanups()",
+	} {
+		if !strings.Contains(shim, m) {
+			t.Errorf("shim missing %s", m)
+		}
+	}
+	if !strings.Contains(shim, "Helper is intentionally a no-op") {
+		t.Errorf("Helper lacks its no-op rationale comment")
+	}
+}
+
+// TestUnsupportedTMethodRejected pins the P1-22 fallback: a test calling
+// a testing.T method the shim does not implement fails at synthesis
+// time with a clear error naming the method, instead of failing later
+// in the backend with an obscure compile error.
+func TestUnsupportedTMethodRejected(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/unsup\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package unsup\n")
+	writeFile(t, root, "a_test.go", `package unsup
+
+import "testing"
+
+func TestBad(t *testing.T) {
+	t.NoSuchMethod()
+}
+`)
+	importPkgNameCache = map[string]string{}
+	_, err := synthesizeTestDriver(root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: []string{"TestBad"}}},
+		[]string{filepath.Join(root, "a.go")}, false)
+	if err == nil {
+		t.Fatal("synthesizeTestDriver accepted a call to an unimplemented testing.T method")
+	}
+	if !strings.Contains(err.Error(), "unsupported") || !strings.Contains(err.Error(), "NoSuchMethod") {
+		t.Fatalf("synthesis error = %v, want it to name the unsupported method", err)
+	}
+}
+
+// TestSupportedNewTMethodsSynthesize ensures the new shim methods pass
+// synthesis (they need no position-capturing rewrite) and that the
+// driver imports context for the shim's Context method.
+func TestSupportedNewTMethodsSynthesize(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/newmethods\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package newmethods\n")
+	writeFile(t, root, "a_test.go", `package newmethods
+
+import "testing"
+
+func TestUses(t *testing.T) {
+	_ = t.TempDir()
+	t.Setenv("GRAALGO_SHIM_TEST_KEY", "v1")
+	t.Chdir(".")
+	_, _ = t.Deadline()
+	_ = t.Context()
+	t.Cleanup(func() {})
+	t.Parallel()
+	t.FailNow()
+}
+`)
+	src := synthDriver(t, root,
+		[]fileTests{{file: filepath.Join(root, "a_test.go"), tests: []string{"TestUses"}}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, `"context"`) {
+		t.Errorf("driver dropped the context import the shim needs:\n%s", src)
+	}
+}
+
+// TestShimFeaturesRunUnderGC executes a synthesized driver with the gc
+// toolchain: the new shim methods must behave, not just exist —
+// cleanups run LIFO at subtest end, TempDir/Setenv/Chdir are scoped to
+// the subtest, a FailNow in a subtest fails only the subtest, and
+// Deadline/Context/Parallel behave as documented.
+func TestShimFeaturesRunUnderGC(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		goBin = filepath.Join(runtime.GOROOT(), "bin", "go")
+		if _, err := os.Stat(goBin); err != nil {
+			t.Skip("go toolchain not on PATH")
+		}
+	}
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/shimfeat\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package shimfeat\n\nvar order []string\n")
+	writeFile(t, root, "p_test.go", `package shimfeat
+
+import (
+	"os"
+	"testing"
+)
+
+func TestCleanupLIFO(t *testing.T) {
+	t.Run("sub", func(t *testing.T) {
+		t.Cleanup(func() { order = append(order, "first") })
+		t.Cleanup(func() { order = append(order, "second") })
+	})
+	if len(order) != 2 || order[0] != "second" || order[1] != "first" {
+		t.Fatalf("cleanup order = %v", order)
+	}
+}
+
+func TestTempDirSetenvChdir(t *testing.T) {
+	d := t.TempDir()
+	if st, err := os.Stat(d); err != nil || !st.IsDir() {
+		t.Fatalf("TempDir %q not a dir: %v", d, err)
+	}
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("GRAALGO_SHIM_TEST_KEY", "v1")
+		if os.Getenv("GRAALGO_SHIM_TEST_KEY") != "v1" {
+			t.Fatal("setenv did not take")
+		}
+		t.Chdir(d)
+		if wd, _ := os.Getwd(); wd != d {
+			t.Fatalf("chdir wd = %q, want %q", wd, d)
+		}
+	})
+	if _, ok := os.LookupEnv("GRAALGO_SHIM_TEST_KEY"); ok {
+		t.Fatal("setenv leaked past subtest")
+	}
+	if wd, _ := os.Getwd(); wd != origWd {
+		t.Fatalf("chdir leaked: wd = %q, want %q", wd, origWd)
+	}
+}
+
+func TestFailNowSubtest(t *testing.T) {
+	if ok := t.Run("failnow", func(t *testing.T) { t.FailNow() }); ok {
+		t.Fatal("Run returned true after FailNow")
+	}
+}
+
+func TestDeadlineContextParallel(t *testing.T) {
+	t.Parallel()
+	if _, ok := t.Deadline(); ok {
+		t.Fatal("Deadline reported a deadline")
+	}
+	if t.Context() == nil {
+		t.Fatal("Context is nil")
+	}
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(driver)
+	cmd := exec.Command(goBin, "run", driver)
+	// TMPDIR points at the test's own temp dir so the run never depends
+	// on the ambient /tmp; GOCACHE is inherited (shared cache, faster
+	// repeat runs).
+	cmd.Env = append(os.Environ(), "TMPDIR="+root)
+	out, err := cmd.CombinedOutput()
+	// The driver exits 1 by design: TestFailNowSubtest fails because
+	// its subtest fails (gc propagates subtest failure to the parent).
+	// Anything other than exit status 1 is a harness failure.
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+			t.Fatalf("go run driver: %v\n%s", err, out)
+		}
+	} else {
+		t.Fatalf("go run driver exited 0, want 1 (TestFailNowSubtest must fail via its subtest):\n%s", out)
+	}
+	for _, want := range []string{
+		"--- PASS: TestCleanupLIFO",
+		"--- PASS: TestTempDirSetenvChdir",
+		"--- FAIL: TestFailNowSubtest/failnow",
+		"--- PASS: TestDeadlineContextParallel",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("driver output lacks %q:\n%s", want, out)
+		}
+	}
+	// The subtest's FailNow panic must have been recovered by Run, not
+	// propagated to the top-level wrapper: a "panic:" line would mean
+	// the parent body after Run never executed.
+	if strings.Contains(string(out), "panic: graalgo test fatal") {
+		t.Errorf("subtest FailNow panic propagated instead of ending only the subtest:\n%s", out)
 	}
 }
