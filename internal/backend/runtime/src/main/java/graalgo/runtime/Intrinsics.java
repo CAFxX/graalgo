@@ -8,6 +8,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoSlice;
+import graalgo.values.GoStruct;
 import graalgo.values.GoTypeDescriptor;
 
 /**
@@ -254,7 +255,11 @@ public final class Intrinsics {
         int newCap = nextSliceCap(newLen, oldCap, elemSizeBytes, elemHasPointers);
         Object array = newTypedArray(elemKind, elemDesc, newCap);
         if (old != null && oldLen > 0) {
-            memmove(array, 0, old.array(), old.offset(), oldLen);
+            // Typed copy: struct/array elements are values, so growth
+            // must deep-copy them — the old untyped memmove shared the
+            // element objects, letting a write through the grown slice
+            // observably mutate the old slice (and vice versa).
+            memmove(array, 0, old.array(), old.offset(), oldLen, elemKind);
         }
         return new GoSlice(array, 0, newLen, newCap);
     }
@@ -551,8 +556,21 @@ public final class Intrinsics {
         return n;
     }
 
-    /** Typed memmove of {@code n} elements of {@code elemKind}. */
-    private static void memmove(Object dstArr, int dstOff, Object srcArr, int srcOff,
+    /** Typed memmove of {@code n} elements of {@code elemKind}.
+     *
+     * <p>Struct and array elements are Go values: each element is
+     * value-copied ({@link GoStruct#copyValue}) instead of shared, so
+     * {@code copy} and slice growth never alias element objects across
+     * the two slices. Pointer, interface, slice, map, string, and
+     * primitive elements are shared/copied exactly as gc shares/copies
+     * them (see {@link GoStruct#copyValue} for the interface rationale).
+     * Overlap keeps memmove semantics: when source and destination are
+     * the same array and the destination starts later, elements are
+     * copied back-to-front so no not-yet-read source element is
+     * overwritten first (a forward loop would read already-copied
+     * values for overlapping {@code copy}).
+     */
+    public static void memmove(Object dstArr, int dstOff, Object srcArr, int srcOff,
             int n, GoKind elemKind) {
         switch (elemKind) {
             case INT8, UINT8 -> {
@@ -603,7 +621,19 @@ public final class Intrinsics {
             default -> {
                 Object[] d = (Object[]) dstArr;
                 Object[] s = (Object[]) srcArr;
-                System.arraycopy(s, srcOff, d, dstOff, n);
+                if (elemKind == GoKind.STRUCT || elemKind == GoKind.ARRAY) {
+                    if (d == s && dstOff > srcOff) {
+                        for (int i = n - 1; i >= 0; i--) {
+                            d[dstOff + i] = GoStruct.copyValue(elemKind, s[srcOff + i]);
+                        }
+                    } else {
+                        for (int i = 0; i < n; i++) {
+                            d[dstOff + i] = GoStruct.copyValue(elemKind, s[srcOff + i]);
+                        }
+                    }
+                } else {
+                    System.arraycopy(s, srcOff, d, dstOff, n);
+                }
             }
         }
     }

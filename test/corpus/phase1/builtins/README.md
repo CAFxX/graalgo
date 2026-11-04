@@ -24,6 +24,11 @@ gofrontend builtin emission, WS B/G), through graalgo for comparison.
 | bi13_append_sizes.go | growth by elem size | len 10, valid caps, elems correct (exact caps compiler-dependent) |
 | bi14_map_lifecycle.go | map ops | make/assign/len/delete/lookup |
 | bi15_copy_counts.go | copy counts | n=3 (truncated); n2=5 |
+| bi23_append_struct_alias.go | append growth, struct elems | grown slice's s2[0]=9 leaves s[0]=1 (no aliasing) |
+| bi24_copy_struct_alias.go | copy, struct elems | copy n=2; t[0]=9 leaves s[0]=1 (no aliasing) |
+| bi25_append_var_struct_alias.go | append struct variable | v=9 leaves appended s[0]=1 (no aliasing) |
+| bi26_append_spread_struct_alias.go | append spread, struct elems | s2[0]=9 leaves spread source t[0]=1 (no aliasing) |
+| bi27_copy_array_alias.go | copy/append, array elems | t[0][0]=9 leaves s[0][0]=1; a[0]=9 leaves u[0][0]=5 |
 
 **Note on exact capacities (bi01, bi10, bi13):** gc's observable `cap`
 after `append` depends on a compiler optimization (the `growsliceBuf`

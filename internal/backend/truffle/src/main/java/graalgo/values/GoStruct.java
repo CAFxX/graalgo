@@ -253,6 +253,58 @@ public final class GoStruct {
         return out;
     }
 
+    /**
+     * Value-copy of a single container element of the given kind: the
+     * rule {@link graalgo.frontend.Boxing#copyForAssign} applies to
+     * assignments, restricted here to container stores (slice/array
+     * element copies). STRUCT elements deep-copy (nested structs and
+     * arrays copied, pointers/slices/maps/interfaces shared); ARRAY
+     * elements deep-copy via {@link #deepCopyArray}; every other kind
+     * is shared as-is — in particular POINTER elements (pointer aliasing
+     * is real Go aliasing) and INTERFACE elements.
+     *
+     * <p>INTERFACE shares deliberately, pinned against gc: an interface
+     * value copy copies the (type, data) pair and the data word is
+     * shared, and no pure-Go operation can mutate an interface's dynamic
+     * struct value in place (it is not addressable — reflect reports
+     * CanAddr false and Set panics; a value type cannot satisfy a
+     * pointer-receiver method set). The only shared-mutable channel,
+     * pointer fields, stays shared under deepCopy too, so sharing the
+     * interface value and deep-copying its data are observably identical.
+     * Boxing already deep-copies at the conversion (boxing) point, which
+     * is where gc makes its copy.
+     */
+    public static Object copyValue(GoKind kind, Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (kind == GoKind.STRUCT) {
+            if (value instanceof GoStruct gs) {
+                return gs.deepCopy();
+            }
+            // Atomic struct wrappers (mirrors Boxing.copyForAssign's
+            // STRUCT branch): the word is copied by value, so each copy
+            // gets an independent cell holding the same current value.
+            if (value instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                return new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
+            }
+            if (value instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
+                return new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
+            }
+            if (value instanceof java.util.concurrent.atomic.AtomicLong al) {
+                return new java.util.concurrent.atomic.AtomicLong(al.get());
+            }
+            if (value instanceof java.util.concurrent.atomic.AtomicInteger ai) {
+                return new java.util.concurrent.atomic.AtomicInteger(ai.get());
+            }
+            return value;
+        }
+        if (kind == GoKind.ARRAY && value.getClass().isArray()) {
+            return deepCopyArray(value);
+        }
+        return value;
+    }
+
     @Override
     public boolean equals(Object o) {
         return o instanceof GoStruct gs && descriptor == gs.descriptor

@@ -5,6 +5,7 @@ import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.Intrinsics;
 import graalgo.values.GoKind;
 import graalgo.values.GoSlice;
+import graalgo.values.GoStruct;
 
 // verifies: GG-0020 (WS G builtin)
 /**
@@ -127,16 +128,21 @@ public final class AppendNode extends GoExprNode {
                 // Remediation (R2 P0-1): overlap-safe copy. When the spread
                 // aliases out's backing array (e.g. append(s[:2], s[:8]...)),
                 // a forward element loop overwrites not-yet-read source
-                // elements; gc has memmove semantics here.
+                // elements; gc has memmove semantics here. The typed
+                // memmove also value-copies struct/array elements, so the
+                // spread source and the result never share element objects.
                 if (spreadArr.getClass().getComponentType()
                         .equals(arr.getClass().getComponentType())) {
-                    Intrinsics.memmove(arr, base, spreadArr, spreadBase, n);
+                    Intrinsics.memmove(arr, base, spreadArr, spreadBase, n, elemKind);
                 } else {
                     // Defensive: different component types cannot alias the
                     // same array; snapshot through a temp buffer anyway.
+                    // Struct/array elements are still value-copied on the
+                    // way through, matching the typed-memmove branch.
                     Object[] tmp = new Object[n];
                     for (int i = 0; i < n; i++) {
-                        tmp[i] = Boxing.arrayGet(spreadArr, elemKind, spreadBase + i);
+                        tmp[i] = GoStruct.copyValue(elemKind,
+                                Boxing.arrayGet(spreadArr, elemKind, spreadBase + i));
                     }
                     for (int i = 0; i < n; i++) {
                         Boxing.arraySet(arr, elemKind, base + i, tmp[i]);
@@ -213,7 +219,11 @@ public final class AppendNode extends GoExprNode {
             case FLOAT32 -> ((float[]) arr)[idx] = (Float) v;
             case FLOAT64 -> ((double[]) arr)[idx] = (Double) v;
             case BOOL -> ((boolean[]) arr)[idx] = (Boolean) v;
-            default -> ((Object[]) arr)[idx] = v;
+            // Struct/array elements are Go values: store a copy, not the
+            // caller's object, so appending a struct variable (or a
+            // struct/array element read from another slice) never aliases
+            // the variable. Pointer/interface elements share, as in gc.
+            default -> ((Object[]) arr)[idx] = GoStruct.copyValue(elemKind, v);
         }
     }
 }

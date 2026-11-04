@@ -70,4 +70,9 @@ public final class BuiltinsCorpusTest {
     public void testBi20StructPrint() throws Exception { Differential.checkProgram(prog("bi20_struct_print")); }
     public void testBi21NestedMaps() throws Exception { Differential.checkProgram(prog("bi21_nested_maps")); }
     public void testBi22FloatEdge() throws Exception { Differential.checkProgram(prog("bi22_float_edge")); }
+    public void testBi23AppendStructAlias() throws Exception { Differential.checkProgram(prog("bi23_append_struct_alias")); }
+    public void testBi24CopyStructAlias() throws Exception { Differential.checkProgram(prog("bi24_copy_struct_alias")); }
+    public void testBi25AppendVarStructAlias() throws Exception { Differential.checkProgram(prog("bi25_append_var_struct_alias")); }
+    public void testBi26AppendSpreadStructAlias() throws Exception { Differential.checkProgram(prog("bi26_append_spread_struct_alias")); }
+    public void testBi27CopyArrayAlias() throws Exception { Differential.checkProgram(prog("bi27_copy_array_alias")); }
 }
