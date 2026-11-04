@@ -131,6 +131,31 @@ public final class GoErrors {
     }
 
     /**
+     * {@code make([]T, len)} with len out of range (gc runtime/slice.go
+     * {@code makeslice}: {@code panic(errorString("makeslice: len out of
+     * range"))}); also used for len beyond what a Java array can address
+     * (see {@code MakeNode}: no Java array holds more than
+     * {@code Integer.MAX_VALUE} elements).
+     */
+    public static GoErrorValue makesliceLenOutOfRange() {
+        String s = "makeslice: len out of range";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
+    }
+
+    /**
+     * {@code make([]T, len, cap)} with cap out of range (gc runtime/slice.go
+     * {@code makeslice}: {@code panic(errorString("makeslice: cap out of
+     * range"))}); also used for cap beyond what a Java array can address
+     * (see {@code MakeNode}).
+     */
+    public static GoErrorValue makesliceCapOutOfRange() {
+        String s = "makeslice: cap out of range";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
+    }
+
+    /**
      * bug-019: gc's "comparing uncomparable type" runtime panic, thrown when
      * two interface values with the identical uncomparable dynamic type are
      * compared with == (runtime/alg.go: efaceeq/ifaceeq). The type name is

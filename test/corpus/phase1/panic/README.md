@@ -73,6 +73,12 @@ both by stock gc (the oracle) and by `gofrontend` → `NodeFactory`.
   integer divide by zero) render gc's exact `runtime error:` strings.
 - `pn20_panic_slice_value`: a composite panic value round-trips through
   recover (renders as `([]int) 0xADDR`, never a real address).
+- `pn21_makeslice_len_range` / `pn22_makeslice_cap_range`: `make` with a
+  len/cap beyond the runtime's range panics with gc's exact
+  `makeslice: len/cap out of range` strings.
+- `pn23_makemap_hint_panic`: a `make(map, hint)` hint expression is
+  evaluated exactly once, so a panicking hint propagates instead of
+  being silently dropped.
 
 ## Comparison scope (fatal programs)
 

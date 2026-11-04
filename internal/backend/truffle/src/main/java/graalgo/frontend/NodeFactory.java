@@ -3783,9 +3783,16 @@ public final class NodeFactory {
                 return new MakeNode(elemKind, args[0], args.length == 2 ? args[1] : null, elemDesc);
             }
             case "map" -> {
-                // The size hint is semantically invisible (GoMap grows
-                // dynamically), so it is not threaded through.
-                return new MakeNode(-1);
+                // The size hint is only a sizing hint (GoMap grows
+                // dynamically), but it must still be EVALUATED: gc evaluates
+                // the hint exactly once, so its side effects and panics are
+                // observable. Dropping the node silently skipped them.
+                // MakeNode executes the hint and discards the value
+                // (negative hints clamp to an empty map per gc makemap).
+                if (args.length > 1) {
+                    throw new FrontendException(path + ": make(map) takes 0-1 size args");
+                }
+                return args.length == 1 ? new MakeNode(args[0]) : new MakeNode(-1);
             }
             default -> throw new FrontendException(path + ": make of " + k
                     + " is not supported in frontend/v1 scope (Phase 2: channels)");
