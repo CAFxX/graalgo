@@ -8,11 +8,17 @@ import graalgo.values.GoTypeDescriptor;
  * Renders a panic value for the {@code panic: } header (M5, WS F).
  *
  * <p>Ports {@code printpanicval}, {@code printanycustomtype}, and
- * {@code printindented} from go1.27.1's runtime/error.go. Callers apply
- * {@code preprintpanics} first: any Go error/Stringer value arrives as a
- * {@link GoErrorValue} carrying its {@code Error()}/{@code String()} text
- * (in v1 only runtime panics produce these; user error values need methods,
- * which are WS D).
+ * {@code printindented} from go1.27.1's runtime/error.go, plus the
+ * {@code preprintpanics} step from runtime/panic.go: a panic value that
+ * implements {@code error} (or, failing that, {@code Stringer}) prints
+ * its {@code Error()} (resp. {@code String()}) text, not its type and
+ * address. Runtime panics arrive as a {@link GoErrorValue} carrying that
+ * text already; user error/Stringer values are resolved at render time
+ * by the installed preprint provider (below), because calling the method
+ * is guest-code execution and must happen at fatal-print time — gc runs
+ * {@code preprintpanics} only once the panic is uncaught, so a recovered
+ * panic still yields the original value from {@code recover()}. This
+ * class never converts the panic value itself.
  *
  * <p>Rendering rules (all gc-verified):
  * <ul>
@@ -31,6 +37,31 @@ public final class PanicRendering {
     private PanicRendering() {}
 
     /**
+     * Preprint provider (gc {@code preprintpanics}, NEW-P1-10): given an
+     * uncaught panic, returns the {@code Error()}/{@code String()} text
+     * for a value whose dynamic type implements {@code error} or
+     * {@code Stringer}, or null when the value implements neither (or
+     * the text cannot be produced). The provider lives outside this
+     * module — this module compiles before the interop module that owns
+     * the interface method tables, so it cannot resolve methods itself —
+     * and is installed by the product launcher alongside the itab
+     * provider (same pattern as {@link Intrinsics#setItabProvider}).
+     * Absent (phase-1 launcher, phase-2 scheduler: no method tables
+     * there at all), rendering falls back to the kind-based rules below.
+     * A provider failure (including a panic inside {@code Error()} /
+     * {@code String()} itself) likewise falls back instead of breaking
+     * the crash report; gc's fatal {@code "panic while printing panic
+     * value"} shape for that case is a documented divergence.
+     */
+    private static volatile java.util.function.Function<PanicException, String> preprintProvider;
+
+    /** Installs (or, with null, clears) the preprint provider. */
+    public static void setPreprintProvider(
+            java.util.function.Function<PanicException, String> provider) {
+        preprintProvider = provider;
+    }
+
+    /**
      * Renders the full {@code panic: <value>} header line for an uncaught
      * panic (P3-M4, WS C): the same header the phase-1 launcher prints,
      * shared with the phase-2/3 scheduler panic path so both render
@@ -39,6 +70,21 @@ public final class PanicRendering {
      */
     public static String renderPanicLine(PanicException p) {
         Object v = p.goValue();
+        if (v instanceof GoErrorValue e) {
+            return "panic: " + printIndented(e.errorString());
+        }
+        java.util.function.Function<PanicException, String> provider = preprintProvider;
+        if (provider != null) {
+            String preprint = null;
+            try {
+                preprint = provider.apply(p);
+            } catch (Throwable ignored) {
+                // Fall through to kind-based rendering (see field doc).
+            }
+            if (preprint != null) {
+                return "panic: " + printIndented(preprint);
+            }
+        }
         RenderInfo info = infoFor(p.descriptor(), p.goTypeName());
         GoKind kind = info != null ? info.kind() : null;
         String typeName = info != null ? info.typeName() : p.goTypeName();

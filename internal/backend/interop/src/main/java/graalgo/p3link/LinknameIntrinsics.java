@@ -9,6 +9,7 @@ import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
+import graalgo.iface.PanicPreprint;
 import graalgo.p3os.GoOs;
 import graalgo.p3net.GoHttp;
 import graalgo.p3net.GoNet;
@@ -17,6 +18,7 @@ import graalgo.p3tls.TlsRuntime;
 import graalgo.p3unsafe.UnsafeTable;
 import graalgo.p3x509.GoX509;
 import graalgo.runtime.Intrinsics;
+import graalgo.runtime.PanicRendering;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.GoDebug;
 import graalgo.runtime.Timers;
@@ -149,6 +151,11 @@ public final class LinknameIntrinsics {
         registerHttpIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
+        // preprintpanics → the P3-M3 method tables (NEW-P1-10): uncaught
+        // error/Stringer panic values print their Error()/String() text.
+        // Installed on every build (like the tables) so a previous
+        // program's provider can never leak into this run.
+        PanicRendering.setPreprintProvider(PanicPreprint::preprint);
         // Interface method-name lists for itabForIntrinsic.
         IfaceMethodTable.installInterfaces(IfaceMethodTables.resolveInterfaces(doc));
         // Go function bindings for callGo.
