@@ -2276,62 +2276,16 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 	if fn == nil || fn.Pkg() == nil {
 		return false
 	}
-	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" &&
-		p != "encoding/base32" && p != "encoding/base64" && p != "encoding/hex" && p != "encoding/binary" &&
-		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "encoding/json" && p != "io" &&
-		// P3-M8 (wave 2): os + io/fs + syscall.
-		p != "os" && p != "io/fs" && p != "syscall" &&
-		p != "reflect" && p != "internal/reflectlite" && p != "iter" &&
-		// P3-M9 (tier-1d): leaf utilities unique/structs (+ synthetic-only
-		// internal/bytealg).
-		p != "unique" && p != "structs" && p != "internal/bytealg" &&
-		// P3-M8 (wave 2): hash + crypto/*.
-		p != "hash" && p != "crypto" &&
-		p != "crypto/aes" && p != "crypto/cipher" && p != "crypto/des" && p != "crypto/hmac" &&
-		p != "crypto/md5" && p != "crypto/rand" && p != "crypto/rc4" && p != "crypto/sha1" &&
-		p != "crypto/sha256" && p != "crypto/sha3" && p != "crypto/sha512" && p != "crypto/subtle" &&
-		// P3-M9 (tier-4: net).
-		p != "net" && p != "net/netip" && p != "net/url" && p != "net/textproto" &&
-		p != "internal/poll" && p != "internal/nettrace" && p != "internal/singleflight" &&
-		// P3-M9 (tier-5: compress).
-		p != "compress/flate" && p != "compress/gzip" && p != "compress/zlib" &&
-		p != "compress/lzw" && p != "compress/bzip2" &&
-		// P3-M9 (tier-5: archive/mime).
-		p != "archive/tar" && p != "archive/zip" &&
-		p != "mime" && p != "mime/multipart" && p != "mime/quotedprintable" &&
-		// P3-M9 (tier-5): asymmetric crypto. Multi-result members the
-		// Appendix-M desugar table knows are rewritten before this is
-		// consulted; anything left fails fast here with the named M7
-		// error instead of a confusing backend failure.
-		p != "crypto/elliptic" && p != "crypto/ecdh" && p != "crypto/dsa" &&
-		p != "crypto/ecdsa" && p != "crypto/ed25519" && p != "crypto/rsa" &&
-		p != "crypto/hkdf" && p != "crypto/pbkdf2" &&
-		p != "golang.org/x/crypto/cryptobyte" &&
-		p != "golang.org/x/crypto/cryptobyte/asn1" &&
-		p != "crypto/internal/fips140" && p != "crypto/internal/fips140/check" &&
-		p != "crypto/internal/fips140/alias" && p != "crypto/internal/fips140only" &&
-		p != "crypto/internal/fips140cache" && p != "crypto/internal/fips140hash" &&
-		p != "crypto/internal/fips140/drbg" && p != "crypto/internal/rand" &&
-		p != "crypto/internal/boring/bbig" && p != "crypto/internal/boring" &&
-		p != "crypto/internal/constanttime" &&
-		p != "crypto/internal/fips140deps/byteorder" &&
-		p != "crypto/internal/fips140/nistec/fiat" &&
-		p != "crypto/internal/fips140/nistec" &&
-		p != "crypto/internal/fips140/edwards25519/field" &&
-		p != "crypto/internal/fips140/edwards25519" &&
-		p != "crypto/internal/fips140/bigmod" &&
-		p != "crypto/internal/fips140/subtle" &&
-		p != "crypto/internal/fips140/sha256" &&
-		p != "crypto/internal/fips140/sha512" &&
-		p != "crypto/internal/fips140/sha3" &&
-		p != "crypto/internal/fips140/hmac" &&
-		p != "crypto/internal/fips140/hkdf" &&
-		p != "crypto/internal/fips140/pbkdf2" &&
-		p != "crypto/internal/fips140/ecdh" &&
-		p != "crypto/internal/fips140/ecdsa" &&
-		p != "crypto/internal/fips140/ed25519" &&
-		p != "crypto/internal/fips140/rsa" {
+	// P1-02 registry: the package half of this predicate is the
+	// multiResultSyntheticMilestones map (pkg_milestone_registry.go);
+	// the receiver-shape and result-count checks below are unchanged.
+	// (Note: the asymmetric crypto packages carry the "M5" default in
+	// the registry, as the old code did — the old comment claiming a
+	// "named M7 error" for them was wrong and is not repeated here.
+	// Multi-result members the Appendix-M desugar table knows are
+	// rewritten before this is consulted; anything left fails fast
+	// here instead of a confusing backend failure.)
+	if _, ok := multiResultSyntheticMilestones[fn.Pkg().Path()]; !ok {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -2367,35 +2321,15 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 }
 
 func multiResultSyntheticError(fn *types.Func) error {
-	// P3-M7: the milestone tag follows the synthetic package (time/context
-	// are M5, errors/sort/bytes/math/strings/encoding-xml and the 8
-	// encoding/* primitives are wave-1 M7; io is wave-2 M8).
-	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-		p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" ||
-		p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
-		milestone = "M7"
-	}
-	if fn.Pkg().Path() == "io" || fn.Pkg().Path() == "os" || fn.Pkg().Path() == "io/fs" ||
-		fn.Pkg().Path() == "syscall" ||
-		fn.Pkg().Path() == "reflect" || fn.Pkg().Path() == "internal/reflectlite" || fn.Pkg().Path() == "iter" ||
-		fn.Pkg().Path() == "hash" || fn.Pkg().Path() == "crypto" ||
-		fn.Pkg().Path() == "crypto/aes" || fn.Pkg().Path() == "crypto/cipher" || fn.Pkg().Path() == "crypto/des" ||
-		fn.Pkg().Path() == "crypto/hmac" || fn.Pkg().Path() == "crypto/md5" || fn.Pkg().Path() == "crypto/rand" ||
-		fn.Pkg().Path() == "crypto/rc4" || fn.Pkg().Path() == "crypto/sha1" || fn.Pkg().Path() == "crypto/sha256" ||
-		fn.Pkg().Path() == "crypto/sha3" || fn.Pkg().Path() == "crypto/sha512" || fn.Pkg().Path() == "crypto/subtle" {
-		// P3-M8 (wave 2).
-		milestone = "M8"
-	}
-	if p := fn.Pkg().Path(); p == "unique" || p == "structs" || p == "internal/bytealg" ||
-		p == "net" || p == "net/netip" || p == "net/url" || p == "net/textproto" ||
-		p == "internal/poll" || p == "internal/nettrace" || p == "internal/singleflight" ||
-		p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
-		p == "compress/lzw" || p == "compress/bzip2" ||
-		p == "archive/tar" || p == "archive/zip" ||
-		p == "mime" || p == "mime/multipart" || p == "mime/quotedprintable" {
-		// P3-M9 (tier-1d, tier-4: net, tier-5: compress, archive/mime).
-		milestone = "M9"
+	// P1-02 registry: the milestone tag comes from
+	// multiResultSyntheticMilestones (pkg_milestone_registry.go); a
+	// package absent from the map keeps the old "M5" default, exactly
+	// as the old three-block chain did (its blocks were all contained
+	// in the registry's key set, so no non-key package could ever have
+	// received M7/M8/M9).
+	milestone, ok := multiResultSyntheticMilestones[fn.Pkg().Path()]
+	if !ok {
+		milestone = "M5"
 	}
 	// Qualify method names with the receiver type name
 	// (bytes.Buffer.Read vs bytes.Reader.Read).
