@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -250,39 +252,101 @@ func cmdBuild(root string, args []string) int {
 	return 0
 }
 
+// vetCheckGroup is one frontend --check invocation: every file of a
+// single package in a single directory. The frontend type-checks
+// exactly the files it is given, so a package's files must travel
+// together or cross-file references fail as "undefined: ...".
+type vetCheckGroup struct {
+	files []string
+}
+
+// groupVetCheckFiles groups files by (directory, declared package name)
+// for the vet gate. The directory is part of the key so two distinct
+// packages that happen to share a name never merge into one invocation.
+// A file whose package clause cannot be parsed (a missing file passed
+// through by resolveFiles, a syntax error) forms a singleton group, so
+// the gate still reports that file's own error instead of masking it
+// behind an unrelated package's files. Group order follows first
+// appearance, so the gate's output is deterministic for a given file
+// list.
+func groupVetCheckFiles(files []string) []vetCheckGroup {
+	var groups []vetCheckGroup
+	index := map[string]int{}
+	fset := token.NewFileSet()
+	for _, f := range files {
+		var key string
+		if parsed, err := parser.ParseFile(fset, f, nil, parser.PackageClauseOnly); err == nil {
+			key = filepath.Dir(f) + "\x00" + parsed.Name.Name
+		} else {
+			// Unparseable: singleton group keyed by the file itself.
+			// The double separator cannot collide with the form
+			// above, whose package name never contains NUL.
+			key = filepath.Dir(f) + "\x00\x00" + f
+		}
+		if i, ok := index[key]; ok {
+			groups[i].files = append(groups[i].files, f)
+			continue
+		}
+		index[key] = len(groups)
+		groups = append(groups, vetCheckGroup{files: []string{f}})
+	}
+	return groups
+}
+
 // cmdVet implements `graalgo vet [packages]`.
 //
 // Runs the frontend translation check (--check) over the named packages,
 // then runs the static analyzers in internal/vet and reports diagnostics
-// in the same style as `go vet`.
+// in the same style as `go vet` (diagnostics on stderr).
 func cmdVet(root string, args []string) int {
 	files, err := resolveFiles(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	// Gate: one --check per (directory, package) group, so the
+	// frontend type-checks each package's files together and
+	// cross-file references resolve. (Previously one --check per
+	// file, which failed every multi-file package with
+	// "undefined: ..." for symbols declared in sibling files.)
+	// Every group still runs even after a failure, so one broken
+	// package does not hide another's gate error.
+	groups := groupVetCheckFiles(files)
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	for _, g := range groups {
+		if code := graalgoRun(root, append([]string{"--check"}, g.files...)); code != 0 {
 			failed = true
 		}
 	}
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
-		return 1
+	// Run the analyzers once per group, not once over all files:
+	// an external test package (foo_test) is a different package
+	// from foo, and analyzing them in a single type-check leaves
+	// the test files' type info incomplete, which makes analyzers
+	// report false positives (e.g. a valid TestXxx flagged as not
+	// taking *testing.T). Per-group analysis matches how go vet
+	// treats the test package as its own package, and is a no-op
+	// for the single-package case. Diagnostics are re-sorted
+	// across groups so output order stays positional.
+	var ds []vet.Diagnostic
+	for _, g := range groups {
+		groupDs, err := vet.Run(g.files)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+			return 1
+		}
+		ds = append(ds, groupDs...)
 	}
+	ds = vet.SortDiagnostics(ds)
 	for _, d := range ds {
-		fmt.Printf("%s: %s\n", d.Pos, d.Message)
+		fmt.Fprintf(os.Stderr, "%s: %s\n", d.Pos, d.Message)
 	}
 	if len(ds) > 0 {
 		return 1
 	}
-	fmt.Println("vet: no issues found")
+	fmt.Fprintln(os.Stderr, "vet: no issues found")
 	return 0
 }
 
