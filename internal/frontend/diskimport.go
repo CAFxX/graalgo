@@ -357,7 +357,7 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 // returns the exact package importSyntheticPackage merged.
 func (e *exporter) importedPackage(p string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[p]; ok {
-		return getSyntheticPackage(p), nil
+		return getSyntheticPackage(p)
 	}
 	return getDiskPackage(p)
 }
@@ -402,7 +402,7 @@ func (e *exporter) importPkgTree(path string) error {
 // merging, or (nil, nil) for signature-only stubs with no bodies.
 func resolvePkgTree(path string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[path]; ok {
-		return getSyntheticPackage(path), nil
+		return getSyntheticPackage(path)
 	}
 	if isDedicatedSyntheticStub(path) {
 		return nil, nil

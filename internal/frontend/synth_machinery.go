@@ -343,21 +343,57 @@ var syntheticSources = map[string]string{
 // The same *types.Package instance is returned to every importer, so
 // *types.Func/*types.TypeName objects are identical between the user's
 // type-check and the synthetic sources' own.
-func getSyntheticPackage(path string) *syntheticPackage {
+// getSyntheticPackage returns the cached synthetic package for path,
+// building it on first use. A build failure is returned, never cached
+// (a failed build must not poison later builds) and never panics.
+// Call chains that cannot return an error use mustSyntheticPackage,
+// whose panic ExportFiles converts back into an error.
+func getSyntheticPackage(path string) (*syntheticPackage, error) {
 	synthMu.Lock()
 	if sp, ok := synthCache[path]; ok {
 		synthMu.Unlock()
-		return sp
+		return sp, nil
 	}
 	synthMu.Unlock()
-	sp := buildSyntheticPackage(path)
+	sp, err := buildSyntheticPackage(path)
+	if err != nil {
+		return nil, err
+	}
 	synthMu.Lock()
 	defer synthMu.Unlock()
 	if prev, ok := synthCache[path]; ok {
-		return prev
+		return prev, nil
 	}
 	synthCache[path] = sp
+	return sp, nil
+}
+
+// mustSyntheticPackage is getSyntheticPackage for call chains that cannot
+// return an error (the multi-result classifiers, which return *mrPlan).
+// It panics with the build error; ExportFiles recovers exactly this
+// class of panic and returns it as a clean error, so it never escapes
+// the tool as a stack trace. Never use it where an error return exists.
+func mustSyntheticPackage(path string) *syntheticPackage {
+	sp, err := getSyntheticPackage(path)
+	if err != nil {
+		panic(err)
+	}
 	return sp
+}
+
+// syntheticBuildError reports whether a recovered panic value is a
+// synthetic-package build failure (the error mustSyntheticPackage
+// panics with), for ExportFiles' boundary recover.
+func syntheticBuildError(r any) (error, bool) {
+	err, ok := r.(error)
+	if !ok {
+		return nil, false
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "gofrontend: synthetic ") || strings.HasPrefix(msg, "gofrontend: no synthetic source ") {
+		return err, true
+	}
+	return nil, false
 }
 
 // restoreRawStrings repairs generator backtick-stripping damage. Some
@@ -833,10 +869,10 @@ func importSpecPath(spec string) string {
 	return spec[i : i+1+j+1]
 }
 
-func buildSyntheticPackage(path string) *syntheticPackage {
+func buildSyntheticPackage(path string) (*syntheticPackage, error) {
 	src, ok := syntheticSources[path]
 	if !ok {
-		panic("gofrontend: no synthetic source for " + path)
+		return nil, fmt.Errorf("gofrontend: no synthetic source for %s", path)
 	}
 	// General generator-damage repair (any synthetic package, never
 	// package-specific):
@@ -859,7 +895,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	// the exporter's linkname scan (ADR-0004 D1); matches ExportFile.
 	file, err := parser.ParseFile(fset, path+".go", src, parser.AllErrors|parser.ParseComments)
 	if err != nil {
-		panic("gofrontend: synthetic " + path + " parse error: " + err.Error())
+		return nil, fmt.Errorf("gofrontend: synthetic %s parse error: %w", path, err)
 	}
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
@@ -872,7 +908,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	conf := types.Config{Importer: overlayImporter{}}
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
-		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
+		return nil, fmt.Errorf("gofrontend: synthetic %s type error: %w", path, err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
@@ -881,7 +917,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
 		raw: []byte(src),
-	}
+	}, nil
 }
 
 // timeIntrinsicNames are the synthetic time package's clock/timer entry
@@ -948,6 +984,18 @@ type synthGroup struct {
 // funcs/methods populate funcByObj/methodIndex (their bodies are emitted
 // later by exportSyntheticBodies). Intrinsics are skipped. The exporter's
 // per-file state is swapped for the duration.
+// importSyntheticByPath builds (or reuses the cached) synthetic package
+// for path and merges it, returning a build failure as an error instead
+// of panicking. This is the only form the needX direct-import flow and
+// the dependency recursion should use.
+func (e *exporter) importSyntheticByPath(path string) error {
+	sp, err := getSyntheticPackage(path)
+	if err != nil {
+		return err
+	}
+	return e.importSyntheticPackage(sp)
+}
+
 func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// P3-M8: idempotent — skip if already imported (prevents duplicate
 	// globals when e.g. errors is imported both directly and via io).
@@ -980,7 +1028,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	for _, imp := range sp.pkg.Imports() {
 		ip := imp.Path()
 		if _, ok := syntheticSources[ip]; ok {
-			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
+			if err := e.importSyntheticByPath(ip); err != nil {
 				return err
 			}
 			continue

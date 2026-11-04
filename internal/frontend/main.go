@@ -63,8 +63,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic: no synthetic source for %q\n", path)
 			os.Exit(2)
 		}
-		// Build the synthetic package. getSyntheticPackage panics on
-		// parse/type errors; recover and report as a clean failure.
+		// Build the synthetic package. Build failures are returned as
+		// errors; the recover remains only as a backstop for unexpected
+		// panics during the build, reported the same clean way.
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -72,7 +73,11 @@ func main() {
 					os.Exit(2)
 				}
 			}()
-			sp := getSyntheticPackage(path)
+			sp, err := getSyntheticPackage(path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, err)
+				os.Exit(2)
+			}
 			fmt.Printf("ok %s (%d decls)\n", path, sp.pkg.Scope().Len())
 		}()
 		return
