@@ -3048,6 +3048,18 @@ type exporter struct {
 	// automatic: any user-defined 2+ result function gets a synthesized
 	// pair struct.
 	userMRFuncs map[*types.Func]*userMRInfo
+	// Pair-type names minted by THIS export, keyed by package path +
+	// "\x00" + name. The pair-name registry is per-export, not the
+	// package scope: synthetic packages are cached process-wide
+	// (synthCache in synth_machinery.go), so a pair name minted into a
+	// shared package scope by one ExportFile call would leak into every
+	// later export in the same process (a second export of the same
+	// program minted __wsd_pair_Time_Date_1 instead of
+	// __wsd_pair_Time_Date). Minted pairs are never read back from
+	// scope — every use flows through userMRInfo/mrPlan objects — so
+	// the scope is consulted only for real package members, and minted
+	// names are recorded here (never inserted into the shared scope).
+	mintedPairNames map[string]bool
 	// P4 (WS D, general interface MR): user-defined multi-result interface
 	// methods. Maps "pkgPath.IfaceName.MethodName" -> pair info for
 	// call-site desugar. Unlike the m8IfaceMultiResultMethods whitelist
@@ -5850,6 +5862,36 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 	return err
 }
 
+// mintPairTypeName returns a pair-type name unique within this export
+// for e.pkg's scope. A name is taken iff it was already minted by this
+// export (mintedPairNames) or it names a real member of the package
+// scope. Minted names are deliberately NOT inserted into the package
+// scope: synthetic package objects are shared across ExportFile calls
+// (synthCache), so scope insertion would leak this export's names into
+// later exports and force numeric suffixes there. Within one export the
+// result is identical to the old scope-based check (real members +
+// this export's mints are exactly the taken set); across exports each
+// export starts from the same base names, so output is deterministic
+// regardless of earlier exports in the same process.
+func (e *exporter) mintPairTypeName(base string) string {
+	if e.mintedPairNames == nil {
+		e.mintedPairNames = make(map[string]bool)
+	}
+	pkgPath := ""
+	if e.pkg != nil {
+		pkgPath = e.pkg.Path()
+	}
+	name := base
+	for i := 1; ; i++ {
+		key := pkgPath + "\x00" + name
+		if !e.mintedPairNames[key] && e.pkg.Scope().Lookup(name) == nil {
+			e.mintedPairNames[key] = true
+			return name
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+}
+
 // synthesizeUserPairType creates a named struct type for a user-defined
 // multi-result function's results (P3-M9 WS D). The struct has fields
 // f0, f1, ... with the result types in order. The name is unique per
@@ -5900,18 +5942,11 @@ func (e *exporter) synthesizePairTypeForSig(sig *types.Signature, nameHint strin
 		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
 	}
 	st := types.NewStruct(fields, nil)
-	// Ensure uniqueness in case of collisions (e.g., generic instantiations).
-	base := nameHint
-	name := base
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	// Per-export uniqueness (see mintPairTypeName); collisions within
+	// this export (e.g., generic instantiations) get a numeric suffix.
+	name := e.mintPairTypeName(nameHint)
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return named, fieldNames, nil
 }
 
@@ -5947,17 +5982,11 @@ func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, err
 	if safeKey != "" {
 		name = fmt.Sprintf("%s_%s", name, safeKey)
 	}
-	// Ensure uniqueness in case of collisions.
-	base := name
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	// Per-export uniqueness (see mintPairTypeName); collisions within
+	// this export get a numeric suffix.
+	name = e.mintPairTypeName(name)
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return &userMRInfo{
 		pairType:   named,
 		pairFields: fieldNames,

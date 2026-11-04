@@ -2155,18 +2155,11 @@ func (e *exporter) synthesizeFuncFieldPairType(sig *types.Signature, structName,
 		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
 	}
 	st := types.NewStruct(fields, nil)
-	// Unique name per (struct, field).
+	// Unique name per (struct, field), per export (see mintPairTypeName).
 	base := fmt.Sprintf("__wsd_pair_%s_%s", structName, fieldName)
-	name := base
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	name := e.mintPairTypeName(base)
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return named, fieldNames
 }
 
@@ -2847,17 +2840,11 @@ func (e *exporter) synthesizeIfacePairType(sig *types.Signature, nameHint string
 		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
 	}
 	st := types.NewStruct(fields, nil)
-	base := nameHint
-	name := base
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	// Per-export uniqueness (see mintPairTypeName); collisions within
+	// this export get a numeric suffix.
+	name := e.mintPairTypeName(nameHint)
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return named, fieldNames, nil
 }
 

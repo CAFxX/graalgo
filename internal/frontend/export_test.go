@@ -715,3 +715,36 @@ func main() {
 		}
 	}
 }
+
+// TestPairNamesStableAcrossExports (NEW-L11): pair-type names minted for
+// synthetic multi-result methods must be identical on every export in
+// the same process. Pre-fix, the pair names were minted into the shared
+// (process-cached) synthetic package scope, so the second export of a
+// program using time.Time accessors minted __wsd_pair_Time_Date_1 (and
+// _Clock_1/_Zone_1) instead of the base names, and its output differed
+// from the first export and from the committed golden. The pair-name
+// registry is per-export, so repeated exports are byte-identical and
+// keep the base names. The test exports the same program twice itself,
+// so it fails on the old code regardless of test order or earlier
+// exports in the process.
+func TestPairNamesStableAcrossExports(t *testing.T) {
+	first, err := ExportFile("testdata/timeintr_value.go")
+	if err != nil {
+		t.Fatalf("first ExportFile: %v", err)
+	}
+	second, err := ExportFile("testdata/timeintr_value.go")
+	if err != nil {
+		t.Fatalf("second ExportFile: %v", err)
+	}
+	if first != second {
+		t.Fatal("second export differs from first: pair names leaked across exports")
+	}
+	for _, name := range []string{"__wsd_pair_Time_Date", "__wsd_pair_Time_Clock", "__wsd_pair_Time_Zone"} {
+		if !strings.Contains(second, name+"\"") {
+			t.Errorf("second export missing base pair name %s", name)
+		}
+		if strings.Contains(second, name+"_1") {
+			t.Errorf("second export has suffixed pair name %s_1", name)
+		}
+	}
+}
