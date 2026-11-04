@@ -147,12 +147,30 @@ def check_no_bridges(diff):
     #    panic(), panic(""), panic("unreachable"), and composed messages like
     #    panic(fmt.Sprintf("... not implemented")). Fail loud on all of them —
     #    a human decides whether an added panic is a legitimate invariant.
+    #
+    # REVIEW-2026-11-04-03 NEW-P1-2: the old literal form anchored the stub
+    # keyword IMMEDIATELY after the opening quote, so a mid-string keyword
+    # evaded it (panic("helper failed: not implemented")). The keyword must
+    # match ANYWHERE in the first string argument, literal or composed,
+    # double-quoted or raw (backtick). One shared keyword list keeps the
+    # literal and composed forms in sync (the old composed form silently
+    # omitted "tbd"). dq_body is a double-quoted string body that tolerates
+    # escaped characters, so a keyword after an escaped quote is still
+    # inside the first argument.
+    stub_keywords = (r"not implemented|unimplemented|not supported|unsupported"
+                     r"|todo|FIXME|unreachable|NYI|not yet|tbd")
+    dq_body = r'(?:[^"\\]|\\.)*'
+    composed = r"(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)"
     panic_stub_res = [
         r'panic\s*\(\s*\)',            # bare panic() — nothing to go on
         r'panic\s*\(\s*""\s*\)',       # panic("") — nothing to go on
-        r'panic\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd)',
-        # Stub keyword anywhere in the first string arg of a composed panic.
-        r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet)',
+        # Stub keyword anywhere in the first string argument (literal).
+        rf'panic\s*\(\s*"{dq_body}({stub_keywords})',
+        # Raw-string literal form: panic(`helper failed: not implemented`).
+        rf'panic\s*\(\s*`[^`]*({stub_keywords})',
+        # Stub keyword anywhere in the format string of a composed panic.
+        rf'panic\s*\(\s*{composed}\s*\(\s*"{dq_body}({stub_keywords})',
+        rf'panic\s*\(\s*{composed}\s*\(\s*`[^`]*({stub_keywords})',
     ]
     for fname, line in added_lines:
         if not fname or not fname.endswith(".go"):
@@ -161,6 +179,37 @@ def check_no_bridges(diff):
             if re.search(pat, line, re.I):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
+
+    # 3b. AST-constructed panic stubs. A stub need not appear as a
+    # panic(" literal at all: internal/frontend/mr_disk.go builds one via
+    # AST — Fun: ast.NewIdent("panic") on one added line, with the message
+    # fragment ` not implemented: no Go body (backend intrinsic)" on
+    # another — so section 3 above sees no panic( call to match. Flag when
+    # the SAME FILE's added lines contain both (i) an ast.NewIdent("panic")
+    # call and (ii) a stub keyword inside a string fragment (a keyword
+    # following an opening double-quote or backtick on an added line; the
+    # fragment need not close on that line, since stub messages are often
+    # built by concatenation). File-level, not function-level: a unified
+    # diff carries no function boundaries, and the gate fails loud for a
+    # human to adjudicate. Added lines only — grandfathered code is never
+    # scanned, so this cannot fail on pre-existing stubs.
+    ast_panic_re = re.compile(r'ast\.NewIdent\s*\(\s*"panic"\s*\)')
+    keyword_fragment_re = re.compile(
+        r'"[^"\n]*(' + stub_keywords + r')|`[^`\n]*(' + stub_keywords + r')',
+        re.I)
+    ast_panic_files = set()
+    keyword_fragment_files = set()
+    for fname, line in added_lines:
+        if not fname or not fname.endswith(".go"):
+            continue
+        if ast_panic_re.search(line):
+            ast_panic_files.add(fname)
+        if keyword_fragment_re.search(line):
+            keyword_fragment_files.add(fname)
+    for fname in sorted(ast_panic_files & keyword_fragment_files):
+        errors.append(f"AST-CONSTRUCTED PANIC STUB in {fname}: "
+                      f"ast.NewIdent(\"panic\") with a stub-keyword string "
+                      f"fragment in the same file's added lines")
 
     # 4. New wire node kinds for stdlib
     for fname, line in added_lines:
