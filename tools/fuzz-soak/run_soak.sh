@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Layer-4 fuzz soak runner (phases/phase3/PLAN.md §5 layer 4, GG-0037):
+# Layer-4 fuzz soak runner (GG-0037):
 # generative differential fuzzing, overnight per release.
 #
 # Runs the seeded program generator + differential harness
 # (harness/run_batch.py) in time-bounded batches until HOURS elapse, then
 # minimizes any divergences (harness/triage.py) and archives the findings.
 # Minimized divergences become permanent regressions per SPEC §5.4 (filed
-# under phases/phase3/fuzzing/findings/ with a minimized reproducer).
+# under tools/fuzz-soak/findings/ with a minimized reproducer).
+#
+# Failure propagation (review-2026-11-04 NEW-P1-7): a batch that produces
+# no results.jsonl is a FAILED batch, never zero divergences. The overnight
+# loop records failures and the job exits nonzero if any batch failed or no
+# batch produced results; the single-batch path likewise fails instead of
+# exiting 0 on an empty batch.
 #
 # This is the OVERNIGHT slot. The CONTINUOUS adversarial track reserves the
 # same interface: `run_soak.sh --seeds A:B` runs one bounded batch (used by
@@ -26,7 +32,7 @@
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Repo root: fuzzing/run_soak.sh -> phase3 -> phases -> repo.
+# Repo root: tools/fuzz-soak/run_soak.sh -> fuzz-soak -> tools -> repo.
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 export GR="${GR:-$REPO_ROOT}"
 export GO_BIN_DIR="${GO_BIN_DIR:-$HOME/tools/go/bin}"
@@ -99,6 +105,11 @@ if [ -n "$SEEDS" ]; then
   # Single bounded batch: the continuous-track slot.
   echo "== soak batch: seeds $SEEDS =="
   run_batch "$SEEDS" "$OUT/batch-0"
+  # A batch with no results ran zero programs: fail, never report clean.
+  if [ ! -s "$OUT/batch-0/results.jsonl" ]; then
+    echo "ERROR: batch produced no results.jsonl (or it is empty); failing" >&2
+    exit 1
+  fi
   minimize_findings "$OUT/batch-0"
   echo "batch done: $OUT/batch-0"
   exit 0
@@ -107,30 +118,49 @@ fi
 [ -n "$HOURS" ] || { echo "need --hours or --seeds" >&2; exit 2; }
 
 # Overnight soak: batches of BATCH seeds until the deadline.
+# Failed batches are recorded and fail the job at the end (a failed batch
+# is not "zero divergences"); later batches still run so one bad batch
+# does not discard the whole night.
 seed=0
 batch=0
+failed_batches=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
   if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
-    echo "batch $batch failed; continuing with next batch"
+    echo "batch $batch failed; recording failure and continuing with next batch"
+    failed_batches=$((failed_batches + 1))
+  elif [ ! -s "$OUT/batch-$batch/results.jsonl" ]; then
+    echo "batch $batch produced no results.jsonl; recording failure and continuing"
+    failed_batches=$((failed_batches + 1))
   fi
   minimize_findings "$OUT/batch-$batch" || true
   seed=$((seed + BATCH))
   batch=$((batch + 1))
 done
 
-echo "== soak complete: $batch batches, $seed programs =="
-python3 - "$OUT" <<'EOF'
+echo "== soak complete: $batch batches, $seed programs, $failed_batches failed =="
+python3 - "$OUT" "$failed_batches" <<'EOF'
 import glob, json, os, sys
-out = sys.argv[1]
+out, failed = sys.argv[1], int(sys.argv[2])
 total_div = 0
+with_results = 0
 for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
+    if os.path.getsize(res) == 0:
+        continue
+    with_results += 1
     for line in open(res):
         r = json.loads(line)
         if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
             total_div += 1
 rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
+       "batches_with_results": with_results,
+       "failed_batches": failed,
        "diverged_total": total_div}
 json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
 print(f"soak report: {rep}")
+if failed > 0 or with_results == 0:
+    print("ERROR: soak failed: "
+          f"{failed} failed batch(es), {with_results} batch(es) with results",
+          file=sys.stderr)
+    sys.exit(1)
 EOF

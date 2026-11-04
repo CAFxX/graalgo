@@ -16,9 +16,11 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: tools/fuzz-soak/harness/run_batch.py -> fuzz-soak -> tools -> repo.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Fuzz tooling now lives in-tree at tools/fuzz-soak (the old
+# phases/phase3/fuzzing tree was deleted 2026-10-14).
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,13 +41,22 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build once: gofrontend + backend classes consumed by
+    # internal/backend/graalgo-sync-run (the product launcher; it never
+    # builds, it requires `make generate build` to have run first).
+    print("== building graalgo (make generate build) ==", flush=True)
+    r = sh(f"make -C {GR} generate build", timeout=1800)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
+        sys.exit(1)
+    sync_run = os.path.join(GR, "internal", "backend", "graalgo-sync-run")
+    gofrontend = os.path.join(GR, "internal", "frontend", "gofrontend")
+    if not (os.path.isfile(sync_run) and os.access(sync_run, os.X_OK)
+            and os.path.isfile(gofrontend)):
+        print("BUILD INCOMPLETE: graalgo-sync-run or gofrontend missing "
+              "after make generate build")
         sys.exit(1)
     print("build ok", flush=True)
 

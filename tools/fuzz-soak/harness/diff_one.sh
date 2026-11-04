@@ -8,15 +8,25 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Repo root: tools/fuzz-soak/harness/diff_one.sh -> fuzz-soak -> tools -> repo.
+# GR from the environment still wins when run_soak/run_batch sets it.
+GR="${GR:-$(cd "$HERE/../../.." && pwd)}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+# graalgo-sync-run resolves its JVM from GRAALVM_HOME; translate the
+# JAVA_BIN override run_soak exports so a custom JDK still takes effect.
+if [ -n "${JAVA_BIN:-}" ] && [ -z "${GRAALVM_HOME:-}" ]; then
+  export GRAALVM_HOME="$(cd "$(dirname -- "$JAVA_BIN")/.." && pwd)"
+fi
+# Keep the JVM off /tmp (a full /tmp silently yields empty output with
+# exit 0); run_soak exports TMPDIR/FUZZ_TMPDIR, else use the workdir.
+export TMPDIR="${FUZZ_TMPDIR:-${TMPDIR:-$WORKDIR}}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
+if [ ! -x "$SYNC_RUN" ]; then
+  printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "graalgo-sync-run missing or not executable (run make generate build first)"}\n' "$(basename "$GO_FILE" .go)"
+  exit 0
+fi
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
@@ -31,10 +41,9 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (120s timeout; JVM startup dominates) via the product
+# launcher wrapper, which owns the classpath and JVM flags.
+timeout 120 "$SYNC_RUN" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 
