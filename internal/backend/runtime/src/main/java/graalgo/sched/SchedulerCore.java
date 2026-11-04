@@ -2,6 +2,7 @@ package graalgo.sched;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.IntSupplier;
 
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.GoCalls;
@@ -98,6 +99,30 @@ public final class SchedulerCore {
      * before the await call cannot cause an early return.
      */
     private final Object quiescenceLock = new Object();
+
+    /**
+     * Live goroutine handles by id (L09 deadlock watchdog): the drainer
+     * tracks parked ids, this map resolves them to handles for the fatal
+     * report's park reasons. Registered at spawn, removed when the live
+     * count drops (same critical section), so a handle is present for
+     * exactly the goroutine's live interval.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<Long, GoroutineHandle>
+            liveHandles = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Pending wake sources outside the scheduler's own accounting (L09):
+     * netpoll-registered fds, registered by the interop launcher. A
+     * non-zero count blocks a deadlock verdict exactly like a pending
+     * timer — an external event may still wake a parked goroutine.
+     * Defaults to zero (no external sources).
+     */
+    private volatile IntSupplier externalWakeSources = () -> 0;
+
+    /** Deadlock watchdog state (L09, P2-M10); see {@link #enableDeadlockWatchdog()}. */
+    private volatile boolean deadlockDetected;
+    private volatile String deadlockReport;
+    private Thread watchdogThread;
 
     /**
      * @param gomaxprocs requested GOMAXPROCS (clamped to &ge;1)
@@ -363,6 +388,7 @@ public final class SchedulerCore {
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
+        liveHandles.put(h.id, h);
         long t = armPark(h);
         Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {
             currentHandle.set(h);
@@ -400,6 +426,7 @@ public final class SchedulerCore {
                 GoroutineState.restore(prev);
                 currentHandle.remove();
                 synchronized (quiescenceLock) {
+                    liveHandles.remove(h.id);
                     if (liveGoroutines.decrementAndGet() == 0) {
                         quiescenceLock.notifyAll();
                     }
@@ -411,7 +438,12 @@ public final class SchedulerCore {
         // Start BEFORE accounting: if start() throws, no slot is leaked
         // and the live count is untouched. The vthread blocks in awaitAck
         // until the drainer admits it, so early start is safe.
-        vthread.start();
+        try {
+            vthread.start();
+        } catch (RuntimeException e) {
+            liveHandles.remove(h.id);
+            throw e;
+        }
         synchronized (quiescenceLock) {
             liveGoroutines.incrementAndGet();
         }
@@ -581,5 +613,191 @@ public final class SchedulerCore {
                 quiescenceLock.wait();
             }
         }
+    }
+
+    // ================= deadlock watchdog (L09, P2-M10) =================
+
+    /**
+     * Registers a pending-external-wake-source count (netpoll-registered
+     * fds, registered by the interop launcher). The supplier is polled
+     * on every watchdog tick; a non-zero value blocks a deadlock verdict
+     * exactly like a pending timer. May be set before or after
+     * {@link #enableDeadlockWatchdog()}.
+     */
+    public void setExternalWakeSourceCount(IntSupplier supplier) {
+        if (supplier == null) {
+            throw new IllegalArgumentException("external wake source supplier must not be null");
+        }
+        this.externalWakeSources = supplier;
+    }
+
+    /**
+     * Enables the deadlock watchdog with default tuning (100&nbsp;ms
+     * poll, 3 consecutive identical candidate snapshots). Launchers
+     * call this; unit tests use the explicit-tuning overload. Idempotent:
+     * a second call is a no-op. The watchdog is deliberately OFF by
+     * default — library/test embeddings that park every goroutine and
+     * wake them from a test thread must opt in explicitly, so enabling
+     * it never changes existing scheduler behavior unasked.
+     */
+    public void enableDeadlockWatchdog() {
+        enableDeadlockWatchdog(100, 3);
+    }
+
+    /**
+     * Enables the deadlock watchdog: a daemon thread polls for the
+     * gc {@code checkdead} condition — every live goroutine parked,
+     * no goroutine admitted or in blocking I/O, no queued or
+     * in-flight scheduler token, no pending timer (including an
+     * in-flight timer callback), and no pending external wake source.
+     * The condition must hold, with an identical snapshot, for
+     * {@code stablePolls} consecutive polls: the stability window
+     * absorbs drainer transits (a token taken from the inbox but not
+     * yet routed) and slow wakeup paths, which resolve in microseconds
+     * to milliseconds — never across the whole window. On firing, the
+     * verdict is sticky: {@link #deadlockDetected()} becomes true,
+     * {@link #deadlockReport()} holds the gc-style report, and
+     * {@link #awaitQuiescenceOrDeadlock()} returns.
+     *
+     * <p>Scope note (design decision, see ADR-0009): the watchdog fires
+     * whenever the <em>launcher's</em> wait is stuck — including after
+     * main has returned, when only parked non-main goroutines remain.
+     * gc would have exited at main return instead; the launcher today
+     * waits for every goroutine, so under its contract a stuck wait
+     * <em>is</em> the deadlock. If main-return semantics ever change
+     * to gc parity (exit on main return), this case disappears with it.
+     */
+    public synchronized void enableDeadlockWatchdog(long pollIntervalMillis, int stablePolls) {
+        if (pollIntervalMillis <= 0 || stablePolls <= 0) {
+            throw new IllegalArgumentException(
+                    "deadlock watchdog needs pollIntervalMillis > 0 and stablePolls > 0");
+        }
+        if (watchdogThread != null) {
+            return;
+        }
+        watchdogThread = Thread.ofPlatform().daemon(true)
+                .name("graalgo-deadlock-watchdog")
+                .start(() -> watchdogLoop(pollIntervalMillis, stablePolls));
+    }
+
+    /** True once the watchdog has fired a deadlock verdict (sticky). */
+    public boolean deadlockDetected() {
+        return deadlockDetected;
+    }
+
+    /**
+     * The gc-style fatal report, or null if the watchdog has not fired.
+     * Written before the {@link #deadlockDetected()} flag is set, so a
+     * reader that observes the flag also observes the full report.
+     */
+    public String deadlockReport() {
+        return deadlockReport;
+    }
+
+    /**
+     * Like {@link #awaitQuiescence()}, but also returns when the
+     * deadlock watchdog fires. Returns true on full quiescence (live
+     * count zero), false on a deadlock verdict — the caller prints
+     * {@link #deadlockReport()} and exits with the panic code. With the
+     * watchdog disabled this behaves exactly like
+     * {@link #awaitQuiescence()} (the flag can never be set).
+     */
+    public boolean awaitQuiescenceOrDeadlock() throws InterruptedException {
+        synchronized (quiescenceLock) {
+            while (liveGoroutines.get() != 0 && !deadlockDetected) {
+                quiescenceLock.wait();
+            }
+            return liveGoroutines.get() == 0;
+        }
+    }
+
+    private void watchdogLoop(long pollIntervalMillis, int stablePolls) {
+        Drainer.DeadlockSnapshot prev = null;
+        int stable = 0;
+        while (!deadlockDetected) {
+            try {
+                Thread.sleep(pollIntervalMillis);
+            } catch (InterruptedException ie) {
+                // Daemon watchdog: an interrupt is not a shutdown signal
+                // (nothing interrupts it in production); re-poll.
+                continue;
+            }
+            Drainer.DeadlockSnapshot snap = drainer.snapshotForDeadlock();
+            boolean candidate = isDeadlockCandidate(snap);
+            if (candidate && snap.equals(prev)) {
+                stable++;
+            } else if (candidate) {
+                stable = 1;
+                prev = snap;
+            } else {
+                stable = 0;
+                prev = null;
+            }
+            if (candidate && stable >= stablePolls) {
+                if (tryFireDeadlock()) {
+                    return;
+                }
+                // State moved during the final re-verification: the
+                // verdict was a race, not a deadlock. Reset and keep
+                // watching rather than firing on stale evidence.
+                stable = 0;
+                prev = null;
+            }
+        }
+    }
+
+    /**
+     * Candidate check. The live count is read AFTER the drainer
+     * snapshot deliberately: a spawn that lands between the two reads
+     * inflates live past the snapshot's parked count (not a candidate),
+     * and an exit cannot happen while nothing is admitted — so a
+     * concurrent state change can only break candidacy, never fake it.
+     * The one gap this ordering leaves (a non-goroutine thread spawning
+     * in the microseconds between the live read and the fire) is closed
+     * by {@link #tryFireDeadlock()}'s re-verification, and in practice
+     * by the wake-source accounting: the only mid-run non-goroutine
+     * spawners are the timer thread (callback in flight counts as a
+     * wake source) and the netpoll thread (registered fds count).
+     */
+    private boolean isDeadlockCandidate(Drainer.DeadlockSnapshot snap) {
+        int live = liveGoroutines.get();
+        return live > 0
+                && snap.inflight == 0
+                && snap.parkedCount == live
+                && snap.inIoCount == 0
+                && snap.wakeQueued == 0
+                && snap.initQueued == 0
+                && snap.runQueued == 0
+                && snap.inboxSize == 0
+                && timerHeap.pendingWakeSources() == 0
+                && externalWakeSources.getAsInt() == 0;
+    }
+
+    /**
+     * Final re-verification plus report. Returns false (no fire) if the
+     * state moved since the stability window's last poll.
+     */
+    private boolean tryFireDeadlock() {
+        Drainer.DeadlockSnapshot snap = drainer.snapshotForDeadlock();
+        if (!isDeadlockCandidate(snap)) {
+            return false;
+        }
+        java.util.Set<Long> parkedIds = drainer.parkedIdsForDeadlock();
+        java.util.List<Long> sorted = new java.util.ArrayList<>(parkedIds);
+        java.util.Collections.sort(sorted);
+        StringBuilder sb = new StringBuilder(
+                "fatal error: all goroutines are asleep - deadlock!\n");
+        for (Long id : sorted) {
+            GoroutineHandle h = liveHandles.get(id);
+            Object reason = h == null ? null : h.parkReason;
+            sb.append("goroutine ").append(id).append(" [")
+                    .append(reason == null ? "unknown" : reason).append("]\n");
+        }
+        deadlockReport = sb.toString();
+        deadlockDetected = true;
+        synchronized (quiescenceLock) {
+            quiescenceLock.notifyAll();
+        }
+        return true;
     }
 }

@@ -111,6 +111,14 @@ public final class P3TimeRuntime {
             if (live <= bg) {
                 break;
             }
+            // L09 (P2-M10): a deadlocked program never drains (live
+            // goroutines are parked, not background), so the drain loop
+            // must not swallow the watchdog's verdict — break out and
+            // let the launcher report the deadlock instead of hanging
+            // here forever.
+            if (sched.deadlockDetected()) {
+                break;
+            }
             Thread.sleep(1);
         }
         shutdownBackground();

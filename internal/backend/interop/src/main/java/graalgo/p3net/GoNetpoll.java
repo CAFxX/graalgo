@@ -234,6 +234,16 @@ public final class GoNetpoll {
         return DESCS.size();
     }
 
+    /**
+     * Number of registered pollDescs, for the deadlock watchdog (L09,
+     * P2-M10): a registered fd is a pending external wake source — a
+     * readiness event may still wake a parked goroutine — so it blocks
+     * a deadlock verdict exactly like a pending timer.
+     */
+    public static int registeredDescCount() {
+        return descCount();
+    }
+
     // ------------------------------------------------------------------
     // Linkname targets.
     // ------------------------------------------------------------------

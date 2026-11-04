@@ -97,6 +97,73 @@ public final class Drainer {
         }
     }
 
+    /**
+     * Deadlock-watchdog snapshot (L09, P2-M10). A single atomic view
+     * of everything that could still move a goroutine: admitted
+     * goroutines, parked goroutines, blocking-I/O goroutines, queued
+     * lane tokens, and unprocessed inbox tokens. A token already taken
+     * from the inbox by the drainer but not yet routed is invisible
+     * here; the watchdog's stability window (identical snapshots on
+     * consecutive polls) closes that gap — a drainer transit resolves
+     * in microseconds, never across the whole window.
+     */
+    static final class DeadlockSnapshot {
+        final int inflight;
+        final int parkedCount;
+        final int inIoCount;
+        final int wakeQueued;
+        final int initQueued;
+        final int runQueued;
+        final int inboxSize;
+        final long admissions;
+
+        DeadlockSnapshot(int inflight, int parkedCount, int inIoCount,
+                         int wakeQueued, int initQueued, int runQueued,
+                         int inboxSize, long admissions) {
+            this.inflight = inflight;
+            this.parkedCount = parkedCount;
+            this.inIoCount = inIoCount;
+            this.wakeQueued = wakeQueued;
+            this.initQueued = initQueued;
+            this.runQueued = runQueued;
+            this.inboxSize = inboxSize;
+            this.admissions = admissions;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof DeadlockSnapshot s)) {
+                return false;
+            }
+            return inflight == s.inflight && parkedCount == s.parkedCount
+                    && inIoCount == s.inIoCount && wakeQueued == s.wakeQueued
+                    && initQueued == s.initQueued && runQueued == s.runQueued
+                    && inboxSize == s.inboxSize && admissions == s.admissions;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(inflight, parkedCount, inIoCount,
+                    wakeQueued, initQueued, runQueued, inboxSize, admissions);
+        }
+    }
+
+    /** Atomic deadlock-watchdog snapshot; see {@link DeadlockSnapshot}. */
+    DeadlockSnapshot snapshotForDeadlock() {
+        synchronized (lock) {
+            return new DeadlockSnapshot(inflight, parked.size(), inIo.size(),
+                    wakeFifo.size(), initFifo.size(), runFifo.size(),
+                    inbox.size(), admissions);
+        }
+    }
+
+    /** Parked goroutine ids (copy); the watchdog's fatal report lists them. */
+    java.util.Set<Long> parkedIdsForDeadlock() {
+        synchronized (lock) {
+            return new java.util.HashSet<>(parked.keySet());
+        }
+    }
+
     private void drainLoop() {
         for (;;) {
             final ResumeToken token;

@@ -545,8 +545,18 @@ public final class P3SyncMain {
             // so first wait until only translators remain, shut them down,
             // then await full quiescence. With no timers this is just the
             // ordinary quiescence wait at 1ms poll granularity.
+            // L09 (P2-M10): the deadlock watchdog turns a fully-parked
+            // scheduler from a silent hang into gc's fatal error.
+            // Netpoll-registered fds are pending wake sources: an
+            // external readiness event may still wake a parked goroutine.
+            sched.setExternalWakeSourceCount(
+                    graalgo.p3net.GoNetpoll::registeredDescCount);
+            sched.enableDeadlockWatchdog();
             P3TimeRuntime.awaitBackgroundDrain(sched);
-            sched.awaitQuiescence();
+            if (!sched.awaitQuiescenceOrDeadlock()) {
+                System.err.print(sched.deadlockReport());
+                exitCode[0] = EXIT_PANIC;
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");

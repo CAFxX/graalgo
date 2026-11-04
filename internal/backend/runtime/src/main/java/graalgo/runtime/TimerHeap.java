@@ -91,6 +91,17 @@ public final class TimerHeap {
     private final Map<Long, Entry> byId = new HashMap<>();
     private final AtomicLong idGen = new AtomicLong(1);
     private final AtomicLong seqGen = new AtomicLong(1);
+    /**
+     * Callbacks currently executing on the timer thread (L09 deadlock
+     * watchdog): a fired callback's heap entry is already removed from
+     * {@link #byId}, but the callback itself may still wake a goroutine
+     * (e.g. an AfterFunc that sends on a channel). While a callback is
+     * in flight it is a pending wake source, exactly like a pending
+     * entry — without this, the watchdog could fatal during a slow
+     * callback whose send has not happened yet.
+     */
+    private final java.util.concurrent.atomic.AtomicInteger callbacksInFlight =
+            new java.util.concurrent.atomic.AtomicInteger();
     private Thread timerThread;
 
     public TimerHeap(SchedulerCore sched) {
@@ -311,6 +322,19 @@ public final class TimerHeap {
         }
     }
 
+    /**
+     * Pending wake sources for the deadlock watchdog (L09, P2-M10):
+     * pending heap entries plus callbacks currently executing on the
+     * timer thread. Either can still wake a parked goroutine, so either
+     * blocks a deadlock verdict. A zero return means no timer activity
+     * can rescue a fully-parked scheduler.
+     */
+    public int pendingWakeSources() {
+        synchronized (lock) {
+            return byId.size() + callbacksInFlight.get();
+        }
+    }
+
     private void timerLoop() {
         for (;;) {
             final Entry e;
@@ -397,6 +421,7 @@ public final class TimerHeap {
      */
     private void fireNonChan(Entry e) {
         if (e.callback != null) {
+            callbacksInFlight.incrementAndGet();
             try {
                 e.callback.run();
             } catch (Throwable t) {
@@ -405,6 +430,8 @@ public final class TimerHeap {
                 // continue — same discipline as the drainer's fatal halt,
                 // but scoped: only this callback is lost.
                 System.err.println("graalgo-timer: callback threw: " + t);
+            } finally {
+                callbacksInFlight.decrementAndGet();
             }
             return;
         }

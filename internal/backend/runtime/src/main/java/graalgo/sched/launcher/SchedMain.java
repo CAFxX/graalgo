@@ -205,7 +205,13 @@ public final class SchedMain {
                     exitCode[0] = EXIT_PANIC;
                 }
             });
-            sched.awaitQuiescence();
+            // L09 (P2-M10): the deadlock watchdog turns a fully-parked
+            // scheduler from a silent hang into gc's fatal error.
+            sched.enableDeadlockWatchdog();
+            if (!sched.awaitQuiescenceOrDeadlock()) {
+                System.err.print(sched.deadlockReport());
+                exitCode[0] = EXIT_PANIC;
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-run: interrupted while awaiting quiescence");
