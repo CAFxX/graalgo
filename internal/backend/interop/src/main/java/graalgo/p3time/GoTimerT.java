@@ -279,14 +279,25 @@ public class GoTimerT {
                     throw new IllegalStateException(
                             "p3time: timer heap channel delivered non-Long " + fireVal);
                 }
+                // Heap fire instant, nanoTime (monotonic) basis — carried
+                // to the delivery site so the delivered Time is the fire
+                // instant, not delivery wall time (see below).
+                long fireMonoNanos = ((Long) fireVal).longValue();
                 if (user.isClosed()) {
                     // gc: send on a closed channel panics (even the
                     // runtime's non-blocking timer send).
                     Panic.throwPanic(new GoString(
                             "send on closed channel".getBytes(StandardCharsets.UTF_8)));
                 }
+                // The delivered Time is the heap FIRE instant: the
+                // monotonic fire value converted to wall unixnano (the
+                // heap Long is nanoTime-based, so it cannot be used
+                // directly as a unixnano). Stamping delivery wall time
+                // here quantized to milliseconds and leaked translator
+                // scheduling latency into Timer.C/Ticker.C values.
                 GoStruct tv = new GoStruct(timeDesc,
-                        new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
+                        new long[]{P3TimeRuntime.wallNanosForMonotonicFire(fireMonoNanos), 1},
+                        new Object[0]);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the

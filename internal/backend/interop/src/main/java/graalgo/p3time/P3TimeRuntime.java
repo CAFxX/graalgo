@@ -34,6 +34,43 @@ import graalgo.sched.SchedulerCore;
 public final class P3TimeRuntime {
     private P3TimeRuntime() {}
 
+    /**
+     * Wall-clock unixnano at nanosecond resolution.
+     *
+     * <p>{@code System.currentTimeMillis() * 1_000_000L} quantizes to
+     * whole milliseconds: every {@code UnixNano()} is a multiple of
+     * 10^6, sub-millisecond durations measure 0, and successive
+     * {@code Now()} calls within a millisecond compare equal.
+     * {@code Instant.now()} reads {@code CLOCK_REALTIME} at nanosecond
+     * resolution instead. The product {@code epochSecond * 1e9} cannot
+     * overflow int64 before the year 2262 (epoch seconds then are
+     * ~1.8e9, product ~1.8e18, far below {@code Long.MAX_VALUE}).
+     *
+     * <p>The synthetic {@code time.Time} carries no monotonic strip
+     * (ADR-0005 D1): this is the wall-clock component only.
+     */
+    public static long wallClockNanos() {
+        java.time.Instant now = java.time.Instant.now();
+        return now.getEpochSecond() * 1_000_000_000L + now.getNano();
+    }
+
+    /**
+     * Wall-clock unixnano of a timer-heap fire instant.
+     *
+     * <p>The heap delivers fire values on the {@code System.nanoTime()}
+     * (monotonic) basis ({@link graalgo.runtime.TimerHeap} deadlines
+     * are nanoTime-based), so the delivered {@code Long} must NOT be
+     * used directly as a unixnano — that would read as a January-1970
+     * date. Instead, the fire wall time is the current wall clock minus
+     * the monotonic age of the fire: both clocks advance at the same
+     * rate, so this reconstructs the wall instant of the fire even when
+     * the translator runs late (scheduler latency no longer leaks into
+     * the delivered value, unlike stamping delivery wall time).
+     */
+    public static long wallNanosForMonotonicFire(long fireMonoNanos) {
+        return wallClockNanos() - (System.nanoTime() - fireMonoNanos);
+    }
+
     /** Guards background registration vs the drain check (see above). */
     private static final Object bgLock = new Object();
 

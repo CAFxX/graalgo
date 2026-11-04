@@ -6,6 +6,7 @@ import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.p3time.P3TimeRuntime;
 import graalgo.p3time.TimeDescriptors;
 import graalgo.values.GoKind;
 import graalgo.values.GoStruct;
@@ -39,9 +40,10 @@ public final class TimeNowNode extends GoExprNode {
         // Wall clock, gc time.Now parity (the synthetic Time carries no
         // monotonic strip — unixnano only, per ADR-0005 D1). isSet=true:
         // Now() never returns the zero Time (bools ride the longs[]
-        // carrier as 0/1).
+        // carrier as 0/1). Nanosecond resolution via P3TimeRuntime:
+        // currentTimeMillis()*1e6 quantized to whole milliseconds.
         return new GoStruct(timeDesc,
-                new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
+                new long[]{P3TimeRuntime.wallClockNanos(), 1}, new Object[0]);
     }
 
     /**
