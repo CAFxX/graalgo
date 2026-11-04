@@ -303,6 +303,12 @@ func (imp *Importer) Files(path string) []*ast.File { return imp.files[path] }
 
 // syntheticRuntimePackage mirrors the frozen synthetic "runtime": Goexit,
 // SetFinalizer, KeepAlive, GC — signatures match gc's runtime package.
+// FROZEN SUBSET: the main frontend's synthetic runtime has since grown
+// far beyond these four (GOARCH/GOOS, NumCPU, GOMAXPROCS, the
+// stack-inspection family, the PKG-038 documented API), so this mirror
+// is narrower than what the main frontend accepts — the exact four and
+// their signatures are pinned against gc 1.27.1 in
+// frozen_surface_test.go.
 func syntheticRuntimePackage() *types.Package {
 	pkg := types.NewPackage("runtime", "runtime")
 	anyT := types.NewInterfaceType(nil, nil).Complete()
@@ -396,6 +402,12 @@ var syncMethodSpecs = map[string][]struct {
 // (internal/frontend/export.go's syntheticSyncPackage, reimplemented
 // — the frozen original is unexported, so this is matched, not reused).
 // All methods have pointer receivers with exact gc 1.27.1 signatures.
+// FROZEN SUBSET: only the four P3-M2b primitives. The main frontend
+// retired this package in 503608ea in favour of disk imports (real
+// GOROOT sync, including Pool/Map/Cond/Locker/OnceFunc), so this mirror
+// is narrower than what the main frontend accepts — the exact subset
+// and every overlapping signature are pinned against the gc 1.27.1
+// oracle in frozen_surface_test.go.
 func syntheticSyncPackage() *types.Package {
 	pkg := types.NewPackage("sync", "sync")
 	emptyStruct := types.NewStruct(nil, nil)
@@ -457,6 +469,16 @@ func syncLockerInterface(pkg *types.Package) types.Type {
 // — the frozen original is unexported, so this is matched, not reused).
 // The six typed wrappers with exact gc 1.27.1 method signatures (pointer
 // receivers), plus the package-level functions with exact signatures.
+// FROZEN SUBSET, not the full gc surface — see frozen_surface_test.go:
+// the main frontend retired sync/sync/atomic in 503608ea in favour of
+// disk imports (real GOROOT packages), while this mirror still serves
+// the frozen subset, so the two surfaces differ by design and the test
+// pins the exact subset and every overlapping signature against the
+// gc 1.27.1 oracle. In particular gc has NO package-level bool atomics
+// (main frontend TestAtomicBoolPackageFuncRejected pins the rejection),
+// so this mirror must not invent LoadBool/StoreBool/SwapBool/
+// CompareAndSwapBool: a program using them would type-check here and
+// fail under gc and under the main frontend.
 func syntheticAtomicPackage() *types.Package {
 	pkg := types.NewPackage("sync/atomic", "atomic")
 	int64T := types.Typ[types.Int64]
@@ -535,14 +557,10 @@ func syntheticAtomicPackage() *types.Package {
 		addFunc("CompareAndSwap"+nm,
 			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
 	}
-	{
-		paddr := types.NewPointer(boolT)
-		addFunc("LoadBool", tuple(param("addr", paddr)), tuple(param("", boolT)))
-		addFunc("StoreBool", types.NewTuple(param("addr", paddr), param("val", boolT)), nil)
-		addFunc("SwapBool", types.NewTuple(param("addr", paddr), param("new", boolT)), tuple(param("old", boolT)))
-		addFunc("CompareAndSwapBool",
-			types.NewTuple(param("addr", paddr), param("old", boolT), param("new", boolT)), boolRes)
-	}
+	// No package-level bool atomics: gc 1.27.1 has none (LoadBool et al.
+	// were previously served here by mistake and are deleted — see the
+	// header comment and frozen_surface_test.go). The Bool *wrapper*
+	// above is real gc API and stays.
 
 	pkg.MarkComplete()
 	return pkg
