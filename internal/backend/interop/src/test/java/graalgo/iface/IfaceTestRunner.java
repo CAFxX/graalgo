@@ -66,6 +66,8 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // R11-MINMAX (REVIEW-2026-11-04-11 NEW-P1-19): p3builtin min/max signed-zero tie rule.
+        TESTS.add(graalgo.p3builtin.nodes.MinMaxNodeTest.class);
     }
 
     private IfaceTestRunner() {}
