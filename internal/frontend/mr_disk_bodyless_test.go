@@ -231,11 +231,13 @@ func (t *T) M() (int, bool)
 	}
 }
 
-// P1-07: resolving the __-helper for a call to an unbound body-less
-// function is a compile-time error naming the function — not a call
-// node to the panic body. A bound (bodied) helper passes this guard
-// and proceeds to normal resolution (which fails here only because
-// the test package is not a real disk package).
+// P1-07: resolving the __-helper for a call to an unbound EXPORTED
+// body-less function is a compile-time error naming the function —
+// not a call node to the panic body. An unexported unbound callee
+// (the internal/cpu.cpuid precedent) passes the guard, as does a
+// bound (bodied) helper, which proceeds to normal resolution (which
+// fails here only because the test package is not a real disk
+// package).
 func TestDiskMRUnboundHelperCallErrors(t *testing.T) {
 	swapSpecs := func(specs []diskMRSpec) func() {
 		diskMRMu.Lock()
@@ -258,7 +260,35 @@ func TestDiskMRUnboundHelperCallErrors(t *testing.T) {
 		return f
 	}
 
-	t.Run("unbound", func(t *testing.T) {
+	t.Run("unbound-exported", func(t *testing.T) {
+		f := parse(t, `package p
+
+//go:noescape
+func Foo(a int) (int, bool)
+`)
+		specs := transformDiskMultiResult("example.com/p", []*ast.File{f})
+		if len(specs) != 1 || !specs[0].unbound {
+			t.Fatalf("want 1 unbound spec, got %+v", specs)
+		}
+		defer swapSpecs(specs)()
+		plan := &mrPlan{kind: mrM7, helperPkg: "example.com/p", helperName: "__Foo", isDisk: true}
+		_, err := (&exporter{}).multiResultHelper(plan)
+		if err == nil {
+			t.Fatal("multiResultHelper(unbound exported) = nil error, want compile-time error")
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "Foo") || !strings.Contains(msg, "backend intrinsic") {
+			t.Errorf("error %q does not name the function and the missing intrinsic", msg)
+		}
+	})
+
+	// The guard fires only for exported names: an unexported unbound
+	// callee (the internal/cpu.cpuid precedent — user code cannot
+	// name it, and the runtime never calls the entry points that
+	// would reach it) passes the guard and proceeds to normal
+	// resolution, which fails here only because the test package is
+	// not a real disk package.
+	t.Run("unexported-passes-guard", func(t *testing.T) {
 		f := parse(t, `package p
 
 import "unsafe"
@@ -274,11 +304,10 @@ func chanrecv(ch unsafe.Pointer, nb bool, val unsafe.Pointer) (selected, receive
 		plan := &mrPlan{kind: mrM7, helperPkg: "example.com/p", helperName: "__chanrecv", isDisk: true}
 		_, err := (&exporter{}).multiResultHelper(plan)
 		if err == nil {
-			t.Fatal("multiResultHelper(unbound) = nil error, want compile-time error")
+			t.Fatal("multiResultHelper(unexported, fake package) = nil error, want disk-resolution error")
 		}
-		msg := err.Error()
-		if !strings.Contains(msg, "chanrecv") || !strings.Contains(msg, "backend intrinsic") {
-			t.Errorf("error %q does not name the function and the missing intrinsic", msg)
+		if strings.Contains(err.Error(), "backend intrinsic") || strings.Contains(err.Error(), "P1-07") {
+			t.Errorf("unexported helper wrongly hit the unbound guard: %v", err)
 		}
 	})
 

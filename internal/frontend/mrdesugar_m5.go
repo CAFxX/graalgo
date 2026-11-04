@@ -3433,11 +3433,25 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 // func-value formation — all desugar paths resolve the helper here
 // and propagate the error). A disk spec marked unbound (body-less
 // declaration with no //go:linkname binding, so no backend intrinsic
-// can serve it) therefore fails the export with a named scope error
-// instead of emitting a call to the helper's panic body, which
-// previously surfaced as a user-runtime panic. The check runs before
-// any disk-package lookup, so it also fires when the helper's package
-// would otherwise fail to load for an unrelated reason.
+// can serve it) whose name is EXPORTED therefore fails the export
+// with a named scope error instead of emitting a call to the helper's
+// panic body, which previously surfaced as a user-runtime panic. The
+// check runs before any disk-package lookup, so it also fires when
+// the helper's package would otherwise fail to load for an unrelated
+// reason.
+//
+// Why only exported names: a blanket guard was tried first and broke
+// twelve existing ExportFile tests, all on internal/cpu.cpuid — the
+// codebase's documented unreachable-by-construction case
+// (diskimport.go): cpuid is unexported in an internal/ package, so
+// user code cannot name it; its only caller is doinit, reachable
+// only via Initialize, which graalgo's runtime never calls, and the
+// cpu.X86 flags stay zero, forcing callers onto generic paths.
+// Erroring on export of doinit's body would fail every program whose
+// closure includes internal/cpu, for code that can never execute.
+// The guard therefore fires exactly where the finding bites — a
+// user-reachable (exported) unbound function — and leaves the
+// documented dead paths alone.
 //
 // Why not "prove every helper has an intrinsic" instead: the backend
 // intrinsic registry is Java-side (LinknameRootNode dispatch); the
@@ -3446,27 +3460,37 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 // unprovided. The mechanical frontend proof available is the negative
 // one used here: a panic-body helper provably has no provider.
 //
-// OPEN DESIGN QUESTION (interface dispatch, not covered by this
-// guard): interface calls do not resolve through multiResultHelper —
-// exportIfaceMethodCall builds an ifacemethod node and the backend
-// dispatches via the itab, which methodTableEntries wires straight
-// to the helper funcdecl. An unbound concrete method invoked through
-// an interface value therefore still reaches the panic body at
-// runtime. Erroring in methodTableEntries was rejected deliberately:
-// it runs from describeType/recomputeMethodTables for every described
-// named/pointer type, so it would fail programs that merely declare
-// or convert such a type without calling the method (against the
-// codebase's own merely-declare principle, cf. methodTableEntry's
-// "unsupported" handling). The consistent follow-up is a methodEntry
-// "unbound" marker consumed by the backend dispatcher to fail fast
-// at dispatch with the method named (the P3-M3 "unsupported"
-// precedent) — backend work, left open for the coordinator to scope;
-// until then, the panic message names the unbound declaration.
+// OPEN DESIGN QUESTIONS (not covered by this guard):
+//   - Interface dispatch: interface calls do not resolve through
+//     multiResultHelper — exportIfaceMethodCall builds an ifacemethod
+//     node and the backend dispatches via the itab, which
+//     methodTableEntries wires straight to the helper funcdecl. An
+//     unbound concrete method invoked through an interface value
+//     therefore still reaches the panic body at runtime. Erroring in
+//     methodTableEntries was rejected deliberately: it runs from
+//     describeType/recomputeMethodTables for every described
+//     named/pointer type, so it would fail programs that merely
+//     declare or convert such a type without calling the method
+//     (against the codebase's own merely-declare principle, cf.
+//     methodTableEntry's "unsupported" handling). The consistent
+//     follow-up is a methodEntry "unbound" marker consumed by the
+//     backend dispatcher to fail fast at dispatch with the method
+//     named (the P3-M3 "unsupported" precedent) — backend work, left
+//     open for the coordinator to scope; until then, the panic
+//     message names the unbound declaration.
+//   - Unexported unbound callees reached via exported wrappers: a
+//     package's own Go code calling its own unbound asm stub (the
+//     mirror image of cpuid's doinit, but with a live wrapper) still
+//     panics at runtime. Closing that needs whole-program
+//     reachability from exported entry points, or the same backend
+//     dispatch marker above; it is deliberately out of scope here
+//     because the cpuid precedent proves a blanket export error
+//     false-positives on dead code.
 func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 	var sp *syntheticPackage
 	if plan.isDisk {
-		// P1-07: refuse to emit a call to an unbound helper.
-		if spec := lookupDiskMRByHelper(plan.helperPkg, plan.helperName); spec != nil && spec.unbound {
+		// P1-07: refuse to emit a call to an unbound EXPORTED helper.
+		if spec := lookupDiskMRByHelper(plan.helperPkg, plan.helperName); spec != nil && spec.unbound && ast.IsExported(spec.name) {
 			name := spec.name
 			if spec.recvType != "" {
 				name = spec.recvType + "." + name

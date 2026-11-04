@@ -43,12 +43,15 @@ type diskMRSpec struct {
 	// (P1-07): no Go body, no directive, or a generic declaration
 	// whose linkname binding is out of M4 scope. There is no backend
 	// intrinsic that can serve such a helper — the panic body is
-	// defense-in-depth only. Every direct call emission to an unbound
-	// helper is a compile-time error (multiResultHelper); the helper
-	// must never be reachable from a successfully exported program
-	// except via interface dispatch, where the itab wires to the
-	// helper funcdecl directly (see the P1-07 design note in
-	// multiResultHelper and the open question recorded with it).
+	// defense-in-depth only. Direct call emission to an unbound
+	// EXPORTED helper is a compile-time error (multiResultHelper);
+	// unexported unbound helpers keep the panic body under the
+	// documented unreachable-by-construction contract (cf.
+	// internal/cpu.cpuid, diskimport.go): user code cannot name
+	// them, and the runtime never calls the entry points that
+	// would reach them. The residual — an unexported unbound
+	// callee reached via an exported wrapper — is recorded in
+	// multiResultHelper, as is the interface-dispatch gap.
 	unbound bool
 }
 
@@ -75,9 +78,9 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			// still need desugaring. When no //go:linkname binding
 			// exists, the generated __-helper gets a panic body and
 			// the spec is marked unbound (P1-07): no backend
-			// intrinsic can serve it, so call emission to it is a
-			// compile-time error (multiResultHelper) rather than a
-			// user-runtime panic.
+			// intrinsic can serve it, so call emission to an
+			// exported one is a compile-time error
+			// (multiResultHelper) rather than a user-runtime panic.
 			if numResults(fd) > 1 {
 				mrNames[fd.Name.Name] = true
 			}
@@ -890,13 +893,14 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// declarations WITHOUT a directive, and generic ones (whose
 	// linkname binding is out of M4 scope), keep the panic body as
 	// defense-in-depth only, and the spec is marked unbound (P1-07):
-	// no backend intrinsic can serve such a helper, so every direct
-	// call emission to it is a compile-time error (multiResultHelper)
-	// instead of a user-runtime panic. The panic body itself is
-	// reachable from a successful export only via interface dispatch,
-	// which wires the itab straight to the helper funcdecl — that
-	// residual path is the recorded P1-07 open design question (see
-	// multiResultHelper), not a silent success.
+	// no backend intrinsic can serve such a helper, so direct call
+	// emission to an exported one is a compile-time error
+	// (multiResultHelper) instead of a user-runtime panic. The panic
+	// body itself is reachable from a successful export via
+	// interface dispatch, which wires the itab straight to the
+	// helper funcdecl, and via unexported callees reached through
+	// exported wrappers — both are recorded P1-07 open design
+	// questions (see multiResultHelper), not silent successes.
 	var rewrittenBody *ast.BlockStmt
 	var helperDoc *ast.CommentGroup
 	if fd.Body == nil {
