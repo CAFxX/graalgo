@@ -76,6 +76,19 @@ O2twfPCYDMvTQiE8cmquId60jxYnCWblSoW2qEWzVizIKuCbBjuGswdgqAWp8IX0
 C5baQ4MR6V6bahfKjdlUCWpAhRpl8DgJ/k/hVMPWltreAOlSN9Y=
 -----END RSA PRIVATE KEY-----`
 
+// clientHandshakePrinted synchronizes print order in the in-process
+// ("both") mode only: runClient closes it after printing its handshake
+// lines, and runServer waits on it before printing its own. Without
+// this, the server — whose verify is a no-op — prints first under
+// graalgo (slow client-side x509 verification), while gc prints the
+// client first, breaking the byte-identical differential. This channel
+// replaces the 10s server-side sleep that used to live in the synthetic
+// crypto/tls Handshake (REVIEW-2026-11-04 P1-2): print ordering between
+// the two sides is synchronized here, in the test, never by slowing
+// down product code. It stays nil in the split server/client modes,
+// where the sides are separate processes and no ordering is imposed.
+var clientHandshakePrinted chan struct{}
+
 func serverConfig() *tls.Config {
 	cert, err := tls.X509KeyPair([]byte(srvPEM), []byte(srvKeyPEM))
 	if err != nil {
@@ -111,6 +124,13 @@ func runServer(port string, ready chan<- string) {
 	if err := tlsConn.Handshake(); err != nil {
 		panic("server handshake: " + err.Error())
 	}
+	// In-process mode only: let the client's handshake prints land
+	// first (see clientHandshakePrinted). The handshake itself is
+	// already complete on both sides here, so this cannot deadlock:
+	// the client is past Dial and only needs to print.
+	if clientHandshakePrinted != nil {
+		<-clientHandshakePrinted
+	}
 	cs := tlsConn.ConnectionState()
 	fmt.Println("server: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	buf := make([]byte, 64)
@@ -135,6 +155,11 @@ func runClient(port string) {
 	fmt.Println("client: handshake-ok version:", cs.Version, "suite:", cs.CipherSuite)
 	fmt.Println("client: peer-certs:", len(cs.PeerCertificates))
 	fmt.Println("client: verify-hostname:", conn.VerifyHostname("localhost") == nil)
+	// In-process mode only: release the server's handshake-ok print
+	// (see clientHandshakePrinted).
+	if clientHandshakePrinted != nil {
+		close(clientHandshakePrinted)
+	}
 	msg := "hello-tls"
 	if _, err := conn.Write([]byte(msg)); err != nil {
 		panic("client write: " + err.Error())
@@ -176,6 +201,7 @@ func main() {
 		tcpAddr := ln.Addr().(*net.TCPAddr)
 		ln.Close()
 		ephemPort := fmt.Sprint(tcpAddr.Port)
+		clientHandshakePrinted = make(chan struct{})
 		ready := make(chan string, 1)
 		go runServer(ephemPort, ready)
 		<-ready
