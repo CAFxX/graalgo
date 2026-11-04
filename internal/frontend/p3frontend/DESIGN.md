@@ -100,15 +100,18 @@ over a visited set plus an explicit stack.
 - `"fmt"` → synthetic package with exactly the seven D4 symbols and their
   exact variadic signatures (`Print/Printf/Println` → `(int, error)`,
   `Sprint/Sprintf/Sprintln` → `string`, `Errorf` → `error`).
-- `"sync"` → synthetic package with the exact P3-M2b signatures
-  (ADR-0002): `Mutex`/`RWMutex`/`WaitGroup`/`Once` with pointer-receiver
-  methods (`Lock/Unlock`, `RLock/RUnlock`, `Add(int)/Done/Wait`,
-  `Do(func())`) plus the defined-but-out-of-scope `TryLock`/`TryRLock`/
-  `RLocker`/`WaitGroup.Go`. The mirror is pinned by
-  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete`; the frozen
-  exporter (not p3frontend) lowers the calls to `syncnew`/`syncop` wire
-  nodes and raises the named `not in M2 scope` errors
-  (`TestSyncScopeErrorParity`).
+- `"sync"`/`"sync/atomic"` → RETIRED (review-2026-11-04 NEW-P1-5,
+  mirroring frontend/v1 commit 503608ea): both resolve from GOROOT
+  source via the general disk path, so the gate sees the real gc surface
+  (`Map`/`Pool`/`Cond`, `WaitGroup.Go`, generic `atomic.Pointer`/
+  `Value`) instead of the narrow P3-M2b/M4 mirror. The retired mirror
+  code is deleted; the retirement is pinned by
+  `TestSyncRetiredToDisk` (importer serves the real packages, agreeing
+  with gc's source importer) and
+  `TestSyncMapWaitGroupGoDifferential` (one program, one outcome through
+  the p3frontend gate and the full ExportDir path). The old
+  `syncnew`/`syncop` wire nodes and `not in M2 scope` errors are gone
+  with the mirror.
 - `"errors"` → synthetic package with the exact gc 1.27.1 signatures
   (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`/`AsType`; `As`
   keeps its exact signature with a fail-fast body (needs `reflect`).

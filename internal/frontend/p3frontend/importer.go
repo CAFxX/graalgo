@@ -16,16 +16,23 @@ import (
 //     frozen signatures (reimplemented here from the freeze spec —
 //     export.go's overlayImporter is unexported and frozen, so it cannot
 //     be reused, only matched);
-//   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
-//     exact frozen signatures (four primitives + the defined-but-out-of-
-//     scope methods, so the same named scope errors fire);
+//   - "sync" and "sync/atomic" RETIRED (review-2026-11-04 NEW-P1-5,
+//     mirroring the frontend/v1 retirement in commit 503608ea): both
+//     resolve from GOROOT source via the general disk path below, so a
+//     program sees the real gc surface (sync.Map/Pool/Cond, generic
+//     sync/atomic.Pointer/Value) instead of the narrow M2/M4 mirror that
+//     rejected them. The retired mirror code (syncMethodSpecs,
+//     syntheticSyncPackage, syntheticAtomicPackage — including the
+//     NEW-P2-12 panic on an unknown sync param type) is deleted, not kept;
 //   - "errors" and "sort" resolve to the synthetic P3-M7 wave-1 packages
 //     (real-Go implementations; fail-fast members keep exact gc 1.27.1
 //     signatures);
 //   - module-local packages are type-checked from source with go/types,
 //     recursively, with results cached by import path;
-//   - stdlib packages resolve (proving the GOROOT mapping) but fail with
-//     a clear scope error: compiling the real stdlib is P3-M7+ work.
+//   - stdlib packages resolve (proving the GOROOT mapping) and are
+//     type-checked from GOROOT source when they compile through this
+//     importer (today: sync, sync/atomic); any other stdlib package fails
+//     with a clear scope error: compiling the real stdlib is P3-M7+ work.
 //
 // Importer is single-threaded (go/types drives it synchronously).
 type Importer struct {
@@ -70,14 +77,6 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "fmt":
 		pkg := syntheticFmtPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync":
-		pkg := syntheticSyncPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync/atomic":
-		pkg := syntheticAtomicPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
 	case "time":
@@ -231,6 +230,25 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return nil, err
 	}
 	if ref.Kind == kindStdlib {
+		// Retired-from-synthetic packages (sync, sync/atomic) resolve
+		// from GOROOT source via the general disk path: type-check the
+		// real sources exactly like a local package. The flattener
+		// never flattens stdlib (LoadClosure only returns kindLocal),
+		// so the merged source keeps the import spec and the frozen
+		// gofrontend — which retired the same synthetics in 503608ea —
+		// compiles the same real package: one outcome per program,
+		// whichever frontend checks it first.
+		//
+		// Any other stdlib package whose sources do not (yet)
+		// type-check through this importer — e.g. because they need a
+		// runtime member the synthetic runtime does not declare — keeps
+		// the named M1 scope error instead of a confusing
+		// types.Config failure. The retirement of sync/sync-atomic is
+		// pinned by TestSyncRetiredToDisk, so a regression there fails
+		// tests rather than silently re-narrowing the surface.
+		if pkg, err := imp.checkRef(ref); err == nil {
+			return pkg, nil
+		}
 		return nil, fmt.Errorf("p3frontend: import %q: stdlib package compilation lands in the P3-M7+ waves (M1 scope: synthetic runtime/fmt only; resolved at %s)", path, ref.Dir)
 	}
 	if ref.Kind != kindLocal {
@@ -320,6 +338,15 @@ func syntheticRuntimePackage() *types.Package {
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "KeepAlive", mkSig(
 		newParam("x", anyT))))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GC", mkSig()))
+	// GOMAXPROCS (review-2026-11-04 NEW-P1-5): the real GOROOT sync
+	// package (pool.go) calls runtime.GOMAXPROCS, so retiring the
+	// synthetic sync requires the synthetic runtime to declare it with
+	// gc's exact signature — otherwise the real sync sources fail this
+	// importer's type-check and fall back to the stdlib scope error.
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GOMAXPROCS",
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(newParam("n", types.Typ[types.Int])),
+			types.NewTuple(newParam("", types.Typ[types.Int])), false)))
 	pkg.MarkComplete()
 	return pkg
 }
@@ -357,203 +384,21 @@ func syntheticFmtPackage() *types.Package {
 	return pkg
 }
 
-// syncMethodSpecs is the P3-M2b (ADR-0002) method surface each synthetic
-// sync primitive exposes: the M2-supported methods plus the defined-but-
-// out-of-scope ones (TryLock/TryRLock/RLocker/WaitGroup.Go), which the
-// frozen exporter rejects with a named "not in M2 scope" error. Kept as
-// data (not code) so the signature-equality test can enumerate it.
-var syncMethodSpecs = map[string][]struct {
-	name    string
-	params  []string // "name:type" — int, bool, func(), Locker
-	results []string
-}{
-	"Mutex": {
-		{"Lock", nil, nil},
-		{"Unlock", nil, nil},
-		{"TryLock", nil, []string{":bool"}},
-	},
-	"RWMutex": {
-		{"Lock", nil, nil},
-		{"Unlock", nil, nil},
-		{"RLock", nil, nil},
-		{"RUnlock", nil, nil},
-		{"TryLock", nil, []string{":bool"}},
-		{"TryRLock", nil, []string{":bool"}},
-		{"RLocker", nil, []string{":Locker"}},
-	},
-	"WaitGroup": {
-		{"Add", []string{"delta:int"}, nil},
-		{"Done", nil, nil},
-		{"Wait", nil, nil},
-		{"Go", []string{"f:func()"}, nil},
-	},
-	"Once": {
-		{"Do", []string{"f:func()"}, nil},
-	},
-}
-
-// syntheticSyncPackage mirrors the frozen P3-M2b synthetic "sync"
-// (internal/frontend/export.go's syntheticSyncPackage, reimplemented
-// — the frozen original is unexported, so this is matched, not reused).
-// All methods have pointer receivers with exact gc 1.27.1 signatures.
-func syntheticSyncPackage() *types.Package {
-	pkg := types.NewPackage("sync", "sync")
-	emptyStruct := types.NewStruct(nil, nil)
-	typeOf := func(spec string) types.Type {
-		name := spec
-		if i := strings.Index(spec, ":"); i >= 0 {
-			name = spec[i+1:]
-		}
-		switch name {
-		case "int":
-			return types.Typ[types.Int]
-		case "bool":
-			return types.Typ[types.Bool]
-		case "func()":
-			return types.NewSignatureType(nil, nil, nil, nil, nil, false)
-		case "Locker":
-			return syncLockerInterface(pkg)
-		}
-		panic("unknown sync param type " + spec)
-	}
-	names := []string{"Mutex", "RWMutex", "WaitGroup", "Once"}
-	for _, name := range names {
-		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
-		pkg.Scope().Insert(tname)
-		named := types.NewNamed(tname, emptyStruct, nil)
-		for _, ms := range syncMethodSpecs[name] {
-			var params []*types.Var
-			for _, ps := range ms.params {
-				pname := ps[:strings.Index(ps, ":")]
-				params = append(params, types.NewParam(token.NoPos, pkg, pname, typeOf(ps)))
-			}
-			var results []*types.Var
-			for _, rs := range ms.results {
-				results = append(results, types.NewParam(token.NoPos, pkg, "", typeOf(rs)))
-			}
-			recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
-			sig := types.NewSignatureType(recv, nil, nil,
-				types.NewTuple(params...), types.NewTuple(results...), false)
-			named.AddMethod(types.NewFunc(token.NoPos, pkg, ms.name, sig))
-		}
-	}
-	pkg.MarkComplete()
-	return pkg
-}
-
-// syncLockerInterface builds the synthesized sync.Locker interface
-// (Lock/Unlock) used as RWMutex.RLocker's result type.
-func syncLockerInterface(pkg *types.Package) types.Type {
-	return types.NewInterfaceType([]*types.Func{
-		types.NewFunc(token.NoPos, pkg, "Lock",
-			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
-		types.NewFunc(token.NoPos, pkg, "Unlock",
-			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
-	}, nil).Complete()
-}
-
-// syntheticAtomicPackage mirrors the frozen P3-M4 synthetic "sync/atomic"
-// (internal/frontend/export.go's syntheticAtomicPackage, reimplemented
-// — the frozen original is unexported, so this is matched, not reused).
-// The six typed wrappers with exact gc 1.27.1 method signatures (pointer
-// receivers), plus the package-level functions with exact signatures.
-func syntheticAtomicPackage() *types.Package {
-	pkg := types.NewPackage("sync/atomic", "atomic")
-	int64T := types.Typ[types.Int64]
-	uint64T := types.Typ[types.Uint64]
-	int32T := types.Typ[types.Int32]
-	uint32T := types.Typ[types.Uint32]
-	boolT := types.Typ[types.Bool]
-	uintptrT := types.Typ[types.Uintptr]
-	emptyStruct := types.NewStruct(nil, nil)
-	param := func(name string, t types.Type) *types.Var {
-		return types.NewParam(token.NoPos, pkg, name, t)
-	}
-	tuple := func(v *types.Var) *types.Tuple {
-		return types.NewTuple(v)
-	}
-
-	newWrapper := func(name string) *types.Named {
-		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
-		pkg.Scope().Insert(tname)
-		return types.NewNamed(tname, emptyStruct, nil)
-	}
-	addMethod := func(named *types.Named, name string, params, results *types.Tuple) {
-		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
-		sig := types.NewSignatureType(recv, nil, nil, params, results, false)
-		named.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
-	}
-	// The five M4 ops per wrapper: Load() T, Store(T), Add(T) T,
-	// Swap(T) T, CompareAndSwap(T, T) bool. And/Or defined, rejected.
-	fiveOps := func(named *types.Named, t types.Type) {
-		boolRes := tuple(param("", boolT))
-		addMethod(named, "Load", nil, tuple(param("", t)))
-		addMethod(named, "Store", tuple(param("val", t)), nil)
-		addMethod(named, "Add", tuple(param("delta", t)), tuple(param("new", t)))
-		addMethod(named, "Swap", tuple(param("new", t)), tuple(param("old", t)))
-		addMethod(named, "CompareAndSwap",
-			types.NewTuple(param("old", t), param("new", t)), boolRes)
-		addMethod(named, "And", tuple(param("mask", t)), tuple(param("old", t)))
-		addMethod(named, "Or", tuple(param("mask", t)), tuple(param("old", t)))
-	}
-	fiveOps(newWrapper("Int64"), int64T)
-	fiveOps(newWrapper("Uint64"), uint64T)
-	fiveOps(newWrapper("Int32"), int32T)
-	fiveOps(newWrapper("Uint32"), uint32T)
-	fiveOps(newWrapper("Uintptr"), uintptrT)
-	// Bool has no Add/And/Or in gc.
-	b := newWrapper("Bool")
-	boolRes := tuple(param("", boolT))
-	addMethod(b, "Load", nil, tuple(param("", boolT)))
-	addMethod(b, "Store", tuple(param("val", boolT)), nil)
-	addMethod(b, "Swap", tuple(param("new", boolT)), tuple(param("old", boolT)))
-	addMethod(b, "CompareAndSwap",
-		types.NewTuple(param("old", boolT), param("new", boolT)), boolRes)
-
-	// Package-level functions: exact gc signatures.
-	addFunc := func(name string, params, results *types.Tuple) {
-		sig := types.NewSignatureType(nil, nil, nil, params, results, false)
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, name, sig))
-	}
-	for _, wt := range []types.Type{int32T, int64T} {
-		nm := map[types.Type]string{int32T: "Int32", int64T: "Int64"}[wt]
-		paddr := types.NewPointer(wt)
-		addFunc("Load"+nm, tuple(param("addr", paddr)), tuple(param("", wt)))
-		addFunc("Store"+nm, types.NewTuple(param("addr", paddr), param("val", wt)), nil)
-		addFunc("Add"+nm, types.NewTuple(param("addr", paddr), param("delta", wt)), tuple(param("new", wt)))
-		addFunc("Swap"+nm, types.NewTuple(param("addr", paddr), param("new", wt)), tuple(param("old", wt)))
-		addFunc("CompareAndSwap"+nm,
-			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
-	}
-	for _, wt := range []types.Type{uint32T, uint64T, uintptrT} {
-		nm := map[types.Type]string{uint32T: "Uint32", uint64T: "Uint64", uintptrT: "Uintptr"}[wt]
-		paddr := types.NewPointer(wt)
-		addFunc("Load"+nm, tuple(param("addr", paddr)), tuple(param("", wt)))
-		addFunc("Store"+nm, types.NewTuple(param("addr", paddr), param("val", wt)), nil)
-		addFunc("Add"+nm, types.NewTuple(param("addr", paddr), param("delta", wt)), tuple(param("new", wt)))
-		addFunc("Swap"+nm, types.NewTuple(param("addr", paddr), param("new", wt)), tuple(param("old", wt)))
-		addFunc("CompareAndSwap"+nm,
-			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
-	}
-	{
-		paddr := types.NewPointer(boolT)
-		addFunc("LoadBool", tuple(param("addr", paddr)), tuple(param("", boolT)))
-		addFunc("StoreBool", types.NewTuple(param("addr", paddr), param("val", boolT)), nil)
-		addFunc("SwapBool", types.NewTuple(param("addr", paddr), param("new", boolT)), tuple(param("old", boolT)))
-		addFunc("CompareAndSwapBool",
-			types.NewTuple(param("addr", paddr), param("old", boolT), param("new", boolT)), boolRes)
-	}
-
-	pkg.MarkComplete()
-	return pkg
-}
-
-// syntheticUnsafePackage mirrors the frozen P3-M4 empty synthetic "unsafe"
-// (internal/frontend/export.go's syntheticUnsafePackage): it exists
-// only so `import _ "unsafe"` (required by //go:linkname directives)
-// type-checks.
+// syntheticUnsafePackage returns go/types' canonical unsafe package
+// (types.Unsafe — the same package the go/types source importer returns
+// for "unsafe"), not a hand-built mirror. The frozen P3-M4 design kept it
+// empty (only so `import _ "unsafe"` for //go:linkname directives
+// type-checks), but the NEW-P1-5 retirement needs the real thing: the
+// GOROOT sync closure uses unsafe.Pointer throughout, unsafe.Sizeof in
+// constant position (sync/pool.go's array-length padding), and
+// unsafe.Slice/String/Offsetof. go/types evaluates Sizeof/Alignof/
+// Offsetof/Slice/String only for the *Builtin objects in types.Unsafe's
+// scope — a hand-declared func with the same name would type-check in
+// value position but fail every constant-position use. This is not a new
+// synthetic surface: it is the checker's own unsafe package, shared
+// read-only, and the frozen gofrontend downstream still applies its own
+// (empty) unsafe contract to the merged source, so a program using
+// unsafe members beyond the blank import still fails loudly there.
 func syntheticUnsafePackage() *types.Package {
-	pkg := types.NewPackage("unsafe", "unsafe")
-	pkg.MarkComplete()
-	return pkg
+	return types.Unsafe
 }

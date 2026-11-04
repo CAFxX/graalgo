@@ -1,5 +1,13 @@
 # [SYNC_DESIGN.md](SYNC_DESIGN.md) — P3-M2b `sync` Go bindings
 
+> **RETIRED (review-2026-11-04 NEW-P1-5, mirroring frontend/v1 commit
+> 503608ea):** the synthetic `sync`/`sync/atomic` packages this document
+> designs are deleted. Both packages now resolve from GOROOT source via
+> the general disk path, and their methods compile as ordinary calls.
+> This document is retained as history for the M2 design only; the
+> current contract is pinned by `TestSyncRetiredToDisk` and
+> `TestSyncMapWaitGroupGoDifferential` in `sync_test.go`.
+
 **Scope:** PLAN.md §4 P3-M2 (WS D), GG-0017 sync slice. Implements
 ADR-0002 (freeze exception for the synthetic `sync` package).
 **Status:** implemented 2026-10-06; differential corpus 22/22 vs gc 1.27.1.
