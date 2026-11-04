@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,8 +43,13 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
+	// -tags is honored, not just parsed: the root package is filtered
+	// with go/build (see resolveBuildFiles) and the tag set is passed
+	// to the backend so imported packages select the same files.
+	var bf buildFlags
 	if len(flagArgs) > 0 {
-		bf, err := parseBuildFlags(flagArgs)
+		var err error
+		bf, err = parseBuildFlags(flagArgs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 			return 2
@@ -58,6 +65,8 @@ func cmdRun(root string, args []string) int {
 			return 1
 		}
 	}
+	tags := effectiveBuildTags(bf.tags)
+	backendEnv := backendTagsEnv(tags)
 
 	if len(rest) == 0 {
 		fmt.Fprintf(os.Stderr, "graalgo run: no Go files listed\n")
@@ -83,13 +92,14 @@ func cmdRun(root string, args []string) int {
 		// its own flag).
 		runArgs := append(append([]string{}, progFiles...), "--")
 		runArgs = append(runArgs, progArgs...)
-		return graalgoRunProgram(root, runArgs)
+		return graalgoRunProgramEnv(root, runArgs, backendEnv)
 	}
 
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
-	// the package build).
-	files, err := resolveFiles([]string{target})
+	// the package build). Files are filtered by build constraints and
+	// tags, so OS-gated alternatives never reach the backend together.
+	files, err := resolveBuildFiles([]string{target}, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -105,12 +115,12 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	if code := graalgoRunEnv(root, append([]string{"--check"}, pkgFiles...), backendEnv); code != 0 {
 		return code
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
-	return graalgoRunProgram(root, runArgs)
+	return graalgoRunProgramEnv(root, runArgs, backendEnv)
 }
 
 // buildFlags holds the parsed `go build` flags that the driver recognizes.
@@ -119,7 +129,7 @@ func cmdRun(root string, args []string) int {
 type buildFlags struct {
 	output  string   // -o: output binary path
 	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
-	tags    string   // -tags: build tags (accepted; backend honors via go/build)
+	tags    string   // -tags: build tags (forwarded to the backend; see effectiveBuildTags)
 	pkgs    []string // remaining package/file args
 }
 
@@ -175,6 +185,127 @@ func parseBuildFlags(args []string) (buildFlags, error) {
 	return bf, nil
 }
 
+// splitBuildTags splits a -tags value the way `go build` does: tags are
+// separated by spaces and/or commas.
+func splitBuildTags(s string) []string {
+	return strings.Fields(strings.ReplaceAll(s, ",", " "))
+}
+
+// effectiveBuildTags is the tag set the backend must honor for this
+// invocation: tags already in the environment (which the frontend reads
+// for imported packages) plus the -tags flag value. The flag augments,
+// never replaces, the environment, so a tag set in GRAALGO_BUILD_TAGS
+// cannot be silently dropped by passing -tags. Duplicates are removed.
+func effectiveBuildTags(flagTags string) []string {
+	seen := make(map[string]bool)
+	var tags []string
+	for _, t := range append(splitBuildTags(os.Getenv("GRAALGO_BUILD_TAGS")), splitBuildTags(flagTags)...) {
+		if !seen[t] {
+			seen[t] = true
+			tags = append(tags, t)
+		}
+	}
+	return tags
+}
+
+// backendTagsEnv renders the effective tag set as extra environment for
+// backend invocations, or nil when no tags are set (in which case the
+// backend inherits the caller's environment unchanged).
+func backendTagsEnv(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	return []string{"GRAALGO_BUILD_TAGS=" + strings.Join(tags, " ")}
+}
+
+// resolveBuildFiles is resolveFiles plus build-constraint filtering for
+// package arguments (directories, and the no-argument current directory):
+// only files go/build selects for the current platform and tag set are
+// returned, so OS-gated alternatives and tag-gated files never reach the
+// backend together. Explicitly listed files pass through unfiltered,
+// matching `go build`/`go run` file mode, where named files are compiled
+// as given regardless of their constraints. _test.go files are left for
+// the callers to strip, as before.
+func resolveBuildFiles(args []string, tags []string) ([]string, error) {
+	files, err := resolveFiles(args)
+	if err != nil {
+		return nil, err
+	}
+	// Files named explicitly on the command line (anything that is not
+	// a directory argument) pass through: resolveFiles kept them verbatim.
+	explicit := make(map[string]bool, len(args))
+	for _, a := range args {
+		if fi, err := os.Stat(a); err != nil || !fi.IsDir() {
+			explicit[a] = true
+		}
+	}
+	// One ImportDir per directory: all files from one package share it.
+	// A file reached both as a directory member and as an explicit
+	// argument is emitted once, not twice.
+	selected := make(map[string]map[string]bool)
+	seen := make(map[string]bool)
+	var out []string
+	for _, f := range files {
+		if seen[f] {
+			continue
+		}
+		if explicit[f] {
+			seen[f] = true
+			out = append(out, f)
+			continue
+		}
+		dir := filepath.Dir(f)
+		sel, ok := selected[dir]
+		if !ok {
+			var err error
+			sel, err = packageFiles(dir, tags)
+			if err != nil {
+				return nil, err
+			}
+			selected[dir] = sel
+		}
+		if sel[filepath.Base(f)] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
+// packageFiles returns the set of base names go/build selects from dir as
+// the package's non-test Go files for the current platform and tag set
+// (filename GOOS/GOARCH suffixes and //go:build lines included). A
+// directory with no buildable files yields an empty set, so callers
+// report "no non-test Go files" instead of building the wrong variant.
+// If the directory cannot be loaded for another reason (e.g. a malformed
+// constraint), the unfiltered file set is returned when no tags were
+// requested, letting the backend report the real error as before; when
+// tags were requested, the load error is returned instead — falling back
+// to the unfiltered set would silently build without honoring the tags.
+func packageFiles(dir string, tags []string) (map[string]bool, error) {
+	pkg, err := importDirWithTags(dir, tags)
+	if err != nil {
+		var noGo *build.NoGoError
+		if errors.As(err, &noGo) {
+			return map[string]bool{}, nil
+		}
+		if len(tags) > 0 {
+			return nil, fmt.Errorf("cannot load package in %s: %w", dir, err)
+		}
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		sel := make(map[string]bool, len(matches))
+		for _, m := range matches {
+			sel[filepath.Base(m)] = true
+		}
+		return sel, nil
+	}
+	sel := make(map[string]bool, len(pkg.GoFiles))
+	for _, f := range pkg.GoFiles {
+		sel[f] = true
+	}
+	return sel, nil
+}
+
 // cmdBuild implements `graalgo build [build flags] [packages]`.
 //
 // The named packages are validated through the frontend (the compile
@@ -197,7 +328,10 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	// -tags is honored, not just parsed: see cmdRun above.
+	tags := effectiveBuildTags(bf.tags)
+	backendEnv := backendTagsEnv(tags)
+	files, err := resolveBuildFiles(bf.pkgs, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -225,7 +359,7 @@ func cmdBuild(root string, args []string) int {
 	wireFile.Close()
 	defer os.Remove(wirePath)
 	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
-	if code := graalgoRun(root, emitArgs); code != 0 {
+	if code := graalgoRunEnv(root, emitArgs, backendEnv); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
 		return 1
 	}

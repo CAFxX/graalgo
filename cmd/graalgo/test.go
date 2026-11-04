@@ -298,11 +298,20 @@ func parseModulePath(modData []byte) string {
 	return ""
 }
 
+// importDirWithTags loads dir with go/build, adding tags to the build
+// context (GOOS/GOARCH come from the environment via build.Default).
+// Shared by buildableGoFiles (test) and packageFiles (build/run) so all
+// three commands select files with the same rules.
+func importDirWithTags(dir string, tags []string) (*build.Package, error) {
+	ctxt := build.Default
+	ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), tags...)
+	return ctxt.ImportDir(dir, 0)
+}
+
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
 func buildableGoFiles(dir string) []string {
-	ctxt := build.Default
-	pkg, err := ctxt.ImportDir(dir, 0)
+	pkg, err := importDirWithTags(dir, nil)
 	if err != nil {
 		// Not importable (no go.mod context, etc.): fall back to all
 		// files and let the backend report real errors.
