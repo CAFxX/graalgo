@@ -2,10 +2,16 @@
 # P3-M9 (tier1c): generate synth_regexpsyntax.go (`regexp/syntax`) from gc
 # 1.27.1's regexp/syntax.
 #
-# The per-file sources are concatenated verbatim (each keeps its own
-# import block); the frontend's synthetic-package builder merges those
-# into one import block at load (hoistSyntheticImports in
-# synth_machinery.go) — a general repair, not a generator concern.
+# P1-09: the per-file sources are concatenated with their import
+# blocks hoisted here, in the generator, into a single import block
+# after the package clause — Go requires imports before other
+# declarations, so a concatenated source with scattered imports does
+# not parse. The frontend parses synthetic sources exactly as
+# registered and rejects damaged input loudly; it no longer repairs
+# this (or any other generator damage) at load. Import specs are
+# collected in first-appearance order, duplicates dropped; a spec
+# with a local name (alias, blank, dot) fails loudly rather than
+# being silently rewritten, since regexp/syntax uses none today.
 #
 # Backtick embedding: the concatenated source contains raw string
 # literals (backticks), which cannot nest inside the outer backtick
@@ -13,9 +19,7 @@
 # backtick fragments joined around each inner backtick
 # (`...` + "`" + `...`), never by replacing backticks with quotes
 # (that turns raw strings like `i` into rune literals like 'i', which
-# is lossy and unrecoverable). See restoreRawStrings in
-# synth_machinery.go for the builder-side safety net covering the
-# unambiguous (multi-char) residue of the old naive replacement.
+# is lossy and unrecoverable).
 import os
 import re
 import glob
@@ -47,8 +51,10 @@ HEADER = '''// P3-M9 (tier1c): synthetic `regexp/syntax` package.
 package main
 
 // syntheticRegexpSyntaxSource is the P3-M9 synthetic `regexp/syntax`
-// package: gc's sources concatenated verbatim, one import block per
-// file (merged at load by the builder).
+// package: gc's sources concatenated, with their import blocks merged
+// by the generator into a single import block after the package
+// clause (the emitted source parses as-is; the frontend does not
+// repair it).
 '''
 
 
@@ -65,15 +71,87 @@ def go_embed(s):
     return "(" + " + ".join(out) + ")"
 
 
+def strip_imports(src):
+    """Remove a file's import declaration, returning (src, specs).
+
+    The import declaration is the first code declaration after the
+    package clause, preceded only by comments and blank lines (gc
+    file layout). specs are the import paths in file order, plain
+    quoted paths only. A spec with a local name fails loudly:
+    silently dropping or renaming it would change the compiled
+    source. A file with no import declaration is returned unchanged.
+    """
+    specs = []
+
+    def collect(spec):
+        spec = spec.strip()
+        if not re.fullmatch(r'"[^"]+"', spec):
+            raise SystemExit(
+                "gen_synth_regexpsyntax: non-plain import spec %r "
+                "(alias/blank/dot) — generator must handle it explicitly"
+                % spec)
+        specs.append(spec)
+
+    lines = src.splitlines(keepends=True)
+    i = 0
+    in_block_comment = False
+    while i < len(lines):
+        t = lines[i].strip()
+        if in_block_comment:
+            if "*/" in lines[i]:
+                in_block_comment = False
+            i += 1
+            continue
+        if t == "" or t.startswith("//"):
+            i += 1
+            continue
+        if t.startswith("/*"):
+            if "*/" not in lines[i][lines[i].find("/*") + 2:]:
+                in_block_comment = True
+            i += 1
+            continue
+        break
+    if i >= len(lines) or not lines[i].lstrip().startswith("import"):
+        return src, specs
+    rest = lines[i].lstrip()[len("import"):].strip()
+    if rest.startswith("("):
+        # Block form: consume through the closing ")".
+        j = i + 1
+        while j < len(lines) and lines[j].strip() != ")":
+            if lines[j].strip():
+                collect(lines[j])
+            j += 1
+        if j >= len(lines):
+            raise SystemExit(
+                "gen_synth_regexpsyntax: unterminated import block")
+        return "".join(lines[:i] + lines[j + 1:]), specs
+    # Single form: import "path" (possibly with trailing comment).
+    spec = rest.split("//")[0].strip()
+    collect(spec)
+    return "".join(lines[:i] + lines[i + 1:]), specs
+
+
 def main():
     chunks = ["package syntax\n\n"]
+    imports = []
+    seen = set()
     for path in sorted(glob.glob(f"{GOROOT}/*.go")):
         if "_test" in path:
             continue
         with open(path) as f:
             src = f.read()
         src = re.sub(r"^package syntax\n", "", src, count=1, flags=re.M)
-        chunks.append(src.rstrip() + "\n\n")
+        # strip_imports skips the license/doc comments preceding the
+        # import declaration (gc file layout).
+        stripped, specs = strip_imports(src)
+        for spec in specs:
+            if spec not in seen:
+                seen.add(spec)
+                imports.append(spec)
+        chunks.append(stripped.rstrip() + "\n\n")
+    if imports:
+        chunks.insert(1, "import (\n" + "".join(
+            "\t%s\n" % spec for spec in imports) + ")\n\n")
     inner = "".join(chunks).rstrip() + "\n"
     out = HEADER + \
         "const syntheticRegexpSyntaxSource = " + go_embed(inner) + "\n"

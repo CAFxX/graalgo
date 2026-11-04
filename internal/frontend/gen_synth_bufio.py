@@ -200,6 +200,75 @@ def strip_package(src):
     return re.sub(r"^package bufio\n", "", src, count=1, flags=re.M)
 
 
+def convert_raw_strings(src):
+    """Convert Go raw strings to interpreted strings.
+
+    P1-09: the frontend no longer repairs backtick-stripping damage at
+    load, so the generator must emit parseable Go itself. Copied from
+    gen_synth_archive_mime.py: raw strings become interpreted strings
+    (escapes rewritten), '`' rune literals become '\\x60', comment
+    backticks become "'". A naive src.replace("`", "'") would turn a
+    multi-char raw string into an illegal rune literal and a 1-char raw
+    string into a rune, silently changing its type.
+    """
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        if src.startswith('//', i):
+            j = src.find('\n', i)
+            if j == -1: j = n
+            out.append(src[i:j].replace('`', "'"))
+            i = j
+            continue
+        if src.startswith('/*', i):
+            j = src.find('*/', i)
+            j = n if j == -1 else j + 2
+            out.append(src[i:j].replace('`', "'"))
+            i = j
+            continue
+        if src[i] == '"' or src[i] == "'":
+            q = src[i]
+            if q == "'" and src.startswith("'`'", i):
+                out.append("'\\x60'")
+                i += 3
+                continue
+            j = i + 1
+            while j < n:
+                if src[j] == '\\':
+                    j += 2
+                    continue
+                if src[j] == q:
+                    j += 1
+                    break
+                j += 1
+            out.append(src[i:j])
+            i = j
+            continue
+        if src[i] == '`':
+            j = src.find('`', i+1)
+            if j == -1:
+                out.append("'")
+                i += 1
+                continue
+            content = src[i+1:j]
+            esc = []
+            for ch in content:
+                if ch == '\\': esc.append('\\\\')
+                elif ch == '"': esc.append('\\"')
+                elif ch == '\n': esc.append('\\n')
+                elif ch == '\r': esc.append('\\r')
+                elif ch == '\t': esc.append('\\t')
+                elif ord(ch) < 0x20 or ord(ch) == 0x7f:
+                    esc.append('\\x%02x' % ord(ch))
+                else: esc.append(ch)
+            out.append('"' + ''.join(esc) + '"')
+            i = j + 1
+            continue
+        out.append(src[i])
+        i += 1
+    return ''.join(out)
+
+
 def replace_utf8(src):
     # Replace utf8.X with __bufioX.
     src = src.replace("utf8.DecodeRune", "__bufioDecodeRune")
@@ -366,9 +435,10 @@ def main():
         src = strip_package(src)
         src = strip_imports(src)
         src = replace_utf8(src)
-        # Strip backticks (they would terminate the Go raw string literal
-        # that embeds this source). Replace with single quotes.
-        src = src.replace("`", "'")
+        # Convert backticks (they would terminate the Go raw string
+        # literal that embeds this source) via convert_raw_strings:
+        # raw strings become interpreted strings, not quote damage.
+        src = convert_raw_strings(src)
         # Transform multi-result methods (only in bufio.go; scan.go has
         # none). Keep originals for type-checking; they are skipped
         # during emission.
