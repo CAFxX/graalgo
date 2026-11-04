@@ -7,10 +7,6 @@
       "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
     },
     {
-      "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
-    },
-    {
       "program": "17_generics",
       "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
     },
@@ -48,7 +44,7 @@
     }
   ],
   "format": "graalgo-behavior-snapshot/v1",
-  "graalgoCommit": "10b6c50708ec3ad46e3cdab6fd2c65555521babe",
+  "graalgoCommit": "473e50fe5c4a711319f54621e2c21277178681cc",
   "normalizer": "harness.Normalize+backend.stderrFilters/v1",
   "programs": [
     {
@@ -181,6 +177,17 @@
       "stderr": "",
       "stdin": "",
       "stdout": "apple 5\ndate 4\nfig 1\npear 3\n5 true\n0 false\n3\n9\n",
+      "timedOut": false
+    },
+    {
+      "args": [],
+      "buildLog": "",
+      "buildOk": true,
+      "exitCode": 0,
+      "name": "14_goroutines_sum",
+      "stderr": "",
+      "stdin": "",
+      "stdout": "36\n",
       "timedOut": false
     },
     {
@@ -470,6 +477,6 @@
       "stderr": ""
     }
   ],
-  "recordedAt": "2026-10-14T13:37:58Z",
+  "recordedAt": "2026-11-04T07:06:00Z",
   "toolchain": "go1.27.1"
 }
