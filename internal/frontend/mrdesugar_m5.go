@@ -3426,9 +3426,53 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 
 // multiResultHelper resolves a desugar plan's __-helper to its
 // *types.Func in the synthetic package scope.
+//
+// P1-07 compile-time error path: this is the single funnel through
+// which every direct call emission reaches a disk __-helper (concrete
+// calls in assign/bare/defer/go positions, nested/hoisted calls, and
+// func-value formation — all desugar paths resolve the helper here
+// and propagate the error). A disk spec marked unbound (body-less
+// declaration with no //go:linkname binding, so no backend intrinsic
+// can serve it) therefore fails the export with a named scope error
+// instead of emitting a call to the helper's panic body, which
+// previously surfaced as a user-runtime panic. The check runs before
+// any disk-package lookup, so it also fires when the helper's package
+// would otherwise fail to load for an unrelated reason.
+//
+// Why not "prove every helper has an intrinsic" instead: the backend
+// intrinsic registry is Java-side (LinknameRootNode dispatch); the
+// frontend has no list of it to check against, and a linkname-bound
+// helper already fails fast at the backend when its symbol is
+// unprovided. The mechanical frontend proof available is the negative
+// one used here: a panic-body helper provably has no provider.
+//
+// OPEN DESIGN QUESTION (interface dispatch, not covered by this
+// guard): interface calls do not resolve through multiResultHelper —
+// exportIfaceMethodCall builds an ifacemethod node and the backend
+// dispatches via the itab, which methodTableEntries wires straight
+// to the helper funcdecl. An unbound concrete method invoked through
+// an interface value therefore still reaches the panic body at
+// runtime. Erroring in methodTableEntries was rejected deliberately:
+// it runs from describeType/recomputeMethodTables for every described
+// named/pointer type, so it would fail programs that merely declare
+// or convert such a type without calling the method (against the
+// codebase's own merely-declare principle, cf. methodTableEntry's
+// "unsupported" handling). The consistent follow-up is a methodEntry
+// "unbound" marker consumed by the backend dispatcher to fail fast
+// at dispatch with the method named (the P3-M3 "unsupported"
+// precedent) — backend work, left open for the coordinator to scope;
+// until then, the panic message names the unbound declaration.
 func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 	var sp *syntheticPackage
 	if plan.isDisk {
+		// P1-07: refuse to emit a call to an unbound helper.
+		if spec := lookupDiskMRByHelper(plan.helperPkg, plan.helperName); spec != nil && spec.unbound {
+			name := spec.name
+			if spec.recvType != "" {
+				name = spec.recvType + "." + name
+			}
+			return nil, scopeErrorf("call to %s.%s is not supported in frontend/v1 scope: the function is a body-less declaration with no Go body and no //go:linkname binding, so no backend intrinsic can serve its __-helper %s; emitting the call would panic at runtime (P1-07)", spec.pkgPath, name, spec.helper)
+		}
 		// WS G (P3-M9): disk-built package (transformDiskMultiResult).
 		var err error
 		sp, err = getDiskPackage(plan.helperPkg)

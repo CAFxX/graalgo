@@ -38,6 +38,18 @@ type diskMRSpec struct {
 	pairType   string // "__parsePair"
 	pairFields []string
 	stub       *ast.FuncDecl // removed after type-check
+	// unbound marks a body-less declaration whose __-helper got the
+	// fail-fast panic body because no //go:linkname binding exists
+	// (P1-07): no Go body, no directive, or a generic declaration
+	// whose linkname binding is out of M4 scope. There is no backend
+	// intrinsic that can serve such a helper — the panic body is
+	// defense-in-depth only. Every direct call emission to an unbound
+	// helper is a compile-time error (multiResultHelper); the helper
+	// must never be reachable from a successfully exported program
+	// except via interface dispatch, where the itab wires to the
+	// helper funcdecl directly (see the P1-07 design note in
+	// multiResultHelper and the open question recorded with it).
+	unbound bool
 }
 
 var (
@@ -60,8 +72,12 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 			// Body-less declarations (e.g. //go:noescape assembly stubs
 			// like reflect's chanrecv) are included: their call sites
-			// still need desugaring, and the generated __-helper gets a
-			// panic body (the real implementation is a backend intrinsic).
+			// still need desugaring. When no //go:linkname binding
+			// exists, the generated __-helper gets a panic body and
+			// the spec is marked unbound (P1-07): no backend
+			// intrinsic can serve it, so call emission to it is a
+			// compile-time error (multiResultHelper) rather than a
+			// user-runtime panic.
 			if numResults(fd) > 1 {
 				mrNames[fd.Name.Name] = true
 			}
@@ -391,10 +407,12 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 // mrLinknameSymbol returns the backend symbol for a body-less
 // declaration carrying a //go:linkname or //go:linknamestd directive,
 // or ("", false) when there is none. A malformed directive also yields
-// ("", false): this transform cannot report errors, and the panic stub
-// is the safe fallback. linknamestd (gc's std-only linkname, no
-// explicit symbol) resolves under the package's default object symbol,
-// as for a single-field //go:linkname.
+// ("", false): this transform cannot report errors, so the caller
+// marks the spec unbound (P1-07) and call emission fails at export
+// time (multiResultHelper); the panic body is defense-in-depth only,
+// never the user-visible outcome for a direct call. linknamestd
+// (gc's std-only linkname, no explicit symbol) resolves under the
+// package's default object symbol, as for a single-field //go:linkname.
 func mrLinknameSymbol(fd *ast.FuncDecl, pkgPath string) (string, bool) {
 	if fd.Doc == nil {
 		return "", false
@@ -858,19 +876,27 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// bindings).
 	//
 	// Body-less declarations (e.g. //go:noescape assembly stubs like
-	// reflect's chanrecv): there is no body to rewrite. By default the
-	// __-helper gets a fail-fast panic body — the real implementation
-	// is a backend intrinsic. EXCEPTION (fix-redmaster-r42): a
-	// body-less declaration carrying a //go:linkname or //go:linknamestd
-	// directive is served by a backend intrinsic, so its __-helper must
-	// be linkname-bound, not a panic stub. That is possible for the
-	// helper even though it is not possible for the original
-	// multi-result declaration: the helper returns a single pair value,
-	// which LinknameRootNode dispatch can carry. The helper is therefore
-	// emitted body-less with a synthesized directive, and the exporter
-	// binds it through the existing bodyless→linkname path. Body-less
-	// declarations WITHOUT a directive, and generic ones (whose linkname
-	// binding is out of M4 scope), keep the panic body exactly as before.
+	// reflect's chanrecv): there is no body to rewrite. EXCEPTION
+	// (fix-redmaster-r42): a body-less declaration carrying a
+	// //go:linkname or //go:linknamestd directive is served by a
+	// backend intrinsic, so its __-helper must be linkname-bound, not
+	// a panic stub. That is possible for the helper even though it is
+	// not possible for the original multi-result declaration: the
+	// helper returns a single pair value, which LinknameRootNode
+	// dispatch can carry. The helper is therefore emitted body-less
+	// with a synthesized directive, and the exporter binds it through
+	// the existing bodyless→linkname path (whose backend fails fast,
+	// naming the symbol, when nothing provides it). Body-less
+	// declarations WITHOUT a directive, and generic ones (whose
+	// linkname binding is out of M4 scope), keep the panic body as
+	// defense-in-depth only, and the spec is marked unbound (P1-07):
+	// no backend intrinsic can serve such a helper, so every direct
+	// call emission to it is a compile-time error (multiResultHelper)
+	// instead of a user-runtime panic. The panic body itself is
+	// reachable from a successful export only via interface dispatch,
+	// which wires the itab straight to the helper funcdecl — that
+	// residual path is the recorded P1-07 open design question (see
+	// multiResultHelper), not a silent success.
 	var rewrittenBody *ast.BlockStmt
 	var helperDoc *ast.CommentGroup
 	if fd.Body == nil {
@@ -888,7 +914,7 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 						X: &ast.CallExpr{
 							Fun: ast.NewIdent("panic"),
 							Args: []ast.Expr{&ast.BasicLit{Kind: token.STRING,
-								Value: `"__` + helper + ` not implemented: no Go body (backend intrinsic)"`}},
+								Value: `"__` + helper + ` not implemented: unbound body-less declaration, no backend intrinsic"`}},
 						},
 					},
 				},
@@ -984,6 +1010,11 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 		pairType:   pairType,
 		pairFields: pairFields,
 		stub:       stubDecl,
+		// P1-07: exactly the panic-body case. helperDoc is set only
+		// inside the fd.Body == nil branch for linkname-bound
+		// declarations, so body-less + helperDoc == nil is precisely
+		// "panic body emitted"; bodied functions are never unbound.
+		unbound: fd.Body == nil && helperDoc == nil,
 	}
 	// The original fd is DISCARDED (replaced by helper+stub). We return
 	// the three new decls; the caller splices them in.
@@ -2086,6 +2117,25 @@ func lookupDiskMR(pkgPath, name, recvType string) *diskMRSpec {
 	for i := range diskMRSpecs {
 		s := &diskMRSpecs[i]
 		if s.pkgPath == pkgPath && s.name == name && s.recvType == recvType {
+			return s
+		}
+	}
+	return nil
+}
+
+// lookupDiskMRByHelper finds a disk spec by its __-helper name, for
+// call-emission guards (multiResultHelper) that know only the plan's
+// helper package/name, not the original function name/receiver.
+// Interface-method specs (helper == "") never match.
+func lookupDiskMRByHelper(pkgPath, helper string) *diskMRSpec {
+	if helper == "" {
+		return nil
+	}
+	diskMRMu.Lock()
+	defer diskMRMu.Unlock()
+	for i := range diskMRSpecs {
+		s := &diskMRSpecs[i]
+		if s.pkgPath == pkgPath && s.helper == helper {
 			return s
 		}
 	}
