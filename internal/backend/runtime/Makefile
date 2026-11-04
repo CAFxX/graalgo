@@ -179,7 +179,10 @@ check: main $(OUT_TEST)/.built
 	-Dpinaudit.test.cp="$(TEST_CP)" \
 	-cp "$(RUN_CP)" graalgo.sched.audit.PinAudit --tests --gmp 2 \
 	> out/test-tmp/pin-smoke.log 2>&1; \
-	rc=$$?; tail -3 out/test-tmp/pin-smoke.log; exit $$rc
+	rc=$$?; tail -40 out/test-tmp/pin-smoke.log; exit $$rc
+# NB: the tail must cover the whole report + the CHILD_FAIL summary block
+# PinAudit prints last on a failed tests leg (2026-11-04: the CI failure
+# named no test because the tail showed only the verdict lines).
 
 # P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
 # suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and

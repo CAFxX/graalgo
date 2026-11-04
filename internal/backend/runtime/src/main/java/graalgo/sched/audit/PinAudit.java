@@ -49,6 +49,19 @@ import jdk.jfr.consumer.RecordingFile;
  * Exit 0 iff zero unexpected pins; exit 1 otherwise (or on tool error).
  * The JFR plumbing uses inline {@code -XX:StartFlightRecording} event
  * settings — a bare custom .jfc silently enables nothing (P2-M7 spike).
+ *
+ * <p>Diagnosability (2026-11-04, red-master pin-smoke failure): a child
+ * JVM's stdout/stderr used to be discarded, so when the {@code --tests}
+ * leg failed, the audit report named no failing test and the CI log
+ * (which tails only the report) could not identify the cause. Every
+ * child now writes its output to {@code <label>.child.log} next to its
+ * JFR recording in the audit work dir, and when the tests leg fails the
+ * audit prints a CHILD_RESULT/CHILD_FAIL summary block as its LAST
+ * lines: the failing test names (and, on a child timeout, the last
+ * completed test, pointing at the hung one). The work dir is cleaned
+ * only on success, so on failure the child logs survive for local
+ * inspection; in CI the summary block is the channel that survives,
+ * via the Makefile's widened tail of the smoke log.
  */
 public final class PinAudit {
 
@@ -119,10 +132,13 @@ public final class PinAudit {
         for (Path prog : programsList) {
             programs++;
             Path jfr = work.resolve("p" + programs + ".jfr");
-            int exit = runChild(jfr, gmp,
-                    new String[]{"--gmp=" + gmp, prog.toString()});
-            if (exit != 0) {
-                skipped.add(prog + " (exit " + exit + ")");
+            ChildResult child = runChild(jfr, gmp,
+                    new String[]{"--gmp=" + gmp, prog.toString()},
+                    "p" + programs);
+            if (child.exit != 0) {
+                skipped.add(prog + (child.timedOut
+                        ? " (timeout after " + CHILD_TIMEOUT_MINUTES + "m)"
+                        : " (exit " + child.exit + ")"));
             }
             try {
                 AuditResult r = readPins(jfr, prog.toString(), allow);
@@ -139,12 +155,22 @@ public final class PinAudit {
         }
         boolean testsUnreadable = false;
         boolean testsFailed = false;
+        boolean testsTimedOut = false;
+        int testsExit = 0;
+        Path testsChildLog = null;
         if (runTests) {
             programs++;
             Path jfr = work.resolve("tests.jfr");
-            int exit = runChild(jfr, gmp, new String[]{"__TESTS__"});
-            if (exit != 0) {
-                skipped.add("SchedTestRunner (exit " + exit + ")");
+            ChildResult child = runChild(jfr, gmp, new String[]{"__TESTS__"},
+                    "tests");
+            testsChildLog = child.childLog;
+            testsExit = child.exit;
+            testsTimedOut = child.timedOut;
+            if (child.exit != 0) {
+                skipped.add("SchedTestRunner ("
+                        + (child.timedOut ? "timeout after " + CHILD_TIMEOUT_MINUTES + "m"
+                                : "exit " + child.exit)
+                        + ")");
                 // Reviewer1 P1-1: the --tests leg is the pin-relevant
                 // coverage; a non-zero exit means the suite did not run
                 // clean, so PASS would be vacuous.
@@ -228,6 +254,14 @@ public final class PinAudit {
                         + " testsUnreadable=" + testsUnreadable
                         + " unreadable=" + unreadable.size() + "/" + programs);
             }
+            // Last lines on a failed tests leg: name the failing test(s)
+            // (or, on a timeout, the last completed test) so the CI log,
+            // which tails this report, identifies the cause.
+            if (testsFailed) {
+                printChildSummary(testsExit, testsTimedOut, testsChildLog);
+                System.out.println("CHILD_LOGS: " + work.toAbsolutePath()
+                        + " (per-leg <label>.child.log; work dir kept on failure)");
+            }
             System.exit(1);
         }
         // Clean up the temp dir (reviewer1 nit: was littered).
@@ -243,10 +277,80 @@ public final class PinAudit {
     }
 
     /**
-     * Runs one child JVM with the pin event enabled. {@code mainArgs[0] ==
-     * "__TESTS__"} selects the test runner instead of SchedMain.
+     * Child watchdog: the tests leg measures 230s locally (2026-11-04),
+     * so a 5m watchdog left only ~70s headroom for a shared CI runner —
+     * a healthy-but-slow suite could trip it and fail the audit with
+     * no failing test. 10m keeps a hung child bounded (the CI job
+     * timeout is 90m) while giving 2.6x headroom over the measured
+     * duration; any future trip is labeled TIMED OUT in CHILD_RESULT
+     * with the last completed test, so it can never again masquerade
+     * as a test failure.
      */
-    private static int runChild(Path jfr, int gmp, String[] mainArgs)
+    private static final int CHILD_TIMEOUT_MINUTES = 10;
+
+    /** Outcome of one child JVM run, including its captured output file. */
+    private static final class ChildResult {
+        final int exit;
+        final boolean timedOut;
+        final Path childLog;
+
+        ChildResult(int exit, boolean timedOut, Path childLog) {
+            this.exit = exit;
+            this.timedOut = timedOut;
+            this.childLog = childLog;
+        }
+    }
+
+    /**
+     * Prints the tests-leg failure summary as the audit's last lines:
+     * the child exit (or timeout), every {@code FAIL <test>} line from
+     * the captured child output, and — when nothing failed by name
+     * (timeout, or a crash outside the runner loop) — the last completed
+     * test, which points at the hung or crashing test.
+     */
+    private static void printChildSummary(int exit, boolean timedOut,
+            Path childLog) {
+        System.out.println("CHILD_RESULT: SchedTestRunner "
+                + (timedOut ? "TIMED OUT after " + CHILD_TIMEOUT_MINUTES + "m (killed)"
+                        : "exit=" + exit));
+        if (childLog == null) {
+            System.out.println("CHILD_LOG: (none recorded)");
+            return;
+        }
+        System.out.println("CHILD_LOG: " + childLog.toAbsolutePath());
+        List<String> lines;
+        try {
+            lines = Files.readAllLines(childLog, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.out.println("CHILD_LOG_UNREADABLE: " + e.getMessage());
+            return;
+        }
+        List<String> fails = lines.stream()
+                .filter(l -> l.startsWith("FAIL ")).toList();
+        String lastPass = null;
+        for (String l : lines) {
+            if (l.startsWith("PASS ")) {
+                lastPass = l;
+            }
+        }
+        if (fails.isEmpty()) {
+            System.out.println("CHILD_FAIL: (no FAIL line in child output)");
+        } else {
+            System.out.println("CHILD_FAILURES: " + fails.size());
+            fails.forEach(f -> System.out.println("CHILD_FAIL: " + f));
+        }
+        System.out.println("CHILD_LAST_PASS: "
+                + (lastPass != null ? lastPass : "(none completed)"));
+    }
+
+    /**
+     * Runs one child JVM with the pin event enabled. {@code mainArgs[0] ==
+     * "__TESTS__"} selects the test runner instead of SchedMain. The
+     * child's stdout/stderr go to {@code <label>.child.log} next to the
+     * JFR recording — never discarded, so a failure stays diagnosable.
+     */
+    private static ChildResult runChild(Path jfr, int gmp, String[] mainArgs,
+            String label)
             throws IOException, InterruptedException {
         String java = System.getProperty("java.home") + "/bin/java";
         String cp = System.getProperty("java.class.path");
@@ -278,16 +382,17 @@ public final class PinAudit {
             cmd.add("graalgo.sched.launcher.SchedMain");
             cmd.addAll(List.of(mainArgs));
         }
+        Path childLog = jfr.resolveSibling(label + ".child.log");
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+        pb.redirectErrorStream(true);
+        pb.redirectOutput(childLog.toFile());
         Process p = pb.start();
-        boolean done = p.waitFor(5, TimeUnit.MINUTES);
+        boolean done = p.waitFor(CHILD_TIMEOUT_MINUTES, TimeUnit.MINUTES);
         if (!done) {
             p.destroyForcibly();
-            return -1;
+            return new ChildResult(-1, true, childLog);
         }
-        return p.exitValue();
+        return new ChildResult(p.exitValue(), false, childLog);
     }
 
     /** Reads pin events from one recording and classifies them. Package-visible for tests. */
