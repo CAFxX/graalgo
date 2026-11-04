@@ -11,7 +11,9 @@ import graalgo.sched.SchedulerCore;
  *
  * <p>Covers: sleep parks (slot release at GOMAXPROCS=1), sleep(0)
  * fast path, After/Timer/Ticker delivery, Stop/Reset edge semantics
- * (Go 1.23+ drain rule, verified vs gc 1.27.1 — see corpus/timers).
+ * (Go 1.23+ drain rule, verified vs gc 1.27.1 — see corpus/timers),
+ * MaxInt64 overflow clamping (NEW-P1-6): far-future timers/sleeps
+ * stay pending without starving later timers/sleepers.
  * Differential output-order tests live in
  * {@code graalgo.sched.TimerDifferentialTest}.
  *
@@ -247,6 +249,72 @@ public final class TimerTest {
             assertTrue(drain((GoChan) t.channel(), sched) == 1,
                     "expected exactly one (new) value, stale must be dropped");
         });
+    }
+
+    // NEW-P1-6: a MaxInt64 deadline must stay pending (gc: Stop()
+    // returns true, channel not fired) WITHOUT starving later timers.
+    // The overflow is a heap-head poison, not an early fire: the
+    // wrapped deadline sorts first, and the timer loop's wait
+    // (deadline - now) wraps again to +MAX, so the thread waits
+    // ~forever on it and every later timer behind it never fires.
+    // Asserting only "max timer not fired" would PASS on the bug —
+    // the later-timer assertions are the discriminating ones.
+    public void testTimerMaxIntDoesNotStarve() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer t = GoTimer.newTimer(Long.MAX_VALUE);
+            GoTimer later = GoTimer.newTimer(20_000_000L);
+            Thread.sleep(150);
+            assertTrue(drain((GoChan) later.channel(), sched) == 1,
+                    "later timer starved by MaxInt64 timer");
+            assertTrue(drain((GoChan) t.channel(), sched) == 0,
+                    "MaxInt64 timer fired");
+            assertTrue(t.stop(), "MaxInt64 timer still active (gc: Stop()=true)");
+            later.stop();
+        });
+    }
+
+    // NEW-P1-6, Reset shape: same heap-head poison via reset().
+    public void testTimerResetMaxIntDoesNotStarve() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer t = GoTimer.newTimer(500_000_000L);
+            assertTrue(t.reset(Long.MAX_VALUE), "reset on active");
+            GoTimer later = GoTimer.newTimer(20_000_000L);
+            Thread.sleep(150);
+            assertTrue(drain((GoChan) later.channel(), sched) == 1,
+                    "later timer starved by Reset(MaxInt64) timer");
+            assertTrue(drain((GoChan) t.channel(), sched) == 0,
+                    "Reset(MaxInt64) timer fired");
+            assertTrue(t.stop(), "Reset(MaxInt64) timer still active");
+            later.stop();
+        });
+    }
+
+    // NEW-P1-6, Sleep shape: Sleep(MaxInt64) must neither wake nor
+    // starve a short sleeper. No withScheduler: its awaitQuiescence
+    // would hang on the MaxInt64 sleeper, which by design never
+    // wakes; the sleeper is left parked on its own (daemon-served)
+    // scheduler, which is uninstalled below and never reused.
+    public void testSleepMaxIntDoesNotStarve() throws Exception {
+        SchedulerCore s = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        s.start();
+        SchedulerCore.install(s);
+        try {
+            AtomicBoolean wokeMax = new AtomicBoolean(false);
+            AtomicBoolean wokeShort = new AtomicBoolean(false);
+            s.spawn(() -> {
+                Timers.sleep(Long.MAX_VALUE);
+                wokeMax.set(true);
+            });
+            s.spawn(() -> {
+                Timers.sleep(50_000_000L);
+                wokeShort.set(true);
+            });
+            Thread.sleep(200);
+            assertFalse(wokeMax.get(), "Sleep(MaxInt64) woke");
+            assertTrue(wokeShort.get(), "short sleeper starved by Sleep(MaxInt64)");
+        } finally {
+            SchedulerCore.install(null);
+        }
     }
 
     // Ticker delivers repeated ticks; Stop ends them.

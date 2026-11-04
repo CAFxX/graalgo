@@ -59,6 +59,17 @@ public final class GoTimer implements TimerHeap.ChanOwner {
         this.chan = new TimerChan();
         this.periodNanos = periodNanos;
         long deadline = System.nanoTime() + Math.max(0, ns);
+        if (deadline < 0) {
+            // NEW-P1-6 overflow guard (same guard as the
+            // TimerHeap.fireChanLocked ticker re-arm): a wrapped
+            // deadline sorts at the heap head, and the timer loop's
+            // wait computation (deadline - now) wraps again to +MAX,
+            // so the entry waits ~forever AND starves every later
+            // timer behind it. Clamp to the far-future tail instead:
+            // the timer stays pending (gc parity) without poisoning
+            // the heap.
+            deadline = Long.MAX_VALUE;
+        }
         // P1-1: addChan assigns this.id under heap→owner locks before
         // the entry is visible; no this-escape before id assignment.
         heap.addChan(deadline, chan, this, periodNanos, generation);
@@ -137,7 +148,11 @@ public final class GoTimer implements TimerHeap.ChanOwner {
         if (periodNanos > 0 && ns <= 0) {
             Panic.throwPanic(GoStrings.of("non-positive interval for Ticker.Reset"));
         }
-        return heap.resetChan(this, System.nanoTime() + Math.max(0, ns));
+        long deadline = System.nanoTime() + Math.max(0, ns);
+        if (deadline < 0) {
+            deadline = Long.MAX_VALUE; // NEW-P1-6 overflow guard, see ctor
+        }
+        return heap.resetChan(this, deadline);
     }
 
     // ---- TimerHeap.ChanOwner ----

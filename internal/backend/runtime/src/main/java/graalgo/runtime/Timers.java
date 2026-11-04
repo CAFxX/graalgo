@@ -43,8 +43,11 @@ public final class Timers {
         // Register BEFORE parking (P2-D7): the timer thread's unpark is
         // safe even if it wins the race (drainer unparkPending absorbs
         // unpark-before-parked).
-        sched.timerHeap().addSleep(
-                System.nanoTime() + ns, sched.currentGoroutine());
+        long deadline = System.nanoTime() + ns;
+        if (deadline < 0) {
+            deadline = Long.MAX_VALUE; // NEW-P1-6 overflow guard, cf. GoTimer
+        }
+        sched.timerHeap().addSleep(deadline, sched.currentGoroutine());
         // P2-M6: a sleeping goroutine parks with reason TIMER. No
         // ChannelBlock — sleep is not a channel operation.
         sched.parkCurrent(null, ParkReason.TIMER);
