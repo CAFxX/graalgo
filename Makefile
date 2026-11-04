@@ -320,3 +320,19 @@ clean:
 	$(MAKE) -C internal/backend/truffle clean
 	$(MAKE) -C internal/backend/runtime clean
 	$(MAKE) -C internal/backend/interop clean
+
+# End-to-end: real published Go modules ([test/e2e/](test/e2e/),
+# review-2026-11-04 NEW-P1-9). Opt-in, NOT in `all`: it needs `generate` +
+# `build` (gofrontend binary + backend classes) and runs the uuid probe
+# cases through [internal/backend/graalgo-sync-run](internal/backend/graalgo-sync-run).
+# The runner defaults its scratch to the probe dir's .tmp (gitignored), so
+# no TMPDIR override is needed here. Run a single case directly with
+# `test/e2e/run_module.sh test/e2e/uuid <case>`.
+# `generate`'s build.sh calls bare `go`, which the root Makefile's GO
+# variable does not put on PATH (the truffle Makefile supplies it for its
+# own build.sh call). This target-specific PATH covers generate, build,
+# and the runner; it touches no other target.
+.PHONY: test-e2e
+test-e2e: PATH := $(dir $(GO)):$(PATH)
+test-e2e: generate build
+	test/e2e/run_module.sh test/e2e/uuid
