@@ -3,30 +3,26 @@
 # runs under stock gc 1.27.1 and under graalgo. Compares stdout bytes
 # (programs print with %x / %.17g to catch single-bit differences).
 #
-# GR defaults to $HOME/workspace/graalgo (the integrated tree); override
-# with GRAALGO_HOME for worktree testing.
-set -uo pipefail
+# GR defaults to the checkout containing this script; override
+# with GR or GRAALGO_HOME for worktree testing.
+set -euo pipefail
 cd "$(dirname "$0")"
 
-GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+SCRIPT_DIR="$(pwd)"
+GR="${GR:-${GRAALGO_HOME:-$SCRIPT_DIR}}"
+while [ "$GR" != "/" ] && [ ! -d "$GR/internal/backend" ]; do GR="$(dirname "$GR")"; done
+[ -d "$GR/internal/backend" ] || { echo "$(basename "$0"): cannot locate repo root (no internal/backend under $SCRIPT_DIR); set GR to a graalgo checkout" >&2; exit 2; }
+GRAALGO_SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
+[ -x "$GRAALGO_SYNC_RUN" ] || { echo "$(basename "$0"): $GRAALGO_SYNC_RUN missing/not executable; run 'make generate build' at the repo root first" >&2; exit 2; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "$(basename "$0"): backend classes not built; run 'make generate build' at the repo root first" >&2; exit 2; }
+GRAALGO_RUN=( "$GRAALGO_SYNC_RUN" )
 export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
-export GOCACHE="$HOME/workspace/.gocache-m7-math"
+export TMPDIR="${TMPDIR:-$GR/test/corpus/wave1/.tmp}"
+export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-m7-math}"
 mkdir -p "$TMPDIR"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== graalgo backend: $GRAALGO_SYNC_RUN =="
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -39,8 +35,10 @@ run_one() { # $1 = go file
     local gcbin="$TMP/$base.gc"
 
     go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
-    "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
-    "${GRAALGO_RUN[@]}" --gmp=1 "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    local gc_exit
+    if "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; then gc_exit=0; else gc_exit=$?; fi
+    local gr_exit
+    if "${GRAALGO_RUN[@]}" --gmp=1 "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; then gr_exit=0; else gr_exit=$?; fi
 
     local ok=1
     cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base: stdout differs"; diff "$TMP/gc.out" "$TMP/gr.out" | head -5; }

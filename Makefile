@@ -104,9 +104,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-corpus-smoke test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression test-corpus-smoke
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -160,6 +160,23 @@ test-regression: generate build graalgo
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
+
+# Corpus smoke: the wave-1 _smoke harness (2 programs, gmp=1 and gmp=4)
+# through the repointed test/corpus/wave1/run_wave.sh and the
+# internal/backend/graalgo-sync-run launcher. In `all` (hence per-push
+# CI): proves at least one corpus runner still runs end to end after
+# the phases/ retirement. The full wave corpora (70/82/167 programs,
+# each a JVM start per leg) stay out of per-push CI — run them locally
+# via test/corpus/wave{1,2,3}/run_wave*.sh.
+# /tmp is a 512M shared tmpfs: keep go build/test temps on persistent
+# disk, as test-regression does (test/corpus/wave1/.tmp and .gocache are
+# gitignored).
+CORPUS_SMOKE_TMP := $(CURDIR)/test/corpus/wave1/.tmp
+test-corpus-smoke: generate build
+	mkdir -p $(CORPUS_SMOKE_TMP) && \
+	TMPDIR="$(CORPUS_SMOKE_TMP)" GOTMPDIR="$(CORPUS_SMOKE_TMP)" \
+	GOCACHE="$(CURDIR)/test/corpus/wave1/.gocache" \
+	./test/corpus/wave1/run_wave.sh _smoke
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the

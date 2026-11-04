@@ -9,33 +9,29 @@
 #   stderr line is compared (wave3 convention).
 #
 # Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
+#   GR        repo root (default: the checkout containing this script)
 #   GO        gc toolchain (default ~/tools/go/bin/go)
-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
 #   TMPDIR    scratch (default <probe-dir>/.tmp, created)
 #
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
-set -uo pipefail
+set -euo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+GR="${GR:-$SCRIPT_DIR}"
+while [ "$GR" != "/" ] && [ ! -d "$GR/internal/backend" ]; do GR="$(dirname "$GR")"; done
+[ -d "$GR/internal/backend" ] || { echo "$(basename "$0"): cannot locate repo root (no internal/backend under $SCRIPT_DIR); set GR to a graalgo checkout" >&2; exit 2; }
+GRAALGO_SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
+[ -x "$GRAALGO_SYNC_RUN" ] || { echo "$(basename "$0"): $GRAALGO_SYNC_RUN missing/not executable; run 'make generate build' at the repo root first" >&2; exit 2; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "$(basename "$0"): backend classes not built; run 'make generate build' at the repo root first" >&2; exit 2; }
+GRAALGO_RUN=( "$GRAALGO_SYNC_RUN" )
 GO="${GO:-$HOME/tools/go/bin/go}"
-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
-fi
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
@@ -56,13 +52,15 @@ for c in "${cases[@]}"; do
     # gc leg (module-aware; module cache supplies deps, no network)
     ( cd "$PROBE_DIR" && GOFLAGS=-mod=mod "$GO" build -o "$TMPDIR/$c.gcbin" "./$c" ) \
         || { rows+=("FAIL $c [gc build failed]"); fail=$((fail+1)); continue; }
-    "$TMPDIR/$c.gcbin" > "$TMPDIR/$c.gc.out" 2> "$TMPDIR/$c.gc.err"
-    gc_exit=$?
+    if "$TMPDIR/$c.gcbin" > "$TMPDIR/$c.gc.out" 2> "$TMPDIR/$c.gc.err"; then gc_exit=0; else gc_exit=$?; fi
     # graalgo legs
     for gmp in 1 4; do
-        "${GRAALGO_RUN[@]}" --gmp="$gmp" "$casedir/main.go" \
-            > "$TMPDIR/$c.gr$gmp.out" 2> "$TMPDIR/$c.gr$gmp.err"
-        eval "gr${gmp}_exit=$?"
+        if "${GRAALGO_RUN[@]}" --gmp="$gmp" "$casedir/main.go" \
+            > "$TMPDIR/$c.gr$gmp.out" 2> "$TMPDIR/$c.gr$gmp.err"; then
+            eval "gr${gmp}_exit=0"
+        else
+            eval "gr${gmp}_exit=$?"
+        fi
     done
     ok=1; why=""
     for gmp in 1 4; do

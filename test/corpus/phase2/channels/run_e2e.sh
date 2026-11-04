@@ -1,26 +1,25 @@
 #!/bin/bash
 # P2-M2 corpus graduation runner (P3-M5, ADR-0005 Appendix C): the channel
 # corpus programs (ch01-ch12) run end-to-end through the full pipeline
-# (phase-1 gofrontend -> phase-3 P3SyncMain) and must produce their
+# (gofrontend -> P3SyncMain via internal/backend/graalgo-sync-run) and must produce their
 # gc-recorded .expected output. Follows the timectx run_differential.sh
 # pattern exactly (cd-to-script-dir, relative paths, gc built binary,
 # stdout+exit+(panic first line) comparison, JVM Unsafe stderr filter).
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+SCRIPT_DIR="$(pwd)"
+GR="${GR:-$SCRIPT_DIR}"
+while [ "$GR" != "/" ] && [ ! -d "$GR/internal/backend" ]; do GR="$(dirname "$GR")"; done
+[ -d "$GR/internal/backend" ] || { echo "$(basename "$0"): cannot locate repo root (no internal/backend under $SCRIPT_DIR); set GR to a graalgo checkout" >&2; exit 2; }
+GRAALGO_SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
+[ -x "$GRAALGO_SYNC_RUN" ] || { echo "$(basename "$0"): $GRAALGO_SYNC_RUN missing/not executable; run 'make generate build' at the repo root first" >&2; exit 2; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "$(basename "$0"): backend classes not built; run 'make generate build' at the repo root first" >&2; exit 2; }
+GRAALGO_RUN=( "$GRAALGO_SYNC_RUN" )
 export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== graalgo backend: $GRAALGO_SYNC_RUN =="
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -34,8 +33,10 @@ run_one() { # $1 = go file, $2 = gmp
     local gcbin="$TMP/$base.gc"
 
     go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
-    "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
-    timeout 120 "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    local gc_exit
+    if "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; then gc_exit=0; else gc_exit=$?; fi
+    local gr_exit
+    if timeout 120 "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; then gr_exit=0; else gr_exit=$?; fi
 
     local ok=1
     # .expected pins gc's recorded stdout — this is the graduation

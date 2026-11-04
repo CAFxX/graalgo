@@ -29,21 +29,25 @@
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
 # only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m7-int run_wave.sh strings
-set -uo pipefail
+# The repo root defaults to the checkout containing this script (walked up
+# from its path) but can be overridden:
+#   GR=<graalgo-checkout> run_wave.sh strings
+set -euo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+SCRIPT_DIR="$(pwd)"
+GR="${GR:-$SCRIPT_DIR}"
+while [ "$GR" != "/" ] && [ ! -d "$GR/internal/backend" ]; do GR="$(dirname "$GR")"; done
+[ -d "$GR/internal/backend" ] || { echo "$(basename "$0"): cannot locate repo root (no internal/backend under $SCRIPT_DIR); set GR to a graalgo checkout" >&2; exit 2; }
+GRAALGO_SYNC_RUN="$GR/internal/backend/graalgo-sync-run"
+[ -x "$GRAALGO_SYNC_RUN" ] || { echo "$(basename "$0"): $GRAALGO_SYNC_RUN missing/not executable; run 'make generate build' at the repo root first" >&2; exit 2; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "$(basename "$0"): backend classes not built; run 'make generate build' at the repo root first" >&2; exit 2; }
+GRAALGO_RUN=( "$GRAALGO_SYNC_RUN" )
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave1/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
-export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
+export TMPDIR="${TMPDIR:-$GR/test/corpus/wave1/.tmp}"
+export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-m7-wave1}"
 mkdir -p "$TMPDIR"
 
 case "${1-all}" in
@@ -60,15 +64,8 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== graalgo backend: $GRAALGO_SYNC_RUN =="
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -86,7 +83,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
@@ -112,8 +109,8 @@ run_scope_limited() { # $1 = go file
         # corpus bug, not a scope limitation.
         local gcbin="$TMP/$base.gc"
         build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
-        "$gcbin" > /dev/null 2>&1
-        local gc_exit=$?
+        local gc_exit
+        if "$gcbin" > /dev/null 2>&1; then gc_exit=0; else gc_exit=$?; fi
         if [ "$gc_exit" != 0 ]; then
             echo "FAIL $base: scope-limited program exits $gc_exit under gc (corpus bug)"
             fail=$((fail+1)); return
@@ -128,8 +125,10 @@ run_one() { # $1 = go file, $2 = gmp
     local gcbin="$TMP/$base.gc"
 
     build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
-    "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
-    "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    local gc_exit
+    if "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; then gc_exit=0; else gc_exit=$?; fi
+    local gr_exit
+    if "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; then gr_exit=0; else gr_exit=$?; fi
 
     local ok=1
     cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base (gmp=$gmp): stdout differs"; }
