@@ -1,6 +1,9 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Panic;
+import graalgo.values.GoEquality;
 import graalgo.values.GoKind;
 
 /**
@@ -32,6 +35,16 @@ final class MapKeys {
         if (kind.isIntKind() || kind.isUintKind()) {
             long v = Boxing.toLong(boxed, kind);
             boxed = Long.valueOf(v);
+        }
+        // An interface key's dynamic type may be unhashable (a slice,
+        // map, func, or struct/array containing one, held in map[any]):
+        // gc panics on hashing it instead of silently inserting a
+        // phantom entry. Checked here so reads, writes, deletes, and
+        // composite literals all panic identically; GoMap.put re-checks
+        // for paths that bypass boxing (reflect).
+        String unhashable = GoEquality.unhashableTypeName(boxed);
+        if (unhashable != null) {
+            Panic.throwPanic(GoErrors.hashOfUnhashable(unhashable), null, null, null);
         }
         return Boxing.copyForAssign(kind, boxed);
     }

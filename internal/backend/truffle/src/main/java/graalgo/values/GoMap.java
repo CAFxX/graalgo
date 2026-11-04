@@ -53,6 +53,15 @@ public final class GoMap {
         if (key == null) {
             throw new IllegalArgumentException("Go map keys are never null in Phase 1 (WS D refines)");
         }
+        // gc panics on map operations with an unhashable key type
+        // (e.g. a slice held in map[any]); previously such keys were
+        // silently inserted as phantom entries that could never be found.
+        // Checked before any resize/store so a failed put stores nothing.
+        String unhashable = GoEquality.unhashableTypeName(key);
+        if (unhashable != null) {
+            graalgo.runtime.Panic.throwPanic(
+                    graalgo.runtime.GoErrors.hashOfUnhashable(unhashable), null, null, null);
+        }
         if ((size + tombstones + 1) > (int) (keys.length * MAX_LOAD)) {
             resize(keys.length * 2);
         }
@@ -133,6 +142,14 @@ public final class GoMap {
 
     /** Slot index holding {@code key}, or -1. */
     private int findSlot(Object key) {
+        // Same unhashable-key panic as put(): reads/deletes through
+        // Intrinsics (reflect) bypass MapKeys.box, so the map itself is
+        // the backstop. Node paths panic earlier, in MapKeys.box.
+        String unhashable = GoEquality.unhashableTypeName(key);
+        if (unhashable != null) {
+            graalgo.runtime.Panic.throwPanic(
+                    graalgo.runtime.GoErrors.hashOfUnhashable(unhashable), null, null, null);
+        }
         int h = GoEquality.hash(key) & mask;
         for (int probe = 0; probe < keys.length; probe++) {
             int i = (h + probe) & mask;

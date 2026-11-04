@@ -1,7 +1,5 @@
 package graalgo.values;
 
-import java.util.Arrays;
-
 /**
  * A Go struct value: descriptor + {@code long[]} + {@code Object[]} (D5).
  *
@@ -255,8 +253,34 @@ public final class GoStruct {
 
     @Override
     public boolean equals(Object o) {
-        return o instanceof GoStruct gs && descriptor == gs.descriptor
-                && Arrays.equals(longs, gs.longs) && structObjectsEqual(objects, gs.objects);
+        if (!(o instanceof GoStruct gs) || descriptor != gs.descriptor) {
+            return false;
+        }
+        // Longs-carried fields compare per kind: float fields use IEEE
+        // semantics (Java ==: -0.0 == +0.0, NaN != NaN), not bitwise
+        // equality — bitwise compared S{NaN} == S{NaN} true and
+        // S{-0.0} == S{0.0} false, both opposite to gc. Ints/bools
+        // compare by raw bits, as before.
+        for (int i = 0; i < descriptor.fields().size(); i++) {
+            GoStructDescriptor.Field f = descriptor.field(i);
+            if (!f.inLongs()) {
+                continue;
+            }
+            long a = longs[f.index()];
+            long b = gs.longs[f.index()];
+            if (f.kind() == GoKind.FLOAT32) {
+                if (Float.intBitsToFloat((int) a) != Float.intBitsToFloat((int) b)) {
+                    return false;
+                }
+            } else if (f.kind().isFloatKind()) {
+                if (Double.longBitsToDouble(a) != Double.longBitsToDouble(b)) {
+                    return false;
+                }
+            } else if (a != b) {
+                return false;
+            }
+        }
+        return structObjectsEqual(objects, gs.objects);
     }
 
     private static boolean structObjectsEqual(Object[] a, Object[] b) {
@@ -274,7 +298,37 @@ public final class GoStruct {
     @Override
     public int hashCode() {
         int h = System.identityHashCode(descriptor);
-        h = 31 * h + Arrays.hashCode(longs);
+        // Same mixing as Arrays.hashCode(longs) (start 1, in longs-index
+        // order — longs indices are assigned in field order, so iterating
+        // fields in order reproduces it exactly), except -0 float bits
+        // normalize to +0, so IEEE-equal structs hash equal. Unchanged
+        // for every struct without a -0 float field, so bucket placement
+        // — and hence map iteration order — is preserved elsewhere.
+        // NaN bits pass through unchanged: NaN structs never equal
+        // anything (see equals), so their hash cannot violate the
+        // equal => same-hash contract, and the map path must not rely
+        // on the hash to match NaN keys — GoEquality.equal is the
+        // authority, which is what gives gc's never-match + accumulate
+        // behavior for NaN keys.
+        int lh = 1;
+        for (int i = 0; i < descriptor.fields().size(); i++) {
+            GoStructDescriptor.Field f = descriptor.field(i);
+            if (!f.inLongs()) {
+                continue;
+            }
+            long bits = longs[f.index()];
+            if (f.kind() == GoKind.FLOAT32) {
+                if ((int) bits == 0x80000000) {
+                    bits = 0L;
+                }
+            } else if (f.kind().isFloatKind()) {
+                if (bits == 0x8000000000000000L) {
+                    bits = 0L;
+                }
+            }
+            lh = 31 * lh + (int) (bits ^ (bits >>> 32));
+        }
+        h = 31 * h + lh;
         for (Object o : objects) {
             h = 31 * h + GoEquality.hash(o);
         }

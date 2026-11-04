@@ -116,6 +116,18 @@ public final class GoEquality {
             }
             return true;
         }
+        if (a instanceof GoComplex32 ca && b instanceof GoComplex32 cb) {
+            // Scalar complex64: component-wise IEEE equality, mirroring
+            // the array branch below (-0 == +0 per component; a NaN
+            // component never equals anything, via Java == semantics).
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
+        if (a instanceof GoComplex64 ca && b instanceof GoComplex64 cb) {
+            // Scalar complex128: same IEEE rule as above. Records box
+            // fresh instances per Boxing.box, so reference equality above
+            // cannot be relied on for scalar complex keys.
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
         if (a instanceof GoComplex32[] ca && b instanceof GoComplex32[] cb) {
             // P3-M9 (arrdispatch): [N]complex64 carrier. Null elements are
             // the zero value (unfilled slots of a var-declared array).
@@ -162,6 +174,22 @@ public final class GoEquality {
         return false;
     }
 
+    /**
+     * Hash of a float64 with -0.0 normalized to +0.0, so IEEE-equal
+     * values (equal() treats -0.0 == +0.0) hash equal. NaN passes
+     * through: Double.hashCode canonicalizes NaN bits, and NaN keys
+     * never equal anything, so their hash value cannot violate the
+     * equal => same-hash contract.
+     */
+    private static int doubleHash(double d) {
+        return Double.hashCode(d == 0d ? 0d : d);
+    }
+
+    /** Float32 analogue of {@link #doubleHash(double)}. */
+    private static int floatHash(float f) {
+        return Float.hashCode(f == 0f ? 0f : f);
+    }
+
     /** Hash consistent with {@link #equal}: equal keys hash equal. */
     public static int hash(Object key) {
         if (key instanceof Long l) {
@@ -171,10 +199,10 @@ public final class GoEquality {
             return Integer.hashCode(i);
         }
         if (key instanceof Double d) {
-            return Double.hashCode(d);
+            return doubleHash(d);
         }
         if (key instanceof Float f) {
-            return Float.hashCode(f);
+            return floatHash(f);
         }
         if (key instanceof Boolean b) {
             return Boolean.hashCode(b);
@@ -209,31 +237,51 @@ public final class GoEquality {
         if (key instanceof int[] ia) {
             return java.util.Arrays.hashCode(ia);
         }
+        if (key instanceof GoComplex32 c) {
+            // Scalar complex64: same 31-mix shape as the array branch,
+            // with -0 components normalized (see doubleHash).
+            return 31 * floatHash(c.re()) + floatHash(c.im());
+        }
+        if (key instanceof GoComplex64 c) {
+            // Scalar complex128: same shape as the complex64 branch.
+            return 31 * doubleHash(c.re()) + doubleHash(c.im());
+        }
         if (key instanceof double[] da) {
-            return java.util.Arrays.hashCode(da);
+            // [N]float64 carrier hash with -0 elements normalized;
+            // Arrays.hashCode would hash -0.0 differently from +0.0.
+            int h = 1;
+            for (double v : da) {
+                h = 31 * h + doubleHash(v);
+            }
+            return h;
         }
         if (key instanceof float[] fa) {
-            // P3-M9 (arrdispatch): [N]float32 carrier hash.
-            return java.util.Arrays.hashCode(fa);
+            // P3-M9 (arrdispatch): [N]float32 carrier hash, -0 normalized.
+            int h = 1;
+            for (float v : fa) {
+                h = 31 * h + floatHash(v);
+            }
+            return h;
         }
         if (key instanceof GoComplex32[] ca) {
             // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
-            // with equal above (null elements hash as the zero value).
+            // with equal above (null elements hash as the zero value),
+            // with -0 components normalized.
             int h = 1;
             for (GoComplex32 c : ca) {
                 GoComplex32 z = c == null ? GoComplex32.ZERO : c;
-                h = 31 * h + Float.hashCode(z.re());
-                h = 31 * h + Float.hashCode(z.im());
+                h = 31 * h + floatHash(z.re());
+                h = 31 * h + floatHash(z.im());
             }
             return h;
         }
         if (key instanceof GoComplex64[] ca) {
-            // P3-M9 (arrdispatch): [N]complex128 carrier hash.
+            // P3-M9 (arrdispatch): [N]complex128 carrier hash, -0 normalized.
             int h = 1;
             for (GoComplex64 c : ca) {
                 GoComplex64 z = c == null ? GoComplex64.ZERO : c;
-                h = 31 * h + Double.hashCode(z.re());
-                h = 31 * h + Double.hashCode(z.im());
+                h = 31 * h + doubleHash(z.re());
+                h = 31 * h + doubleHash(z.im());
             }
             return h;
         }
@@ -249,5 +297,180 @@ public final class GoEquality {
         }
         // Opaque reference keys (pointers, interfaces): identity hash.
         return System.identityHashCode(key);
+    }
+
+    /**
+     * Returns the Go-syntax type name when {@code key} is of an
+     * unhashable (uncomparable) Go type — slices, maps, funcs, and
+     * structs/arrays containing one — or null when the key is hashable.
+     * Callers (GoMap, MapKeys) panic with gc's
+     * "hash of unhashable type &lt;T&gt;" for a non-null result instead
+     * of silently inserting phantom entries.
+     *
+     * <p>Name accuracy: for interface-wrapped keys the dynamic-type
+     * descriptor's name is exact (gc's name, e.g. "[]int", "main.S",
+     * "func()") — guest keys always pass through MapKeys.box, which
+     * preserves the descriptor. Bare carriers carry no type info, so
+     * their names are best-effort from the carrier (a long[]-backed
+     * slice reports "[]int64" even when the Go type was "[]int";
+     * an empty reference-element slice reports "[]any").
+     */
+    public static String unhashableTypeName(Object key) {
+        if (key == null) {
+            return null;
+        }
+        if (key instanceof GoInterface gi) {
+            if (gi.isNil()) {
+                return null;
+            }
+            // The frontend marks slice/map/func (and structs/arrays
+            // containing one) non-comparable on the descriptor, so this
+            // fires even for a typed-nil value (data == null), matching
+            // gc: the TYPE is unhashable regardless of the value.
+            if (gi.descriptor() instanceof GoTypeDescriptor td && !td.isComparable()) {
+                return td.name();
+            }
+            String inner = unhashableTypeName(gi.data());
+            if (inner != null) {
+                return gi.descriptor() instanceof GoTypeDescriptor td ? td.name() : inner;
+            }
+            return null;
+        }
+        if (key instanceof GoSlice gs) {
+            return "[]" + sliceElemName(gs.array());
+        }
+        if (key instanceof GoMap) {
+            // Bare map carrier: key/value types did not survive boxing.
+            return "map[any]any";
+        }
+        if (key instanceof GoFunc) {
+            return "func()";
+        }
+        if (key instanceof GoStruct gs) {
+            // Kind-based first: covers typed fields even when the value
+            // slot is null (reflect shells). Value-based second: covers
+            // fields whose descriptor metadata is absent.
+            String byKind = unhashableStructDescriptorName(gs.descriptor());
+            if (byKind != null) {
+                return byKind;
+            }
+            for (int i = 0; i < gs.descriptor().fields().size(); i++) {
+                GoStructDescriptor.Field f = gs.descriptor().field(i);
+                if (f.inLongs()) {
+                    continue;
+                }
+                String n = unhashableTypeName(gs.getObject(i));
+                if (n != null) {
+                    return gs.descriptor().typeName();
+                }
+            }
+            return null;
+        }
+        if (key instanceof Object[] oa) {
+            // Array of an unhashable element type (e.g. [N][]int).
+            for (Object e : oa) {
+                String n = unhashableTypeName(e);
+                if (n != null) {
+                    return n;
+                }
+            }
+            return null;
+        }
+        // Scalars, strings, pointers, chans, and opaque references are hashable.
+        return null;
+    }
+
+    /** Descriptor-only unhashability for a struct type, or null if hashable. */
+    private static String unhashableStructDescriptorName(GoStructDescriptor d) {
+        for (GoStructDescriptor.Field f : d.fields()) {
+            switch (f.kind()) {
+                case SLICE, MAP, FUNC -> {
+                    return d.typeName();
+                }
+                case STRUCT -> {
+                    if (f.structDesc() != null
+                            && unhashableStructDescriptorName(f.structDesc()) != null) {
+                        return d.typeName();
+                    }
+                }
+                case ARRAY -> {
+                    if (f.arrayElemKind() == GoKind.SLICE || f.arrayElemKind() == GoKind.MAP
+                            || f.arrayElemKind() == GoKind.FUNC) {
+                        return d.typeName();
+                    }
+                    if (f.arrayElemKind() == GoKind.STRUCT && f.arrayElemDesc() != null
+                            && unhashableStructDescriptorName(f.arrayElemDesc()) != null) {
+                        return d.typeName();
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Best-effort Go element-type name for a slice backing array. */
+    private static String sliceElemName(Object array) {
+        Class<?> ct = array.getClass().getComponentType();
+        if (ct == null) {
+            return "any";
+        }
+        if (ct.isPrimitive()) {
+            if (ct == byte.class) {
+                return "uint8";
+            }
+            if (ct == short.class) {
+                return "int16";
+            }
+            if (ct == int.class) {
+                return "int32";
+            }
+            if (ct == long.class) {
+                return "int64";
+            }
+            if (ct == float.class) {
+                return "float32";
+            }
+            if (ct == double.class) {
+                return "float64";
+            }
+            if (ct == boolean.class) {
+                return "bool";
+            }
+            return "any";
+        }
+        if (ct == GoString.class) {
+            return "string";
+        }
+        if (ct == GoComplex32.class) {
+            return "complex64";
+        }
+        if (ct == GoComplex64.class) {
+            return "complex128";
+        }
+        // Reference-element backing (Object[], GoStruct[]): name from the
+        // first informative element, if any.
+        int n = java.lang.reflect.Array.getLength(array);
+        for (int i = 0; i < n; i++) {
+            Object e = java.lang.reflect.Array.get(array, i);
+            if (e instanceof GoStruct gs) {
+                return gs.descriptor().typeName();
+            }
+            if (e instanceof GoString) {
+                return "string";
+            }
+            if (e instanceof GoComplex32) {
+                return "complex64";
+            }
+            if (e instanceof GoComplex64) {
+                return "complex128";
+            }
+            if (e instanceof GoInterface gi
+                    && gi.descriptor() instanceof GoTypeDescriptor td) {
+                return td.name();
+            }
+        }
+        return "any";
     }
 }

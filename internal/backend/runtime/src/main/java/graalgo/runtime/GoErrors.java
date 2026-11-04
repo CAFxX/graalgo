@@ -139,4 +139,22 @@ public final class GoErrors {
     public static GoErrorValue comparingUncomparable(String typeName) {
         return new GoErrorValue("runtime error: comparing uncomparable type " + typeName);
     }
+
+    /**
+     * gc's "hash of unhashable type" runtime panic, thrown when a map
+     * operation hashes a key of unhashable type (e.g. a slice held in
+     * map[any]): a runtime.errorString, so an uncaught panic prints
+     * "panic: runtime error: hash of unhashable type &lt;T&gt;".
+     * Note: gc's map-READ panic is a different value
+     * (maps.unhashableTypeError, "hash of unhashable type: &lt;T&gt;"
+     * with a colon and no "runtime error: " prefix); the write form
+     * is used for all map operations here, since the boxing site
+     * cannot distinguish reads from writes — the read-form value is
+     * a known, documented deviation.
+     */
+    public static GoErrorValue hashOfUnhashable(String typeName) {
+        String s = "hash of unhashable type " + typeName;
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
+    }
 }
