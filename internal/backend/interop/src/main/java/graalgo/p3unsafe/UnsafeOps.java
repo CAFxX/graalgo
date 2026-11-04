@@ -111,7 +111,7 @@ public final class UnsafeOps {
     /**
      * {@code unsafe.Slice(ptr, len)} given the pointer's referent (null for
      * a nil pointer). Returns the new {@code GoSlice}, or {@code null} for
-     * the nil slice.
+     * the nil slice. As in gc, the result has {@code len == cap == len}.
      */
     public static GoSlice slice(Object referent, long len, GoKind elemKind, Node site) {
         if (len < 0) {
@@ -129,29 +129,38 @@ public final class UnsafeOps {
         }
         Object array;
         int baseOffset;
-        int cap;
         if (referent instanceof UnsafeTable.ArrayRef ref) {
             array = ref.array();
             baseOffset = ref.offset();
-            cap = arrayLength(array) - baseOffset;
         } else if (referent instanceof GoSlice gs) {
             array = gs.array();
             baseOffset = gs.offset();
-            cap = gs.cap();
         } else if (referent.getClass().isArray()) {
             array = referent;
             baseOffset = 0;
-            cap = arrayLength(array);
         } else {
             Panic.throwPanic("unsafe.Slice: unsupported referent shape "
                     + referent.getClass().getSimpleName(), null, null, site);
             throw new AssertionError("unreachable");
         }
         checkCarrier(array, elemKind, "Slice", site);
-        if (len > cap) {
+        // R11-UNSAFE (REVIEW-2026-11-04-11 NEW-P0-10): gc's unsafe.Slice
+        // yields len == cap == len by construction (gc 1.27.1 probe:
+        // Slice over a [4]int with len 2 gives cap 2; len 10 over a
+        // [4]int builds without panicking). The old code returned the
+        // backing remainder / source slice's cap, so cap() differed and
+        // append past len wrote into the adjacent backing array instead
+        // of reallocating. len past the physical backing array is the
+        // intentional divergence pinned by corpus README item 10: GoSlice
+        // cannot represent elements past its backing array, and
+        // growing/copying would break aliasing — fail fast instead of
+        // building a header the runtime cannot honor. len within the
+        // physical array, even past the source slice's cap, is allowed:
+        // gc does not check.
+        if (len > arrayLength(array) - baseOffset) {
             Panic.throwPanic("unsafe.Slice: len out of range", null, null, site);
         }
-        return new GoSlice(array, baseOffset, (int) len, cap);
+        return new GoSlice(array, baseOffset, (int) len, (int) len);
     }
 
     /**

@@ -52,6 +52,9 @@ public final class IfaceTestRunner {
         // (UnsafeTable.derive) soundness — a derivation can only ever
         // view its own base referent, never alias another live object.
         TESTS.add(graalgo.p3unsafe.UnsafeDeriveTest.class);
+        // R11-UNSAFE (REVIEW-2026-11-04-11 NEW-P0-10): unsafe.Slice
+        // yields len == cap == len by construction (gc parity).
+        TESTS.add(graalgo.p3unsafe.UnsafeSliceCapTest.class);
         // fix-redmaster-r40: string/slice header views for
         // unsafe.Pointer -> *Header reinterpretations (reflect Len).
         TESTS.add(graalgo.p3unsafe.HeaderViewTest.class);
