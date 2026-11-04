@@ -3,16 +3,39 @@ package main
 // WS G (P3-M9, module-probe lane): general third-party package import.
 //
 // Any import path not claimed by the synthetic overlay resolves from local
-// disk: the module cache ($GOMODCACHE/<path>@<highest version>) first, then
-// GOPATH/src/<path>. The package's .go files are selected
-// constraint-aware via go/build (GOOS/GOARCH build tags, so e.g.
-// node_js.go is skipped on linux), parsed and type-checked with the same
-// overlayImporter (its own imports resolve recursively through the same
-// mechanism), and merged into the export document through the exact
-// syntheticPackage machinery (importSyntheticPackage): function bodies,
-// package vars, init() functions, and generic instantiations all flow
-// through the same path as synthetic packages. Nothing here is
-// module-specific: this is the general import overlay WS G always owned.
+// disk. The package's .go files are selected constraint-aware via go/build
+// (GOOS/GOARCH build tags, so e.g. node_js.go is skipped on linux), parsed
+// and type-checked with the same overlayImporter (its own imports resolve
+// recursively through the same mechanism), and merged into the export
+// document through the exact syntheticPackage machinery
+// (importSyntheticPackage): function bodies, package vars, init()
+// functions, and generic instantiations all flow through the same path as
+// synthetic packages. Nothing here is module-specific: this is the general
+// import overlay WS G always owned.
+//
+// Version selection is module-aware (review 2026-11-04, P1-04/P1-05; see
+// diskmodule.go): when the package being compiled belongs to a module,
+// the version of every third-party import comes ONLY from that module's
+// go.mod (with replace applied), and any other outcome is a loud error.
+// Only compilations outside any module (standalone files, corpus
+// fixtures) keep the legacy order — newest version in the module cache,
+// then GOPATH/src, then GOROOT — because there is no go.mod to select
+// from. Standard-library imports always resolve from the toolchain
+// GOROOT, never from the cache or GOPATH.
+//
+// Build inputs vs ambient environment: the module-cache LOCATION is a
+// machine input (explicit --modcache flag, else GOMODCACHE, else the
+// GOPATH default), but under module mode it can only affect availability,
+// never the selected version. GOROOT is pinned by the explicit --goroot
+// flag, else the toolchain that built gofrontend: the CLI clears the
+// ambient GOROOT variable at startup (see main.go) because
+// runtime.GOROOT() consults it first. GRAALGO_BUILD_TAGS is a build input
+// in the same sense as -tags — extra build tags selecting which files
+// compile — not an ambient default: it is honoured only when the
+// --build-tags flag is absent, and a build with different tags is a
+// different build. The backend launcher may pass --modcache/--goroot/
+// --build-tags explicitly to pin CI builds; when it does not, the flag
+// defaults above apply.
 
 import (
 	"errors"
@@ -44,8 +67,41 @@ var (
 	diskBuilding = map[string]bool{}   // cycle guard for recursive imports
 )
 
-// goModCache returns the local module cache directory.
+// Explicit argv inputs (see main.go) for disk resolution. Empty means
+// "not given": the flag fallbacks below apply. buildTagsSet distinguishes
+// "--build-tags=" (explicitly no extra tags, env ignored) from the flag
+// being absent (GRAALGO_BUILD_TAGS honoured).
+var (
+	diskFlagModCache     string
+	diskFlagGoroot       string
+	diskFlagBuildTags    []string
+	diskFlagBuildTagsSet bool
+)
+
+// setDiskFlags installs the explicit argv inputs for disk resolution,
+// as parsed by main (or by tests, which assign the globals directly).
+// Changing the cache or GOROOT location invalidates the disk caches:
+// a directory resolved under one location must never be reused for
+// another.
+func setDiskFlags(modCache, goroot string, buildTags []string, buildTagsSet bool) {
+	diskMu.Lock()
+	defer diskMu.Unlock()
+	if modCache != diskFlagModCache || goroot != diskFlagGoroot {
+		diskDirCache = map[string]string{}
+		diskCache = map[string]*syntheticPackage{}
+	}
+	diskFlagModCache = modCache
+	diskFlagGoroot = goroot
+	diskFlagBuildTags = buildTags
+	diskFlagBuildTagsSet = buildTagsSet
+}
+
+// goModCache returns the local module cache directory: the explicit
+// --modcache flag wins, then GOMODCACHE, then the GOPATH default.
 func goModCache() string {
+	if diskFlagModCache != "" {
+		return diskFlagModCache
+	}
 	if v := os.Getenv("GOMODCACHE"); v != "" {
 		return v
 	}
@@ -59,6 +115,18 @@ func goModCache() string {
 		return ""
 	}
 	return filepath.Join(strings.Split(gp, string(os.PathListSeparator))[0], "pkg", "mod")
+}
+
+// diskGoroot returns the toolchain GOROOT disk resolution uses: the
+// explicit --goroot flag wins, else runtime.GOROOT(). The CLI pins the
+// latter to the toolchain that built the binary by clearing the ambient
+// GOROOT variable at startup (see main.go); direct API callers that
+// need the same pin must pass --goroot or clear GOROOT themselves.
+func diskGoroot() string {
+	if diskFlagGoroot != "" {
+		return diskFlagGoroot
+	}
+	return runtime.GOROOT()
 }
 
 // escapeModulePath applies the module-cache path escaping: every uppercase
@@ -122,8 +190,11 @@ func compareSemver(a, b string) int {
 }
 
 // resolveDiskPackageDir maps an import path to a source directory on disk.
-// Module cache wins ($GOMODCACHE/<escaped path>@<highest version>); the
-// probe harness pins the cache to the intended version. Falls back to
+// Under a module context (see diskmodule.go) the version comes ONLY from
+// the importing module's go.mod and anything else fails loudly; without
+// one (legacy mode) the module cache wins
+// ($GOMODCACHE/<escaped path>@<highest version>) — the probe harness
+// pins the cache to the intended version — falling back to
 // GOPATH/src/<path>, then to the toolchain's GOROOT/src/<path> so plain
 // stdlib packages outside the synthetic overlay (e.g.
 // database/sql/driver) resolve through the same general mechanism.
@@ -148,6 +219,27 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 	diskMu.Unlock()
 
 	resolve := func() (string, error) {
+		// Module mode (P1-04): when ExportFiles installed a module
+		// context, third-party versions come ONLY from its go.mod.
+		// A module path that go.mod does not require is a loud error
+		// here, never a scan of whatever the cache happens to hold;
+		// a standard-library path resolves from the toolchain GOROOT
+		// only, never from the cache or GOPATH.
+		if ctx := activeModuleContext(); ctx != nil {
+			if dir, handled, err := ctx.resolveModuleDir(importPath, goModCache()); handled {
+				return dir, err
+			}
+			if goroot := diskGoroot(); goroot != "" {
+				dir := filepath.Join(goroot, "src", importPath)
+				if st, err := os.Stat(dir); err == nil && st.IsDir() {
+					return dir, nil
+				}
+			}
+			return "", fmt.Errorf("%w: %q", errDiskNotFound, importPath)
+		}
+		// Legacy mode: no module context (standalone files, corpus
+		// fixtures). Newest cached version first; the probe harness
+		// pins the cache to the intended version.
 		if mc := goModCache(); mc != "" {
 			// P4 (driver-harden): subpackage imports (e.g.
 			// github.com/google/go-cmp/cmp). The module cache stores
@@ -205,7 +297,7 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 		}
 		// Standard library outside the synthetic overlay: resolve from the
 		// toolchain that built gofrontend (matches the gc leg's version).
-		if goroot := runtime.GOROOT(); goroot != "" {
+		if goroot := diskGoroot(); goroot != "" {
 			dir := filepath.Join(goroot, "src", importPath)
 			if st, err := os.Stat(dir); err == nil && st.IsDir() {
 				return dir, nil
@@ -277,9 +369,14 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	}
 	// Constraint-aware file selection (GOOS/GOARCH build tags, including
 	// the legacy // +build lines): _test.go files are never in GoFiles.
-	// P3-driver-harden (jsonlib lane): the GRAALGO_BUILD_TAGS env var
-	// (space-separated) adds extra build tags, e.g. purego to select
-	// pure-Go fallbacks over assembly stubs (segmentio/asm).
+	// P3-driver-harden (jsonlib lane): extra build tags select pure-Go
+	// fallbacks over assembly stubs (e.g. purego for segmentio/asm).
+	// GRAALGO_BUILD_TAGS (space-separated) is a BUILD INPUT, not an
+	// ambient default: it changes which files compile, so a build with
+	// different tags is a different build. The explicit --build-tags
+	// flag wins when given; otherwise the env var is honoured for
+	// backward compatibility with the launcher, which is expected to
+	// pass the flag to pin CI builds.
 	// ASM Phase 1 (pure-Go fallback selection): graalgo cannot process Go
 	// assembly (.s files), so the purego tag is always on. This selects
 	// pure-Go fallbacks (*_generic.go, `|| purego`) over assembly
@@ -291,7 +388,11 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
 	// forcing callers onto their generic paths.
 	ctxt := build.Default
-	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
+	extraTags := diskFlagBuildTags
+	if !diskFlagBuildTagsSet {
+		extraTags = strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))
+	}
+	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), extraTags...)
 	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: cannot load package %q from %s: %w", importPath, dir, err)

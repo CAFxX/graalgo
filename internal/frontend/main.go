@@ -4,7 +4,10 @@
 // go/* packages (see VENDORING.md) and emits the frontend/v1 typed-AST JSON
 // document (see ../docs/frontend-v1.md) to stdout.
 //
-// Usage: gofrontend [--test-package-dir=DIR] <file.go> [file.go...]
+// Usage: gofrontend [flags] <file.go> [file.go...]
+// Flags: --test-package-dir=DIR, --modcache=DIR, --goroot=DIR,
+// --build-tags="TAG ...".
+//
 // All files must declare the same package. They are type-checked together,
 // so cross-file references resolve.
 // --test-package-dir=DIR declares the package a synthesized `graalgo test`
@@ -12,6 +15,17 @@
 // launcher); the import gate applies Go's internal-visibility rule with
 // that package's privileges. Never read from the environment: a
 // user-exported variable must not confer the privilege.
+// --modcache=DIR pins the module-cache location for disk imports
+// (default: GOMODCACHE, else the GOPATH default). The cache location
+// never selects a version: under a module context the version comes
+// from the importing module's go.mod (see diskmodule.go).
+// --goroot=DIR pins the toolchain GOROOT for stdlib disk imports. When
+// absent, the ambient GOROOT variable is cleared at startup so
+// runtime.GOROOT() returns the toolchain that built this binary —
+// ambient env must not redirect stdlib resolution.
+// --build-tags="TAG ..." adds build tags for disk-import file selection
+// (default: GRAALGO_BUILD_TAGS). Build tags are a build input: a build
+// with different tags is a different build.
 // Exit codes: 0 success, 1 usage error, 2 frontend error (details on stderr).
 //
 // Validation mode: gofrontend --check-synthetic <import-path>
@@ -41,16 +55,40 @@ func main() {
 	// ExportFiles — it is never read from the environment, so a
 	// user-exported variable cannot confer the privilege.
 	var testPackageDir string
+	var modCacheFlag, gorootFlag, buildTagsFlag string
+	var buildTagsSet bool
 	var rest []string
 	for _, a := range os.Args[1:] {
 		if strings.HasPrefix(a, testPackageDirFlag) {
 			testPackageDir = strings.TrimPrefix(a, testPackageDirFlag)
 			continue
 		}
+		if strings.HasPrefix(a, "--modcache=") {
+			modCacheFlag = strings.TrimPrefix(a, "--modcache=")
+			continue
+		}
+		if strings.HasPrefix(a, "--goroot=") {
+			gorootFlag = strings.TrimPrefix(a, "--goroot=")
+			continue
+		}
+		if strings.HasPrefix(a, "--build-tags=") {
+			buildTagsFlag = strings.TrimPrefix(a, "--build-tags=")
+			buildTagsSet = true
+			continue
+		}
 		rest = append(rest, a)
 	}
+	// Disk-resolution inputs (see diskimport.go): explicit flags win.
+	setDiskFlags(modCacheFlag, gorootFlag, strings.Fields(buildTagsFlag), buildTagsSet)
+	// Pin GOROOT to the toolchain that built this binary unless the
+	// caller explicitly passed --goroot: runtime.GOROOT() consults the
+	// GOROOT environment variable first, so ambient env would otherwise
+	// redirect stdlib disk resolution (review 2026-11-04, P1-05).
+	if gorootFlag == "" {
+		os.Unsetenv("GOROOT")
+	}
 	if len(rest) < 1 {
-		fmt.Fprintf(os.Stderr, "usage: gofrontend [--test-package-dir=DIR] <file.go> [file.go...] | gofrontend --check-synthetic <import-path>\n")
+		fmt.Fprintf(os.Stderr, "usage: gofrontend [--test-package-dir=DIR] [--modcache=DIR] [--goroot=DIR] [--build-tags=\"TAG ...\"] <file.go> [file.go...] | gofrontend --check-synthetic <import-path>\n")
 		os.Exit(1)
 	}
 	if rest[0] == "--check-synthetic" {

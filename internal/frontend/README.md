@@ -48,6 +48,41 @@ Exit codes: 0 success · 1 usage error · 2 frontend error (parse/type/scope;
 details on stderr, no JSON on stdout). Scope errors name the workstream that
 owns the extension (e.g. `if` → WS E, imports → WS G).
 
+## Disk imports: module-aware version selection
+
+Imports not claimed by the synthetic overlay resolve from local disk
+([`diskimport.go`](diskimport.go), [`diskmodule.go`](diskmodule.go)):
+
+- **Inside a module** (a `go.mod` is found by walking up from the package
+  being compiled): the version of every third-party import comes ONLY from
+  that `go.mod`'s `require` list, with `replace` applied. The exact
+  required version is read from the module cache; a module that `go.mod`
+  does not require, a required version absent from the cache, or a
+  missing replacement directory is a loud error, never a silent fallback
+  to another version. Packages of the main module itself resolve to the
+  module tree. Standard-library imports always resolve from the toolchain
+  GOROOT, never from the cache or GOPATH.
+- **Outside any module** (standalone files, corpus fixtures): legacy
+  behaviour — newest version in the module cache, then `GOPATH/src`,
+  then GOROOT — because there is no `go.mod` to select from.
+
+Build inputs, not ambient defaults (review 2026-11-04, P1-04/P1-05):
+
+- `--modcache=DIR` pins the module-cache location (default: `GOMODCACHE`,
+  else the `GOPATH` default). The location can affect availability, never
+  the selected version.
+- `--goroot=DIR` pins the toolchain GOROOT. Without it, the CLI clears the
+  ambient `GOROOT` variable at startup so stdlib resolution uses the
+  toolchain that built `gofrontend` — `runtime.GOROOT()` consults the
+  environment first, so ambient env would otherwise redirect it.
+- `--build-tags="TAG ..."` adds build tags for disk-import file selection
+  (default: `GRAALGO_BUILD_TAGS`). Tags are a build input like `-tags`: a
+  build with different tags is a different build. The launcher may pass
+  all three flags explicitly to pin CI builds.
+
+`go.sum` is not consulted: version selection is `go.mod`'s job, and cache
+directories are populated (and hash-verified) by `cmd/go`.
+
 ## Java side
 
 `NodeFactory` + node classes live in

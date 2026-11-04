@@ -730,7 +730,7 @@ func internalVisibilityRoot(importPath string) (root string, ok bool) {
 	}
 	var srcDir string
 	if _, isSynthetic := syntheticSources[importPath]; isSynthetic {
-		goroot := runtime.GOROOT()
+		goroot := diskGoroot()
 		if goroot == "" {
 			return "", false
 		}
@@ -844,6 +844,17 @@ func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 	if importAdmitted(path, importingDir) {
 		return nil
 	}
+	// Under a module context, a denied third-party import almost always
+	// failed module resolution (not required by go.mod, required version
+	// absent from the cache); report that cause, not the generic scope
+	// error, so the user learns which build input to fix (P1-04). The
+	// WS G attribution is kept: disk resolution is the WS G import
+	// overlay's job, and scope-error goldens pin it.
+	if ctx := activeModuleContext(); ctx != nil {
+		if _, handled, err := ctx.resolveModuleDir(path, goModCache()); handled && err != nil {
+			return fmt.Errorf("%s (WS G import overlay)", err)
+		}
+	}
 	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 }
 
@@ -895,6 +906,15 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// The test driver is the package's own test binary: resolve imports
 	// with the package's privileges (Go's internal-visibility rule).
 	idir := importingDir(paths, testPackageDir)
+	// Module mode (review 2026-11-04, P1-04): the importing package's
+	// enclosing go.mod — if any — selects third-party versions for the
+	// whole export (see diskmodule.go). A malformed go.mod fails loudly
+	// here rather than silently falling back to a cache scan.
+	if ctx, err := loadModuleContext(idir); err != nil {
+		return "", err
+	} else {
+		setModuleContext(ctx)
+	}
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if err := checkImportAllowed(imp, idir); err != nil {
