@@ -17,8 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#   `make all` = generate + build + snapshot-check + check + test-v2
+#                + test-p3frontend + test-ci + test-regression + test-root:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -32,6 +32,7 @@
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-root root-module `go test` (driver + vet suites; P1-20)
 #     test-regression
 #               regression tests for fixed PKGs
 #               ([test/regression/](test/regression/)): each
@@ -104,9 +105,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test-root test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression test-root
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -205,17 +206,48 @@ test-v2:
 	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
 
+# Root-module Go tests (review-2026-11-04 P1-20): the driver
+# ([cmd/graalgo](cmd/graalgo/)), [internal/driver](internal/driver/), and
+# [internal/vet](internal/vet/) live in the root module, but no `all`
+# prerequisite ran `go test` on them — test-v2 and test-p3frontend run
+# `go test` only inside their own submodules, and test/differential/run.sh
+# only inside the differential module. In `all` (hence per-push CI): a
+# break in the driver/vet suites fails the gate loudly. These are pure
+# unit tests (no backend/gofrontend dependency), so this target stands
+# alone with no generate/build prerequisite.
+# Temp dir is deliberately NOT worktree-local (unlike test-v2/
+# test-p3frontend): internal/vet's stdversion analyzer walks up from a
+# tested file to its enclosing go.mod, so a TempDir inside the repo would
+# find the root go.mod and break TestStdVersion's "skip without go.mod"
+# case. $(HOME)/.cache is outside any module tree; /tmp is a 512M shared
+# tmpfs, so it is not used either.
+ROOT_TEST_TMP := $(HOME)/.cache/graalgo-root-test-tmp
+test-root:
+	mkdir -p $(ROOT_TEST_TMP) && \
+	TMPDIR="$(ROOT_TEST_TMP)" GOTMPDIR="$(ROOT_TEST_TMP)" $(GO) vet ./cmd/... ./internal/driver/... ./internal/vet/... && \
+	TMPDIR="$(ROOT_TEST_TMP)" GOTMPDIR="$(ROOT_TEST_TMP)" $(GO) test -count=1 ./cmd/... ./internal/driver/... ./internal/vet/...
+
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
 #   make gate1 PKG=foo — single package trial
+# Pilot failure semantics (review-2026-11-04 P1-23): the loop aggregates
+# failures and exits non-zero if any package is non-PASS. tools/gate1/run.py
+# exits non-zero for DIVERGE *and* for SKIP (harness cannot validate), so
+# both fail the pilot; a bare `|| true` here used to exit 0 even when every
+# package failed, leaving only per-package verdict.txt files as evidence.
 GATE1_PKGS ?= strconv errors sort strings bytes
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@failed=0; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || failed=1; \
+	done; \
+	if [ "$$failed" -ne 0 ]; then \
+		echo "Gate 1 pilot FAILED: one or more packages non-PASS (see tools/gate1/.tmp/*/verdict.txt)"; \
+		exit 1; \
+	fi
 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build
