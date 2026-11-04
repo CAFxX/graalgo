@@ -875,33 +875,169 @@ func hasPrefix(s, p string) bool {
 	return len(s) >= len(p) && s[:len(p)] == p
 }
 func (t Time) GoString() string { panic("time.Time.GoString: not in M5 scope") }
-func (t Time) AddDate(years int, months int, days int) Time {
-	panic("time.Time.AddDate: not in M5 scope")
+
+// timeCivilParts is the UTC civil decomposition of a Time, shared by
+// the accessors below. It mirrors Format's Hinnant civil-from-days
+// computation over the same unixnano field (UTC basis); Format's own
+// copy stays inline in its layout loop and is untouched by this
+// change, and the accessor value test pins Format output for its base
+// case alongside the accessors. Weekday follows
+// Format's weekdayName rule (1970-01-01 was a Thursday); YearDay is
+// derived from days_from_civil (the same formula Date uses), not from
+// Format's March-based doy, which is not a calendar day-of-year.
+//
+// Zero-instant special case: the int64 unixnano model cannot represent
+// 0001-01-01 (its nanoseconds overflow int64), so the wrapped marker
+// value decomposes to nonsense under the general path — exactly as
+// Format does today. The accessors instead follow Unix()'s precedent
+// in this file and special-case IsZero (Go zero value, Date(1,1,1),
+// Unix(-62135596800,0)) to the gc zero-instant components.
+type timeCivilParts struct {
+	year    int64
+	month   int64
+	day     int64
+	hour    int64
+	min     int64
+	sec     int64
+	nsec    int64
+	weekday Weekday
+	yearday int64
 }
+
+func timeCivilOf(t Time) timeCivilParts {
+	if t.IsZero() {
+		return timeCivilParts{year: 1, month: 1, day: 1, weekday: Monday, yearday: 1}
+	}
+	// Split unixnano into days + time-of-day (UTC), as Format does.
+	sec := t.unixnano / 1e9
+	nsec := t.unixnano % 1e9
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	days := sec / 86400
+	secsOfDay := sec % 86400
+	if secsOfDay < 0 {
+		secsOfDay += 86400
+		days--
+	}
+	// Hinnant civil-from-days: days since 1970-01-01 -> y/m/d.
+	z := days + 719468
+	var era int64
+	if z >= 0 {
+		era = z / 146097
+	} else {
+		era = (z - 146096) / 146097
+	}
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	y := yoe + era*400
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d := doy - (153*mp+2)/5 + 1
+	var m int64
+	if mp < 10 {
+		m = mp + 3
+	} else {
+		m = mp - 9
+	}
+	if m <= 2 {
+		y++
+	}
+	w := (days + 4) % 7
+	if w < 0 {
+		w += 7
+	}
+	return timeCivilParts{
+		year:    y,
+		month:   m,
+		day:     d,
+		hour:    secsOfDay / 3600,
+		min:     (secsOfDay % 3600) / 60,
+		sec:     secsOfDay % 60,
+		nsec:    nsec,
+		weekday: Weekday(w),
+		yearday: days - timeDaysFromCivil(y, 1, 1) + 1,
+	}
+}
+
+// timeDaysFromCivil is days_from_civil (Howard Hinnant's algorithm,
+// proleptic Gregorian), the same formula Date uses below, factored out
+// for YearDay. Arguments are a civil date with month in [1,12].
+func timeDaysFromCivil(y, m, d int64) int64 {
+	yy := y
+	if m <= 2 {
+		yy--
+	}
+	era := yy / 400
+	if yy < 0 && yy%400 != 0 {
+		era--
+	}
+	yoe := yy - era*400
+	mp := m - 3
+	if mp < 0 {
+		mp += 12
+	}
+	doy := (153*mp+2)/5 + d - 1
+	doe := yoe*365 + yoe/4 - yoe/100 + doy
+	return era*146097 + doe - 719468
+}
+
+func (t Time) Year() int        { return int(timeCivilOf(t).year) }
+func (t Time) Month() Month     { return Month(timeCivilOf(t).month) }
+func (t Time) Day() int         { return int(timeCivilOf(t).day) }
+func (t Time) Weekday() Weekday { return timeCivilOf(t).weekday }
+func (t Time) Hour() int        { return int(timeCivilOf(t).hour) }
+func (t Time) Minute() int      { return int(timeCivilOf(t).min) }
+func (t Time) Second() int      { return int(timeCivilOf(t).sec) }
+func (t Time) Nanosecond() int  { return int(timeCivilOf(t).nsec) }
+func (t Time) YearDay() int     { return int(timeCivilOf(t).yearday) }
+
 func (t Time) Date() (year int, month Month, day int) {
-	panic("time.Time.Date: not in M5 scope")
+	c := timeCivilOf(t)
+	return int(c.year), Month(c.month), int(c.day)
 }
-func (t Time) Year() int          { panic("time.Time.Year: not in M5 scope") }
-func (t Time) Month() Month       { panic("time.Time.Month: not in M5 scope") }
-func (t Time) Day() int           { panic("time.Time.Day: not in M5 scope") }
-func (t Time) Weekday() Weekday   { panic("time.Time.Weekday: not in M5 scope") }
-func (t Time) Clock() (int, int, int) {
-	panic("time.Time.Clock: not in M5 scope")
+
+func (t Time) Clock() (hour int, min int, sec int) {
+	c := timeCivilOf(t)
+	return int(c.hour), int(c.min), int(c.sec)
 }
-func (t Time) Hour() int        { panic("time.Time.Hour: not in M5 scope") }
-func (t Time) Minute() int      { panic("time.Time.Minute: not in M5 scope") }
-func (t Time) Second() int      { panic("time.Time.Second: not in M5 scope") }
-func (t Time) Nanosecond() int  { panic("time.Time.Nanosecond: not in M5 scope") }
-func (t Time) YearDay() int     { panic("time.Time.YearDay: not in M5 scope") }
-func (t Time) UTC() Time        { return t }
-func (t Time) Local() Time      { return t }
+
+// AddDate adds years/months/days and normalizes exactly like Date
+// (gc parity: October 31 + 1 month is December 1, January 31 + 1 month
+// in a leap year is March 2 — the overflow rolls into the next month
+// rather than clamping). Delegating to Date gives that normalization
+// for free, including negative and out-of-range components.
+func (t Time) AddDate(years int, months int, days int) Time {
+	c := timeCivilOf(t)
+	return Date(int(c.year)+years, Month(int(c.month)+months), int(c.day)+days, int(c.hour), int(c.min), int(c.sec), int(c.nsec), UTC)
+}
+func (t Time) UTC() Time   { return t }
+func (t Time) Local() Time { return t }
+
+// In returns t unchanged under the documented UTC-only decision
+// (ADR-0005: Local is accepted as UTC; there is no zoneinfo yet, so a
+// synthetic Time carries no location to convert from). Nil panics
+// with gc's message; a genuinely non-UTC location (unreachable from
+// user code today — Location's name field is unexported and only UTC
+// and Local exist) fails fast with the same "not in scope" wording
+// Date uses, rather than silently treating it as UTC.
 func (t Time) In(loc *Location) Time {
-	panic("time.Time.In: not in M5 scope")
+	if loc == nil {
+		panic("time: missing Location in call to Time.In")
+	}
+	if loc.name != "" && loc.name != "UTC" {
+		panic("time.In: non-UTC locations not in scope (re-test: synthetic zoneinfo)")
+	}
+	return t
 }
-func (t Time) Location() *Location { panic("time.Time.Location: not in M5 scope") }
-func (t Time) Zone() (string, int) {
-	panic("time.Time.Zone: not in M5 scope")
-}
+
+// Location returns UTC: synthetic Times are UTC-only (see In), so
+// there is no stored location to report.
+func (t Time) Location() *Location { return UTC }
+
+// Zone returns the UTC zone under the same UTC-only decision.
+func (t Time) Zone() (string, int) { return "UTC", 0 }
 func (t Time) UnixMilli() int64 { return t.unixnano / 1e6 }
 func (t Time) UnixMicro() int64 { return t.unixnano / 1e3 }
 
