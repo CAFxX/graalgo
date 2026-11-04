@@ -244,8 +244,31 @@ public final class GoNet {
             }
         }
         if (t instanceof java.net.BindException) {
+            // BindException covers three distinct gc errnos; the JVM
+            // message distinguishes them (verified 2026-11-04: live
+            // binds on this box produce exactly these messages):
+            //   "Cannot assign requested address" -> EADDRNOTAVAIL
+            //       (bind to a non-local address)
+            //   "Permission denied" -> EACCES (privileged port as
+            //       non-root; not producible live as root, so this
+            //       branch is covered by a synthetic-message test)
+            //   anything else, incl. "Address already in use" ->
+            //       EADDRINUSE (the default; unknown messages keep
+            //       the historical mapping rather than collapsing
+            //       to a new errno).
+            String m = t.getMessage();
+            if (m != null) {
+                String lower = m.toLowerCase(java.util.Locale.ROOT);
+                if (lower.contains("cannot assign requested address")) {
+                    return EADDRNOTAVAIL;
+                }
+                if (lower.contains("permission denied")) {
+                    return GoOs.EACCES;
+                }
+            }
             return EADDRINUSE;
-        }        if (t instanceof java.net.NoRouteToHostException) {
+        }
+        if (t instanceof java.net.NoRouteToHostException) {
             return EHOSTUNREACH;
         }
         if (t instanceof java.net.PortUnreachableException) {
