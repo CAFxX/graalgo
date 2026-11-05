@@ -41,8 +41,13 @@ import graalgo.jfr.ParkReason;
  * either complete or report "would block" atomically under one monitor
  * hold (a select waiter claimed by another channel between the readiness
  * peek and the handoff just makes trySend report WOULD_BLOCK; a waiter
- * whose selector transiently self-claimed it makes trySend report RETRY
- * instead of dropping the waiter).
+ * whose FOREIGN selector transiently self-claimed it makes trySend
+ * report RETRY instead of dropping the waiter). A waiter self-claimed
+ * by the CALLING select itself — its own earlier-enqueued case on the
+ * same channel — is treated as absent: a select must not communicate
+ * with itself, so the case enqueues normally instead of RETRYing
+ * against its own waiter forever (same-channel mixed-direction
+ * select livelock).
  *
  * <p>Subclassing (P3-M2a): the class is intentionally non-final for the
  * single dedicated {@link TimerChan} flavor. The masking contract is:
@@ -236,13 +241,16 @@ public class GoChan implements ChanOps.Chan {
         /** Would block: no receiver and no buffer space. */
         WOULD_BLOCK,
         /**
-         * Blocked only by a self-claimed select waiter: another select
-         * holds its transient self-claim on this channel's queue. The
-         * caller must retry (outside the monitor / without holding a
-         * self-claim) once that claim resolves — never drop the waiter
-         * and never treat this as "would block" and park: the waiter
-         * carries no wakeup for the blocked party, and parking on a
-         * RETRY strands the caller (CI run 41943236460 lost wakeup).
+         * Blocked only by a FOREIGN select's self-claimed waiter:
+         * another select holds its transient self-claim on this
+         * channel's queue. The caller must retry (outside the monitor
+         * / without holding a self-claim) once that claim resolves —
+         * never drop the waiter and never treat this as "would block"
+         * and park: the waiter carries no wakeup for the blocked
+         * party, and parking on a RETRY strands the caller (CI run
+         * 41943236460 lost wakeup). A waiter self-claimed by the
+         * calling select itself never yields RETRY (it is skipped as
+         * absent by {@code pollAccepting}).
          */
         RETRY
     }
@@ -253,14 +261,20 @@ public class GoChan implements ChanOps.Chan {
     /**
      * Attempts a non-blocking send under the monitor. SENT if the send
      * completed (direct handoff or buffered); WOULD_BLOCK if it would
-     * block; RETRY if the only waiter is a self-claimed select waiter
-     * (see {@link SendAttempt#RETRY}). A buffered completion is taken
-     * even past a self-claimed waiter: the waiter belongs to a select
-     * completing elsewhere, and the value is genuinely stored. Never
-     * parks.
+     * block; RETRY if the only waiter is a FOREIGN select's self-claimed
+     * waiter (see {@link SendAttempt#RETRY}). A waiter self-claimed by
+     * {@code caller} itself is the caller's own earlier-enqueued case
+     * on this channel and is skipped as absent (a select must not pair
+     * with itself). A buffered completion is taken even past a
+     * self-claimed waiter: the waiter belongs to a select completing
+     * elsewhere, and the value is genuinely stored. Never parks.
+     *
+     * @param caller the select on whose behalf this attempt runs, or
+     *               null for a plain send (every self-claimed waiter
+     *               is then foreign)
      */
-    SendAttempt trySend(Object v, SchedulerCore sched) {
-        ChanWaiter r = pollAccepting(recvWaiters);
+    SendAttempt trySend(Object v, SchedulerCore sched, SelectOp caller) {
+        ChanWaiter r = pollAccepting(recvWaiters, caller);
         if (r != null && r != RETRY_WAIT) {
             deliverToReceiver(r, v, true, sched);
             return SendAttempt.SENT;
@@ -278,14 +292,20 @@ public class GoChan implements ChanOps.Chan {
      * Attempts a non-blocking receive under the monitor. Returns the
      * result (or null result when it would block), plus a retry flag:
      * retry is true only when the buffer is empty, the channel is open,
-     * and the only sender waiter is a self-claimed select waiter (see
-     * {@link SendAttempt#RETRY} — same contract, receive side). A
-     * buffered value, or the closed-channel zero, is returned even past
-     * a self-claimed waiter: the waiter belongs to a select completing
-     * elsewhere. Never parks.
+     * and the only sender waiter is a FOREIGN select's self-claimed
+     * waiter (see {@link SendAttempt#RETRY} — same contract, receive
+     * side). A waiter self-claimed by {@code caller} itself is the
+     * caller's own earlier-enqueued case on this channel and is skipped
+     * as absent. A buffered value, or the closed-channel zero, is
+     * returned even past a self-claimed waiter: the waiter belongs to a
+     * select completing elsewhere. Never parks.
+     *
+     * @param caller the select on whose behalf this attempt runs, or
+     *               null for a plain receive (every self-claimed
+     *               waiter is then foreign)
      */
-    RecvAttempt tryRecv(SchedulerCore sched) {
-        ChanWaiter s = pollAccepting(sendWaiters);
+    RecvAttempt tryRecv(SchedulerCore sched, SelectOp caller) {
+        ChanWaiter s = pollAccepting(sendWaiters, caller);
         if (s != null && s != RETRY_WAIT) {
             return new RecvAttempt(new RecvResult(takeFromSender(s, sched), true), false);
         }
@@ -304,10 +324,12 @@ public class GoChan implements ChanOps.Chan {
 
     /**
      * Sentinel waiter returned by {@link #pollAccepting} when the queue
-     * holds no accepting waiter but a self-claimed select waiter blocks
-     * it. Never accepted, never delivered to: callers must retry (see
-     * {@link SendAttempt#RETRY}). The sentinel's null handle is never
-     * dereferenced — it is filtered out before any deliver/take.
+     * holds no accepting waiter but a FOREIGN select's self-claimed
+     * waiter blocks it. Never accepted, never delivered to: callers
+     * must retry (see {@link SendAttempt#RETRY}). The sentinel's null
+     * handle is never dereferenced — it is filtered out before any
+     * deliver/take. A waiter self-claimed by the calling select itself
+     * never produces this sentinel (it is skipped as absent).
      */
     private static final ChanWaiter RETRY_WAIT = new ChanWaiter(null) {
         @Override
@@ -319,20 +341,31 @@ public class GoChan implements ChanOps.Chan {
     /**
      * Dequeues the first accepting waiter, dropping select waiters
      * already claimed by another channel (their wakeup is in flight).
-     * A self-claimed select waiter is SKIPPED (left enqueued) and, if
-     * no accepting waiter is found behind it, reported via
+     * A FOREIGN self-claimed select waiter is SKIPPED (left enqueued)
+     * and, if no accepting waiter is found behind it, reported via
      * {@link #RETRY_WAIT}: the caller must retry once the transient
      * self-claim resolves. Dropping it, or treating the queue as
      * empty and parking, strands its selector (CI run 41943236460
-     * lost wakeup). Returns null if the queue is empty (or holds only
-     * waker-claimed waiters, which are dropped).
+     * lost wakeup). A waiter self-claimed by {@code caller} itself is
+     * the caller's own earlier-enqueued case on this channel
+     * (same-channel multi-case select): it is likewise skipped, but
+     * does NOT set {@code sawSelfClaimed} — it can never pair with
+     * this attempt (a select must not communicate with itself), so
+     * the attempt reports WOULD_BLOCK and the case enqueues normally
+     * instead of RETRYing against its own waiter forever. Returns
+     * null if the queue is empty (or holds only waker-claimed waiters,
+     * which are dropped, or only the caller's own self-claimed
+     * waiters).
      */
-    private ChanWaiter pollAccepting(Deque<ChanWaiter> q) {
+    private ChanWaiter pollAccepting(Deque<ChanWaiter> q, SelectOp caller) {
         boolean sawSelfClaimed = false;
         Iterator<ChanWaiter> it = q.iterator();
         while (it.hasNext()) {
             ChanWaiter w = it.next();
             if (w instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+                if (sw.isSelfClaimedBy(caller)) {
+                    continue;
+                }
                 sawSelfClaimed = true;
                 continue;
             }
@@ -406,7 +439,7 @@ public class GoChan implements ChanOps.Chan {
                 if (closed) {
                     Panic.throwPanic(GoStrings.of("send on closed channel"));
                 }
-                SendAttempt a = trySend(v, sched);
+                SendAttempt a = trySend(v, sched, null);
                 if (a == SendAttempt.SENT) {
                     return;
                 }
@@ -449,7 +482,7 @@ public class GoChan implements ChanOps.Chan {
         // monitor, never enqueue-and-park on a RETRY.
         while (!enqueued) {
             synchronized (this) {
-                RecvAttempt a = tryRecv(sched);
+                RecvAttempt a = tryRecv(sched, null);
                 if (!a.retry() && a.result() != null) {
                     return a.result();
                 }

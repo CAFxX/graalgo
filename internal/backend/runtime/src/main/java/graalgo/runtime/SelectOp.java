@@ -101,6 +101,21 @@ public final class SelectOp {
         }
 
         /**
+         * Non-mutating check: is the claim held transiently by the
+         * given select itself? Only then is this waiter the caller's
+         * own earlier-enqueued case on the same channel (a
+         * same-channel multi-case select mid-sweep): it can never
+         * pair with the caller's current attempt — a select must not
+         * communicate with itself — so {@code pollAccepting} skips
+         * it as absent instead of reporting RETRY. A null caller is
+         * never "self" (plain send/recv and the timer thread have no
+         * op of their own).
+         */
+        boolean isSelfClaimedBy(SelectOp caller) {
+            return caller != null && op == caller && isSelfClaimed();
+        }
+
+        /**
          * Non-mutating check: has a waker on another channel won the
          * claim? Only then is a wakeup in flight and the waiter safe
          * for a waker to drop.
@@ -342,7 +357,7 @@ public final class SelectOp {
                     if (ch.isClosed()) {
                         return null;
                     }
-                    GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched);
+                    GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched, this);
                     if (sa == GoChan.SendAttempt.SENT) {
                         resultIndex = chosen;
                         resultOk = true;
@@ -350,7 +365,7 @@ public final class SelectOp {
                     }
                     retry = sa == GoChan.SendAttempt.RETRY;
                 } else {
-                    GoChan.RecvAttempt a = ch.tryRecv(sched);
+                    GoChan.RecvAttempt a = ch.tryRecv(sched, this);
                     if (a.retry()) {
                         retry = true;
                     } else if (a.result() != null) {
@@ -388,7 +403,7 @@ public final class SelectOp {
             if (ch.isClosed()) {
                 return COMP_BLOCK;
             }
-            GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched);
+            GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched, this);
             if (sa == GoChan.SendAttempt.SENT) {
                 resultIndex = chosen;
                 resultOk = true;
@@ -396,7 +411,7 @@ public final class SelectOp {
             }
             return sa == GoChan.SendAttempt.RETRY ? COMP_RETRY : COMP_BLOCK;
         }
-        GoChan.RecvAttempt a = ch.tryRecv(sched);
+        GoChan.RecvAttempt a = ch.tryRecv(sched, this);
         if (a.retry()) {
             return COMP_RETRY;
         }

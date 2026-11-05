@@ -276,7 +276,7 @@ public final class TimerHeap {
             // RETRY result is also null-valued (RETRY is only returned
             // when the buffer is empty and the channel is open), so it
             // ends the drain the same way: nothing stale remains.
-            while (ch.tryRecv(sched).result() != null) {
+            while (ch.tryRecv(sched, null).result() != null) {
                 drained = true;
             }
             return drained;
@@ -380,7 +380,7 @@ public final class TimerHeap {
                 // receiver has not consumed the previous one). RETRY
                 // also drops it, which is the same case: RETRY is only
                 // returned when the buffer is full.
-                e.chan.trySend(System.nanoTime(), sched);
+                e.chan.trySend(System.nanoTime(), sched, null);
             }
             if (e.periodNanos > 0) {
                 // Ticker re-arm, atomic w.r.t. stop/reset (heap lock

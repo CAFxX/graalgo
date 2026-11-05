@@ -33,6 +33,11 @@ import graalgo.sched.SchedulerCore;
  *
  * <p>Each test constructs the self-claimed state directly (via
  * reflection on the private claim field — the only reflective access).
+ * The tests call {@code trySend}/{@code tryRecv} with a null caller:
+ * they model a FOREIGN party probing the waiter's selector, so the
+ * RETRY contract below holds. (A waiter self-claimed by the calling
+ * select itself is skipped as absent instead — see
+ * {@code ChannelTest.testSelectSameChannelMixedDirection}.)
  * Tests that never deliver to a waiter use null handles (unpark is only
  * called for accepted waiters); the close-retry test uses a real
  * spawned goroutine's handle so the claiming unpark is delivered and
@@ -112,13 +117,13 @@ public final class SelectSelfClaimTest {
         SchedulerCore sched = installScheduler();
         try {
             GoChan ch = new GoChan(1, 0L);
-            assertTrue(ch.trySend(1L, sched) == GoChan.SendAttempt.SENT,
+            assertTrue(ch.trySend(1L, sched, null) == GoChan.SendAttempt.SENT,
                     "buffer fill must send");
             SelectOp op = new SelectOp(new ChanOps.SelectCase[]{
                     new ChanOps.SelectCase(ch, false, null)});
             setSelfClaim(op);
             enqueueWaiter(op, ch, false, null, null);
-            assertTrue(ch.trySend(2L, sched) == GoChan.SendAttempt.RETRY,
+            assertTrue(ch.trySend(2L, sched, null) == GoChan.SendAttempt.RETRY,
                     "send past self-claimed waiter with full buffer must RETRY");
             assertEquals(1, ch.buffered(), "buffer untouched by RETRY");
             assertEquals(1, ch.recvWaitersCount(),
@@ -140,7 +145,7 @@ public final class SelectSelfClaimTest {
                     new ChanOps.SelectCase(ch, false, null)});
             setSelfClaim(op);
             enqueueWaiter(op, ch, false, null, null);
-            assertTrue(ch.trySend(7L, sched) == GoChan.SendAttempt.SENT,
+            assertTrue(ch.trySend(7L, sched, null) == GoChan.SendAttempt.SENT,
                     "send completes via buffer");
             assertEquals(1, ch.buffered(), "value buffered");
             assertEquals(1, ch.recvWaitersCount(),
@@ -163,7 +168,7 @@ public final class SelectSelfClaimTest {
                     new ChanOps.SelectCase(ch, true, 5L)});
             setSelfClaim(op);
             enqueueWaiter(op, ch, true, 5L, null);
-            GoChan.RecvAttempt a = ch.tryRecv(sched);
+            GoChan.RecvAttempt a = ch.tryRecv(sched, null);
             assertTrue(a.retry(), "recv past self-claimed sender must retry");
             assertTrue(a.result() == null, "retry carries no value");
             assertEquals(1, ch.sendWaitersCount(),
@@ -181,13 +186,13 @@ public final class SelectSelfClaimTest {
         SchedulerCore sched = installScheduler();
         try {
             GoChan ch = new GoChan(1, 0L);
-            assertTrue(ch.trySend(9L, sched) == GoChan.SendAttempt.SENT,
+            assertTrue(ch.trySend(9L, sched, null) == GoChan.SendAttempt.SENT,
                     "buffer fill must send");
             SelectOp op = new SelectOp(new ChanOps.SelectCase[]{
                     new ChanOps.SelectCase(ch, true, 5L)});
             setSelfClaim(op);
             enqueueWaiter(op, ch, true, 5L, null);
-            GoChan.RecvAttempt a = ch.tryRecv(sched);
+            GoChan.RecvAttempt a = ch.tryRecv(sched, null);
             assertTrue(!a.retry(), "buffered value beats RETRY");
             assertTrue(a.result() != null && Long.valueOf(9L).equals(a.result().value()),
                     "buffered value returned");

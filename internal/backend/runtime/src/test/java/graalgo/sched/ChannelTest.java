@@ -688,6 +688,67 @@ public final class ChannelTest {
     }
 
     /**
+     * Same channel in two select cases, mixed directions (one send,
+     * one recv): the selector must PARK on both cases — one send
+     * waiter and one recv waiter on the channel — not spin forever
+     * in the sweep RETRY loop. On the unfixed code the second swept
+     * case re-claims, sees the op's own earlier-enqueued waiter as
+     * self-claimed, RETRYs, yields and re-claims forever; the
+     * selector never parks and no external party can pair with it.
+     * Both pairings are exercised: an external receiver must win
+     * the send case, an external sender the recv case. verifies:
+     * GG-0017
+     */
+    public void testSelectSameChannelMixedDirection() throws Exception {
+        selectMixedDirectionOnce(false);
+        selectMixedDirectionOnce(true);
+    }
+
+    /** One mixed-direction scenario: the external party sends when {@code externalSends}. */
+    private void selectMixedDirectionOnce(boolean externalSends) throws Exception {
+        AtomicBoolean selDone = new AtomicBoolean();
+        AtomicInteger idx = new AtomicInteger(-1);
+        AtomicReference<Object> val = new AtomicReference<>();
+        withScheduler(2, () -> {
+            GoChan ch = new GoChan(0, 0L);
+            sched.spawn(() -> {
+                int i = ChanOps.selectGo(new ChanOps.SelectCase[]{
+                        new ChanOps.SelectCase(ch, true, 1L),
+                        new ChanOps.SelectCase(ch, false, null),
+                });
+                idx.set(i);
+                if (i == 1) {
+                    val.set(ChanOps.selectRecvValue());
+                }
+                selDone.set(true);
+            });
+            // The selector must park on BOTH cases: one send waiter
+            // and one recv waiter on the same channel. Deterministic
+            // probe — on the unfixed code the sweep spins and the
+            // second waiter count never settles, so waitFor times out.
+            waitFor(() -> ch.sendWaitersCount() == 1 && ch.recvWaitersCount() == 1,
+                    "selector parked on both mixed-direction cases");
+            sched.spawn(() -> {
+                if (externalSends) {
+                    ChanOps.send(ch, 2L);
+                } else {
+                    Object v = ChanOps.recv(ch);
+                    if (!Long.valueOf(1L).equals(v)) {
+                        idx.set(-99);
+                    }
+                }
+            });
+            waitFor(() -> selDone.get(), "select done");
+        });
+        if (externalSends) {
+            assertTrue(idx.get() == 1, "recv case must win, idx=" + idx.get());
+            assertEquals(2L, val.get(), "value delivered to recv case");
+        } else {
+            assertTrue(idx.get() == 0, "send case must win, idx=" + idx.get());
+        }
+    }
+
+    /**
      * Close broadcasts to multiple parked receivers: all observe
      * (zero, false). verifies: GG-0017
      */
