@@ -16,7 +16,7 @@ import (
 
 type verifyOptions struct {
 	Target       string // vendored tree dir; "" => <manifest>.TargetDir
-	ManifestPath string // in-repo manifest; "" => <repo>/phases/phase3/stdlib-fork/vendor-manifest.json
+	ManifestPath string // in-repo manifest; "" => <repo>/tools/stdlib-fork/vendor-manifest.json
 	Repo         string // explicit repo root; "" => discover from CWD
 }
 
@@ -163,7 +163,7 @@ func runVerifyCmd(argv []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	targetFlag := fs.String("target", "", "vendored tree directory (default: the TargetDir recorded in the manifest)")
-	manifestFlag := fs.String("manifest", "", "manifest path (default: <repo>/phases/phase3/stdlib-fork/vendor-manifest.json)")
+	manifestFlag := fs.String("manifest", "", "manifest path (default: <repo>/tools/stdlib-fork/vendor-manifest.json)")
 	repoFlag := fs.String("repo", "", "repo root (default: discovered from CWD)")
 	if err := fs.Parse(argv); err != nil {
 		return &usageError{err.Error()}

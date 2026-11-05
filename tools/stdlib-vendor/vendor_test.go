@@ -285,3 +285,47 @@ func TestManifestHashesAreReal(t *testing.T) {
 		}
 	}
 }
+
+// Default manifest/pin paths live under tools/stdlib-fork — the directory
+// that actually exists in the repo — and vendoring with defaults writes
+// there without creating the deleted phases/ tree.
+func TestDefaultPathsResolveInsideCurrentTree(t *testing.T) {
+	repo := t.TempDir()
+	wantFork := filepath.Join(repo, "tools", "stdlib-fork")
+	if got := stdlibForkDir(repo); got != wantFork {
+		t.Fatalf("stdlibForkDir = %q, want %q", got, wantFork)
+	}
+	wantManifest := filepath.Join(wantFork, "vendor-manifest.json")
+	if got := defaultManifestPath(repo); got != wantManifest {
+		t.Fatalf("defaultManifestPath = %q, want %q", got, wantManifest)
+	}
+	wantPin := filepath.Join(wantFork, "pinned-version.txt")
+	if got := defaultPinPath(repo); got != wantPin {
+		t.Fatalf("defaultPinPath = %q, want %q", got, wantPin)
+	}
+
+	// Vendoring with defaults (Repo set, no explicit manifest/pin) must
+	// write the manifest and pin under tools/stdlib-fork and must not
+	// create a phases/ directory.
+	goroot := fakeGoroot(t, "go1.27.1", stdFiles)
+	target := filepath.Join(t.TempDir(), "vendored")
+	o := vendorOptions{Goroot: goroot, Target: target, Repo: repo}
+	var log bytes.Buffer
+	if err := vendorTree(o, &log); err != nil {
+		t.Fatalf("vendor with defaults: %v", err)
+	}
+	if _, err := os.Stat(wantManifest); err != nil {
+		t.Fatalf("default manifest not written at %s: %v", wantManifest, err)
+	}
+	if _, err := os.Stat(wantPin); err != nil {
+		t.Fatalf("default pin not written at %s: %v", wantPin, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "phases")); !os.IsNotExist(err) {
+		t.Fatalf("vendor with defaults created %s (must stay inside the current tree)",
+			filepath.Join(repo, "phases"))
+	}
+	m := readManifest(t, wantManifest)
+	if m.GoVersion != "go1.27.1" {
+		t.Fatalf("default manifest goVersion = %q", m.GoVersion)
+	}
+}

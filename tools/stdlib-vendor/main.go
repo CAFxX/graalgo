@@ -6,7 +6,7 @@
 // EXTERNAL directory (default ~/workspace/graalgo-stdlib/<version>/) and
 // writes a byte-deterministic file manifest (relative path + SHA-256 +
 // size + mode) plus the pinned Go version into the repo at
-// phases/phase3/stdlib-fork/.
+// tools/stdlib-fork/.
 //
 // Subcommands:
 //
@@ -36,8 +36,8 @@ Usage:
 
 vendor copies $GOROOT/src into --target (default
 $HOME/workspace/graalgo-stdlib/<goVersion>/) and writes a deterministic
-manifest at --manifest (default <repo>/phases/phase3/stdlib-fork/vendor-manifest.json)
-plus the pinned version at <repo>/phases/phase3/stdlib-fork/pinned-version.txt.
+manifest at --manifest (default <repo>/tools/stdlib-fork/vendor-manifest.json)
+plus the pinned version at <repo>/tools/stdlib-fork/pinned-version.txt.
 
   --force                vendor into an existing non-empty target directory
   --allow-version-drift  proceed when the GOROOT version differs from the pin
@@ -103,7 +103,7 @@ func repoRoot(dir string) (string, error) {
 
 // stdlibForkDir is the in-repo directory owned by this workstream.
 func stdlibForkDir(repo string) string {
-	return filepath.Join(repo, "phases", "phase3", "stdlib-fork")
+	return filepath.Join(repo, "tools", "stdlib-fork")
 }
 
 func defaultManifestPath(repo string) string {
