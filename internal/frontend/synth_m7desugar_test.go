@@ -80,12 +80,24 @@ var m7ArchiveMimeTable = []m7StrconvJsonExpect{
 	// multiResultHelperFor, so the fs.DirEntry/fs.File interface
 	// dispatch (classifyUserIfaceMultiResultCall fallback, f0/f1 pair)
 	// reaches the concrete helpers. ifaceFallback stays false for all
-	// five: the flag only fires when the selected method's package is
+	// six: the flag only fires when the selected method's package is
 	// the entry's own package, and the three interface-dispatched
 	// methods here are declared in io/fs and io, never archive/zip.
 	{"archive/zip", "Info", "fileListEntry", "__zipfileListEntryInfo", "__zipfileListEntryInfoPair", []string{"f0", "f1"}},
 	{"archive/zip", "Stat", "openDir", "__zipopenDirStat", "__zipopenDirStatPair", []string{"f0", "f1"}},
 	{"archive/zip", "Read", "openDir", "__zipopenDirRead", "__zipopenDirReadPair", []string{"f0", "f1"}},
+	// archive/zip: headerFileInfo.Info (NEEDS-FIX re-review of
+	// acab9a30, 2026-11-05): the guard's EXCLUSIONS wrongly excused
+	// this row as unreachable, but headerFileInfo implements
+	// fs.DirEntry, so it is reachable two ways — (a) a file entry
+	// from fs.ReadDir on a zip IS a headerFileInfo value (gc
+	// fileListEntry.stat returns headerFileInfo for files), so
+	// e.Info() dispatches to it; (b) FileHeader.FileInfo() returns a
+	// headerFileInfo as fs.FileInfo, which asserts to fs.DirEntry.
+	// Without this row the itab has no entry for headerFileInfo.Info
+	// (multiResultHelperFor finds no helper) and interface dispatch
+	// fails fast with "missing method".
+	{"archive/zip", "Info", "headerFileInfo", "__zipheaderFileInfoInfo", "__zipheaderFileInfoInfoPair", []string{"f0", "f1"}},
 }
 
 func TestM7StringsBuilderDesugarWiring(t *testing.T) {
@@ -112,8 +124,10 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 	}
 }
 
-// TestM7ArchiveMimeDesugarWiring pins the 5 A-P1-11 m7MultiResultFuncs
-// entries for archive/zip and mime/multipart (REVIEW-2026-11-05-15).
+// TestM7ArchiveMimeDesugarWiring pins the 6 A-P1-11 m7MultiResultFuncs
+// entries for archive/zip and mime/multipart (REVIEW-2026-11-05-15;
+// the 6th, headerFileInfo.Info, added by the NEEDS-FIX fix-up — the
+// guard's EXCLUSIONS had wrongly excused it as unreachable).
 // Table-only by design (step 1 of checkM7DesugarWiring): the full
 // synthetic-package check (steps 2-5) cannot run on this branch's base
 // because the two synthetic packages do not type-check there yet —
@@ -131,8 +145,8 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 // sources; the subset check in check_mr_table_subset.py re-verifies
 // them against the generator on every `make check`).
 func TestM7ArchiveMimeDesugarWiring(t *testing.T) {
-	if len(m7ArchiveMimeTable) != 5 {
-		t.Fatalf("m7ArchiveMimeTable has %d entries, want 5", len(m7ArchiveMimeTable))
+	if len(m7ArchiveMimeTable) != 6 {
+		t.Fatalf("m7ArchiveMimeTable has %d entries, want 6", len(m7ArchiveMimeTable))
 	}
 	for _, want := range m7ArchiveMimeTable {
 		name := want.pkgPath + "." + want.recvType + "." + want.name

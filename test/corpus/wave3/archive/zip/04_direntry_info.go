@@ -1,9 +1,11 @@
 // P3-M9 wave3: archive/zip — fs.DirEntry/fs.File interface dispatch:
 // fs.ReadDir + DirEntry.Info, Reader.Open(dir) + Stat + Read.
 // SCOPE-LIMITED: the m7 desugar rows for fileListEntry.Info,
-// openDir.Stat and openDir.Read are missing (A-P1-11,
-// REVIEW-2026-11-05-15); the carried archive/zip FixedZone fix is also
-// still open (see 04_direntry_info.scopelimited).
+// openDir.Stat, openDir.Read and headerFileInfo.Info landed in
+// review-1105-mr-table-missing (A-P1-11, REVIEW-2026-11-05-15, plus the
+// NEEDS-FIX fix-up adding the headerFileInfo.Info row); the carried
+// archive/zip FixedZone fix is still open (see
+// 04_direntry_info.scopelimited).
 package main
 
 import (

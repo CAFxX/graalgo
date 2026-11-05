@@ -20,11 +20,19 @@ carried nine wrong pair-field names (e.g. tar computeChecksum
 which synthPairField would have rejected loudly at the first desugar.
 All nine were corrected with the A-P1-11 rows; this check pins them.
 
-Deliberate exclusions (generated rows with no committed row, each
-verified unreachable from user code — see REVIEW-2026-11-05-15
-"checked-clear"); adding an exclusion needs a fresh review note here:
-- ("archive/zip", "Info", "headerFileInfo"): headerFileInfo is only
-  obtainable as fs.FileInfo, which has no Info method.
+Deliberate exclusions (generated rows with no committed row). Each
+exclusion is a claim that the method is unreachable from user code —
+and the claim is CHECKED, not trusted: verify_exclusions() below
+re-derives it mechanically on every run (unexported name, no remaining
+call site in any synthetic source, not a member of any interface
+declared in the synthetic sources). A wrong claim used to pass
+silently: headerFileInfo.Info was excluded as "only obtainable as
+fs.FileInfo, which has no Info method", but headerFileInfo implements
+fs.DirEntry, so it IS reachable (fs.ReadDir file entries are
+headerFileInfo values; FileHeader.FileInfo().(fs.DirEntry).Info()).
+That exclusion was removed and the row added (NEEDS-FIX re-review of
+acab9a30, 2026-11-05); adding an exclusion needs a fresh review note
+here AND must pass the mechanical checks.
 - ("archive/zip", "findBodyOffset", "File"): unexported; internal calls
   are rewritten in-source to __zipFilefindBodyOffset by the generator.
 - ("mime/multipart", "readForm", "Reader"): unexported; called only
@@ -37,6 +45,7 @@ run_gen_synth.py); if they cannot be located the check fails instead
 of skipping.
 """
 
+import glob
 import os
 import re
 import subprocess
@@ -48,13 +57,134 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 GENERATOR = os.path.join(REPO, "internal", "frontend",
                          "gen_synth_archive_mime.py")
 TABLE = os.path.join(REPO, "internal", "frontend", "mrdesugar_m5.go")
+SYNTH_DIR = os.path.join(REPO, "internal", "frontend")
 
 # (pkgPath, name, recvType) generated rows with no committed row, by design.
 EXCLUSIONS = {
-    ("archive/zip", "Info", "headerFileInfo"),
     ("archive/zip", "findBodyOffset", "File"),
     ("mime/multipart", "readForm", "Reader"),
 }
+
+
+def synth_sources():
+    """Synthetic stdlib sources (the generated Go lives inside raw-string
+    consts in synth_*.go; scanning the wrapper files scans the source)."""
+    return sorted(glob.glob(os.path.join(SYNTH_DIR, "synth_*.go")))
+
+
+def remaining_call_sites(name):
+    """`.name(` occurrences in any synthetic source (the stub definition
+    `func (r T) name(` and the `__helper(` rewrites have no dot, so any
+    hit is a real call site — including an interface-dispatched one,
+    which can reach the concrete method through the itab)."""
+    pat = re.compile(r"\." + re.escape(name) + r"\(")
+    hits = []
+    for path in synth_sources():
+        with open(path) as f:
+            for i, line in enumerate(f, 1):
+                if pat.search(line):
+                    if line.strip().startswith("//"):
+                        continue
+                    hits.append("%s:%d: %s"
+                                % (os.path.basename(path), i, line.strip()))
+    return hits
+
+
+def interface_members():
+    """Bare interface name -> member method names, transitive through
+    embedding, over all `type X interface { ... }` declarations in the
+    synthetic sources. A method that is a member of any interface can be
+    reached by interface dispatch on any implementer."""
+    ifaces = {}
+    decl_re = re.compile(r"type\s+(\w+)(?:\[[^\]]*\])?\s+interface\s*\{")
+    for path in synth_sources():
+        with open(path) as f:
+            text = f.read()
+        for m in decl_re.finditer(text):
+            name = m.group(1)
+            start = m.end()
+            depth = 1
+            i = start
+            while i < len(text) and depth > 0:
+                c = text[i]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                i += 1
+            if depth != 0:
+                raise SystemExit(
+                    "check_mr_table_subset: unterminated interface %s in %s"
+                    % (name, path))
+            body = text[start:i - 1]
+            members, embeds = set(), set()
+            for raw in body.split("\n"):
+                line = raw.strip()
+                if not line or line.startswith("//"):
+                    continue
+                if "//" in line:
+                    line = line[:line.index("//")].strip()
+                mm = re.match(r"(\w+)\s*\(", line)
+                if mm:
+                    members.add(mm.group(1))
+                    continue
+                em = re.match(r"^([\w./]+)(?:\[[^\]]*\])?$", line)
+                if em:
+                    embeds.add(em.group(1).split(".")[-1])
+            e = ifaces.setdefault(name, {"members": set(), "embeds": set()})
+            e["members"] |= members
+            e["embeds"] |= embeds
+    resolved = {}
+
+    def all_members(n, seen):
+        if n in resolved:
+            return resolved[n]
+        if n in seen:
+            return set()
+        e = ifaces.get(n)
+        if e is None:
+            return set()
+        out = set(e["members"])
+        for emb in e["embeds"]:
+            out |= all_members(emb, seen | {n})
+        resolved[n] = out
+        return out
+
+    return {n: all_members(n, set()) for n in ifaces}
+
+
+def verify_exclusions():
+    """Re-derive every EXCLUSIONS claim mechanically. Returns a list of
+    problems (empty when every exclusion holds). This is the guard's
+    root-cause fix: an exclusion used to be a trusted human claim, and
+    a wrong one (headerFileInfo.Info) passed the check while the table
+    missed a reachable row. Each exclusion must now satisfy all three:
+    the method is unexported; no `.name(` call site remains in any
+    synthetic source; the name is a member of no declared interface."""
+    problems = []
+    members_by_iface = interface_members()
+    if not members_by_iface:
+        raise SystemExit("check_mr_table_subset: zero interfaces parsed "
+                         "from synthetic sources (parser drift?)")
+    for key in sorted(EXCLUSIONS):
+        _pkg, name, _recv = key
+        if not name or not name[0].islower():
+            problems.append(
+                "%r: exclusion requires an unexported method name" % (key,))
+        hits = remaining_call_sites(name)
+        if hits:
+            problems.append(
+                "%r: excluded as unreachable but call sites remain: %s"
+                % (key, "; ".join(hits)))
+        hit_ifaces = sorted(
+            iface for iface, members in members_by_iface.items()
+            if name in members)
+        if hit_ifaces:
+            problems.append(
+                "%r: excluded as unreachable but %s is a member of "
+                "interface(s) %s (interface dispatch can reach it)"
+                % (key, name, ", ".join(hit_ifaces)))
+    return problems
 
 GEN_ROW_RE = re.compile(
     r'^\s*\{"([^"]+)", "([^"]*)", "([^"]*)", "([^"]+)", "([^"]+)", '
@@ -194,6 +324,11 @@ def main():
                          "archive/mime m7 rows parsed (parser drift?)")
 
     problems = []
+    # The exclusions are claims, not facts: re-derive each one
+    # mechanically (unexported, no call site, no interface member).
+    # A wrong exclusion used to pass while the table missed a reachable
+    # row (headerFileInfo.Info, NEEDS-FIX re-review of acab9a30).
+    problems.extend(verify_exclusions())
     for key in sorted(generated):
         want = generated[key]
         if key in EXCLUSIONS:
@@ -213,6 +348,14 @@ def main():
             problems.append(
                 "%r: committed row %s != generated row %s"
                 % (key, got, want))
+    # Reverse direction: a committed archive/mime row with no generated
+    # row is an orphan (e.g. a single-result method that never had a
+    # helper) — it can never classify, so delete it instead of carrying it.
+    for key in sorted(committed_am):
+        if key not in generated and key not in EXCLUSIONS:
+            problems.append(
+                "%r: committed archive/mime row has no generated row "
+                "(orphan; delete it)" % (key,))
     if problems:
         sys.stderr.write(
             "check_mr_table_subset: FAIL (%d problem(s)):\n" % len(problems))

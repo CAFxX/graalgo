@@ -597,7 +597,6 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Read", "dirReader", "__zipdirReaderRead", "__zipdirReaderReadPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Stat", "checksumReader", "__zipchecksumReaderStat", "__zipchecksumReaderStatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "checksumReader", "__zipchecksumReaderRead", "__zipchecksumReaderReadPair", []string{"n", "err"}, false},
-	{"archive/zip", "Close", "checksumReader", "__zipchecksumReaderClose", "__zipchecksumReaderClosePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "readDirectoryEnd", "", "__zipreadDirectoryEnd", "__zipreadDirectoryEndPair", []string{"dir", "baseOffset", "err"}, false},
 	{"archive/zip", "findDirectory64End", "", "__zipfindDirectory64End", "__zipfindDirectory64EndPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "stat", "fileListEntry", "__zipfileListEntrystat", "__zipfileListEntrystatPair", []string{"f0", "f1"}, false},
@@ -606,7 +605,6 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"dir", "elem", "isDir"}, false},
 	{"archive/zip", "Stat", "openDir", "__zipopenDirStat", "__zipopenDirStatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "openDir", "__zipopenDirRead", "__zipopenDirReadPair", []string{"f0", "f1"}, false},
-	{"archive/zip", "Close", "openDir", "__zipopenDirClose", "__zipopenDirClosePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "ReadDir", "openDir", "__zipopenDirReadDir", "__zipopenDirReadDirPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Create", "Writer", "__zipWriterCreate", "__zipWriterCreatePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"valid", "require"}, false},
@@ -615,6 +613,14 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Write", "fileWriter", "__zipfileWriterWrite", "__zipfileWriterWritePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Write", "countWriter", "__zipcountWriterWrite", "__zipcountWriterWritePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "FileInfoHeader", "", "__zipFileInfoHeader", "__zipFileInfoHeaderPair", []string{"f0", "f1"}, false},
+	// NEEDS-FIX fix-up (REVIEW-2026-11-05-15 re-review, 2026-11-05):
+	// headerFileInfo.Info was wrongly carried in the subset check's
+	// EXCLUSIONS as unreachable. headerFileInfo implements fs.DirEntry,
+	// so it is reachable — via fs.ReadDir on a zip (file entries ARE
+	// headerFileInfo values: fileListEntry.stat returns headerFileInfo
+	// for files) and via FileHeader.FileInfo().(fs.DirEntry).Info().
+	// Without this row the itab has no entry for headerFileInfo.Info.
+	{"archive/zip", "Info", "headerFileInfo", "__zipheaderFileInfoInfo", "__zipheaderFileInfoInfoPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "timeToMsDosTime", "", "__ziptimeToMsDosTime", "__ziptimeToMsDosTimePair", []string{"fDate", "fTime"}, false},
 	{"archive/zip", "Write", "pooledFlateWriter", "__zippooledFlateWriterWrite", "__zippooledFlateWriterWritePair", []string{"n", "err"}, false},
 	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}, false},

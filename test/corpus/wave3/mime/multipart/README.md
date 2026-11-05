@@ -20,7 +20,11 @@ worker). Conventions are the wave-1 ones (`../../wave1/README.md`).
   rows for `Reader.ReadForm` / `FileHeader.Open` landed in
   review-1105-mr-table-missing (A-P1-11), but the package still does
   not type-check until the carried type-error fix lands (branch
-  review-1105-multipart-typeerr: `synth_mime_multipart.go:934`). The
-  gc leg validates it is real deterministic Go.
+  review-1105-multipart-typeerr: `synth_mime_multipart.go:934`), and
+  the program is further blocked by the carried `path/filepath`
+  `lstat` export bug (own lane `review-1105-filepath-lstat`) and by
+  the hand-written `mime/multipart.readMIMEHeader` M9-scope panic stub
+  (no `__`-helper, no desugar row; `(*Part).populateHeaders` calls it
+  for every part). The gc leg validates it is real deterministic Go.
 - The `ReadForm` spill path uses the wave-3 `TMPDIR` discipline via
   `os.CreateTemp` internals; no paths are printed.

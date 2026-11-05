@@ -32,9 +32,10 @@ no network.
 
 ## Scope limits
 
-- No synthetic `archive/zip` source exists in frontend/v1, so all
-  programs are `.scopelimited`; the gc leg validates each is real
-  deterministic Go with exit 0. `retest:` synthetic `archive/zip`
-  lands in `internal/frontend`, coordinated with the parallel
-  `compress/*` worker (the zip corpus exercises `Deflate` via the
-  real std `compress/flate` on the gc leg).
+- The synthetic `archive/zip` source exists in
+  [internal/frontend/](../../../../../internal/frontend/) (`synth_archive_zip.go`),
+  but the programs are `.scopelimited` until the carried FixedZone fix
+  lands (branch `review-1105-zip-fixedzone`:
+  `synth_archive_zip.go:2397`, `time.FixedZone`) — the synthetic package
+  does not type-check without it. The gc leg validates each program is
+  real deterministic Go with exit 0.
