@@ -1,6 +1,6 @@
 # Corpus
 
-55 single-file Go programs (`package main`, stdlib only) covering the
+56 single-file Go programs (`package main`, stdlib only) covering the
 language surface the smoke net guards. Each program is deterministic by
 construction under `GOMAXPROCS=1`:
 
@@ -81,6 +81,9 @@ Coverage map:
 | 54  | deadlock_select_nil  | RV-P1-19: all-nil select → fatal deadlock, exit  |
 |     |                      | 2 (nil cases dropped by the p3chan builder, so  |
 |     |                      | this parks as `select {}`; gc probe: [select])   |
+| 55  | goexit_timer         | RV-P1-19: main Goexit + pending ticker → gc's   |
+|     |                      | no-goroutines fatal, exit 2 (a pending timer   |
+|     |                      | is not a goroutine)                            |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,

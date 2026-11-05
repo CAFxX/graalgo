@@ -539,9 +539,20 @@ public final class P3SyncMain {
                     // blocked children and pending timers.
                     sched.signalMainReturned();
                 } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
-                    // goroutine is live; otherwise main just dies.
-                    if (sched.runnableCount() > 1) {
+                    // Main called Goexit: gc fatal deadlock iff no other
+                    // USER goroutine is live; otherwise main just dies.
+                    // Background timer translators do not count: they are
+                    // runtime machinery, not goroutines (a pending timer
+                    // is not a goroutine — gc probe, go1.27.1: NewTicker
+                    // + Goexit fatals with the no-goroutines message,
+                    // exit 2). backgroundLive is process-global, like
+                    // the drain's live <= bg check; the launcher runs a
+                    // single scheduler, so the counts agree here.
+                    // (A translator mid-exit — deregistered, live count
+                    // not yet decremented — transiently overcounts by one;
+                    // the window is a single exit-path step and the only
+                    // consequence is a missed C2 fatal, never a false one.)
+                    if (sched.runnableCount() - P3TimeRuntime.backgroundLive() > 1) {
                         return;
                     }
                     // RV-P1-19 (C2): gc's distinct message for this case

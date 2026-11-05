@@ -158,24 +158,27 @@ public final class DeadlockLauncherTest {
     }
 
     /**
-     * Main Goexit'ed with a pending timer translator live → exit 0, not
-     * a hang. Port regression (RV-P1-19): awaiting quiescence before
-     * draining the background translators hangs the launcher — the
-     * translator's heap timer stays pending, which suppresses the
-     * deadlock detector, so {@code awaitQuiescence} can never return.
-     * gc exits: a pending timer is not a goroutine.
+     * Main Goexit'ed with a pending timer translator live → exit 2 with
+     * gc's no-goroutines message (a pending timer is not a goroutine).
+     * Port regression (RV-P1-19): awaiting quiescence before draining
+     * the background translators hangs the launcher — the translator's
+     * heap timer stays pending, which suppresses the deadlock detector,
+     * so {@code awaitQuiescence} can never return. And the C2 decision
+     * must not count the translator as a live goroutine, or the program
+     * would exit 0 instead of gc's fatal exit 2.
      */
-    public void testGoexitWithPendingTimerExits() throws Exception {
+    public void testGoexitWithPendingTimerDeadlocks() throws Exception {
         RunResult r = runGo("goexit_timer",
                 "package main\n\nimport (\n\t\"runtime\"\n\t\"time\"\n)\n\n"
                         + "func main() {\n"
                         + "    _ = time.NewTicker(time.Hour)\n"
                         + "    runtime.Goexit()\n"
                         + "}\n");
-        assertEquals(0, r.exitCode,
-                "Goexit with pending timer exits, stderr was:\n" + r.stderr);
-        assertTrue(!r.stderr.contains("deadlock"),
-                "no deadlock report, stderr was:\n" + r.stderr);
+        assertEquals(2, r.exitCode,
+                "Goexit with pending timer exits 2, stderr was:\n" + r.stderr);
+        assertTrue(r.firstStderrLine().equals(
+                        "fatal error: no goroutines (main called runtime.Goexit) - deadlock!"),
+                "gc-identical no-goroutines message, stderr was:\n" + r.stderr);
     }
 
     /**
