@@ -33,7 +33,8 @@ deliverable until the design lands.
   delete the machinery wholesale: `syntheticSources` + the import overlay,
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
   allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
-  intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
+  intrinsic predicates, the `"syncop"`/`"runtimecaller"`/`"reflectop"` wire
+  nodes, and
   `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
@@ -84,7 +85,31 @@ deliverable until the design lands.
   - [export.go](../../internal/frontend/export.go): `"syncop"` and
     `"runtimecaller"` custom wire nodes for stdlib functions, and the
     `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228);
+  - [export.go](../../internal/frontend/export.go): the `"reflectop"`
+    custom wire node for real-`reflect` calls (NEW-P1-2,
+    REVIEW-2026-11-05-22; fix-redmaster-r43) — three interceptions,
+    all keyed on the resolved `reflect` package, not the import
+    spelling: `reflect.MakeFunc` → op `makefuncval` (~lines
+    9435–9464); `reflect.Value` `Call`/`CallSlice`/`Interface`/
+    `IsValid` → ops `call`/`callslice`/`interface`/`isvalid` via
+    `reflectValueMethodOp` (~lines 10164–10184, helper ~11173);
+    `reflect.Type` `Method`/`MethodByName`/`NumMethod` → ops
+    `typeMethod`/`typeMethodByName`/`typeNumMethod` via
+    `reflectTypeMethodOp` (~lines 11147–11158, helper ~11216).
+    Backend:
+    [ReflectOpNode.java](../../internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectOpNode.java)
+    (single kind dispatching on `op`), registered in
+    [P3KindRegistrations.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3KindRegistrations.java)
+    (~line 234) and
+    [P3SyncMain.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java)
+    (~line 444). Test pins: `typeMethodByName` in
+    [m7_override_iface_test.go](../../internal/frontend/m7_override_iface_test.go)
+    (`TestM7OverrideIfaceReflectMethod`); `makefuncval` and the
+    `Value` ops in
+    [reflectop_pins_test.go](../../internal/frontend/reflectop_pins_test.go)
+    (`TestReflectopMakeFunc`, `TestReflectopValueMethods`,
+    `TestReflectopDoesNotInterceptNonReflect`).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -96,6 +121,23 @@ deliverable until the design lands.
   In flight: `real-reflect2` already drops stale synthetic-reflect entries;
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
+  The `reflectop` interceptions retire one at a time, and no
+  interception is deleted before its replacement lands — each fixes
+  a real red-master failure (fix-redmaster-r43). (1) `makefuncval`:
+  a general `reflectcall` trampoline, so guest `MakeFunc` can build
+  its trampoline the way gc does (guest `reflectcall` has no graalgo
+  equivalent today). (2) The `Value` ops: a guest `Value` layout
+  fix — `Call`/`CallSlice` need the trampoline from (1), `Interface`
+  on func values traps in `buildInterfaceView`, and `IsValid`
+  misreads `Method.Func` values built on the synthetic `(tok,
+  handle, flag)` layout. (3) The `Type` ops: shells must carry the
+  type's uncommon part (methods), or the backend must resolve
+  methods from `TypeInfo` without guest dispatch (shells deliberately
+  carry TFlag 0, so guest dispatch always reports no methods). None
+  of the three is judged a permanent intrinsic: each has a named
+  general mechanism above. If a later review judges one permanent,
+  record that judgment here explicitly instead of silently keeping
+  the interception.
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
 - **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
   the *declared view* of the already-inventoried dedicated stubs
