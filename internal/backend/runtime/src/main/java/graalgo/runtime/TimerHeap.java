@@ -270,10 +270,13 @@ public final class TimerHeap {
         GoChan ch = owner.channelImpl();
         synchronized (ch) {
             boolean drained = false;
-            // tryRecv is non-blocking and monitor-held; a null return
+            // tryRecv is non-blocking and monitor-held; a null result
             // means the buffer is empty (no send waiters exist — only
-            // the timer thread sends, via non-blocking trySend).
-            while (ch.tryRecv(sched) != null) {
+            // the timer thread sends, via non-blocking trySend). A
+            // RETRY result is also null-valued (RETRY is only returned
+            // when the buffer is empty and the channel is open), so it
+            // ends the drain the same way: nothing stale remains.
+            while (ch.tryRecv(sched).result() != null) {
                 drained = true;
             }
             return drained;
@@ -372,6 +375,11 @@ public final class TimerHeap {
         // owners); kept as a defensive guard.
         if (e.owner == null || e.owner.stillCurrent(e.id, e.generation)) {
             synchronized (e.chan) {
+                // Ignored outcome: WOULD_BLOCK drops the tick (buffer
+                // full — gc timer parity, ticks are lossy when the
+                // receiver has not consumed the previous one). RETRY
+                // also drops it, which is the same case: RETRY is only
+                // returned when the buffer is full.
                 e.chan.trySend(System.nanoTime(), sched);
             }
             if (e.periodNanos > 0) {

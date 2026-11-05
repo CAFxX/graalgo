@@ -69,7 +69,7 @@ public final class TimerTest {
     private static int drain(GoChan ch, SchedulerCore sched) {
         int n = 0;
         synchronized (ch) {
-            while (ch.tryRecv(sched) != null) {
+            while (ch.tryRecv(sched).result() != null) {
                 n++;
             }
         }
@@ -210,7 +210,7 @@ public final class TimerTest {
                 GoChan ch = (GoChan) t.channel();
                 synchronized (ch) {
                     extra = 0;
-                    while (ch.tryRecv(sched) != null) {
+                    while (ch.tryRecv(sched).result() != null) {
                         extra++;
                     }
                 }

@@ -1,7 +1,10 @@
 package graalgo.runtime;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Iterator;
+import java.util.List;
 
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
@@ -37,7 +40,9 @@ import graalgo.jfr.ParkReason;
  * agree exactly. There is no check-then-act split: trySend/tryRecv
  * either complete or report "would block" atomically under one monitor
  * hold (a select waiter claimed by another channel between the readiness
- * peek and the handoff just makes trySend return false).
+ * peek and the handoff just makes trySend report WOULD_BLOCK; a waiter
+ * whose selector transiently self-claimed it makes trySend report RETRY
+ * instead of dropping the waiter).
  *
  * <p>Subclassing (P3-M2a): the class is intentionally non-final for the
  * single dedicated {@link TimerChan} flavor. The masking contract is:
@@ -174,7 +179,7 @@ public class GoChan implements ChanOps.Chan {
      */
     boolean canSend() {
         purgeClaimed(recvWaiters);
-        return !recvWaiters.isEmpty() || count < buf.length;
+        return hasAcceptingWaiter(recvWaiters) || count < buf.length;
     }
 
     /**
@@ -183,14 +188,19 @@ public class GoChan implements ChanOps.Chan {
      */
     boolean canRecv() {
         purgeClaimed(sendWaiters);
-        return !sendWaiters.isEmpty() || count > 0 || closed;
+        return hasAcceptingWaiter(sendWaiters) || count > 0 || closed;
     }
 
-    /** Drops already-claimed select waiters from a queue head. */
+    /**
+     * Drops select waiters already claimed by a waker from a queue
+     * head. A SELF_CLAIMed waiter is NOT dropped: its selector is
+     * mid-sweep, no wakeup is in flight for it, and purging it strands
+     * the selector (CI run 41943236460 lost wakeup).
+     */
     private void purgeClaimed(Deque<ChanWaiter> q) {
         while (!q.isEmpty()) {
             ChanWaiter w = q.peekFirst();
-            if (w instanceof SelectOp.SelectCaseWaiter sw && sw.isClaimed()) {
+            if (w instanceof SelectOp.SelectCaseWaiter sw && sw.isClaimedByWaker()) {
                 q.pollFirst();
             } else {
                 break;
@@ -199,60 +209,139 @@ public class GoChan implements ChanOps.Chan {
     }
 
     /**
-     * Attempts a non-blocking send under the monitor. Returns true if
-     * the send completed (direct handoff or buffered); false if it would
-     * block. Never parks.
+     * Would trySend/tryRecv actually accept a waiter from this queue
+     * right now? A plain waiter, or a select waiter whose claim is
+     * still free. Self-claimed waiters (selector mid-sweep) and
+     * waker-claimed waiters (wake in flight) are not accepting. This
+     * mirrors pollAccepting exactly, so Phase-1 readiness never
+     * promises a completion trySend/tryRecv cannot keep.
      */
-    boolean trySend(Object v, SchedulerCore sched) {
+    private static boolean hasAcceptingWaiter(Deque<ChanWaiter> q) {
+        for (ChanWaiter w : q) {
+            if (w instanceof SelectOp.SelectCaseWaiter sw) {
+                if (!sw.isClaimed()) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Outcome of a non-blocking send attempt (monitor-held). */
+    enum SendAttempt {
+        /** Sent (direct handoff or buffered). */
+        SENT,
+        /** Would block: no receiver and no buffer space. */
+        WOULD_BLOCK,
+        /**
+         * Blocked only by a self-claimed select waiter: another select
+         * holds its transient self-claim on this channel's queue. The
+         * caller must retry (outside the monitor / without holding a
+         * self-claim) once that claim resolves — never drop the waiter
+         * and never treat this as "would block" and park: the waiter
+         * carries no wakeup for the blocked party, and parking on a
+         * RETRY strands the caller (CI run 41943236460 lost wakeup).
+         */
+        RETRY
+    }
+
+    /** Outcome of a non-blocking receive attempt (monitor-held). */
+    record RecvAttempt(RecvResult result, boolean retry) {}
+
+    /**
+     * Attempts a non-blocking send under the monitor. SENT if the send
+     * completed (direct handoff or buffered); WOULD_BLOCK if it would
+     * block; RETRY if the only waiter is a self-claimed select waiter
+     * (see {@link SendAttempt#RETRY}). A buffered completion is taken
+     * even past a self-claimed waiter: the waiter belongs to a select
+     * completing elsewhere, and the value is genuinely stored. Never
+     * parks.
+     */
+    SendAttempt trySend(Object v, SchedulerCore sched) {
         ChanWaiter r = pollAccepting(recvWaiters);
-        if (r != null) {
+        if (r != null && r != RETRY_WAIT) {
             deliverToReceiver(r, v, true, sched);
-            return true;
+            return SendAttempt.SENT;
         }
         if (count < buf.length) {
             buf[tail] = v;
             tail = (tail + 1) % buf.length;
             count++;
-            return true;
+            return SendAttempt.SENT;
         }
-        return false;
+        return r == RETRY_WAIT ? SendAttempt.RETRY : SendAttempt.WOULD_BLOCK;
     }
 
     /**
      * Attempts a non-blocking receive under the monitor. Returns the
-     * result, or null if it would block. {@code (zeroValue, false)} once
-     * closed and drained. Never parks.
+     * result (or null result when it would block), plus a retry flag:
+     * retry is true only when the buffer is empty, the channel is open,
+     * and the only sender waiter is a self-claimed select waiter (see
+     * {@link SendAttempt#RETRY} — same contract, receive side). A
+     * buffered value, or the closed-channel zero, is returned even past
+     * a self-claimed waiter: the waiter belongs to a select completing
+     * elsewhere. Never parks.
      */
-    RecvResult tryRecv(SchedulerCore sched) {
+    RecvAttempt tryRecv(SchedulerCore sched) {
         ChanWaiter s = pollAccepting(sendWaiters);
-        if (s != null) {
-            return new RecvResult(takeFromSender(s, sched), true);
+        if (s != null && s != RETRY_WAIT) {
+            return new RecvAttempt(new RecvResult(takeFromSender(s, sched), true), false);
         }
         if (count > 0) {
             Object v = buf[head];
             buf[head] = null;
             head = (head + 1) % buf.length;
             count--;
-            return new RecvResult(v, true);
+            return new RecvAttempt(new RecvResult(v, true), false);
         }
         if (closed) {
-            return new RecvResult(zeroValue, false);
+            return new RecvAttempt(new RecvResult(zeroValue, false), false);
         }
-        return null;
+        return new RecvAttempt(null, s == RETRY_WAIT);
     }
 
     /**
-     * Dequeues the head waiter, dropping select waiters already claimed
-     * by another channel. Returns null if the queue is empty.
+     * Sentinel waiter returned by {@link #pollAccepting} when the queue
+     * holds no accepting waiter but a self-claimed select waiter blocks
+     * it. Never accepted, never delivered to: callers must retry (see
+     * {@link SendAttempt#RETRY}). The sentinel's null handle is never
+     * dereferenced — it is filtered out before any deliver/take.
+     */
+    private static final ChanWaiter RETRY_WAIT = new ChanWaiter(null) {
+        @Override
+        boolean accept() {
+            throw new AssertionError("RETRY sentinel must never be accepted");
+        }
+    };
+
+    /**
+     * Dequeues the first accepting waiter, dropping select waiters
+     * already claimed by another channel (their wakeup is in flight).
+     * A self-claimed select waiter is SKIPPED (left enqueued) and, if
+     * no accepting waiter is found behind it, reported via
+     * {@link #RETRY_WAIT}: the caller must retry once the transient
+     * self-claim resolves. Dropping it, or treating the queue as
+     * empty and parking, strands its selector (CI run 41943236460
+     * lost wakeup). Returns null if the queue is empty (or holds only
+     * waker-claimed waiters, which are dropped).
      */
     private ChanWaiter pollAccepting(Deque<ChanWaiter> q) {
-        while (!q.isEmpty()) {
-            ChanWaiter w = q.pollFirst();
+        boolean sawSelfClaimed = false;
+        Iterator<ChanWaiter> it = q.iterator();
+        while (it.hasNext()) {
+            ChanWaiter w = it.next();
+            if (w instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+                sawSelfClaimed = true;
+                continue;
+            }
+            it.remove();
             if (w.accept()) {
                 return w;
             }
         }
-        return null;
+        return sawSelfClaimed ? RETRY_WAIT : null;
     }
 
     /** Hands value v to a dequeued receiver waiter (plain or select). */
@@ -305,16 +394,33 @@ public class GoChan implements ChanOps.Chan {
      */
     public void send(Object v) {
         SchedulerCore sched = SchedulerCore.current();
-        SendWaiter w;
-        synchronized (this) {
-            if (closed) {
-                Panic.throwPanic(GoStrings.of("send on closed channel"));
+        SendWaiter w = null;
+        boolean enqueued = false;
+        // RETRY loop: a self-claimed select waiter blocks the queue
+        // only transiently (its selector releases the self-claim as
+        // soon as its sweep step finishes). Retry outside the monitor
+        // so the selector can proceed; never enqueue-and-park on a
+        // RETRY — the waiter carries no wakeup for us.
+        while (!enqueued) {
+            synchronized (this) {
+                if (closed) {
+                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                }
+                SendAttempt a = trySend(v, sched);
+                if (a == SendAttempt.SENT) {
+                    return;
+                }
+                if (a == SendAttempt.RETRY) {
+                    // Fall through to the yield below.
+                } else {
+                    w = new SendWaiter(sched.currentGoroutine(), v);
+                    sendWaiters.addLast(w);
+                    enqueued = true;
+                }
             }
-            if (trySend(v, sched)) {
-                return;
+            if (!enqueued) {
+                Thread.yield();
             }
-            w = new SendWaiter(sched.currentGoroutine(), v);
-            sendWaiters.addLast(w);
         }
         // Outside the monitor: scheduler-aware park (P2-D4: never blocks
         // the carrier). A waker that dequeued us before we park has its
@@ -336,14 +442,28 @@ public class GoChan implements ChanOps.Chan {
      */
     public RecvResult recv() {
         SchedulerCore sched = SchedulerCore.current();
-        RecvWaiter w;
-        synchronized (this) {
-            RecvResult r = tryRecv(sched);
-            if (r != null) {
-                return r;
+        RecvWaiter w = null;
+        boolean enqueued = false;
+        // RETRY loop: same contract as send() — a self-claimed select
+        // waiter blocks the queue only transiently; retry outside the
+        // monitor, never enqueue-and-park on a RETRY.
+        while (!enqueued) {
+            synchronized (this) {
+                RecvAttempt a = tryRecv(sched);
+                if (!a.retry() && a.result() != null) {
+                    return a.result();
+                }
+                if (a.retry()) {
+                    // Fall through to the yield below.
+                } else {
+                    w = new RecvWaiter(sched.currentGoroutine());
+                    recvWaiters.addLast(w);
+                    enqueued = true;
+                }
             }
-            w = new RecvWaiter(sched.currentGoroutine());
-            recvWaiters.addLast(w);
+            if (!enqueued) {
+                Thread.yield();
+            }
         }
         // P2-M6: the receive genuinely blocks — record it before parking.
         JfrEvents.channelBlock(w.handle, channelId, ChannelOp.RECV);
@@ -360,28 +480,49 @@ public class GoChan implements ChanOps.Chan {
      */
     public void close() {
         SchedulerCore sched = SchedulerCore.current();
+        // Self-claimed select waiters are DEFERRED, not dropped and not
+        // cleared: their selector is mid-sweep, no wakeup is in flight
+        // for them, and dropping them strands the selector (CI run
+        // 41943236460 lost wakeup). The retry pass below claims each
+        // deferred waiter as soon as its transient self-claim resolves
+        // (or stops when the selector decides elsewhere and cleans up).
+        // Retry runs OUTSIDE the monitor so the selector can proceed.
+        List<ChanWaiter> deferred = new ArrayList<>();
         synchronized (this) {
             if (closed) {
                 Panic.throwPanic(GoStrings.of("close of closed channel"));
             }
             closed = true;
-            for (ChanWaiter r : recvWaiters) {
+            Iterator<ChanWaiter> rit = recvWaiters.iterator();
+            while (rit.hasNext()) {
+                ChanWaiter r = rit.next();
                 if (r instanceof RecvWaiter rw) {
                     rw.value = zeroValue;
                     rw.ok = false;
                     sched.unpark(rw.handle);
+                    rit.remove();
+                } else if (r instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+                    deferred.add(sw);
                 } else if (r.accept()) {
                     // Select recv case: closed is always ready.
                     SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) r;
                     sw.op.setResult(sw.caseIndex, zeroValue, false);
                     sched.unpark(sw.handle);
+                    rit.remove();
+                } else {
+                    // Already claimed by another case: wake in flight, drop.
+                    rit.remove();
                 }
             }
-            recvWaiters.clear();
-            for (ChanWaiter s : sendWaiters) {
+            Iterator<ChanWaiter> sit = sendWaiters.iterator();
+            while (sit.hasNext()) {
+                ChanWaiter s = sit.next();
                 if (s instanceof SendWaiter sw) {
                     sw.panicOnWake = true;
                     sched.unpark(sw.handle);
+                    sit.remove();
+                } else if (s instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+                    deferred.add(sw);
                 } else if (s.accept()) {
                     // Select send case on a channel being closed: poison.
                     // The select panics on resume ("send on closed
@@ -391,9 +532,50 @@ public class GoChan implements ChanOps.Chan {
                     SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) s;
                     sw.op.setPoison(sw.caseIndex);
                     sched.unpark(sw.handle);
+                    sit.remove();
+                } else {
+                    // Already claimed by another case: wake in flight, drop.
+                    sit.remove();
                 }
             }
-            sendWaiters.clear();
+            // No clear(): every waiter was removed or deferred. A closed
+            // channel admits no new waiters (send panics, recv and
+            // select-recv complete immediately), so the queues now hold
+            // only deferred entries, resolved by the retry pass.
+        }
+        for (ChanWaiter d : deferred) {
+            SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) d;
+            for (;;) {
+                boolean retry = false;
+                synchronized (this) {
+                    Deque<ChanWaiter> q = sw.isSend ? sendWaiters : recvWaiters;
+                    if (!q.contains(sw)) {
+                        break; // Selector decided elsewhere and cleaned up.
+                    }
+                    if (sw.isClaimedByWaker()) {
+                        q.remove(sw); // Decided elsewhere; drop.
+                        break;
+                    }
+                    if (sw.isSelfClaimed()) {
+                        retry = true;
+                    } else if (sw.accept()) {
+                        if (sw.isSend) {
+                            sw.op.setPoison(sw.caseIndex);
+                        } else {
+                            sw.op.setResult(sw.caseIndex, zeroValue, false);
+                        }
+                        sched.unpark(sw.handle);
+                        q.remove(sw);
+                        break;
+                    } else {
+                        q.remove(sw); // Lost the race to a waker claim; decided.
+                        break;
+                    }
+                }
+                if (retry) {
+                    Thread.yield();
+                }
+            }
         }
     }
 

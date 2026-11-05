@@ -88,6 +88,27 @@ public final class SelectOp {
             return op.claim.get() != UNCLAIMED;
         }
 
+        /**
+         * Non-mutating check: is the claim held transiently by the
+         * selecting goroutine itself (block-phase sweep)? No wakeup is
+         * in flight for such a waiter: wakers must preserve it, never
+         * drop it — dropping it strands the selector, whose sweep never
+         * revisits this channel and which then parks with no future
+         * event to wake it (CI run 41943236460 lost wakeup).
+         */
+        boolean isSelfClaimed() {
+            return op.claim.get() == SELF_CLAIM;
+        }
+
+        /**
+         * Non-mutating check: has a waker on another channel won the
+         * claim? Only then is a wakeup in flight and the waiter safe
+         * for a waker to drop.
+         */
+        boolean isClaimedByWaker() {
+            return op.claim.get() instanceof SelectCaseWaiter;
+        }
+
         @Override
         boolean accept() {
             return claim();
@@ -199,37 +220,58 @@ public final class SelectOp {
                     continue;
                 }
                 GoChan ch = requireGoChan(c.chan());
-                synchronized (ch) {
-                    // Re-check under the monitor: a case that became ready
-                    // between poll and enqueue completes immediately.
-                    // (Never enqueue on a poisoned channel.)
-                    if (c.send() && ch.isClosed()) {
-                        poison = true;
-                        continue;
-                    }
-                    // P0-1: claim the SelectOp BEFORE completing. A
-                    // concurrent waker on another channel may have already
-                    // won the shared claim; completing without it causes
-                    // a lost claim (stale unpark → spurious wakeup, or a
-                    // resultIndex overwrite).
-                    if (tryClaimSelf()) {
-                        Integer doneNow = completeUnderLock(ch, i, sched);
-                        if (doneNow != null) {
-                            immediate = doneNow;
+                // Per-channel retry: a RETRY means another select holds
+                // its transient self-claim on this channel's queue.
+                // Release our own self-claim and re-attempt the channel
+                // (yielding outside the monitor). NEVER wait while
+                // holding SELF: a ring of selects each waiting on the
+                // next one's self-claim would deadlock. Releasing lets
+                // the other select finish (claiming our waiter, or
+                // completing elsewhere and cleaning up), after which
+                // this channel re-resolves.
+                for (;;) {
+                    boolean retry = false;
+                    synchronized (ch) {
+                        // Re-check under the monitor: a case that became
+                        // ready between poll and enqueue completes
+                        // immediately. (Never enqueue on a poisoned
+                        // channel.)
+                        if (c.send() && ch.isClosed()) {
+                            poison = true;
+                        } else if (tryClaimSelf()) {
+                            // P0-1: claim the SelectOp BEFORE completing.
+                            // A concurrent waker on another channel may
+                            // have already won the shared claim;
+                            // completing without it causes a lost claim
+                            // (stale unpark → spurious wakeup, or a
+                            // resultIndex overwrite).
+                            CompOutcome doneNow = completeUnderLock(ch, i, sched);
+                            if (doneNow.retry()) {
+                                releaseSelfClaim();
+                                retry = true;
+                            } else if (doneNow.index() >= 0) {
+                                immediate = doneNow.index();
+                            } else {
+                                // Lost the race under the monitor:
+                                // release so a waker can win, then
+                                // enqueue normally.
+                                releaseSelfClaim();
+                                SelectCaseWaiter w = new SelectCaseWaiter(this, i, ch,
+                                        c.send(), c.sendValue(), self);
+                                ch.enqueueSelectWaiter(w, c.send());
+                                mine.add(w);
+                            }
                         } else {
-                            // Lost the race under the monitor: release so
-                            // a waker can win, then enqueue normally.
-                            releaseSelfClaim();
-                            SelectCaseWaiter w = new SelectCaseWaiter(this, i, ch,
-                                    c.send(), c.sendValue(), self);
-                            ch.enqueueSelectWaiter(w, c.send());
-                            mine.add(w);
+                            // A waker won the claim; its unpark is in
+                            // flight. Do not complete — park and read
+                            // its result.
+                            claimedByOther = true;
                         }
-                    } else {
-                        // A waker won the claim; its unpark is in flight.
-                        // Do not complete — park and read its result.
-                        claimedByOther = true;
                     }
+                    if (!retry) {
+                        break;
+                    }
+                    Thread.yield();
                 }
             }
             if (immediate != null) {
@@ -285,52 +327,86 @@ public final class SelectOp {
     /**
      * Tries to complete a poll-ready case atomically. Returns the case
      * index on success, null if the race was lost (caller re-polls).
+     * A RETRY from the channel (another select's transient self-claim
+     * on its queue) is retried outside the monitor until it resolves;
+     * this thread holds no self-claim here, so the retry cannot
+     * deadlock a ring of completing selects.
      */
     private Integer tryCompleteReady(int chosen, SchedulerCore sched) {
         ChanOps.SelectCase c = cases[chosen];
         GoChan ch = requireGoChan(c.chan());
-        synchronized (ch) {
-            if (c.send()) {
-                if (ch.isClosed() || !ch.trySend(c.sendValue(), sched)) {
-                    return null;
+        for (;;) {
+            boolean retry = false;
+            synchronized (ch) {
+                if (c.send()) {
+                    if (ch.isClosed()) {
+                        return null;
+                    }
+                    GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched);
+                    if (sa == GoChan.SendAttempt.SENT) {
+                        resultIndex = chosen;
+                        resultOk = true;
+                        return chosen;
+                    }
+                    retry = sa == GoChan.SendAttempt.RETRY;
+                } else {
+                    GoChan.RecvAttempt a = ch.tryRecv(sched);
+                    if (a.retry()) {
+                        retry = true;
+                    } else if (a.result() != null) {
+                        resultIndex = chosen;
+                        resultValue = a.result().value();
+                        resultOk = a.result().ok();
+                        return chosen;
+                    }
                 }
-                resultIndex = chosen;
-                resultOk = true;
-                return chosen;
             }
-            GoChan.RecvResult rr = ch.tryRecv(sched);
-            if (rr == null) {
+            if (!retry) {
                 return null;
             }
-            resultIndex = chosen;
-            resultValue = rr.value();
-            resultOk = rr.ok();
-            return chosen;
+            Thread.yield();
         }
     }
 
+    /** Outcome of {@link #completeUnderLock}: a won case index, a block, or a retry. */
+    private record CompOutcome(int index, boolean retry) {}
+
+    private static final CompOutcome COMP_BLOCK = new CompOutcome(-1, false);
+    private static final CompOutcome COMP_RETRY = new CompOutcome(-1, true);
+
     /**
-     * Caller holds ch's monitor. Completes the case if still possible;
-     * returns the case index, or null if the race was lost.
+     * Caller holds ch's monitor and the self-claim. Completes the case
+     * if still possible (won index); COMP_BLOCK if the race was lost;
+     * COMP_RETRY if another select's transient self-claim blocks this
+     * channel's queue. COMP_RETRY must NOT be waited on while holding
+     * the self-claim (see the sweep's retry loop): the caller releases
+     * the claim, yields, and re-attempts.
      */
-    private Integer completeUnderLock(GoChan ch, int chosen, SchedulerCore sched) {
+    private CompOutcome completeUnderLock(GoChan ch, int chosen, SchedulerCore sched) {
         ChanOps.SelectCase c = cases[chosen];
         if (c.send()) {
-            if (ch.isClosed() || !ch.trySend(c.sendValue(), sched)) {
-                return null;
+            if (ch.isClosed()) {
+                return COMP_BLOCK;
             }
-            resultIndex = chosen;
-            resultOk = true;
-            return chosen;
+            GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched);
+            if (sa == GoChan.SendAttempt.SENT) {
+                resultIndex = chosen;
+                resultOk = true;
+                return new CompOutcome(chosen, false);
+            }
+            return sa == GoChan.SendAttempt.RETRY ? COMP_RETRY : COMP_BLOCK;
         }
-        GoChan.RecvResult rr = ch.tryRecv(sched);
-        if (rr == null) {
-            return null;
+        GoChan.RecvAttempt a = ch.tryRecv(sched);
+        if (a.retry()) {
+            return COMP_RETRY;
+        }
+        if (a.result() == null) {
+            return COMP_BLOCK;
         }
         resultIndex = chosen;
-        resultValue = rr.value();
-        resultOk = rr.ok();
-        return chosen;
+        resultValue = a.result().value();
+        resultOk = a.result().ok();
+        return new CompOutcome(chosen, false);
     }
 
     /** Removes our waiter entries from all channels (post-resume). */
