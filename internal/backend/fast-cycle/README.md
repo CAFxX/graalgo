@@ -21,6 +21,7 @@ internal/backend/fast-cycle/fast-cycle test graalgo.frontend.ArithmeticCorpusTes
 internal/backend/fast-cycle/fast-cycle watch foo.go
 internal/backend/fast-cycle/fast-cycle stop    # stop the daemon
 internal/backend/fast-cycle/fast-cycle status  # check daemon
+internal/backend/fast-cycle/fast-cycle selftest  # daemon regression test
 ```
 
 ## How it works
@@ -39,6 +40,12 @@ A persistent JVM daemon (`FastCycleDaemon.java`) holds a warm JVM:
 3. **Tests** are invoked via `RUNTEST` — test methods are called directly
    via reflection, bypassing `main` (which calls `System.exit`).
 
+Each `RUN`/`RUNTEST` loads its classes in a fresh `URLClassLoader`, which
+is closed when the run finishes and the calling thread's context
+classloader is restored — a long-lived daemon must not retain loaders,
+their classes, or their open jar handles across runs. Covered by the
+regression test `FastCycleDaemonTest.java` (`fast-cycle selftest`).
+
 ## Measured cycle times
 
 | Operation | Baseline | Fast-cycle |
@@ -55,6 +62,17 @@ A persistent JVM daemon (`FastCycleDaemon.java`) holds a warm JVM:
   (verified via md5sum).
 - No test coverage is cut — the same tests run, just faster.
 - The daemon is a debug tool; CI still uses `make all`.
+
+## Trust boundary
+
+Dev-only tool, no sandbox: the daemon binds `127.0.0.1:47321` and
+`COMPILE`/`RUN`/`RUNTEST` execute arbitrary code in its JVM. Run it only
+on a single-developer workstation, never on a shared machine, and never
+expose the port. Each start generates a random token, written to
+`~/.fastcycle.port` (mode `0600`) next to the port; every connection must
+send `AUTH <token>` first. The token keeps a casual local prober out — it
+is not a boundary against a local attacker who can read your home
+directory.
 
 ## Limitations
 
