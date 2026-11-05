@@ -2011,8 +2011,14 @@ public final class ReflectOpNode extends GoExprNode {
 
     /** Boxes an int[] as a GoSlice of int. */
     private static GoSlice intSlice(int[] vals) {
-        Object arr = new int[vals.length];
-        System.arraycopy(vals, 0, (int[]) arr, 0, vals.length);
-        return new GoSlice(arr, 0, vals.length, vals.length);
+        // Go int is 64-bit in graalgo (GoKind: int -> INT64), so the
+        // backing store must be long[], matching Boxing.arrayGet's
+        // INT64 arm (((long[]) array)[i]); an int[] backing threw
+        // ClassCastException on every element read.
+        long[] arr = new long[vals.length];
+        for (int i = 0; i < vals.length; i++) {
+            arr[i] = vals[i];
+        }
+        return new GoSlice(arr, 0, arr.length, arr.length);
     }
 }
