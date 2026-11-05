@@ -29,8 +29,9 @@
 //     first-use order, two-state uint encoding, zigzag ints, byte-reversed
 //     float bits via exact soft-float). Struct/array/complex/interface-
 //     nesting beyond the model fail fast ("not in M7 scope (needs
-//     reflect, P3-M8)"). io-based constructors are absent (fail fast);
-//     NewBufferEncoder/Bytes/NewBufferDecoder are the M7 extensions.
+//     reflect, P3-M8)"). NewEncoder/NewDecoder take io.Writer/io.Reader
+//     (io landed P3-M8; see their comments for the streaming design).
+//     NewBufferEncoder/Bytes/NewBufferDecoder remain as M7 extensions.
 //     gob.Register/RegisterName are real (needed for nested []any /
 //     map[string]any inside interfaces, exactly like gc).
 //
@@ -1009,7 +1010,8 @@ func (w *Writer) csvFieldNeedsQuotes(field string) bool {
 // Encoder/Decoder over the closed dynamic any-model (nil, bool, all
 // int/uint widths, float32/float64, string, []byte, []any,
 // map[string]any), with a byte-identical wire format to gc 1.27.1 for
-// the supported subset. Imports only the synthetic `errors` package.
+// the supported subset. Imports only the synthetic `errors` and `io`
+// packages.
 //
 // Wire summary (gc 1.27.1, verified by probe):
 //   - builtin type ids: bool=1 int=2 uint=3 float=4 bytes=5 string=6
@@ -1025,7 +1027,10 @@ func (w *Writer) csvFieldNeedsQuotes(field string) bool {
 //   - composite descriptors: SliceT/MapT with empty Name, Key=6/Elem=8.
 const syntheticGobSource = `package gob
 
-import "errors"
+import (
+	"errors"
+	"io"
+)
 
 // gobEncodeUint writes an encoded unsigned integer (gc encode.go's
 // two-state encoding).
@@ -1510,11 +1515,12 @@ func gobAllocID(class, width int) int {
 }
 
 // An Encoder manages the transmission of type and data information.
-// M7 divergence: gc's NewEncoder takes an io.Writer (io is out of M7
-// scope, P3-M8 re-test trigger); use NewBufferEncoder and Bytes.
 type Encoder struct {
 	out []byte
 	err error
+	// w is the stream destination (NewEncoder); nil for buffer
+	// encoders (NewBufferEncoder), which accumulate in out only.
+	w io.Writer
 	// sentIDs records transmitted composite type ids (gc's enc.sent):
 	// index gobClassSliceAny/gobClassMapStringAny.
 	sentIDs [gobClassMapStringAny + 1]int
@@ -1527,13 +1533,66 @@ type Encoder struct {
 // NewBufferEncoder returns a new Encoder that accumulates output in
 // memory; Bytes returns the accumulated output.
 //
-// M7 EXTENSION (not in gc 1.27.1): gc's NewEncoder takes an io.Writer;
-// io is out of M7 scope, so this in-memory constructor is provided
-// instead. Re-test trigger: when io lands (P3-M8), add NewEncoder with
-// the exact gc signature.
+// M7 EXTENSION (not in gc 1.27.1): kept alongside NewEncoder for
+// in-memory use; a stream Encoder's Bytes returns the same accumulated
+// output (see NewEncoder).
 func NewBufferEncoder() *Encoder {
 	gobEnsureReg()
 	return &Encoder{}
+}
+
+// NewEncoder returns a new Encoder that writes to w.
+//
+// DESIGN (P1-2, io landed P3-M8): gc streams one framed message per
+// Encode (descriptor messages as they are first sent, then the value
+// message, then queued nested-composite messages, in order). The synth
+// encoder keeps that granularity: writeMsg appends each framed message
+// to out AND, for stream encoders, writes it to w before Encode
+// returns, so a value is on the wire as soon as its Encode returns
+// (there is no buffering until close, and no Close). A write error is
+// recorded in the encoder error state (first error wins, gc's setError
+// semantics) and returned by that Encode; like gc, a failed Encode
+// writes no value message, but descriptor messages already sent stay
+// sent. A later Encode resets the error state (gc parity: EncodeValue
+// resets enc.err), so a transient write failure does not poison the
+// encoder permanently. Bytes still returns everything encoded so far,
+// for stream and buffer encoders alike — including a message whose
+// write failed (only the error state reports the failure).
+// A nil writer panics immediately (fail fast): gc would panic at the
+// first Encode's Write instead; the failure is the same caller bug,
+// surfaced at construction rather than at first use.
+func NewEncoder(w io.Writer) *Encoder {
+	if w == nil {
+		panic("gob: NewEncoder: nil writer")
+	}
+	gobEnsureReg()
+	return &Encoder{w: w}
+}
+
+// writeFull writes all of p to the stream destination, looping over
+// short writes (a Writer may write fewer bytes than requested with a
+// nil error; contract-compliant writers see exactly one Write call
+// per message, matching gc's writeMessage). On error it records the
+// first error in enc.err and stops; a (0, nil) write — forbidden by
+// the io.Writer contract — is treated as an error rather than spun
+// on forever.
+func (enc *Encoder) writeFull(p []byte) {
+	for len(p) > 0 {
+		n, werr := enc.w.Write(p)
+		if werr != nil {
+			if enc.err == nil {
+				enc.err = werr
+			}
+			return
+		}
+		if n <= 0 {
+			if enc.err == nil {
+				enc.err = errors.New("gob: encoder: short write")
+			}
+			return
+		}
+		p = p[n:]
+	}
 }
 
 // Bytes returns the accumulated encoded output.
@@ -1549,12 +1608,21 @@ func (enc *Encoder) fail(msg string) {
 	}
 }
 
-// writeMsg frames payload as a count-delimited message.
+// writeMsg frames payload as a count-delimited message, appends it to
+// out, and — for stream encoders — writes exactly that framed message
+// to w now (one Write per message, gc's writeMessage granularity).
+// Messages are not written once the encoder is already in an error
+// state (gc skips the value message after an encode failure; messages
+// sent before the failure stay sent).
 func (enc *Encoder) writeMsg(payload []byte) {
 	var c []byte
 	gobEncodeUint(&c, uint64(len(payload)))
 	enc.out = append(enc.out, c...)
 	enc.out = append(enc.out, payload...)
+	if enc.w != nil && enc.err == nil {
+		msg := append(c, payload...)
+		enc.writeFull(msg)
+	}
 }
 
 // gobSliceAnyDescriptor returns the (undelimited) type descriptor bytes
@@ -1914,8 +1982,6 @@ func (b *gobDecBuf) bytes(n int) []byte {
 }
 
 // A Decoder manages the receipt of type and data information.
-// M7 divergence: gc's NewDecoder takes an io.Reader (io is out of M7
-// scope, P3-M8 re-test trigger); use NewBufferDecoder.
 type Decoder struct {
 	data []byte
 	off  int
@@ -1925,17 +1991,98 @@ type Decoder struct {
 	err  error
 	// valBuf is the current value's payload cursor, set by typeSeq.
 	valBuf *gobDecBuf
+	// r is the source for stream decoders (NewDecoder); nil for
+	// buffer decoders (NewBufferDecoder), which read from data alone.
+	// For stream decoders data/off hold the not-yet-consumed
+	// read-ahead buffer, refilled in message units by fill.
+	r io.Reader
+	// rDone is set once r has returned EOF or a read error; no
+	// further Reads are attempted after that.
+	rDone bool
 }
 
 // NewBufferDecoder returns a Decoder that reads from data.
 //
-// M7 EXTENSION (not in gc 1.27.1): gc's NewDecoder takes an io.Reader;
-// io is out of M7 scope, so this in-memory constructor is provided
-// instead. Re-test trigger: when io lands (P3-M8), add NewDecoder with
-// the exact gc signature.
+// M7 EXTENSION (not in gc 1.27.1): kept alongside NewDecoder for
+// in-memory use.
 func NewBufferDecoder(data []byte) *Decoder {
 	gobEnsureReg()
 	return &Decoder{data: data, wire: make(map[int]int)}
+}
+
+// NewDecoder returns a new Decoder that reads from r.
+//
+// DESIGN (P1-2, io landed P3-M8): gc wraps a non-ByteReader r in
+// bufio.Reader and then consumes the stream one framed message at a
+// time; the synth decoder needs no bufio wrapper because fill buffers
+// internally (512-byte chunks) and consumes strictly in message
+// units. An io.ReadAll upfront was considered and REJECTED: it would
+// change Decode on an open stream from "return the next value" to
+// "block until the writer closes", breaking interactive streams
+// (e.g. gob over a pipe). The exact consumption point is therefore:
+// each Decode consumes exactly the messages it needs — preceding type
+// definitions plus one value message — and no further; bytes of later
+// messages that arrive inside a 512-byte chunk are buffered in the
+// decoder (never discarded, never re-read). A Decode on a cleanly
+// exhausted stream returns EOF ("EOF", the gobErrEOF sentinel — same
+// message as io.EOF, as for buffer decoders); EOF inside a message,
+// or after type definitions with no value following, returns
+// unexpected EOF (gc's ErrUnexpectedEOF, same message); a non-EOF
+// read error is returned verbatim. A nil reader panics immediately
+// (fail fast; gc would panic at the first read instead).
+func NewDecoder(r io.Reader) *Decoder {
+	if r == nil {
+		panic("gob: NewDecoder: nil reader")
+	}
+	gobEnsureReg()
+	return &Decoder{r: r, wire: make(map[int]int)}
+}
+
+// fill ensures at least need bytes are buffered past off, reading
+// from r in chunks when this is a stream decoder. It reports whether
+// need bytes are available. For buffer decoders (r == nil) it only
+// reports what data already holds. On a non-EOF read error it records
+// the error in dec.err (first error wins); on clean EOF it marks the
+// stream done and reports availability from the buffer alone (bytes
+// delivered alongside EOF still count). A (0, nil) Read — forbidden
+// by the io.Reader contract — marks the stream done instead of
+// spinning forever. Fully-consumed (or >8KB-consumed) prefixes are
+// dropped so a long stream does not retain its whole history.
+func (dec *Decoder) fill(need int) bool {
+	if dec.off > 0 {
+		if dec.off == len(dec.data) {
+			dec.data = nil
+			dec.off = 0
+		} else if dec.off > 8192 {
+			nd := make([]byte, len(dec.data)-dec.off)
+			copy(nd, dec.data[dec.off:])
+			dec.data = nd
+			dec.off = 0
+		}
+	}
+	for len(dec.data)-dec.off < need {
+		if dec.r == nil || dec.rDone {
+			return false
+		}
+		chunk := make([]byte, 512)
+		n, rerr := dec.r.Read(chunk)
+		if n > 0 {
+			dec.data = append(dec.data, chunk[:n]...)
+		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				dec.rDone = true
+			} else {
+				if dec.err == nil {
+					dec.err = rerr
+				}
+				dec.rDone = true
+			}
+		} else if n <= 0 {
+			dec.rDone = true
+		}
+	}
+	return len(dec.data)-dec.off >= need
 }
 
 func (dec *Decoder) fail(msg string) {
@@ -1945,30 +2092,62 @@ func (dec *Decoder) fail(msg string) {
 }
 
 // readMsg reads one count-delimited message payload (gc's recvMessage).
+// The count prefix is parsed byte-by-byte from the refillable buffer
+// (its length is data-dependent, at most 9 bytes, so it cannot be
+// fill()ed up front); the payload is then fill()ed in full. At a
+// message boundary with no more input it reports EOF; EOF (or a short
+// stream) inside the prefix or the payload reports unexpected EOF,
+// matching gc's recvMessage + decodeTypeSequence conversion. (A
+// truncated prefix in a buffer decoder previously failed with
+// "unexpected EOF" via the message cursor; it now reports the
+// gobErrUnexpectedEOF sentinel — same message.)
 func (dec *Decoder) readMsg() []byte {
 	if dec.err != nil {
 		return nil
 	}
-	if dec.off >= len(dec.data) {
-		dec.err = gobErrEOF
+	if !dec.fill(1) {
+		if dec.err == nil {
+			dec.err = gobErrEOF
+		}
 		return nil
 	}
-	buf := &gobDecBuf{dec: dec, data: dec.data, off: dec.off}
-	n := buf.uint()
-	if dec.err != nil {
-		return nil
+	c := dec.data[dec.off]
+	dec.off++
+	var n uint64
+	if c <= 0x7f {
+		n = uint64(c)
+	} else {
+		nb := -int(int8(c))
+		if nb > 8 {
+			dec.fail("gob: encoded unsigned integer out of range")
+			return nil
+		}
+		var x uint64
+		for i := 0; i < nb; i++ {
+			if !dec.fill(1) {
+				if dec.err == nil {
+					dec.err = gobErrUnexpectedEOF
+				}
+				return nil
+			}
+			x = x<<8 | uint64(dec.data[dec.off])
+			dec.off++
+		}
+		n = x
 	}
 	if n >= 1<<33 {
 		dec.fail("invalid message length")
 		return nil
 	}
 	ni := int(n)
-	if buf.off+ni > len(dec.data) {
-		dec.err = gobErrUnexpectedEOF
+	if !dec.fill(ni) {
+		if dec.err == nil {
+			dec.err = gobErrUnexpectedEOF
+		}
 		return nil
 	}
-	msg := dec.data[buf.off : buf.off+ni]
-	dec.off = buf.off + ni
+	msg := dec.data[dec.off : dec.off+ni]
+	dec.off += ni
 	return msg
 }
 
