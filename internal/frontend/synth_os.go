@@ -349,6 +349,9 @@ var (
 	ErrNotExist   = fs.ErrNotExist   // "file does not exist"
 	ErrClosed     = fs.ErrClosed     // "file already closed"
 
+	// ErrProcessDone indicates a [Process] has finished.
+	ErrProcessDone = errors.New("os: process already finished")
+
 	ErrNoDeadline       = errNoDeadline()       // "file type does not support deadline"
 	ErrDeadlineExceeded = errDeadlineExceeded() // "i/o timeout"
 )
