@@ -218,13 +218,20 @@ func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string
 
 	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test),
 	// plus the repo-dir property and test tmpdir the Makefile's `test` target sets.
+	// The Makefile also mkdirs the tmpdir and exports TMPDIR/GOTMPDIR at it
+	// (go builds and Java temp dirs would otherwise land on the 512M /tmp
+	// tmpfs and fail opaquely when it fills); mirror all three here.
+	testTmp := filepath.Join(truffle, "out", "test-tmp")
+	if err := os.MkdirAll(testTmp, 0755); err != nil {
+		return "ERROR", fmt.Sprintf("mkdir test-tmp: %v", err)
+	}
 	cmd := exec.Command(javaRunBin(),
 		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
 		"-Dgraalgo.repo.dir="+repo,
-		"-Djava.io.tmpdir="+filepath.Join(truffle, "out", "test-tmp"),
+		"-Djava.io.tmpdir="+testTmp,
 		"-cp", cp, "graalgo.test.Runner")
 	cmd.Dir = truffle
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), "TMPDIR="+testTmp, "GOTMPDIR="+testTmp)
 	for k, v := range extraEnv {
 		if k == "CLASSPATH_OVERLAY" {
 			continue
