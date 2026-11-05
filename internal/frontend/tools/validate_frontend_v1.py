@@ -438,6 +438,13 @@ def check_node(ctx, path, node, expr):
         # P3-M5 (WS E, ADR-0005 App W): t.C channel accessor.
         expr_node("recv")
         type_ref("type")
+    elif kind == "methodexpr":
+        # REVIEW-2026-11-05-05: method expression T.M in value position
+        # — an unbound method function value (no recv child); obj is
+        # the method funcdecl/instantiation, type is the method
+        # expression's static func type (receiver as first parameter).
+        ctx.check_obj_id(f"{fp}.obj", f.get("obj"))
+        type_ref("type")
     elif kind == "timenow":
         # P3-M5 (WS E, ADR-0005 App W): time.Now().
         type_ref("type")

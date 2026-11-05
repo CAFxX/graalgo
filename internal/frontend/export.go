@@ -10064,6 +10064,69 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	return e.node("methodvalue", sel, map[string]any{"obj": objID, "recv": recv, "type": t}), nil
 }
 
+// methodExprNode exports a method expression T.M in value position
+// (selection kind MethodExpr, concrete receiver) as a "methodexpr" wire
+// node (REVIEW-2026-11-05-05). It mirrors methodValueNode's resolution
+// exactly — resolveMethodCall, generic instantiation — but instead of a
+// "methodvalue" node with a bound receiver it produces an expression node
+// evaluating to an unbound GoFunc: the factory returns the method's
+// funcdecl target with no bound arguments (see MethodExprNode), so the
+// call convention (GoCalls.callArgs) passes the call's first argument
+// as the method's receiver parameter, exactly as a direct methodref
+// call does. The "type" field is the method expression's static func
+// type (receiver as first parameter), from the selector expression's
+// type.
+//
+// Not supported (named scope errors, greppable re-test triggers):
+//   - interface receivers: handled by the P3-M3 early return in
+//     exportSelector (dynamic dispatch deferred to call time);
+//   - promoted methods (len(mc.recvPath) > 0): the callee expects the
+//     embedded field, not the outer value, as its receiver argument,
+//     so an unbound GoFunc would pass the wrong receiver — a wrapper
+//     extracting the field at call time is needed (future work);
+//   - the ifaceFallback (type-parameter) path, which is call-only;
+//   - the synthetic runtime stack-inspection methods, which have no
+//     funcdecl to point at.
+func (e *exporter) methodExprNode(sel *ast.SelectorExpr, selection *types.Selection, t int) (*Node, error) {
+	if selection.Recv() == nil {
+		return nil, fmt.Errorf("gofrontend: method expression %s with no receiver type", sel.Sel.Name)
+	}
+	if mname, isRt := runtimeStackMethod(selection); isRt {
+		return nil, scopeErrorf("method expression %s is not supported: runtime stack-inspection method (WS D)", mname)
+	}
+	var mtargs []types.Type
+	if ii, ok := e.info.Instances[sel.Sel]; ok {
+		mtargs = typeList(ii.TypeArgs)
+	}
+	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
+	if err != nil {
+		return nil, err
+	}
+	// The ifacemethod fallback is call-only: a method expression on a
+	// type parameter would need itab dispatch deferred to call time,
+	// which is out of scope. Fail fast with a named error.
+	if mc.ifaceFallback != nil {
+		return nil, scopeErrorf("method expression %s via type parameter is not supported (WS H: iface fallback is call-only)", sel.Sel.Name)
+	}
+	if len(mc.recvPath) > 0 {
+		return nil, scopeErrorf("method expression %s is not supported: promoted method (methodexpr scope)", sel.Sel.Name)
+	}
+	if mc.decl == nil {
+		return nil, fmt.Errorf("gofrontend: method expression %s resolved without a declaration (exporter bug)", sel.Sel.Name)
+	}
+	var objID int
+	if mc.needsInst {
+		inst, ok := e.instByKey[mc.key]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
+		}
+		objID = inst.instID
+	} else {
+		objID = mc.decl.funcID
+	}
+	return e.node("methodexpr", sel, map[string]any{"obj": objID, "type": t}), nil
+}
+
 // runtimeStackMethodValue eta-expands a single-result stack-inspection
 // intrinsic in method-value position (e.g. `f := fn.Name`) into a real
 // closure: a zero-arg funclit capturing a temp that holds the receiver.
@@ -12011,6 +12074,23 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 		recvIface(sel.Recv()) != nil {
 		return nil, scopeErrorf("method expression %s is not supported: method expression via interface (P3-M3 scope)", x.Sel.Name)
 	}
+	// REVIEW-2026-11-05-05 (review-1105-regexp-methodexpr): a method
+	// expression on a concrete type (T.M in value position) is a
+	// first-class function value whose first parameter is the receiver
+	// (Go spec). It must be handled here, before x.X is exported:
+	// x.X is a type name, not an exportable expression (exporting it
+	// yields the confusing `identifier "T" denotes *types.TypeName`
+	// internal error) — the same reason the interface case above
+	// fails fast. methodExprNode resolves the method through the
+	// method-value machinery (resolveMethodCall) and emits a
+	// "methodexpr" node; the factory builds an unbound GoFunc, so a
+	// call f(r, args...) passes r as the method's receiver argument
+	// (see MethodExprNode). This is the general mechanism — never
+	// special-cased per type, package, or method name.
+	if sel, ok := e.info.Selections[x]; ok && sel.Kind() == types.MethodExpr &&
+		recvIface(sel.Recv()) == nil {
+		return e.methodExprNode(x, sel, t)
+	}
 	xe, err := e.exportExpr(x.X)
 	if err != nil {
 		return nil, err
@@ -12042,9 +12122,9 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 			return nil, scopeErrorf("%s %s is not supported: %s via interface (P3-M3 scope)",
 				what, x.Sel.Name, what)
 		}
-		if sel.Kind() == types.MethodExpr {
-			return nil, scopeErrorf("method expression %s is not supported: method expression on concrete type (P3-M3 scope)", x.Sel.Name)
-		}
+		// Method expressions never reach here: concrete ones return
+		// from methodExprNode above (before x.X is exported) and
+		// interface ones from the P3-M3 early return above.
 		return e.methodValueNode(x, sel, xe, t)
 	}
 	idx := sel.Index()

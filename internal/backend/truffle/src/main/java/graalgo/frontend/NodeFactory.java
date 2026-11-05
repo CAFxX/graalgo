@@ -365,6 +365,10 @@ public final class NodeFactory {
         // P3-M9 (WS H): method values x.M in value position — a GoFunc
         // with the receiver bound (see MethodValueNode).
         registerExprKind("methodvalue", this::buildMethodValue);
+        // REVIEW-2026-11-05-05: method expressions T.M in value
+        // position — a GoFunc with NO bound receiver; the call's first
+        // argument is the receiver (see MethodExprNode).
+        registerExprKind("methodexpr", this::buildMethodExpr);
         // P3-M9 (unsafe patterns): crypto/internal/fips140/alias.AnyOverlap
         // and InexactOverlap lower to the "sliceoverlap" wire node (see
         // SliceOverlapNode). The real stdlib uses uintptr(unsafe.Pointer(...))
@@ -3240,6 +3244,19 @@ public final class NodeFactory {
         int objId = f.intValue("obj", path);
         GoExprNode recv = buildExpr(f.object("recv", path), ctx);
         return new MethodValueNode(recv, funcTable, objId);
+    }
+
+    /**
+     * Builds a method expression {@code T.M} (frontend {@code methodexpr}
+     * node, REVIEW-2026-11-05-05): an unbound method function value — no
+     * receiver child is built, because the receiver arrives as the
+     * call's first argument (see MethodExprNode).
+     */
+    private GoExprNode buildMethodExpr(Json.Object node, BuildCtx ctx) {
+        Json.Object f = fieldsOf(node, "methodexpr");
+        String path = "methodexpr.fields";
+        int objId = f.intValue("obj", path);
+        return new MethodExprNode(funcTable, objId);
     }
 
     /**
