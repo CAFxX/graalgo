@@ -994,6 +994,8 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// P4 (WS D, general interface MR): user-defined multi-result
 		// interface methods.
 		userIfaceMRPairs: make(map[string]*userMRInfo),
+		// P1-1 (review-2026-11-04): see iface_stub_gate.go.
+		userPkg: pkg,
 		// MR-closure-var: multi-result closures held in variables.
 		userMRVars: make(map[*types.Var]*userMRInfo),
 		// MR-closure-var: func lit -> pair info side channel.
@@ -3058,6 +3060,18 @@ type exporter struct {
 	// ... names from synthesizePairTypeForSig, matching the concrete
 	// helper's pair.
 	userIfaceMRPairs map[string]*userMRInfo
+	// P1-1 (review-2026-11-04): interface dispatch to stub-only
+	// synthetic methods (see iface_stub_gate.go). userPkg is the package
+	// being compiled (set once in ExportFiles); the gate fires only
+	// while e.pkg == userPkg, i.e. for user-code call sites, never for
+	// synthetic/disk bodies. ifaceStubMethods is the lazily-built
+	// registry keyed by method signature, rebuilt when ifaceStubFP
+	// (the imported-package fingerprint) changes; ifaceReach is the
+	// cached user-code value-source set.
+	userPkg          *types.Package
+	ifaceStubMethods map[string][]*ifaceStubMethod
+	ifaceStubFP      string
+	ifaceReach       *ifaceReachability
 	// MR-closure-var: user-defined multi-result function literals assigned
 	// to variables, transformed to pair-returning form. Maps the
 	// *types.Var holding the closure -> pair info for call-site desugar.
@@ -11033,6 +11047,17 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
+	// P1-1 (review-2026-11-04): reject interface dispatch to a
+	// stub-only synthetic method before any pair classifier runs. The
+	// whitelist classifier would otherwise accept the call (e.g.
+	// io.Writer.Write via ioWritePair) while the method table wires
+	// the method to the panic stub, so the accepted program could only
+	// fail at run time. See iface_stub_gate.go for the stub-only
+	// definition (single-panic body + no pair helper) and the
+	// reachability guard.
+	if stubs := e.ifaceStubsFor(mname, sig, selection.Recv()); len(stubs) > 0 {
+		return nil, ifaceStubError(mname, stubs)
+	}
 	// P3-M8 (WS D): multi-result interface methods with a dispatched pair
 	// (io.Reader.Read, io.Writer.Write — see m8IfaceMultiResultMethods)
 	// lower to the ifacemethod dispatch: the itab maps the method to the
@@ -11246,6 +11271,11 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	sig, err := e.resolveIfaceMethod(constraint, mname)
 	if err != nil {
 		return nil, err
+	}
+	// P1-1 (review-2026-11-04): same stub-only gate as
+	// exportIfaceMethodCall, for type-parameter constraint dispatch.
+	if stubs := e.ifaceStubsFor(mname, sig, constraint); len(stubs) > 0 {
+		return nil, ifaceStubError(mname, stubs)
 	}
 	// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): multi-result
 	// methods via the fallback use the pair plan from
