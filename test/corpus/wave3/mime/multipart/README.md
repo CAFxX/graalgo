@@ -15,8 +15,12 @@ worker). Conventions are the wave-1 ones (`../../wave1/README.md`).
 
 ## Scope limits
 
-- No synthetic `mime/multipart` source exists in frontend/v1, so the
-  program is `.scopelimited`; the gc leg validates it is real
-  deterministic Go. `retest:` synthetic `mime/multipart` lands.
+- The program is `.scopelimited` (see `01_multipart.scopelimited`):
+  the synthetic `mime/multipart` source exists, and the m7 desugar
+  rows for `Reader.ReadForm` / `FileHeader.Open` landed in
+  review-1105-mr-table-missing (A-P1-11), but the package still does
+  not type-check until the carried type-error fix lands (branch
+  review-1105-multipart-typeerr: `synth_mime_multipart.go:934`). The
+  gc leg validates it is real deterministic Go.
 - The `ReadForm` spill path uses the wave-3 `TMPDIR` discipline via
   `os.CreateTemp` internals; no paths are printed.

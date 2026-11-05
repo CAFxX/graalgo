@@ -25,6 +25,10 @@ no network.
   `../` and absolute names NOT sanitized by `Reader` (documented
   non-behavior); 65536-byte comment rejected, 65535 accepted and
   round-tripped.
+- `04_direntry_info.go` — `fs.DirEntry`/`fs.File` interface dispatch
+  (A-P1-11): `fs.ReadDir` on the zip root and inside a directory,
+  `DirEntry.Info()` on dir and file entries, `Reader.Open(dir)` +
+  `Stat` + `Read` (gc-exact "is a directory" `*fs.PathError`).
 
 ## Scope limits
 

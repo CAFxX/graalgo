@@ -69,6 +69,25 @@ var m7BytesBufferWriteStringTable = []m7StrconvJsonExpect{
 	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
 }
 
+var m7ArchiveMimeTable = []m7StrconvJsonExpect{
+	// mime/multipart: Reader.ReadForm + FileHeader.Open (A-P1-11,
+	// REVIEW-2026-11-05-15): the __-helpers existed with real bodies but
+	// no table rows, so the calls failed with the export scope error.
+	{"mime/multipart", "ReadForm", "Reader", "__mpReaderReadForm", "__mpReaderReadFormPair", []string{"f0", "f1"}},
+	{"mime/multipart", "Open", "FileHeader", "__mpFileHeaderOpen", "__mpFileHeaderOpenPair", []string{"f0", "f1"}},
+	// archive/zip: fileListEntry.Info, openDir.Stat, openDir.Read
+	// (A-P1-11). The Info/Stat/Read rows also wire the itab via
+	// multiResultHelperFor, so the fs.DirEntry/fs.File interface
+	// dispatch (classifyUserIfaceMultiResultCall fallback, f0/f1 pair)
+	// reaches the concrete helpers. ifaceFallback stays false for all
+	// five: the flag only fires when the selected method's package is
+	// the entry's own package, and the three interface-dispatched
+	// methods here are declared in io/fs and io, never archive/zip.
+	{"archive/zip", "Info", "fileListEntry", "__zipfileListEntryInfo", "__zipfileListEntryInfoPair", []string{"f0", "f1"}},
+	{"archive/zip", "Stat", "openDir", "__zipopenDirStat", "__zipopenDirStatPair", []string{"f0", "f1"}},
+	{"archive/zip", "Read", "openDir", "__zipopenDirRead", "__zipopenDirReadPair", []string{"f0", "f1"}},
+}
+
 func TestM7StringsBuilderDesugarWiring(t *testing.T) {
 	if len(m7StringsBuilderTable) != 3 {
 		t.Fatalf("m7StringsBuilderTable has %d entries, want 3", len(m7StringsBuilderTable))
@@ -89,6 +108,65 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 		name := want.pkgPath + "." + want.recvType + "." + want.name
 		t.Run(name, func(t *testing.T) {
 			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
+// TestM7ArchiveMimeDesugarWiring pins the 5 A-P1-11 m7MultiResultFuncs
+// entries for archive/zip and mime/multipart (REVIEW-2026-11-05-15).
+// Table-only by design (step 1 of checkM7DesugarWiring): the full
+// synthetic-package check (steps 2-5) cannot run on this branch's base
+// because the two synthetic packages do not type-check there yet —
+// mime/multipart is blocked by the carried type-error fix (branch
+// review-1105-multipart-typeerr, tip 5225acbe: synth_mime_multipart.go:934,
+// `os` used as a value) and archive/zip by the carried FixedZone fix
+// (branch review-1105-zip-fixedzone, tip ddd8b37d:
+// synth_archive_zip.go:2397, time.FixedZone); buildSyntheticPackage
+// panics on a type error, so loading either package would crash the
+// test binary. The full checkM7DesugarWiring coverage for these five
+// rows was verified in the merged checkout (this lane + both carried
+// branches) and must replace this table-only pinning once the carried
+// branches land — the helper/pair/field values pinned here are the
+// same ones that check verifies (pair structs read from the synth
+// sources; the subset check in check_mr_table_subset.py re-verifies
+// them against the generator on every `make check`).
+func TestM7ArchiveMimeDesugarWiring(t *testing.T) {
+	if len(m7ArchiveMimeTable) != 5 {
+		t.Fatalf("m7ArchiveMimeTable has %d entries, want 5", len(m7ArchiveMimeTable))
+	}
+	for _, want := range m7ArchiveMimeTable {
+		name := want.pkgPath + "." + want.recvType + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			var got *m7MultiResultFunc
+			for i := range m7MultiResultFuncs {
+				mf := &m7MultiResultFuncs[i]
+				if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
+					if got != nil {
+						t.Fatalf("duplicate m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
+					}
+					got = mf
+				}
+			}
+			if got == nil {
+				t.Fatalf("no m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
+			}
+			if got.helper != want.helper {
+				t.Fatalf("table helper = %q, want %q", got.helper, want.helper)
+			}
+			if got.pairType != want.pairType {
+				t.Fatalf("table pairType = %q, want %q", got.pairType, want.pairType)
+			}
+			if len(got.pairFields) != len(want.pairFields) {
+				t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+			}
+			for i, f := range want.pairFields {
+				if got.pairFields[i] != f {
+					t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+				}
+			}
+			if got.ifaceFallback {
+				t.Fatalf("table ifaceFallback = true for %s, want false (interface dispatch for these methods goes through classifyUserIfaceMultiResultCall, not the m7 ifaceFallback retry)", name)
+			}
 		})
 	}
 }

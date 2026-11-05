@@ -1,2 +1,2 @@
-reason: no synthetic mime/multipart source in frontend/v1 (imports are not supported in frontend/v1 scope — WS G import overlay); M9 tier-5 package work
-retest: synthetic mime/multipart source lands in internal/frontend
+reason: the m7 desugar rows for Reader.ReadForm and FileHeader.Open landed in review-1105-mr-table-missing (A-P1-11, REVIEW-2026-11-05-15), but the program is still blocked by the carried mime/multipart type-error fix (branch review-1105-multipart-typeerr: synth_mime_multipart.go:934, `os` used as a value) — the synthetic mime/multipart package does not type-check without it
+retest: carried branch review-1105-multipart-typeerr lands on master and review-1105-mr-table-missing is integrated

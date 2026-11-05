@@ -1,0 +1,2 @@
+reason: the m7 desugar rows for fileListEntry.Info, openDir.Stat and openDir.Read landed in review-1105-mr-table-missing (A-P1-11, REVIEW-2026-11-05-15), but the program is still blocked by the carried archive/zip FixedZone fix (branch review-1105-zip-fixedzone: synth_archive_zip.go:2397, time.FixedZone) — the synthetic archive/zip package does not type-check without it
+retest: carried branch review-1105-zip-fixedzone lands on master and review-1105-mr-table-missing is integrated
