@@ -966,3 +966,418 @@ func TestB(t *testing.T) {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
 	}
 }
+
+// TestMain support (P1-3). TestMain is an entry point, not a test: it
+// must never be discovered as one, and the driver must call it with a
+// testing.M equivalent instead of a *graalgoT.
+
+// TestDiscoverTestsExcludesTestMain: TestMain is not returned by
+// discoverTests, while ordinary tests are — including multi-arity
+// Test functions, which `go test` ignores as tests, and tests using an
+// aliased or dot-imported testing package.
+func TestDiscoverTestsExcludesTestMain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tm\n\ngo 1.21\n")
+	writeFile(t, root, "a_test.go", `package tm
+
+import "testing"
+
+func TestMain(m *testing.M) {
+}
+
+func TestReal(t *testing.T) {
+}
+
+func TestTwo(t *testing.T, u *testing.T) {
+}
+
+func TestNone() {
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestReal" {
+		t.Fatalf("discoverTests = %v, want [TestReal]", tests)
+	}
+	found, err := discoverTestMain(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Errorf("discoverTestMain = false, want true")
+	}
+
+	// Aliased and dot-imported testing spellings are the same entry
+	// points, not different ones.
+	writeFile(t, root, "b_test.go", `package tm
+
+import tt "testing"
+
+func TestMain(m *tt.M) {
+}
+
+func TestAliased(t *tt.T) {
+}
+`)
+	// b_test.go's TestMain would be a second TestMain in the package;
+	// discovery is per file, so each file is checked on its own.
+	tests, err = discoverTests(filepath.Join(root, "b_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestAliased" {
+		t.Fatalf("discoverTests (aliased) = %v, want [TestAliased]", tests)
+	}
+	found, err = discoverTestMain(filepath.Join(root, "b_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Errorf("discoverTestMain (aliased) = false, want true")
+	}
+
+	writeFile(t, root, "c_test.go", `package tm
+
+import . "testing"
+
+func TestMain(m *M) {
+}
+
+func TestDot(t *T) {
+}
+`)
+	tests, err = discoverTests(filepath.Join(root, "c_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestDot" {
+		t.Fatalf("discoverTests (dot-import) = %v, want [TestDot]", tests)
+	}
+	found, err = discoverTestMain(filepath.Join(root, "c_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Errorf("discoverTestMain (dot-import) = false, want true")
+	}
+}
+
+// TestDiscoverTestsRejectsNonTParam: a Test function taking exactly one
+// parameter that is not *testing.T, and a TestMain taking anything but
+// *testing.M, are rejected with a clear diagnostic — not miscompiled
+// into a driver that fails with a generated-code type error.
+func TestDiscoverTestsRejectsNonTParam(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmrej\n\ngo 1.21\n")
+	writeFile(t, root, "bad_test.go", `package tmrej
+
+import "testing"
+
+func TestBad(x int) {
+}
+`)
+	if _, err := discoverTests(filepath.Join(root, "bad_test.go")); err == nil {
+		t.Errorf("discoverTests accepted TestBad(x int), want an error")
+	} else if !strings.Contains(err.Error(), "TestBad") || !strings.Contains(err.Error(), "*testing.T") {
+		t.Errorf("discoverTests error = %v, want it to name TestBad and *testing.T", err)
+	}
+
+	writeFile(t, root, "badmain_test.go", `package tmrej
+
+import "testing"
+
+func TestMain(m *testing.T) {
+}
+`)
+	if _, err := discoverTestMain(filepath.Join(root, "badmain_test.go")); err == nil {
+		t.Errorf("discoverTestMain accepted TestMain(m *testing.T), want an error")
+	} else if !strings.Contains(err.Error(), "TestMain") || !strings.Contains(err.Error(), "*testing.M") {
+		t.Errorf("discoverTestMain error = %v, want it to name TestMain and *testing.M", err)
+	}
+
+	// Two TestMains in one file are a duplicate, not two entry points.
+	writeFile(t, root, "dup_test.go", `package tmrej
+
+import "testing"
+
+func TestMain(m *testing.M) {
+}
+
+func TestMain(m *testing.M) {
+}
+`)
+	if _, err := discoverTestMain(filepath.Join(root, "dup_test.go")); err == nil {
+		t.Errorf("discoverTestMain accepted two TestMains, want an error")
+	} else if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("discoverTestMain error = %v, want it to say duplicate", err)
+	}
+
+	// A zero-parameter TestMain is not an entry point at all.
+	writeFile(t, root, "noparam_test.go", `package tmrej
+
+import "testing"
+
+func TestMain() {
+}
+`)
+	found, err := discoverTestMain(filepath.Join(root, "noparam_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Errorf("discoverTestMain = true for zero-parameter TestMain, want false")
+	}
+}
+
+// TestSynthDriverTestMain: the driver calls TestMain with a *graalgoM
+// (whose Run runs the discovered tests) and never as a test with a
+// *graalgoT. Every assertion below fails on the pre-fix driver, which
+// emitted TestMain(tt) and left the TestMain parameter as *testing.M.
+func TestSynthDriverTestMain(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmdrv\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package tmdrv\n\nvar SetupRan bool\n")
+	writeFile(t, root, "a_test.go", `package tmdrv
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	SetupRan = true
+	os.Exit(m.Run())
+}
+
+func TestReal(t *testing.T) {
+	if !SetupRan {
+		t.Fatal("setup did not run")
+	}
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestReal" {
+		t.Fatalf("discoverTests = %v, want [TestReal]", tests)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
+	}
+	if !strings.Contains(src, "func TestMain(m *graalgoM") {
+		t.Errorf("driver did not rewrite TestMain parameter to *graalgoM:\n%s", src)
+	}
+	if !strings.Contains(src, "func (m *graalgoM) Run() int") {
+		t.Errorf("driver has no graalgoM.Run:\n%s", src)
+	}
+	if !strings.Contains(src, "func graalgoRunAllTests() int") {
+		t.Errorf("driver has no graalgoRunAllTests:\n%s", src)
+	}
+	if strings.Contains(src, "TestMain(tt)") {
+		t.Errorf("driver still calls TestMain as a test with *graalgoT:\n%s", src)
+	}
+	main := src[strings.LastIndex(src, "func main()"):]
+	if !strings.Contains(main, "TestMain(tm)") {
+		t.Errorf("generated main does not call TestMain(tm):\n%s", main)
+	}
+	if strings.Contains(main, "TestReal(tt)") {
+		t.Errorf("generated main calls TestReal directly instead of via TestMain:\n%s", main)
+	}
+}
+
+// TestSynthDriverTestMainExternalPackage: TestMain in an external test
+// package (package foo_test) is called the same way; the package's own
+// sources are not inlined, but that changes nothing about TestMain.
+func TestSynthDriverTestMainExternalPackage(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmext\n\ngo 1.21\n")
+	writeFile(t, root, "foo.go", "package tmext\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "foo_test.go", `package tmext_test
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestExt(t *testing.T) {
+}
+`)
+	testFile := filepath.Join(root, "foo_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "foo.go")})
+	main := src[strings.LastIndex(src, "func main()"):]
+	if !strings.Contains(main, "TestMain(tm)") {
+		t.Errorf("generated main does not call external TestMain(tm):\n%s", main)
+	}
+	if !strings.Contains(src, "func TestMain(m *graalgoM") {
+		t.Errorf("driver did not rewrite external TestMain parameter to *graalgoM:\n%s", src)
+	}
+}
+
+// TestSynthDriverTestMainRenamedOnCollision: when the package under test
+// itself declares a top-level TestMain (an ordinary function, legal in
+// its own package), the flattened driver must rename the external test
+// package's TestMain and call the renamed one — calling the plain name
+// would invoke the package's own zero-parameter function with a
+// *graalgoM argument.
+func TestSynthDriverTestMainRenamedOnCollision(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmcol\n\ngo 1.21\n")
+	writeFile(t, root, "foo.go", "package tmcol\n\nfunc TestMain() {}\n")
+	writeFile(t, root, "a_test.go", `package tmcol
+
+import "testing"
+
+func TestWhite(t *testing.T) {
+}
+`)
+	writeFile(t, root, "b_test.go", `package tmcol_test
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestExt(t *testing.T) {
+}
+`)
+	testsA, err := discoverTests(filepath.Join(root, "a_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsB, err := discoverTests(filepath.Join(root, "b_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "a_test.go"), tests: testsA},
+			{file: filepath.Join(root, "b_test.go"), tests: testsB},
+		},
+		[]string{filepath.Join(root, "foo.go")})
+	main := src[strings.LastIndex(src, "func main()"):]
+	if !strings.Contains(main, "TestMain2(tm)") {
+		t.Errorf("generated main does not call renamed TestMain2(tm):\n%s", main)
+	}
+	if !strings.Contains(src, "func TestMain2(m *graalgoM") {
+		t.Errorf("driver did not rename external TestMain to TestMain2:\n%s", src)
+	}
+	if !strings.Contains(src, "func TestMain()\t{}") {
+		t.Errorf("driver lost the package's own TestMain function:\n%s", src)
+	}
+}
+
+// TestSynthDriverTestMainAliasedImport: an aliased testing import
+// (import tt "testing") rewrites TestMain's parameter to *graalgoM, not
+// just the plain `testing` spelling.
+func TestSynthDriverTestMainAliasedImport(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmalias\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package tmalias\n\nvar SetupRan bool\n")
+	writeFile(t, root, "a_test.go", `package tmalias
+
+import (
+	"os"
+	tt "testing"
+)
+
+func TestMain(m *tt.M) {
+	SetupRan = true
+	os.Exit(m.Run())
+}
+
+func TestAliased(t *tt.T) {
+	if !SetupRan {
+		t.Fatal("setup did not run")
+	}
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestAliased" {
+		t.Fatalf("discoverTests = %v, want [TestAliased]", tests)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, "func TestMain(m *graalgoM") {
+		t.Errorf("driver did not rewrite aliased TestMain parameter to *graalgoM:\n%s", src)
+	}
+	if !strings.Contains(src, "func TestAliased(t *graalgoT") {
+		t.Errorf("driver did not rewrite aliased test parameter to *graalgoT:\n%s", src)
+	}
+	main := src[strings.LastIndex(src, "func main()"):]
+	if !strings.Contains(main, "TestMain(tm)") {
+		t.Errorf("generated main does not call TestMain(tm):\n%s", main)
+	}
+}
+
+// TestSynthDriverTestMainSiblingFile: TestMain in a test file whose own
+// tests were not selected still runs — it is a sibling file, not a
+// selected one, and TestMain runs regardless of selection.
+func TestSynthDriverTestMainSiblingFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmsib\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package tmsib\n")
+	writeFile(t, root, "a_test.go", `package tmsib
+
+import "testing"
+
+func TestSelected(t *testing.T) {
+}
+`)
+	writeFile(t, root, "b_test.go", `package tmsib
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestOther(t *testing.T) {
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	main := src[strings.LastIndex(src, "func main()"):]
+	if !strings.Contains(main, "TestMain(tm)") {
+		t.Errorf("generated main does not call sibling TestMain(tm):\n%s", main)
+	}
+	if strings.Contains(src, "TestOther(tt)") {
+		t.Errorf("driver runs unselected sibling TestOther as a test:\n%s", src)
+	}
+}
