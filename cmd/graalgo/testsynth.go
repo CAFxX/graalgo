@@ -87,10 +87,48 @@ func isTestingParamType(typ ast.Expr, local string, dot bool, sel string) bool {
 	return false
 }
 
+// hasTypeParams reports whether fn declares type parameters, and
+// hasResults reports whether it declares results. Both disqualify a
+// Test/TestMain entry point: `go test` requires exactly
+// func TestXxx(t *testing.T) / func TestMain(m *testing.M).
+func hasTypeParams(fn *ast.FuncDecl) bool {
+	return fn.Type != nil && fn.Type.TypeParams != nil && len(fn.Type.TypeParams.List) > 0
+}
+
+func hasResults(fn *ast.FuncDecl) bool {
+	return fn.Type != nil && fn.Type.Results != nil && len(fn.Type.Results.List) > 0
+}
+
+// checkTestEntrySignature validates the shape of a Test/TestMain entry
+// point other than its parameter type: no type parameters, exactly one
+// parameter, and no results. A violation is rejected with a clear
+// diagnostic naming the required signature — `go test` rejects every
+// such form at setup ("wrong signature ... [setup failed]"), so
+// silently skipping it would let a package gc refuses to test pass
+// under graalgo. The parameter-type check itself stays with the
+// callers, which phrase it in terms of the file's testing import.
+func checkTestEntrySignature(fset *token.FileSet, fn *ast.FuncDecl, sel string) error {
+	if hasTypeParams(fn) {
+		return fmt.Errorf("%s: %s must be func(*testing.%s): it has type parameters", fset.Position(fn.Pos()), fn.Name.Name, sel)
+	}
+	if hasResults(fn) {
+		return fmt.Errorf("%s: %s must be func(*testing.%s): it returns a value", fset.Position(fn.Pos()), fn.Name.Name, sel)
+	}
+	if _, ok := singleParamType(fn); !ok {
+		return fmt.Errorf("%s: %s must be func(*testing.%s): it does not take exactly one parameter", fset.Position(fn.Pos()), fn.Name.Name, sel)
+	}
+	return nil
+}
+
 // isTestMainFunc reports whether fn is a TestMain entry point:
-// func TestMain(m *testing.M).
+// func TestMain(m *testing.M), with no type parameters and no results.
+// Any other TestMain-shaped declaration is not an entry point here —
+// discoverTestMain rejects it — so synthesis never miscompiles it.
 func isTestMainFunc(fn *ast.FuncDecl, f *ast.File) bool {
 	if fn.Recv != nil || fn.Name.Name != "TestMain" {
+		return false
+	}
+	if hasTypeParams(fn) || hasResults(fn) {
 		return false
 	}
 	typ, ok := singleParamType(fn)
@@ -107,11 +145,14 @@ func isTestMainFunc(fn *ast.FuncDecl, f *ast.File) bool {
 // discoverTests returns the names of runnable TestXxx functions in a
 // _test.go file: Test-prefixed functions (other than TestMain) taking
 // exactly one *testing.T parameter. TestMain is not a test (see
-// discoverTestMain) and is never returned. A Test-prefixed function
-// taking exactly one parameter of another type is rejected with a clear
-// diagnostic instead of being miscompiled into a driver that fails with
-// a generated-code type error; functions with any other arity are not
-// tests at all (matching `go test`) and are skipped silently.
+// discoverTestMain) and is never returned. Any other Test-prefixed
+// non-method function whose signature is not exactly
+// func(*testing.T) — wrong arity, type parameters, results, or a
+// parameter of another type — is rejected with a clear diagnostic
+// instead of being miscompiled into a driver that fails with a
+// generated-code type error or silently skipped: `go test` rejects
+// every such form at setup, so skipping it would let a package gc
+// refuses to test pass under graalgo.
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
@@ -128,10 +169,11 @@ func discoverTests(path string) ([]string, error) {
 		if fn.Name.Name == "TestMain" {
 			continue
 		}
-		typ, ok := singleParamType(fn)
-		if !ok {
-			continue
+		if err := checkTestEntrySignature(fset, fn, "T"); err != nil {
+			return nil, err
 		}
+		// Arity is already validated by checkTestEntrySignature.
+		typ, _ := singleParamType(fn)
 		if !isTestingParamType(typ, local, dot, "T") {
 			if !hasTesting {
 				return nil, fmt.Errorf("%s: %s is not a runnable test: the file does not import testing, so it cannot take *testing.T", fset.Position(fn.Pos()), fn.Name.Name)
@@ -148,11 +190,14 @@ func discoverTests(path string) ([]string, error) {
 }
 
 // discoverTestMain reports whether a _test.go file defines a TestMain
-// entry point, func TestMain(m *testing.M). A one-parameter TestMain
-// taking anything else is rejected: the old driver miscompiled it as
-// an ordinary test and failed with a generated-code type error.
-// TestMain functions with any other arity are not entry points
-// (matching `go test`) and are ignored; a file cannot define two.
+// entry point, func TestMain(m *testing.M). A TestMain whose signature
+// is not exactly that — wrong arity, type parameters, results, or a
+// parameter of another type — is rejected: the old driver miscompiled
+// a one-parameter wrong-type TestMain as an ordinary test and failed
+// with a generated-code type error, and silently ignoring any other
+// malformed TestMain would let a package gc refuses to test pass
+// under graalgo with its setup never running. A file cannot define
+// two valid TestMains.
 func discoverTestMain(path string) (bool, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
@@ -166,10 +211,11 @@ func discoverTestMain(path string) (bool, error) {
 		if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" {
 			continue
 		}
-		typ, ok := singleParamType(fn)
-		if !ok {
-			continue
+		if err := checkTestEntrySignature(fset, fn, "M"); err != nil {
+			return false, err
 		}
+		// Arity is already validated by checkTestEntrySignature.
+		typ, _ := singleParamType(fn)
 		if !isTestingParamType(typ, local, dot, "M") {
 			if !hasTesting {
 				return false, fmt.Errorf("%s: TestMain does not take *testing.M: the file does not import testing", fset.Position(fn.Pos()))
@@ -337,16 +383,16 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 // main would, and returns 0 when they all pass, 1 otherwise — the exit
 // code TestMain typically hands to os.Exit. The PASS/FAIL summary line
 // is printed here (not by main) so it still appears when TestMain exits
-// from inside its own body, matching go test output.
+// from inside its own body, matching go test output. Run may be called
+// repeatedly: each call re-executes the tests, updates the exit code,
+// and prints the summary again, exactly as go test does — it does
+// not panic on a second call.
 type graalgoM struct {
 	runCalled bool
 	exitCode  int
 }
 
 func (m *graalgoM) Run() int {
-	if m.runCalled {
-		panic("testing: M.Run called multiple times")
-	}
 	m.runCalled = true
 	failed := graalgoRunAllTests()
 	if failed > 0 {

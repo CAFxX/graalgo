@@ -5,7 +5,9 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -972,9 +974,11 @@ func TestB(t *testing.T) {
 // testing.M equivalent instead of a *graalgoT.
 
 // TestDiscoverTestsExcludesTestMain: TestMain is not returned by
-// discoverTests, while ordinary tests are — including multi-arity
-// Test functions, which `go test` ignores as tests, and tests using an
-// aliased or dot-imported testing package.
+// discoverTests, while ordinary tests are — including tests using an
+// aliased or dot-imported testing package. Malformed Test functions
+// are not silently excluded: `go test` rejects them at setup, so
+// discoverTests rejects them too (see also
+// TestDiscoverTestsRejectsNonTParam).
 func TestDiscoverTestsExcludesTestMain(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "go.mod", "module example.com/tm\n\ngo 1.21\n")
@@ -986,12 +990,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestReal(t *testing.T) {
-}
-
-func TestTwo(t *testing.T, u *testing.T) {
-}
-
-func TestNone() {
 }
 `)
 	testFile := filepath.Join(root, "a_test.go")
@@ -1008,6 +1006,34 @@ func TestNone() {
 	}
 	if !found {
 		t.Errorf("discoverTestMain = false, want true")
+	}
+
+	// A two-parameter Test function is rejected, not excluded.
+	writeFile(t, root, "two_test.go", `package tm
+
+import "testing"
+
+func TestTwo(t *testing.T, u *testing.T) {
+}
+`)
+	if _, err := discoverTests(filepath.Join(root, "two_test.go")); err == nil {
+		t.Errorf("discoverTests accepted TestTwo(t, u *testing.T), want an error")
+	} else if !strings.Contains(err.Error(), "TestTwo") || !strings.Contains(err.Error(), "*testing.T") {
+		t.Errorf("discoverTests error = %v, want it to name TestTwo and *testing.T", err)
+	}
+
+	// A zero-parameter Test function is rejected, not excluded.
+	writeFile(t, root, "none_test.go", `package tm
+
+import "testing"
+
+func TestNone() {
+}
+`)
+	if _, err := discoverTests(filepath.Join(root, "none_test.go")); err == nil {
+		t.Errorf("discoverTests accepted TestNone(), want an error")
+	} else if !strings.Contains(err.Error(), "TestNone") || !strings.Contains(err.Error(), "*testing.T") {
+		t.Errorf("discoverTests error = %v, want it to name TestNone and *testing.T", err)
 	}
 
 	// Aliased and dot-imported testing spellings are the same entry
@@ -1115,7 +1141,9 @@ func TestMain(m *testing.M) {
 		t.Errorf("discoverTestMain error = %v, want it to say duplicate", err)
 	}
 
-	// A zero-parameter TestMain is not an entry point at all.
+	// A zero-parameter TestMain is rejected, not ignored: `go test`
+	// refuses the package at setup, so a silent skip would let it pass
+	// with its setup never running.
 	writeFile(t, root, "noparam_test.go", `package tmrej
 
 import "testing"
@@ -1123,12 +1151,38 @@ import "testing"
 func TestMain() {
 }
 `)
-	found, err := discoverTestMain(filepath.Join(root, "noparam_test.go"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := discoverTestMain(filepath.Join(root, "noparam_test.go")); err == nil {
+		t.Errorf("discoverTestMain accepted TestMain(), want an error")
+	} else if !strings.Contains(err.Error(), "TestMain") || !strings.Contains(err.Error(), "*testing.M") {
+		t.Errorf("discoverTestMain error = %v, want it to name TestMain and *testing.M", err)
 	}
-	if found {
-		t.Errorf("discoverTestMain = true for zero-parameter TestMain, want false")
+
+	// Every other malformed shape `go test` rejects at setup is
+	// rejected here too: generic and returning Test functions, and
+	// extra-parameter, returning, and generic TestMains.
+	malformed := []struct {
+		file, src, fn, want string
+		discoverMain        bool
+	}{
+		{"gen_test.go", "package tmrej\n\nimport \"testing\"\n\nfunc TestGen[T any](t *testing.T) {\n}\n", "TestGen", "*testing.T", false},
+		{"ret_test.go", "package tmrej\n\nimport \"testing\"\n\nfunc TestRet(t *testing.T) int { return 0 }\n", "TestRet", "*testing.T", false},
+		{"mainextra_test.go", "package tmrej\n\nimport \"testing\"\n\nfunc TestMain(m *testing.M, extra int) {\n}\n", "TestMain", "*testing.M", true},
+		{"mainret_test.go", "package tmrej\n\nimport \"testing\"\n\nfunc TestMain(m *testing.M) int { return 0 }\n", "TestMain", "*testing.M", true},
+		{"maingen_test.go", "package tmrej\n\nimport \"testing\"\n\nfunc TestMain[T any](m *testing.M) {\n}\n", "TestMain", "*testing.M", true},
+	}
+	for _, tc := range malformed {
+		writeFile(t, root, tc.file, tc.src)
+		var err error
+		if tc.discoverMain {
+			_, err = discoverTestMain(filepath.Join(root, tc.file))
+		} else {
+			_, err = discoverTests(filepath.Join(root, tc.file))
+		}
+		if err == nil {
+			t.Errorf("accepted %s in %s, want an error", tc.fn, tc.file)
+		} else if !strings.Contains(err.Error(), tc.fn) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("error for %s = %v, want it to name %s and %s", tc.fn, err, tc.fn, tc.want)
+		}
 	}
 }
 
@@ -1191,6 +1245,74 @@ func TestReal(t *testing.T) {
 	}
 	if strings.Contains(main, "TestReal(tt)") {
 		t.Errorf("generated main calls TestReal directly instead of via TestMain:\n%s", main)
+	}
+}
+
+// TestSynthDriverTestMainRunTwice: a TestMain calling m.Run() twice
+// must re-execute the tests and return each run's code, not panic.
+// The driver is executed with the reference toolchain: on the old
+// driver the second Run panicked ("testing: M.Run called multiple
+// times"), so `go run` exited non-zero; here both runs must pass and
+// the test body must have executed exactly twice (Runs == 2), so a
+// driver that skipped the second run fails with exit code 8.
+func TestSynthDriverTestMainRunTwice(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tmdbl\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package tmdbl\n\nvar Runs int\n")
+	writeFile(t, root, "a_test.go", `package tmdbl
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	c1 := m.Run()
+	c2 := m.Run()
+	if c1 != 0 || c2 != 0 {
+		os.Exit(7)
+	}
+	if Runs != 2 {
+		os.Exit(8)
+	}
+	os.Exit(0)
+}
+
+func TestCount(t *testing.T) {
+	Runs++
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestCount" {
+		t.Fatalf("discoverTests = %v, want [TestCount]", tests)
+	}
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(driver)
+	src, err := os.ReadFile(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "M.Run called multiple times") {
+		t.Errorf("driver still panics on a second m.Run() call")
+	}
+	goBin := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if _, err := os.Stat(goBin); err != nil {
+		t.Skipf("reference go toolchain not found at %s: %v", goBin, err)
+	}
+	cmd := exec.Command(goBin, "run", driver)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("driver with two m.Run() calls failed: %v\n%s", err, out)
 	}
 }
 
