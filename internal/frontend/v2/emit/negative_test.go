@@ -165,7 +165,56 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
-		name: "IndexListExpr_generics",
+		name: "CaseClause",
+		src: `package main
+func main() {
+	x := 1
+	switch x {
+	case 1:
+		println("one")
+	default:
+		println("other")
+	}
+}
+`,
+		want: "unsupported stmt",
+	},
+	{
+		name: "CommClause",
+		src: `package main
+func sel(c chan int) {
+	select {
+	case x := <-c:
+		println(x)
+	default:
+	}
+}
+func main() {}
+`,
+		want: "unsupported stmt",
+	},
+	{
+		name: "TypeSpec",
+		src: `package main
+func main() {
+	type T int
+	_ = T(1)
+}
+`,
+		want: "unsupported decl stmt",
+	},
+	{
+		name: "ValueSpec",
+		src: `package main
+func main() {
+	const K = 1
+	println(K)
+}
+`,
+		want: "unsupported decl stmt",
+	},
+	{
+		name: "IndexListExpr",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }

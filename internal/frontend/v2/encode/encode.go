@@ -40,7 +40,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
+	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"graalgo-frontend-v2/emit"
 )
@@ -67,20 +71,53 @@ func Encode(doc *emit.Document) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteString(formatMagic)
 	writeVarint(&buf, formatVersion)
-	// Encode as a map with the Document's top-level fields.
-	m := map[string]any{
-		"frontend":  doc.Frontend,
-		"generator": doc.Generator,
-		"package":   doc.Package,
-		"types":     doc.Types,
-		"objects":   doc.Objects,
-		"funcs":     doc.Funcs,
-		"globals":   doc.Globals,
-	}
-	if err := encodeValue(&buf, m); err != nil {
+	// Encode as a map built from the Document struct itself (see
+	// documentMap): a field-by-field literal would silently drop any
+	// future Document field from the wire format.
+	if err := encodeValue(&buf, documentMap(doc)); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// documentMap converts a Document to its wire map. It is derived from
+// the struct by reflection so that adding an exported field to Document
+// automatically adds it to the wire format — a hand-written literal
+// would silently drop it. Keys are the lower-cased field names, which
+// match the wire keys used since format version 1 (frontend, generator,
+// package, types, objects, funcs, globals). A future multi-word field
+// needs an explicit key mapping here; lower-casing alone would produce
+// "sourcefiles" for "SourceFiles".
+func documentMap(doc *emit.Document) map[string]any {
+	v := reflect.ValueOf(doc).Elem()
+	t := v.Type()
+	m := make(map[string]any, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
+			continue // unexported field: not on the wire
+		}
+		m[strings.ToLower(f.Name)] = v.Field(i).Interface()
+	}
+	return m
+}
+
+// formatFloat renders a float as a string the Java side can parse back
+// with Double.parseDouble (or Float.parseFloat for 32-bit). Go's %v
+// renders +Inf/-Inf, which Java rejects; the Java spellings are
+// "Infinity"/"-Infinity"/"NaN". Finite values use FormatFloat 'g' with
+// the shortest representation that round-trips.
+func formatFloat(x float64, bits int) string {
+	switch {
+	case math.IsNaN(x):
+		return "NaN"
+	case math.IsInf(x, 1):
+		return "Infinity"
+	case math.IsInf(x, -1):
+		return "-Infinity"
+	default:
+		return strconv.FormatFloat(x, 'g', -1, bits)
+	}
 }
 
 // encodeValue writes one value with its tag.
@@ -125,12 +162,21 @@ func encodeValue(buf *bytes.Buffer, v any) error {
 	case uint64:
 		buf.WriteByte(tagInt)
 		writeVarint(buf, zigzagUnsigned(x))
+	case float32:
+		// Floats are encoded as strings to preserve exact representation.
+		// The Java side parses them back with Float.parseFloat, which
+		// accepts "Infinity"/"-Infinity"/"NaN" but not Go's "+Inf"/"-Inf"
+		// spellings (see formatFloat).
+		buf.WriteByte(tagString)
+		s := formatFloat(float64(x), 32)
+		writeVarint(buf, uint64(len(s)))
+		buf.WriteString(s)
 	case float64:
 		// Floats are encoded as strings to preserve exact representation.
-		// The Java side parses them back. (v2 currently uses ints for
-		// constants; this is for future completeness.)
+		// The Java side parses them back with Double.parseDouble (see
+		// formatFloat for the Inf/NaN spellings).
 		buf.WriteByte(tagString)
-		s := fmt.Sprintf("%v", x)
+		s := formatFloat(x, 64)
 		writeVarint(buf, uint64(len(s)))
 		buf.WriteString(s)
 	case string:
