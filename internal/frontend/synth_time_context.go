@@ -921,6 +921,17 @@ func (l *Location) String() string {
 	return l.name
 }
 
+// FixedZone returns a Location with the given name. The offset is not
+// modeled: synthetic Location carries only a name (same UTC-only
+// divergence as Local above). Sufficient for archive/zip's timeZone
+// helper, which calls FixedZone("", offset) — the empty name keeps
+// Date's non-UTC panic from firing. (Without this, importing archive/zip
+// panicked the frontend with "undefined: time.FixedZone" at synthetic
+// type-check time.)
+func FixedZone(name string, offset int) *Location {
+	return &Location{name: name}
+}
+
 func Parse(layout, value string) (Time, error) {
 	panic("time.Parse: not in M5 scope")
 }
