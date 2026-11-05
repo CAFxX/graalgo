@@ -199,6 +199,51 @@ public final class SchedulerCore {
         JfrEvents.ioParkEnd(h, ioEvent, System.nanoTime() - h.ioStartNanos);
     }
 
+    /**
+     * Conditional blocking-I/O bracket for production call sites
+     * (review-1105-io-slots B-P1-6, GG-0018): enters blocking I/O on
+     * the current goroutine when there is one, and returns the
+     * scheduler to pass to {@link #ioExitIfEntered}; returns null and
+     * takes no bracket when there is no scheduler installed, when the
+     * current thread is not a scheduler goroutine (a foreign thread —
+     * e.g. a test thread driving an intrinsic directly), or when the
+     * goroutine is already inside blocking I/O (a nested bracket would
+     * re-acquire the slot while the outer call is still blocked, then
+     * break the outer pair — the outer bracket already released the
+     * slot, so the inner call proceeds unbracketed).
+     *
+     * <p>This answers the review's open design question ("whether
+     * ioEnter on a non-scheduler thread should fail fast"): direct
+     * {@link #ioEnter}/{@link #ioExit} keep their fail-fast contract
+     * (pinned by {@code IoSlotsTest}), and production call sites —
+     * which also run scheduler-less (Phase-1 runs) and from foreign
+     * threads — use this pair instead.
+     */
+    public static SchedulerCore ioEnterIfGoroutine() {
+        SchedulerCore sc = installed;
+        if (sc == null) {
+            return null;
+        }
+        GoroutineHandle h = sc.currentHandle.get();
+        if (h == null || h.inIo.get()) {
+            return null;
+        }
+        sc.ioEnter();
+        return sc;
+    }
+
+    /**
+     * Ends a bracket begun by {@link #ioEnterIfGoroutine}; a null
+     * argument (no bracket was taken) is a no-op. Call in
+     * {@code finally} with the value {@code ioEnterIfGoroutine}
+     * returned, on the same thread.
+     */
+    public static void ioExitIfEntered(SchedulerCore sc) {
+        if (sc != null) {
+            sc.ioExit();
+        }
+    }
+
     Drainer drainer() {
         return drainer;
     }

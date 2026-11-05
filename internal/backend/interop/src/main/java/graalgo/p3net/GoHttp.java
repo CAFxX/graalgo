@@ -1,6 +1,7 @@
 package graalgo.p3net;
 
 import com.oracle.truffle.api.dsl.Cached;
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import java.net.URI;
@@ -79,7 +80,17 @@ public final class GoHttp {
                 }
             }
             HttpRequest req = rb.build();
-            HttpResponse<byte[]> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
+            // review-1105-io-slots B-P1-6 (GG-0018): CLIENT.send blocks
+            // up to 30 s; release the in-flight slot while waiting, or
+            // GOMAXPROCS=1 stalls. Conditional bracket: no-op on foreign
+            // threads and in scheduler-less runs.
+            SchedulerCore io = SchedulerCore.ioEnterIfGoroutine();
+            HttpResponse<byte[]> resp;
+            try {
+                resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
+            } finally {
+                SchedulerCore.ioExitIfEntered(io);
+            }
             int status = resp.statusCode();
             // Collect headers first to count them.
             List<String> hkeys = new ArrayList<>();

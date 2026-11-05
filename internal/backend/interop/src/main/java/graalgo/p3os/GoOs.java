@@ -43,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -787,6 +788,15 @@ public final class GoOs {
         if (!(ch.ch instanceof ReadableByteChannel)) {
             return -EBADF;
         }
+        // review-1105-io-slots B-P1-6 (GG-0018): a pipe/FIFO/stdio/socket
+        // read blocks; release the in-flight slot while waiting. Regular
+        // files stay unbracketed (page-cache fast; the finding's
+        // "non-regular-file" qualifier). Conditional bracket: no-op on
+        // foreign threads and in scheduler-less runs. readAt/writeAt stay
+        // unbracketed too: they are FileChannel-only (-ESPIPE otherwise)
+        // and open() assigns KIND_REGULAR to every FileChannel handle,
+        // so the qualifier excludes them by construction.
+        SchedulerCore io = ch.kind == KIND_REGULAR ? null : SchedulerCore.ioEnterIfGoroutine();
         try {
             int n = ((ReadableByteChannel) ch.ch).read(bb);
             if (n < 0) {
@@ -796,6 +806,8 @@ public final class GoOs {
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
+        } finally {
+            SchedulerCore.ioExitIfEntered(io);
         }
     }
 
@@ -813,6 +825,9 @@ public final class GoOs {
             return -EBADF;
         }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
+        // review-1105-io-slots B-P1-6 (GG-0018): same rule as read() —
+        // bracket non-regular-file writes (pipes, stdio, sockets).
+        SchedulerCore io = ch.kind == KIND_REGULAR ? null : SchedulerCore.ioEnterIfGoroutine();
         try {
             int n = wch.write(bb);
             return (long) n + 1;
@@ -830,6 +845,8 @@ public final class GoOs {
                 return -EPIPE;
             }
             return -errno(e);
+        } finally {
+            SchedulerCore.ioExitIfEntered(io);
         }
     }
 

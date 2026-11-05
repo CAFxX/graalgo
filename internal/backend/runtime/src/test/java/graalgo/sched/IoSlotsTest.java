@@ -285,4 +285,128 @@ public final class IoSlotsTest {
         });
         assertTrue(ok.get(), "paired ioEnter/ioExit broke after foreign-thread failures");
     }
+
+    // review-1105-io-slots B-P1-6: the conditional bracket is a no-op
+    // on a foreign thread (no scheduler goroutine): it returns null and
+    // ioExitIfEntered(null) does nothing — production call sites driven
+    // from a test thread (GoOs.write in BlockingIoSlotsTest) must not
+    // fail fast.
+    public void testIoEnterIfGoroutineFromForeignThreadIsNoop() throws Exception {
+        AtomicBoolean ok = new AtomicBoolean();
+        withScheduler(1, () -> {
+            assertTrue(SchedulerCore.ioEnterIfGoroutine() == null,
+                    "foreign thread must take no bracket");
+            SchedulerCore.ioExitIfEntered(null);
+            sched.spawn(() -> {
+                sched.ioEnter();
+                sched.ioExit();
+                ok.set(true);
+            });
+        });
+        assertTrue(ok.get(), "paired ioEnter/ioExit broke after foreign-thread no-op calls");
+        assertTrue(sched.maxInflightObserved() <= 1,
+                "cap violated: maxInflight=" + sched.maxInflightObserved());
+    }
+
+    // review-1105-io-slots B-P1-6: with no scheduler installed
+    // (scheduler-less / Phase-1 runs) the conditional bracket is also
+    // a no-op returning null.
+    public void testIoEnterIfGoroutineWithoutSchedulerIsNoop() {
+        SchedulerCore prev = SchedulerCore.install(null);
+        try {
+            assertTrue(SchedulerCore.ioEnterIfGoroutine() == null,
+                    "no installed scheduler must take no bracket");
+            SchedulerCore.ioExitIfEntered(null);
+        } finally {
+            SchedulerCore.install(prev);
+        }
+    }
+
+    // review-1105-io-slots B-P1-6: nested brackets — inside ioEnter,
+    // ioEnterIfGoroutine returns null (the outer bracket already
+    // released the slot); the inner ioExitIfEntered(null) is a no-op
+    // and the outer ioExit still pairs.
+    public void testIoEnterIfGoroutineNestedIsNoop() throws Exception {
+        AtomicBoolean ok = new AtomicBoolean();
+        AtomicReference<Throwable> err = new AtomicReference<>();
+        withScheduler(1, () -> {
+            sched.spawn(() -> {
+                try {
+                    sched.ioEnter();
+                    try {
+                        if (SchedulerCore.ioEnterIfGoroutine() != null) {
+                            err.set(new AssertionError(
+                                    "nested ioEnterIfGoroutine must take no bracket"));
+                        }
+                        SchedulerCore.ioExitIfEntered(null);
+                    } finally {
+                        sched.ioExit();
+                    }
+                    ok.set(true);
+                } catch (Throwable t) {
+                    err.set(t);
+                }
+            });
+        });
+        assertTrue(err.get() == null, "nested bracket failed: " + err.get());
+        assertTrue(ok.get(), "goroutine did not continue after nested no-op bracket");
+        assertTrue(sched.maxInflightObserved() <= 1,
+                "cap violated: maxInflight=" + sched.maxInflightObserved());
+    }
+
+    // review-1105-io-slots B-P1-6: the conditional pair releases the
+    // slot like ioEnter/ioExit — a goroutine blocked in a pipe read
+    // bracketed with ioEnterIfGoroutine/ioExitIfEntered must not starve
+    // a busy peer at GOMAXPROCS=1. (The production call-site wiring is
+    // pinned by BlockingIoSlotsTest; this pins the pair itself.)
+    public void testIoEnterIfGoroutineReleasesSlot() throws Exception {
+        AtomicLong counter = new AtomicLong();
+        AtomicBoolean stop = new AtomicBoolean();
+        AtomicBoolean inIo = new AtomicBoolean();
+        AtomicBoolean readerDone = new AtomicBoolean();
+        AtomicReference<Throwable> readerError = new AtomicReference<>();
+        withScheduler(1, () -> {
+            PipedInputStream in = new PipedInputStream();
+            PipedOutputStream out = new PipedOutputStream(in);
+            sched.spawn(() -> {
+                SchedulerCore io = SchedulerCore.ioEnterIfGoroutine();
+                inIo.set(true);
+                try {
+                    int b = in.read();
+                    if (b != 7) {
+                        throw new AssertionError("short read: " + b);
+                    }
+                } catch (java.io.IOException e) {
+                    readerError.set(e);
+                } finally {
+                    SchedulerCore.ioExitIfEntered(io);
+                }
+                readerDone.set(true);
+            });
+            long deadline = System.currentTimeMillis() + 5000;
+            while (!inIo.get()) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new AssertionError("reader never entered blocking I/O");
+                }
+                Thread.sleep(5);
+            }
+            sched.spawn(() -> {
+                while (!stop.get()) {
+                    counter.incrementAndGet();
+                }
+            });
+            Thread.sleep(300);
+            long c = counter.get();
+            assertTrue(c > 1000,
+                    "busy goroutine starved at GOMAXPROCS=1 while peer in I/O: " + c);
+            out.write(7);
+            out.flush();
+            stop.set(true);
+            out.close();
+        });
+        assertTrue(readerError.get() == null, "reader failed: " + readerError.get());
+        assertTrue(readerDone.get(), "reader did not complete after ioExit");
+        assertTrue(sched.maxInflightObserved() <= 1,
+                "cap violated: maxInflight=" + sched.maxInflightObserved());
+    }
 }

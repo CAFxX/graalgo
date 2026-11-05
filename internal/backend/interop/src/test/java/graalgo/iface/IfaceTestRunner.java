@@ -35,6 +35,10 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // review-1105-io-slots B-P1-6 (GG-0018): the production blocking-I/O
+        // call sites (GoHttp.clientDo, GoOs pipe read/write) must release
+        // the in-flight slot — a GOMAXPROCS=1 stall otherwise.
+        TESTS.add(graalgo.p3net.BlockingIoSlotsTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         // (fix-redmaster-r52: the FmtStateItabTest registration is removed
         // — the test class itself was deleted by the real-fmt2 removal
