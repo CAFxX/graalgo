@@ -45,6 +45,12 @@ jobs:
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py
 
+      - name: No-bridges gate regression tests (pins the gate fix)
+        # The gate's exemptions are pinned by
+        # .github/scripts/test_check_no_bridges.py — run it here so a
+        # future gate regression fails CI instead of reverting silently.
+        run: python3 .github/scripts/test_check_no_bridges.py
+
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
 

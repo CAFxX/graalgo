@@ -114,11 +114,14 @@ def check_no_bridges(diff):
     errors = []
     added_lines = []
     current_file = None
-    # Per-hunk (file, added, removed) triples: Rule 2's narrowing check
+    # Per-hunk (file, ordered) pairs: Rule 2's narrowing check
     # compares an added conditional against the removed lines of the SAME
     # hunk — a narrowing edit is by definition a removed+added line pair
     # in one hunk; a conditional added with no removed counterpart in its
-    # hunk is new until proven otherwise.
+    # hunk is new until proven otherwise. `ordered` keeps every hunk
+    # line in diff order as (status, text) — context lines included —
+    # so wrapped case lists can be tracked across unchanged lines: a
+    # continuation line only counts as part of the `case` list above it.
     hunks = []
     current_hunk = None
 
@@ -126,15 +129,17 @@ def check_no_bridges(diff):
         if line.startswith("+++ b/"):
             current_file = line[6:]
         elif line.startswith("@@"):
-            current_hunk = (current_file, [], [])
+            current_hunk = (current_file, [])
             hunks.append(current_hunk)
         elif line.startswith("+") and not line.startswith("+++"):
             added_lines.append((current_file, line[1:]))
             if current_hunk is not None:
-                current_hunk[1].append(line[1:])
+                current_hunk[1].append(("+", line[1:]))
         elif line.startswith("-") and not line.startswith("---"):
             if current_hunk is not None:
-                current_hunk[2].append(line[1:])
+                current_hunk[1].append(("-", line[1:]))
+        elif line.startswith(" ") and current_hunk is not None:
+            current_hunk[1].append((" ", line[1:]))
 
     # 1. New synth_*.go files. Only genuinely NEW files count (the --- line
     #    is /dev/null); modifying a grandfathered synth_*.go is not a new
@@ -162,25 +167,62 @@ def check_no_bridges(diff):
     def conditional_pairs(line):
         """All (kind, package) package-name conditionals in one line.
 
-        The `case` pattern matches any stdlib name in the case list on
-        that line, not just the first label: a list is one keyword
-        followed by many quoted names (`case "time", "fmt", ...`), so
-        `case\\s*"pkg"` would see only the first label — and widening
-        the list by appending a package would be invisible to the gate.
+        The `case` pattern is anchored to a real clause
+        (`^\\s*case\\b`): the unanchored `case\\b.*` matched the
+        substring anywhere on the line, so comments (`// edge case:
+        "fmt"`), identifiers (`testcase := "fmt"`), and prose
+        (`// lowercase "sync"`) false-positived. A case list is one
+        keyword followed by many quoted names (`case "time", "fmt",
+        ...`), so the pattern sees every label on the line, not just
+        the first — and widening the list by appending a package is
+        visible to the gate.
         The `==` patterns need no such treatment: each value there is
         preceded by its own `==`."""
         found = []
         for pkg in stdlib_pkgs:
             for kind, pat in (
                 ("eq", rf'==\s*"{pkg}"'),
-                ("case", rf'case\b.*"{pkg}"'),
+                ("case", rf'^\s*case\b.*"{pkg}"'),
                 ("name-eq", rf'Name\s*==\s*"{pkg}"'),
             ):
                 if re.search(pat, line):
                     found.append((kind, pkg))
         return found
 
-    for fname, added, removed in hunks:
+    # A wrapped case list continues on lines that are only quoted
+    # strings (`"os", "net",`, or the clause-terminating
+    # `"encoding":`). Such a line is a case-list continuation when it
+    # directly follows a `case` line (or another continuation) in the
+    # hunk's ordered lines — the Rule 2 walk tracks that state across
+    # context lines — or, failing that, when it ends with `,` or `:`,
+    # the punctuation every case-list line carries. The fallback
+    # covers a widening appended to a deep continuation whose `case`
+    # line falls outside the hunk's 3-line context window
+    # (loader.go's list wraps across 7 lines). The punctuation guard
+    # is load-bearing: a bare `"os"` line — an import-block addition
+    # — is NOT a continuation, so this never fires on imports (the
+    # stateless reading of "every pure-quoted-string line is a
+    # case-list line" would: adding `"os"` to an import block flagged
+    # as a package-name conditional). Residual: a string-slice /
+    # composite-literal element line (`"os",`) added with no removed
+    # counterpart in the hunk is treated as a case continuation and
+    # flags — a rare shape, adjudicated by a human like any other
+    # tripwire hit.
+    _pure_string_line_re = re.compile(
+        r'^\s*"[^"]*"(,\s*"[^"]*")*,?\s*:?\s*(//.*)?$')
+    _case_list_end_re = re.compile(r'[,:]\s*(//.*)?$')
+    _case_line_re = re.compile(r'^\s*case\b')
+
+    def _case_list_pairs(line, in_case_list):
+        """("case", pkg) pairs if `line` is a case-list continuation."""
+        if not _pure_string_line_re.match(line):
+            return []
+        if not in_case_list and not _case_list_end_re.search(line):
+            return []
+        return [("case", pkg) for pkg in stdlib_pkgs
+                if re.search(rf'"{pkg}"', line)]
+
+    for fname, ordered in hunks:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
         # Allow in test files and docs. ("_test." covers *_test.go
@@ -192,13 +234,31 @@ def check_no_bridges(diff):
         # line mentioning only such pairs narrows/reshuffles a
         # pre-existing conditional instead of adding a new special case.
         # Any pair NOT in the removed set is a widening and still flags
-        # (one error per offending added line).
+        # (one error per offending added line). Pairs are assigned to
+        # every line in one ordered walk first — an added line is exempt
+        # no matter where in the hunk its removed counterpart sits —
+        # and only then are added lines judged against the removed set.
+        # Known limitation, by design: a removed pair exempts an
+        # identical added pair anywhere in the same hunk, even in a
+        # different conditional (same-hunk, same-kind
+        # cross-conditional reuse). The gate is a heuristic tripwire
+        # backed by human review, not a proof.
         removed_pairs = set()
-        for removed_line in removed:
-            removed_pairs.update(conditional_pairs(removed_line))
-        for line in added:
-            new_pairs = [p for p in conditional_pairs(line)
-                         if p not in removed_pairs]
+        added_with_pairs = []
+        in_case_list = False
+        for status, line in ordered:
+            if _case_line_re.match(line):
+                in_case_list = True
+            elif not _pure_string_line_re.match(line):
+                in_case_list = False
+            pairs = conditional_pairs(line)
+            pairs += _case_list_pairs(line, in_case_list)
+            if status == "-":
+                removed_pairs.update(pairs)
+            elif status == "+":
+                added_with_pairs.append((line, pairs))
+        for line, pairs in added_with_pairs:
+            new_pairs = [p for p in pairs if p not in removed_pairs]
             if new_pairs:
                 errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
 
