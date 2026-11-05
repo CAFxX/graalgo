@@ -8,6 +8,12 @@
 #   fast-cycle watch <GoFile>     rebuild + rerun on file change
 #   fast-cycle stop               stop the daemon
 #   fast-cycle status             check daemon
+#   fast-cycle selftest           run the daemon's regression test
+#                                 (FastCycleDaemonTest.java)
+#
+# Every connection sends the daemon's per-start token first (read from
+# the port file ~/.fastcycle.port); see FastCycleDaemon.java's header
+# for the trust boundary.
 #
 # The daemon (FastCycleDaemon.java) holds a warm JVM: compilation uses the
 # in-process JavaCompiler API, runs use a fresh classloader per invocation.
@@ -41,8 +47,19 @@ daemon_pid() {
     pgrep -f "FastCycleDaemon" || true
 }
 
+# The daemon's per-start token (second field of the port file).
+daemon_token() {
+    [ -f "$PORT_FILE" ] && awk '{print $2}' "$PORT_FILE" 2>/dev/null || true
+}
+
+# Authenticated liveness check (PING with the current token).
+ping() {
+    { echo "AUTH $(daemon_token)"; echo "PING"; } \
+        | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"
+}
+
 ensure_daemon() {
-    if echo "PING" | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"; then
+    if ping; then
         return 0
     fi
     # Start the daemon
@@ -59,9 +76,11 @@ ensure_daemon() {
         -cp "$HERE:$FULL_CP" FastCycleDaemon \
         >"$HERE/daemon.log" 2>&1 < /dev/null &
     disown
-    # Wait for readiness
+    # Wait for readiness (the new daemon overwrites the port file with
+    # its own token before accepting, so an early stale-token PING just
+    # fails and the poll retries).
     for i in $(seq 1 30); do
-        if echo "PING" | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"; then
+        if ping; then
             echo "Daemon ready." >&2
             return 0
         fi
@@ -72,7 +91,7 @@ ensure_daemon() {
 }
 
 send() {
-    echo "$1" | timeout 120 nc 127.0.0.1 $PORT
+    { echo "AUTH $(daemon_token)"; echo "$1"; } | timeout 120 nc 127.0.0.1 $PORT
 }
 
 # Map a .java source path to its module, output dir, and joint-round membership.
@@ -318,6 +337,18 @@ do_watch() {
     done
 }
 
+do_selftest() {
+    # Regression test for the daemon itself (FastCycleDaemonTest.java):
+    # per-run classloaders are closed and the context classloader
+    # restored. Recompiles when the daemon or the test changed.
+    if [ ! -f "$HERE/FastCycleDaemonTest.class" ] \
+        || [ "$HERE/FastCycleDaemonTest.java" -nt "$HERE/FastCycleDaemonTest.class" ] \
+        || [ "$HERE/FastCycleDaemon.java" -nt "$HERE/FastCycleDaemonTest.class" ]; then
+        "$JAVAC" -d "$HERE" "$HERE/FastCycleDaemon.java" "$HERE/FastCycleDaemonTest.java"
+    fi
+    "$JAVA" -cp "$HERE" FastCycleDaemonTest
+}
+
 case "${1:-}" in
     build)  do_build ;;
     run)    do_run "${2:?usage: fast-cycle run <GoFile>}" ;;
@@ -325,5 +356,6 @@ case "${1:-}" in
     watch)  do_watch "${2:?usage: fast-cycle watch <GoFile>}" ;;
     stop)   send "STOP" || true; pkill -f FastCycleDaemon || true; echo "Stopped." ;;
     status) ensure_daemon && echo "Daemon running." ;;
-    *) echo "usage: fast-cycle {build|run|test|watch|stop|status}"; exit 1 ;;
+    selftest) do_selftest ;;
+    *) echo "usage: fast-cycle {build|run|test|watch|stop|status|selftest}"; exit 1 ;;
 esac

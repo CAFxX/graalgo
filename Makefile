@@ -301,6 +301,8 @@ snapshot-check: build
 #   make fast-run GO=foo.go   compile + run a Go program
 #   make fast-test TEST=com.foo.Bar [METHOD=testX]  compile + run Java test
 #   make fast-watch GO=foo.go  rebuild + rerun on file change
+#   make fast-selftest        run the daemon regression test
+#                             (internal/backend/fast-cycle/fast-cycle selftest)
 fast-build:
 	internal/backend/fast-cycle/fast-cycle build
 
@@ -315,6 +317,9 @@ fast-test:
 fast-watch:
 	@test -n "$(GO)" || (echo "usage: make fast-watch GO=<file.go>"; exit 1)
 	internal/backend/fast-cycle/fast-cycle watch "$(GO)"
+
+fast-selftest:
+	internal/backend/fast-cycle/fast-cycle selftest
 
 clean:
 	$(MAKE) -C internal/backend/truffle clean
