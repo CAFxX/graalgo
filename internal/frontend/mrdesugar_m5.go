@@ -320,6 +320,8 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// encoding/binary: package-level funcs.
 	{"encoding/binary", "Uvarint", "", "__binaryUvarint", "binaryUvarintPair", []string{"x", "n"}, false},
 	{"encoding/binary", "Varint", "", "__binaryVarint", "binaryVarintPair", []string{"x", "n"}, false},
+	{"encoding/binary", "ReadUvarint", "", "__binaryReadUvarint", "binaryReadUvarintPair", []string{"x", "err"}, false},
+	{"encoding/binary", "ReadVarint", "", "__binaryReadVarint", "binaryReadVarintPair", []string{"x", "err"}, false},
 	// encoding/ascii85: package-level func, 3 results.
 	{"encoding/ascii85", "Decode", "", "__ascii85Decode", "ascii85DecodeTriple", []string{"ndst", "nsrc", "err"}, false},
 	// encoding/pem: package-level func.

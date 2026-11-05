@@ -70,8 +70,10 @@ var encCorePackages = []encCorePackage{
 		mirror:     syntheticBinaryPackage,
 		namedTypes: []string{"ByteOrder", "AppendByteOrder", "littleEndian", "bigEndian", "nativeEndian"},
 		pairStructs: map[string][]string{
-			"binaryUvarintPair": {"x", "n"},
-			"binaryVarintPair":  {"x", "n"},
+			"binaryUvarintPair":     {"x", "n"},
+			"binaryVarintPair":      {"x", "n"},
+			"binaryReadUvarintPair": {"x", "err"},
+			"binaryReadVarintPair":  {"x", "err"},
 		},
 	},
 	{
@@ -142,6 +144,13 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 			return phase1SyntheticPackageForTest(t,
 				"../synth_errors.go",
 				"syntheticErrorsSource", "errors", imp), nil
+		}
+		if p == "math" {
+			// P3-M8: the binary synthetic source imports math (the
+			// Float32/64bits/frombits intrinsics in the fast path).
+			return phase1SyntheticPackageForTest(t,
+				"../synth_math.go",
+				"syntheticMathSource", "math", imp), nil
 		}
 		if p == "internal/reflectlite" {
 			// The synthetic errors source (above) imports the real

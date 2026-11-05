@@ -69,6 +69,27 @@ var m7BytesBufferWriteStringTable = []m7StrconvJsonExpect{
 	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
 }
 
+var m7BinaryTable = []m7StrconvJsonExpect{
+	// encoding/binary: varint readers (P3-M7 wave 1; Uvarint/Varint were
+	// unpinned before) and streaming varint readers (P3-M8).
+	{"encoding/binary", "Uvarint", "", "__binaryUvarint", "binaryUvarintPair", []string{"x", "n"}},
+	{"encoding/binary", "Varint", "", "__binaryVarint", "binaryVarintPair", []string{"x", "n"}},
+	{"encoding/binary", "ReadUvarint", "", "__binaryReadUvarint", "binaryReadUvarintPair", []string{"x", "err"}},
+	{"encoding/binary", "ReadVarint", "", "__binaryReadVarint", "binaryReadVarintPair", []string{"x", "err"}},
+}
+
+func TestM7BinaryDesugarWiring(t *testing.T) {
+	if len(m7BinaryTable) != 4 {
+		t.Fatalf("m7BinaryTable has %d entries, want 4", len(m7BinaryTable))
+	}
+	for _, want := range m7BinaryTable {
+		name := want.pkgPath + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
 func TestM7StringsBuilderDesugarWiring(t *testing.T) {
 	if len(m7StringsBuilderTable) != 3 {
 		t.Fatalf("m7StringsBuilderTable has %d entries, want 3", len(m7StringsBuilderTable))

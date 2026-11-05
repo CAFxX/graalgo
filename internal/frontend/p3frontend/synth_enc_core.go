@@ -122,6 +122,28 @@ func ioStreamingIfaces() (writer, reader, writeCloser *types.Named) {
 	return writer, reader, writeCloser
 }
 
+// ioByteReader builds the minimal synthetic "io" ByteReader named
+// interface (ReadByte() (byte, error), exact gc 1.27.1 method set) for
+// the encoding/binary streaming signatures. Only the "io.X" rendering
+// matters for the drift comparison.
+func ioByteReader() *types.Named {
+	pkg := types.NewPackage("io", "io")
+	byteT := types.Typ[types.Byte]
+	errT := types.Universe.Lookup("error").Type()
+	readByte := types.NewFunc(token.NoPos, pkg, "ReadByte",
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(),
+			types.NewTuple(
+				types.NewParam(token.NoPos, pkg, "", byteT),
+				types.NewParam(token.NoPos, pkg, "", errT),
+			), false))
+	tn := types.NewTypeName(token.NoPos, pkg, "ByteReader", nil)
+	pkg.Scope().Insert(tn)
+	named := types.NewNamed(tn, types.NewInterfaceType([]*types.Func{readByte}, nil).Complete(), nil)
+	pkg.MarkComplete()
+	return named
+}
+
 // syntheticBase32Package mirrors the P3-M7 synthetic "encoding/base32".
 func syntheticBase32Package() *types.Package {
 	pkg := types.NewPackage("encoding/base32", "base32")
@@ -548,12 +570,38 @@ func syntheticBinaryPackage() *types.Package {
 		[]*types.Var{h.param("v", anyT)},
 		[]*types.Var{h.param("", st.intT)}, false)
 
+	// P3-M8: streaming API (exact gc 1.27.1 signatures; Read/Write are
+	// single-result with real fast-path bodies; ReadUvarint/ReadVarint
+	// are multi-result and desugar via mrM7).
+	ioWriter, ioReader, _ := ioStreamingIfaces()
+	r := h.param("r", ioReader)
+	w := h.param("w", ioWriter)
+	h.insertFunc("Read",
+		[]*types.Var{r, order, data},
+		[]*types.Var{h.param("", st.errorT)}, false)
+	h.insertFunc("Write",
+		[]*types.Var{w, order, data},
+		[]*types.Var{h.param("", st.errorT)}, false)
+	br := h.param("r", ioByteReader())
+	h.insertFunc("ReadUvarint",
+		[]*types.Var{br},
+		[]*types.Var{h.param("", uint64T), h.param("", st.errorT)}, false)
+	h.insertFunc("ReadVarint",
+		[]*types.Var{br},
+		[]*types.Var{h.param("", int64T), h.param("", st.errorT)}, false)
+
 	// Appendix M pair structs (unexported).
 	h.insertPair("binaryUvarintPair", []*types.Var{
 		h.field("x", uint64T, false), h.field("n", st.intT, false),
 	})
 	h.insertPair("binaryVarintPair", []*types.Var{
 		h.field("x", int64T, false), h.field("n", st.intT, false),
+	})
+	h.insertPair("binaryReadUvarintPair", []*types.Var{
+		h.field("x", uint64T, false), h.field("err", st.errorT, false),
+	})
+	h.insertPair("binaryReadVarintPair", []*types.Var{
+		h.field("x", int64T, false), h.field("err", st.errorT, false),
 	})
 
 	pkg.MarkComplete()

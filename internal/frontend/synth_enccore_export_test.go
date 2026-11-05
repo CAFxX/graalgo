@@ -91,9 +91,9 @@ func TestSyntheticEnccoreM7(t *testing.T) {
 		},
 		{
 			"encoding/binary",
-			"package main\nimport \"encoding/binary\"\nfunc main() {\nb := make([]byte, 8)\nbinary.LittleEndian.PutUint16(b, 1)\nprintln(binary.LittleEndian.Uint16(b))\nprintln(binary.PutUvarint(b, 300))\n}\n",
-			[]string{"PutUvarint", "PutVarint", "AppendUvarint", "AppendVarint", "Uint16", "PutUint16", "__binaryUvarint"},
-			[]string{"Uvarint", "Varint"},
+			"package main\nimport (\"bytes\"; \"encoding/binary\")\nfunc main() {\nb := make([]byte, 8)\nbinary.LittleEndian.PutUint16(b, 1)\nprintln(binary.LittleEndian.Uint16(b))\nprintln(binary.PutUvarint(b, 300))\nvar buf bytes.Buffer\nbinary.Write(&buf, binary.LittleEndian, uint16(1))\nvar v uint16\nprintln(binary.Read(&buf, binary.LittleEndian, &v) == nil, v)\n}\n",
+			[]string{"PutUvarint", "PutVarint", "AppendUvarint", "AppendVarint", "Uint16", "PutUint16", "__binaryUvarint", "Read", "Write", "__binaryReadUvarint", "__binaryReadVarint"},
+			[]string{"Uvarint", "Varint", "ReadUvarint", "ReadVarint"},
 		},
 		{
 			"encoding/ascii85",
@@ -167,6 +167,16 @@ func TestEnccoreDesugarShapes(t *testing.T) {
 			"binary Uvarint 2-target",
 			"package main\nimport \"encoding/binary\"\nfunc main() {\nbuf := make([]byte, 10)\nbinary.PutUvarint(buf, 300)\nx, n := binary.Uvarint(buf)\nprintln(x, n)\n}\n",
 			"__binaryUvarint", []string{"x", "n"},
+		},
+		{
+			"binary ReadUvarint 2-target",
+			"package main\nimport (\"bytes\"; \"encoding/binary\")\nfunc main() {\nbuf := make([]byte, 10)\nbinary.PutUvarint(buf, 300)\nx, err := binary.ReadUvarint(bytes.NewBuffer(buf))\nprintln(x, err == nil)\n}\n",
+			"__binaryReadUvarint", []string{"x", "err"},
+		},
+		{
+			"binary ReadVarint 2-target",
+			"package main\nimport (\"bytes\"; \"encoding/binary\")\nfunc main() {\nbuf := make([]byte, 10)\nbinary.PutVarint(buf, -300)\nx, err := binary.ReadVarint(bytes.NewBuffer(buf))\nprintln(x, err == nil)\n}\n",
+			"__binaryReadVarint", []string{"x", "err"},
 		},
 		{
 			"ascii85 3-target",
