@@ -477,7 +477,7 @@ func main() {
 		"uint32": "uint", "uint64": "uint", "uintptr": "uint",
 		"float32": "float", "float64": "float",
 		"complex64": "complex", "complex128": "complex",
-		"string": "string", "byte": "uint", "rune": "int",
+		"string":      "string",
 		"Pointer":     "pointer",
 		"untyped int": "int", "untyped float": "float",
 		"untyped string": "string", "untyped bool": "bool",
