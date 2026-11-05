@@ -8,7 +8,6 @@ package emit
 import (
 	"fmt"
 	"go/ast"
-	"go/constant"
 	"go/token"
 	"go/types"
 )
@@ -31,22 +30,81 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
 	}
-	sig := e.typeID(fn.Type())
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("emit: %s has no signature type", fd.Name.Name)
+	}
+	sigID := e.typeID(fn.Type())
+
+	// Receiver: methods carry their receiver explicitly (name, object,
+	// type). Without it, same-named methods on different types are
+	// indistinguishable in the Funcs list. The signature's Recv is the
+	// same *types.Var as the Defs entry for a named receiver, and the
+	// object for an unnamed one, so this handles both uniformly.
+	var recv any
+	if sig.Recv() != nil {
+		recvVar := sig.Recv()
+		rid, err := e.declareParam(recvVar)
+		if err != nil {
+			return nil, err
+		}
+		if fd.Recv == nil || len(fd.Recv.List) == 0 {
+			// Cannot happen for a checked method, but a receiverless
+			// method node would be a silent mis-emission.
+			return nil, fmt.Errorf("emit: method %s has a receiver type but no receiver syntax", fd.Name.Name)
+		}
+		recvField := fd.Recv.List[0]
+		recvNode := ast.Node(recvField.Type)
+		if len(recvField.Names) > 0 {
+			recvNode = recvField.Names[0]
+		}
+		recv = e.node("param", recvNode, map[string]any{
+			"name": recvVar.Name(),
+			"obj":  rid,
+			"type": e.typeID(recvVar.Type()),
+		})
+	}
 
 	params := []any{}
 	if fd.Type.Params != nil {
+		// Walk the signature's params positionally alongside the AST
+		// fields: a field with no names is one unnamed parameter, and
+		// its object lives only in the signature (Defs has no ident for
+		// it). Named fields fall back to the signature too if Defs has
+		// no entry (e.g. the blank identifier). Silently dropping a
+		// parameter, as the old code did, is not an option.
+		pi := 0
 		for _, field := range fd.Type.Params.List {
-			for _, name := range field.Names {
-				pobj := e.info.Info.Defs[name]
-				if pobj == nil {
-					continue
+			count := len(field.Names)
+			if count == 0 {
+				count = 1
+			}
+			for i := 0; i < count; i++ {
+				if pi >= sig.Params().Len() {
+					return nil, fmt.Errorf("emit: param %d of %s has no signature entry", pi, fd.Name.Name)
 				}
-				pid := e.declareParam(pobj)
-				params = append(params, e.node("param", name, map[string]any{
-					"name": name.Name,
+				var nameNode ast.Node = field.Type
+				var name string
+				var pobj types.Object
+				if len(field.Names) > 0 {
+					nameNode = field.Names[i]
+					name = field.Names[i].Name
+					pobj = e.info.Info.Defs[field.Names[i]]
+				}
+				if pobj == nil {
+					pobj = sig.Params().At(pi)
+					name = pobj.Name()
+				}
+				pid, err := e.declareParam(pobj)
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, e.node("param", nameNode, map[string]any{
+					"name": name,
 					"obj":  pid,
 					"type": e.typeID(pobj.Type()),
 				}))
+				pi++
 			}
 		}
 	}
@@ -65,11 +123,12 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 		pkgpath = pkg.Path()
 	}
 	fields := map[string]any{
-		"name":    fn.Name(),
-		"sig":     sig,
-		"params":  params,
-		"body":    body,
-		"pkgpath": pkgpath,
+		"name":     fn.Name(),
+		"sig":      sigID,
+		"receiver": recv,
+		"params":   params,
+		"body":     body,
+		"pkgpath":  pkgpath,
 	}
 	return e.node("funcdecl", fd, fields), nil
 }
@@ -81,19 +140,29 @@ func (e *Emitter) emitBlock(b *ast.BlockStmt) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		stmts = append(stmts, sn)
+		// One statement usually yields one node; a multi-spec var
+		// DeclStmt yields one vardecl node per spec.
+		for _, n := range sn {
+			stmts = append(stmts, n)
+		}
 	}
 	return e.node("block", b, map[string]any{"stmts": stmts}), nil
 }
 
-func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
+// emitStmt emits one statement, returning one node — except a multi-spec
+// var DeclStmt, which expands to one vardecl node per spec (see
+// emitDeclSpecs). Callers that hold exactly one statement (if/for init
+// and post) use emitSingleStmt, which rejects a multi-node result loudly:
+// a multi-spec var decl is not valid there in checked Go.
+func (e *Emitter) emitStmt(s ast.Stmt) ([]map[string]any, error) {
+	one := func(n map[string]any) []map[string]any { return []map[string]any{n} }
 	switch st := s.(type) {
 	case *ast.ExprStmt:
 		x, err := e.emitExpr(st.X)
 		if err != nil {
 			return nil, err
 		}
-		return e.node("exprstmt", s, map[string]any{"x": x}), nil
+		return one(e.node("exprstmt", s, map[string]any{"x": x})), nil
 	case *ast.ReturnStmt:
 		results := []any{}
 		for _, r := range st.Results {
@@ -103,31 +172,59 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 			}
 			results = append(results, rn)
 		}
-		return e.node("return", s, map[string]any{"results": results}), nil
+		return one(e.node("return", s, map[string]any{"results": results})), nil
 	case *ast.AssignStmt:
-		return e.emitAssign(st)
+		n, err := e.emitAssign(st)
+		if err != nil {
+			return nil, err
+		}
+		return one(n), nil
 	case *ast.DeclStmt:
-		return e.emitDeclStmt(st)
+		return e.emitDeclSpecs(st)
 	case *ast.IfStmt:
-		return e.emitIf(st)
+		n, err := e.emitIf(st)
+		if err != nil {
+			return nil, err
+		}
+		return one(n), nil
 	case *ast.ForStmt:
-		return e.emitFor(st)
+		n, err := e.emitFor(st)
+		if err != nil {
+			return nil, err
+		}
+		return one(n), nil
 	case *ast.RangeStmt:
-		return e.emitRange(st)
+		n, err := e.emitRange(st)
+		if err != nil {
+			return nil, err
+		}
+		return one(n), nil
 	case *ast.IncDecStmt:
 		x, err := e.emitExpr(st.X)
 		if err != nil {
 			return nil, err
 		}
-		return e.node("incdec", s, map[string]any{
+		return one(e.node("incdec", s, map[string]any{
 			"tok": st.Tok.String(),
 			"x":   x,
-		}), nil
+		})), nil
 	case *ast.BranchStmt:
-		return e.node("branch", s, map[string]any{"tok": st.Tok.String()}), nil
+		return one(e.node("branch", s, map[string]any{"tok": st.Tok.String()})), nil
 	default:
 		return nil, fmt.Errorf("emit: unsupported stmt %T", s)
 	}
+}
+
+// emitSingleStmt is emitStmt for positions that hold exactly one statement.
+func (e *Emitter) emitSingleStmt(s ast.Stmt) (map[string]any, error) {
+	nodes, err := e.emitStmt(s)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) != 1 {
+		return nil, fmt.Errorf("emit: %d nodes for single statement %T", len(nodes), s)
+	}
+	return nodes[0], nil
 }
 
 func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
@@ -152,7 +249,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -164,39 +263,65 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 	}), nil
 }
 
-func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
+// emitDeclSpecs emits one vardecl node per ValueSpec in a var DeclStmt.
+// A multi-spec `var (...)` block must not merge specs into one node: each
+// spec has its own type and values, and merging them misattributes the
+// last spec's type to every name (v1 fixed the same shape in
+// TestVarGenDeclMultiSpecSplit).
+func (e *Emitter) emitDeclSpecs(st *ast.DeclStmt) ([]map[string]any, error) {
 	gd, ok := st.Decl.(*ast.GenDecl)
 	if !ok || gd.Tok != token.VAR {
 		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
 	}
+	nodes := []map[string]any{}
+	for _, spec := range gd.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return nil, fmt.Errorf("emit: unsupported var spec %T", spec)
+		}
+		n, err := e.emitValueSpec(vs)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, nil
+}
+
+// emitValueSpec emits one vardecl node for a single ValueSpec: its own
+// names, objects, type, and values. Shared by block-level var decls and
+// package-level globals (emitGlobals). The node's position is the spec's,
+// not the enclosing GenDecl's, so each node points at its own declaration.
+func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 	names := []string{}
 	objs := []any{}
 	var typ any
-	values := []any{}
-	for _, spec := range gd.Specs {
-		vs := spec.(*ast.ValueSpec)
-		if vs.Type != nil {
-			if tv, ok := e.info.Info.Types[vs.Type]; ok {
-				typ = e.typeID(tv.Type)
-			}
+	if vs.Type != nil {
+		if tv, ok := e.info.Info.Types[vs.Type]; ok {
+			typ = e.typeID(tv.Type)
 		}
-		for _, name := range vs.Names {
-			names = append(names, name.Name)
-			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
-			} else {
-				objs = append(objs, -1)
-			}
-		}
-		for _, v := range vs.Values {
-			vn, err := e.emitExpr(v)
+	}
+	for _, name := range vs.Names {
+		names = append(names, name.Name)
+		if obj := e.info.Info.Defs[name]; obj != nil {
+			id, err := e.declareObject(obj)
 			if err != nil {
 				return nil, err
 			}
-			values = append(values, vn)
+			objs = append(objs, id)
+		} else {
+			objs = append(objs, -1)
 		}
 	}
-	return e.node("vardecl", st, map[string]any{
+	values := []any{}
+	for _, v := range vs.Values {
+		vn, err := e.emitExpr(v)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, vn)
+	}
+	return e.node("vardecl", vs, map[string]any{
 		"names":  names,
 		"objs":   objs,
 		"define": false,
@@ -208,7 +333,7 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 func (e *Emitter) emitIf(st *ast.IfStmt) (map[string]any, error) {
 	var init any
 	if st.Init != nil {
-		in, err := e.emitStmt(st.Init)
+		in, err := e.emitSingleStmt(st.Init)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +375,7 @@ func (e *Emitter) emitIf(st *ast.IfStmt) (map[string]any, error) {
 func (e *Emitter) emitFor(st *ast.ForStmt) (map[string]any, error) {
 	var init, cond, post any
 	if st.Init != nil {
-		in, err := e.emitStmt(st.Init)
+		in, err := e.emitSingleStmt(st.Init)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +389,7 @@ func (e *Emitter) emitFor(st *ast.ForStmt) (map[string]any, error) {
 		cond = cn
 	}
 	if st.Post != nil {
-		pn, err := e.emitStmt(st.Post)
+		pn, err := e.emitSingleStmt(st.Post)
 		if err != nil {
 			return nil, err
 		}
@@ -283,20 +408,13 @@ func (e *Emitter) emitFor(st *ast.ForStmt) (map[string]any, error) {
 }
 
 func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
-	var key, value any
-	if st.Key != nil {
-		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
-			}
-		}
+	key, err := e.emitRangeTarget(st.Key)
+	if err != nil {
+		return nil, err
 	}
-	if st.Value != nil {
-		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
-			}
-		}
+	value, err := e.emitRangeTarget(st.Value)
+	if err != nil {
+		return nil, err
 	}
 	x, err := e.emitExpr(st.X)
 	if err != nil {
@@ -313,6 +431,30 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 		"x":      x,
 		"body":   body,
 	}), nil
+}
+
+// emitRangeTarget resolves one range variable. An identifier defined by
+// := lives in Info.Defs; one assigned by = lives in Info.Uses — a
+// Defs-only lookup silently dropped the = form's variables (key/value
+// null). The blank identifier is null. A non-identifier target (index,
+// selector, ...) is emitted as an expression, like an assignment LHS.
+func (e *Emitter) emitRangeTarget(x ast.Expr) (any, error) {
+	if x == nil {
+		return nil, nil
+	}
+	if id, ok := x.(*ast.Ident); ok {
+		if id.Name == "_" {
+			return nil, nil
+		}
+		if obj := e.info.Info.Defs[id]; obj != nil {
+			return e.declareObject(obj)
+		}
+		if obj := e.info.Info.Uses[id]; obj != nil {
+			return e.declareObject(obj)
+		}
+		return nil, fmt.Errorf("emit: unresolved range target %s", id.Name)
+	}
+	return e.emitExpr(x)
 }
 
 func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
@@ -464,15 +606,27 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 			"name": "_",
 		}), nil
 	}
-	// Builtin?
+	// A struct field name (composite literal key, e.g. Point{X: 1}): the
+	// ident denotes a field, not a variable. Declaring it would create a
+	// phantom var object for every literal key. Emit the field name with
+	// no object instead.
 	if obj := e.info.Info.Uses[id]; obj != nil {
+		if v, ok := obj.(*types.Var); ok && v.IsField() {
+			return e.node("fieldname", id, map[string]any{
+				"name": id.Name,
+			}), nil
+		}
+		// Builtin?
 		if _, ok := obj.(*types.Builtin); ok {
 			return e.node("ident", id, map[string]any{
 				"name":    id.Name,
 				"builtin": id.Name,
 			}), nil
 		}
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -480,7 +634,15 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
+		if v, ok := obj.(*types.Var); ok && v.IsField() {
+			return e.node("fieldname", id, map[string]any{
+				"name": id.Name,
+			}), nil
+		}
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
@@ -502,7 +664,6 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
 	}
-	_ = constant.MakeInt64(0)
 	return e.node("basiclit", l, fields), nil
 }
 
@@ -550,42 +711,66 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 		}
 	}
 	return e.node("call", c, map[string]any{
-		"fun":      fun,
-		"args":     args,
-		"builtin":  builtin,
-		"type":     e.exprType(c),
-		"ellipsis": c.Ellipsis.IsValid(),
+		"fun":     fun,
+		"args":    args,
+		"builtin": builtin,
+		"type":    e.exprType(c),
 	}), nil
 }
 
 func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	// Method call or field access — go/types Selection tells us.
 	if sel, ok := e.info.Info.Selections[s]; ok {
-		// Method or field selection.
+		// Method or field selection. The selection's kind (field vs
+		// method value vs method expression) and field/method index are
+		// part of the meaning: without them a backend cannot tell
+		// p.X (field 0) from p.M (method) or resolve an embedded
+		// field's position.
 		x, err := e.emitExpr(s.X)
 		if err != nil {
 			return nil, err
 		}
-		_ = sel
+		// types.SelectionKind has no String method; spell the kinds
+		// out so the wire form stays stable across Go releases.
+		var selKind string
+		switch sel.Kind() {
+		case types.FieldVal:
+			selKind = "field"
+		case types.MethodVal:
+			selKind = "method"
+		case types.MethodExpr:
+			selKind = "methodexpr"
+		default:
+			return nil, fmt.Errorf("emit: unsupported selection kind %v", sel.Kind())
+		}
+		index := make([]any, len(sel.Index()))
+		for i, ix := range sel.Index() {
+			index[i] = ix
+		}
 		return e.node("selector", s, map[string]any{
-			"x":    x,
-			"sel":  s.Sel.Name,
-			"type": e.exprType(s),
+			"x":       x,
+			"sel":     s.Sel.Name,
+			"selkind": selKind,
+			"index":   index,
+			"type":    e.exprType(s),
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
 	if id, ok := s.X.(*ast.Ident); ok {
 		if obj := e.info.Info.Uses[id]; obj != nil {
-			if pkgname, ok := obj.(*types.PkgName); ok {
+			if _, ok := obj.(*types.PkgName); ok {
 				target := e.info.Info.Uses[s.Sel]
 				if target == nil {
 					target = e.info.Info.Defs[s.Sel]
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					tid, err := e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
+					oid = tid
 				}
-				_ = pkgname
 				return e.node("pkgref", s, map[string]any{
 					"pkg":  id.Name,
 					"name": s.Sel.Name,

@@ -70,23 +70,61 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// declarations sorted by source position, so the same package always
 	// produces the same document — a prerequisite for reproducible builds
 	// and snapshot testing.
-	decls := sortedFuncDecls(pkg)
+	decls := sortedTopDecls(pkg)
 
-	var funcs []any
-	for _, fd := range decls {
-		obj := e.info.Info.Defs[fd.Name]
-		if obj == nil {
-			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
+	// Pass 1: declare all top-level funcs and globals (assigning object
+	// ids) so bodies and initializers can reference them.
+	for _, d := range decls {
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			obj := e.info.Info.Defs[d.Name]
+			if obj == nil {
+				return nil, fmt.Errorf("emit: no object for func %s", d.Name.Name)
+			}
+			if _, err := e.declareObject(obj); err != nil {
+				return nil, err
+			}
+		case *ast.GenDecl:
+			if d.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range d.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					return nil, fmt.Errorf("emit: unsupported var spec %T", spec)
+				}
+				for _, name := range vs.Names {
+					if name.Name == "_" {
+						continue
+					}
+					obj := e.info.Info.Defs[name]
+					if obj == nil {
+						return nil, fmt.Errorf("emit: no object for global %s", name.Name)
+					}
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
-		e.declareObject(obj)
 	}
 
-	for _, fd := range decls {
+	var funcs []any
+	for _, d := range decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
 		fn, err := e.emitFuncDecl(fd)
 		if err != nil {
 			return nil, err
 		}
 		funcs = append(funcs, fn)
+	}
+
+	globals, err := e.emitGlobals(decls)
+	if err != nil {
+		return nil, err
 	}
 
 	baseNames := make([]string, len(e.files))
@@ -108,42 +146,67 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Types:   e.types,
 		Objects: e.objects,
 		Funcs:   funcs,
-		Globals: []any{},
+		Globals: globals,
 	}, nil
 }
 
-// sortedFuncDecls returns every top-level function declaration in the
-// package in deterministic order: files sorted by name, then declarations
-// sorted by source position. Non-function declarations are skipped, as in
-// the original emission loop. Sorting is structural — by filename and
-// token position — never keyed on any package, symbol, or test name.
-func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
+// sortedTopDecls returns every top-level declaration in the package in
+// deterministic order: files sorted by name, then declarations sorted by
+// source position. Non-function declarations are no longer skipped: the
+// emitter needs top-level var declarations for Globals, and methods are
+// FuncDecls like any other function. Sorting is structural — by filename
+// and token position — never keyed on any package, symbol, or test name.
+func sortedTopDecls(pkg *ast.Package) []ast.Decl {
 	names := make([]string, 0, len(pkg.Files))
 	for name := range pkg.Files {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	var decls []*ast.FuncDecl
+	var decls []ast.Decl
 	for _, name := range names {
 		file := pkg.Files[name]
-		var fds []*ast.FuncDecl
-		for _, d := range file.Decls {
-			fd, ok := d.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fds = append(fds, fd)
-		}
+		ds := make([]ast.Decl, len(file.Decls))
+		copy(ds, file.Decls)
 		// Positions from one *ast.File share the same FileSet base, so
 		// token.Pos comparison is a total source-position order within the
 		// file. go/parser already produces Decls in source order; this sort
 		// states the contract explicitly instead of relying on that
 		// implementation detail.
-		sort.SliceStable(fds, func(i, j int) bool { return fds[i].Pos() < fds[j].Pos() })
-		decls = append(decls, fds...)
+		sort.SliceStable(ds, func(i, j int) bool { return ds[i].Pos() < ds[j].Pos() })
+		decls = append(decls, ds...)
 	}
 	return decls
+}
+
+// emitGlobals emits one vardecl node per top-level var ValueSpec, in
+// deterministic (file, position) order. Package-level vars are real
+// definitions: a backend reading Globals must see them, with their
+// initializers, or references to them would dangle (objects 26/27 with
+// no definition anywhere, as the review found). Top-level const and type
+// declarations need no Globals entry: consts are fully described in the
+// object table (kind const, with value) and named types in the type
+// table, both on demand when referenced.
+func (e *Emitter) emitGlobals(decls []ast.Decl) ([]any, error) {
+	globals := []any{}
+	for _, d := range decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				return nil, fmt.Errorf("emit: unsupported var spec %T", spec)
+			}
+			n, err := e.emitValueSpec(vs)
+			if err != nil {
+				return nil, err
+			}
+			globals = append(globals, n)
+		}
+	}
+	return globals, nil
 }
 
 func fileBase(p string) string {
@@ -184,50 +247,80 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
 // declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
-	typ := e.typeID(obj.Type())
+// describeObject describes one object for the object table. Every object
+// kind the checker can produce gets its own kind here: a const, a type
+// name, or a builtin emitted as "var" is a wrong program, not a missing
+// feature (math.Pi, true, and the conversion type int(u) all came out as
+// vars). An object kind with no case fails loudly instead of silently
+// mis-describing.
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
 	switch o := obj.(type) {
 	case *types.Var:
 		return map[string]any{
 			"kind":  "var",
 			"name":  o.Name(),
-			"type":  typ,
+			"type":  e.typeID(o.Type()),
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
-			"type": typ,
-		}
-	default:
+			"type": e.typeID(o.Type()),
+		}, nil
+	case *types.Const:
 		return map[string]any{
-			"kind": "var",
+			"kind":  "const",
+			"name":  o.Name(),
+			"type":  e.typeID(o.Type()),
+			"value": o.Val().ExactString(),
+		}, nil
+	case *types.TypeName:
+		return map[string]any{
+			"kind": "typename",
 			"name": o.Name(),
-			"type": typ,
-		}
+			"type": e.typeID(o.Type()),
+		}, nil
+	case *types.Builtin:
+		// Builtins have no meaningful single type (len, unsafe.Sizeof);
+		// the name is the whole description.
+		return map[string]any{
+			"kind": "builtin",
+			"name": o.Name(),
+		}, nil
+	case *types.Nil:
+		return map[string]any{
+			"kind": "nil",
+			"name": o.Name(),
+		}, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported object %T %s", obj, obj.Name())
 	}
 }
 

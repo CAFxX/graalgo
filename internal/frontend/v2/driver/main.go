@@ -9,7 +9,6 @@ package main
 
 import (
 	"fmt"
-	"go/token"
 	"os"
 
 	"graalgo-frontend-v2/checker"
@@ -45,7 +44,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "gofrontend-v2: %v\n", err)
 		os.Exit(2)
 	}
-	_ = token.NoPos
 	fmt.Printf("package %s: %d funcs, %d types, %d objects\n",
 		doc.Package["name"], len(doc.Funcs), len(doc.Types), len(doc.Objects))
 }

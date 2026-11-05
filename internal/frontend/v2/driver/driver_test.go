@@ -1,7 +1,6 @@
 package main
 
 import (
-	"go/token"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,5 +55,4 @@ func main() {
 	if len(doc.Funcs) != 1 {
 		t.Fatalf("funcs has %d entries, want 1", len(doc.Funcs))
 	}
-	_ = token.NoPos
 }

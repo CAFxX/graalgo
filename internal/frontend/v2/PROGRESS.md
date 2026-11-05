@@ -43,8 +43,13 @@ for the design.
       output to compare against)
 - [ ] More node kinds: composite literals, struct/array/map/slice types,
       type assertions, type switches, go/defer, channels, interfaces
-- [ ] Method declarations (currently only functions)
-- [ ] Package-level vars and init order (globals)
+- [x] Method declarations: emitted with an explicit receiver
+      (`funcdecl.receiver`: name, object, type), so same-named methods on
+      different types are distinguishable (review-1105-v2-objs, 2026-11-05)
+- [x] Package-level vars: emitted into `Document.Globals`, one vardecl
+      node per ValueSpec with initializers (review-1105-v2-objs, 2026-11-05)
+- [ ] Package-level init order (dependency-ordered initialization of
+      globals; currently emitted in source order)
 - [ ] Generic instantiations
 - [ ] Import resolution for multi-package programs
 - [ ] `go vet` clean, more unit tests per stage
