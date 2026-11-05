@@ -119,6 +119,31 @@ public final class DeadlockLauncherTest {
     }
 
     /**
+     * All-nil select deadlocks (gc probe: two nil cases render
+     * {@code [select]}, exit 2). The p3chan builder drops nil-channel
+     * cases, so this reaches the detector as an empty select. (A single
+     * nil case would render as {@code [chan receive (nil chan)]} under
+     * gc, so the two-case form is the label-exact probe.)
+     */
+    public void testAllNilSelectDeadlocks() throws Exception {
+        RunResult r = runGo("select_all_nil",
+                "package main\n\nfunc main() {\n"
+                        + "    var ch1, ch2 chan int\n"
+                        + "    select {\n"
+                        + "    case <-ch1:\n"
+                        + "    case ch2 <- 1:\n"
+                        + "    }\n"
+                        + "}\n");
+        assertEquals(2, r.exitCode, "all-nil select exit code");
+        assertTrue(r.firstStderrLine()
+                        .equals("fatal error: all goroutines are asleep - deadlock!"),
+                "gc-identical fatal line, stderr was:\n" + r.stderr);
+        assertTrue(java.util.regex.Pattern.compile("(?m)^goroutine \\d+ \\[select\\]:$")
+                        .matcher(r.stderr).find(),
+                "dump names a goroutine with the select label, stderr was:\n" + r.stderr);
+    }
+
+    /**
      * Fire-and-forget child + main returns → exit 0 (gc probe p2; C1).
      * Would hang before C1; would falsely fatal with the detector but
      * without C1.
