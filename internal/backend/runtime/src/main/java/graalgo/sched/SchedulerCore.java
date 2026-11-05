@@ -802,7 +802,8 @@ public final class SchedulerCore {
      * True while the external deadlock suppressor reports blocked progress
      * (RV-P1-19). Public for the netpoll wiring test and embedders: the gc
      * p6 quirk (a live netpoller suppresses the deadlock report) is wired
-     * by {@code GoNetpoll.pollServerInit} via {@link #setDeadlockSuppressor}.
+     * by the interop-module poller ({@code graalgo.p3net.GoNetpoll}) via
+     * {@link #setDeadlockSuppressor}.
      */
     public boolean deadlockSuppressed() {
         return deadlockSuppressor.getAsBoolean();
