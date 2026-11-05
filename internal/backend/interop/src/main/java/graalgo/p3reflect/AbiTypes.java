@@ -218,7 +218,7 @@ public final class AbiTypes {
     }
 
     /** The type token of a canonical abi shell; 0 when not minted here. */
-    public static long tokForShell(GoStruct shell) {
+    public static synchronized long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
     }
@@ -899,7 +899,7 @@ public final class AbiTypes {
      * the same denoted-value read the reflect intrinsics use. A zero
      * Type word with a zero Data word is the nil interface.
      */
-    public static GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
+    public static synchronized GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
         Object typeWord = null;
         Object itabWord = null;
         long dataHandle = 0;
