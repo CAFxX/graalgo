@@ -261,13 +261,11 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			failed = true
-		}
-	}
-	if failed {
+	// Check all files together as one package: the frontend type-checks
+	// the files it is given together, so cross-file references resolve.
+	// Checking one file at a time rejects every multi-file package whose
+	// files reference each other's declarations.
+	if code := graalgoRun(root, append([]string{"--check"}, files...)); code != 0 {
 		return 1
 	}
 	// Run the analyzers over all files as one package.
