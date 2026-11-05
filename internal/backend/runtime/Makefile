@@ -200,14 +200,34 @@ pin-audit: main $(OUT_TEST)/.built
 	--corpus $(P1_CORPUS) --corpus $(P2_CORPUS) --tests --gmp 2 \
 	--out out/pinaudit-report.md
 
+# The truffle stubs build in the truffle module (against this module's
+# classes); the battery needs them on its classpath (see torture below).
+$(TRUFFLE_CLASSES)/.built:
+	$(MAKE) -C $(TRUFFLE) main
+
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
-torture: main $(OUT_TEST)/.built
+# Takes ~10 min. Logs under out/torture/logs/ (gitignored). The battery's
+# classpath needs the truffle stubs (truffle/out/classes), which the runtime
+# joint round does not produce — the target builds them first (2026-11-05:
+# a fresh checkout failed the script's fail-fast check here because this
+# prerequisite was missing; the Oct repoint had only ever run on a tree
+# where truffle/out/classes already existed).
+torture: main $(OUT_TEST)/.built $(TRUFFLE_CLASSES)/.built
 	bash ../../../tools/torture/run_battery.sh
 
-# P2-M8 GOMAXPROCS matrix (differential vs gc).
+# P2-M8 GOMAXPROCS matrix (differential vs gc). Needs the gofrontend
+# binary (internal/frontend/build.sh); the interop module (product launcher)
+# is built first. Logs under out/torture/gmp-matrix/.
 gmp-matrix: main $(OUT_TEST)/.built
+	$(MAKE) -C ../interop main
 	bash ../../../tools/torture/gmp_matrix.sh
+
+# P2-M8 stress-corpus differential (Go runtime/context patterns vs gc).
+# Needs the gofrontend binary; the interop module (product launcher)
+# is built first. Logs under out/torture/stress-differential/.
+stress-differential: main $(OUT_TEST)/.built
+	$(MAKE) -C ../interop main
+	bash ../../../tools/torture/stress_differential.sh
 
 clean:
 	rm -rf out

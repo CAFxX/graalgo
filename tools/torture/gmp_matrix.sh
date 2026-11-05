@@ -4,72 +4,116 @@
 # Matrix: GOMAXPROCS in {1, 2, 4, N} x workload in {compute, mixed}.
 # (N = host CPUs; 4 on a 2-CPU VM exercises the oversubscription clamp.)
 # Each cell: run under graalgo (--gmp=N) and under gc (GOMAXPROCS=N),
-# compare stdout byte-for-byte. Any systematic divergence is a
+# compare stderr byte-for-byte (the corpus prints via the println builtin,
+# which writes to stderr on both). Any systematic divergence is a
 # kill-criterion trigger (PLAN.md risk: "in-flight-cap economics").
 #
 # Channel-heavy cells are Java-level (TortureBattery F1); Go channel ops
 # are WS E/F (not in Go source scope).
-set -u
+#
+# Logs go to internal/backend/runtime/out/torture/gmp-matrix/ (gitignored
+# via out/). The Go corpus lives in tools/torture/corpus/ (committed).
+#
+# Go programs run through the product launcher internal/backend/graalgo-sync-run
+# (P3SyncMain): it drives the same SchedulerCore under test and supports
+# channels/select and the full stdlib surface. The raw scheduler entry point
+# (graalgo.sched.launcher.SchedMain) cannot run real Go programs on this base
+# (its Truffle NodeFactory lacks the ifacemethod/makechan hooks) — using it
+# here would fail every cell for the wrong reason.
+#
+# Prerequisites: the backend modules built:
+#   make -C internal/backend/truffle main     # runtime + truffle classes
+#   make -C internal/backend/interop main     # product launcher classes
+#   (see internal/frontend/build.sh for the gofrontend binary)
+set -euo pipefail
 cd "$(dirname "$0")/../.." || exit 1
+GR="$PWD"
 
-GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-GO="$HOME/tools/go/bin/go"
-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
-CORPUS="hidden_files/torture/corpus"
-OUTDIR="hidden_files/torture/gmp-matrix"
-mkdir -p "$OUTDIR"
+SYNC_RUN="internal/backend/graalgo-sync-run"
+[ -x "$SYNC_RUN" ] || { echo "ERROR: $SYNC_RUN missing/not executable" >&2; exit 1; }
+[ -d internal/backend/interop/out/classes ] || {
+  echo "ERROR: interop classes missing — build first: make -C internal/backend/interop main" >&2; exit 1; }
+[ -d internal/backend/runtime/out/classes ] || {
+  echo "ERROR: runtime classes missing — build first: make -C internal/backend/truffle main" >&2; exit 1; }
+GO="${GO:-$HOME/tools/go/bin/go}"
+[ -x "$GO" ] || { echo "ERROR: no go at $GO (set GO)" >&2; exit 1; }
+# gofrontend resolution mirrors graalgo.launcher.ToolPaths: an explicit
+# GRAALGO_GOFRONTEND wins if executable, else the in-tree build location.
+GOFRONTEND="${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}"
+[ -x "$GOFRONTEND" ] || { echo "ERROR: gofrontend not executable at $GOFRONTEND — build it (see internal/frontend/build.sh)" >&2; exit 1; }
+export GRAALGO_GOFRONTEND="$GOFRONTEND"
+
+CORPUS="tools/torture/corpus"
+OUTDIR="internal/backend/runtime/out/torture/gmp-matrix"
+mkdir -p "$OUTDIR" || { echo "ERROR: cannot create $OUTDIR" >&2; exit 1; }
+# Keep the JVM's temp files out of /tmp (small shared tmpfs); the launcher
+# honors TMPDIR for -Djava.io.tmpdir.
+export TMPDIR="$OUTDIR"
+# Cap the per-cell JVM heap: the box is memory-tight and an uncapped
+# truffle JVM risks the OOM killer (observed SIGKILL, exit 137).
+export _JAVA_OPTIONS="-Xmx1g"
+
+# strip_picked_up <file>: drop the JVM's _JAVA_OPTIONS "Picked up" notice
+# from a captured stderr file. Retried (3x, 5s apart): the strip is cosmetic
+# and a transient quota flap must never abort the run under set -e (a matrix
+# run died mid-cell on exactly this: sed -i could not create its temp file).
+# If all retries fail the notice stays and the cell fails honestly on
+# comparison instead of the whole run dying.
+strip_picked_up() {
+  local f="$1" i
+  for i in 1 2 3; do
+    sed -i '/^Picked up _JAVA_OPTIONS/d' "$f" && return 0
+    sleep 5
+  done
+  echo "WARNING: could not strip _JAVA_OPTIONS notice from $f (quota?)" >&2
+  return 0
+}
 
 NPROC=$(nproc)
 PASS=0
 FAIL=0
 FAILED_CELLS=""
 
-# Note: on hosts where NPROC is 1, 2, or 4, the gmp=N run duplicates an
-# earlier cell; we still run it (distinct evidence) but tag the files
-# -n<N> to avoid overwriting.
+cell() {
+  local wl="$1" gmp="$2" tag="$3"
+  local prog="$CORPUS/gmp_$wl.go"
+  [ -f "$prog" ] || { echo "ERROR: corpus program missing: $prog" >&2; exit 1; }
+  local grc=0 gcrc=0
+  # graalgo (product launcher: same SchedulerCore, full stdlib surface).
+  # The corpus prints via the println builtin, which writes to stderr on
+  # both gc and graalgo — so the differential comparison is on stderr.
+  # (JVM/launcher warnings would also land on stderr and fail the cell;
+  # that is intended: toolchain noise is a signal, not to be filtered.
+  # The _JAVA_OPTIONS "Picked up" notice is the sole exception: it is
+  # JVM-launcher chatter, stripped before comparison.)
+  timeout 180 "$SYNC_RUN" --gmp="$gmp" "$GR/$prog" \
+    > "$OUTDIR/${wl}_${tag}.graalgo.stdout" 2> "$OUTDIR/${wl}_${tag}.graalgo.stderr" || grc=$?
+  strip_picked_up "$OUTDIR/${wl}_${tag}.graalgo.stderr"
+  # gc
+  GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
+    > "$OUTDIR/${wl}_${tag}.gc.stdout" 2> "$OUTDIR/${wl}_${tag}.gc.stderr" || gcrc=$?
+  if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
+     cmp -s "$OUTDIR/${wl}_${tag}.graalgo.stderr" "$OUTDIR/${wl}_${tag}.gc.stderr"; then
+    echo "PASS wl=$wl gmp=$gmp"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL wl=$wl gmp=$gmp (graalgo_exit=$grc gc_exit=$gcrc)"
+    FAILED_CELLS="$FAILED_CELLS $wl/gmp$gmp"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 for gmp in 1 2 4; do
   for wl in compute mixed; do
-    tag="gmp${gmp}"
-    prog="$CORPUS/gmp_$wl.go"
-    # graalgo
-    timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
-      graalgo.sched.launcher.SchedMain --gmp="$gmp" "$prog" \
-      > "$OUTDIR/${wl}_${tag}.graalgo.out" 2> "$OUTDIR/${wl}_${tag}.graalgo.err"
-    grc=$?
-    # gc
-    GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
-      > "$OUTDIR/${wl}_${tag}.gc.out" 2> "$OUTDIR/${wl}_${tag}.gc.err"
-    gcrc=$?
-    if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
-       cmp -s "$OUTDIR/${wl}_${tag}.graalgo.out" "$OUTDIR/${wl}_${tag}.gc.out"; then
-      echo "PASS wl=$wl gmp=$gmp"
-      PASS=$((PASS + 1))
-    else
-      echo "FAIL wl=$wl gmp=$gmp (graalgo_exit=$grc gc_exit=$gcrc)"
-      FAILED_CELLS="$FAILED_CELLS $wl/gmp$gmp"
-      FAIL=$((FAIL + 1))
-    fi
+    cell "$wl" "$gmp" "gmp${gmp}"
   done
 done
 # gmp=N (distinct cell even when N coincides numerically: separate files).
+# Note: on hosts where NPROC is 1, 2, or 4, the gmp=N run duplicates an
+# earlier cell; we still run it (distinct evidence) but tag the files
+# -n<N> to avoid overwriting.
 for wl in compute mixed; do
-  prog="$CORPUS/gmp_$wl.go"
-  timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
-    graalgo.sched.launcher.SchedMain --gmp="$NPROC" "$prog" \
-    > "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.out" 2> "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.err"
-  grc=$?
-  GOMAXPROCS="$NPROC" timeout 120 "$GO" run "$prog" \
-    > "$OUTDIR/${wl}_gmpN.n$NPROC.gc.out" 2> "$OUTDIR/${wl}_gmpN.n$NPROC.gc.err"
-  gcrc=$?
-  if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
-     cmp -s "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.out" "$OUTDIR/${wl}_gmpN.n$NPROC.gc.out"; then
-    echo "PASS wl=$wl gmp=N($NPROC)"
-    PASS=$((PASS + 1))
-  else
-    echo "FAIL wl=$wl gmp=N($NPROC) (graalgo_exit=$grc gc_exit=$gcrc)"
-    FAILED_CELLS="$FAILED_CELLS $wl/gmpN"
-    FAIL=$((FAIL + 1))
-  fi
+  cell "$wl" "$NPROC" "gmpN.n$NPROC"
 done
 
 echo "---"

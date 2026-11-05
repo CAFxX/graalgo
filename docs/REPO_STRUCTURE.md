@@ -189,7 +189,8 @@ Related: [Makefile](../Makefile) (root build entry point),
   tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
-  [torture/](../tools/torture/) (scheduler torture),
+  [torture/](../tools/torture/) (scheduler torture: battery/matrix/differential
+  scripts + committed [corpus/](../tools/torture/corpus/)),
   [godebug-diff/](../tools/godebug-diff/),
   [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
   [req/](../tools/req/) (requirements CLI), and
