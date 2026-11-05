@@ -22,6 +22,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -412,4 +413,51 @@ func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 		t.Fatal("non-tree dir: expected refusal, got a tree")
 	}
 	mustContain(t, err.Error(), "not a stdlib src root", "refusal diagnosis")
+}
+
+// Default --list path lives under tools/stdlib-fork -- the directory that
+// actually exists in the repo -- and validate with defaults reads it
+// without creating the deleted phases/ tree.
+func TestDefaultPathsResolveInsideCurrentTree(t *testing.T) {
+	repo := t.TempDir()
+	wantList := filepath.Join(repo, "tools", "stdlib-fork", "exclusions.yaml")
+	if got := defaultListPath(repo); got != wantList {
+		t.Fatalf("defaultListPath = %q, want %q", got, wantList)
+	}
+
+	// Validate with defaults (no --list, no --baseline) inside a scratch
+	// git repo whose live list sits at tools/stdlib-fork/exclusions.yaml:
+	// it must read that list and must not create a phases/ directory.
+	fork := filepath.Join(repo, "tools", "stdlib-fork")
+	if err := os.MkdirAll(fork, 0755); err != nil {
+		t.Fatal(err)
+	}
+	src := fixtureSrc(t, "runtime/cgo")
+	testList(t, fork, "exclusions.yaml", "1",
+		"- file: runtime/cgo\n  reason: CGO\n  detail: evidence\n")
+	git(t, repo, "init", "-q")
+	git(t, repo, "add", ".")
+	git(t, repo, "-c", "user.name=test", "-c", "user.email=test@example.com",
+		"commit", "-qm", "fixture list")
+	t.Chdir(repo)
+	var stdout, stderr strings.Builder
+	err := runValidate([]string{"--src", src, "--test-binaries", "1000", "--max", "25"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("validate with defaults: %v (stderr: %s)", err, stderr.String())
+	}
+	mustContain(t, stdout.String(), "validate: OK", "default-list accept")
+	if _, err := os.Stat(filepath.Join(repo, "phases")); !os.IsNotExist(err) {
+		t.Fatalf("validate with defaults created %s (must stay inside the current tree)",
+			filepath.Join(repo, "phases"))
+	}
+}
+
+// git runs git in dir, failing the test on error.
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
 }

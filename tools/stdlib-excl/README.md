@@ -49,7 +49,8 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 An explicit `--src` always wins. There are no silent fallbacks: every
 resolution announces where the tree came from.
 
-Wired into `make -C phases/phase3 check` (stdlib exclusion-list gate).
+Not wired into any `make` target: run `stdlib-excl validate` directly
+(build with `go build` in this directory).
 
 ## measure
 
