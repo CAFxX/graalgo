@@ -21,10 +21,15 @@ import (
 // This is the driver's built-in test runner. The full differential
 // conformance suite (test/differential/) remains the arbiter for
 // graalgo-vs-gc behavior parity.
+//
+// With -emit-driver=file the driver is synthesized and written to
+// file instead of run (Gate 1 differential harness); the driver is
+// always verbose so every test reports a line.
 func cmdTest(root string, args []string) int {
 	// Separate test flags from package args. We accept -run, -v, -count,
 	// and -cover (the last two for compatibility; see below).
 	var runFilter string
+	var emitDriver string
 	var verbose bool
 	var count int = 1
 	var cover bool
@@ -46,6 +51,9 @@ Flags:
 	-count=n		run tests n times (n=1 disables caching; graalgo
 			has no test cache, so every run is fresh)
 	-cover		enable coverage (not yet supported)
+	-emit-driver=file	synthesize the test driver for one package and
+			write it to file, without running it (the driver is
+			always verbose so every test reports a line)
 `)
 			return 0
 		case a == "-run" && i+1 < len(args):
@@ -53,6 +61,11 @@ Flags:
 			runFilter = args[i]
 		case strings.HasPrefix(a, "-run="):
 			runFilter = strings.TrimPrefix(a, "-run=")
+		case a == "-emit-driver" && i+1 < len(args):
+			i++
+			emitDriver = args[i]
+		case strings.HasPrefix(a, "-emit-driver="):
+			emitDriver = strings.TrimPrefix(a, "-emit-driver=")
 		case a == "-count" && i+1 < len(args):
 			i++
 			n, err := parseCount(args[i])
@@ -98,6 +111,21 @@ Flags:
 			fmt.Fprintf(os.Stderr, "graalgo test: invalid -run regexp %q: %v\n", runFilter, err)
 			return 1
 		}
+	}
+
+	// -emit-driver: synthesize the driver for exactly one package
+	// and write it out without running it. -count is irrelevant
+	// (synthesis only); the -run filter still applies.
+	if emitDriver != "" {
+		if len(dirs) != 1 {
+			fmt.Fprintf(os.Stderr, "graalgo test: -emit-driver needs exactly one package\n")
+			return 1
+		}
+		if err := emitTestDriver(dirs[0], emitDriver, runRe); err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	runner := newTestRunner(root, verbose, runRe, count)
@@ -173,12 +201,14 @@ func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int) *
 // output matches `go test`: per-test === RUN / --- PASS lines and one
 // PASS/FAIL summary, then the `ok`/`FAIL` package line with the import
 // path and timing.
-func (r *testRunner) runPackage(dir string) bool {
-	importPath := importPathForDir(dir)
-	testFiles, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
-	if err != nil || len(testFiles) == 0 {
-		fmt.Printf("?   \t%s\t[no test files]\n", importPath)
-		return true
+// discoverPackageTests collects the test files, the selected tests
+// of each (applying the -run filter), and the non-test source files
+// of one package directory. Shared by runPackage and the -emit-driver
+// mode so both synthesize from the same discovery.
+func discoverPackageTests(dir string, runRe *regexp.Regexp) (testFiles []string, ftList []fileTests, srcFiles []string, err error) {
+	testFiles, err = filepath.Glob(filepath.Join(dir, "*_test.go"))
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// Collect non-test Go files in the package (the code under test),
@@ -187,7 +217,6 @@ func (r *testRunner) runPackage(dir string) bool {
 	// this, build-tag-gated alternatives (e.g. node_js.go vs node_net.go)
 	// are inlined together and redeclare each other's symbols.
 	buildable := buildableGoFiles(dir)
-	var srcFiles []string
 	for _, f := range buildable {
 		if !strings.HasSuffix(f, "_test.go") {
 			srcFiles = append(srcFiles, f)
@@ -207,22 +236,62 @@ func (r *testRunner) runPackage(dir string) bool {
 
 	// Discover the selected tests of every file, applying the -run
 	// filter (regex, like `go test`).
-	var ftList []fileTests
 	for _, tf := range runnableTests {
 		tests, err := discoverTests(tf)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
-			return false
+			return nil, nil, nil, fmt.Errorf("%s: %w", tf, err)
 		}
 		var selected []string
 		for _, t := range tests {
-			if r.runRe == nil || r.runRe.MatchString(t) {
+			if runRe == nil || runRe.MatchString(t) {
 				selected = append(selected, t)
 			}
 		}
 		if len(selected) > 0 {
 			ftList = append(ftList, fileTests{file: tf, tests: selected})
 		}
+	}
+	return testFiles, ftList, srcFiles, nil
+}
+
+// emitTestDriver synthesizes the test driver for one package and
+// writes it to outPath, without running it. The driver is always
+// verbose so every test reports a `--- PASS/FAIL/SKIP` line; the
+// Gate 1 differential harness (tools/gate1/run.py) parses those
+// lines from both the gc and graalgo runs.
+func emitTestDriver(dir, outPath string, runRe *regexp.Regexp) error {
+	_, ftList, srcFiles, err := discoverPackageTests(dir, runRe)
+	if err != nil {
+		return err
+	}
+	if len(ftList) == 0 {
+		return fmt.Errorf("no tests to run in %s", dir)
+	}
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, true)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(driver)
+	data, err := os.ReadFile(driver)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(outPath, data, 0644); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *testRunner) runPackage(dir string) bool {
+	importPath := importPathForDir(dir)
+	testFiles, ftList, srcFiles, err := discoverPackageTests(dir, r.runRe)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+		return false
+	}
+	if len(testFiles) == 0 {
+		fmt.Printf("?   \t%s\t[no test files]\n", importPath)
+		return true
 	}
 
 	// The synthesized driver prints go-test-format output itself
@@ -282,7 +351,23 @@ func importPathForDir(dir string) string {
 		if err != nil || rel == "." {
 			return module
 		}
+		// The standard library's go.mod declares module "std", but
+		// `go test` prints std import paths without that prefix
+		// ("strings", not "std/strings").
+		if module == "std" {
+			return filepath.ToSlash(rel)
+		}
 		return module + "/" + filepath.ToSlash(rel)
+	}
+	// Standard library: a directory under $GOROOT/src reports its
+	// import path (e.g. $GOROOT/src/net/http -> "net/http"), not the
+	// filesystem path — `go test` prints the import path in its
+	// ok/FAIL line, and so must `graalgo test` (notably for the Gate
+	// 1 harness, which runs stdlib package dirs).
+	if goroot := goRoot(); goroot != "" {
+		if rel, err := filepath.Rel(filepath.Join(goroot, "src"), abs); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(rel)
+		}
 	}
 	return abs
 }

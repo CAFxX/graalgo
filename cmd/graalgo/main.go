@@ -123,6 +123,16 @@ Flags:
 
 Test the named packages. Runs each package's tests through the
 graalgo backend and reports pass/fail.
+
+Flags:
+	-v		verbose output
+	-run=regexp	run only tests matching regexp
+	-count=n		run tests n times (n=1 disables caching)
+	-cover		enable coverage (not yet supported)
+	-emit-driver=file	synthesize the test driver for one package and
+			write it to file, without running it (the Gate 1
+			differential harness uses this; the driver is
+			always verbose so every test reports a line)
 `)
 	case "vet":
 		fmt.Printf(`usage: graalgo vet [build flags] [packages]
