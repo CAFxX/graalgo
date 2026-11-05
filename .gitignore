@@ -1,6 +1,9 @@
 # build outputs
 out/
 *.class
+# python bytecode caches (created by `make check`'s unittest run)
+__pycache__/
+*.py[cod]
 # regenerable caches, downloads, binaries
 **/dl/
 **/gocache*/

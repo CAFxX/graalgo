@@ -5,20 +5,38 @@ and compare against gc 1.27.1.
 
 ## Design
 
-Graalgo's frontend is single-file today (no package-mode `go test`).
-The harness synthesizes single-file drivers from stdlib test sources:
+The harness compares the two toolchains on the same package:
 
-1. **discover.py** — extract `TestXxx` functions from `$GOROOT/src/<pkg>/*_test.go`
-2. **synthesize.py** — generate a `main`-package driver:
-   - Inlines the testing shim (package main)
-   - Hoists imports to the driver header
-   - Rewrites `*testing.T` → `*T`, strips benchmarks
-   - Handles dot-import vs qualified import styles
-3. **shim/shim.go** — minimal `testing.T` replacement (`Errorf`, `Fatalf`,
-   `Run`, `Skip`, etc.). Does NOT support: `Cleanup` (no-op), `Parallel`
-   (no-op), benchmarks.
-4. **run.py** — differential runner: builds driver via `go run` (gc) and
-   `graalgo-run`, compares per-test PASS/FAIL/SKIP.
+1. **Synthesize the driver** with the graalgo driver itself:
+   `graalgo test -emit-driver` (see [cmd/graalgo/testsynth.go](../../cmd/graalgo/testsynth.go)).
+   Test-driver synthesis has exactly one implementation — the Go one
+   used by `graalgo test`. This harness never synthesizes drivers
+   itself: the old Python synthesizer (`synthesize.py`, `discover.py`,
+   `shim/`) was deleted in the review-1105-gate1-falsepass lane so the
+   two implementations could not drift apart.
+2. **Run via gc**: real `go test -v` on the package — the reference.
+   (The driver is *not* run under gc: for packages with internal test
+   files the driver inlines the package's own sources, which import
+   `internal/*` packages that plain `go run` cannot resolve outside
+   GOROOT. The old harness papered over the same gap with hard-coded
+   per-package replicas; the reference side now needs no synthesis.)
+3. **Run via graalgo**: the synthesized driver through
+   `graalgo-sync-run` — the same launcher `graalgo test` uses — with
+   `--test-package-dir` so the frontend grants internal visibility.
+4. **run.py** — differential runner: compares per-test
+   go-test-format verdicts (`--- PASS/FAIL/SKIP` lines) from both
+   sides and reports the verdict.
+
+## Verdicts
+
+The verdict is evidence-driven, over the reported per-test results:
+
+| Verdict | Meaning |
+|---------|---------|
+| PASS | Both sides reported the same per-test verdicts. (A test failing identically under both is agreement — the gate compares graalgo against gc, it does not require the tests themselves to pass.) |
+| DIVERGE | Per-test verdicts differ, or graalgo reported nothing while gc reported results (graalgo-side crash). |
+| SKIP | gc reported nothing (build/test failure on the reference side); the harness cannot validate this package. |
+| ERROR | Neither side reported any test result, or a side exited 0 while reporting nothing. No evidence is never a PASS. |
 
 ## Usage
 
@@ -31,7 +49,13 @@ make gate1-pilot   # 5-package pilot
 make gate1 PKG=sort # single package
 ```
 
-## Pilot Results (2026-10-13, master @ 3af2572)
+## Pilot Results (2026-10-13, master @ 3af2572, OLD harness)
+
+The table below is the old harness's pilot (Python synthesis,
+same-driver-under-both-toolchains). It is kept as history; the
+harness has since changed (single synthesis via
+`graalgo test -emit-driver`, gc side is real `go test`), so re-run
+the pilot to refresh it.
 
 | Package | Tests | gc | graalgo | Verdict | Root cause |
 |---------|-------|----|---------|---------|------------|
@@ -46,10 +70,12 @@ not graalgo).
 
 ## Harness Limitations (not graalgo bugs)
 
-- Internal test packages (`package foo`) skipped — need unexported access
-- Tests using `unsafe`, `slices`, `iter`, `internal/*` skipped
-- `testing.Cleanup` is a no-op; `testing.Parallel` is a no-op
-- Benchmarks stripped (only `TestXxx` run)
+- `TestMain` is not run by the synthesized driver (inherited from
+  `graalgo test`: the driver calls each `TestXxx` directly).
+- The `graalgo test` shim has no `Cleanup`/`Parallel`: a test calling
+  them fails to build the driver (same limitation as `graalgo test`
+  itself; the old Python shim no-oped them instead).
+- Benchmarks are not run (only `TestXxx`).
 
 ## Graalgo Findings (for the fix queue)
 

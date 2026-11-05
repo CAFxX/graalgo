@@ -136,6 +136,7 @@ check:
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
+	python3 -m unittest discover -s tools/gate1 -p "test_*.py"
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
@@ -208,21 +209,23 @@ test-v2:
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
 #   make gate1 PKG=foo — single package trial
+# The driver is synthesized by the graalgo binary (`graalgo test
+# -emit-driver`); gc runs real `go test`, graalgo runs the driver via
+# graalgo-sync-run (both are run.py defaults — see tools/gate1/run.py).
 GATE1_PKGS ?= strconv errors sort strings bytes
-gate1-pilot: build
+gate1-pilot: build graalgo
 	@for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
+			|| true; \
 	done
 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
-gate1: build
+gate1: build graalgo
 	@test -n "$(PKG)" || (echo "usage: make gate1 PKG=<pkg>"; exit 1)
 	TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
-	python3 tools/gate1/run.py $(PKG) --out tools/gate1/.tmp/$(PKG) \
-		--graalgo-run "$(CURDIR)/internal/backend/graalgo-run"
+	python3 tools/gate1/run.py $(PKG) --out tools/gate1/.tmp/$(PKG)
 
 # Full test suite: all phase differential/test runners. LONG (30+ min);
 # for local verification and nightly runs, not per-push CI.
