@@ -51,6 +51,15 @@ export GRAALGO_HOME=/path/to/graalgo
 - **vet**: Run frontend static checks.
 - **fmt**: Format source files with `gofmt`.
 
+Build tags: `build`, `run`, and `vet` honor `-tags` (comma- and/or
+space-separated, like `go build -tags`). The flag selects the main
+package's files through the same build-constraint selection `graalgo
+test` uses, and is forwarded to the backend for dependency packages
+via the backend's existing `GRAALGO_BUILD_TAGS` channel; explicitly
+listed `.go` files bypass constraints, as with `go run`/`go build`.
+`fmt` intentionally does not take `-tags` and formats every `.go`
+file, matching `go fmt`.
+
 ## Architecture
 
 The driver is a thin Go program ([cmd/graalgo/](./)) that:
