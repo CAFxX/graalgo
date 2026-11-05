@@ -1,9 +1,13 @@
 package p3frontend
 
-// P3-M2b (WS D, ADR-0002): p3frontend tests for the synthetic "sync"
-// package. The importer reimplements the frozen exporter's synthetic sync
-// signatures (it cannot reuse them — unexported and frozen); these tests
-// pin the mirror so drift fails fast.
+// p3frontend tests for the "sync" package. The synthetic sync mirror
+// (P3-M2b, ADR-0002) was RETIRED with the fmt/sync retirement
+// (REVIEW-2026-11-05-11): sync now resolves to the REAL GOROOT package,
+// type-checked from source like any other stdlib package. These tests
+// pin that contract: the importer serves real sync (full surface,
+// including Pool/Map/OnceFunc, which the stub lacked), ResolveImport
+// reports kindStdlib at the GOROOT directory, and the served package
+// matches the source-imported real sync method-for-method.
 
 import (
 	"go/format"
@@ -13,101 +17,120 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
 
-// TestSyncSyntheticSignatures pins the mirrored synthetic sync package:
-// exactly the four primitives, each method present with a pointer
-// receiver and exact gc 1.27.1 parameter/result types.
-func TestSyncSyntheticSignatures(t *testing.T) {
-	pkg := syntheticSyncPackage()
+// importerSyncPackage returns the sync package as served by the
+// p3frontend Importer: the REAL GOROOT package, type-checked from
+// source (the synthetic mirror is retired). Each call re-type-checks
+// real sync (~1s); callers that need it twice should share one.
+func importerSyncPackage(t *testing.T) *types.Package {
+	t.Helper()
+	l := NewLoader()
+	imp := NewImporter(l, t.TempDir(), token.NewFileSet())
+	pkg, err := imp.Import("sync")
+	if err != nil {
+		t.Fatalf("Import(sync): %v", err)
+	}
+	return pkg
+}
+
+// TestSyncRealSurface pins the real-sync contract: the importer serves
+// the FULL gc 1.27.1 sync surface — the stub declared only
+// Mutex/RWMutex/WaitGroup/Once, so a program using Pool, Map, Cond or
+// OnceFunc failed type-check. Every name below must resolve, with
+// pointer receivers on the primitive methods.
+func TestSyncRealSurface(t *testing.T) {
+	pkg := importerSyncPackage(t)
 	if pkg.Name() != "sync" || pkg.Path() != "sync" {
 		t.Fatalf("package name/path = %s/%s, want sync/sync", pkg.Name(), pkg.Path())
 	}
-	sigString := func(sig *types.Signature) string {
-		return types.TypeString(sig, func(p *types.Package) string { return p.Name() })
-	}
-	for prim, specs := range syncMethodSpecs {
+	// The primitives the stub had — plus the ones it lacked.
+	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once",
+		"Pool", "Map", "Cond"} {
 		obj := pkg.Scope().Lookup(prim)
 		if obj == nil {
-			t.Fatalf("sync.%s missing from synthetic package", prim)
+			t.Fatalf("sync.%s missing from the importer-served package", prim)
 		}
-		tn, ok := obj.(*types.TypeName)
-		if !ok {
-			t.Fatalf("sync.%s is %T, want *types.TypeName", prim, obj)
-		}
-		named, ok := tn.Type().(*types.Named)
-		if !ok {
-			t.Fatalf("sync.%s is %T, want *types.Named", prim, tn.Type())
-		}
-		if _, ok := named.Underlying().(*types.Struct); !ok {
-			t.Fatalf("sync.%s underlying is %T, want *types.Struct", prim, named.Underlying())
-		}
-		if got := named.NumMethods(); got != len(specs) {
-			t.Fatalf("sync.%s has %d methods, want %d", prim, got, len(specs))
-		}
-		for i, ms := range specs {
-			m := named.Method(i)
-			if m.Name() != ms.name {
-				t.Fatalf("sync.%s method %d = %s, want %s", prim, i, m.Name(), ms.name)
-			}
-			sig, ok := m.Type().(*types.Signature)
-			if !ok {
-				t.Fatalf("sync.%s.%s is %T, want *types.Signature", prim, ms.name, m.Type())
-			}
-			// Pointer receiver, like the real package.
-			recv, ok := sig.Recv().Type().(*types.Pointer)
-			if !ok {
-				t.Fatalf("sync.%s.%s receiver is %T, want *types.Pointer", prim, ms.name, sig.Recv().Type())
-			}
-			if recv.Elem() != named {
-				t.Fatalf("sync.%s.%s receiver points at %v, want %v", prim, ms.name, recv.Elem(), named)
-			}
-			// Exact parameter/result shape.
-			if sig.Params().Len() != len(ms.params) {
-				t.Fatalf("sync.%s.%s has %d params, want %d (%s)",
-					prim, ms.name, sig.Params().Len(), len(ms.params), sigString(sig))
-			}
-			for j, ps := range ms.params {
-				want := ps[strings.Index(ps, ":")+1:]
-				got := types.TypeString(sig.Params().At(j).Type(), nil)
-				var wantStr string
-				switch want {
-				case "int":
-					wantStr = "int"
-				case "func()":
-					wantStr = "func()"
-				default:
-					t.Fatalf("test bug: unhandled param type %q", want)
-				}
-				if got != wantStr {
-					t.Fatalf("sync.%s.%s param %d = %s, want %s", prim, ms.name, j, got, wantStr)
-				}
-			}
-			if sig.Results().Len() != len(ms.results) {
-				t.Fatalf("sync.%s.%s has %d results, want %d (%s)",
-					prim, ms.name, sig.Results().Len(), len(ms.results), sigString(sig))
-			}
-			for j, rs := range ms.results {
-				want := rs[strings.Index(rs, ":")+1:]
-				got := types.TypeString(sig.Results().At(j).Type(), nil)
-				switch want {
-				case "bool":
-					if got != "bool" {
-						t.Fatalf("sync.%s.%s result %d = %s, want bool", prim, ms.name, j, got)
-					}
-				case "Locker":
-					iface, ok := sig.Results().At(j).Type().(*types.Interface)
-					if !ok || iface.NumMethods() != 2 {
-						t.Fatalf("sync.%s.%s result %d = %v, want Locker interface", prim, ms.name, j, got)
-					}
-				default:
-					t.Fatalf("test bug: unhandled result type %q", want)
-				}
-			}
+		if _, ok := obj.Type().(*types.Named); !ok {
+			t.Fatalf("sync.%s is %T, want *types.Named", prim, obj.Type())
 		}
 	}
+	// Pool.New field (func() any) and Get/Put methods.
+	pool := namedTypeOf(t, pkg, "Pool")
+	if st, ok := pool.Underlying().(*types.Struct); !ok {
+		t.Fatalf("sync.Pool underlying is %T, want *types.Struct", pool.Underlying())
+	} else {
+		f, ok := findField(st, "New")
+		if !ok {
+			t.Fatal("sync.Pool lacks the New field")
+		}
+		if _, ok := f.Type().Underlying().(*types.Signature); !ok {
+			t.Fatalf("sync.Pool.New is %T, want func type", f.Type())
+		}
+	}
+	for _, m := range []string{"Get", "Put"} {
+		if !hasMethod(pool, m) {
+			t.Fatalf("sync.Pool lacks method %s", m)
+		}
+	}
+	// Map: the full 10-method set (the stub had no Map at all).
+	mapNamed := namedTypeOf(t, pkg, "Map")
+	for _, m := range []string{"Clear", "CompareAndDelete", "CompareAndSwap",
+		"Delete", "Load", "LoadAndDelete", "LoadOrStore", "Range", "Store", "Swap"} {
+		if !hasMethod(mapNamed, m) {
+			t.Fatalf("sync.Map lacks method %s", m)
+		}
+	}
+	// Cond: L Locker field + Broadcast/Signal/Wait.
+	cond := namedTypeOf(t, pkg, "Cond")
+	if st, ok := cond.Underlying().(*types.Struct); !ok {
+		t.Fatalf("sync.Cond underlying is %T, want *types.Struct", cond.Underlying())
+	} else if _, ok := findField(st, "L"); !ok {
+		t.Fatal("sync.Cond lacks the L field")
+	}
+	for _, m := range []string{"Broadcast", "Signal", "Wait"} {
+		if !hasMethod(cond, m) {
+			t.Fatalf("sync.Cond lacks method %s", m)
+		}
+	}
+	// Locker interface + package-level funcs the stub lacked.
+	if obj := pkg.Scope().Lookup("Locker"); obj == nil {
+		t.Fatal("sync.Locker missing")
+	} else if _, ok := obj.Type().Underlying().(*types.Interface); !ok {
+		t.Fatalf("sync.Locker underlying is %T, want *types.Interface", obj.Type().Underlying())
+	}
+	for _, fn := range []string{"NewCond", "OnceFunc", "OnceValue", "OnceValues"} {
+		obj := pkg.Scope().Lookup(fn)
+		if obj == nil {
+			t.Fatalf("sync.%s missing", fn)
+		}
+		if _, ok := obj.(*types.Func); !ok {
+			t.Fatalf("sync.%s is %T, want *types.Func", fn, obj)
+		}
+	}
+}
+
+// findField looks up an (exported) struct field by name.
+func findField(st *types.Struct, name string) (*types.Var, bool) {
+	for i := 0; i < st.NumFields(); i++ {
+		if f := st.Field(i); f.Name() == name {
+			return f, true
+		}
+	}
+	return nil, false
+}
+
+// hasMethod reports whether the named type has a method of that name.
+func hasMethod(named *types.Named, name string) bool {
+	for i := 0; i < named.NumMethods(); i++ {
+		if named.Method(i).Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 // normIface strips named-ness from interface types for comparison: Go
@@ -159,29 +182,26 @@ func namedTypeOf(t *testing.T, pkg *types.Package, name string) *types.Named {
 	return named
 }
 
-// TestSyncMirrorMatchesRealGorootSync is the independent oracle for the
-// synthetic sync mirror (reviewer P1-1): it type-checks the REAL
+// TestSyncMatchesRealGorootSync is the independent oracle for the
+// importer-served sync package: it type-checks the REAL
 // $GOROOT/src/sync package from source with the go/types source importer
-// and asserts the mirror's exported method set, pointer receivers, and
-// parameter/result types match gc exactly.
-//
-// TestSyncSyntheticSignatures asserts the mirror against syncMethodSpecs —
-// the same table that BUILDS the mirror — so a wrong table passes. This
-// test breaks that circularity: it fails if the mirror drifts from gc's
-// real signatures in any direction (missing/extra method, changed
-// receiver, mistyped parameter or result).
+// and asserts the served package's exported method set, pointer
+// receivers, and parameter/result types match gc exactly. Both sides
+// are real sync now (the synthetic mirror is retired), so the test
+// pins that the importer serves the real package — not a stub, not a
+// partial package — and fails if either side drifts.
 //
 // The oracle reads the test toolchain's GOROOT, which this project pins
 // to gc 1.27.1 (the same tree the corpus differential runs against).
-func TestSyncMirrorMatchesRealGorootSync(t *testing.T) {
+func TestSyncMatchesRealGorootSync(t *testing.T) {
 	fset := token.NewFileSet()
 	real, err := importer.ForCompiler(fset, "source", nil).Import("sync")
 	if err != nil {
 		t.Fatalf("source-import of real sync package: %v", err)
 	}
 	qf := func(p *types.Package) string { return p.Name() }
-	mirror := syntheticSyncPackage()
-	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once"} {
+	mirror := importerSyncPackage(t)
+	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once", "Pool", "Map", "Cond"} {
 		realNamed := namedTypeOf(t, real, prim)
 		mirrorNamed := namedTypeOf(t, mirror, prim)
 		var realByName = map[string]*types.Func{}
@@ -192,8 +212,9 @@ func TestSyncMirrorMatchesRealGorootSync(t *testing.T) {
 		}
 		var mirrorByName = map[string]*types.Func{}
 		for i := 0; i < mirrorNamed.NumMethods(); i++ {
-			m := mirrorNamed.Method(i)
-			mirrorByName[m.Name()] = m
+			if m := mirrorNamed.Method(i); m.Exported() {
+				mirrorByName[m.Name()] = m
+			}
 		}
 		// Same exported method set (order-independent: go/types sorts
 		// type-checked methods, AddMethod keeps insertion order).
@@ -234,31 +255,35 @@ func TestSyncMirrorMatchesRealGorootSync(t *testing.T) {
 	}
 }
 
-// TestSyncResolveImportSynthetic: "sync" resolves as synthetic — it must
-// NOT hit the stdlib branch (there IS a $GOROOT/src/sync directory; the
-// M2 binding is synthetic, not compiled from GOROOT).
-func TestSyncResolveImportSynthetic(t *testing.T) {
+// TestSyncResolveImportStdlib: "sync" resolves as stdlib — the synthetic
+// mirror is retired, so it MUST hit the stdlib branch (there IS a
+// $GOROOT/src/sync directory) and the importer must serve the real
+// package from it.
+func TestSyncResolveImportStdlib(t *testing.T) {
 	l := NewLoader()
 	dir := t.TempDir()
 	ref, err := l.ResolveImport(dir, "sync")
 	if err != nil {
 		t.Fatalf("ResolveImport(sync): %v", err)
 	}
-	if ref.Kind != kindSynthetic {
-		t.Fatalf("sync resolved as kind %v, want kindSynthetic (must not hit the stdlib branch)", ref.Kind)
+	if ref.Kind != kindStdlib {
+		t.Fatalf("sync resolved as kind %v, want kindStdlib (synthetic mirror retired)", ref.Kind)
 	}
-	// The stdlib branch would have resolved a directory; synthetic has none.
-	if ref.Dir != "" {
-		t.Fatalf("sync resolution carries Dir %q, want empty (synthetic)", ref.Dir)
+	wantDir := filepath.Join(l.GOROOT(), "src", "sync")
+	if ref.Dir != wantDir {
+		t.Fatalf("sync resolved at %s, want %s", ref.Dir, wantDir)
 	}
-	// And the importer serves the mirrored package for it.
-	imp := NewImporter(l, dir, nil)
+	// And the importer serves the real package for it.
+	imp := NewImporter(l, dir, token.NewFileSet())
 	pkg, err := imp.Import("sync")
 	if err != nil {
 		t.Fatalf("Import(sync): %v", err)
 	}
 	if pkg.Name() != "sync" {
 		t.Fatalf("imported package name = %s, want sync", pkg.Name())
+	}
+	if pkg.Scope().Lookup("Pool") == nil || pkg.Scope().Lookup("Map") == nil {
+		t.Fatal("importer-served sync lacks Pool/Map: not the real package")
 	}
 }
 
@@ -394,17 +419,20 @@ func TestSyncFormerScopeErrorsNowCompile(t *testing.T) {
 	}
 }
 
-// TestSyncMethodSetComplete: the mirror exposes exactly the union of the
-// M2-supported methods and the defined-but-out-of-scope ones — no more,
-// no less (a missing method would be a confusing type error; an extra one
-// would silently widen the surface).
+// TestSyncMethodSetComplete: the importer-served sync package exposes
+// exactly the real gc 1.27.1 method set for every primitive — no more,
+// no less (a missing method would be a confusing type error; an extra
+// one would silently widen the surface). Pool/Map/Cond are the
+// regression pin: the retired stub had none of them.
 func TestSyncMethodSetComplete(t *testing.T) {
-	pkg := syntheticSyncPackage()
+	pkg := importerSyncPackage(t)
 	var got []string
-	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once"} {
+	for _, prim := range []string{"Mutex", "RWMutex", "WaitGroup", "Once", "Pool", "Map", "Cond"} {
 		named := pkg.Scope().Lookup(prim).(*types.TypeName).Type().(*types.Named)
 		for i := 0; i < named.NumMethods(); i++ {
-			got = append(got, prim+"."+named.Method(i).Name())
+			if m := named.Method(i); m.Exported() {
+				got = append(got, prim+"."+m.Name())
+			}
 		}
 	}
 	want := []string{
@@ -413,7 +441,14 @@ func TestSyncMethodSetComplete(t *testing.T) {
 		"RWMutex.TryLock", "RWMutex.TryRLock", "RWMutex.RLocker",
 		"WaitGroup.Add", "WaitGroup.Done", "WaitGroup.Wait", "WaitGroup.Go",
 		"Once.Do",
+		"Pool.Get", "Pool.Put",
+		"Map.Clear", "Map.CompareAndDelete", "Map.CompareAndSwap",
+		"Map.Delete", "Map.Load", "Map.LoadAndDelete", "Map.LoadOrStore",
+		"Map.Range", "Map.Store", "Map.Swap",
+		"Cond.Broadcast", "Cond.Signal", "Cond.Wait",
 	}
+	sort.Strings(got)
+	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("method set = %v, want %v", got, want)
 	}

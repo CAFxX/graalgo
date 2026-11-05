@@ -7,12 +7,14 @@ import (
 	"testing"
 )
 
-// TestProbeFmtFprintlnSyncPool is the mechanism probe for the fmt/sync
-// retirement: a program using fmt.Fprintln, fmt.Fscanf, sync.Pool and
-// sync.Map must type-check through MergeDir against the REAL stdlib
-// packages from GOROOT (previously: "could not import os ... P3-M7+
-// waves" / undefined F-family symbols against the stub).
-func TestProbeFmtFprintlnSyncPool(t *testing.T) {
+// TestFmtFprintlnSyncPool pins the fmt/sync retirement
+// (REVIEW-2026-11-05-11): a program using fmt.Fprintln, fmt.Fscanf,
+// sync.Pool and sync.Map must type-check through MergeDir against the
+// REAL stdlib packages from GOROOT. Previously it failed two ways: the
+// fmt stub declared only the 7 pure functions (no F-family, no Scan*),
+// and the stdlib scope error refused the real packages outright
+// ("could not import os ... P3-M7+ waves").
+func TestFmtFprintlnSyncPool(t *testing.T) {
 	dir := t.TempDir()
 	src := `package main
 

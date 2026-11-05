@@ -105,11 +105,9 @@ func (rejectImports) Import(path string) (*types.Package, error) {
 // strings_test.go — one place to extend when the import graph grows.
 func syntheticStdImporter(t *testing.T) types.Importer {
 	t.Helper()
+	// syntheticErrorsPackage calls MarkComplete itself (required: the
+	// drift type-check needs a complete package).
 	errorsPkg := syntheticErrorsPackage()
-	// syntheticErrorsPackage does not MarkComplete (it is only ever
-	// returned directly by the Importer); the drift type-check needs a
-	// complete package.
-	errorsPkg.MarkComplete()
 	var imp importerFunc
 	imp = importerFunc(func(path string) (*types.Package, error) {
 		if path == "iter" || path == "internal/reflectlite" {

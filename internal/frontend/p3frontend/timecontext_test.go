@@ -80,9 +80,15 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 	}
 
 	// Time methods (including multi-result Date/Clock/Zone).
+	// "String" is the documented mirror-only divergence (the phase-1
+	// source lacks it; see the header comment in
+	// synth_time_context.go) — pinned here, allowed in the drift test.
 	for _, name := range []string{"Unix", "UnixNano", "Add", "Sub", "Before",
 		"After", "Equal", "Compare", "IsZero", "String", "Format",
-		"Date", "Clock", "Zone"} {
+		"Date", "Clock", "Zone", "Round", "Truncate", "AppendFormat",
+		"GoString", "AddDate", "Year", "Month", "Day", "Weekday",
+		"Hour", "Minute", "Second", "Nanosecond", "YearDay",
+		"UTC", "Local", "In", "Location", "UnixMilli", "UnixMicro"} {
 		found := false
 		for i := 0; i < timeNamed.NumMethods(); i++ {
 			if timeNamed.Method(i).Name() == name {
@@ -120,9 +126,35 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 			tickerNamed.NumMethods())
 	}
 
+	// Location type with String on *Location, and the Local/UTC vars.
+	locObj := pkg.Scope().Lookup("Location")
+	if locObj == nil {
+		t.Fatal("time.Location missing")
+	}
+	locNamed, ok := locObj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("time.Location is %T, want *types.Named", locObj.Type())
+	}
+	if _, ok := locNamed.Underlying().(*types.Struct); !ok {
+		t.Fatalf("time.Location underlying is %T, want *types.Struct", locNamed.Underlying())
+	}
+	if !hasMethod(locNamed, "String") {
+		t.Fatal("time.Location lacks method String")
+	}
+	for _, name := range []string{"Local", "UTC"} {
+		v := pkg.Scope().Lookup(name)
+		if v == nil {
+			t.Fatalf("time.%s missing", name)
+		}
+		if _, ok := v.Type().(*types.Pointer); !ok {
+			t.Fatalf("time.%s is %T, want *Location", name, v.Type())
+		}
+	}
+
 	// Package-level functions.
 	for _, name := range []string{"Now", "Sleep", "After", "Tick", "NewTimer",
-		"NewTicker", "AfterFunc", "Since", "Until", "ParseDuration"} {
+		"NewTicker", "AfterFunc", "Since", "Until", "ParseDuration",
+		"Date", "Parse", "Unix"} {
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {
 			t.Fatalf("time.%s missing", name)
@@ -340,6 +372,75 @@ func TestTimeContextImportResolvesSynthetic(t *testing.T) {
 		}
 		if ref.Kind != kindSynthetic {
 			t.Fatalf("ResolveImport(%q).Kind = %v, want kindSynthetic", path, ref.Kind)
+		}
+	}
+}
+
+// TestTimeMirrorMatchesPhase1 is the drift test for the synthetic time
+// mirror: the mirror must match the live phase-1 syntheticTimeSource
+// (internal/frontend/synth_time_context.go) in scope and in the method
+// sets of every named type. ONE documented exception: the mirror declares
+// Time.String, which the phase-1 source lacks (a live-path gap — gc has
+// it; see the header comment in synth_time_context.go). Any other
+// divergence fails fast here instead of silently diverging.
+func TestTimeMirrorMatchesPhase1(t *testing.T) {
+	mirror := syntheticTimePackage()
+	// The time source imports nothing, so any import is a failure.
+	phase1 := phase1SyntheticPackageForTest(t,
+		"../synth_time_context.go", "syntheticTimeSource", "time", rejectImports{})
+	assertScopeMatchesPhase1(t, "time", mirror, phase1)
+	for _, name := range []string{"Duration", "Time", "Timer", "Ticker",
+		"Location", "Month", "Weekday"} {
+		compareNamedMethodSets(t, "time."+name, mirror, phase1, name,
+			map[string]bool{"Time.String": true})
+	}
+}
+
+// compareNamedMethodSets checks that the named type `name` has the same
+// method set in mirror and phase1 (name + rendered signature), except for
+// the explicitly allowed extras (mirror-only "Type.Method" keys, e.g.
+// the documented Time.String divergence). Order-independent: go/types
+// sorts type-checked methods, AddMethod keeps insertion order.
+func compareNamedMethodSets(t *testing.T, label string, mirror, phase1 *types.Package, name string, allowExtra map[string]bool) {
+	t.Helper()
+	mirrorObj := mirror.Scope().Lookup(name)
+	phase1Obj := phase1.Scope().Lookup(name)
+	if mirrorObj == nil || phase1Obj == nil {
+		t.Fatalf("%s: mirror=%v phase1=%v", label, mirrorObj != nil, phase1Obj != nil)
+	}
+	mirrorNamed, ok := mirrorObj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("%s: mirror type is %T, want *types.Named", label, mirrorObj.Type())
+	}
+	phase1Named, ok := phase1Obj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("%s: phase1 type is %T, want *types.Named", label, phase1Obj.Type())
+	}
+	qual := func(p *types.Package) string { return p.Name() }
+	sigOf := func(named *types.Named, method string) string {
+		for i := 0; i < named.NumMethods(); i++ {
+			if m := named.Method(i); m.Name() == method {
+				return types.TypeString(m.Type(), qual)
+			}
+		}
+		return ""
+	}
+	for i := 0; i < phase1Named.NumMethods(); i++ {
+		m := phase1Named.Method(i)
+		got := sigOf(mirrorNamed, m.Name())
+		if got == "" {
+			t.Errorf("%s: mirror lacks method %s", label, m.Name())
+			continue
+		}
+		want := types.TypeString(m.Type(), qual)
+		if got != want {
+			t.Errorf("%s.%s: mirror %s, want %s", label, m.Name(), got, want)
+		}
+	}
+	for i := 0; i < mirrorNamed.NumMethods(); i++ {
+		m := mirrorNamed.Method(i)
+		if sigOf(phase1Named, m.Name()) == "" && !allowExtra[name+"."+m.Name()] {
+			t.Errorf("%s: mirror has extra method %s (not in phase-1 source)", label, m.Name())
 		}
 	}
 }

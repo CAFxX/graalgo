@@ -487,14 +487,15 @@ func TestInitRejected(t *testing.T) {
 	})
 }
 
-// TestStdlibScopeError verifies methodology P1-4: import "os" (a stdlib
-// package with no synthetic mirror) resolves via ResolveImport (proving
-// the GOROOT mapping) and then fails fast through the public API with
-// the named "P3-M7+ waves" scope error — compiling the real stdlib is
-// out of M1 scope.
+// TestStdlibCompilesFromGoroot verifies methodology P1-4 (REVISED):
+// import "os" (a stdlib package) resolves via ResolveImport (proving
+// the GOROOT mapping) and now COMPILES through the public API — the
+// "P3-M7+ waves" scope error is retired with the fmt/sync retirement
+// (REVIEW-2026-11-05-11): stdlib packages type-check from GOROOT
+// source. Formerly TestStdlibScopeError, which pinned the refusal.
 // (m7-wenc-core: this test used "strings", which has since become a
 // synthetic package — updated to "os".)
-func TestStdlibScopeError(t *testing.T) {
+func TestStdlibCompilesFromGoroot(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
 		"main.go": "package main\n\nimport \"os\"\n\nfunc main() { println(os.Args[0]) }\n",
@@ -513,10 +514,12 @@ func TestStdlibScopeError(t *testing.T) {
 	}
 	t.Logf("os resolves to %s", ref.Dir)
 
-	if _, err := MergeDir(dir); err == nil || !strings.Contains(err.Error(), "P3-M7+ waves") {
-		t.Fatalf("expected stdlib scope error, got: %v", err)
-	} else {
-		t.Logf("stdlib compile correctly refused: %v", err)
+	merged, err := MergeDir(dir)
+	if err != nil {
+		t.Fatalf("MergeDir with import \"os\": expected success under real stdlib, got: %v", err)
+	}
+	if !strings.Contains(merged, `"os"`) {
+		t.Error("merged source dropped the import \"os\" spec")
 	}
 }
 
