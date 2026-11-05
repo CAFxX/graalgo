@@ -4,6 +4,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.runtime.ChanOps;
@@ -36,6 +38,10 @@ import graalgo.runtime.PanicException;
  * <p>These .go files double as the future end-to-end corpus: once the
  * exporter lowering lands (parent dependency), the same programs run
  * through {@code graalgo-run} and must produce identical output.
+ *
+ * <p>Exception: ch12 is nondeterministic under gc (poison competes
+ * uniformly with a ready case), so its test asserts the outcome
+ * distribution instead of a single output; see the test.
  *
  * <p>verifies: GG-0017 (differential slice)
  */
@@ -81,6 +87,18 @@ public final class ChannelDifferentialTest {
 
     private interface ThrowingRunnable {
         void run() throws Exception;
+    }
+
+    /** Polls cond until true or timeout (for cross-goroutine assertions). */
+    private static void waitFor(java.util.function.BooleanSupplier cond, String what)
+            throws Exception {
+        long deadline = System.currentTimeMillis() + 10000;
+        while (!cond.getAsBoolean()) {
+            if (System.currentTimeMillis() > deadline) {
+                throw new AssertionError("timeout waiting for: " + what);
+            }
+            Thread.sleep(5);
+        }
     }
 
     // ch01: unbuffered ping-pong via spawned goroutine.
@@ -291,26 +309,71 @@ public final class ChannelDifferentialTest {
         assertEquals(want, panicLine.get() + "\n", "ch11");
     }
 
-    // ch12: poison ignored when another case is ready (gc parity).
+    // ch12: poison competes uniformly with a ready case (gc parity).
+    // The program is nondeterministic under gc — `go run` prints
+    // "recv ch2 99" or panics with "send on closed channel", ~50/50 —
+    // so no single .expected pins it: the .expected file records the
+    // recv outcome and the .panic file the panic outcome, and this test
+    // asserts the outcome distribution (both outcomes occur) while
+    // validating each observed outcome against its gc-recorded file.
+    // run_e2e.sh accepts either outcome for such dual-artifact programs.
     public void testCh12SelectPoisonReady() throws Exception {
-        StringBuilder out = new StringBuilder();
+        String wantRecv = expected("ch12_select_poison_ready");
+        String wantPanic = expectedPanic("ch12_select_poison_ready");
+        int n = 200;
+        AtomicInteger panics = new AtomicInteger();
+        AtomicInteger recvs = new AtomicInteger();
+        AtomicReference<String> error = new AtomicReference<>();
         withScheduler(2, () -> {
-            ChanOps.Chan ch1 = ChanOps.makeChan(8, 0, 0L);
-            ChanOps.close(ch1);
-            ChanOps.Chan ch2 = ChanOps.makeChan(8, 1, 0L);
-            ChanOps.send(ch2, 99L);
-            sched.spawn(() -> {
-                int idx = ChanOps.selectGo(new ChanOps.SelectCase[]{
-                        new ChanOps.SelectCase(ch1, true, 1L),
-                        new ChanOps.SelectCase(ch2, false, null),
+            for (int i = 0; i < n; i++) {
+                ChanOps.Chan ch1 = ChanOps.makeChan(8, 0, 0L);
+                ChanOps.close(ch1);
+                ChanOps.Chan ch2 = ChanOps.makeChan(8, 1, 0L);
+                ChanOps.send(ch2, 99L);
+                AtomicBoolean done = new AtomicBoolean();
+                sched.spawn(() -> {
+                    try {
+                        int idx = ChanOps.selectGo(new ChanOps.SelectCase[]{
+                                new ChanOps.SelectCase(ch1, true, 1L),
+                                new ChanOps.SelectCase(ch2, false, null),
+                        });
+                        if (idx != 1) {
+                            error.compareAndSet(null,
+                                    "send case returned instead of panicking");
+                        } else {
+                            String out = "recv ch2 " + ChanOps.selectRecvValue() + "\n";
+                            if (!wantRecv.equals(out)) {
+                                error.compareAndSet(null, "recv outcome differs: " + out);
+                            } else {
+                                recvs.incrementAndGet();
+                            }
+                        }
+                    } catch (PanicException pe) {
+                        String out = "panic: " + pe.goValue() + "\n";
+                        if (!wantPanic.equals(out)) {
+                            error.compareAndSet(null, "panic outcome differs: " + out);
+                        } else {
+                            panics.incrementAndGet();
+                        }
+                    } finally {
+                        done.set(true);
+                    }
                 });
-                if (idx == 0) {
-                    out.append("sent ch1\n");
-                } else {
-                    out.append("recv ch2 ").append(ChanOps.selectRecvValue()).append('\n');
-                }
-            });
+                waitFor(done::get, "ch12 iteration " + i);
+            }
         });
-        assertEquals(expected("ch12_select_poison_ready"), out.toString(), "ch12");
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        if (panics.get() == 0) {
+            throw new AssertionError("poison never chosen in " + n + " iterations");
+        }
+        if (recvs.get() == 0) {
+            throw new AssertionError("ready case never chosen in " + n + " iterations");
+        }
+        if (panics.get() + recvs.get() != n) {
+            throw new AssertionError("every iteration must decide: panics=" + panics.get()
+                    + " recvs=" + recvs.get() + " n=" + n);
+        }
     }
 }

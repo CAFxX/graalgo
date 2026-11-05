@@ -17,13 +17,14 @@ import graalgo.jfr.ParkReason;
  * <p>Go select semantics:
  * <ol>
  *   <li>Poll every case under each channel's monitor: a send case is
- *       ready if a receiver waits or the buffer has space (send on a
- *       closed channel is poison, never ready); a recv case is ready if
- *       a sender waits, the buffer is non-empty, or the channel is
- *       closed.
+ *       ready if a receiver waits or the buffer has space; a send on a
+ *       closed channel is poison, which is itself a ready case —
+ *       choosing it panics, exactly as gc chooses uniformly among all
+ *       ready cases (poison included). A recv case is ready if a sender
+ *       waits, the buffer is non-empty, or the channel is closed.
  *   <li>If any case is ready, complete one chosen uniformly at random
  *       (Go fairness: no case starves under contention) and return its
- *       index.
+ *       index; a chosen poison case panics instead of completing.
  *   <li>If none is ready and a {@code default} case is present (a
  *       {@code SelectCase} with {@code chan == null} — documented
  *       convention for the future exporter), return its index.
@@ -166,7 +167,13 @@ public final class SelectOp {
                 synchronized (ch) {
                     if (c.send()) {
                         if (ch.isClosed()) {
-                            poison = true;
+                            // Poison is a ready case: gc chooses uniformly
+                            // among all ready cases, poison included, and
+                            // choosing it panics. Excluding it from the
+                            // ready set made the select return another case
+                            // 100% of the time where gc panics ~50% (two
+                            // ready cases).
+                            ready.add(i);
                         } else if (ch.canSend()) {
                             ready.add(i);
                         }
@@ -185,13 +192,11 @@ public final class SelectOp {
                 // Each retry consumes a genuine contention event.
                 continue;
             }
-            // Poison (send on closed) panics BEFORE default: gc panics for
-            // `select { case closedCh <- v: default: }` (verified p1/p4).
-            // A ready case above already won, so poison is only reached
-            // when nothing is ready.
-            if (poison) {
-                Panic.throwPanic(GoStrings.of("send on closed channel"));
-            }
+            // Poison-before-default still holds: a poison case is in the
+            // ready set above, so with no other ready case it is chosen
+            // and tryCompleteReady panics — before default is considered
+            // (gc panics for `select { case closedCh <- v: default: }`,
+            // verified p1/p4).
             if (defaultIndex >= 0) {
                 return defaultIndex;
             }
@@ -213,7 +218,8 @@ public final class SelectOp {
                 order[i] = order[j];
                 order[j] = t;
             }
-            for (int oi = 0; oi < order.length && immediate == null && !claimedByOther; oi++) {
+            for (int oi = 0; oi < order.length && immediate == null && !claimedByOther
+                    && !poison; oi++) {
                 int i = order[oi];
                 ChanOps.SelectCase c = cases[i];
                 if (c.chan() == null) {
@@ -235,7 +241,14 @@ public final class SelectOp {
                         // Re-check under the monitor: a case that became
                         // ready between poll and enqueue completes
                         // immediately. (Never enqueue on a poisoned
-                        // channel.)
+                        // channel.) A closed-send found here is a
+                        // completable candidate like any ready case: it
+                        // wins the sweep in random order (the loop exits
+                        // on poison and panics below, after removing the
+                        // waiters enqueued so far), so a ready case
+                        // earlier in the random order wins and a poison
+                        // case earlier in the order panics — gc's uniform
+                        // choice among ready cases.
                         if (c.send() && ch.isClosed()) {
                             poison = true;
                         } else if (tryClaimSelf()) {
@@ -274,6 +287,19 @@ public final class SelectOp {
                     Thread.yield();
                 }
             }
+            if (poison) {
+                // Sweep-phase poison: a send case closed between the poll
+                // phase (which saw it open) and this sweep. No case has
+                // already won here (poison exits the sweep loop, so
+                // immediate is null and no waker claimed us), so the
+                // select panics rather than parking on the remaining
+                // enqueued cases — parking would hang (or return another
+                // case) where gc panics. The enqueued waiters are removed
+                // first: a panicking select must not leave stale waiters
+                // on other channels.
+                cleanup(mine);
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
+            }
             if (immediate != null) {
                 cleanup(mine);
                 return immediate;
@@ -295,10 +321,6 @@ public final class SelectOp {
                 }
             }
             if (mine.isEmpty()) {
-                if (poison) {
-                    // Every case was a send on a closed channel.
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
-                }
                 // Zero cases: `select {}` blocks forever (gc deadlock).
                 // Park indefinitely; the deadlock detector (P2-M10) owns it.
                 // P2-M6: it genuinely blocks — record with channelId -1
@@ -327,6 +349,7 @@ public final class SelectOp {
     /**
      * Tries to complete a poll-ready case atomically. Returns the case
      * index on success, null if the race was lost (caller re-polls).
+     * A chosen closed-send case panics instead of returning null.
      * A RETRY from the channel (another select's transient self-claim
      * on its queue) is retried outside the monitor until it resolves;
      * this thread holds no self-claim here, so the retry cannot
@@ -340,7 +363,11 @@ public final class SelectOp {
             synchronized (ch) {
                 if (c.send()) {
                     if (ch.isClosed()) {
-                        return null;
+                        // The chosen ready case is poison: choosing it
+                        // panics (gc). Returning null here would re-poll
+                        // forever — closed is terminal, so the case would
+                        // be chosen again on every retry.
+                        Panic.throwPanic(GoStrings.of("send on closed channel"));
                     }
                     GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched);
                     if (sa == GoChan.SendAttempt.SENT) {
@@ -378,15 +405,23 @@ public final class SelectOp {
      * Caller holds ch's monitor and the self-claim. Completes the case
      * if still possible (won index); COMP_BLOCK if the race was lost;
      * COMP_RETRY if another select's transient self-claim blocks this
-     * channel's queue. COMP_RETRY must NOT be waited on while holding
-     * the self-claim (see the sweep's retry loop): the caller releases
-     * the claim, yields, and re-attempts.
+     * channel's queue. A closed-send case panics (it never reaches here
+     * from the sweep, which takes the poison branch first). COMP_RETRY
+     * must NOT be waited on while holding the self-claim (see the
+     * sweep's retry loop): the caller releases the claim, yields, and
+     * re-attempts.
      */
     private CompOutcome completeUnderLock(GoChan ch, int chosen, SchedulerCore sched) {
         ChanOps.SelectCase c = cases[chosen];
         if (c.send()) {
             if (ch.isClosed()) {
-                return COMP_BLOCK;
+                // Defense in depth: the sweep never calls this for a
+                // closed-send case (it takes the poison branch first),
+                // but completing one here must panic, never COMP_BLOCK:
+                // trySend on a closed channel would deliver/buffer the
+                // value (it does not check closed), and COMP_BLOCK would
+                // silently drop the poison. gc panics.
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
             }
             GoChan.SendAttempt sa = ch.trySend(c.sendValue(), sched);
             if (sa == GoChan.SendAttempt.SENT) {

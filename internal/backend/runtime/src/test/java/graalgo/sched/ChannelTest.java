@@ -532,28 +532,57 @@ public final class ChannelTest {
     }
 
     /**
-     * Poison is ignored when another case is ready (gc parity: ready
-     * wins, no panic). verifies: GG-0017
+     * Poison (send on closed) competes uniformly with a ready case (gc
+     * parity: `select { case closedCh <- v: case v := <-readyCh: }`
+     * chooses uniformly among the two ready cases, so it panics ~50% of
+     * the time; verified against go1.27.1: 10,036 panics / 9,964 recvs
+     * over 20,000 iterations). The old assertion ("ready wins, no
+     * panic") baked in the poll-phase poison exclusion bug: closed-send
+     * cases were never added to the ready set. verifies: GG-0017
      */
-    public void testSelectPoisonIgnoredWhenReady() throws Exception {
-        AtomicInteger idx = new AtomicInteger(-1);
-        AtomicReference<Object> val = new AtomicReference<>();
+    public void testSelectPoisonCompetesWithReady() throws Exception {
+        int n = 200;
+        AtomicInteger panics = new AtomicInteger();
+        AtomicInteger recvs = new AtomicInteger();
+        AtomicReference<String> error = new AtomicReference<>();
         withScheduler(2, () -> {
-            GoChan ch1 = new GoChan(0, 0L);
-            ChanOps.close(ch1);
-            GoChan ch2 = new GoChan(1, 0L);
-            ChanOps.send(ch2, 99L);
-            sched.spawn(() -> {
-                int i = ChanOps.selectGo(new ChanOps.SelectCase[]{
-                        new ChanOps.SelectCase(ch1, true, 1L),
-                        new ChanOps.SelectCase(ch2, false, null),
+            for (int i = 0; i < n; i++) {
+                GoChan ch1 = new GoChan(0, 0L);
+                ChanOps.close(ch1);
+                GoChan ch2 = new GoChan(1, 0L);
+                ChanOps.send(ch2, 99L);
+                AtomicBoolean done = new AtomicBoolean();
+                sched.spawn(() -> {
+                    try {
+                        int idx = ChanOps.selectGo(new ChanOps.SelectCase[]{
+                                new ChanOps.SelectCase(ch1, true, 1L),
+                                new ChanOps.SelectCase(ch2, false, null),
+                        });
+                        if (idx != 1 || !Long.valueOf(99L).equals(ChanOps.selectRecvValue())) {
+                            error.compareAndSet(null,
+                                    "unexpected select outcome idx=" + idx);
+                        } else {
+                            recvs.incrementAndGet();
+                        }
+                    } catch (PanicException pe) {
+                        if ("send on closed channel".equals(pe.goValue().toString())) {
+                            panics.incrementAndGet();
+                        } else {
+                            error.compareAndSet(null, "unexpected panic: " + pe.goValue());
+                        }
+                    } finally {
+                        done.set(true);
+                    }
                 });
-                idx.set(i);
-                val.set(ChanOps.selectRecvValue());
-            });
+                waitFor(done::get, "select iteration " + i);
+            }
         });
-        assertEquals(1, idx.get(), "ready case wins over poison");
-        assertEquals(99L, val.get(), "value delivered");
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        assertTrue(panics.get() > 0, "poison never chosen in " + n + " iterations");
+        assertTrue(recvs.get() > 0, "ready case never chosen in " + n + " iterations");
+        assertEquals(n, (long) panics.get() + recvs.get(), "every iteration decided");
     }
 
     /**
