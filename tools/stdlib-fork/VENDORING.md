@@ -97,7 +97,7 @@ Steps:
    - the Plan 9 assembly inventory (P3-M6 asm strategy):
      ```sh
      cd ~/workspace/graalgo
-     python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --goroot <new-goroot>
+     python3 tools/stdlib-fork/gen-asm-inventory.py --goroot <new-goroot>
      ```
      The generator enumerates every `.s`/`.S`/`.sx` file, fails on any
      uncategorized file, and regenerates the JSON inventory, the
@@ -105,7 +105,7 @@ Steps:
      loader enforces. (Update the generator's pinned `VERSION`
      constant to the new release first -- it names the output files.)
      Verify with
-     `python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --check`.
+     `python3 tools/stdlib-fork/gen-asm-inventory.py --check`.
      Skipping this step leaves the loader enforcing the OLD
      version-pinned inventory: every new `.s` file fails the build as
      uncategorized.
