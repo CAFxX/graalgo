@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"unicode"
+	"unicode/utf8"
 )
 
 func init() {
@@ -81,15 +83,17 @@ func runTests(pass *Pass) []Diagnostic {
 		}
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
+			if !ok || fn.Recv != nil {
 				continue
 			}
 			name := fn.Name.Name
-			if len(name) < 4 || name[:4] != "Test" {
+			// TestMain is checked separately below; helpers the testing
+			// framework would not run (e.g. Testhelper) are ignored.
+			if name == "TestMain" || !isTestName(name) {
 				continue
 			}
-			// TestXxx must take *testing.T.
-			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+			// TestXxx must take one *testing.T parameter.
+			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) > 1 {
 				out = append(out, Diagnostic{
 					pass.position(fn),
 					"Test functions must take one *testing.T parameter",
@@ -97,28 +101,70 @@ func runTests(pass *Pass) []Diagnostic {
 				continue
 			}
 			param := fn.Type.Params.List[0]
-			tv, ok := pass.Info.Types[param.Type]
-			if !ok || tv.Type == nil || tv.Type.String() != "*testing.T" {
+			if !isTestingParam(pass, param.Type, "T") {
 				out = append(out, Diagnostic{
 					pass.position(fn),
 					"Test functions must take *testing.T",
 				})
 			}
 		}
-		// Check TestMain signature.
+		// Check TestMain signature: func TestMain(m *testing.M).
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != "TestMain" {
+			if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" {
 				continue
 			}
-			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 || len(fn.Type.Params.List[0].Names) > 1 {
 				out = append(out, Diagnostic{
 					pass.position(fn),
 					"TestMain must take one *testing.M parameter",
+				})
+				continue
+			}
+			if !isTestingParam(pass, fn.Type.Params.List[0].Type, "M") {
+				out = append(out, Diagnostic{
+					pass.position(fn),
+					"TestMain must take *testing.M",
 				})
 			}
 		}
 	}
 	_ = token.NoPos
 	return out
+}
+
+// isTestName mirrors cmd/go's isTest (cmd/go/internal/load/test.go): a
+// Test function is one the testing framework would run — the name is
+// "Test", or "Test" followed by a character that is not a lower-case
+// letter. Testhelper and friends are helpers, not tests.
+func isTestName(name string) bool {
+	if len(name) < 4 || name[:4] != "Test" {
+		return false
+	}
+	if len(name) == 4 { // "Test" is ok
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(name[4:])
+	return !unicode.IsLower(r)
+}
+
+// isTestingParam reports whether expr denotes *testing.X (X = "T" or "M").
+// Type info is used when available; otherwise the syntactic *X / *.X shape
+// is checked, mirroring cmd/go's isTestFunc, which cannot assume the import
+// name. A missing type with a non-pointer shape is not a match.
+func isTestingParam(pass *Pass, expr ast.Expr, want string) bool {
+	if tv, ok := pass.Info.Types[expr]; ok && tv.Type != nil {
+		return tv.Type.String() == "*testing."+want
+	}
+	ptr, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	if id, ok := ptr.X.(*ast.Ident); ok {
+		return id.Name == want
+	}
+	if sel, ok := ptr.X.(*ast.SelectorExpr); ok {
+		return sel.Sel.Name == want
+	}
+	return false
 }

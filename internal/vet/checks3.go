@@ -93,32 +93,40 @@ func isValidErrorsAsTarget(t types.Type) bool {
 }
 
 // unmarshal checks that values passed to encoding/json.Unmarshal,
-// encoding/xml.Unmarshal, etc. are pointers (or maps/slices/interfaces).
+// encoding/xml.Unmarshal, etc. are pointers (or maps/slices/interfaces),
+// and likewise for the value passed to (json|xml|gob).Decoder.Decode.
 func runUnmarshal(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	unmarshalFuncs := []struct{ pkg, name string }{
 		{"encoding/json", "Unmarshal"},
 		{"encoding/xml", "Unmarshal"},
-		{"encoding/gob", "NewDecoder"},
 	}
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 2 {
+			if !ok {
 				return true
 			}
-			isUnmarshal := false
-			for _, uf := range unmarshalFuncs {
-				if pass.isPkgFunc(call, uf.pkg, uf.name) {
-					isUnmarshal = true
-					break
+			var v ast.Expr
+			what := ""
+			// encoding/json.Unmarshal(data, v) / encoding/xml.Unmarshal(data, v).
+			if len(call.Args) >= 2 {
+				for _, uf := range unmarshalFuncs {
+					if pass.isPkgFunc(call, uf.pkg, uf.name) {
+						v = call.Args[1]
+						what = "Unmarshal"
+						break
+					}
 				}
 			}
-			if !isUnmarshal {
+			// (json|xml|gob).Decoder.Decode(v).
+			if v == nil && len(call.Args) >= 1 && isDecoderDecode(pass, call) {
+				v = call.Args[0]
+				what = "Decode"
+			}
+			if v == nil {
 				return true
 			}
-			// Second arg (the value) should be a pointer.
-			v := call.Args[1]
 			tv, ok := pass.Info.Types[v]
 			if !ok || tv.Type == nil {
 				return true
@@ -131,12 +139,46 @@ func runUnmarshal(pass *Pass) []Diagnostic {
 			}
 			out = append(out, Diagnostic{
 				pass.position(v),
-				"unmarshal: passing non-pointer value to Unmarshal",
+				"unmarshal: passing non-pointer value to " + what,
 			})
 			return true
 		})
 	}
 	return out
+}
+
+// isDecoderDecode reports whether call is a Decode method on a json, xml
+// or gob Decoder: dec.Decode(v) where dec is a *Decoder from
+// encoding/json, encoding/xml or encoding/gob.
+func isDecoderDecode(pass *Pass, call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Decode" {
+		return false
+	}
+	var recv types.Type
+	if tv, ok := pass.Info.Types[sel.X]; ok && tv.Type != nil {
+		recv = tv.Type
+	} else if s := pass.Info.Selections[sel]; s != nil {
+		recv = s.Recv()
+	}
+	if recv == nil {
+		return false
+	}
+	if p, ok := recv.(*types.Pointer); ok {
+		recv = p.Elem()
+	}
+	named, ok := recv.(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return false
+	}
+	if named.Obj().Name() != "Decoder" {
+		return false
+	}
+	switch named.Obj().Pkg().Path() {
+	case "encoding/json", "encoding/xml", "encoding/gob":
+		return true
+	}
+	return false
 }
 
 // unusedresult checks for unused results of calls to pure functions
@@ -226,6 +268,10 @@ func runTimeFormat(pass *Pass) []Diagnostic {
 			if pass.isPkgFunc(call, "time", "Parse") && len(call.Args) >= 2 {
 				layoutArg = call.Args[0]
 			}
+			// time.ParseInLocation(layout, value, loc)
+			if pass.isPkgFunc(call, "time", "ParseInLocation") && len(call.Args) >= 2 {
+				layoutArg = call.Args[0]
+			}
 			if layoutArg == nil {
 				return true
 			}
@@ -251,6 +297,10 @@ func runTimeFormat(pass *Pass) []Diagnostic {
 }
 
 func isTimeType(t types.Type) bool {
+	// Unwrap *time.Time: methods are callable on pointer receivers too.
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
 	named, ok := t.(*types.Named)
 	if !ok {
 		return false
@@ -351,24 +401,34 @@ func runSlog(pass *Pass) []Diagnostic {
 				return true
 			}
 			// Check if it's log/slog.
-			isSlog := false
+			var slogFn *types.Func
 			if obj := pass.Info.Uses[sel.Sel]; obj != nil {
-				if fn, ok := obj.(*types.Func); ok && fn.Pkg() != nil {
-					isSlog = fn.Pkg().Path() == "log/slog"
+				if fn, ok := obj.(*types.Func); ok && fn.Pkg() != nil && fn.Pkg().Path() == "log/slog" {
+					slogFn = fn
 				}
 			}
-			if !isSlog {
+			if slogFn == nil {
 				return true
 			}
-			// Args after msg should be key-value pairs.
-			// For *Context variants, first arg is ctx.
-			args := call.Args
-			start := 1 // skip msg
-			if strings.HasSuffix(sel.Sel.Name, "Context") {
-				start = 2 // skip ctx, msg
+			// Args after the last fixed parameter should be key-value pairs.
+			// Derive the skip from the resolved signature: the variadic
+			// `args ...any` parameter marks where key-value pairs begin.
+			// This handles package funcs (Info(msg, args...)), *Context
+			// variants (InfoContext(ctx, msg, args...)), Log
+			// (Log(ctx, level, msg, args...)) and *Logger methods uniformly
+			// — the method and package forms of a name differ in their fixed
+			// prefix, so a name-based table cannot be right for both.
+			skip := false
+			start := slogKVStart(slogFn, sel.Sel.Name, &skip)
+			if skip {
+				return true // e.g. LogAttrs takes attrs, not pairs
 			}
-			if sel.Sel.Name == "LogAttrs" {
-				return true // takes attrs, not pairs
+			// Too few args for any key-value pairs: nothing to check
+			// (the call is invalid Go; the compiler reports it). Without
+			// this guard args[start:] panics on short calls.
+			args := call.Args
+			if len(args) <= start {
+				return true
 			}
 			rest := args[start:]
 			if len(rest)%2 != 0 {
@@ -395,4 +455,40 @@ func runSlog(pass *Pass) []Diagnostic {
 		})
 	}
 	return out
+}
+
+// slogKVStart returns the index of the first key-value-pair argument for a
+// log/slog call, derived from the resolved function's signature: the index
+// of the variadic `args ...any` parameter. It reports skip=true for
+// functions whose variadic parameter is not `...any` (LogAttrs takes
+// `...Attr`). When type info is unavailable (fn == nil) it falls back to
+// the name-based table: 1 (msg), 2 for *Context variants (ctx, msg),
+// 3 for Log (ctx, level, msg).
+func slogKVStart(fn *types.Func, name string, skip *bool) int {
+	if fn != nil {
+		if sig, ok := fn.Type().(*types.Signature); ok && sig.Variadic() {
+			params := sig.Params()
+			last := params.At(params.Len() - 1)
+			if slice, ok := last.Type().(*types.Slice); ok {
+				if iface, ok := slice.Elem().Underlying().(*types.Interface); ok && iface.Empty() {
+					return params.Len() - 1
+				}
+				*skip = true
+				return 0
+			}
+		}
+	}
+	// Fallback: name-based table.
+	if name == "LogAttrs" {
+		*skip = true
+		return 0
+	}
+	start := 1 // skip msg
+	if strings.HasSuffix(name, "Context") {
+		start = 2 // skip ctx, msg
+	}
+	if name == "Log" {
+		start = 3 // skip ctx, level, msg
+	}
+	return start
 }

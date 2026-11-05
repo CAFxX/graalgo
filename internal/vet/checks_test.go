@@ -131,18 +131,35 @@ func f(err error) {
 func TestUnmarshal(t *testing.T) {
 	src := `package main
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/gob"
+	"encoding/json"
+)
 
 func f(data []byte) {
 	var m map[string]interface{}
 	json.Unmarshal(data, &m) // good: pointer
 	var s struct{ X int }
 	json.Unmarshal(data, s) // bad: non-pointer
+	var d struct{ X int }
+	json.NewDecoder(bytes.NewReader(data)).Decode(d) // bad: non-pointer Decode
+	var e struct{ X int }
+	_ = json.NewDecoder(bytes.NewReader(data)).Decode(&e) // good: pointer Decode
+	var g struct{ Y int }
+	_ = gob.NewDecoder(bytes.NewReader(data)).Decode(g) // bad: non-pointer gob Decode
+	var h struct{ Y int }
+	_ = gob.NewDecoder(bytes.NewReader(data)).Decode(&h) // good: pointer gob Decode
 }
 `
 	joined := runVetOnSrc(t, src)
 	if !strings.Contains(joined, "non-pointer") {
 		t.Errorf("expected unmarshal diagnostic, got:\n%s", joined)
+	}
+	// One diagnostic per bad call: Unmarshal, json Decode, gob Decode.
+	count := strings.Count(joined, "non-pointer")
+	if count != 3 {
+		t.Errorf("expected exactly 3 unmarshal diagnostics, got %d:\n%s", count, joined)
 	}
 }
 
@@ -173,16 +190,19 @@ func TestTimeFormat(t *testing.T) {
 
 import "time"
 
-func f(t time.Time) {
+func f(t time.Time, pt *time.Time) {
 	_ = t.Format("2006-02-01") // bad
 	_ = t.Format("2006-01-02") // good
 	_, _ = time.Parse("2006-02-01", "x") // bad
+	_, _ = time.ParseInLocation("2006-02-01", "x", time.UTC) // bad
+	_ = pt.Format("2006-02-01") // bad: *time.Time receiver
+	_ = pt.Format("2006-01-02") // good
 }
 `
 	joined := runVetOnSrc(t, src)
 	count := strings.Count(joined, "2006-02-01 should be 2006-01-02")
-	if count != 2 {
-		t.Errorf("expected 2 timeformat diagnostics, got %d:\n%s", count, joined)
+	if count != 4 {
+		t.Errorf("expected 4 timeformat diagnostics, got %d:\n%s", count, joined)
 	}
 }
 
@@ -285,12 +305,21 @@ func g(s Stringer) {
 func TestSlog(t *testing.T) {
 	src := `package main
 
-import "log/slog"
+import (
+	"context"
+	"log/slog"
+)
 
-func f() {
+func f(ctx context.Context, l *slog.Logger) {
 	slog.Info("hello", "key", "value") // good
 	slog.Info("hello", "key")          // bad: odd args
 	slog.Info("hello", 123, "value")   // bad: non-string key
+	slog.Log(ctx, slog.LevelInfo, "hello", "key", "value") // good: Log skips ctx, level, msg
+	slog.Log(ctx, slog.LevelInfo, "hello", "key")          // bad: odd args
+	slog.Log(ctx, slog.LevelInfo, "hello", 123, "value")   // bad: non-string key
+	l.Info("hello", "key", "value") // good: Logger method Info takes msg, args
+	l.Log(ctx, slog.LevelInfo, "hello", "key", "value") // good: Logger method Log takes ctx, level, msg, args
+	l.Info("hello", "key")         // bad: odd args (method)
 }
 `
 	joined := runVetOnSrc(t, src)
@@ -299,6 +328,102 @@ func f() {
 	}
 	if !strings.Contains(joined, "should be a string") {
 		t.Errorf("expected slog key diagnostic, got:\n%s", joined)
+	}
+	// Bad calls: Info odd, Log odd, method Info odd (3); Info key, Log key (2).
+	// The good Log / Logger-method calls must not add any.
+	if n := strings.Count(joined, "odd number"); n != 3 {
+		t.Errorf("expected exactly 3 slog odd-args diagnostics, got %d:\n%s", n, joined)
+	}
+	if n := strings.Count(joined, "should be a string"); n != 2 {
+		t.Errorf("expected exactly 2 slog key diagnostics, got %d:\n%s", n, joined)
+	}
+}
+
+// TestSlogShortCalls guards the arg-slicing in runSlog: calls with fewer
+// args than the skipped prefix (invalid Go, but the analyzer runs on
+// best-effort type info) must not panic the analyzer.
+func TestSlogShortCalls(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f(ctx context.Context) {
+	slog.Info()
+	slog.Log(ctx)
+	slog.Log(ctx, slog.LevelInfo)
+}
+`
+	joined := runVetOnSrc(t, src)
+	if strings.Contains(joined, "slog") {
+		t.Errorf("unexpected slog diagnostic on short calls:\n%s", joined)
+	}
+}
+
+// TestTestsAnalyzer covers the tests analyzer, which only fires on
+// _test.go files: valid TestMain and Test funcs must be clean, wrong
+// signatures must be flagged, and Test-prefixed helpers the testing
+// framework would not run must be ignored.
+func TestTestsAnalyzer(t *testing.T) {
+	src := `package main
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestFoo(t *testing.T) {
+	t.Log("ok")
+}
+
+func Testhelper(t *testing.T) {
+	t.Log("helper, not run by go test")
+}
+
+func TestBad() {
+}
+
+func TestBadType(x int) {
+}
+
+// TestMainWrongType is NOT a TestMain: go test runs it as an ordinary test
+// (the rune after "Test" is uppercase), and its *testing.T param is correct,
+// so it must not be flagged.
+func TestMainWrongType(m *testing.T) {
+}
+`
+	joined := runVetOnModule(t, "", map[string]string{"foo_test.go": src})
+	// Valid TestMain / TestFoo / Testhelper / TestMainWrongType must not be flagged.
+	if strings.Count(joined, "Test functions must take one *testing.T parameter") != 1 {
+		t.Errorf("expected exactly 1 wrong-arity diagnostic (TestBad), got:\n%s", joined)
+	}
+	if strings.Count(joined, "Test functions must take *testing.T") != 1 {
+		t.Errorf("expected exactly 1 wrong-type diagnostic (TestBadType), got:\n%s", joined)
+	}
+	if strings.Contains(joined, "TestMain must") {
+		t.Errorf("false positive on valid TestMain:\n%s", joined)
+	}
+}
+
+// TestTestMainBad covers wrong TestMain signatures: the second loop in
+// runTests must flag them (arity and param type).
+func TestTestMainBad(t *testing.T) {
+	src := `package main
+
+import "testing"
+
+func TestMain() {
+}
+`
+	joined := runVetOnModule(t, "", map[string]string{"bad_test.go": src})
+	if !strings.Contains(joined, "TestMain must take one *testing.M parameter") {
+		t.Errorf("expected TestMain arity diagnostic, got:\n%s", joined)
 	}
 }
 
