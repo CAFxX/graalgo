@@ -49,8 +49,8 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 An explicit `--src` always wins. There are no silent fallbacks: every
 resolution announces where the tree came from.
 
-Not wired into any `make` target: run `stdlib-excl validate` directly
-(build with `go build` in this directory).
+Wired into the `check` target of `internal/backend/interop/Makefile` (stdlib exclusion-list gate, P3-M6), invoked with an explicit `--list`, so it does not depend on the default path.
+Run `stdlib-excl validate` directly (build with `go build` in this directory) for ad-hoc use.
 
 ## measure
 
