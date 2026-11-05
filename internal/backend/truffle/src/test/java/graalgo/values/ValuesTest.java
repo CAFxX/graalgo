@@ -144,6 +144,39 @@ public final class ValuesTest {
         assertEq(1, fm.size(), "NaN key still stored");
     }
 
+    public void testGoMapIterationOrderVaries() {
+        // Go spec: map iteration order is unspecified; gc randomizes it per
+        // iteration. GoMap.keysSnapshot() Fisher-Yates-shuffles the snapshot,
+        // so repeated snapshots of the same map must show more than one
+        // order (8 keys, 50 snapshots: P(all identical) = (1/8!)^49).
+        // The shuffle is a permutation: every snapshot still holds exactly
+        // the key set, once each.
+        GoMap m = new GoMap();
+        String[] keys = {"a", "b", "c", "d", "e", "f", "g", "h"};
+        for (String k : keys) {
+            m.put(GoString.fromUtf8(k), 1L);
+        }
+        java.util.Set<String> orders = new java.util.HashSet<>();
+        for (int i = 0; i < 50; i++) {
+            Object[] snap = m.keysSnapshot();
+            assertEq(8, snap.length, "snapshot length");
+            StringBuilder sb = new StringBuilder();
+            for (Object k : snap) {
+                sb.append(((GoString) k).toString());
+            }
+            orders.add(sb.toString());
+            Object[] sorted = snap.clone();
+            Arrays.sort(sorted, (a, b) -> ((GoString) a).compareTo((GoString) b));
+            StringBuilder ssb = new StringBuilder();
+            for (Object k : sorted) {
+                ssb.append(((GoString) k).toString());
+            }
+            assertTrue("abcdefgh".equals(ssb.toString()), "snapshot is a permutation of the key set");
+        }
+        assertTrue(orders.size() >= 2,
+                "iteration order varied: " + orders.size() + " distinct orders in 50 snapshots");
+    }
+
     public void testGoStruct() {
         GoStructDescriptor d = GoStructDescriptor.layout("T",
                 List.of("a", "b", "s"), List.of(GoKind.INT32, GoKind.STRING, GoKind.BOOL));

@@ -114,11 +114,21 @@ public final class GoMap {
     }
 
     /**
-     * Snapshot of the present keys, in table order. Used by range-over-map:
-     * entries deleted mid-iteration are skipped by re-checking
-     * {@link #containsKey} at production time (Go spec: a not-yet-reached
-     * entry removed during iteration is not produced); entries created
-     * mid-iteration are never produced (the spec permits skipping them).
+     * Snapshot of the present keys, Fisher-Yates-shuffled. Used by range-over-map
+     * (and the reflect/sync.Map iterators, which share this path): entries
+     * deleted mid-iteration are skipped by re-checking {@link #containsKey} at
+     * production time (Go spec: a not-yet-reached entry removed during iteration
+     * is not produced); entries created mid-iteration are never produced (the
+     * spec permits skipping them).
+     *
+     * <p>The shuffle is the iteration-order fix: the Go spec leaves map
+     * iteration order unspecified and gc randomizes it per iteration, while
+     * the table layout is a pure function of insertion order and the
+     * deterministic {@link GoEquality#hash} — without it, every iteration of
+     * the same map would produce the same (table) order. The shuffle uses
+     * {@link java.util.concurrent.ThreadLocalRandom} (per-thread seeded from
+     * system entropy), the same source as the uniform random choice in
+     * {@code graalgo.runtime.SelectOp}; it is O(n) with no extra allocation.
      */
     public Object[] keysSnapshot() {
         Object[] out = new Object[size];
@@ -127,6 +137,17 @@ public final class GoMap {
             if (states[i] == OCCUPIED) {
                 out[j++] = keys[i];
             }
+        }
+        // Fisher-Yates shuffle: a uniform random permutation, so the
+        // iteration order varies per call (Go spec: unspecified; gc
+        // randomizes per iteration). No-op for 0/1-element snapshots.
+        java.util.concurrent.ThreadLocalRandom rng =
+                java.util.concurrent.ThreadLocalRandom.current();
+        for (int i = out.length - 1; i > 0; i--) {
+            int k = rng.nextInt(i + 1);
+            Object tmp = out[i];
+            out[i] = out[k];
+            out[k] = tmp;
         }
         return out;
     }
