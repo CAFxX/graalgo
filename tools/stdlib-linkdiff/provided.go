@@ -9,18 +9,27 @@ package main
 // Sources (see README.md § "Provided set"):
 //  1. internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
 //     Linknames.register("symbol", ...) calls (Go→intrinsic direction).
-//  2. internal/frontend/p3frontend/importer.go — syntheticRuntimePackage,
-//     syntheticFmtPackage, syntheticSyncPackage, syntheticAtomicPackage,
-//     plus the package-level syncMethodSpecs var and the
-//     syncLockerInterface function.
-//  3. internal/frontend/p3frontend/synth_time_context.go —
+//  2. internal/frontend/p3frontend/synth_time_context.go —
 //     syntheticTimePackage, syntheticContextPackage.
-//  4. internal/frontend/synth_time_context.go — syntheticTimeSource /
+//  3. internal/frontend/synth_time_context.go — syntheticTimeSource /
 //     syntheticContextSource embedded Go sources (normative; the
-//     p3frontend mirrors of (3) pin them via signature-equality tests).
-//  5. M10: every embedded synthetic package in the syntheticSources
+//     p3frontend mirrors of (2) pin them via signature-equality tests).
+//  4. M10: every embedded synthetic package in the syntheticSources
 //     registry (internal/frontend/synth_machinery.go) — exported
 //     symbols qualified by import path (see synth.go).
+//
+// NOT a source: the p3frontend fmt/sync/sync-atomic/runtime mirrors
+// were retired (REVIEW-2026-11-05-11) — fmt, sync and sync/atomic now
+// compile from GOROOT via the disk importer, so no synthetic source
+// provides them (same precedent as reflect/net/http, see
+// TestProvidedExtraction). The live runtime stub
+// (internal/frontend/export.go syntheticRuntimePackage) is likewise not
+// extracted. Consequence, measured 2026-11-05 against the vendored
+// go1.27.1 tree: exactly three scanned linknames flip SATISFIED to
+// MISSING — sync/atomic.{CompareAndSwap,Store,Swap}Uintptr from the
+// shadowed runtime/atomic_pointer.go (shadowed-only bucket; the live
+// MISSING count is unchanged). They ARE provided by real sync/atomic
+// from disk; the tool just has no source that says so.
 //
 // Symbol forms: path.Name (func/var/const/type), path.Type.Method
 // (value-receiver or interface method), path.(*Type).Method
@@ -76,10 +85,10 @@ func loadProvided(o options) (*ProvidedSet, error) {
 		"graalgo", "p3link", "LinknameIntrinsics.java")); err != nil {
 		return nil, err
 	}
+	// Only synth_time_context.go is extracted: importer.go no longer
+	// defines any synthetic-package builder (its fmt/sync/sync-atomic/
+	// runtime mirrors were retired — see the header comment).
 	p3fe := filepath.Join(o.graalgo, "internal", "frontend", "p3frontend")
-	if err := p.extractP3FrontendFile(filepath.Join(p3fe, "importer.go")); err != nil {
-		return nil, err
-	}
 	if err := p.extractP3FrontendFile(filepath.Join(p3fe, "synth_time_context.go")); err != nil {
 		return nil, err
 	}
@@ -126,11 +135,11 @@ func (p *ProvidedSet) extractRegistry(path string) error {
 
 // synthFuncToPkg maps synthetic-package builder function names to the
 // import path of the package they synthesize.
+// synthFuncToPkg maps synthetic-package builder function names to the
+// import path of the package they synthesize. Only time/context remain:
+// the runtime/fmt/sync/sync-atomic builders were deleted with the
+// fmt/sync retirement (REVIEW-2026-11-05-11).
 var synthFuncToPkg = map[string]string{
-	"syntheticRuntimePackage": "runtime",
-	"syntheticFmtPackage":     "fmt",
-	"syntheticSyncPackage":    "sync",
-	"syntheticAtomicPackage":  "sync/atomic",
 	"syntheticTimePackage":    "time",
 	"syntheticContextPackage": "context",
 }
@@ -141,8 +150,9 @@ func isExported(name string) bool {
 }
 
 // extractP3FrontendFile extracts synthetic package surfaces from one
-// p3frontend Go source file: the synthetic*Package builders, the
-// package-level syncMethodSpecs var, and syncLockerInterface.
+// p3frontend Go source file: the synthetic*Package builders in
+// synthFuncToPkg (time/context only — the runtime/fmt/sync/
+// sync-atomic builders were deleted with the fmt/sync retirement).
 func (p *ProvidedSet) extractP3FrontendFile(path string) error {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
@@ -152,36 +162,18 @@ func (p *ProvidedSet) extractP3FrontendFile(path string) error {
 	base := filepath.Base(path)
 	found := false
 	for _, decl := range f.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			pkgPath, ok := synthFuncToPkg[d.Name.Name]
-			if !ok || d.Body == nil {
-				if d.Name.Name == "syncLockerInterface" && d.Body != nil {
-					found = true
-					p.extractLockerInterface(d.Body,
-						"synthetic \"sync\": p3frontend/"+base+" syncLockerInterface()")
-				}
-				continue
-			}
-			found = true
-			x := newSynthExtractor(pkgPath,
-				fmt.Sprintf("synthetic %q: p3frontend/%s %s()", pkgPath, base, d.Name.Name), p)
-			x.run(d.Body)
-		case *ast.GenDecl:
-			if d.Tok != token.VAR {
-				continue
-			}
-			for _, spec := range d.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "syncMethodSpecs" ||
-					len(vs.Values) != 1 {
-					continue
-				}
-				found = true
-				p.extractSyncMethodSpecs(vs.Values[0],
-					"synthetic \"sync\": p3frontend/"+base+" syncMethodSpecs")
-			}
+		d, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
 		}
+		pkgPath, ok := synthFuncToPkg[d.Name.Name]
+		if !ok || d.Body == nil {
+			continue
+		}
+		found = true
+		x := newSynthExtractor(pkgPath,
+			fmt.Sprintf("synthetic %q: p3frontend/%s %s()", pkgPath, base, d.Name.Name), p)
+		x.run(d.Body)
 	}
 	if !found {
 		return fmt.Errorf("%s: no synthetic package surface found (source drift?)", path)
@@ -189,83 +181,19 @@ func (p *ProvidedSet) extractP3FrontendFile(path string) error {
 	return nil
 }
 
-// extractSyncMethodSpecs extracts type->method names from the
-// package-level syncMethodSpecs map literal. Methods are
-// pointer-receiver (the builder uses types.NewPointer receivers).
-func (p *ProvidedSet) extractSyncMethodSpecs(e ast.Expr, prov string) {
-	lit, ok := e.(*ast.CompositeLit)
-	if !ok {
-		return
-	}
-	for _, el := range lit.Elts {
-		kv, ok := el.(*ast.KeyValueExpr)
-		if !ok {
-			continue
-		}
-		key, ok := kv.Key.(*ast.BasicLit)
-		if !ok || key.Kind != token.STRING {
-			continue
-		}
-		tname, err := strconv.Unquote(key.Value)
-		if err != nil || !isExported(tname) {
-			continue
-		}
-		p.add("sync."+tname, prov+" type")
-		vl, ok := kv.Value.(*ast.CompositeLit)
-		if !ok {
-			continue
-		}
-		for _, mel := range vl.Elts {
-			mc, ok := mel.(*ast.CompositeLit)
-			if !ok || len(mc.Elts) == 0 {
-				continue
-			}
-			mn, ok := mc.Elts[0].(*ast.BasicLit)
-			if !ok || mn.Kind != token.STRING {
-				continue
-			}
-			mname, err := strconv.Unquote(mn.Value)
-			if err != nil || !isExported(mname) {
-				continue
-			}
-			p.add("sync.(*"+tname+")."+mname, prov+" method")
-		}
-	}
-}
-
-// extractLockerInterface extracts the Lock/Unlock methods of the
-// synthesized sync.Locker interface.
-func (p *ProvidedSet) extractLockerInterface(body *ast.BlockStmt, prov string) {
-	p.add("sync.Locker", prov+" type")
-	var methods []string
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || callExprFun(call) != "types.NewFunc" {
-			return true
-		}
-		if name := nameArg(call, 2); name != "" && isExported(name) {
-			methods = append(methods, name)
-		}
-		return true
-	})
-	for _, m := range methods {
-		p.add("sync.Locker."+m, prov+" interface method")
-	}
-}
-
 // synthExtractor accumulates one synthetic package's surface from the
 // AST of its builder function body.
 type synthExtractor struct {
-	pkg string
-	out *ProvidedSet
+	pkg  string
+	out  *ProvidedSet
 	prov string
 
-	typeNameOf    map[string]string   // var -> T from v := types.NewTypeName(...,"T",...)
+	typeNameOf     map[string]string   // var -> T from v := types.NewTypeName(...,"T",...)
 	namedOf        map[string]string   // var -> T from v := types.NewNamed(w,...), w->T
 	listOf         map[string][]string // var -> methods from v := []*types.Func{...}
 	fieldsOf       map[string][]string // var -> names from v := []struct{ name string ... }{...}
 	wrapperOf      map[string]string   // var -> T from v := newWrapper("T")
-	rangeSrc       map[string]string   // range var -> ranged var, for _, v := range X
+	rangeSrc       map[string]string   // range var -> ranged var, for _, v := range X (prepass fallback; the walk threads the binding via walkCtx.rangeVars)
 	ifaceListOf    map[string]string   // named var -> []*types.Func list var (interfaces)
 	fiveOpsTypes   []string            // newWrapper("T") types passed to fiveOps(...)
 	fiveOpsMethods []string            // method names added inside the fiveOps closure
@@ -434,6 +362,11 @@ type walkCtx struct {
 	inAddMethod bool // inside an X.AddMethod(...) call
 	inFuncList  bool // inside a []*types.Func{...} literal
 	inFiveOps   bool // inside the fiveOps closure body
+	// rangeVars binds range variables to the table they range over,
+	// for the enclosing range statement only (see walk's RangeStmt
+	// case). It shadows the prepass's global rangeSrc, which is only
+	// a fallback for shapes the walk does not thread.
+	rangeVars map[string]string
 }
 
 // walk extracts package members and methods with ancestor context.
@@ -453,6 +386,33 @@ func (x *synthExtractor) walk(n ast.Node, ctx walkCtx) {
 		if ctx.inFiveOps {
 			return
 		}
+	case *ast.RangeStmt:
+		// Range context: `for _, v := range X` binds v to X for the
+		// loop body only. The prepass's global rangeSrc (keyed by var
+		// name) is wrong when two loops share a var name — the time
+		// mirror ranges durationMethods and timeMethods both as `m`,
+		// so the last loop won and the first loop's method names
+		// resolved against the wrong table (every table-driven Time
+		// method was attributed to time.Duration). Thread the binding
+		// through the walk context instead (shadowing-safe: a nested
+		// loop reusing the var name shadows within its own body).
+		child := ctx
+		if s.Tok == token.DEFINE {
+			if v, ok := s.Value.(*ast.Ident); ok {
+				if tab, ok := s.X.(*ast.Ident); ok {
+					child.rangeVars = make(map[string]string, len(ctx.rangeVars)+1)
+					for k, val := range ctx.rangeVars {
+						child.rangeVars[k] = val
+					}
+					child.rangeVars[v.Name] = tab.Name
+				}
+			}
+		}
+		x.walk(s.Key, ctx)
+		x.walk(s.Value, ctx)
+		x.walk(s.X, ctx)
+		x.walk(s.Body, child)
+		return
 	}
 	// Detect the fiveOps closure assignment and map-index value sets.
 	if as, ok := n.(*ast.AssignStmt); ok {
@@ -464,7 +424,8 @@ func (x *synthExtractor) walk(n ast.Node, ctx walkCtx) {
 				}
 			}
 			// nm := map[K]string{k1: "S1", ...}[k] — value set for
-			// "Prefix"+nm name construction (syntheticAtomicPackage).
+			// "Prefix"+nm name construction (pattern formerly used by
+			// the retired syntheticAtomicPackage builder).
 			if id, ok := as.Lhs[0].(*ast.Ident); ok {
 				if idx, ok := as.Rhs[0].(*ast.IndexExpr); ok {
 					if ml, ok := idx.X.(*ast.CompositeLit); ok {
@@ -580,7 +541,7 @@ func (x *synthExtractor) walkCall(call *ast.CallExpr, ctx walkCtx) {
 	// Method definitions: X.AddMethod(...) or addMethod(x, "M", ...).
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "AddMethod" {
 		recv, _ := identName(sel.X)
-		x.methodCall(recv, call)
+		x.methodCall(recv, call, ctx)
 		return
 	}
 	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "addMethod" && !ctx.inFiveOps {
@@ -607,7 +568,7 @@ func (x *synthExtractor) walkCall(call *ast.CallExpr, ctx walkCtx) {
 			x.out.add(x.pkg+"."+name, x.prov)
 		} else if sel, ok := nameSelector(call, 2); ok {
 			// c.name / m.name over a ranged []struct{name...} literal.
-			for _, name := range x.selectorNames(sel) {
+			for _, name := range x.selectorNames(sel, ctx) {
 				if isExported(name) {
 					x.out.add(x.pkg+"."+name, x.prov)
 				}
@@ -658,7 +619,7 @@ func (x *synthExtractor) callNameSet(call *ast.CallExpr) []string {
 }
 
 // methodCall records methods from X.AddMethod(types.NewFunc(..., name, ...)).
-func (x *synthExtractor) methodCall(recv string, call *ast.CallExpr) {
+func (x *synthExtractor) methodCall(recv string, call *ast.CallExpr, ctx walkCtx) {
 	if len(call.Args) == 0 {
 		return
 	}
@@ -673,7 +634,7 @@ func (x *synthExtractor) methodCall(recv string, call *ast.CallExpr) {
 	if t == "" || !isExported(t) {
 		return
 	}
-	for _, m := range x.newFuncNames(nf) {
+	for _, m := range x.newFuncNames(nf, ctx) {
 		if !isExported(m) {
 			continue
 		}
@@ -687,7 +648,7 @@ func (x *synthExtractor) methodCall(recv string, call *ast.CallExpr) {
 
 // newFuncNames resolves the name argument of types.NewFunc: a string
 // literal, or a v.name selector over a ranged []struct{name...} list.
-func (x *synthExtractor) newFuncNames(nf *ast.CallExpr) []string {
+func (x *synthExtractor) newFuncNames(nf *ast.CallExpr, ctx walkCtx) []string {
 	if len(nf.Args) < 3 {
 		return nil
 	}
@@ -700,15 +661,20 @@ func (x *synthExtractor) newFuncNames(nf *ast.CallExpr) []string {
 		}
 	case *ast.SelectorExpr:
 		if id, ok := a.X.(*ast.Ident); ok {
-			return x.selectorNames(id.Name)
+			return x.selectorNames(id.Name, ctx)
 		}
 	}
 	return nil
 }
 
 // selectorNames resolves `v.name` where `for _, v := range X` and X is
-// a recorded []struct{name...} literal.
-func (x *synthExtractor) selectorNames(v string) []string {
+// a recorded []struct{name...} literal. The enclosing range's binding
+// (walkCtx.rangeVars) wins; the prepass's global rangeSrc is only a
+// fallback for shapes the walk does not thread.
+func (x *synthExtractor) selectorNames(v string, ctx walkCtx) []string {
+	if src, ok := ctx.rangeVars[v]; ok {
+		return x.fieldsOf[src]
+	}
 	if src, ok := x.rangeSrc[v]; ok {
 		return x.fieldsOf[src]
 	}
@@ -784,11 +750,22 @@ func methodIsPointer(nf *ast.CallExpr) bool {
 		return false
 	}
 	recv, ok := sig.Args[0].(*ast.CallExpr)
-	if !ok || callExprFun(recv) != "types.NewParam" || len(recv.Args) < 3 {
+	if !ok || callExprFun(recv) != "types.NewParam" || len(recv.Args) == 0 {
 		return false
 	}
-	if id, ok := recv.Args[2].(*ast.Ident); ok {
+	// The receiver TYPE is NewParam's last argument (pos, pkg, name,
+	// type): a *Ptr-suffixed ident (timerPtr — pointer vars are named
+	// *Ptr by convention) or an inline types.NewPointer(...) call.
+	// (The old code read Args[2], the NAME — always "" for method
+	// receivers — so it always returned false and every AddMethod
+	// method was emitted in value form, e.g. time.Timer.Stop for the
+	// pointer-receiver Stop.)
+	typ := recv.Args[len(recv.Args)-1]
+	if id, ok := typ.(*ast.Ident); ok {
 		return strings.HasSuffix(id.Name, "Ptr")
+	}
+	if call, ok := typ.(*ast.CallExpr); ok {
+		return callExprFun(call) == "types.NewPointer"
 	}
 	return false
 }

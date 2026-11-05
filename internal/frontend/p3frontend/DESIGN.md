@@ -4,6 +4,15 @@
 this document. Normative parents: `phases/phase3/PLAN.md` §§2–5 (WS A),
 `phases/phase1/INTERFACE_FREEZE.md` (v1, in force), `phases/phase2/DONE-GATES.md`.
 
+**Status update (2026-11-05, REVIEW-2026-11-05-11):** the M1 contract
+below is superseded in one respect — the synthetic `runtime`/`fmt`/
+`sync`/`sync-atomic` mirrors are RETIRED. `fmt`, `sync`,
+`sync/atomic` and `runtime` now type-check from GOROOT source like any
+other stdlib package (general `kindStdlib` → `checkRef` mechanism), the
+"P3-M7+ waves" stdlib scope error is gone, and `TestStdlibScopeError`
+is now the positive `TestStdlibCompilesFromGoroot`. The rest of this
+document (flattening, `ExportDir` flow, `init()` rejection) is unchanged.
+
 ## 1. Problem
 
 `frontend.ExportFile` (frozen, Phase 1) type-checks **one** `.go` file whose
@@ -22,9 +31,10 @@ ExportDir(dir)
   ├─ loader.go    SelectFiles(dir): *.go, no *_test.go, build-tag filtered
   │               ResolveImport(fromDir, path): synthetic | stdlib | module-local
   │               LoadClosure(mainDir): dep-ordered local packages, cycle-checked
-  ├─ importer.go  p3Importer (types.Importer): synthetic runtime/fmt/sync (exact
-  │               frozen signatures, reimplemented); local packages type-checked
-  │               recursively with go/types (cached); stdlib → clear scope error
+  ├─ importer.go  p3Importer (types.Importer): synthetic mirrors
+  │               (time/context/errors/sort/io/… — see §2.2); local AND
+  │               stdlib packages (incl. fmt/sync/runtime) type-checked
+  │               from source recursively with go/types (cached)
   ├─ flatten.go   rename every dep package-level identifier with
   │               p3i_<sha256hex8(importpath)>_; rewrite selectors via go/types
   │               Info.Uses (shadowing-safe); drop dep import specs; emit one
@@ -72,11 +82,15 @@ directory → module root.
 
 **`ResolveImport(fromDir, path) (*PackageRef, error)`** classifies:
 
-- `"runtime"`, `"fmt"`, `"sync"` → synthetic marker (never flattened; the import spec
-  is kept and resolved by the frozen overlay inside `ExportFile`).
+- `"time"`, `"context"`, `"errors"`, `"sort"`, `"bytes"`, `"math"`,
+  `"strings"`, `encoding/*` and friends → synthetic marker (never
+  flattened; the import spec is kept and resolved by the frozen overlay
+  inside `ExportFile`).
 - Otherwise, if `$GOROOT/src/<path>` is a directory → stdlib marker with
-  the resolved dir + selected file list (resolution is proven; *compiling*
-  it is a scope error — see §2.2).
+  the resolved dir + selected file list, and the importer type-checks it
+  from GOROOT source (see §2.2). This now includes `"fmt"`,
+  `"sync"`, `"sync/atomic"` and `"runtime"`, whose synthetic mirrors
+  were retired 2026-11-05 (REVIEW-2026-11-05-11).
 - Otherwise, module mode: walk up from the main package dir to the nearest
   `go.mod`, read the module path, and map `modpath/rest` → `<modroot>/rest`
   (must exist). Anything else is an unresolvable-import error naming the
@@ -94,21 +108,16 @@ over a visited set plus an explicit stack.
 
 `p3Importer` implements `types.Importer`:
 
-- `"runtime"` → synthetic package with the exact frozen signatures
-  (`Goexit()`, `SetFinalizer(obj, finalizer any)`, `KeepAlive(x any)`,
-  `GC()`), reimplemented from the frozen spec (export.go).
-- `"fmt"` → synthetic package with exactly the seven D4 symbols and their
-  exact variadic signatures (`Print/Printf/Println` → `(int, error)`,
-  `Sprint/Sprintf/Sprintln` → `string`, `Errorf` → `error`).
-- `"sync"` → synthetic package with the exact P3-M2b signatures
-  (ADR-0002): `Mutex`/`RWMutex`/`WaitGroup`/`Once` with pointer-receiver
-  methods (`Lock/Unlock`, `RLock/RUnlock`, `Add(int)/Done/Wait`,
-  `Do(func())`) plus the defined-but-out-of-scope `TryLock`/`TryRLock`/
-  `RLocker`/`WaitGroup.Go`. The mirror is pinned by
-  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete`; the frozen
-  exporter (not p3frontend) lowers the calls to `syncnew`/`syncop` wire
-  nodes and raises the named `not in M2 scope` errors
-  (`TestSyncScopeErrorParity`).
+- `"runtime"`, `"fmt"`, `"sync"`, `"sync/atomic"` → the REAL stdlib
+  packages, type-checked from GOROOT source (retired 2026-11-05,
+  REVIEW-2026-11-05-11 — the synthetic mirrors in this file are
+  deleted). Previously: `runtime` was a 4-function stub, `fmt` a
+  7-function D4 stub, `sync` the P3-M2b 4-primitive mirror (ADR-0002),
+  `sync/atomic` the P3-M4 typed-wrapper mirror. Pinned now by
+  `TestFmtFprintlnSyncPool` (`fmt.Fprintln`/`Fscanf`, `sync.Pool`/
+  `sync.Map` through `MergeDir`) and the `TestSync*` real-surface tests.
+  `unsafe` is the one remaining builder in this file: the P3-M8
+  package (eight builtins shared from `types.Unsafe` + `type Pointer`).
 - `"errors"` → synthetic package with the exact gc 1.27.1 signatures
   (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`/`AsType`; `As`
   keeps its exact signature with a fail-fast body (needs `reflect`).
@@ -122,11 +131,12 @@ over a visited set plus an explicit stack.
 - Local packages → resolved via the loader and type-checked with
   `go/types` recursively (results cached by import path; the recursion
   carries its own cycle stack as defense in depth behind `LoadClosure`).
-- Stdlib packages → resolution succeeds (dir + file list, proving the
-  GOROOT mapping), but `Import` returns a clear scope error:
-  `stdlib package compilation lands in the P3-M7+ waves`. Compiling the
-  real stdlib is out of M1 scope by plan; failing fast with a named error
-  beats a confusing `types.Config` failure.
+- Stdlib packages → resolved via the loader and type-checked with
+  `go/types` from GOROOT source, recursively, exactly like local
+  packages (`checkRef`; results cached by import path). The old M1
+  behaviour — resolution succeeds but `Import` returns the
+  "P3-M7+ waves" scope error — is retired: compiling the real stdlib
+  is now the mechanism, not a scope error.
 
 The importer records the `types.Info` (Defs/Uses) per type-checked package;
 the flattener consumes it.
@@ -165,8 +175,10 @@ rewrite **shadowing-correct**:
 
 Import specs for flattened packages are dropped (blank imports
 `import _ "x"` are flattened for side effects, then dropped; the M1
-`init()` rule in §4 makes this honest). `runtime`/`fmt` specs are kept and
-deduplicated.
+`init()` rule in §4 makes this honest). Import specs for non-local
+(stdlib/synthetic) packages are kept and deduplicated — the frozen
+exporter resolves them from disk (real `fmt`/`sync`/…) or from its own
+overlay (synthetic `time`/`context`/…) inside `ExportFile`.
 
 The merged file is one `*ast.File`: `package main`, the kept imports
 (sorted, deduplicated), then dep declarations in dependency order (files
@@ -237,14 +249,17 @@ so M1 fails fast instead of flattening through it:
   `init` hits the same error. This is the documented M1 limitation —
   a clear scope error, never a silent gap.
 
-## 5. GOROOT vs vendoring (M1 note)
+## 5. GOROOT vs vendoring (M1 note; updated 2026-11-05)
 
-M1 resolves stdlib import paths against the **go1.27.1 source tree**
-(default `~/tools/go-1.27.1`, `GRAALGO_GOROOT` override) purely to prove
-the resolution mapping (dir + file list) and to fail fast with the named
-scope error when a program tries to *compile* a stdlib package. The
-in-repo vendoring pipeline (stdlib re-vendored atomically with `go/*`
-per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
+p3frontend type-checks stdlib import paths against the **go1.27.1
+source tree** (default `~/tools/go-1.27.1`, `GRAALGO_GOROOT` override).
+M1 originally resolved them purely to prove the resolution mapping
+(dir + file list) and failed fast with the named scope error when a
+program tried to *compile* a stdlib package; since the 2026-11-05
+retirement (REVIEW-2026-11-05-11) the GOROOT sources are actually
+compiled (`kindStdlib` → `checkRef`). The in-repo vendoring pipeline
+(stdlib re-vendored atomically with `go/*` per SPEC §3.2) is P3-M6
+work; M1 must not invent its own vendored copy.
 
 ## 6. Scope errors (fail-fast, named)
 
@@ -254,7 +269,6 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 | main dir's package clause ≠ `main` | `p3frontend: …: expected package main, found "x"` |
 | flattened dep named `main` | `p3frontend: dependency "…" declares package main` |
 | unresolvable import | `p3frontend: cannot resolve import "…" (not stdlib, not in module "…")` |
-| compiling a stdlib package | `p3frontend: import "strings": stdlib package compilation lands in the P3-M7+ waves` |
 | `func init()` anywhere | `p3frontend: package "…": func init() not supported in M1 …` |
 | multiple `//go:build` lines | `p3frontend: …: multiple //go:build lines` (mirrors go/build) |
 
@@ -290,9 +304,20 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 - `TestDeterministic`: `ExportDir` twice → byte-identical.
 - `TestInitRejected`: `func init()` in main and in a dep → the named
   "not supported in M1" scope error (never a silent divergence).
-- `TestStdlibScopeError`: `import "strings"` resolves via `ResolveImport`
-  (proving the GOROOT mapping) then fails fast with the "P3-M7+ waves"
-  scope error.
+- `TestStdlibCompilesFromGoroot` (formerly `TestStdlibScopeError`,
+  retired 2026-11-05): `import "os"` resolves via `ResolveImport`
+  (proving the GOROOT mapping) then compiles through `MergeDir` — the
+  "P3-M7+ waves" scope error is gone.
+- `TestFmtFprintlnSyncPool`: `fmt.Fprintln`/`fmt.Fscanf` +
+  `sync.Pool`/`sync.Map` type-check through `MergeDir` (pins the
+  fmt/sync retirement).
+- `TestSyncRealSurface` / `TestSyncMatchesRealGorootSync` /
+  `TestSyncMethodSetComplete` / `TestSyncResolveImportStdlib`: the
+  importer serves real `sync` (full surface incl. `Pool`/`Map`/`Cond`/
+  `OnceFunc`), matching the source-imported real package.
+- `TestIoMirrorMatchesPhase1` / `TestTimeMirrorMatchesPhase1`: the
+  `io`/`time` mirrors match their phase-1 synthetic sources (scope +
+  method sets; one documented extra: `Time.String`).
 - `TestResolveImportNestedModules`: the resolve cache is keyed by
   (fromDir, path) — a nested-module resolution must not leak into the
   parent module.

@@ -4,6 +4,13 @@
 ADR-0002 (freeze exception for the synthetic `sync` package).
 **Status:** implemented 2026-10-06; differential corpus 22/22 vs gc 1.27.1.
 
+**Status update (2026-11-05, REVIEW-2026-11-05-11):** §4 below is
+RETIRED — the p3frontend `sync` mirror is deleted and `sync` now
+type-checks from GOROOT source like any other stdlib package. (The
+live-path synthetic `sync` of §3 was retired earlier, 503608ea — see
+the NOTE in `internal/frontend/export.go` — so §3/§5 describe the
+historical M2b mechanism, retained as the design record.)
+
 ## 1. Value model
 
 A `sync.Mutex` Go value **is** the `GoMutex` Java object (opaque, like
@@ -71,12 +78,19 @@ whose receiver unwraps (through pointers) to a sync named type:
   GoStatementNode's P2-M1 contract); the receiver is captured, which is
   identical to Go's address semantics even under races.
 
-## 4. p3frontend (`phases/phase3/src/p3frontend/`)
+## 4. p3frontend (`phases/phase3/src/p3frontend/`) — RETIRED 2026-11-05
 
-- [importer.go](importer.go): mirrors the synthetic `sync` signatures for p3frontend's
-  own type-check.
-- [flatten.go](flatten.go): keeps `import "sync"` specs, like `runtime`/`fmt`.
-- [loader.go](loader.go): resolves `"sync"` as synthetic — never the GOROOT stdlib.
+- [importer.go](importer.go): ~~mirrors the synthetic `sync` signatures
+  for p3frontend's own type-check~~ — DELETED with the fmt/sync
+  retirement (REVIEW-2026-11-05-11). The importer now serves the REAL
+  `sync` package, type-checked from GOROOT source (`kindStdlib` →
+  `checkRef`); the full surface (`Pool`/`Map`/`Cond`/`OnceFunc`, which
+  the 4-primitive mirror lacked) is pinned by `TestSyncRealSurface` /
+  `TestSyncMatchesRealGorootSync` / `TestSyncMethodSetComplete`.
+- [flatten.go](flatten.go): keeps `import "sync"` specs, like every
+  other non-local import.
+- [loader.go](loader.go): resolves `"sync"` as `kindStdlib` at
+  `$GOROOT/src/sync` — never synthetic.
 
 The `defer`/`go` desugars need no p3frontend work: they are standard
 `funclit`/`call`/`defer`/`gostmt` wire.

@@ -23,16 +23,22 @@ diff rather than silent staleness.
    (Go→intrinsic direction). Today: `runtime.fastrand`,
    `runtime.fastrandn`, `runtime.nanotime`,
    `graalgo.runtime.Linknames.callGo`.
-2. **Synthetic `runtime`, `fmt`, `sync`, `sync/atomic`** — the builder
-   functions in `internal/frontend/p3frontend/importer.go`
-   (`syntheticRuntimePackage`, `syntheticFmtPackage`,
-   `syntheticSyncPackage`, `syntheticAtomicPackage`), plus the
-   package-level `syncMethodSpecs` map and `syncLockerInterface`
-   (same file). Method symbols use gc qualification:
-   `sync.(*Mutex).Lock`, `sync/atomic.(*Int64).Load`.
-3. **Synthetic `time`, `context`** — `syntheticTimePackage` /
+2. **Synthetic `time`, `context`** — `syntheticTimePackage` /
    `syntheticContextPackage` in
    `internal/frontend/p3frontend/synth_time_context.go`.
+   (Retired: the synthetic `runtime`, `fmt`, `sync`, `sync/atomic`
+   builders in `internal/frontend/p3frontend/importer.go` were
+   deleted with the fmt/sync retirement (REVIEW-2026-11-05-11) —
+   those packages now compile from GOROOT via the disk importer,
+   so no synthetic source provides them, exactly like the earlier
+   reflect/net/http retirements. The live `runtime` stub in
+   `internal/frontend/export.go` is likewise not extracted.
+   Measured consequence: three scanned linknames flip SATISFIED to
+   MISSING — `sync/atomic.{CompareAndSwap,Store,Swap}Uintptr`
+   from the shadowed `runtime/atomic_pointer.go` (shadowed-only
+   bucket; the live MISSING count is unchanged). They ARE provided
+   by real `sync/atomic` from disk; the tool has no source that
+   says so.)
 4. **Normative `time`/`context` sources** — the `syntheticTimeSource` /
    `syntheticContextSource` embedded Go sources in
    [internal/frontend/synth_time_context.go](../../internal/frontend/synth_time_context.go)

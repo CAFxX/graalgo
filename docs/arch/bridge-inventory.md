@@ -100,7 +100,11 @@ deliverable until the design lands.
 - **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
   the *declared view* of the already-inventoried dedicated stubs
   (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
-  `syntheticFmtPackage`, `syntheticUnsafePackage`) is NOT a new bridge.
+  `syntheticUnsafePackage`) is NOT a new bridge. (`syntheticFmtPackage`
+  was named here too; it no longer exists anywhere in
+  `internal/frontend/` — retired with B-1 in the live path and with
+  REVIEW-2026-11-05-11 in p3frontend. The dedicated stubs are now
+  `runtime` + `unsafe` only.)
   The mechanical gate flags `addFunc(` lines in `export.go`, but the
   overlay's existence is grandfathered by this entry — extending its
   declared API surface toward gc's documented API adds no new bridge
@@ -125,7 +129,11 @@ deliverable until the design lands.
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. In flight: `real-fmt2`/`real-fmt-rebase` (`fmt`),
+  decision. Retired 2026-11-05 (REVIEW-2026-11-05-11): the p3frontend
+  `fmt`/`sync`/`sync-atomic`/`runtime` mirrors — those packages now
+  type-check from GOROOT; the `io`/`time` mirrors were extended to the
+  full live-source API in the same change, not deleted. In flight:
+  `real-fmt2`/`real-fmt-rebase` (`fmt`),
   `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
   general disk mechanism"), `real-nethttp` (`net`/`net/http`),
   `real-reflect2` (`reflect`).

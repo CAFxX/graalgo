@@ -305,12 +305,6 @@ func TestProvidedExtraction(t *testing.T) {
 	want := []string{
 		"runtime.fastrand", "runtime.fastrandn", "runtime.nanotime",
 		"graalgo.runtime.Linknames.callGo",
-		"runtime.Goexit", "runtime.SetFinalizer", "runtime.KeepAlive", "runtime.GC",
-		"fmt.Print", "fmt.Errorf",
-		"sync.Mutex", "sync.(*Mutex).Lock", "sync.(*Mutex).TryLock",
-		"sync.(*WaitGroup).Go", "sync.Locker", "sync.Locker.Lock",
-		"sync/atomic.Int64", "sync/atomic.LoadInt64", "sync/atomic.CompareAndSwapBool",
-		"sync/atomic.(*Int64).CompareAndSwap", "sync/atomic.(*Bool).Swap",
 		"time.Now", "time.Duration", "time.Nanosecond", "time.Time",
 		"time.Duration.String", "time.(*Timer).Stop", "time.Month.String",
 		"context.Background", "context.Context", "context.Canceled",
@@ -320,10 +314,12 @@ func TestProvidedExtraction(t *testing.T) {
 		"graalgo.tls.newClientEngine",
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
-		// reflect, net/http and internal/reflectlite are NOT here:
-		// their synthetic sources were retired and the real packages
-		// now compile from GOROOT via the disk importer, so no
-		// synthetic source provides them (see TestSyntheticShadowSet).
+		// reflect, net/http, internal/reflectlite, fmt, sync,
+		// sync/atomic and runtime are NOT here: their synthetic
+		// sources/mirrors were retired and the real packages now
+		// compile from GOROOT via the disk importer (runtime: the
+		// live export.go stub is not extracted), so no synthetic
+		// source provides them (see TestSyntheticShadowSet).
 		"encoding/json.Marshal", "crypto/sha256.New",
 		"syscall.Getenv", "maps.Clone",
 	}
@@ -331,10 +327,6 @@ func TestProvidedExtraction(t *testing.T) {
 		if !provided.has(w) {
 			t.Errorf("provided set missing %q", w)
 		}
-	}
-	// Bool must NOT have Add (fiveOps is not applied to Bool).
-	if provided.has("sync/atomic.(*Bool).Add") {
-		t.Error("sync/atomic.(*Bool).Add present: fiveOps must not apply to Bool")
 	}
 	// No unexported names may leak, except the genuine lowercase
 	// targets from the linkname registry (LinknameIntrinsics.java
@@ -355,6 +347,49 @@ func TestProvidedExtraction(t *testing.T) {
 	}
 	if len(provided.Symbols) < 200 {
 		t.Errorf("provided set suspiciously small: %d symbols", len(provided.Symbols))
+	}
+}
+
+// TestMirrorExtractionReceivers pins the synthExtractor's fidelity on the
+// time mirror (syntheticTimePackage): method names from a ranged table
+// resolve against THAT loop's table (not a same-named loop's table), and
+// pointer receivers are recognised (NewParam's type argument, not its
+// name). Regression: the extractor used to attribute every table-driven
+// Time method to time.Duration (rangeSrc keyed by var name only — the
+// Duration and Time loops share `m`) and to emit pointer-receiver
+// methods in value form (methodIsPointer read the name argument).
+func TestMirrorExtractionReceivers(t *testing.T) {
+	provided := &ProvidedSet{}
+	if err := provided.extractP3FrontendFile(filepath.Join(graalgoRoot(t),
+		"internal", "frontend", "p3frontend", "synth_time_context.go")); err != nil {
+		t.Fatalf("extractP3FrontendFile: %v", err)
+	}
+	// Table-driven Time methods must land on Time, never Duration.
+	for _, m := range []string{"Add", "Unix", "Format", "AppendFormat", "Hour", "Local", "YearDay"} {
+		if provided.has("time.Duration." + m) {
+			t.Errorf("mirror extraction mis-attributes Time.%s to Duration", m)
+		}
+		if !provided.has("time.Time." + m) {
+			t.Errorf("mirror extraction missing time.Time.%s", m)
+		}
+	}
+	// Month consts must resolve against the month table, not the weekday
+	// table (both loops share the range var `c`).
+	for _, m := range []string{"January", "December"} {
+		if !provided.has("time." + m) {
+			t.Errorf("mirror extraction missing time.%s", m)
+		}
+	}
+	// Pointer receivers emit pointer form, not value form.
+	for _, sym := range []string{"time.(*Timer).Stop", "time.(*Ticker).Reset", "time.(*Location).String"} {
+		if !provided.has(sym) {
+			t.Errorf("mirror extraction missing %s (pointer form)", sym)
+		}
+	}
+	for _, sym := range []string{"time.Timer.Stop", "time.Ticker.Reset", "time.Location.String"} {
+		if provided.has(sym) {
+			t.Errorf("mirror extraction emitted value form %s for a pointer-receiver method", sym)
+		}
 	}
 }
 

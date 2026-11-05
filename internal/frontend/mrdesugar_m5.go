@@ -1684,10 +1684,6 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
-			// P4 (driver-harden): the fmt F-family (Fprint/Fprintf/
-			// Fprintln). Detected structurally: package "fmt", one of
-			// the three names, resolving to the overlay stub with a
-			// 2-result signature.
 			switch pn.Imported().Path() {
 			case "context":
 				switch fn.Name() {

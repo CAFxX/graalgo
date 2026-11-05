@@ -71,11 +71,13 @@ func TestSyntheticShadowSet(t *testing.T) {
 		}
 	}
 	// Not overlaid: their real-stdlib files are compiled (from disk).
-	// fmt, sync, sync/atomic still appear in the PROVIDED set via the
-	// p3frontend mirrors, but the frontend overlay resolves them from
-	// disk — provided ≠ shadowed. reflect, net/http and
-	// internal/reflectlite synthetic sources were retired in the same
-	// way (synth_machinery.go retirement comments).
+	// fmt, sync, sync/atomic no longer appear in the PROVIDED set
+	// either — their p3frontend mirrors were retired
+	// (REVIEW-2026-11-05-11), so no synthetic source provides them —
+	// but the frontend overlay resolves them from disk: provided ≠
+	// shadowed. reflect, net/http and internal/reflectlite synthetic
+	// sources were retired in the same way (synth_machinery.go
+	// retirement comments).
 	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo",
 		"fmt", "sync", "sync/atomic", "reflect", "net/http"} {
 		if reg.Shadowed[path] {
@@ -136,7 +138,7 @@ func TestShadowMarking(t *testing.T) {
 	want := map[string]string{
 		"os/file.go": "os", "runtime/proc.go": "runtime",
 		"cmd/vendor/golang.org/x/sys/unix/auxv.go": "",
-		"database/sql/sql.go": "", "synthetic/os": "",
+		"database/sql/sql.go":                      "", "synthetic/os": "",
 	}
 	for _, ln := range scan.Linknames {
 		if ln.ShadowedBy != want[ln.File] {
@@ -250,14 +252,14 @@ func TestLocalNamePackageScope(t *testing.T) {
 
 func TestTargetPackage(t *testing.T) {
 	cases := map[string]string{
-		"runtime.fastrand":               "runtime",
-		"internal/poll.runtime_pollOpen": "internal/poll",
-		"reflect.(*rtype).Name":          "reflect",
+		"runtime.fastrand":                "runtime",
+		"internal/poll.runtime_pollOpen":  "internal/poll",
+		"reflect.(*rtype).Name":           "reflect",
 		"net/http.(*Transport).RoundTrip": "net/http",
-		"go/types.(*Checker).infer":      "go/types",
-		"http.cloneTLSConfig":            "http",
-		"go:fipsinfo":                    "go:fipsinfo",
-		"time.Duration.String":           "time",
+		"go/types.(*Checker).infer":       "go/types",
+		"http.cloneTLSConfig":             "http",
+		"go:fipsinfo":                     "go:fipsinfo",
+		"time.Duration.String":            "time",
 	}
 	for target, want := range cases {
 		if got := targetPackage(target); got != want {
