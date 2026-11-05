@@ -358,9 +358,27 @@ func parseModulePath(modData []byte) string {
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
 func buildableGoFiles(dir string) []string {
+	return buildableGoFilesWithTags(dir, nil)
+}
+
+// buildableGoFilesWithTags is buildableGoFiles with extra build tags
+// (already split; see splitBuildTags). The tags are appended to a copy
+// of build.Default's tags — never mutated in place — so a call cannot
+// leak tags into later selections. On a NoGoError (every file excluded
+// by constraints, or no Go files at all) it returns nil, not the raw
+// glob: falling back to all files would reintroduce the bug this
+// selection exists to prevent (excluded alternates compiled together
+// and redeclaring each other). Any other ImportDir error (e.g. two
+// packages in one directory) still falls back to all files so the
+// backend reports the real error, as before.
+func buildableGoFilesWithTags(dir string, tags []string) []string {
 	ctxt := build.Default
+	ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), tags...)
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
+		if _, ok := err.(*build.NoGoError); ok {
+			return nil
+		}
 		// Not importable (no go.mod context, etc.): fall back to all
 		// files and let the backend report real errors.
 		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
