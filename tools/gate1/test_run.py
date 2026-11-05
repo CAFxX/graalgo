@@ -50,6 +50,15 @@ class TestParseGoTestResults(unittest.TestCase):
         self.assertEqual(run.parse_go_test_results(out),
                          {"TestA/subcase": "PASS"})
 
+    def test_example_functions_ignored(self):
+        # The driver runs TestXxx only; `go test` also reports
+        # Example* — those must not enter the comparison.
+        out = ("--- PASS: TestA (0.00s)\n"
+               "--- PASS: ExampleA (0.00s)\n"
+               "--- PASS: ExampleB_sub (0.00s)\n")
+        self.assertEqual(run.parse_go_test_results(out),
+                         {"TestA": "PASS"})
+
 
 class TestDecideVerdict(unittest.TestCase):
     def test_both_agree_pass(self):
@@ -211,6 +220,22 @@ class StubHarness(unittest.TestCase):
     def test_graalgo_fail_only_is_diverge(self):
         rc, verdict = self._run_main(canned("PASS"), 0, "", 1,
                                      gr_err="gr boom")
+        self.assertEqual(verdict, "DIVERGE")
+        self.assertEqual(rc, 1)
+
+    def test_graalgo_results_on_stderr_are_parsed(self):
+        # The synthesized driver prints via builtin println, which
+        # writes to stderr; result lines there must still count.
+        rc, verdict = self._run_main(canned("PASS"), 0, "", 0,
+                                     gr_err=canned("PASS"))
+        self.assertEqual(verdict, "PASS")
+        self.assertEqual(rc, 0)
+
+    def test_partial_graalgo_results_diverge(self):
+        # graalgo reports one test then crashes; gc reports two.
+        go_out = canned("PASS", "TestOne") + canned("PASS", "TestTwo")
+        rc, verdict = self._run_main(go_out, 0, "", 1,
+                                     gr_err=canned("PASS", "TestOne"))
         self.assertEqual(verdict, "DIVERGE")
         self.assertEqual(rc, 1)
 

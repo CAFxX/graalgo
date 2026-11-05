@@ -65,11 +65,15 @@ def parse_go_test_results(text):
     Parses `--- PASS/FAIL/SKIP: Name` lines (both the reference side
     and the synthesized driver print go-test format). Returns
     {test_name: "PASS"|"FAIL"|"SKIP"}.
+
+    Only TestXxx names are kept: the driver synthesizes TestXxx
+    functions only, so `go test`'s Example* results have no graalgo
+    counterpart and would diverge spuriously on every package.
     """
     results = {}
     for line in text.split("\n"):
         m = re.match(r"^--- (PASS|FAIL|SKIP): (\S+)", line)
-        if m:
+        if m and m.group(2).startswith("Test"):
             results[m.group(2)] = m.group(1)
     return results
 
@@ -216,9 +220,13 @@ def main():
     with open(os.path.join(workdir, "graalgo.stderr"), "w") as f:
         f.write(err_gr)
 
-    # 4. Compare per-test verdicts.
-    gc_res = parse_go_test_results(out_gc)
-    gr_res = parse_go_test_results(out_gr)
+    # 4. Compare per-test verdicts. Parse both streams: the
+    # synthesized driver prints via builtin println, which writes to
+    # stderr, so its `--- PASS/FAIL/SKIP` lines arrive there; `go
+    # test -v` writes its results to stdout (parsing its stderr too
+    # is harmless — build failures print no `--- ` lines).
+    gc_res = parse_go_test_results(out_gc + "\n" + err_gc)
+    gr_res = parse_go_test_results(out_gr + "\n" + err_gr)
 
     print(f"=== {pkg} ===")
     print(f"gc:      rc={rc_gc} {len(gc_res)} tests")
