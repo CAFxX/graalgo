@@ -10,19 +10,18 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P1="$GR/phases/phase1"
-P2="$GR/phases/phase2"
-export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+GR="${GR:-$(pwd)/../../..}"
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend modules (runtime + truffle + interop) =="
+make -C "$GR/internal/backend/interop" main > /dev/null || { echo "backend build failed"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# Product launcher: internal/backend/graalgo-sync-run carries the
+# load-bearing classpath (interop : runtime : truffle : truffle lib
+# jars) and the P3SyncMain entry point, so this script no longer
+# hand-builds either. Requires the build above to have run.
+GRAALGO_RUN=("$GR/internal/backend/graalgo-sync-run")
+[ -x "$GR/internal/backend/graalgo-sync-run" ] || { echo "graalgo-sync-run missing or not executable"; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

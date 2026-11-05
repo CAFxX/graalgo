@@ -29,20 +29,16 @@
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
 # only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
+# The repo root defaults to the repository containing this script but can be overridden:
 #   GR=~/workspace/graalgo-m7-int run_wave.sh strings
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+GR="${GR:-$(pwd)/../../..}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave1/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
+export TMPDIR="$GR/test/corpus/wave1/.tmp"
 export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
 mkdir -p "$TMPDIR"
 
@@ -60,15 +56,14 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend modules (runtime + truffle + interop) =="
+make -C "$GR/internal/backend/interop" main > /dev/null || { echo "backend build failed"; exit 1; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# Product launcher (internal/backend/graalgo-sync-run) carries
+# the load-bearing classpath and honors $TMPDIR for -Djava.io.tmpdir,
+# so the off-/tmp discipline above still holds.
+GRAALGO_RUN=("$GR/internal/backend/graalgo-sync-run")
+[ -x "$GR/internal/backend/graalgo-sync-run" ] || { echo "graalgo-sync-run missing or not executable"; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -86,7 +81,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
