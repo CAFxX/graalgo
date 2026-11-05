@@ -7662,8 +7662,14 @@ func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
 
 // exportAssignable exports an assignment lhs: identifier, index,
 // selector, or dereference expression. The blank identifier becomes a
-// "blank" node (the value is evaluated and discarded).
+// "blank" node (the value is evaluated and discarded). Parentheses are
+// transparent in Go (cf. isAddressable): a parenthesized lhs exports as
+// its operative shape, so (x), ((*p)), (a[i]) and (s.f) are all valid
+// targets (e.g. log/slog's (*s.prefix) = (*s.prefix)[:...]).
 func (e *exporter) exportAssignable(l ast.Expr) (*Node, error) {
+	if p, ok := l.(*ast.ParenExpr); ok {
+		return e.exportAssignable(p.X)
+	}
 	if id, ok := l.(*ast.Ident); ok && id.Name == "_" {
 		return e.node("blank", id, map[string]any{}), nil
 	}

@@ -4166,8 +4166,11 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			// MR-closure-var: also allow dereference LHS (e.g.,
 			// *last, err = readModuleLine(elem)); exportAssignable
 			// handles *ast.StarExpr via exportDerefAssignable.
+			// Parentheses are transparent (cf. exportAssignable): a
+			// parenthesized target (e.g. (v), err = f()) is allowed
+			// here and unwrapped by exportAssignable below.
 			switch lhs.(type) {
-			case *ast.SelectorExpr, *ast.IndexExpr, *ast.StarExpr:
+			case *ast.SelectorExpr, *ast.IndexExpr, *ast.StarExpr, *ast.ParenExpr:
 				// OK: handled by exportAssignable in the assignment branch.
 			default:
 				return nil, scopeErrorf("multi-result desugar with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)
