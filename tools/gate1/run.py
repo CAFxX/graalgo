@@ -20,12 +20,32 @@ never over exit codes alone (a dual failure used to certify PASS):
           (A test failing identically under both is agreement — the
           gate compares graalgo against gc, it does not require the
           tests themselves to pass.)
-  DIVERGE per-test verdicts differ, or graalgo reported nothing while
-          gc reported results (graalgo-side crash).
+  DIVERGE per-test verdicts differ, a gc Example*/Fuzz* result
+          FAILs (see below), or graalgo reported nothing while gc
+          reported results (graalgo-side crash).
   SKIP    gc reported nothing (build/test failure on the reference
           side); the harness cannot validate this package.
   ERROR   neither side reported any test result, or a side exited 0
           while reporting nothing. No evidence is never a PASS.
+
+Comparison scope: TestXxx results only, subtests included
+(indented `--- ` lines are matched like-for-like). The synthesized
+driver runs TestXxx functions only, so `go test` also reports
+Example* and Fuzz* results that have no graalgo counterpart. Those
+are tracked separately as dropped results, never silently dropped:
+they are listed in the report, and a gc FAIL for any of them makes
+the verdict DIVERGE (named) — a failing example or fuzz target
+under gc must never certify PASS. A package with no TestXxx at all
+errors loudly with no verdict (the driver refuses: "no tests to
+run").
+
+Stream asymmetry (deliberate): the synthesized driver prints via
+builtin println, which writes to stderr, so graalgo results are
+parsed from stdout+stderr; `go test -v` writes its results to
+stdout only, so gc results are parsed from stdout only. Parsing gc
+stderr too once let a stray `--- PASS` line there (e.g. nested
+`go test` output echoed by the test binary) override stdout's
+verdict.
 
 Usage: run.py <package> [--goroot PATH] [--graalgo PATH]
             [--graalgo-run PATH] [--out DIR]
@@ -59,26 +79,45 @@ def run_cmd(cmd, env=None, timeout=300):
         return SPAWN_FAILED_RC, "", f"SPAWN FAILED: {e}"
 
 
-def parse_go_test_results(text):
-    """Per-test verdicts from `go test -v` / driver output.
+def parse_go_test_results_full(text):
+    """Per-test verdicts from `go test -v` / driver output, split in two.
 
     Parses `--- PASS/FAIL/SKIP: Name` lines (both the reference side
     and the synthesized driver print go-test format). Returns
-    {test_name: "PASS"|"FAIL"|"SKIP"}.
-
-    Only TestXxx names are kept: the driver synthesizes TestXxx
-    functions only, so `go test`'s Example* results have no graalgo
-    counterpart and would diverge spuriously on every package.
+    (results, dropped): results is {test_name: verdict} for TestXxx
+    names — subtests included, since `--- ` lines indented by the
+    parent are matched like-for-like; dropped is {name: verdict} for
+    every other result name (Example*, Fuzz*), which the driver never
+    runs and which therefore have no graalgo counterpart. Dropped
+    results are not compared — but a gc FAIL among them must still
+    diverge the verdict (see decide_verdict); silently dropping them
+    once certified PASS for a package whose fuzz test failed under gc.
     """
     results = {}
+    dropped = {}
     for line in text.split("\n"):
-        m = re.match(r"^--- (PASS|FAIL|SKIP): (\S+)", line)
-        if m and m.group(2).startswith("Test"):
-            results[m.group(2)] = m.group(1)
+        m = re.match(r"^\s*--- (PASS|FAIL|SKIP): (\S+)", line)
+        if m:
+            if m.group(2).startswith("Test"):
+                results[m.group(2)] = m.group(1)
+            else:
+                dropped[m.group(2)] = m.group(1)
+    return results, dropped
+
+
+def parse_go_test_results(text):
+    """Per-test verdicts from `go test -v` / driver output.
+
+    TestXxx names only; see parse_go_test_results_full for the
+    Example*/Fuzz* names tracked separately as dropped results.
+    Returns {test_name: "PASS"|"FAIL"|"SKIP"}.
+    """
+    results, _ = parse_go_test_results_full(text)
     return results
 
 
-def decide_verdict(rc_gc, rc_gr, gc_res, gr_res, err_gc, err_gr):
+def decide_verdict(rc_gc, rc_gr, gc_res, gr_res, err_gc, err_gr,
+                     gc_dropped=None):
     """Decide the package verdict from the two sides' evidence.
 
     Returns (verdict, report_lines). The verdict is computed from the
@@ -86,9 +125,26 @@ def decide_verdict(rc_gc, rc_gr, gc_res, gr_res, err_gc, err_gr):
     consulted only to classify an empty side (a side that failed is
     SKIP/DIVERGE; a side that exited 0 while reporting nothing is a
     harness anomaly — ERROR, never PASS).
+
+    gc_dropped is the {name: verdict} of gc-side Example*/Fuzz*
+    results (see parse_go_test_results_full): the driver never runs
+    them, so they are not compared — but any FAIL among them is real
+    gc evidence the gate must not certify over, so it diverges the
+    verdict (named in the report), never PASS.
     """
     lines = []
+    gc_dropped = gc_dropped or {}
+    dropped_failures = sorted(n for n, v in gc_dropped.items()
+                              if v == "FAIL")
+    dropped_lines = [
+        f"  DIVERGE {name}: gc=FAIL graalgo=NOT-RUN "
+        "(driver runs TestXxx only)"
+        for name in dropped_failures
+    ]
     if not gc_res and not gr_res:
+        if dropped_failures:
+            lines.extend(dropped_lines)
+            return "DIVERGE", lines
         lines.append(
             f"ERROR: no test results from either side "
             f"(gc rc={rc_gc}, graalgo rc={rc_gr})"
@@ -99,6 +155,9 @@ def decide_verdict(rc_gc, rc_gr, gc_res, gr_res, err_gc, err_gr):
             lines.append(f"graalgo stderr tail: {err_gr[-500:]}")
         return "ERROR", lines
     if not gc_res:
+        if dropped_failures:
+            lines.extend(dropped_lines)
+            return "DIVERGE", lines
         if rc_gc == 0:
             lines.append(
                 "ERROR: gc exited 0 but reported no test results; "
@@ -129,10 +188,17 @@ def decide_verdict(rc_gc, rc_gr, gc_res, gr_res, err_gc, err_gr):
         g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
         if g != r:
             divergences.append((name, g, r))
-    if divergences:
+    if divergences or dropped_failures:
         for name, g, r in divergences:
             lines.append(f"  DIVERGE {name}: gc={g} graalgo={r}")
+        lines.extend(dropped_lines)
         return "DIVERGE", lines
+    if gc_dropped:
+        names = ", ".join(f"{n}: {gc_dropped[n]}"
+                          for n in sorted(gc_dropped))
+        lines.append(
+            f"  note: {len(gc_dropped)} gc non-Test result(s) not "
+            f"compared (driver runs TestXxx only): {names}")
     lines.append(f"  {len(gc_res)} tests agree")
     return "PASS", lines
 
@@ -220,19 +286,22 @@ def main():
     with open(os.path.join(workdir, "graalgo.stderr"), "w") as f:
         f.write(err_gr)
 
-    # 4. Compare per-test verdicts. Parse both streams: the
-    # synthesized driver prints via builtin println, which writes to
-    # stderr, so its `--- PASS/FAIL/SKIP` lines arrive there; `go
-    # test -v` writes its results to stdout (parsing its stderr too
-    # is harmless — build failures print no `--- ` lines).
-    gc_res = parse_go_test_results(out_gc + "\n" + err_gc)
-    gr_res = parse_go_test_results(out_gr + "\n" + err_gr)
+    # 4. Compare per-test verdicts. The stream asymmetry is
+    # deliberate: the synthesized driver prints via builtin println,
+    # which writes to stderr, so its `--- PASS/FAIL/SKIP` lines
+    # arrive there and graalgo results are parsed from stdout+stderr;
+    # `go test -v` writes its results to stdout only, so gc results
+    # are parsed from stdout only — parsing gc stderr too once let a
+    # stray `--- PASS` line there (e.g. nested `go test` output echoed
+    # by the test binary) override stdout's verdict.
+    gc_res, gc_dropped = parse_go_test_results_full(out_gc)
+    gr_res, _ = parse_go_test_results_full(out_gr + "\n" + err_gr)
 
     print(f"=== {pkg} ===")
     print(f"gc:      rc={rc_gc} {len(gc_res)} tests")
     print(f"graalgo: rc={rc_gr} {len(gr_res)} tests")
     verdict, lines = decide_verdict(rc_gc, rc_gr, gc_res, gr_res,
-                                    err_gc, err_gr)
+                                    err_gc, err_gr, gc_dropped)
     for line in lines:
         print(line)
 

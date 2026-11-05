@@ -29,6 +29,29 @@ func TestSub(t *testing.T) {
 }
 `
 
+const emitDriverMixedTest = `package demo
+
+import "testing"
+
+func TestWithSub(t *testing.T) {
+	t.Run("sub", func(t *testing.T) {
+		if Add(1, 2) != 3 {
+			t.Fatal("bad add")
+		}
+	})
+}
+
+func ExampleHello() {
+	println("hello")
+	// Output: hello
+}
+
+func FuzzParse(f *testing.F) {
+	f.Add("a")
+	f.Fuzz(func(t *testing.T, s string) {})
+}
+`
+
 // emitDriverFixture creates a minimal package with two tests.
 func emitDriverFixture(t *testing.T) string {
 	t.Helper()
@@ -63,6 +86,25 @@ func TestEmitDriverWritesVerboseDriver(t *testing.T) {
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("emitted driver missing %q", want)
+		}
+	}
+}
+
+// TestEmitDriverSkipsExampleAndFuzz pins the driver's emitted
+// format for a package mixing a subtest, an Example, and a Fuzz
+// target: the Test (with its subtest) is emitted; Example/Fuzz entry
+// points are not.
+func TestEmitDriverSkipsExampleAndFuzz(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "demo.go", emitDriverDemoSrc)
+	writeFile(t, dir, "demo_test.go", emitDriverMixedTest)
+	src := emitDriver(t, dir, nil)
+	if !strings.Contains(src, "TestWithSub(tt)") {
+		t.Error("emitted driver missing TestWithSub")
+	}
+	for _, want := range []string{"ExampleHello", "FuzzParse"} {
+		if strings.Contains(src, want) {
+			t.Errorf("emitted driver contains %q entry point", want)
 		}
 	}
 }

@@ -34,7 +34,7 @@ The verdict is evidence-driven, over the reported per-test results:
 | Verdict | Meaning |
 |---------|---------|
 | PASS | Both sides reported the same per-test verdicts. (A test failing identically under both is agreement — the gate compares graalgo against gc, it does not require the tests themselves to pass.) |
-| DIVERGE | Per-test verdicts differ, or graalgo reported nothing while gc reported results (graalgo-side crash). |
+| DIVERGE | Per-test verdicts differ, a gc Example*/Fuzz* result FAILs, or graalgo reported nothing while gc reported results (graalgo-side crash). |
 | SKIP | gc reported nothing (build/test failure on the reference side); the harness cannot validate this package. |
 | ERROR | Neither side reported any test result, or a side exited 0 while reporting nothing. No evidence is never a PASS. |
 
@@ -75,7 +75,13 @@ not graalgo).
 - The `graalgo test` shim has no `Cleanup`/`Parallel`: a test calling
   them fails to build the driver (same limitation as `graalgo test`
   itself; the old Python shim no-oped them instead).
-- Benchmarks are not run (only `TestXxx`).
+- Only `TestXxx` results are compared (subtests included): the
+  driver runs `TestXxx` functions only, so Benchmarks, Examples, and
+  Fuzz targets are not run. gc-side Example*/Fuzz* results are
+  tracked separately and listed in the report — a FAIL among them
+  makes the verdict DIVERGE (named), never PASS — but a package with
+  only Examples/Fuzz/Benchmarks (no `TestXxx`) errors loudly with no
+  verdict (`emitTestDriver` refuses: "no tests to run").
 
 ## Graalgo Findings (for the fix queue)
 

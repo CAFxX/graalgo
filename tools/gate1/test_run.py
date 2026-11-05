@@ -8,11 +8,13 @@ Two layers:
     exit with a chosen code, and a fake `graalgo` binary writes a
     canned driver to the -emit-driver path. No JVM, no real toolchain.
 """
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -52,12 +54,39 @@ class TestParseGoTestResults(unittest.TestCase):
 
     def test_example_functions_ignored(self):
         # The driver runs TestXxx only; `go test` also reports
-        # Example* — those must not enter the comparison.
+        # Example* — passing ones must not enter the comparison.
+        # (A FAIL among them is tracked separately and diverges the
+        # verdict — see parse_go_test_results_full / decide_verdict.)
         out = ("--- PASS: TestA (0.00s)\n"
                "--- PASS: ExampleA (0.00s)\n"
                "--- PASS: ExampleB_sub (0.00s)\n")
         self.assertEqual(run.parse_go_test_results(out),
                          {"TestA": "PASS"})
+
+    def test_indented_subtest_lines_parsed(self):
+        # N1: both sides indent `--- ` lines per subtest depth; they
+        # are compared like-for-like, not dropped by the anchor.
+        out = ("--- PASS: TestTop (0.00s)\n"
+               "    --- PASS: TestTop/sub (0.00s)\n"
+               "        --- PASS: TestTop/sub/deep (0.00s)\n")
+        self.assertEqual(run.parse_go_test_results(out),
+                         {"TestTop": "PASS",
+                          "TestTop/sub": "PASS",
+                          "TestTop/sub/deep": "PASS"})
+
+    def test_example_and_fuzz_results_are_dropped_not_lost(self):
+        # F1: Example*/Fuzz* results are tracked separately as
+        # dropped results — visible to the caller, never silently
+        # discarded.
+        out = ("--- PASS: TestA (0.00s)\n"
+               "--- FAIL: FuzzParse (0.00s)\n"
+               "--- PASS: ExampleHello (0.00s)\n"
+               "--- SKIP: FuzzSlow (0.00s)\n")
+        results, dropped = run.parse_go_test_results_full(out)
+        self.assertEqual(results, {"TestA": "PASS"})
+        self.assertEqual(dropped, {"FuzzParse": "FAIL",
+                                   "ExampleHello": "PASS",
+                                   "FuzzSlow": "SKIP"})
 
 
 class TestDecideVerdict(unittest.TestCase):
@@ -83,6 +112,41 @@ class TestDecideVerdict(unittest.TestCase):
                                       {"TestOne": "FAIL"}, "", "")
         self.assertEqual(v, "DIVERGE")
         self.assertTrue(any("TestOne" in ln for ln in lines))
+
+    def test_gc_dropped_fuzz_fail_is_diverge(self):
+        # F1: a gc FAIL for a Fuzz* target the driver never runs must
+        # diverge (named), never certify PASS.
+        v, lines = run.decide_verdict(1, 0, {"TestOne": "PASS"},
+                                      {"TestOne": "PASS"}, "", "",
+                                      {"FuzzParse": "FAIL"})
+        self.assertEqual(v, "DIVERGE")
+        self.assertTrue(any("FuzzParse" in ln for ln in lines))
+
+    def test_gc_dropped_example_fail_is_diverge(self):
+        # F1, Example half: same rule for Example* results.
+        v, lines = run.decide_verdict(1, 0, {"TestOne": "PASS"},
+                                      {"TestOne": "PASS"}, "", "",
+                                      {"ExampleHello": "FAIL"})
+        self.assertEqual(v, "DIVERGE")
+        self.assertTrue(any("ExampleHello" in ln for ln in lines))
+
+    def test_gc_dropped_fuzz_pass_is_pass(self):
+        # A passing fuzz target is reported but not compared: the
+        # TestXxx results agree, so the verdict is PASS.
+        v, lines = run.decide_verdict(0, 0, {"TestOne": "PASS"},
+                                      {"TestOne": "PASS"}, "", "",
+                                      {"FuzzParse": "PASS"})
+        self.assertEqual(v, "PASS")
+        self.assertTrue(any("FuzzParse" in ln for ln in lines))
+
+    def test_gc_dropped_fail_with_no_test_results_is_diverge(self):
+        # Even with no TestXxx results at all, a gc FAIL among the
+        # dropped names is divergence evidence, not a SKIP.
+        v, lines = run.decide_verdict(1, 1, {}, {}, "gc boom",
+                                      "gr boom",
+                                      {"ExampleHello": "FAIL"})
+        self.assertEqual(v, "DIVERGE")
+        self.assertTrue(any("ExampleHello" in ln for ln in lines))
 
     def test_missing_on_one_side(self):
         v, _ = run.decide_verdict(0, 0, {"TestOne": "PASS", "TestTwo": "PASS"},
@@ -233,9 +297,81 @@ class StubHarness(unittest.TestCase):
 
     def test_partial_graalgo_results_diverge(self):
         # graalgo reports one test then crashes; gc reports two.
+        # N2: assert the divergence detail names the missing test —
+        # the pre-tip code also yielded DIVERGE here (via the
+        # empty-graalgo branch), so the verdict alone pins nothing.
         go_out = canned("PASS", "TestOne") + canned("PASS", "TestTwo")
-        rc, verdict = self._run_main(go_out, 0, "", 1,
-                                     gr_err=canned("PASS", "TestOne"))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc, verdict = self._run_main(go_out, 0, "", 1,
+                                         gr_err=canned("PASS", "TestOne"))
+        self.assertEqual(verdict, "DIVERGE")
+        self.assertEqual(rc, 1)
+        self.assertIn("TestTwo", buf.getvalue())
+        self.assertIn("MISSING", buf.getvalue())
+
+    def test_gc_fuzz_fail_is_diverge(self):
+        # F1 end to end: gc's fuzz target FAILs while every TestXxx
+        # agrees — the verdict must be DIVERGE (named), never PASS.
+        go_out = (canned("PASS", "TestOne")
+                  + "--- FAIL: FuzzParse (0.00s)\n")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc, verdict = self._run_main(go_out, 1, canned("PASS"), 0)
+        self.assertEqual(verdict, "DIVERGE")
+        self.assertEqual(rc, 1)
+        self.assertIn("FuzzParse", buf.getvalue())
+
+    def test_gc_example_fail_is_diverge(self):
+        # F1 end to end, Example half: same rule for Example* FAILs.
+        go_out = (canned("PASS", "TestOne")
+                  + "--- FAIL: ExampleHello (0.00s)\n")
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc, verdict = self._run_main(go_out, 1, canned("PASS"), 0)
+        self.assertEqual(verdict, "DIVERGE")
+        self.assertEqual(rc, 1)
+        self.assertIn("ExampleHello", buf.getvalue())
+
+    def test_gc_fuzz_pass_is_pass(self):
+        # A passing fuzz target under gc does not diverge the verdict.
+        go_out = (canned("PASS", "TestOne")
+                  + "--- PASS: FuzzParse (0.00s)\n")
+        rc, verdict = self._run_main(go_out, 0, canned("PASS"), 0)
+        self.assertEqual(verdict, "PASS")
+        self.assertEqual(rc, 0)
+
+    def test_gc_stderr_pass_does_not_override_stdout_fail(self):
+        # F2 end to end: gc stdout FAILs TestOne while gc stderr
+        # carries a stray `--- PASS: TestOne` (e.g. nested `go test`
+        # output echoed by the test binary). Only stdout counts, so
+        # gc=FAIL against graalgo PASS diverges — the old code parsed
+        # stderr too and certified a false PASS.
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc, verdict = self._run_main(canned("FAIL"), 1,
+                                         canned("PASS"), 0,
+                                         go_err=canned("PASS"))
+        self.assertEqual(verdict, "DIVERGE")
+        self.assertEqual(rc, 1)
+        self.assertIn("TestOne", buf.getvalue())
+
+    def test_subtests_agree_through_main(self):
+        # N1 end to end: indented subtest lines agree on both sides.
+        sub = "    --- PASS: TestTop/sub (0.00s)\n"
+        rc, verdict = self._run_main(canned("PASS", "TestTop") + sub, 0,
+                                     canned("PASS", "TestTop") + sub, 0)
+        self.assertEqual(verdict, "PASS")
+        self.assertEqual(rc, 0)
+
+    def test_subtest_divergence_is_caught(self):
+        # N1 end to end: a subtest FAIL on the graalgo side alone
+        # diverges, even though the parent agrees.
+        go_out = (canned("PASS", "TestTop")
+                  + "    --- PASS: TestTop/sub (0.00s)\n")
+        gr_out = (canned("PASS", "TestTop")
+                  + "    --- FAIL: TestTop/sub (0.00s)\n")
+        rc, verdict = self._run_main(go_out, 0, gr_out, 1)
         self.assertEqual(verdict, "DIVERGE")
         self.assertEqual(rc, 1)
 
