@@ -13,6 +13,7 @@ import (
 	"go/importer"
 	"go/token"
 	"go/types"
+	"sort"
 )
 
 // Result is the output of stage 2.
@@ -24,6 +25,10 @@ type Result struct {
 	Info *types.Info
 	// Fset is the file set from stage 1 (positions are stable across stages).
 	Fset *token.FileSet
+	// GoVersion is the language version the check ran under, e.g.
+	// "go1.27" (from Config.GoVersion; empty when unconfigured). The
+	// emitter renders it as the document's language version.
+	GoVersion string
 }
 
 // Config controls stage 2 behavior.
@@ -56,9 +61,18 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 	// stdlib, not a synthetic copy.
 	imp := importer.Default()
 
-	files := make([]*ast.File, 0, len(pkg.Files))
-	for _, f := range pkg.Files {
-		files = append(files, f)
+	// Files are fed to types.Config.Check in sorted-name order:
+	// pkg.Files is a Go map, so ranging over it directly would make
+	// the reported error (and any order-dependent checking) vary run
+	// to run.
+	names := make([]string, 0, len(pkg.Files))
+	for name := range pkg.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	files := make([]*ast.File, 0, len(names))
+	for _, name := range names {
+		files = append(files, pkg.Files[name])
 	}
 
 	tconf := &types.Config{
@@ -75,7 +89,7 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 
 	tpkg, err := tconf.Check(pkg.Name, fset, files, info)
 	if err != nil {
-		return nil, fmt.Errorf("checker: type-check failed: %v", err)
+		return nil, fmt.Errorf("checker: type-check failed: %w", err)
 	}
-	return &Result{Pkg: tpkg, Info: info, Fset: fset}, nil
+	return &Result{Pkg: tpkg, Info: info, Fset: fset, GoVersion: conf.GoVersion}, nil
 }

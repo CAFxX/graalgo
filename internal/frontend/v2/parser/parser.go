@@ -35,11 +35,17 @@ func ParseFiles(filenames []string) (*Result, error) {
 	fset := token.NewFileSet()
 	sources := make(map[string]string, len(filenames))
 	absFiles := make([]string, 0, len(filenames))
+	seen := make(map[string]bool, len(filenames))
 	for _, fn := range filenames {
 		abs, err := filepath.Abs(fn)
 		if err != nil {
 			return nil, fmt.Errorf("parser: %v", err)
 		}
+		if seen[abs] {
+			// A repeated path is the same file twice: record it once.
+			continue
+		}
+		seen[abs] = true
 		src, err := os.ReadFile(abs)
 		if err != nil {
 			return nil, fmt.Errorf("parser: %v", err)
@@ -61,6 +67,9 @@ func ParseSources(fset *token.FileSet, sources map[string]string) (*ast.Package,
 }
 
 func parseSources(fset *token.FileSet, sources map[string]string) (*ast.Package, error) {
+	if fset == nil {
+		return nil, fmt.Errorf("parser: nil token.FileSet")
+	}
 	files := make(map[string]*ast.File, len(sources))
 	var pkgName string
 	for name, src := range sources {

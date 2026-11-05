@@ -79,6 +79,22 @@ reaches differential parity on the corpus.
   itself does not do but which the backend requires (e.g., multi-result
   handling — but done as a general mechanism, not per-package).
 
+- **Type table.** Each `go/types` type is described exactly once. Basic
+  kinds map to classes (`bool`, `int`, `uint`, `float`, `complex`,
+  `string`, `pointer`, `untyped`, `unknown`) following the v1 wire
+  classes; struct fields carry real byte offsets under the gc sizes
+  for the host architecture (`-1` when offsets cannot be computed);
+  named types list their methods (`{name, obj, recv, index}` in
+  `types.NewMethodSet` order, including promoted methods; pointer
+  entries carry the full `*T` set) and interfaces
+  theirs (`{name, sig}`) plus embedded interfaces; call-result types
+  are `tuple` entries. Aliases canonicalize to the aliased type
+  (`types.Unalias` in `typeID`, the single choke point). Types v2 has
+  no lowering for yet (type parameters, unions) fail loudly with an
+  `unsupported type` error — never a bogus `basic`/`unknown` entry.
+  Positions are rune-based (col and len) per the v1 wire spec §3, with
+  a byte-based fallback when the source cannot be read.
+
 ## 3. What v2 does NOT do
 
 - **No synthetic packages.** Not even "temporarily." If a stdlib package
