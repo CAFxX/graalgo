@@ -338,5 +338,6 @@ func syntheticStringsPackage() *types.Package {
 	addReaderMethod("UnreadRune", nil, []*types.Var{newParam("", errorT)})
 	insertFunc("NewReader", str, []*types.Var{newParam("", readerPtr)}, false)
 
+	pkg.MarkComplete()
 	return pkg
 }

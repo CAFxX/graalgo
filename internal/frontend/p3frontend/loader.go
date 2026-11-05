@@ -90,8 +90,8 @@ type PackageRef struct {
 type refKind int
 
 const (
-	kindSynthetic refKind = iota // "runtime"/"fmt"/"sync"/"time"/"context"/"errors"/"sort": resolved by the frozen overlay
-	kindStdlib                   // $GOROOT/src/<path>: resolvable, not compilable in M1
+	kindSynthetic refKind = iota // "time"/"context"/"errors"/"sort": resolved by the frozen overlay
+	kindStdlib                   // $GOROOT/src/<path>: type-checked from source by the importer
 	kindLocal                    // module-local package: flattened
 )
 
@@ -425,9 +425,8 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // mode (the importing package's directory); results are cached by
 // (fromDir, path) because resolution is anchored at fromDir — the same
 // path can resolve differently (or fail) from different modules.
-// "runtime"/"fmt"/"sync" resolve to synthetic markers; stdlib paths resolve to
-// their GOROOT directory (proving the mapping — compiling them is a scope
-// error raised by the importer); module-path-prefixed imports resolve to
+// Stdlib paths resolve to their GOROOT directory and are type-checked
+// from source by the importer; module-path-prefixed imports resolve to
 // directories; anything else is an error. "time" and "context" resolve to
 // synthetic markers (never GOROOT): the phase-1 exporter type-checks them
 // against its synthetic time/context packages (ADR-0005), so the p3frontend
@@ -440,7 +439,7 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
 	switch path {
-	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings",
+	case "time", "context", "errors", "sort", "bytes", "math", "strings",
 		"encoding/xml", "encoding/csv", "encoding/gob", "strconv", "encoding/json",
 		"encoding/base32", "encoding/base64", "encoding/hex", "encoding/binary",
 		"encoding/ascii85", "encoding/pem", "encoding/asn1", "encoding":

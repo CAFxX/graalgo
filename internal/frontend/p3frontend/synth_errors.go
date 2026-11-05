@@ -75,5 +75,6 @@ func syntheticErrorsPackage() *types.Package {
 	// ErrUnsupported is a package-level error variable.
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "ErrUnsupported", errorT))
 
+	pkg.MarkComplete()
 	return pkg
 }

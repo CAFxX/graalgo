@@ -12,6 +12,11 @@ package p3frontend
 //
 // P3-M9: isSet distinguishes the zero Time (0001-01-01, isSet=false)
 // from 1970-01-01 (unixnano==0, isSet=true).
+//
+// DIVERGENCE (documented, pinned by TestTimeSyntheticSignatures): the
+// mirror declares Time.String, which the phase-1 synthetic source lacks
+// (a live-path gap — gc has it). Removing it would break the pinned
+// test; the drift test allows exactly this one extra method.
 
 import (
 	"go/constant"
@@ -27,6 +32,7 @@ func constantValue(v int64) constant.Value {
 // syntheticTimePackage mirrors the frozen P3-M5 synthetic "time".
 func syntheticTimePackage() *types.Package {
 	pkg := types.NewPackage("time", "time")
+	byteT := types.Universe.Lookup("byte").Type()
 	intT := types.Typ[types.Int]
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
@@ -91,8 +97,10 @@ func syntheticTimePackage() *types.Package {
 		{"TimeOnly", "15:04:05"},
 	}
 	for _, c := range layoutConsts {
+		// Untyped, as in the phase-1 source (and gc): the drift test
+		// compares the rendered const type.
 		pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, c.name,
-			stringT, constant.MakeString(c.val)))
+			types.Typ[types.UntypedString], constant.MakeString(c.val)))
 	}
 
 	// Duration methods.
@@ -145,6 +153,19 @@ func syntheticTimePackage() *types.Package {
 		{"IsZero", nil, []*types.Var{newParam("", boolT)}},
 		{"String", nil, []*types.Var{newParam("", stringT)}},
 		{"Format", []*types.Var{newParam("layout", stringT)}, []*types.Var{newParam("", stringT)}},
+		{"Round", []*types.Var{newParam("d", duration)}, []*types.Var{newParam("", timeType)}},
+		{"Truncate", []*types.Var{newParam("d", duration)}, []*types.Var{newParam("", timeType)}},
+		{"AppendFormat", []*types.Var{newParam("b", types.NewSlice(byteT)), newParam("layout", stringT)}, []*types.Var{newParam("", types.NewSlice(byteT))}},
+		{"GoString", nil, []*types.Var{newParam("", stringT)}},
+		{"Hour", nil, []*types.Var{newParam("", intT)}},
+		{"Minute", nil, []*types.Var{newParam("", intT)}},
+		{"Second", nil, []*types.Var{newParam("", intT)}},
+		{"Nanosecond", nil, []*types.Var{newParam("", intT)}},
+		{"YearDay", nil, []*types.Var{newParam("", intT)}},
+		{"UTC", nil, []*types.Var{newParam("", timeType)}},
+		{"Local", nil, []*types.Var{newParam("", timeType)}},
+		{"UnixMilli", nil, []*types.Var{newParam("", int64T)}},
+		{"UnixMicro", nil, []*types.Var{newParam("", int64T)}},
 	}
 	for _, m := range timeMethods {
 		sig := types.NewSignatureType(
@@ -199,6 +220,24 @@ func syntheticTimePackage() *types.Package {
 			weekday, constantValue(c.val)))
 	}
 
+	// Location = struct{ name string } with String on *Location and
+	// the Local/UTC vars (phase-1 source: both point at name "UTC";
+	// Local is the same object in the synthetic world).
+	locationName := types.NewTypeName(token.NoPos, pkg, "Location", nil)
+	pkg.Scope().Insert(locationName)
+	locationStruct := types.NewStruct(
+		[]*types.Var{newField("name", stringT)},
+		[]string{"name"})
+	locationType := types.NewNamed(locationName, locationStruct, nil)
+	locationPtr := types.NewPointer(locationType)
+	locationType.AddMethod(types.NewFunc(token.NoPos, pkg, "String",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", locationPtr),
+			nil, nil, nil,
+			types.NewTuple(newParam("", stringT)), false)))
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "Local", locationPtr))
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "UTC", locationPtr))
+
 	// Multi-result Time methods (defined with exact gc signatures, fail
 	// fast at emission — see phase-1 isMultiResultSynthetic).
 	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Date",
@@ -214,16 +253,56 @@ func syntheticTimePackage() *types.Package {
 			types.NewParam(token.NoPos, pkg, "", timeType),
 			nil, nil, nil,
 			types.NewTuple(
-				newParam("hour", intT),
-				newParam("min", intT),
-				newParam("sec", intT)), false)))
+				newParam("", intT),
+				newParam("", intT),
+				newParam("", intT)), false)))
 	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Zone",
 		types.NewSignatureType(
 			types.NewParam(token.NoPos, pkg, "", timeType),
 			nil, nil, nil,
 			types.NewTuple(
-				newParam("name", stringT),
-				newParam("offset", intT)), false)))
+				newParam("", stringT),
+				newParam("", intT)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "AddDate",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil,
+			types.NewTuple(
+				newParam("years", intT),
+				newParam("months", intT),
+				newParam("days", intT)),
+			types.NewTuple(newParam("", timeType)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Year",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil, nil,
+			types.NewTuple(newParam("", intT)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Month",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil, nil,
+			types.NewTuple(newParam("", month)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Day",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil, nil,
+			types.NewTuple(newParam("", intT)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Weekday",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil, nil,
+			types.NewTuple(newParam("", weekday)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "In",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil,
+			types.NewTuple(newParam("loc", locationPtr)),
+			types.NewTuple(newParam("", timeType)), false)))
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "Location",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", timeType),
+			nil, nil, nil,
+			types.NewTuple(newParam("", locationPtr)), false)))
 
 	// Timer = struct{ C <-chan Time } with Stop/Reset.
 	timerName := types.NewTypeName(token.NoPos, pkg, "Timer", nil)
@@ -292,6 +371,24 @@ func syntheticTimePackage() *types.Package {
 		[]*types.Var{newParam("", duration)})
 	insertFunc("ParseDuration", []*types.Var{newParam("s", stringT)},
 		[]*types.Var{newParam("", duration), newParam("", errorT)})
+	insertFunc("Date", []*types.Var{
+		newParam("year", intT),
+		newParam("month", month),
+		newParam("day", intT),
+		newParam("hour", intT),
+		newParam("min", intT),
+		newParam("sec", intT),
+		newParam("nsec", intT),
+		newParam("loc", locationPtr),
+	}, []*types.Var{newParam("", timeType)})
+	insertFunc("Parse", []*types.Var{
+		newParam("layout", stringT),
+		newParam("value", stringT),
+	}, []*types.Var{newParam("", timeType), newParam("", errorT)})
+	insertFunc("Unix", []*types.Var{
+		newParam("sec", int64T),
+		newParam("nsec", int64T),
+	}, []*types.Var{newParam("", timeType)})
 
 	pkg.MarkComplete()
 	return pkg
@@ -330,7 +427,7 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(
 					newParam("", types.NewChan(types.RecvOnly,
-						types.NewStruct(nil, nil)))) , false)),
+						types.NewStruct(nil, nil)))), false)),
 		types.NewFunc(token.NoPos, pkg, "Err",
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(newParam("", errorT)), false)),

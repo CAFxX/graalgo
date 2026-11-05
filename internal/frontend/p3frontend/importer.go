@@ -12,20 +12,21 @@ import (
 )
 
 // Importer is a types.Importer that graduates the frozen overlayImporter:
-//   - "runtime" and "fmt" resolve to synthetic packages with the exact
-//     frozen signatures (reimplemented here from the freeze spec —
-//     export.go's overlayImporter is unexported and frozen, so it cannot
-//     be reused, only matched);
-//   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
-//     exact frozen signatures (four primitives + the defined-but-out-of-
-//     scope methods, so the same named scope errors fire);
+//   - "runtime", "fmt", "sync" and "sync/atomic" resolve to the REAL
+//     stdlib packages, type-checked from GOROOT source like any other
+//     stdlib package (B-1/PKG-053 retired the frozen stubs; the p3frontend
+//     fmt/sync/atomic/runtime mirrors were deleted with them);
+//   - "unsafe" resolves to the P3-M8 package: the eight real compiler
+//     builtins shared from types.Unsafe's scope plus `type Pointer =
+//     unsafe.Pointer`;
 //   - "errors" and "sort" resolve to the synthetic P3-M7 wave-1 packages
 //     (real-Go implementations; fail-fast members keep exact gc 1.27.1
 //     signatures);
 //   - module-local packages are type-checked from source with go/types,
 //     recursively, with results cached by import path;
-//   - stdlib packages resolve (proving the GOROOT mapping) but fail with
-//     a clear scope error: compiling the real stdlib is P3-M7+ work.
+//   - stdlib packages are type-checked from GOROOT source via checkRef,
+//     recursively, with results cached by import path (the same mechanism
+//     as module-local packages).
 //
 // Importer is single-threaded (go/types drives it synchronously).
 type Importer struct {
@@ -64,22 +65,6 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		}
 	}
 	switch path {
-	case "runtime":
-		pkg := syntheticRuntimePackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "fmt":
-		pkg := syntheticFmtPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync":
-		pkg := syntheticSyncPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
-	case "sync/atomic":
-		pkg := syntheticAtomicPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
 	case "time":
 		pkg := syntheticTimePackage()
 		imp.pkgs[path] = pkg
@@ -231,7 +216,10 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return nil, err
 	}
 	if ref.Kind == kindStdlib {
-		return nil, fmt.Errorf("p3frontend: import %q: stdlib package compilation lands in the P3-M7+ waves (M1 scope: synthetic runtime/fmt only; resolved at %s)", path, ref.Dir)
+		// Stdlib packages type-check from GOROOT source, exactly like
+		// module-local packages (B-1/PKG-053: fmt/sync/sync-atomic/
+		// runtime retired their synthetic mirrors).
+		return imp.checkRef(ref)
 	}
 	if ref.Kind != kindLocal {
 		return nil, fmt.Errorf("p3frontend: import %q: unexpected resolution kind", path)
@@ -548,12 +536,32 @@ func syntheticAtomicPackage() *types.Package {
 	return pkg
 }
 
-// syntheticUnsafePackage mirrors the frozen P3-M4 empty synthetic "unsafe"
-// (internal/frontend/export.go's syntheticUnsafePackage): it exists
-// only so `import _ "unsafe"` (required by //go:linkname directives)
-// type-checks.
+// unsafeBuiltinNames are the eight unsafe builtins shared from types.Unsafe
+// (the P3-M8 mechanism from internal/frontend/synth_unsafe.go: go/types
+// populates types.Unsafe's scope in its universe init, so the synthetic
+// package inserts the same objects — go/types then applies gc's own
+// checking to them, e.g. constant-folding Sizeof/Alignof/Offsetof).
+var unsafeBuiltinNames = []string{
+	"Add", "Alignof", "Offsetof", "Sizeof",
+	"Slice", "SliceData", "String", "StringData",
+}
+
+// syntheticUnsafePackage builds the P3-M8 synthetic "unsafe" package: the
+// eight real compiler builtins (shared objects from types.Unsafe's scope)
+// plus `type Pointer = unsafe.Pointer`. The empty P3-M4 stub is retired:
+// real stdlib (e.g. internal/bytealg) uses unsafe.Offsetof.
 func syntheticUnsafePackage() *types.Package {
 	pkg := types.NewPackage("unsafe", "unsafe")
+	for _, name := range unsafeBuiltinNames {
+		obj := types.Unsafe.Scope().Lookup(name)
+		if obj == nil {
+			panic(fmt.Sprintf("p3frontend: synthetic unsafe package: types.Unsafe lacks builtin %s", name))
+		}
+		pkg.Scope().Insert(obj)
+	}
+	ptrName := types.NewTypeName(token.NoPos, pkg, "Pointer", nil)
+	types.NewAlias(ptrName, types.Typ[types.UnsafePointer])
+	pkg.Scope().Insert(ptrName)
 	pkg.MarkComplete()
 	return pkg
 }

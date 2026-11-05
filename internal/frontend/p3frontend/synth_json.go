@@ -215,5 +215,6 @@ func syntheticJsonPackage() *types.Package {
 	// Valid func(data []byte) bool
 	insertFunc("Valid", []*types.Var{newParam("data", types.NewSlice(byteT))}, []*types.Var{newParam("", boolT)}, false)
 
+	pkg.MarkComplete()
 	return pkg
 }
