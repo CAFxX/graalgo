@@ -6076,6 +6076,10 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// MR-closure-var (params): a parameter holding a multi-result
+	// function value has no initializer to link from — record its pair
+	// info now so calls through it desugar (see linkMRFuncParams).
+	e.linkMRFuncParams(fi.sig.Params())
 	// Set the current transform so return statements are rewritten.
 	prevMR := e.currentMR
 	if mrInfo != nil {
@@ -6527,6 +6531,9 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 		}
 		results = []*Node{pairResult}
 	}
+	// MR-closure-var (params): see exportFuncDecl; the effective
+	// signatures are resolved through this instantiation's substitution.
+	e.linkMRFuncParams(inst.decl.sig.Params())
 	// Set the current transform so return statements are rewritten.
 	prevMR := e.currentMR
 	if mrInfo != nil {
@@ -7614,6 +7621,53 @@ func (e *exporter) linkFuncValueMRVars(s *ast.AssignStmt) {
 		if v, ok := e.info.ObjectOf(id).(*types.Var); ok {
 			e.userMRVars[v] = mrInfo
 		}
+	}
+}
+
+// linkMRFuncParams registers *types.Var -> pair info for parameters whose
+// type is a multi-result function type, so call sites through the
+// parameter desugar exactly like calls through a variable holding a
+// multi-result closure (PKG-035). A parameter has no initializer, so
+// mrInfoForFuncValueInit can never link it — this is the only provenance
+// that covers parameters. The pair type is synthesized from the
+// parameter's signature with f0 fields, the same convention as the
+// call-init case: the value flowing into the parameter is a
+// pair-returning closure (a transformed named function or func lit),
+// never a disk __-helper (f1-based).
+//
+// Called at every body-export site — exportFuncDecl, exportInstantiation
+// and exportFuncLit — immediately before the body is exported, so
+// callType and classifyMultiResultCall find the link while exporting the
+// body. The effective signature is resolved through the active
+// instantiation substitution (e.substType): inside a generic
+// instantiation the parameter's type still mentions the template's type
+// parameters, and a pair struct with type-param fields would leak
+// "typeparam" kinds into the type table (see synthesizeUserPairType).
+// If the effective signature still mentions a type parameter (no
+// substitution active, or a partially-bound nested generic), the
+// parameter is left unlinked and the call keeps the honest WS D error.
+//
+// The link is (re)written on every call: the same template parameter
+// *types.Var is shared across instantiations, so each instantiation
+// must overwrite the previous instantiation's pair type with its own
+// substituted one before exporting its body. This is safe because the
+// link is only consulted while the body being exported is in progress,
+// and body exports never interleave.
+func (e *exporter) linkMRFuncParams(params *types.Tuple) {
+	for i := 0; i < params.Len(); i++ {
+		v := params.At(i)
+		sig, ok := e.substType(v.Type()).Underlying().(*types.Signature)
+		if !ok || sig.Results().Len() <= 1 {
+			continue
+		}
+		if signatureHasTypeParam(sig) {
+			continue
+		}
+		pairType, fieldNames, err := e.synthesizePairTypeForSig(sig, "__wsd_pair_param")
+		if err != nil {
+			continue
+		}
+		e.userMRVars[v] = &userMRInfo{pairType: pairType, pairFields: fieldNames, origSig: sig}
 	}
 }
 
@@ -11603,6 +11657,10 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 		results = []*Node{pairResult}
 		sigForType = types.NewSignatureType(nil, nil, nil, sig.Params(), pairResults, sig.Variadic())
 	}
+	// MR-closure-var (params): a literal's parameters holding
+	// multi-result function values link like a declaration's (see
+	// linkMRFuncParams).
+	e.linkMRFuncParams(sig.Params())
 	// Transform `return a, b` (and bare `return`) into pair construction
 	// while exporting the body. A literal without the transform is a fresh
 	// function: the outer pair transform must not leak into its returns —
