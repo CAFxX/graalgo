@@ -15,7 +15,8 @@ This directory holds end-to-end proofs: real published Go modules compiled
   from the deleted `phases/phase*` layout to the current backend: it
   invokes [internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run)
   (P3SyncMain, `--gmp=1` and `--gmp=4` legs) with the gofrontend binary
-  at [internal/frontend/gofrontend](../../internal/frontend/gofrontend).
+  at `internal/frontend/gofrontend` (built by `make generate`; see
+  [internal/frontend/](../../internal/frontend/)).
 - [BUGS.md](BUGS.md) — module-probe bug log (moved here from
   `modprobe/bugs/`, 2026-10-14). Every entry names the general fix or the
   blocking graalgo gap; module sources are never patched.
