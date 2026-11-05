@@ -2112,7 +2112,13 @@ func (e *exporter) classifyGeneralFuncField(selection *types.Selection, v *types
 	if n <= 1 {
 		return nil
 	}
-	// Get struct and field names for the pair type name.
+	// Get struct and field names for the pair type name. The receiver
+	// need not be a named type: anonymous structs (e.g. the closure
+	// state struct in sync.OnceValues, `struct { f func() (T1, T2);
+	// ... }`) hold func-typed fields too, and their calls must desugar
+	// exactly like named-struct fields — the pair type name only needs
+	// uniqueness in the package scope (synthesizeFuncFieldPairType
+	// appends a numeric suffix on collision), not the struct's name.
 	recv := selection.Recv()
 	if recv == nil {
 		return nil
@@ -2121,11 +2127,10 @@ func (e *exporter) classifyGeneralFuncField(selection *types.Selection, v *types
 	if pt, ok := rt.(*types.Pointer); ok {
 		rt = pt.Elem()
 	}
-	nt, ok := rt.(*types.Named)
-	if !ok || nt.Obj() == nil {
-		return nil
+	structName := "anon"
+	if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+		structName = nt.Obj().Name()
 	}
-	structName := nt.Obj().Name()
 	fieldName := v.Name()
 
 	// Synthesize the pair type.
