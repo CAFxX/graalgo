@@ -96,6 +96,18 @@ public final class P3TimeRuntime {
      *
      * <p>With no timer translators registered this reduces to waiting for
      * ordinary quiescence (1ms poll granularity at exit).
+     *
+     * <p>RV-P1-19: bails early — <em>without</em> shutting translators
+     * down — when the launcher's wait is already settled another way:
+     * main returned normally (C1: gc exits immediately, a pending
+     * {@code time.After(time.Hour)} must not delay exit), a panic/crash
+     * was recorded (panic-no-progress wake), or the drainer's deadlock
+     * detector fired (blocked non-background goroutines with no timers).
+     * The caller then takes the matching exit path via
+     * {@link SchedulerCore#awaitQuiescence} (early return /
+     * {@code DeadlockException}). Without this bail the drain-first order
+     * would spin forever whenever a blocked user goroutine keeps
+     * {@code live > bg} — the detector, not the drain, owns that case.
      */
     public static void awaitBackgroundDrain(SchedulerCore sched) throws InterruptedException {
         for (;;) {
@@ -104,6 +116,14 @@ public final class P3TimeRuntime {
             synchronized (bgLock) {
                 live = sched.runnableCount();
                 bg = backgroundLive.get();
+            }
+            // RV-P1-19: bail without shutting translators down when the
+            // launcher's wait is already settled another way (see the
+            // method javadoc): the caller takes the matching exit path
+            // via awaitQuiescence.
+            if (sched.mainReturnedNormally() || sched.panicked() || sched.crashed()
+                    || sched.isDeadlocked()) {
+                return;
             }
             // bg <= live always: deregister runs before the goroutine's
             // live-count decrement, and register+spawn are atomic above —

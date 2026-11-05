@@ -158,6 +158,27 @@ public final class DeadlockLauncherTest {
     }
 
     /**
+     * Main Goexit'ed with a pending timer translator live → exit 0, not
+     * a hang. Port regression (RV-P1-19): awaiting quiescence before
+     * draining the background translators hangs the launcher — the
+     * translator's heap timer stays pending, which suppresses the
+     * deadlock detector, so {@code awaitQuiescence} can never return.
+     * gc exits: a pending timer is not a goroutine.
+     */
+    public void testGoexitWithPendingTimerExits() throws Exception {
+        RunResult r = runGo("goexit_timer",
+                "package main\n\nimport (\n\t\"runtime\"\n\t\"time\"\n)\n\n"
+                        + "func main() {\n"
+                        + "    _ = time.NewTicker(time.Hour)\n"
+                        + "    runtime.Goexit()\n"
+                        + "}\n");
+        assertEquals(0, r.exitCode,
+                "Goexit with pending timer exits, stderr was:\n" + r.stderr);
+        assertTrue(!r.stderr.contains("deadlock"),
+                "no deadlock report, stderr was:\n" + r.stderr);
+    }
+
+    /**
      * {@code runtime.Goexit()} in main alone → exit 2 with gc's distinct
      * message (gc probe p3; C2).
      */

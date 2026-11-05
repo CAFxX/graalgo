@@ -551,6 +551,27 @@ public final class P3SyncMain {
                     exitCode[0] = EXIT_PANIC;
                 }
             });
+            // P3-M5 (WS E, ADR-0005): timer translators are background
+            // goroutines that may outlive the Go program's own goroutines
+            // (gc: process exit abandons pending timers; time.Tick's ticker
+            // leaks by design). awaitQuiescence waits for EVERY goroutine,
+            // so first wait until only translators remain, shut them down,
+            // then await full quiescence. With no timers this is just the
+            // ordinary quiescence wait at 1ms poll granularity.
+            //
+            // RV-P1-19: the drain runs FIRST — awaitQuiescence alone
+            // cannot return while a translator is live (its heap timer
+            // stays pending, which suppresses the deadlock detector), so
+            // awaiting quiescence before the drain hangs any program
+            // whose main Goexit'ed with a timer translator live (or whose
+            // other goroutines finish leaving only translators). The drain
+            // bails early (without shutting translators down) when main
+            // returned normally (C1: gc exits immediately — a pending
+            // time.After(time.Hour) must not delay exit), when a
+            // panic/crash was recorded, or when the deadlock detector
+            // fired; awaitQuiescence below then takes the matching exit
+            // path (early return / DeadlockException).
+            P3TimeRuntime.awaitBackgroundDrain(sched);
             try {
                 sched.awaitQuiescence();
             } catch (graalgo.sched.DeadlockException de) {
@@ -566,41 +587,6 @@ public final class P3SyncMain {
         } finally {
             SchedulerCore.install(prev);
         }
-        // RV-P1-19: the first awaitQuiescence returned early iff main
-        // returned normally (C1: exit now, like gc), or the drainer
-        // proved no further progress is possible after a recorded
-        // panic/crash (panic-no-progress wake). Otherwise main
-        // Goexit'ed with live others: drain the background translators,
-        // then await the rest.
-        boolean mainDone = sched.mainReturnedNormally();
-        boolean settled = mainDone || sched.panicked() || sched.crashed();
-        if (!settled) {
-            try {
-                // P3-M5 (WS E, ADR-0005): timer translators are background
-                // goroutines that may outlive the Go program's own goroutines
-                // (gc: process exit abandons pending timers; time.Tick's ticker
-                // leaks by design). awaitQuiescence waits for EVERY goroutine,
-                // so first wait until only translators remain, shut them down,
-                // then await full quiescence. With no timers this is just the
-                // ordinary quiescence wait at 1ms poll granularity.
-                // (Skipped on the C1 path: gc exits immediately — a pending
-                // time.After(time.Hour) must not delay exit — and on the
-                // panic-no-progress path, where parked non-background
-                // survivors would keep live > bg forever.)
-                P3TimeRuntime.awaitBackgroundDrain(sched);
-                try {
-                    sched.awaitQuiescence();
-                } catch (graalgo.sched.DeadlockException de) {
-                    // RV-P1-19 (C3).
-                    System.err.print(de.getReport());
-                    return EXIT_PANIC;
-                }
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
-                return EXIT_INPUT_ERROR;
-            }
-        }
         // M9: dump even on panic (partial traces are marked as such by
         // the harness); the dump goes to stderr, never to the program's
         // stdout.
@@ -615,7 +601,7 @@ public final class P3SyncMain {
         }
         // RV-P1-19 (C1): main returned normally → exit 0 without waiting
         // for children (gc probe p2). Otherwise the Goexit path's code.
-        return mainDone ? EXIT_OK : exitCode[0];
+        return sched.mainReturnedNormally() ? EXIT_OK : exitCode[0];
     }
 
     /**
