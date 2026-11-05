@@ -5,19 +5,27 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P1="$GR/phases/phase1"
-P2="$GR/phases/phase2"
+GR="${GR:-$HOME/workspace/graalgo}"
+BE="$GR/internal/backend"
 export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+# Build precondition: the product launcher (internal/backend/graalgo-sync-run)
+# needs the backend classes (internal/backend/*/out/classes) and the
+# gofrontend binary (internal/frontend/gofrontend). Build what's missing at
+# the repo root; the stdlib gate already builds, so this is normally a
+# no-op check. (The old phases/phase{1,2,3} layout was deleted 2026-10-14.)
+if [ ! -d "$BE/interop/out/classes" ] || [ ! -d "$BE/runtime/out/classes" ] \
+    || [ ! -d "$BE/truffle/out/classes" ]; then
+    echo "== building backend (make build) =="
+    make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+fi
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build > /dev/null ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

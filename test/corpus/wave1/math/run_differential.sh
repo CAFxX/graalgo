@@ -9,24 +9,31 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+BE="$GR/internal/backend"
 export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-graalgo-m7-math}"
 export GOCACHE="$HOME/workspace/.gocache-m7-math"
 mkdir -p "$TMPDIR"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+# Build precondition: the product launcher (internal/backend/graalgo-sync-run)
+# needs the backend classes (internal/backend/*/out/classes) and the
+# gofrontend binary (internal/frontend/gofrontend). Build what's missing at
+# the repo root; the stdlib gate already builds, so this is normally a
+# no-op check. (The old phases/phase{1,2,3} layout was deleted 2026-10-14.)
+if [ ! -d "$BE/interop/out/classes" ] || [ ! -d "$BE/runtime/out/classes" ] \
+    || [ ! -d "$BE/truffle/out/classes" ]; then
+    echo "== building backend (make build) =="
+    make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+fi
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build > /dev/null ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# The product launcher inherits -Djava.io.tmpdir from $TMPDIR (never /tmp)
+# and resolves its JVM from GRAALVM_HOME (default $HOME/tools/graalvm-jdk-25).
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
