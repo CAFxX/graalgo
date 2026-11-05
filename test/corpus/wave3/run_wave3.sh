@@ -39,15 +39,17 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+GR="${GR:-$HOME/workspace/graalgo}"
+BE="$GR/internal/backend"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+# The product launcher resolves its JVM from GRAALVM_HOME; JAVA_BIN still
+# overrides it when GRAALVM_HOME is unset (default: $HOME/tools/graalvm-jdk-25).
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    export GRAALVM_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+fi
 
 # Tmp discipline (corpus/wave3/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m9-tmp/wave3"
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-graalgo-m9-wave3}"
 export GOCACHE="$HOME/workspace/.gocache-m9-wave3"
 mkdir -p "$TMPDIR"
 
@@ -72,15 +74,25 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+# Build precondition: the product launcher (internal/backend/graalgo-sync-run)
+# needs the backend classes (internal/backend/*/out/classes) and the
+# gofrontend binary (internal/frontend/gofrontend). Build what's missing at
+# the repo root; the stdlib gate already builds, so this is normally a
+# no-op check. (The old phases/phase{1,2,3} layout was deleted 2026-10-14.)
+if [ ! -d "$BE/interop/out/classes" ] || [ ! -d "$BE/runtime/out/classes" ] \
+    || [ ! -d "$BE/truffle/out/classes" ]; then
+    echo "== building backend (make build) =="
+    make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+fi
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build > /dev/null ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# The product launcher inherits -Djava.io.tmpdir from $TMPDIR (never /tmp)
+# and resolves its JVM from GRAALVM_HOME; see the JAVA_BIN mapping above.
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -90,7 +102,7 @@ pass=0; fail=0; scopelimited=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
 # build_gc <go file> <gcbin>: stock-gc reference leg. Programs marked
-# <base>.synthetic build against the extracted phase-1 synthetic sources;
+# <base>.synthetic build against the extracted internal/frontend synthetic sources;
 # all others build against real std.
 build_gc() {
     local go="$1" gcbin="$2" base="${1%.go}"
@@ -98,7 +110,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
