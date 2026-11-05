@@ -12,6 +12,20 @@ Fails if the diff introduces new bridges:
 Existing bridges are grandfathered (they're in the removal queue — see
 docs/arch/bridge-inventory.md). This check only looks at ADDED lines in the diff.
 
+Two exemptions keep the gate from misfiring on bridge RETIREMENTS:
+- Rule 2 (package-name conditionals) is narrowing-aware: an added
+  conditional line is not a new special case when the same hunk removes a
+  conditional line mentioning the same (kind, package) pair — the edit
+  only shrinks or reshuffles a pre-existing conditional. Widening (adding
+  a package the removed lines never mentioned) still flags.
+- Rule 5 (synthetic registrations) exempts test files, like Rule 2
+  already did: a drift test calling a pre-existing synthetic builder pins
+  the inventoried mirror against the live source; it registers no new
+  synthetic package, and test files are never shipped code.
+Both are pinned by .github/scripts/test_check_no_bridges.py (fixtures
+taken from the p3fmt-stub branch diff, 16547f17, which the old script
+failed with 3 false positives).
+
 Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
@@ -89,16 +103,38 @@ def get_diff():
             return result.stdout, name
     return "", ""
 
+def _is_test_file(fname):
+    """Test files and test harnesses: never shipped code, so a pattern
+    that is only meaningful in shipped code does not apply there.
+    (Same predicate Rule 2 already used; Rule 5 now shares it.)"""
+    return "/test" in fname or "test_" in fname or "_test." in fname
+
+
 def check_no_bridges(diff):
     errors = []
     added_lines = []
     current_file = None
+    # Per-hunk (file, added, removed) triples: Rule 2's narrowing check
+    # compares an added conditional against the removed lines of the SAME
+    # hunk — a narrowing edit is by definition a removed+added line pair
+    # in one hunk; a conditional added with no removed counterpart in its
+    # hunk is new until proven otherwise.
+    hunks = []
+    current_hunk = None
 
     for line in diff.split("\n"):
         if line.startswith("+++ b/"):
             current_file = line[6:]
+        elif line.startswith("@@"):
+            current_hunk = (current_file, [], [])
+            hunks.append(current_hunk)
         elif line.startswith("+") and not line.startswith("+++"):
             added_lines.append((current_file, line[1:]))
+            if current_hunk is not None:
+                current_hunk[1].append(line[1:])
+        elif line.startswith("-") and not line.startswith("---"):
+            if current_hunk is not None:
+                current_hunk[2].append(line[1:])
 
     # 1. New synth_*.go files. Only genuinely NEW files count (the --- line
     #    is /dev/null); modifying a grandfathered synth_*.go is not a new
@@ -122,25 +158,49 @@ def check_no_bridges(diff):
     stdlib_pkgs = ["fmt", "sync", "os", "net", "http", "runtime", "reflect", "time",
                    "strings", "bytes", "strconv", "sort", "math", "encoding", "crypto",
                    "syscall", "unsafe", "io", "bufio", "context", "errors"]
-    for fname, line in added_lines:
+
+    def conditional_pairs(line):
+        """All (kind, package) package-name conditionals in one line.
+
+        The `case` pattern matches any stdlib name in the case list on
+        that line, not just the first label: a list is one keyword
+        followed by many quoted names (`case "time", "fmt", ...`), so
+        `case\\s*"pkg"` would see only the first label — and widening
+        the list by appending a package would be invisible to the gate.
+        The `==` patterns need no such treatment: each value there is
+        preceded by its own `==`."""
+        found = []
+        for pkg in stdlib_pkgs:
+            for kind, pat in (
+                ("eq", rf'==\s*"{pkg}"'),
+                ("case", rf'case\b.*"{pkg}"'),
+                ("name-eq", rf'Name\s*==\s*"{pkg}"'),
+            ):
+                if re.search(pat, line):
+                    found.append((kind, pkg))
+        return found
+
+    for fname, added, removed in hunks:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
-        # Match: if pkg == "fmt", case "sync", pkg.Name == "os", etc.
-        for pkg in stdlib_pkgs:
-            patterns = [
-                rf'==\s*"{pkg}"',
-                rf'case\s*"{pkg}"',
-                rf'Name\s*==\s*"{pkg}"',
-            ]
-            for pat in patterns:
-                if re.search(pat, line):
-                    # Allow in test files and docs. ("_test." covers
-                    # *_test.go harnesses, e.g. drift-test importers that
-                    # resolve synthetic import paths like the pre-existing
-                    # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
-                        errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
-                        break
+        # Allow in test files and docs. ("_test." covers *_test.go
+        # harnesses, e.g. drift-test importers that resolve synthetic
+        # import paths like the pre-existing `if path == "bytes"` stubs.)
+        if _is_test_file(fname):
+            continue
+        # Pairs the hunk's removed lines already conditioned on: an added
+        # line mentioning only such pairs narrows/reshuffles a
+        # pre-existing conditional instead of adding a new special case.
+        # Any pair NOT in the removed set is a widening and still flags
+        # (one error per offending added line).
+        removed_pairs = set()
+        for removed_line in removed:
+            removed_pairs.update(conditional_pairs(removed_line))
+        for line in added:
+            new_pairs = [p for p in conditional_pairs(line)
+                         if p not in removed_pairs]
+            if new_pairs:
+                errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
 
     # 3. New panic stubs. The old regex only caught literal "not implemented"/
     #    "unsupported"/"todo" messages; fail-fast stubs also hide behind bare
@@ -180,6 +240,12 @@ def check_no_bridges(diff):
     # 5. New synthetic function registrations
     for fname, line in added_lines:
         if not fname or not fname.endswith(".go"):
+            continue
+        # Test files are not shipped code: a drift test calling a
+        # pre-existing synthetic builder (e.g. syntheticIoPackage()) pins
+        # the inventoried mirror against the live source; it registers no
+        # new synthetic package. Same exemption as Rule 2.
+        if _is_test_file(fname):
             continue
         if re.search(r'addFunc\s*\(|synthetic.*Package\s*\(|registerSynthetic', line):
             # Allow in existing synth files (grandfathered), flag in new contexts
