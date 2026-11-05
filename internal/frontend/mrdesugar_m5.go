@@ -1546,16 +1546,18 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
-				}
-			}
 			// General (real-x509 lane): Var aliases a multi-result Func
 			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
+			// aliased Func via the table. This check MUST precede
+			// userMRInfoForVar: that helper's alias fallback converts
+			// the table plan into an mrUser plan, whose desugar
+			// exports the call normally — but an aliased var has no
+			// pair-returning callee of its own (etaExpandMRFuncValues
+			// removed its spec), so the normal export dies in
+			// exportIdent with "used before declaration". Only the
+			// table plan (helper call) is a valid desugar here.
+			// userMRInfoForVar's alias fallback is untouched: the
+			// call-result-type path still needs the pair type.
 			if aliasedFn, ok := e.varFuncAliases[v]; ok {
 				// Build a synthetic SelectorExpr call for classification.
 				// The table classifiers take (pkgPath, fn, targs).
@@ -1574,6 +1576,20 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
+				}
+				return nil
+			}
+			// MR-closure-var: call through a variable holding a
+			// multi-result closure (e.g. readModuleLine(elem) where
+			// readModuleLine := func(...) (T, error) {...}). The
+			// variable was linked to the func lit's pair info at its
+			// definition; desugar via the pair exactly like a named
+			// user MR function.
+			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
 				}
 			}
 			return nil
