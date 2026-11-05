@@ -585,7 +585,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// platform (PKG-037).
 	var sibUnits []srcUnit
 	buildable := make(map[string]bool)
-	for _, f := range buildableGoFiles(dir) {
+	buildableFiles, err := buildableGoFiles(dir)
+	if err != nil {
+		return "", fmt.Errorf("cannot load package in %s: %w", dir, err)
+	}
+	for _, f := range buildableFiles {
 		buildable[f] = true
 	}
 	siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))

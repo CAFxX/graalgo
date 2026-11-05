@@ -42,14 +42,24 @@ export GRAALGO_HOME=/path/to/graalgo
 ## Commands
 
 - **run**: Compile and run a Go program via the Truffle backend.
+  `-tags` build tags are honored (file selection and import resolution).
 - **build**: Validate that packages translate through the frontend (the
   compile gate), then emit an executable artifact: a real binary that
   embeds the frontend output and runs it through the graalgo backend.
   (`./...` is not yet supported; build one package/directory at a time.)
+  `-tags` build tags are honored.
 - **test**: Discover `*_test.go` files and run each `TestXxx` function
   through the backend with a minimal `testing.T` shim.
-- **vet**: Run frontend static checks.
-- **fmt**: Format source files with `gofmt`.
+- **vet**: Run frontend static checks (one check over the whole package,
+  so cross-file references resolve) plus the static analyzers in
+  [internal/vet/](../../internal/vet/). `-tags` build tags are honored.
+  External test files (`package foo_test`) are not vetted yet: they
+  declare a different package and cannot be checked in the same unit.
+- **fmt**: Format source files with `gofmt`. Accepts `-l` (list files
+  whose formatting differs), `-d` (print the diff), `-s` (simplify),
+  `-e` (print all errors), and `./...` (format recursively, skipping
+  vendor). With no flags it rewrites files in place and prints the
+  names of the files it changed, like `go fmt`.
 
 ## Architecture
 

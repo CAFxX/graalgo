@@ -21,9 +21,11 @@ package main
 
 import (
 	"fmt"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -39,7 +41,7 @@ func main() {
 	switch cmd {
 	case "help", "-h", "--help":
 		if len(args) > 0 {
-			helpFor(args[0])
+			os.Exit(helpFor(args[0]))
 		} else {
 			usage()
 		}
@@ -95,7 +97,9 @@ Use "graalgo help <command>" for more information about a command.
 `)
 }
 
-func helpFor(cmd string) {
+// helpFor prints usage for a command. It returns the process exit code:
+// 0 for a known command, 2 for an unknown one (like `go help <unknown>`).
+func helpFor(cmd string) int {
 	switch cmd {
 	case "run":
 		fmt.Printf(`usage: graalgo run [build flags] [package] [arguments...]
@@ -129,15 +133,24 @@ graalgo backend and reports pass/fail.
 
 Vet the named packages: run the frontend's static checks and
 report likely mistakes.
+
+Flags:
+	-tags=tags	build tags
 `)
 	case "fmt":
-		fmt.Printf(`usage: graalgo fmt [packages]
+		fmt.Printf(`usage: graalgo fmt [-l] [-d] [-s] [-e] [packages]
 
 Format the Go source files in the named packages using gofmt.
+With no flags, rewrites the files in place and prints the names
+of the files it changed, like go fmt. -l lists files whose
+formatting differs without rewriting them; -d prints the diff;
+-s simplifies the code; -e prints all errors.
 `)
 	default:
-		fmt.Printf("graalgo: unknown command %q\n", cmd)
+		fmt.Fprintf(os.Stderr, "graalgo: unknown command %q\n", cmd)
+		return 2
 	}
+	return 0
 }
 
 // findGraalgoRoot locates the graalgo installation root: the directory
@@ -198,11 +211,35 @@ func isGraalgoRoot(dir string) bool {
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
 func graalgoRun(root string, args []string) int {
+	return graalgoRunEnv(root, args, nil)
+}
+
+// graalgoRunTags invokes the backend like graalgoRun, additionally passing
+// the -tags build tags to the frontend: the frontend reads them from the
+// GRAALGO_BUILD_TAGS environment variable when resolving imports
+// (internal/frontend/diskimport.go), and the driver applies the same tags
+// to its own file selection via buildContext. Tags select files; they
+// confer no privilege (unlike --test-package-dir), so the established
+// environment channel is safe here. When tags is empty the environment
+// is left untouched, so a user-exported GRAALGO_BUILD_TAGS still applies.
+func graalgoRunTags(root string, args []string, tags string) int {
+	if tags == "" {
+		return graalgoRun(root, args)
+	}
+	return graalgoRunEnv(root, args, []string{"GRAALGO_BUILD_TAGS=" + tags})
+}
+
+// graalgoRunEnv is graalgoRun with extra environment variables set on the
+// launcher child only (later entries override earlier ones).
+func graalgoRunEnv(root string, args []string, extraEnv []string) int {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.Command(runner, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
@@ -224,8 +261,8 @@ func graalgoRun(root string, args []string) int {
 // backend failure also gets the "exit status N" treatment; `go run`
 // prints no such line for its own build failures. Disambiguating needs
 // a backend exit-code convention change.
-func graalgoRunProgram(root string, args []string) int {
-	code := graalgoRun(root, args)
+func graalgoRunProgram(root string, args []string, tags string) int {
+	code := graalgoRunTags(root, args, tags)
 	if code != 0 {
 		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
 		return 1
@@ -233,47 +270,116 @@ func graalgoRunProgram(root string, args []string) int {
 	return 0
 }
 
+// buildContext returns the go/build context for file selection: the
+// platform defaults (GOOS/GOARCH from the environment) plus the -tags
+// build tags, if any. Tags are space- or comma-separated, like `go build`.
+func buildContext(tags string) build.Context {
+	ctxt := build.Default
+	if tags != "" {
+		ctxt.BuildTags = append(ctxt.BuildTags, splitTags(tags)...)
+	}
+	return ctxt
+}
+
+// splitTags splits a -tags value the way the go command does: on spaces,
+// tabs, and commas.
+func splitTags(tags string) []string {
+	return strings.FieldsFunc(tags, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == ','
+	})
+}
+
+// packageFiles returns the buildable .go files of dir under ctxt: only the
+// files satisfying the platform and tag constraints, like `go build`.
+// Returns an error (never a silent fallback) when the directory cannot be
+// imported — including *build.NoGoError when no file is buildable, e.g.
+// every file is excluded by constraints.
+func packageFiles(dir string, ctxt build.Context) ([]string, error) {
+	pkg, err := ctxt.ImportDir(dir, 0)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load package in %s: %w", dir, err)
+	}
+	var out []string
+	for _, f := range pkg.GoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.TestGoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.XTestGoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	return out, nil
+}
+
 // resolveFiles turns package/file arguments into a list of .go files.
-// With no args, uses *.go in the current directory. Directories are
-// expanded to their *.go files (non-recursive, like a simple package).
-func resolveFiles(args []string) ([]string, error) {
+// With no args, uses the buildable .go files in the current directory.
+// Directories and import paths expand to their buildable .go files
+// (honoring GOOS/GOARCH and //go:build constraints via ctxt, like
+// `go build`); explicit .go files are used exactly as listed, like
+// `go run file.go` (file lists ignore build constraints).
+func resolveFiles(args []string, ctxt build.Context) ([]string, error) {
 	if len(args) == 0 {
-		matches, err := filepath.Glob("*.go")
+		files, err := packageFiles(".", ctxt)
 		if err != nil {
 			return nil, err
 		}
-		if len(matches) == 0 {
-			return nil, fmt.Errorf("no Go files in current directory")
+		if len(files) == 0 {
+			return nil, fmt.Errorf("no buildable Go files in current directory")
 		}
-		return matches, nil
+		return files, nil
 	}
 	var files []string
 	for _, a := range args {
 		if a == "./..." {
 			return nil, fmt.Errorf("./... not yet supported")
 		}
-		fi, err := os.Stat(a)
-		if err != nil {
-			// Maybe a .go file that doesn't exist yet (typo) — let
-			// the backend report the error.
-			if filepath.Ext(a) == ".go" {
-				files = append(files, a)
+		if fi, err := os.Stat(a); err == nil {
+			if fi.IsDir() {
+				matches, err := packageFiles(a, ctxt)
+				if err != nil {
+					return nil, err
+				}
+				files = append(files, matches...)
 				continue
 			}
-			return nil, fmt.Errorf("no such file or directory: %s", a)
-		}
-		if fi.IsDir() {
-			matches, err := filepath.Glob(filepath.Join(a, "*.go"))
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, matches...)
+			files = append(files, a)
 			continue
 		}
-		files = append(files, a)
+		// Not a path on disk: a .go file that doesn't exist yet (typo)
+		// is passed through so the backend reports the error, while
+		// anything else is resolved as an import path (same module,
+		// stdlib, module cache, or GOPATH) via importDirForPath.
+		if filepath.Ext(a) == ".go" {
+			files = append(files, a)
+			continue
+		}
+		dir, err := resolvePackageDir(a)
+		if err != nil {
+			return nil, fmt.Errorf("no such file or directory: %s", a)
+		}
+		matches, err := packageFiles(dir, ctxt)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, matches...)
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no Go files matched")
 	}
 	return files, nil
+}
+
+// resolvePackageDir maps a package argument to its source directory:
+// a directory on disk as-is, otherwise an import path resolved via
+// importDirForPath (same module, stdlib, module cache, GOPATH).
+func resolvePackageDir(arg string) (string, error) {
+	if fi, err := os.Stat(arg); err == nil && fi.IsDir() {
+		return arg, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return importDirForPath(cwd, arg)
 }

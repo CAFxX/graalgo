@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"go/build"
 	"os"
@@ -141,16 +142,22 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 		if p == "./..." {
 			return nil, fmt.Errorf("./... not yet supported")
 		}
-		fi, err := os.Stat(p)
+		if fi, err := os.Stat(p); err == nil {
+			if !fi.IsDir() {
+				// A single file: test its directory.
+				dirs = append(dirs, filepath.Dir(p))
+				continue
+			}
+			dirs = append(dirs, p)
+			continue
+		}
+		// Not a path on disk: resolve it as an import path (same
+		// module, stdlib, module cache, GOPATH).
+		dir, err := resolvePackageDir(p)
 		if err != nil {
 			return nil, fmt.Errorf("no such file or directory: %s", p)
 		}
-		if !fi.IsDir() {
-			// A single file: test its directory.
-			dirs = append(dirs, filepath.Dir(p))
-			continue
-		}
-		dirs = append(dirs, p)
+		dirs = append(dirs, dir)
 	}
 	return dirs, nil
 }
@@ -186,7 +193,11 @@ func (r *testRunner) runPackage(dir string) bool {
 	// //go:build lines) — the same file set `go test` would use. Without
 	// this, build-tag-gated alternatives (e.g. node_js.go vs node_net.go)
 	// are inlined together and redeclare each other's symbols.
-	buildable := buildableGoFiles(dir)
+	buildable, err := buildableGoFiles(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", dir, err)
+		return false
+	}
 	var srcFiles []string
 	for _, f := range buildable {
 		if !strings.HasSuffix(f, "_test.go") {
@@ -300,14 +311,22 @@ func parseModulePath(modData []byte) string {
 
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
-func buildableGoFiles(dir string) []string {
+// A directory with no buildable files (e.g. every file excluded by
+// constraints) yields an empty list, not an error — `go test` reports
+// such a package as having no test files. Any other ImportDir failure
+// (two packages in one directory, unreadable files) is returned as an
+// error: the caller must fail loudly rather than fall back to the
+// unfiltered *.go list, which would discard constraint filtering and
+// redeclare symbols.
+func buildableGoFiles(dir string) ([]string, error) {
 	ctxt := build.Default
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
-		// Not importable (no go.mod context, etc.): fall back to all
-		// files and let the backend report real errors.
-		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-		return all
+		var noGo *build.NoGoError
+		if errors.As(err, &noGo) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("cannot load package in %s: %w", dir, err)
 	}
 	var out []string
 	for _, f := range pkg.GoFiles {
@@ -319,5 +338,5 @@ func buildableGoFiles(dir string) []string {
 	for _, f := range pkg.XTestGoFiles {
 		out = append(out, filepath.Join(dir, f))
 	}
-	return out
+	return out, nil
 }
