@@ -7543,7 +7543,19 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 //   - a multi-result function literal (the existing MR-closure-var case),
 //   - a named function in value position (F := two),
 //   - a package-qualified named function (var F ... = syscall.Accept),
-//   - an alias of an already-linked variable (G := F).
+//   - an alias of an already-linked variable (G := F),
+//   - a call returning a multi-result function value whose single
+//     multi-result function-literal argument is the wrapped function
+//     (e.g. var entityMaps = sync.OnceValues(func() (map, map) {...})
+//     in html, or the same shape in a user package). The wrapper returns
+//     a fresh closure (or the argument itself); either way the stored
+//     value is a pair-returning closure in the func-literal convention
+//     (f0-based fields), never a disk __-helper (f1-based), so the pair
+//     type is synthesized from the call's result signature with f0
+//     fields. Anything else about a call initializer (no func-lit
+//     argument, several such arguments, mismatched result types) keeps
+//     the honest nil: guessing the field convention there could extract
+//     the wrong fields silently.
 //
 // The pair info comes from the func lit's recorded transform
 // (funcLitMRInfo), from the named function's pair plan
@@ -7557,6 +7569,52 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 			return mrInfo
 		}
 		return nil
+	}
+	if call, ok := x.(*ast.CallExpr); ok {
+		// Call returning a multi-result function value: the call's
+		// type is the returned function's signature (a single result
+		// of func type, not a tuple).
+		tv, ok := e.info.Types[call]
+		if !ok || tv.Type == nil {
+			return nil
+		}
+		sig, ok := tv.Type.Underlying().(*types.Signature)
+		if !ok || sig.Results().Len() <= 1 {
+			return nil
+		}
+		// Exactly one argument must be a transformed multi-result
+		// function literal, with result types identical to the call's
+		// result signature (the wrapper wraps exactly this function).
+		// mrInfoForFuncValueInit is called after the initializer was
+		// exported, so the argument lit's pair info is recorded.
+		var litSig *types.Signature
+		count := 0
+		for _, arg := range call.Args {
+			lit, ok := unparen(arg).(*ast.FuncLit)
+			if !ok {
+				continue
+			}
+			mrInfo, ok := e.funcLitMRInfo[lit]
+			if !ok || mrInfo.origSig == nil {
+				continue
+			}
+			count++
+			litSig = mrInfo.origSig
+		}
+		if count != 1 || litSig == nil ||
+			litSig.Results().Len() != sig.Results().Len() {
+			return nil
+		}
+		for i := 0; i < sig.Results().Len(); i++ {
+			if !types.Identical(litSig.Results().At(i).Type(), sig.Results().At(i).Type()) {
+				return nil
+			}
+		}
+		pairType, fieldNames, err := e.synthesizePairTypeForSig(sig, "__wsd_pair_funcvalue_call")
+		if err != nil {
+			return nil
+		}
+		return &userMRInfo{pairType: pairType, pairFields: fieldNames, origSig: sig}
 	}
 	var fn *types.Func
 	switch x := x.(type) {
@@ -11419,15 +11477,29 @@ func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*N
 // inner call is hoisted to a temp var (emitted to e.mrHoistPre, flushed by
 // exportStmt), and the pair fields are spread as separate arguments.
 // Nested MR calls (h(f(g()))) are handled recursively.
-// Only user-defined MR kinds (mrUser, mrFuncField) are hoisted here; the
-// synthetic M5/M7 kinds keep their pinned fail-fast outside desugar
-// positions (TestMultiResultFailFastKept, GG-0017).
+// Hoisted here are exactly the kinds hoistMRCallArg serves with a plain
+// helper call or a dedicated path: user pair-transformed calls (mrUser),
+// function-field calls (mrFuncField), table/disk helper calls (mrM7 —
+// this covers the synthetic m7/os/m8/io/m9 tables AND the dynamic disk
+// table, e.g. a disk method like text/template/parse.Tree.parseControl
+// used as a call argument inside its own package), interface dispatch
+// (mrIfaceMethod) and xml token helpers (mrXmlToken). The special
+// intrinsic kinds (mrWithCancel, mrWithDeadline, mrDeadline, mrParseDur,
+// mrRuntimeStack, mrSyncMap) are NOT hoisted: their desugar is not a
+// plain helper call, and they keep their pinned fail-fast outside
+// desugar positions (TestMultiResultFailFastKept, GG-0017). Previously
+// only mrUser/mrFuncField were hoisted, so a disk mrM7 call as an
+// argument fell through to exportExpr/callType, which has no disk-table
+// entry and failed fast with the WS D error even though the assignment
+// desugar handles the same call fine.
 func (e *exporter) exportCallArgs(c *ast.CallExpr) ([]*Node, error) {
 	args := make([]*Node, 0, len(c.Args))
 	for _, a := range c.Args {
 		if inner, ok := unparen(a).(*ast.CallExpr); ok {
 			if innerPlan := e.classifyMultiResultCall(inner); innerPlan != nil &&
-				(innerPlan.kind == mrUser || innerPlan.kind == mrFuncField) {
+				(innerPlan.kind == mrUser || innerPlan.kind == mrFuncField ||
+					innerPlan.kind == mrM7 || innerPlan.kind == mrIfaceMethod ||
+					innerPlan.kind == mrXmlToken) {
 				// User-defined multi-result call as argument: hoist to
 				// temp, unpack.
 				unpacked, pre, err := e.hoistMRCallArg(inner, innerPlan)
