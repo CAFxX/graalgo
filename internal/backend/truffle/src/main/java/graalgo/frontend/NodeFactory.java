@@ -3118,13 +3118,34 @@ public final class NodeFactory {
                     // Boxing.box reads via the node's own kind; the old
                     // idxNode.executeObject assumed Object slot kind and
                     // threw for every integer index expression.
-                    int idx = (int) Boxing.toLong(Boxing.box(idxNode.kind(), idxNode, frame),
+                    //
+                    // B-N1 (REVIEW-2026-11-06-15): &s[i]/&arr[i] had NO
+                    // bounds check — and the (int) cast truncated the
+                    // index first, so a huge out-of-range index wrapped
+                    // to an in-range int and silently produced a wrong
+                    // pointer (gc panics "index out of range"). Check
+                    // in long precision, with IndexNode.checkedIndex's
+                    // exact rule (signed: idx < 0 || idx >= len;
+                    // unsigned: unsigned-compare idx >= len; a nil
+                    // slice has length 0), BEFORE the (int) cast; the
+                    // slice offset is applied only after the check
+                    // passes.
+                    long idx = Boxing.toLong(Boxing.box(idxNode.kind(), idxNode, frame),
                             idxNode.kind());
-                    // Unwrap GoSlice to the underlying Java array.
+                    boolean signed = idxNode.kind().isSigned();
+                    // Unwrap GoSlice to the underlying Java array, and
+                    // resolve the length the check runs against.
                     Object javaArray = arr;
-                    if (arr instanceof graalgo.values.GoSlice gs) {
+                    long len;
+                    int offset = 0;
+                    if (arr == null) {
+                        // Nil slice as a Java null: length 0, so every
+                        // index panics (IndexNode's SLICE arm agrees).
+                        len = 0;
+                    } else if (arr instanceof graalgo.values.GoSlice gs) {
                         javaArray = gs.array();
-                        idx += gs.offset();
+                        len = gs.len();
+                        offset = gs.offset();
                     } else if (arr instanceof graalgo.values.GoPointer gp) {
                         // P3-M9: &ptr[i] where ptr is *[N]T — dereference
                         // the pointer to the underlying Java array (Go:
@@ -3137,11 +3158,23 @@ public final class NodeFactory {
                         javaArray = gp.referent();
                         // Defensive: the referent may itself be a GoSlice.
                         if (javaArray instanceof graalgo.values.GoSlice gs2) {
-                            idx += gs2.offset();
+                            len = gs2.len();
+                            offset = gs2.offset();
                             javaArray = gs2.array();
+                        } else {
+                            len = java.lang.reflect.Array.getLength(javaArray);
                         }
+                    } else {
+                        len = java.lang.reflect.Array.getLength(arr);
                     }
-                    return new GoPointer(javaArray, idx);
+                    boolean bad = signed ? (idx < 0 || idx >= len)
+                            : Long.compareUnsigned(idx, len) >= 0;
+                    if (bad) {
+                        graalgo.runtime.Panic.throwPanic(
+                                graalgo.runtime.GoErrors.indexOutOfRange(idx, len, signed),
+                                null, null, this);
+                    }
+                    return new GoPointer(javaArray, (int) idx + offset);
                 }
             };
         }
