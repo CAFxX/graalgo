@@ -121,102 +121,24 @@ public final class P3SyncMain {
             System.err.println("graalgo-sync-run: fatal error: " + e.getMessage());
             return 2;
         }
-        int gmp = 0; // 0 = default (carriers)
-        boolean check = false;
-        boolean dumpPolymorphism = false;
-        // PKG-001: package dir whose internal-visibility privileges a
-        // synthesized `graalgo test` driver compiles with. Explicit argv
-        // flag (per-invocation, non-inheritable), never an environment
-        // variable: a user-exported value must not confer privilege on
-        // commands that never asked for it.
-        String testPackageDir = null;
-        // Phase 4 (build-artifact): path to a file containing pre-generated
-        // frontend/v1 JSON. When present, the JSON is read directly instead
-        // of running gofrontend on source files. This is how `graalgo build`
-        // artifacts avoid re-running the frontend on every execution: the
-        // frontend runs once at build time, and the artifact embeds its
-        // output.
-        String wireInput = null;
-        // Phase 4 (build-artifact): when set, write the frontend JSON to
-        // this file and exit (implies --check). This is how `graalgo build`
-        // captures the frontend output at build time for embedding in the
-        // artifact.
-        String emitWire = null;
-        java.util.List<String> files = new java.util.ArrayList<>();
-        // P3-M8 (wave 2, R6): program argv. Everything after a bare
-        // "--" is the Go program's argv (os.Args); the first element is
-        // always the absolute input-file path (gc parity: argv[0] is
-        // absolute under `go run`). Without "--", os.Args is just
-        // [input-file].
-        boolean dashdash = false;
-        java.util.List<String> goArgs = new java.util.ArrayList<>();
-        for (String a : args) {
-            if (dashdash) {
-                if (files.isEmpty()) {
-                    files.add(a);
-                } else {
-                    goArgs.add(a);
-                }
-                continue;
-            }
-            if (a.startsWith("--gmp=")) {
-                try {
-                    gmp = Integer.parseInt(a.substring("--gmp=".length()));
-                } catch (NumberFormatException e) {
-                    return usageError("bad --gmp value: " + a);
-                }
-                if (gmp < 1) {
-                    return usageError("--gmp must be >= 1");
-                }
-                continue;
-            }
-            if (a.startsWith("--test-package-dir=")) {
-                testPackageDir = a.substring("--test-package-dir=".length());
-                if (testPackageDir.isEmpty()) {
-                    return usageError("--test-package-dir must not be empty");
-                }
-                continue;
-            }
-            if (a.startsWith("--wire-input=")) {
-                wireInput = a.substring("--wire-input=".length());
-                if (wireInput.isEmpty()) {
-                    return usageError("--wire-input must not be empty");
-                }
-                continue;
-            }
-            if (a.startsWith("--emit-wire=")) {
-                emitWire = a.substring("--emit-wire=".length());
-                if (emitWire.isEmpty()) {
-                    return usageError("--emit-wire must not be empty");
-                }
-                continue;
-            }
-            switch (a) {
-                case "--" -> dashdash = true;
-                case "--check" -> check = true;
-                // P3-M3 (M9 re-measure): enable the InterfaceDispatchProbes
-                // (WS D hooks) and dump per-site itab-identity histograms
-                // to stderr after the run. The program's stdout is
-                // untouched, so differential comparisons still apply.
-                case "--dump-polymorphism" -> dumpPolymorphism = true;
-                case "--help", "-h" -> {
-                    usage();
-                    return EXIT_OK;
-                }
-                default -> {
-                    if (a.startsWith("-")) {
-                        return usageError("unknown flag: " + a);
-                    }
-                    files.add(a);
-                }
-            }
+        final ParsedArgs parsed;
+        try {
+            parsed = parseArgs(args);
+        } catch (UsageError e) {
+            return usageError(e.getMessage());
+        } catch (HelpRequested e) {
+            usage();
+            return EXIT_OK;
         }
-        if (files.isEmpty() && wireInput == null) {
-            return usageError("no input file");
-        }
-        if (!files.isEmpty() && wireInput != null) {
-            return usageError("--wire-input cannot be combined with input files");
-        }
+        int gmp = parsed.gmp();
+        boolean check = parsed.check();
+        boolean dumpPolymorphism = parsed.dumpPolymorphism();
+        String testPackageDir = parsed.testPackageDir();
+        String buildTags = parsed.buildTags();
+        String wireInput = parsed.wireInput();
+        String emitWire = parsed.emitWire();
+        java.util.List<String> files = parsed.files();
+        java.util.List<String> goArgs = parsed.goArgs();
         if (gmp == 0) {
             gmp = Runtime.getRuntime().availableProcessors();
         }
@@ -240,7 +162,7 @@ public final class P3SyncMain {
                 return EXIT_INPUT_ERROR;
             }
         } else try {
-            json = runGofrontend(paths, testPackageDir);
+            json = runGofrontend(paths, testPackageDir, buildTags);
         } catch (GofrontendException e) {
             // gofrontend's stderr is the deterministic build log the harness records.
             // M10 (self-attack F11): a gofrontend killed by a signal leaves an
@@ -609,6 +531,143 @@ public final class P3SyncMain {
         }
     }
 
+    /**
+     * Parses graalgo-sync-run argv into its flags and input files.
+     * Usage errors raise {@link UsageError} (run() prints the message +
+     * usage and exits 1); {@code --help} raises {@link HelpRequested}
+     * (run() prints usage and exits 0). Extracted from run() so the
+     * parsing contract is unit-testable without executing a program.
+     */
+    static ParsedArgs parseArgs(String[] args) {
+        int gmp = 0; // 0 = default (carriers)
+        boolean check = false;
+        boolean dumpPolymorphism = false;
+        // PKG-001: package dir whose internal-visibility privileges a
+        // synthesized `graalgo test` driver compiles with. Explicit argv
+        // flag (per-invocation, non-inheritable), never an environment
+        // variable: a user-exported value must not confer privilege on
+        // commands that never asked for it.
+        String testPackageDir = null;
+        // V12-P1-4: user build tags (`graalgo -tags`), forwarded to
+        // gofrontend as --tags=. Null when no -tags was given.
+        String buildTags = null;
+        // Phase 4 (build-artifact): path to a file containing pre-generated
+        // frontend/v1 JSON. When present, the JSON is read directly instead
+        // of running gofrontend on source files. This is how `graalgo build`
+        // artifacts avoid re-running the frontend on every execution: the
+        // frontend runs once at build time, and the artifact embeds its
+        // output.
+        String wireInput = null;
+        // Phase 4 (build-artifact): when set, write the frontend JSON to
+        // this file and exit (implies --check). This is how `graalgo build`
+        // captures the frontend output at build time for embedding in the
+        // artifact.
+        String emitWire = null;
+        java.util.List<String> files = new java.util.ArrayList<>();
+        // P3-M8 (wave 2, R6): program argv. Everything after a bare
+        // "--" is the Go program's argv (os.Args); the first element is
+        // always the absolute input-file path.
+        boolean dashdash = false;
+        java.util.List<String> goArgs = new java.util.ArrayList<>();
+        for (String a : args) {
+            if (dashdash) {
+                if (files.isEmpty()) {
+                    files.add(a);
+                } else {
+                    goArgs.add(a);
+                }
+                continue;
+            }
+            if (a.startsWith("--gmp=")) {
+                try {
+                    gmp = Integer.parseInt(a.substring("--gmp=".length()));
+                } catch (NumberFormatException e) {
+                    throw new UsageError("bad --gmp value: " + a);
+                }
+                if (gmp < 1) {
+                    throw new UsageError("--gmp must be >= 1");
+                }
+                continue;
+            }
+            if (a.startsWith("--test-package-dir=")) {
+                testPackageDir = a.substring("--test-package-dir=".length());
+                if (testPackageDir.isEmpty()) {
+                    throw new UsageError("--test-package-dir must not be empty");
+                }
+                continue;
+            }
+            // V12-P1-4: build tags forwarded to gofrontend (explicit argv
+            // flag, mirroring --test-package-dir): the driver's `graalgo
+            // -tags` reaches the backend's file selection through this flag.
+            // Never an environment variable: env is inherited by every child
+            // process, so a user-exported value would confer the tag set on
+            // commands that never asked for it.
+            if (a.startsWith("--tags=")) {
+                buildTags = a.substring("--tags=".length());
+                if (buildTags.isEmpty()) {
+                    throw new UsageError("--tags must not be empty");
+                }
+                continue;
+            }
+            if (a.startsWith("--wire-input=")) {
+                wireInput = a.substring("--wire-input=".length());
+                if (wireInput.isEmpty()) {
+                    throw new UsageError("--wire-input must not be empty");
+                }
+                continue;
+            }
+            if (a.startsWith("--emit-wire=")) {
+                emitWire = a.substring("--emit-wire=".length());
+                if (emitWire.isEmpty()) {
+                    throw new UsageError("--emit-wire must not be empty");
+                }
+                continue;
+            }
+            switch (a) {
+                case "--" -> dashdash = true;
+                case "--check" -> check = true;
+                // P3-M3 (M9 re-measure): enable the InterfaceDispatchProbes
+                // (WS D hooks) and dump per-site itab-identity histograms
+                // to stderr after the run. The program's stdout is
+                // untouched, so differential comparisons still apply.
+                case "--dump-polymorphism" -> dumpPolymorphism = true;
+                case "--help", "-h" -> throw new HelpRequested();
+                default -> {
+                    if (a.startsWith("-")) {
+                        throw new UsageError("unknown flag: " + a);
+                    }
+                    files.add(a);
+                }
+            }
+        }
+        if (files.isEmpty() && wireInput == null) {
+            throw new UsageError("no input file");
+        }
+        if (!files.isEmpty() && wireInput != null) {
+            throw new UsageError("--wire-input cannot be combined with input files");
+        }
+        return new ParsedArgs(gmp, check, dumpPolymorphism, testPackageDir,
+                buildTags, wireInput, emitWire, files, goArgs);
+    }
+
+    /** Parsed graalgo-sync-run argv: flags plus input files and program argv. */
+    record ParsedArgs(int gmp, boolean check, boolean dumpPolymorphism,
+                      String testPackageDir, String buildTags,
+                      String wireInput, String emitWire,
+                      java.util.List<String> files, java.util.List<String> goArgs) {
+    }
+
+    /** Signals a usage error: run() prints the message + usage and exits 1. */
+    static final class UsageError extends RuntimeException {
+        UsageError(String message) {
+            super(message);
+        }
+    }
+
+    /** Signals --help/-h: run() prints usage and exits 0. */
+    static final class HelpRequested extends RuntimeException {
+    }
+
     private static int usageError(String msg) {
         System.err.println("graalgo-sync-run: " + msg);
         usage();
@@ -637,8 +696,10 @@ public final class P3SyncMain {
      * @param testPackageDir package dir for gofrontend's
      *     {@code --test-package-dir} flag (PKG-001), or null for an
      *     ordinary compile with no test-driver privilege.
+     * @param buildTags user build tags for gofrontend's {@code --tags}
+     *     flag (V12-P1-4), or null when no -tags was given.
      */
-    private static String runGofrontend(java.util.List<Path> goFiles, String testPackageDir) throws IOException, GofrontendException {
+    private static String runGofrontend(java.util.List<Path> goFiles, String testPackageDir, String buildTags) throws IOException, GofrontendException {
         // P3-M9: run gofrontend with stdout to a temp file, not a pipe.
         // Piping 200MB+ through Process.getInputStream() hangs (gofrontend
         // blocks on write while the reader blocks on read — pipe buffer
@@ -651,6 +712,9 @@ public final class P3SyncMain {
             cmd.add(graalgo.launcher.ToolPaths.gofrontend().toString());
             if (testPackageDir != null) {
                 cmd.add("--test-package-dir=" + testPackageDir);
+            }
+            if (buildTags != null) {
+                cmd.add("--tags=" + buildTags);
             }
             for (Path p : goFiles) {
                 cmd.add(p.toString());
@@ -690,7 +754,7 @@ public final class P3SyncMain {
 
     private static void usage() {
         System.err.println(
-                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] [--test-package-dir=DIR] [--wire-input=FILE] [--emit-wire=FILE] file.go [file.go...] [-- args...]");
+                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] [--test-package-dir=DIR] [--tags=TAGS] [--wire-input=FILE] [--emit-wire=FILE] file.go [file.go...] [-- args...]");
         System.err.println(
                 "  --            program argv follow (os.Args[0] is the absolute input-file path)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
@@ -698,6 +762,7 @@ public final class P3SyncMain {
         System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");
         System.err.println("  --test-package-dir=DIR  PKG-001: package dir whose internal-visibility");
         System.err.println("      privileges a synthesized `graalgo test` driver compiles with");
+        System.err.println("  --tags=TAGS  build tags forwarded to gofrontend (V12-P1-4)");
         System.err.println("  --wire-input=FILE  read pre-generated frontend/v1 JSON instead of running");
         System.err.println("      gofrontend (used by `graalgo build` artifacts; cannot combine with files)");
         System.err.println("  --emit-wire=FILE  write the frontend/v1 JSON to FILE and exit (implies --check;");
