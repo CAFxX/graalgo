@@ -951,17 +951,22 @@ public final class NodeFactoryV2 {
             }
         }
         if (k == GoKind.STRING || k == GoKind.UNTYPED_STRING) {
-            // Strip quotes.
-            String s = value;
-            if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
-                s = s.substring(1, s.length() - 1);
-            }
-            return ConstNode.ofString(new GoString(s.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            // The emitter sends the DECODED string value (canonical
+            // basiclit value, REVIEW-2026-11-06-10 R-P0-2), not the raw
+            // source spelling: use it verbatim — no quote stripping, no
+            // unescaping. Stripping quotes would corrupt a decoded
+            // string that starts and ends with '"' (e.g. the literal
+            // "\"x\"" decodes to "\"x\"", which quote-stripping would
+            // reduce to "x").
+            return ConstNode.ofString(new GoString(value.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         }
         if (k == GoKind.BOOL || k == GoKind.UNTYPED_BOOL) {
             return ConstNode.ofBool("true".equals(value));
         }
-        // Character literal (rune).
+        // Character literal (rune). The emitter sends the canonical
+        // decimal code point (e.g. '\n' -> "10"), which the int branch
+        // above already handles. This quoted-spelling branch survives
+        // only for hand-built documents that still carry source text.
         if (value.startsWith("'") && value.endsWith("'") && value.length() >= 3) {
             String inner = value.substring(1, value.length() - 1);
             long runeVal = inner.codePointAt(0);

@@ -8,8 +8,10 @@ package emit
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
+	"strconv"
 )
 
 // node is the in-memory representation of one AST node.
@@ -657,14 +659,81 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: no type for basiclit %s", l.Value)
 	}
+	value, err := canonicalBasicLitValue(l, tv)
+	if err != nil {
+		return nil, err
+	}
 	fields := map[string]any{
-		"value": l.Value,
+		"value": value,
 		"type":  e.typeID(tv.Type),
 	}
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
 	}
 	return e.node("basiclit", l, fields), nil
+}
+
+// canonicalBasicLitValue returns the wire value for a basic literal: the
+// literal's canonical (decoded) value, derived from the go/types constant
+// value — never the raw source spelling in l.Value.
+//
+// The raw spelling is not a value: "a\nb" is 4 characters of source for a
+// 3-character string, '\n' is 2 characters of source for rune 10, and
+// legacy octal 017 is source for 15. The Java consumer parses "value"
+// as the value itself (it never unescapes), so emitting the spelling
+// silently corrupts the program (REVIEW-2026-11-06-10 R-P0-2). The
+// canonical forms, by literal kind:
+//
+//   - INT, CHAR: go/constant ExactString — canonical decimal. Handles
+//     legacy octal (017 -> "15"), hex (0x10 -> "16"), binary, and digit
+//     separators (1_000 -> "1000"), and gives the rune's code point
+//     ('\n' -> "10").
+//   - STRING: constant.StringVal — the decoded string, emitted unquoted.
+//     The consumer must use it verbatim: stripping quotes would corrupt
+//     a decoded string that starts and ends with '"' (e.g. "\"x\"").
+//   - FLOAT: ExactString is unusable here — it renders rationals as
+//     "a/b" ("1.5" -> "3/2"), which no float parser reads. Format the
+//     float64 value instead, at the bit size of the literal's type, so a
+//     float32 literal renders at float32 precision ("1.1", not the
+//     float64 expansion of the rounded value).
+//   - IMAG: ExactString ("(0 + 2i)"). Complex literals have no consumer
+//     support yet (NodeFactoryV2 throws on them, as before); the
+//     canonical form keeps that failure loud rather than changing it.
+func canonicalBasicLitValue(l *ast.BasicLit, tv types.TypeAndValue) (string, error) {
+	if tv.Value == nil {
+		// A BasicLit is always a constant expression, so go/types always
+		// sets Value; this is a defensive fallback only. Unquote the
+		// spelling for string/rune literals, keep it raw otherwise.
+		if l.Kind == token.STRING || l.Kind == token.CHAR {
+			if s, err := strconv.Unquote(l.Value); err == nil {
+				return s, nil
+			}
+		}
+		return l.Value, nil
+	}
+	switch l.Kind {
+	case token.INT, token.CHAR:
+		return tv.Value.ExactString(), nil
+	case token.STRING:
+		if tv.Value.Kind() != constant.String {
+			return "", fmt.Errorf("emit: string literal %s has non-string constant %v", l.Value, tv.Value)
+		}
+		return constant.StringVal(tv.Value), nil
+	case token.FLOAT:
+		f, ok := constant.Float64Val(tv.Value)
+		if !ok {
+			return "", fmt.Errorf("emit: float literal %s is not representable as float64", l.Value)
+		}
+		bitSize := 64
+		if b, ok := tv.Type.(*types.Basic); ok && b.Kind() == types.Float32 {
+			bitSize = 32
+		}
+		return strconv.FormatFloat(f, 'g', -1, bitSize), nil
+	case token.IMAG:
+		return tv.Value.ExactString(), nil
+	default:
+		return "", fmt.Errorf("emit: unsupported basic literal kind %v (%s)", l.Kind, l.Value)
+	}
 }
 
 func (e *Emitter) emitBinary(b *ast.BinaryExpr) (map[string]any, error) {
