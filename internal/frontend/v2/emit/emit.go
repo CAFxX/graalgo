@@ -81,10 +81,37 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 			if obj == nil {
 				return nil, fmt.Errorf("emit: no object for func %s", d.Name.Name)
 			}
+			// Reject a generic function before declareObject
+			// describes its signature: describeType would reject
+			// the signature too (backstop), but without the
+			// function name. emitFuncDecl repeats this check as
+			// the emitter-side precondition.
+			if fn, ok := obj.(*types.Func); ok {
+				if sig, ok := fn.Type().(*types.Signature); ok && sig.TypeParams().Len() > 0 {
+					return nil, fmt.Errorf("emit: unsupported generic func %s (type parameters not supported)", fn.Name())
+				}
+			}
 			if _, err := e.declareObject(obj); err != nil {
 				return nil, err
 			}
 		case *ast.GenDecl:
+			if d.Tok == token.TYPE {
+				// Type declarations are otherwise invisible to the
+				// emitter (only referenced types reach the type table),
+				// so a generic type declared here would be silently
+				// dropped — or, if referenced, fail only deep inside
+				// describeType. Reject it at the declaration instead.
+				for _, spec := range d.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						return nil, fmt.Errorf("emit: unsupported type spec %T", spec)
+					}
+					if err := e.checkTypeDecl(ts); err != nil {
+						return nil, err
+					}
+				}
+				continue
+			}
 			if d.Tok != token.VAR {
 				continue
 			}
@@ -148,6 +175,32 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Funcs:   funcs,
 		Globals: globals,
 	}, nil
+}
+
+// checkTypeDecl rejects a type declaration with type parameters: the v2
+// emitter has no representation for generics, so a generic type must fail
+// loudly at its declaration instead of being silently dropped (unreferenced)
+// or failing later, in another language, at decode (referenced).
+func (e *Emitter) checkTypeDecl(ts *ast.TypeSpec) error {
+	obj := e.info.Info.Defs[ts.Name]
+	if obj == nil {
+		return fmt.Errorf("emit: no object for type %s", ts.Name.Name)
+	}
+	tn, ok := obj.(*types.TypeName)
+	if !ok {
+		return fmt.Errorf("emit: %s is not a type name", ts.Name.Name)
+	}
+	switch t := tn.Type().(type) {
+	case *types.Named:
+		if t.TypeParams().Len() > 0 {
+			return fmt.Errorf("emit: unsupported generic type %s (type parameters not supported)", tn.Name())
+		}
+	case *types.Alias:
+		if t.TypeParams().Len() > 0 {
+			return fmt.Errorf("emit: unsupported generic type %s (type parameters not supported)", tn.Name())
+		}
+	}
+	return nil
 }
 
 // sortedTopDecls returns every top-level declaration in the package in
@@ -282,30 +335,46 @@ func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error
 func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
 	switch o := obj.(type) {
 	case *types.Var:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":  "var",
 			"name":  o.Name(),
-			"type":  e.typeID(o.Type()),
+			"type":  tid,
 			"param": isParam,
 		}, nil
 	case *types.Func:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
-			"type": e.typeID(o.Type()),
+			"type": tid,
 		}, nil
 	case *types.Const:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":  "const",
 			"name":  o.Name(),
-			"type":  e.typeID(o.Type()),
+			"type":  tid,
 			"value": o.Val().ExactString(),
 		}, nil
 	case *types.TypeName:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "typename",
 			"name": o.Name(),
-			"type": e.typeID(o.Type()),
+			"type": tid,
 		}, nil
 	case *types.Builtin:
 		// Builtins have no meaningful single type (len, unsafe.Sizeof);
@@ -325,18 +394,33 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
-func (e *Emitter) typeID(t types.Type) int {
+// A type that cannot be described (describeType error) fails the whole
+// emission: the id is unregistered and the error propagates to Emit.
+// The nil placeholder slot is left behind in e.types — the document is
+// discarded on error and the Emitter is single-use, so it is never read.
+func (e *Emitter) typeID(t types.Type) (int, error) {
 	if id, ok := e.typeIDs[t]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.types)
 	e.typeIDs[t] = id
 	e.types = append(e.types, nil) // placeholder for recursion
-	e.types[id] = e.describeType(t)
-	return id
+	desc, err := e.describeType(t)
+	if err != nil {
+		delete(e.typeIDs, t)
+		return 0, err
+	}
+	e.types[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeType(t types.Type) map[string]any {
+// describeType describes one type for the type table. Every go/types kind
+// the checker can produce gets its own kind here. A kind with no case
+// (TypeParam, Union, ...) fails loudly instead of being emitted as
+// a bogus basic/unknown entry: the Java consumer throws on class
+// "unknown", so the old default produced documents that were undecodable
+// while the emitter reported success.
+func (e *Emitter) describeType(t types.Type) (map[string]any, error) {
 	switch tt := t.(type) {
 	case *types.Basic:
 		class := basicClass(tt)
@@ -347,30 +431,50 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"class":   class,
 				"untyped": tt.Info()&types.IsUntyped != 0,
 			},
-		}
+		}, nil
 	case *types.Pointer:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "pointer",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Slice:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "slice",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Array:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "array",
-			"detail": map[string]any{"len": tt.Len(), "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"len": tt.Len(), "elem": elem},
+		}, nil
 	case *types.Map:
+		key, err := e.typeID(tt.Key())
+		if err != nil {
+			return nil, err
+		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "map",
 			"detail": map[string]any{
-				"key":  e.typeID(tt.Key()),
-				"elem": e.typeID(tt.Elem()),
+				"key":  key,
+				"elem": elem,
 			},
-		}
+		}, nil
 	case *types.Chan:
 		var dir string
 		switch tt.Dir() {
@@ -381,25 +485,45 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		case types.RecvOnly:
 			dir = "recv"
 		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "chan",
-			"detail": map[string]any{"dir": dir, "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"dir": dir, "elem": elem},
+		}, nil
 	case *types.Signature:
+		// A signature with type parameters is a generic function: it
+		// can only arise from a generic declaration, which emitFuncDecl
+		// rejects with the function name. This is the backstop for a
+		// generic signature reached any other way (e.g. through a
+		// generic method receiver or a value of generic function type).
+		if tt.TypeParams().Len() > 0 {
+			return nil, fmt.Errorf("emit: unsupported generic signature %s (type parameters not supported)", tt.String())
+		}
 		params := []any{}
 		for i := 0; i < tt.Params().Len(); i++ {
 			p := tt.Params().At(i)
+			pid, err := e.typeID(p.Type())
+			if err != nil {
+				return nil, err
+			}
 			params = append(params, map[string]any{
 				"name": p.Name(),
-				"type": e.typeID(p.Type()),
+				"type": pid,
 			})
 		}
 		results := []any{}
 		for i := 0; i < tt.Results().Len(); i++ {
 			r := tt.Results().At(i)
+			rid, err := e.typeID(r.Type())
+			if err != nil {
+				return nil, err
+			}
 			results = append(results, map[string]any{
 				"name": r.Name(),
-				"type": e.typeID(r.Type()),
+				"type": rid,
 			})
 		}
 		return map[string]any{
@@ -409,23 +533,31 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"results":  results,
 				"variadic": tt.Variadic(),
 			},
-		}
+		}, nil
 	case *types.Named:
+		underlying, err := e.typeID(tt.Underlying())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
-				"underlying": e.typeID(tt.Underlying()),
+				"underlying": underlying,
 				"methods":    []any{},
 			},
-		}
+		}, nil
 	case *types.Struct:
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
+			fid, err := e.typeID(f.Type())
+			if err != nil {
+				return nil, err
+			}
 			fields = append(fields, map[string]any{
 				"name":     f.Name(),
-				"type":     e.typeID(f.Type()),
+				"type":     fid,
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
 				"offset":   0,
@@ -434,7 +566,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		return map[string]any{
 			"kind":   "struct",
 			"detail": map[string]any{"fields": fields},
-		}
+		}, nil
 	case *types.Interface:
 		return map[string]any{
 			"kind": "interface",
@@ -443,12 +575,43 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"methods":  []any{},
 				"embedded": []any{},
 			},
+		}, nil
+	case *types.Alias:
+		// An alias IS its right-hand side (gc treats them as
+		// identical), so describe the RHS instead of the alias: a
+		// plain alias such as `type A = int` then emits exactly as
+		// `int` does. The old default emitted the alias itself as
+		// basic/unknown, which is undecodable. A generic alias
+		// (`type L[T any] = []T`) still fails loudly: its RHS
+		// contains the type parameter, which the default case
+		// rejects (and its declaration is rejected earlier by
+		// checkTypeDecl).
+		return e.describeType(tt.Rhs())
+	case *types.Tuple:
+		// A tuple is the type of a call expression: the empty tuple
+		// `()` for a call returning no values, `(int, string)` for
+		// a multi-value call. It must be represented, not rejected:
+		// every void call's type flows through exprType, so
+		// rejecting tuples would reject every program containing
+		// a call to a void function. The Java consumer maps an
+		// unknown type kind to INTERFACE (NodeFactoryV2
+		// goKindForTypeId default case), so a "tuple" entry
+		// decodes; the old basic/unknown entry for `()` instead
+		// threw in fromBasic for every non-builtin void call.
+		elems := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			eid, err := e.typeID(tt.At(i).Type())
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, eid)
 		}
-	default:
 		return map[string]any{
-			"kind":   "basic",
-			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
-		}
+			"kind":   "tuple",
+			"detail": map[string]any{"elems": elems},
+		}, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported type %T %s", t, t.String())
 	}
 }
 

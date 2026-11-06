@@ -34,7 +34,18 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s has no signature type", fd.Name.Name)
 	}
-	sigID := e.typeID(fn.Type())
+	// Generics have no representation in v2: a generic function must
+	// fail loudly at its declaration. Without this check a generic
+	// function whose type parameters are never used in a parameter or
+	// result type (e.g. func f[T any]()) would emit "successfully"
+	// with the type parameters silently dropped.
+	if sig.TypeParams().Len() > 0 {
+		return nil, fmt.Errorf("emit: unsupported generic func %s (type parameters not supported)", fn.Name())
+	}
+	sigID, err := e.typeID(fn.Type())
+	if err != nil {
+		return nil, err
+	}
 
 	// Receiver: methods carry their receiver explicitly (name, object,
 	// type). Without it, same-named methods on different types are
@@ -58,10 +69,14 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 		if len(recvField.Names) > 0 {
 			recvNode = recvField.Names[0]
 		}
+		recvTypeID, err := e.typeID(recvVar.Type())
+		if err != nil {
+			return nil, err
+		}
 		recv = e.node("param", recvNode, map[string]any{
 			"name": recvVar.Name(),
 			"obj":  rid,
-			"type": e.typeID(recvVar.Type()),
+			"type": recvTypeID,
 		})
 	}
 
@@ -99,10 +114,14 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if err != nil {
 					return nil, err
 				}
+				paramTypeID, err := e.typeID(pobj.Type())
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", nameNode, map[string]any{
 					"name": name,
 					"obj":  pid,
-					"type": e.typeID(pobj.Type()),
+					"type": paramTypeID,
 				}))
 				pi++
 			}
@@ -298,7 +317,11 @@ func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 	var typ any
 	if vs.Type != nil {
 		if tv, ok := e.info.Info.Types[vs.Type]; ok {
-			typ = e.typeID(tv.Type)
+			tid, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			typ = tid
 		}
 	}
 	for _, name := range vs.Names {
@@ -470,19 +493,27 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		tid, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("unary", x, map[string]any{
 			"op":   ex.Op.String(),
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": tid,
 		}), nil
 	case *ast.ParenExpr:
 		xn, err := e.emitExpr(ex.X)
 		if err != nil {
 			return nil, err
 		}
+		tid, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("paren", x, map[string]any{
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": tid,
 		}), nil
 	case *ast.CallExpr:
 		return e.emitCall(ex)
@@ -503,7 +534,11 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 	var typ any
 	if c.Type != nil {
 		if tv, ok := e.info.Info.Types[c.Type]; ok {
-			typ = e.typeID(tv.Type)
+			tid, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			typ = tid
 		}
 	}
 	elems := []any{}
@@ -518,12 +553,16 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 			if err != nil {
 				return nil, err
 			}
+			tid, err := e.exprType(kv)
+			if err != nil {
+				return nil, err
+			}
 			elems = append(elems, map[string]any{
 				"kind": "keyvalue",
 				"fields": map[string]any{
 					"key":   kn,
 					"value": vn,
-					"type":  e.exprType(kv),
+					"type":  tid,
 				},
 			})
 			continue
@@ -556,10 +595,14 @@ func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	tid, err := e.exprType(ix)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("index", ix, map[string]any{
 		"x":     x,
 		"index": index,
-		"type":  e.exprType(ix),
+		"type":  tid,
 	}), nil
 }
 
@@ -590,12 +633,16 @@ func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
 		}
 		max = mn
 	}
+	tid, err := e.exprType(s)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("slice", s, map[string]any{
 		"x":    x,
 		"low":  low,
 		"high": high,
 		"max":  max,
-		"type": e.exprType(s),
+		"type": tid,
 	}), nil
 }
 
@@ -627,10 +674,14 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		tid, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": tid,
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
@@ -643,10 +694,14 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		tid, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": tid,
 		}), nil
 	}
 	return nil, fmt.Errorf("emit: unresolved ident %s", id.Name)
@@ -659,8 +714,12 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	}
 	fields := map[string]any{
 		"value": l.Value,
-		"type":  e.typeID(tv.Type),
 	}
+	tid, err := e.typeID(tv.Type)
+	if err != nil {
+		return nil, err
+	}
+	fields["type"] = tid
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
 	}
@@ -676,11 +735,15 @@ func (e *Emitter) emitBinary(b *ast.BinaryExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	tid, err := e.exprType(b)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("binary", b, map[string]any{
 		"op":   b.Op.String(),
 		"x":    x,
 		"y":    y,
-		"type": e.exprType(b),
+		"type": tid,
 	}), nil
 }
 
@@ -710,11 +773,15 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 			}
 		}
 	}
+	tid, err := e.exprType(c)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("call", c, map[string]any{
 		"fun":     fun,
 		"args":    args,
 		"builtin": builtin,
-		"type":    e.exprType(c),
+		"type":    tid,
 	}), nil
 }
 
@@ -747,12 +814,16 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 		for i, ix := range sel.Index() {
 			index[i] = ix
 		}
+		tid, err := e.exprType(s)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("selector", s, map[string]any{
 			"x":       x,
 			"sel":     s.Sel.Name,
 			"selkind": selKind,
 			"index":   index,
-			"type":    e.exprType(s),
+			"type":    tid,
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
@@ -771,11 +842,15 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 					}
 					oid = tid
 				}
+				typID, err := e.exprType(s)
+				if err != nil {
+					return nil, err
+				}
 				return e.node("pkgref", s, map[string]any{
 					"pkg":  id.Name,
 					"name": s.Sel.Name,
 					"obj":  oid,
-					"type": e.exprType(s),
+					"type": typID,
 				}), nil
 			}
 		}
@@ -783,10 +858,16 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	return nil, fmt.Errorf("emit: unresolved selector %v", s)
 }
 
-// exprType returns the type-table id for an expression's type.
-func (e *Emitter) exprType(x ast.Expr) any {
+// exprType returns the type-table id for an expression's type. It fails
+// when the expression's type cannot be described (e.g. a type parameter):
+// callers propagate the error instead of emitting a dangling nil type.
+func (e *Emitter) exprType(x ast.Expr) (any, error) {
 	if tv, ok := e.info.Info.Types[x]; ok && tv.Type != nil {
-		return e.typeID(tv.Type)
+		id, err := e.typeID(tv.Type)
+		if err != nil {
+			return nil, err
+		}
+		return id, nil
 	}
-	return nil
+	return nil, nil
 }
