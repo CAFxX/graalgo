@@ -18,6 +18,7 @@ import graalgo.frontend.ExprStmtNode;
 import graalgo.frontend.ForRepeatingNode;
 import graalgo.frontend.ForStmtNode;
 import graalgo.frontend.FrontendException;
+import graalgo.frontend.FuncConstNode;
 import graalgo.frontend.FuncValueCallNode;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.GoLoopNode;
@@ -27,6 +28,7 @@ import graalgo.frontend.IncDecNode;
 import graalgo.frontend.IndexNode;
 import graalgo.frontend.LenNode;
 import graalgo.frontend.MakeNode;
+import graalgo.frontend.MethodValueNode;
 import graalgo.frontend.NewNode;
 import graalgo.frontend.NilNode;
 import graalgo.frontend.PanicBuiltinNode;
@@ -43,11 +45,13 @@ import graalgo.frontend.SelectorWriteNode;
 import graalgo.frontend.SliceExprNode;
 import graalgo.frontend.UnaryOpNode;
 import graalgo.frontend.VarReadNode;
+import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -63,11 +67,24 @@ import java.util.Map;
  * <pre>
  *   frontend: "v2"
  *   package: {name, files, lang}
- *   types:   [...]  (type table)
- *   objects: [...]  (object table)
- *   funcs:   [{kind: "funcdecl", fields: {name, sig, params, body, pkgpath}}...]
+ *   types:   [...]  (type table; named/pointer/struct/interface entries
+ *            carry "methods" — the type's method set, one entry per method:
+ *            {name, obj, sig, implkey, recv, index, addrOf}, plus
+ *            "embeddedIface" on embedded-interface redispatch entries
+ *            (obj -1). Struct fields carry real "offset"s (-1 = unknown,
+ *            e.g. generic templates). Interfaces carry "embedded" type ids.)
+ *   objects: [...]  (object table; func objects have kind "func")
+ *   funcs:   [{kind: "funcdecl", fields: {name, obj, sig, params, body,
+ *            pkgpath}}...]  ("obj" is the function object id, the funcTable
+ *            key method dispatch resolves through)
  *   globals: [...]
  * </pre>
+ *
+ * <p>Selector nodes carry "selkind" ("field" | "method" | "methodexpr")
+ * and, for methods, "obj" (the method object id; -1 marks an
+ * embedded-interface redispatch, which the factory rejects at build time
+ * until redispatch is implemented). See
+ * {@code docs/arch/frontend-v2-method-dispatch.md} for the full contract.
  *
  * <p>Node kinds from the v2 emitter (see {@code emit/nodes.go}):
  * funcdecl, block, exprstmt, return, assign, vardecl, if, for, range,
@@ -95,8 +112,21 @@ public final class NodeFactoryV2 {
      * @throws FrontendException if the document is invalid
      */
     public V2Program buildProgram(byte[] data) throws IOException {
-        Map<String, Object> doc = BinaryDecoder.decodeDocument(data);
+        return buildProgram(BinaryDecoder.decodeDocument(data));
+    }
 
+    /**
+     * Builds a program from an already-decoded v2 document.
+     *
+     * <p>Package-private test seam: production callers use the
+     * {@code byte[]} overload, which decodes and then delegates here, so
+     * both paths validate and build identically.
+     *
+     * @param doc the decoded Document map
+     * @return the built program
+     * @throws FrontendException if the document is invalid
+     */
+    V2Program buildProgram(Map<String, Object> doc) {
         String frontend = getString(doc, "frontend", "document");
         if (!"v2".equals(frontend)) {
             throw new FrontendException(
@@ -107,6 +137,19 @@ public final class NodeFactoryV2 {
         List<Object> types = getList(doc, "types", "document");
         List<Object> objects = getList(doc, "objects", "document");
 
+        // Validate the method-set / offset contract before building any
+        // function: a malformed type table must fail here, loudly, rather
+        // than producing nodes that mis-dispatch at execution time.
+        validateTypeTable(types, objects);
+
+        // The function table is owned by this build and shared by every
+        // node that resolves a function object id lazily (MethodValueNode,
+        // FuncConstNode). It is EMPTY until the v2 launcher registers
+        // RootCallTargets for the built functions (see V2Program.funcTable):
+        // until then, evaluating a method value or function constant fails
+        // loudly at execution with "unresolved ... object N".
+        Map<Integer, GoFunc> funcTable = new LinkedHashMap<>();
+
         List<Object> funcs = getList(doc, "funcs", "document");
         List<V2Function> functions = new ArrayList<>();
         for (int i = 0; i < funcs.size(); i++) {
@@ -116,10 +159,288 @@ public final class NodeFactoryV2 {
             }
             @SuppressWarnings("unchecked")
             Map<String, Object> fnMap = (Map<String, Object>) f;
-            functions.add(buildFunction(fnMap, i, types, objects));
+            functions.add(buildFunction(fnMap, i, types, objects, funcTable));
         }
 
-        return new V2Program(functions);
+        return new V2Program(functions, funcTable);
+    }
+
+    /**
+     * Validates the type table's method-set and struct-offset contract
+     * (see {@code docs/arch/frontend-v2-method-dispatch.md} §3).
+     *
+     * <p>Lenient about ABSENT fields (the pre-methodsets wire shape has
+     * no "methods" and no per-field "offset" beyond the placeholder):
+     * a missing "methods"/"offset" is the old shape, not malformed.
+     * Strict about PRESENT fields: every method entry must be complete
+     * and consistent, every offset must be -1 (unknown) or a
+     * non-decreasing non-negative byte offset. A violation throws
+     * {@link FrontendException} naming the exact table position.
+     */
+    @SuppressWarnings("unchecked")
+    private static void validateTypeTable(List<Object> types, List<Object> objects) {
+        for (int i = 0; i < types.size(); i++) {
+            String where = "types[" + i + "]";
+            Object t = types.get(i);
+            if (!(t instanceof Map)) {
+                throw new FrontendException(where + ": must be a map");
+            }
+            Map<String, Object> typeMap = (Map<String, Object>) t;
+            String kind = (String) typeMap.get("kind");
+            if (kind == null) {
+                throw new FrontendException(where + ": missing kind");
+            }
+            Object detailObj = typeMap.get("detail");
+            if (detailObj == null) {
+                continue; // No detail: nothing about methods/offsets to check.
+            }
+            if (!(detailObj instanceof Map)) {
+                throw new FrontendException(where + ".detail: must be a map");
+            }
+            Map<String, Object> detail = (Map<String, Object>) detailObj;
+
+            if (detail.containsKey("methods")) {
+                validateMethodSet(types, objects, i, kind, detail, where);
+            }
+            if ("interface".equals(kind) && detail.containsKey("embedded")) {
+                Object embObj = detail.get("embedded");
+                if (!(embObj instanceof List)) {
+                    throw new FrontendException(where + ".detail.embedded: must be a list");
+                }
+                for (Object e : (List<Object>) embObj) {
+                    validTypeId(types, e, where + ".detail.embedded");
+                }
+            }
+            if ("struct".equals(kind) && detail.containsKey("fields")) {
+                validateStructOffsets(detail, where);
+            }
+        }
+    }
+
+    /**
+     * Validates one type entry's "methods" list.
+     *
+     * @param kind the type entry's kind ("named", "pointer", "struct",
+     *             "interface" — the only kinds that carry method sets)
+     */
+    @SuppressWarnings("unchecked")
+    private static void validateMethodSet(List<Object> types, List<Object> objects,
+            int typeId, String kind, Map<String, Object> detail, String where) {
+        if (!"named".equals(kind) && !"pointer".equals(kind)
+                && !"struct".equals(kind) && !"interface".equals(kind)) {
+            throw new FrontendException(where + ": kind \"" + kind +
+                "\" must not carry a method set");
+        }
+        Object methodsObj = detail.get("methods");
+        if (!(methodsObj instanceof List)) {
+            throw new FrontendException(where + ".detail.methods: must be a list");
+        }
+        List<Object> methods = (List<Object>) methodsObj;
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (int j = 0; j < methods.size(); j++) {
+            String mwhere = where + ".detail.methods[" + j + "]";
+            Object m = methods.get(j);
+            if (!(m instanceof Map)) {
+                throw new FrontendException(mwhere + ": must be a map");
+            }
+            Map<String, Object> entry = (Map<String, Object>) m;
+            Object nameObj = entry.get("name");
+            if (!(nameObj instanceof String) || ((String) nameObj).isEmpty()) {
+                throw new FrontendException(mwhere + ": method without a name");
+            }
+            String name = (String) nameObj;
+            if (!names.add(name)) {
+                throw new FrontendException(mwhere + ": duplicate method \"" + name + "\"");
+            }
+            // Signature: must resolve to a "signature" type entry.
+            int sigId = validTypeId(types, entry.get("sig"), mwhere + ".sig");
+            String sigKind = typeKind(types, sigId, mwhere + ".sig");
+            if (!"signature".equals(sigKind)) {
+                throw new FrontendException(mwhere + ".sig: type " + sigId +
+                    " is \"" + sigKind + "\", want signature");
+            }
+            Object implkeyObj = entry.get("implkey");
+            if (!(implkeyObj instanceof String) || ((String) implkeyObj).isEmpty()) {
+                throw new FrontendException(mwhere + ": method \"" + name +
+                    "\" without an implkey");
+            }
+            Object recvObj = entry.get("recv");
+            Object indexObj = entry.get("index");
+            if ("interface".equals(kind)) {
+                // Interface method entries are {name, sig, implkey} only:
+                // no receiver (no funcdecl exists) and no index. If a
+                // hand-built doc carries them anyway, validate the shape
+                // rather than rejecting the entry outright.
+                if (recvObj != null && !"value".equals(recvObj) && !"pointer".equals(recvObj)) {
+                    throw new FrontendException(mwhere + ": method \"" + name +
+                        "\" recv must be \"value\" or \"pointer\", got " + recvObj);
+                }
+            } else if (!"value".equals(recvObj) && !"pointer".equals(recvObj)) {
+                throw new FrontendException(mwhere + ": method \"" + name +
+                    "\" recv must be \"value\" or \"pointer\", got " + recvObj);
+            }
+            if (indexObj != null) {
+                if (!(indexObj instanceof List)) {
+                    throw new FrontendException(mwhere + ": method \"" + name +
+                        "\" index must be a list");
+                }
+                for (Object ix : (List<Object>) indexObj) {
+                    if (!(ix instanceof Long) || ((Long) ix).longValue() < 0) {
+                        throw new FrontendException(mwhere + ": method \"" + name +
+                            "\" index entries must be non-negative integers");
+                    }
+                }
+            } else if (!"interface".equals(kind)) {
+                throw new FrontendException(mwhere + ": method \"" + name +
+                    "\" without index");
+            }
+            if (entry.containsKey("addrOf") && !(entry.get("addrOf") instanceof Boolean)) {
+                throw new FrontendException(mwhere + ": method \"" + name +
+                    "\" addrOf must be a boolean");
+            }
+            if ("interface".equals(kind)) {
+                // Interface methods have no funcdecl: no obj, ever.
+                if (entry.containsKey("obj")) {
+                    throw new FrontendException(mwhere + ": interface method \"" + name +
+                        "\" must not carry obj");
+                }
+            } else {
+                // Concrete method: obj is the method's *types.Func object,
+                // or -1 for an embedded-interface redispatch entry.
+                Object objObj = entry.get("obj");
+                if (!(objObj instanceof Long)) {
+                    throw new FrontendException(mwhere + ": method \"" + name +
+                        "\" without obj");
+                }
+                long objId = ((Long) objObj).longValue();
+                if (objId < -1) {
+                    throw new FrontendException(mwhere + ": method \"" + name +
+                        "\" has bad obj " + objId);
+                }
+                if (objId >= 0) {
+                    validObjectId(objects, objId, mwhere + ".obj", "func");
+                }
+            }
+            if (entry.containsKey("embeddedIface")) {
+                int ifaceId = validTypeId(types, entry.get("embeddedIface"),
+                    mwhere + ".embeddedIface");
+                String ifaceKind = resolvedTypeKind(types, ifaceId, mwhere + ".embeddedIface");
+                if (!"interface".equals(ifaceKind)) {
+                    throw new FrontendException(mwhere + ".embeddedIface: type " + ifaceId +
+                        " is \"" + ifaceKind + "\", want interface");
+                }
+            }
+        }
+    }
+
+    /** Validates one struct entry's field offsets: -1 or non-decreasing ≥ 0. */
+    @SuppressWarnings("unchecked")
+    private static void validateStructOffsets(Map<String, Object> detail, String where) {
+        Object fieldsObj = detail.get("fields");
+        if (!(fieldsObj instanceof List)) {
+            throw new FrontendException(where + ".detail.fields: must be a list");
+        }
+        long lastKnown = -1;
+        List<Object> fields = (List<Object>) fieldsObj;
+        for (int i = 0; i < fields.size(); i++) {
+            String fwhere = where + ".detail.fields[" + i + "]";
+            Object f = fields.get(i);
+            if (!(f instanceof Map)) {
+                throw new FrontendException(fwhere + ": must be a map");
+            }
+            Object offObj = ((Map<String, Object>) f).get("offset");
+            if (offObj == null) {
+                continue; // Old wire shape: offset absent, not malformed.
+            }
+            if (!(offObj instanceof Long)) {
+                throw new FrontendException(fwhere + ".offset: must be an integer");
+            }
+            long off = ((Long) offObj).longValue();
+            if (off < -1) {
+                throw new FrontendException(fwhere + ".offset: " + off + " < -1");
+            }
+            if (off >= 0) {
+                if (lastKnown >= 0 && off < lastKnown) {
+                    throw new FrontendException(fwhere + ".offset: " + off +
+                        " < previous known offset " + lastKnown + " (offsets must be non-decreasing)");
+                }
+                lastKnown = off;
+            }
+            // -1 (unknown, e.g. generic template): does not constrain
+            // the next known offset.
+        }
+    }
+
+    /** Returns the type id, or throws if the value is not a valid type id. */
+    private static int validTypeId(List<Object> types, Object idObj, String where) {
+        if (!(idObj instanceof Long)) {
+            throw new FrontendException(where + ": must be a type id");
+        }
+        long id = ((Long) idObj).longValue();
+        if (id < 0 || id >= types.size()) {
+            throw new FrontendException(where + ": bad type id " + id);
+        }
+        return (int) id;
+    }
+
+    /** Returns the object id, or throws if it does not resolve to a func object. */
+    @SuppressWarnings("unchecked")
+    private static void validObjectId(List<Object> objects, long objId, String where,
+            String wantKind) {
+        if (objId < 0 || objId >= objects.size()) {
+            throw new FrontendException(where + ": bad object id " + objId);
+        }
+        Object o = objects.get((int) objId);
+        if (!(o instanceof Map)) {
+            throw new FrontendException(where + ": object " + objId + " must be a map");
+        }
+        String kind = (String) ((Map<String, Object>) o).get("kind");
+        if (!wantKind.equals(kind)) {
+            throw new FrontendException(where + ": object " + objId +
+                " is \"" + kind + "\", want " + wantKind);
+        }
+    }
+
+    /** Returns the "kind" string of a type-table entry. */
+    @SuppressWarnings("unchecked")
+    private static String typeKind(List<Object> types, int typeId, String where) {
+        Object t = types.get(typeId);
+        if (!(t instanceof Map)) {
+            throw new FrontendException(where + ": type " + typeId + " must be a map");
+        }
+        String kind = (String) ((Map<String, Object>) t).get("kind");
+        if (kind == null) {
+            throw new FrontendException(where + ": type " + typeId + " has no kind");
+        }
+        return kind;
+    }
+
+    /**
+     * Returns a type's kind, resolving one named type to its underlying
+     * kind (a named interface reports "interface"). Follows the chain a
+     * bounded number of hops so a cyclic hand-built table cannot loop.
+     */
+    @SuppressWarnings("unchecked")
+    private static String resolvedTypeKind(List<Object> types, int typeId, String where) {
+        int id = typeId;
+        for (int hop = 0; hop < 8; hop++) {
+            String kind = typeKind(types, id, where);
+            if (!"named".equals(kind)) {
+                return kind;
+            }
+            Object t = types.get(id);
+            Map<String, Object> typeMap = (Map<String, Object>) t;
+            Object detailObj = typeMap.get("detail");
+            if (!(detailObj instanceof Map)) {
+                return kind;
+            }
+            Object underObj = ((Map<String, Object>) detailObj).get("underlying");
+            if (!(underObj instanceof Long)) {
+                return kind;
+            }
+            id = validTypeId(types, underObj, where);
+        }
+        throw new FrontendException(where + ": named-type chain too deep at type " + typeId);
     }
 
     /**
@@ -131,10 +452,13 @@ public final class NodeFactoryV2 {
         final Map<Integer, GoKind> objToKind = new HashMap<>();
         final List<Object> types;
         final List<Object> objects;
+        /** The program's shared function table (see buildProgram). */
+        final Map<Integer, GoFunc> funcTable;
 
-        V2Scope(List<Object> types, List<Object> objects) {
+        V2Scope(List<Object> types, List<Object> objects, Map<Integer, GoFunc> funcTable) {
             this.types = types;
             this.objects = objects;
+            this.funcTable = funcTable;
         }
 
         /** Declares a new frame slot for an object id. Returns the slot index. */
@@ -249,10 +573,16 @@ public final class NodeFactoryV2 {
 
     /**
      * Builds a single function from its funcdecl node map.
+     *
+     * <p>Reads the funcdecl's "obj" (the function object id): the v2
+     * launcher registers RootCallTargets under that id in the program's
+     * funcTable, and method values / function constants resolve through
+     * it. A funcdecl without a valid func object id fails loudly here —
+     * it could never be called through a method value.
      */
     @SuppressWarnings("unchecked")
     private V2Function buildFunction(Map<String, Object> fnMap, int index,
-            List<Object> types, List<Object> objects) {
+            List<Object> types, List<Object> objects, Map<Integer, GoFunc> funcTable) {
         String kind = getString(fnMap, "kind", "funcs[" + index + "]");
         if (!"funcdecl".equals(kind)) {
             throw new FrontendException(
@@ -261,7 +591,16 @@ public final class NodeFactoryV2 {
         Map<String, Object> fields = getMap(fnMap, "fields", "funcdecl");
         String name = getString(fields, "name", "funcdecl.fields");
 
-        V2Scope scope = new V2Scope(types, objects);
+        Object objObj = fields.get("obj");
+        if (!(objObj instanceof Long)) {
+            throw new FrontendException("funcs[" + index + "] (" + name +
+                "): funcdecl without obj — the emitter must attach the function object id");
+        }
+        int funcObjId = ((Long) objObj).intValue();
+        // The obj must resolve to a func object in the objects table.
+        validObjectId(objects, funcObjId, "funcs[" + index + "] (" + name + ").obj", "func");
+
+        V2Scope scope = new V2Scope(types, objects, funcTable);
 
         // Declare parameters as frame slots.
         List<Object> params = getList(fields, "params", "funcdecl.fields");
@@ -288,7 +627,7 @@ public final class NodeFactoryV2 {
             body = buildStmt((Map<String, Object>) bodyObj, "funcdecl.fields.body", scope);
         }
 
-        return new V2Function(name, body, scope.frames.build());
+        return new V2Function(name, funcObjId, body, scope.frames.build());
     }
 
     /**
@@ -528,8 +867,16 @@ public final class NodeFactoryV2 {
                 GoKind k = scope.kindForObj(objId, where);
                 assigns.add(new AssignNode(slot, k, rhs));
             } else if ("selector".equals(lkind)) {
-                // s.Field = value
+                // s.Field = value — only field selectors are assignable.
+                // A method selector as an LHS cannot occur in a checked
+                // program (method values are not addressable); fail
+                // loudly rather than misreading it as a field write.
                 Map<String, Object> lfields = getMap(lmap, "fields", where + ".lhs.fields");
+                Object selkindObj = lfields.get("selkind");
+                if (selkindObj instanceof String && !"field".equals(selkindObj)) {
+                    throw new FrontendException(where + ".lhs[" + i + "]: method selector \"" +
+                        lfields.get("sel") + "\" is not assignable");
+                }
                 Object xObj = lfields.get("x");
                 if (!(xObj instanceof Map)) {
                     throw new FrontendException(where + ".lhs[" + i + "]: selector.x must be a map");
@@ -731,6 +1078,85 @@ public final class NodeFactoryV2 {
     }
 
     /**
+     * Returns the method object id a method/methodexpr selector carries,
+     * or throws if the selector has none. -1 is the emitter's marker for
+     * an embedded-interface redispatch entry (handled by the caller).
+     */
+    private static int selectorObjId(Map<String, Object> fields, String where, String sel) {
+        Object objObj = fields.get("obj");
+        if (!(objObj instanceof Long)) {
+            throw new FrontendException(where + ": method selector \"" + sel +
+                "\" without obj — the emitter must attach the method object id");
+        }
+        long objId = ((Long) objObj).longValue();
+        if (objId < -1) {
+            throw new FrontendException(where + ": method selector \"" + sel +
+                "\" has bad obj " + objId);
+        }
+        return (int) objId;
+    }
+
+    /**
+     * Returns true if the selector receiver x has an interface type
+     * (a bare interface, or a named type whose underlying type is an
+     * interface). A pointer receiver is never an interface receiver:
+     * method sets of pointers to interfaces are empty in Go, so the
+     * emitter never produces such a selection.
+     */
+    @SuppressWarnings("unchecked")
+    private static boolean isInterfaceType(List<Object> types, Map<String, Object> xMap,
+            String where) {
+        Map<String, Object> xfields = getMap(xMap, "fields", where + ".x.fields");
+        Object typeIdObj = xfields.get("type");
+        if (!(typeIdObj instanceof Long)) {
+            throw new FrontendException(where + ": selector.x has no type");
+        }
+        int typeId = validTypeId(types, typeIdObj, where + ".x");
+        return "interface".equals(resolvedTypeKind(types, typeId, where + ".x"));
+    }
+
+    /**
+     * Resolves a type id to the struct detail it denotes, following
+     * pointer→elem and named→underlying links. A field selector's receiver
+     * usually has a NAMED struct type (idents carry the named type id),
+     * so resolving only pointers — as the old code did — rejected every
+     * field access on a named struct.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> structDetailForType(List<Object> types, int typeId,
+            String where) {
+        int id = typeId;
+        for (int hop = 0; hop < 8; hop++) {
+            if (id < 0 || id >= types.size()) {
+                throw new FrontendException(where + ": bad type id " + id);
+            }
+            Object t = types.get(id);
+            if (!(t instanceof Map)) {
+                throw new FrontendException(where + ": type not a map");
+            }
+            Map<String, Object> typeMap = (Map<String, Object>) t;
+            String kind = (String) typeMap.get("kind");
+            if ("struct".equals(kind)) {
+                return getMap(typeMap, "detail", where);
+            }
+            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+            Object nextObj = null;
+            if ("pointer".equals(kind)) {
+                nextObj = detail == null ? null : detail.get("elem");
+            } else if ("named".equals(kind)) {
+                nextObj = detail == null ? null : detail.get("underlying");
+            } else {
+                throw new FrontendException(where + ": selector on non-struct type " + kind);
+            }
+            if (!(nextObj instanceof Long)) {
+                throw new FrontendException(where + ": " + kind + " type without target");
+            }
+            id = ((Long) nextObj).intValue();
+        }
+        throw new FrontendException(where + ": type chain too deep at type " + typeId);
+    }
+
+    /**
      * Finds the field index of a named field in the struct type of x.
      */
     @SuppressWarnings("unchecked")
@@ -742,30 +1168,7 @@ public final class NodeFactoryV2 {
             throw new FrontendException(where + ": selector.x has no type");
         }
         int typeId = ((Long) typeIdObj).intValue();
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
-        // Handle pointer to struct: dereference.
-        String kind = (String) typeMap.get("kind");
-        if ("pointer".equals(kind)) {
-            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
-            Object elemObj = detail.get("elem");
-            if (elemObj instanceof Long) {
-                typeId = ((Long) elemObj).intValue();
-                t = types.get(typeId);
-                typeMap = (Map<String, Object>) t;
-                kind = (String) typeMap.get("kind");
-            }
-        }
-        if (!"struct".equals(kind)) {
-            throw new FrontendException(where + ": selector on non-struct type " + kind);
-        }
-        Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+        Map<String, Object> detail = structDetailForType(types, typeId, where);
         List<Object> fieldsList = (List<Object>) detail.get("fields");
         for (int i = 0; i < fieldsList.size(); i++) {
             Object f = fieldsList.get(i);
@@ -844,12 +1247,61 @@ public final class NodeFactoryV2 {
                     throw new FrontendException(where + ": selector.x must be a map");
                 }
                 Map<String, Object> xMap = (Map<String, Object>) xObj;
-                GoExprNode x = buildExpr(xMap, where + ".x", scope);
                 String sel = getString(fields, "sel", where);
-                GoKind k = goKindForTypeId(scope.types, fields.get("type"), where);
-                // Look up the field index in the struct type of x.
-                int fieldIndex = findFieldIndex(scope.types, xMap, sel, where);
-                return new SelectorNode(x, new int[]{fieldIndex}, k);
+                // "selkind" distinguishes field access from method values
+                // and method expressions. The pre-methodsets wire shape has
+                // no selkind and only ever produced field selectors.
+                String selkind = (String) fields.get("selkind");
+                if (selkind == null) {
+                    selkind = "field";
+                }
+                switch (selkind) {
+                    case "field": {
+                        GoExprNode x = buildExpr(xMap, where + ".x", scope);
+                        GoKind k = goKindForTypeId(scope.types, fields.get("type"), where);
+                        // Look up the field index in the struct type of x.
+                        int fieldIndex = findFieldIndex(scope.types, xMap, sel, where);
+                        return new SelectorNode(x, new int[]{fieldIndex}, k);
+                    }
+                    case "method": {
+                        // Method value x.M: binds the receiver as-is and
+                        // resolves the method lazily through the funcTable.
+                        // The emitter only produces direct methods (see
+                        // docs/arch/frontend-v2-method-dispatch.md §4).
+                        GoExprNode x = buildExpr(xMap, where + ".x", scope);
+                        int objId = selectorObjId(fields, where, sel);
+                        if (objId == -1) {
+                            throw new FrontendException(where +
+                                ": method selector \"" + sel +
+                                "\" is an embedded-interface redispatch (obj -1)" +
+                                " — v2 redispatch is not yet implemented");
+                        }
+                        if (isInterfaceType(scope.types, xMap, where)) {
+                            throw new FrontendException(where +
+                                ": method selector \"" + sel +
+                                "\" on an interface receiver" +
+                                " — v2 interface dispatch is not yet implemented");
+                        }
+                        return new MethodValueNode(x, scope.funcTable, objId);
+                    }
+                    case "methodexpr": {
+                        // Method expression T.M: a plain function constant
+                        // for the method's object id (no receiver to bind).
+                        // The selector's x is a TYPE expression (e.g. the
+                        // ident for T), not a value: do not build it.
+                        int objId = selectorObjId(fields, where, sel);
+                        if (objId == -1) {
+                            throw new FrontendException(where +
+                                ": method expression \"" + sel +
+                                "\" is an embedded-interface redispatch (obj -1)" +
+                                " — v2 redispatch is not yet implemented");
+                        }
+                        return new FuncConstNode(scope.funcTable, objId);
+                    }
+                    default:
+                        throw new FrontendException(where +
+                            ": bad selector selkind \"" + selkind + "\"");
+                }
             }
             case "pkgref": {
                 // Package-qualified reference (e.g. fmt.Println).
@@ -1168,13 +1620,16 @@ public final class NodeFactoryV2 {
     // --- Result types ---
 
     /**
-     * A built v2 program: the list of functions with their Truffle bodies.
+     * A built v2 program: the list of functions with their Truffle bodies,
+     * plus the shared function table method values resolve through.
      */
     public static final class V2Program {
         private final List<V2Function> functions;
+        private final Map<Integer, GoFunc> funcTable;
 
-        V2Program(List<V2Function> functions) {
+        V2Program(List<V2Function> functions, Map<Integer, GoFunc> funcTable) {
             this.functions = List.copyOf(functions);
+            this.funcTable = funcTable;
         }
 
         public List<V2Function> functions() {
@@ -1184,24 +1639,55 @@ public final class NodeFactoryV2 {
         public int functionCount() {
             return functions.size();
         }
+
+        /**
+         * The program's function table: object id → {@link GoFunc}.
+         *
+         * <p>Registration contract: the v2 launcher registers each built
+         * function's {@link GoFunc} (a RootCallTarget) here under the
+         * funcdecl's {@code obj} id, AFTER all bodies are built (so
+         * mutually recursive functions resolve). Nodes that reference a
+         * function object id ({@code MethodValueNode},
+         * {@code FuncConstNode}) resolve LAZILY through this same map
+         * instance at execution time: an absent id throws
+         * {@code FrontendException("unresolved ... object N")} then, never
+         * silently. Until the launcher lands, the table is empty and every
+         * method value / function constant fails loudly at execution —
+         * by design (see {@code docs/arch/frontend-v2-method-dispatch.md}
+         * §6). Callers may populate the table, but must never replace the
+         * map instance the built nodes hold.
+         */
+        public Map<Integer, GoFunc> funcTable() {
+            return funcTable;
+        }
     }
 
     /**
-     * A single built function: name, Truffle body, and frame descriptor.
+     * A single built function: name, object id, Truffle body, and frame descriptor.
      */
     public static final class V2Function {
         private final String name;
+        private final int objId;
         private final GoStmtNode body;
         private final FrameDescriptor frameDescriptor;
 
-        V2Function(String name, GoStmtNode body, FrameDescriptor frameDescriptor) {
+        V2Function(String name, int objId, GoStmtNode body, FrameDescriptor frameDescriptor) {
             this.name = name;
+            this.objId = objId;
             this.body = body;
             this.frameDescriptor = frameDescriptor;
         }
 
         public String name() {
             return name;
+        }
+
+        /**
+         * The function object id (the funcTable key the launcher
+         * registers this function's RootCallTarget under).
+         */
+        public int objId() {
+            return objId;
         }
 
         public GoStmtNode body() {
@@ -1300,22 +1786,10 @@ public final class NodeFactoryV2 {
     /**
      * Finds a field index by type ID (for composite literals).
      */
-    @SuppressWarnings("unchecked")
     private static int findFieldIndexByTypeId(List<Object> types, int typeId,
             String fieldName, String where) {
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
-        String kind = (String) typeMap.get("kind");
-        if (!"struct".equals(kind)) {
-            throw new FrontendException(where + ": keyed literal on non-struct type " + kind);
-        }
-        Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+        Map<String, Object> detail = structDetailForType(types, typeId, where);
+        @SuppressWarnings("unchecked")
         List<Object> fieldsList = (List<Object>) detail.get("fields");
         for (int i = 0; i < fieldsList.size(); i++) {
             Object f = fieldsList.get(i);

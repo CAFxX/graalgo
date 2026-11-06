@@ -34,6 +34,9 @@ type Document struct {
 type Emitter struct {
 	fset *token.FileSet
 	info *checker.Result
+	// sizes is the target size model (gc/amd64, pinned by the checker)
+	// used for struct field offsets.
+	sizes types.Sizes
 	// files maps absolute path → index in package.files.
 	files []string
 	// Type table: go/types.Type → id.
@@ -48,9 +51,17 @@ type Emitter struct {
 // document is consumed directly by the backend via the Go→Java API;
 // it is never serialized to JSON.
 func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, error) {
+	sizes := cr.Sizes
+	if sizes == nil {
+		// Defensive: checker.Check always pins Sizes, but a hand-built
+		// Result must not silently compute offsets under a different
+		// model (or the zero model). Fail to the pinned target.
+		sizes = types.SizesFor("gc", "amd64")
+	}
 	e := &Emitter{
 		fset:    cr.Fset,
 		info:    cr,
+		sizes:   sizes,
 		files:   files,
 		typeIDs: make(map[types.Type]int),
 		objIDs:  make(map[types.Object]int),
@@ -282,30 +293,46 @@ func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error
 func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
 	switch o := obj.(type) {
 	case *types.Var:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":  "var",
 			"name":  o.Name(),
-			"type":  e.typeID(o.Type()),
+			"type":  tid,
 			"param": isParam,
 		}, nil
 	case *types.Func:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
-			"type": e.typeID(o.Type()),
+			"type": tid,
 		}, nil
 	case *types.Const:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":  "const",
 			"name":  o.Name(),
-			"type":  e.typeID(o.Type()),
+			"type":  tid,
 			"value": o.Val().ExactString(),
 		}, nil
 	case *types.TypeName:
+		tid, err := e.typeID(o.Type())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "typename",
 			"name": o.Name(),
-			"type": e.typeID(o.Type()),
+			"type": tid,
 		}, nil
 	case *types.Builtin:
 		// Builtins have no meaningful single type (len, unsafe.Sizeof);
@@ -325,18 +352,29 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
-func (e *Emitter) typeID(t types.Type) int {
+// Describing a type can fail (method tables declare objects), so the error
+// propagates: a type that cannot be described is a compile error, never a
+// silently degraded entry.
+func (e *Emitter) typeID(t types.Type) (int, error) {
 	if id, ok := e.typeIDs[t]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.types)
 	e.typeIDs[t] = id
 	e.types = append(e.types, nil) // placeholder for recursion
-	e.types[id] = e.describeType(t)
-	return id
+	desc, err := e.describeType(t)
+	if err != nil {
+		return 0, err
+	}
+	e.types[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeType(t types.Type) map[string]any {
+// describeType describes one type for the type table. Method sets are
+// populated, never left empty as a placeholder: a named, pointer, struct,
+// or interface type carries the method set of exactly that type (see
+// methods.go and docs/arch/frontend-v2-method-dispatch.md).
+func (e *Emitter) describeType(t types.Type) (map[string]any, error) {
 	switch tt := t.(type) {
 	case *types.Basic:
 		class := basicClass(tt)
@@ -347,30 +385,54 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"class":   class,
 				"untyped": tt.Info()&types.IsUntyped != 0,
 			},
-		}
+		}, nil
 	case *types.Pointer:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
+		methods, err := e.methodTableEntries(tt)
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "pointer",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem, "methods": methods},
+		}, nil
 	case *types.Slice:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "slice",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Array:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "array",
-			"detail": map[string]any{"len": tt.Len(), "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"len": tt.Len(), "elem": elem},
+		}, nil
 	case *types.Map:
+		key, err := e.typeID(tt.Key())
+		if err != nil {
+			return nil, err
+		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "map",
 			"detail": map[string]any{
-				"key":  e.typeID(tt.Key()),
-				"elem": e.typeID(tt.Elem()),
+				"key":  key,
+				"elem": elem,
 			},
-		}
+		}, nil
 	case *types.Chan:
 		var dir string
 		switch tt.Dir() {
@@ -381,25 +443,37 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		case types.RecvOnly:
 			dir = "recv"
 		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "chan",
-			"detail": map[string]any{"dir": dir, "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"dir": dir, "elem": elem},
+		}, nil
 	case *types.Signature:
 		params := []any{}
 		for i := 0; i < tt.Params().Len(); i++ {
 			p := tt.Params().At(i)
+			tid, err := e.typeID(p.Type())
+			if err != nil {
+				return nil, err
+			}
 			params = append(params, map[string]any{
 				"name": p.Name(),
-				"type": e.typeID(p.Type()),
+				"type": tid,
 			})
 		}
 		results := []any{}
 		for i := 0; i < tt.Results().Len(); i++ {
 			r := tt.Results().At(i)
+			tid, err := e.typeID(r.Type())
+			if err != nil {
+				return nil, err
+			}
 			results = append(results, map[string]any{
 				"name": r.Name(),
-				"type": e.typeID(r.Type()),
+				"type": tid,
 			})
 		}
 		return map[string]any{
@@ -409,47 +483,118 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"results":  results,
 				"variadic": tt.Variadic(),
 			},
-		}
+		}, nil
 	case *types.Named:
+		under, err := e.typeID(tt.Underlying())
+		if err != nil {
+			return nil, err
+		}
+		methods, err := e.methodTableEntries(tt)
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
-				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				"underlying": under,
+				"methods":    methods,
 			},
-		}
+		}, nil
 	case *types.Struct:
 		fields := []any{}
+		offsets := e.structOffsets(tt)
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
+			tid, err := e.typeID(f.Type())
+			if err != nil {
+				return nil, err
+			}
 			fields = append(fields, map[string]any{
 				"name":     f.Name(),
-				"type":     e.typeID(f.Type()),
+				"type":     tid,
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
-				"offset":   0,
+				"offset":   offsets[i],
 			})
+		}
+		methods, err := e.methodTableEntries(tt)
+		if err != nil {
+			return nil, err
 		}
 		return map[string]any{
 			"kind":   "struct",
-			"detail": map[string]any{"fields": fields},
-		}
+			"detail": map[string]any{"fields": fields, "methods": methods},
+		}, nil
 	case *types.Interface:
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			msig, ok := m.Type().(*types.Signature)
+			if !ok {
+				return nil, fmt.Errorf("emit: interface method %s has non-signature type %T", m.Name(), m.Type())
+			}
+			sigID, err := e.typeID(m.Type())
+			if err != nil {
+				return nil, err
+			}
+			methods = append(methods, map[string]any{
+				"name":    m.Name(),
+				"sig":     sigID,
+				"implkey": implKeyOf(m, msig),
+			})
+		}
+		embedded := []any{}
+		for i := 0; i < tt.NumEmbeddeds(); i++ {
+			tid, err := e.typeID(tt.EmbeddedType(i))
+			if err != nil {
+				return nil, err
+			}
+			embedded = append(embedded, tid)
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"methods":  methods,
+				"embedded": embedded,
 			},
-		}
+		}, nil
 	default:
 		return map[string]any{
 			"kind":   "basic",
 			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
+		}, nil
+	}
+}
+
+// structOffsets returns the gc/amd64 byte offset of each field of tt, or
+// -1 ("unknown") for every field when the offsets cannot be computed:
+// a field type containing a type parameter (go/types panics on Sizeof
+// there; offsets of a generic struct are instantiation-dependent anyway)
+// or a value-nesting depth over maxStructDepth (Sizeof is exponential in
+// nesting depth). -1 is never mistaken for 0: the factory indexes fields
+// by position and never trusts an offset for layout.
+func (e *Emitter) structOffsets(tt *types.Struct) []int64 {
+	offsets := make([]int64, tt.NumFields())
+	vars := make([]*types.Var, 0, tt.NumFields())
+	for i := 0; i < tt.NumFields(); i++ {
+		vars = append(vars, tt.Field(i))
+	}
+	generic := false
+	for _, v := range vars {
+		if sizesWouldPanic(v.Type()) {
+			generic = true
+			break
 		}
 	}
+	if generic || structValueDepth(tt, 0) > maxStructDepth {
+		for i := range offsets {
+			offsets[i] = -1
+		}
+		return offsets
+	}
+	return e.sizes.Offsetsof(vars)
 }
 
 func basicClass(b *types.Basic) string {

@@ -288,7 +288,13 @@ func (Point) Blank() string   { return "b" }
 func (p *Point) Ptr() int     { return p.X }
 func main() {
 	p := Point{}
-	println(p.Name(), p.Ptr())
+	pp := &Point{}
+	// Ptr is called on the pointer: p.Ptr() would need an implicit
+	// address-of, which v2 does not support yet — the emitter fails
+	// loudly on it (pinned by TestMethodSelectionNeedsAdaptationFails in
+	// methodsets_test.go). The receiver assertions below are about the
+	// funcdecls, not the call form.
+	println(p.Name(), pp.Ptr())
 }
 `)
 	fds := funcDecls(t, doc)

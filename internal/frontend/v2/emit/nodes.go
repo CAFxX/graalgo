@@ -34,7 +34,17 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s has no signature type", fd.Name.Name)
 	}
-	sigID := e.typeID(fn.Type())
+	sigID, err := e.typeID(fn.Type())
+	if err != nil {
+		return nil, err
+	}
+	// Object id of the function itself: the Java funcTable keys method
+	// dispatch by it, so a funcdecl without "obj" could never be called
+	// through a method value.
+	objID, err := e.declareObject(fn)
+	if err != nil {
+		return nil, err
+	}
 
 	// Receiver: methods carry their receiver explicitly (name, object,
 	// type). Without it, same-named methods on different types are
@@ -58,10 +68,14 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 		if len(recvField.Names) > 0 {
 			recvNode = recvField.Names[0]
 		}
+		recvTypeID, err := e.typeID(recvVar.Type())
+		if err != nil {
+			return nil, err
+		}
 		recv = e.node("param", recvNode, map[string]any{
 			"name": recvVar.Name(),
 			"obj":  rid,
-			"type": e.typeID(recvVar.Type()),
+			"type": recvTypeID,
 		})
 	}
 
@@ -99,10 +113,14 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if err != nil {
 					return nil, err
 				}
+				ptypeID, err := e.typeID(pobj.Type())
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", nameNode, map[string]any{
 					"name": name,
 					"obj":  pid,
-					"type": e.typeID(pobj.Type()),
+					"type": ptypeID,
 				}))
 				pi++
 			}
@@ -124,6 +142,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 	fields := map[string]any{
 		"name":     fn.Name(),
+		"obj":      objID,
 		"sig":      sigID,
 		"receiver": recv,
 		"params":   params,
@@ -298,7 +317,11 @@ func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 	var typ any
 	if vs.Type != nil {
 		if tv, ok := e.info.Info.Types[vs.Type]; ok {
-			typ = e.typeID(tv.Type)
+			tid, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			typ = tid
 		}
 	}
 	for _, name := range vs.Names {
@@ -470,19 +493,27 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		xt, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("unary", x, map[string]any{
 			"op":   ex.Op.String(),
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": xt,
 		}), nil
 	case *ast.ParenExpr:
 		xn, err := e.emitExpr(ex.X)
 		if err != nil {
 			return nil, err
 		}
+		xt, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("paren", x, map[string]any{
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": xt,
 		}), nil
 	case *ast.CallExpr:
 		return e.emitCall(ex)
@@ -503,7 +534,11 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 	var typ any
 	if c.Type != nil {
 		if tv, ok := e.info.Info.Types[c.Type]; ok {
-			typ = e.typeID(tv.Type)
+			tid, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			typ = tid
 		}
 	}
 	elems := []any{}
@@ -518,12 +553,16 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 			if err != nil {
 				return nil, err
 			}
+			kvType, err := e.exprType(kv)
+			if err != nil {
+				return nil, err
+			}
 			elems = append(elems, map[string]any{
 				"kind": "keyvalue",
 				"fields": map[string]any{
 					"key":   kn,
 					"value": vn,
-					"type":  e.exprType(kv),
+					"type":  kvType,
 				},
 			})
 			continue
@@ -556,10 +595,14 @@ func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	ixType, err := e.exprType(ix)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("index", ix, map[string]any{
 		"x":     x,
 		"index": index,
-		"type":  e.exprType(ix),
+		"type":  ixType,
 	}), nil
 }
 
@@ -590,12 +633,16 @@ func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
 		}
 		max = mn
 	}
+	sType, err := e.exprType(s)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("slice", s, map[string]any{
 		"x":    x,
 		"low":  low,
 		"high": high,
 		"max":  max,
-		"type": e.exprType(s),
+		"type": sType,
 	}), nil
 }
 
@@ -627,10 +674,14 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		otid, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": otid,
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
@@ -643,10 +694,14 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		otid, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": otid,
 		}), nil
 	}
 	return nil, fmt.Errorf("emit: unresolved ident %s", id.Name)
@@ -657,9 +712,13 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: no type for basiclit %s", l.Value)
 	}
+	bt, err := e.typeID(tv.Type)
+	if err != nil {
+		return nil, err
+	}
 	fields := map[string]any{
 		"value": l.Value,
-		"type":  e.typeID(tv.Type),
+		"type":  bt,
 	}
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
@@ -676,11 +735,15 @@ func (e *Emitter) emitBinary(b *ast.BinaryExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	bt, err := e.exprType(b)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("binary", b, map[string]any{
 		"op":   b.Op.String(),
 		"x":    x,
 		"y":    y,
-		"type": e.exprType(b),
+		"type": bt,
 	}), nil
 }
 
@@ -710,11 +773,15 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 			}
 		}
 	}
+	ct, err := e.exprType(c)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("call", c, map[string]any{
 		"fun":     fun,
 		"args":    args,
 		"builtin": builtin,
-		"type":    e.exprType(c),
+		"type":    ct,
 	}), nil
 }
 
@@ -747,13 +814,38 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 		for i, ix := range sel.Index() {
 			index[i] = ix
 		}
-		return e.node("selector", s, map[string]any{
+		st, err := e.exprType(s)
+		if err != nil {
+			return nil, err
+		}
+		fields := map[string]any{
 			"x":       x,
 			"sel":     s.Sel.Name,
 			"selkind": selKind,
 			"index":   index,
-			"type":    e.exprType(s),
-		}), nil
+			"type":    st,
+		}
+		if sel.Kind() != types.FieldVal {
+			// Method value / method expression: the selector carries
+			// the method's object id so the Java side can resolve it
+			// through the program funcTable (see MethodValueNode /
+			// FuncConstNode and docs/arch/frontend-v2-method-dispatch.md).
+			// A field selector needs no object: the field is resolved
+			// by name/index in the struct type.
+			mobj, ok := sel.Obj().(*types.Func)
+			if !ok {
+				return nil, fmt.Errorf("emit: method selection %s is not a func (%T)", s.Sel.Name, sel.Obj())
+			}
+			if err := e.checkMethodSelection(s, sel, mobj); err != nil {
+				return nil, err
+			}
+			objID, err := e.methodSelectorObj(s, sel, mobj)
+			if err != nil {
+				return nil, err
+			}
+			fields["obj"] = objID
+		}
+		return e.node("selector", s, fields), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
 	if id, ok := s.X.(*ast.Ident); ok {
@@ -771,11 +863,15 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 					}
 					oid = tid
 				}
+				st, err := e.exprType(s)
+				if err != nil {
+					return nil, err
+				}
 				return e.node("pkgref", s, map[string]any{
 					"pkg":  id.Name,
 					"name": s.Sel.Name,
 					"obj":  oid,
-					"type": e.exprType(s),
+					"type": st,
 				}), nil
 			}
 		}
@@ -783,10 +879,63 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	return nil, fmt.Errorf("emit: unresolved selector %v", s)
 }
 
+// checkMethodSelection enforces what the v2 factory can dispatch today
+// (see docs/arch/frontend-v2-method-dispatch.md §4): direct methods only.
+// Receiver adaptation lives in the emitter (mirroring v1's methodRefNode),
+// and v2 has no address-of / deref / promoted-field machinery yet, so a
+// selection needing adaptation fails loudly here instead of emitting a
+// node the factory would mis-execute (bind the wrong receiver) or
+// misread as a field access.
+//
+// Direct means: the selection index path is empty (no promotion through
+// an embedded field) and — for method values — the receiver expression's
+// type is identical to the method's declared receiver type (no implicit
+// & or * needed). Method expressions need no receiver check: go/types
+// already rejects the cases that would need adaptation (a method
+// expression on a value type needs a value receiver), but a promoted
+// method expression still needs the field walk, so the index check
+// applies to both kinds.
+func (e *Emitter) checkMethodSelection(s *ast.SelectorExpr, sel *types.Selection, mobj *types.Func) error {
+	idx := sel.Index()
+	if len(idx) > 1 {
+		return fmt.Errorf("emit: method %s is promoted via embedded field %d (receiver adaptation not yet supported in v2; see docs/arch/frontend-v2-method-dispatch.md §4)", s.Sel.Name, idx[0])
+	}
+	if sel.Kind() != types.MethodVal {
+		return nil
+	}
+	msig, ok := mobj.Type().(*types.Signature)
+	if !ok || msig.Recv() == nil {
+		return fmt.Errorf("emit: method %s has no receiver signature", s.Sel.Name)
+	}
+	recvType := sel.Recv()
+	if recvType == nil {
+		return fmt.Errorf("emit: method selection %s has no receiver type", s.Sel.Name)
+	}
+	if !types.Identical(recvType, msig.Recv().Type()) {
+		declRecv := msig.Recv().Type()
+		if _, isPtr := declRecv.(*types.Pointer); isPtr {
+			return fmt.Errorf("emit: method %s needs an implicit address-of on the receiver (declared receiver %v, receiver type %v; not yet supported in v2; see docs/arch/frontend-v2-method-dispatch.md §4)", s.Sel.Name, declRecv, recvType)
+		}
+		return fmt.Errorf("emit: method %s needs an implicit deref on the receiver (declared receiver %v, receiver type %v; not yet supported in v2; see docs/arch/frontend-v2-method-dispatch.md §4)", s.Sel.Name, declRecv, recvType)
+	}
+	return nil
+}
+
+// methodSelectorObj resolves the object id for a method selector: the
+// object-table id of the method's *types.Func, for lazy resolution
+// through the program funcTable. (A method promoted via an embedded
+// interface field would carry -1 here, mirroring the redispatch entry in
+// the type table — but checkMethodSelection rejects promoted selections
+// before this runs, so that case is unreachable until receiver adaptation
+// lands; the -1 marker lives only in the table until then.)
+func (e *Emitter) methodSelectorObj(s *ast.SelectorExpr, sel *types.Selection, mobj *types.Func) (any, error) {
+	return e.declareObject(mobj)
+}
+
 // exprType returns the type-table id for an expression's type.
-func (e *Emitter) exprType(x ast.Expr) any {
+func (e *Emitter) exprType(x ast.Expr) (any, error) {
 	if tv, ok := e.info.Info.Types[x]; ok && tv.Type != nil {
 		return e.typeID(tv.Type)
 	}
-	return nil
+	return nil, nil
 }

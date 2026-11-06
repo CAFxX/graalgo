@@ -24,6 +24,11 @@ type Result struct {
 	Info *types.Info
 	// Fset is the file set from stage 1 (positions are stable across stages).
 	Fset *token.FileSet
+	// Sizes is the target size model used for type-checking (and by the
+	// emitter for struct field offsets). Pinned to gc/amd64 — the same
+	// pin p3frontend uses — so the emitter's offsets can never drift
+	// from the checker's size-dependent decisions.
+	Sizes types.Sizes
 }
 
 // Config controls stage 2 behavior.
@@ -31,6 +36,9 @@ type Config struct {
 	// GoVersion is the language version to type-check against, e.g. "go1.27".
 	// Empty means the toolchain default.
 	GoVersion string
+	// Sizes is the target size model, e.g. types.SizesFor("gc", "amd64").
+	// Nil means the gc/amd64 pin (the graalgo target).
+	Sizes types.Sizes
 }
 
 // Check type-checks pkg (from stage 1) and returns the typed result.
@@ -68,6 +76,10 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 		// one. The backend resolves the actual symbol; if it cannot, that
 		// is a backend gap, not a frontend workaround.
 		IgnoreFuncBodies: false,
+		// Pinned target sizes (gc/amd64): the emitter computes struct
+		// field offsets from these, so the checker's size-dependent
+		// decisions and the emitted layout always agree.
+		Sizes: sizesOrDefault(conf.Sizes),
 	}
 	if conf.GoVersion != "" {
 		tconf.GoVersion = conf.GoVersion
@@ -77,5 +89,14 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 	if err != nil {
 		return nil, fmt.Errorf("checker: type-check failed: %v", err)
 	}
-	return &Result{Pkg: tpkg, Info: info, Fset: fset}, nil
+	return &Result{Pkg: tpkg, Info: info, Fset: fset, Sizes: sizesOrDefault(conf.Sizes)}, nil
+}
+
+// sizesOrDefault returns the configured size model, defaulting to the
+// pinned gc/amd64 target.
+func sizesOrDefault(s types.Sizes) types.Sizes {
+	if s == nil {
+		return types.SizesFor("gc", "amd64")
+	}
+	return s
 }

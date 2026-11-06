@@ -78,6 +78,14 @@ reaches differential parity on the corpus.
 - **Legitimate lowerings only**: language-level desugaring that `go/types`
   itself does not do but which the backend requires (e.g., multi-result
   handling — but done as a general mechanism, not per-package).
+- **Method sets are real data**: the type table carries the full method
+  set of every named, pointer, struct, and interface type (with struct
+  field offsets computed for gc/amd64, never hard-coded), and method
+  selectors carry their method identity. The dispatch contract — wire
+  shape, `implkey` method identity, emitter-side receiver adaptation,
+  and what still fails loudly (interface dispatch, promoted-method
+  adaptation, embedded-interface redispatch) — is
+  [frontend-v2-method-dispatch.md](frontend-v2-method-dispatch.md).
 
 ## 3. What v2 does NOT do
 
