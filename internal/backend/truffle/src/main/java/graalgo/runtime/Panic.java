@@ -84,6 +84,8 @@ public final class Panic {
 
     /**
      * Returns the in-flight panic value, or Go nil if none (frozen).
+     * Only the first call in a deferred function returns the value; a
+     * second call in the same defer sees nil (B-P1-5, gc-verified).
      *
      * <p>Non-nil only when called <em>directly</em> by a deferred function
      * while a panic is in flight: the {@link DeferChain} arms the
@@ -99,7 +101,12 @@ public final class Panic {
             return null;
         }
         PanicException p = s.panicking();
-        if (p == null) {
+        if (p == null || p.isRecovered()) {
+            // B-P1-5: gc returns the panic value only on the first
+            // recover() call in a deferred function. The in-flight
+            // exception stays marked recovered from that first call, so
+            // a second call in the same defer — and any later defer
+            // after recovery — must see nil, not the value again.
             return null;
         }
         p.markRecovered();

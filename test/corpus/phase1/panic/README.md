@@ -73,6 +73,9 @@ both by stock gc (the oracle) and by `gofrontend` → `NodeFactory`.
   integer divide by zero) render gc's exact `runtime error:` strings.
 - `pn20_panic_slice_value`: a composite panic value round-trips through
   recover (renders as `([]int) 0xADDR`, never a real address).
+- `pn21_double_recover`: recover() returns the panic value only on the
+  first call in one deferred function — a second call in the same defer,
+  and a later defer after recovery, both see nil (gc: 1 1 1).
 
 ## Comparison scope (fatal programs)
 
