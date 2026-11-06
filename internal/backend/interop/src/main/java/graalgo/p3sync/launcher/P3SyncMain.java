@@ -150,13 +150,17 @@ public final class P3SyncMain {
         // [input-file].
         boolean dashdash = false;
         java.util.List<String> goArgs = new java.util.ArrayList<>();
+        // O5: post-"--" args are the Go program's argv, collected
+        // separately from input files. The old code folded the first
+        // post-"--" arg into `files`, which made a --wire-input run
+        // carrying its program argv[0] after `--` (exactly what `graalgo
+        // build` artifacts pass) trip "--wire-input cannot be combined
+        // with input files". Splitting after the loop keeps the file-run
+        // shape identical while letting a wire run carry its argv.
+        java.util.List<String> dashdashArgs = new java.util.ArrayList<>();
         for (String a : args) {
             if (dashdash) {
-                if (files.isEmpty()) {
-                    files.add(a);
-                } else {
-                    goArgs.add(a);
-                }
+                dashdashArgs.add(a);
                 continue;
             }
             if (a.startsWith("--gmp=")) {
@@ -211,11 +215,30 @@ public final class P3SyncMain {
                 }
             }
         }
-        if (files.isEmpty() && wireInput == null) {
-            return usageError("no input file");
-        }
-        if (!files.isEmpty() && wireInput != null) {
-            return usageError("--wire-input cannot be combined with input files");
+        if (wireInput != null) {
+            // A wire run has no input files: pre-"--" files are still a
+            // genuine combination error, but the post-"--" args are the
+            // program's argv (argv[0] first), not files.
+            if (!files.isEmpty()) {
+                return usageError("--wire-input cannot be combined with input files");
+            }
+            if (dashdashArgs.isEmpty()) {
+                return usageError("--wire-input requires program argv after --");
+            }
+            goArgs.addAll(dashdashArgs.subList(1, dashdashArgs.size()));
+        } else {
+            // File-run shape, unchanged: with no pre-"--" file, the
+            // first post-"--" arg is the input file (and argv[0]);
+            // otherwise all post-"--" args are program args.
+            if (files.isEmpty() && !dashdashArgs.isEmpty()) {
+                files.add(dashdashArgs.get(0));
+                goArgs.addAll(dashdashArgs.subList(1, dashdashArgs.size()));
+            } else {
+                goArgs.addAll(dashdashArgs);
+            }
+            if (files.isEmpty()) {
+                return usageError("no input file");
+            }
         }
         if (gmp == 0) {
             gmp = Runtime.getRuntime().availableProcessors();
@@ -273,17 +296,30 @@ public final class P3SyncMain {
 
         // Build one Truffle Source per input file; the frontend's position
         // "file" index selects among them (frontend/v1 wire format).
-        Source[] sources = new Source[paths.size()];
-        for (int i = 0; i < paths.size(); i++) {
-            final String srcText;
-            try {
-                srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
-                return EXIT_INPUT_ERROR;
+        // O5 (continued): a --wire-input run has no input files, but
+        // NodeFactory requires at least one Source. Sources back
+        // positions only (sectionFor falls back to sources[0] and
+        // clamps out-of-range sections, the path synthetic nodes
+        // already take), and a wire run by design has no original
+        // source text at run time — the artifact embeds the frontend
+        // output precisely so it is not needed — so supply one empty
+        // placeholder Source instead of failing the construction.
+        Source[] sources;
+        if (wireInput != null) {
+            sources = new Source[]{Source.newBuilder("go", "", "wire").build()};
+        } else {
+            sources = new Source[paths.size()];
+            for (int i = 0; i < paths.size(); i++) {
+                final String srcText;
+                try {
+                    srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
+                    return EXIT_INPUT_ERROR;
+                }
+                sources[i] = Source.newBuilder("go", srcText,
+                        paths.get(i).getFileName().toString()).build();
             }
-            sources[i] = Source.newBuilder("go", srcText,
-                    paths.get(i).getFileName().toString()).build();
         }
         final NodeFactory.Program program;
         try {
@@ -506,9 +542,13 @@ public final class P3SyncMain {
         // file). A relative argv[0] matches gc in no scenario, so the
         // launcher resolves it here — the single choke point for all
         // entry paths (`graalgo run`, `graalgo test`, direct
-        // graalgo-sync-run, diffharness).
+        // graalgo-sync-run, diffharness). For a --wire-input run there
+        // is no input file, so argv[0] is the artifact path the caller
+        // passed after `--` (previously this unconditionally read
+        // files.get(0), which would throw on every wire run).
+        String argv0Source = wireInput != null ? dashdashArgs.get(0) : files.get(0);
         String[] goArgv = new String[goArgs.size() + 1];
-        goArgv[0] = Paths.get(files.get(0)).toAbsolutePath().normalize().toString();
+        goArgv[0] = Paths.get(argv0Source).toAbsolutePath().normalize().toString();
         for (int i = 0; i < goArgs.size(); i++) {
             goArgv[i + 1] = goArgs.get(i);
         }
@@ -692,7 +732,7 @@ public final class P3SyncMain {
         System.err.println(
                 "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] [--test-package-dir=DIR] [--wire-input=FILE] [--emit-wire=FILE] file.go [file.go...] [-- args...]");
         System.err.println(
-                "  --            program argv follow (os.Args[0] is the absolute input-file path)");
+                "  --            program argv follow (os.Args[0] is the absolute input-file path, or the artifact path with --wire-input)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
         System.err.println("  --check   build only, do not execute");
         System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");
