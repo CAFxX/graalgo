@@ -16,7 +16,10 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE1_DIR   phase-1 tree with the graalgo-run launcher
+#   PHASE1_DIR   backend dir with the graalgo-run launcher
+#                (default: $REPO_ROOT/internal/backend, as in
+#                test/differential/run_conformance.sh; backends.json
+#                resolves the launcher as ${PHASE1_DIR}/../../internal/backend/graalgo-run)
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +39,7 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/phases/phase1}"
+export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/internal/backend}"
 
 FUZZTIME="30"
 OUTDIR=""
