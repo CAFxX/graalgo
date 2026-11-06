@@ -16,9 +16,12 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: run_batch.py -> harness -> fuzz-soak -> tools -> repo.
+# Four dirname calls: the first strips the filename, then one per
+# directory (harness, fuzz-soak, tools). Counting from the harness
+# directory instead of the file undercounts by one and lands in tools/.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,9 +42,16 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build the backend once. Root `make build` builds the truffle,
+    # runtime and interop Java modules AND the gofrontend binary: the
+    # truffle module's `main` target depends on $(GOFRONTEND)
+    # (internal/backend/truffle/Makefile), which builds it via
+    # internal/frontend/build.sh. diff_one.sh fail-fasts with
+    # HARNESS_ERROR when the launcher, the module classes or gofrontend
+    # is missing, so the batch build must cover both halves — `make
+    # build` does; do not "simplify" it to a Java-only build.
+    print("== building graalgo backend ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=600)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
@@ -114,7 +124,12 @@ def main():
     if scope_rate > 0.2:
         print("WARNING: scope-hit rate >20% — tune generator before scaling")
 
-    return 0 if counts.get("GC_BUILD_FAIL", 0) == 0 else 1
+    # Any non-PASS/non-SCOPE result (divergence, crash, hang, harness
+    # error) fails the batch: the single-batch slot is a gate, and the
+    # overnight soak records divergences in soak-report.json while
+    # continuing to the next batch.
+    bad = sum(v for k, v in counts.items() if k not in ("PASS", "SCOPE"))
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
