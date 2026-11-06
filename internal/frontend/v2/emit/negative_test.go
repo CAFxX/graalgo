@@ -165,10 +165,26 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
+		// The generic declaration itself fails first (emitFuncDecl
+		// rejects type parameters), so this case pins the
+		// declaration rejection; the instantiation path is pinned
+		// separately by IndexListExpr_importedGenerics below.
 		name: "IndexListExpr_generics",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
+`,
+		want: "unsupported generic func",
+	},
+	{
+		// Generic instantiation of an IMPORTED generic function:
+		// there is no declaration in this file for emitFuncDecl
+		// to reject, so the instantiation itself must fail loudly
+		// in emitIndex.
+		name: "IndexListExpr_importedGenerics",
+		src: `package main
+import "cmp"
+func main() { println(cmp.Compare[int](1, 2)) }
 `,
 		want: "unsupported expr",
 	},
