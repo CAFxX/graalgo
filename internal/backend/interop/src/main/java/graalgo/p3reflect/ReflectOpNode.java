@@ -1222,17 +1222,19 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectTypes.Table table = ReflectTypes.table();
         TypeInfo elem = table.info(elemTok);
         String key = "slice:" + elemKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long tok = table.byTok.size();
+            table.keyToTok.put(key, tok);
+            TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
+                    elem, null, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return tok;
         }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        TypeInfo info = new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
     }
 
     private static String elemKey(TypeInfo t) {
@@ -1438,18 +1440,20 @@ public final class ReflectOpNode extends GoExprNode {
             sb.append("...");
         }
         String key = sb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long tok = table.byTok.size();
+            table.keyToTok.put(key, tok);
+            List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
+            TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
+                    null, null, 0, null, List.of(), List.of(),
+                    List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
+            table.byTok.add(info);
+            return tok;
         }
-        long tok = table.byTok.size();
-        table.keyToTok.put(key, tok);
-        List<TypeInfo> ins = new ArrayList<>(ft.ins.subList(1, ft.ins.size()));
-        TypeInfo info = new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
-                null, null, 0, null, List.of(), List.of(),
-                List.copyOf(ins), List.copyOf(ft.outs), ft.variadic, List.of(), "", -1);
-        table.byTok.add(info);
-        return tok;
     }
 
     /** __reflect_makefunc. */

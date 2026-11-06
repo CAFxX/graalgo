@@ -169,7 +169,45 @@ public final class ReflectTypes {
         }
     }
 
-    /** The installed per-run table. */
+    /**
+     * The installed per-run table.
+     *
+     * <p>Lock discipline (fix-0005-reflect-mint-race, NEW-P1-2): the
+     * Table instance monitor guards every collection below
+     * ({@code byTok}, {@code keyToTok}, {@code wireIdToTok},
+     * {@code tokToDesc}, {@code basicKindToTok}, {@code building}).
+     * Every post-install read or mint of the table — the
+     * {@code ptrTo}/{@code arrayOf}/{@code sliceOf}/{@code mapOf}/
+     * {@code chanOf}/{@code funcOf}/{@code structOf}/
+     * {@code dynamicTokForName} families, the {@code info()}/
+     * {@code tokForWireId()}/{@code infoForName()}/
+     * {@code descriptorForTok()} readers, and the out-of-class mint
+     * sites in {@code ReflectOpNode} and {@code ReflectLinknames} —
+     * holds the monitor for the whole check-then-mint (or scan), so
+     * two threads can never read the same {@code byTok.size()} and
+     * mint the same token for different types, and a reader can never
+     * observe a stale size or a null phase-B placeholder. The
+     * monitor is per installed table: a fresh install swaps in a new
+     * instance, so in-flight work on the old table is unaffected.
+     *
+     * <p>Lock order (verified by audit, never the reverse):
+     * {@code AbiTypes} class lock → Table monitor
+     * ({@code abiPointerForTok}/{@code unpackInterfaceView} call
+     * {@code table().info()} / {@code dynamicTokForName});
+     * {@code METHOD_SET_CACHE} → Table monitor
+     * ({@code methodSetFor} promotes methods, minting wrapper func
+     * types); {@code DYN_SYNTH_LOCK} (dynamic synthesis, commit
+     * 92fddee5, not in this tree yet) → Table monitor (synthesizers
+     * call the mint family). No Table-locked code ever acquires any
+     * of those locks.
+     *
+     * <p>Scope limit: {@code build()}/{@code resolve()}/
+     * {@code buildOne()} mutate the table WITHOUT the monitor. They
+     * run single-threaded at {@code install()} time — the launchers
+     * call {@code install()} once before any guest code executes,
+     * and tests install sequentially between rounds — so no guest
+     * thread can observe a half-built table.
+     */
     public static final class Table {
         final List<TypeInfo> byTok = new ArrayList<>();
         final Map<String, Long> keyToTok = new HashMap<>();
@@ -190,7 +228,7 @@ public final class ReflectTypes {
         }
 
         /** The TypeInfo for a token (fails fast on unknown). */
-        public TypeInfo info(long tok) {
+        public synchronized TypeInfo info(long tok) {
             if (tok <= 0 || tok >= byTok.size()) {
                 throw new IllegalArgumentException("reflect: unknown type token " + tok);
             }
@@ -198,7 +236,7 @@ public final class ReflectTypes {
         }
 
         /** Token for a basic kind (fails fast when absent). */
-        public long tokForKind(GoKind kind) {
+        public synchronized long tokForKind(GoKind kind) {
             Long t = basicKindToTok.get(kind);
             if (t == null) {
                 throw new IllegalStateException("reflect: no basic type for kind " + kind);
@@ -240,20 +278,25 @@ public final class ReflectTypes {
      * representative wire id.
      */
     public static long tokForWireId(int wireId) {
-        Long tok = table().wireIdToTok.get(wireId);
-        return tok == null ? -1 : tok;
+        Table t = table();
+        synchronized (t) {
+            Long tok = t.wireIdToTok.get(wireId);
+            return tok == null ? -1 : tok;
+        }
     }
 
     /** The TypeInfo for a qualified type name, or null. */
     public static TypeInfo infoForName(String qname) {
         Table t = table();
-        for (int i = 1; i < t.byTok.size(); i++) {
-            TypeInfo info = t.byTok.get(i);
-            if (info != null && qname.equals(info.name)) {
-                return info;
+        synchronized (t) {
+            for (int i = 1; i < t.byTok.size(); i++) {
+                TypeInfo info = t.byTok.get(i);
+                if (info != null && qname.equals(info.name)) {
+                    return info;
+                }
             }
+            return null;
         }
-        return null;
     }
 
     /**
@@ -273,26 +316,28 @@ public final class ReflectTypes {
      */
     public static TypeInfo infoForStructString(String structString) {
         Table t = table();
-        for (int i = 1; i < t.byTok.size(); i++) {
-            TypeInfo info = t.byTok.get(i);
-            if (info == null || info.kind != GoKind.STRUCT) {
-                continue;
+        synchronized (t) {
+            for (int i = 1; i < t.byTok.size(); i++) {
+                TypeInfo info = t.byTok.get(i);
+                if (info == null || info.kind != GoKind.STRUCT) {
+                    continue;
+                }
+                // Unrenderable candidates (e.g. a generic template's
+                // struct with a type-parameter field, whose typeString
+                // throws) are skipped, not fatal: the scan is a lookup,
+                // and one unrenderable entry must not hide a match.
+                String rendered;
+                try {
+                    rendered = typeString(info.tok);
+                } catch (RuntimeException e) {
+                    continue;
+                }
+                if (structString.equals(rendered)) {
+                    return info;
+                }
             }
-            // Unrenderable candidates (e.g. a generic template's
-            // struct with a type-parameter field, whose typeString
-            // throws) are skipped, not fatal: the scan is a lookup,
-            // and one unrenderable entry must not hide a match.
-            String rendered;
-            try {
-                rendered = typeString(info.tok);
-            } catch (RuntimeException e) {
-                continue;
-            }
-            if (structString.equals(rendered)) {
-                return info;
-            }
+            return null;
         }
-        return null;
     }
 
     /** Token for a GoTypeDescriptor (via the patch-03 wireId registry). */
@@ -304,12 +349,14 @@ public final class ReflectTypes {
             throw new IllegalStateException(
                     "reflect: descriptor has no wire id: " + descriptor);
         }
-        Long tok = table.wireIdToTok.get(wireId);
-        if (tok == null) {
-            throw new IllegalStateException(
-                    "reflect: wire id " + wireId + " has no token");
+        synchronized (table) {
+            Long tok = table.wireIdToTok.get(wireId);
+            if (tok == null) {
+                throw new IllegalStateException(
+                        "reflect: wire id " + wireId + " has no token");
+            }
+            return tok;
         }
-        return tok;
     }
 
     /**
@@ -326,37 +373,39 @@ public final class ReflectTypes {
      */
     public static graalgo.values.GoTypeDescriptor descriptorForTok(long tok) {
         Table table = table();
-        graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
-        if (d == null) {
-            TypeInfo t = table.info(tok);
-            if (t.isNamed()) {
-                d = graalgo.frontend.NodeFactory.namedDescriptorFor(t.name, t.kind);
-            } else if (!t.basicName.isEmpty()) {
-                d = graalgo.frontend.NodeFactory.basicDescriptorForName(
-                        canonicalBasicName(t.basicName), t.kind);
-            } else if (t.kind == graalgo.values.GoKind.POINTER
-                    && t.elem != null && t.elem.isNamed()) {
-                d = graalgo.frontend.NodeFactory.namedDescriptorFor(
-                        "*" + t.elem.name, t.kind);
-            } else {
-                d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
-                if (d == null) {
-                    for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
-                        if (e.getValue() == tok) {
-                            d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
-                            if (d != null) {
-                                break;
+        synchronized (table) {
+            graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
+            if (d == null) {
+                TypeInfo t = table.info(tok);
+                if (t.isNamed()) {
+                    d = graalgo.frontend.NodeFactory.namedDescriptorFor(t.name, t.kind);
+                } else if (!t.basicName.isEmpty()) {
+                    d = graalgo.frontend.NodeFactory.basicDescriptorForName(
+                            canonicalBasicName(t.basicName), t.kind);
+                } else if (t.kind == graalgo.values.GoKind.POINTER
+                        && t.elem != null && t.elem.isNamed()) {
+                    d = graalgo.frontend.NodeFactory.namedDescriptorFor(
+                            "*" + t.elem.name, t.kind);
+                } else {
+                    d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
+                    if (d == null) {
+                        for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
+                            if (e.getValue() == tok) {
+                                d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
+                                if (d != null) {
+                                    break;
+                                }
                             }
                         }
                     }
+                    if (d == null) {
+                        d = buildStructuralDescriptorOnDemand(t);
+                    }
                 }
-                if (d == null) {
-                    d = buildStructuralDescriptorOnDemand(t);
-                }
+                table.tokToDesc.put(tok, d);
             }
-            table.tokToDesc.put(tok, d);
+            return d;
         }
-        return d;
     }
 
     /**
@@ -1730,32 +1779,36 @@ public final class ReflectTypes {
     public static long existingPtrTo(long tok) {
         Table table = table();
         TypeInfo t = table.info(tok);
-        Long existing = table.keyToTok.get("ptr:" + structuralKey(t));
-        return existing == null ? 0 : existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get("ptr:" + structuralKey(t));
+            return existing == null ? 0 : existing;
+        }
     }
 
     public static long ptrTo(long tok) {
         Table table = table();
         TypeInfo t = table.info(tok);
         String key = "ptr:" + structuralKey(t);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            // Synthesize: no wire id, empty method table. Documented in the
+            // design: *T from PtrTo has no methods; when the wire carries a
+            // *T entry (methods present) it canonicalizes to this same key
+            // only if the method sets agree — otherwise the wire entry keeps
+            // its own token and this synthesized one is method-less.
+            // (In practice the wire always carries *T for named T, so this
+            // path serves genuinely new pointers.)
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            TypeInfo info = new TypeInfo(newTok, GoKind.POINTER, "", "", 8, 8,
+                    t, null, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        // Synthesize: no wire id, empty method table. Documented in the
-        // design: *T from PtrTo has no methods; when the wire carries a
-        // *T entry (methods present) it canonicalizes to this same key
-        // only if the method sets agree — otherwise the wire entry keeps
-        // its own token and this synthesized one is method-less.
-        // (In practice the wire always carries *T for named T, so this
-        // path serves genuinely new pointers.)
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, GoKind.POINTER, "", "", 8, 8,
-                t, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /** arrayOf: token for [n]T (synthesized; no methods). */
@@ -1763,18 +1816,20 @@ public final class ReflectTypes {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
         String key = "array:" + n + ":" + structuralKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            long size = elem.size * n;
+            TypeInfo info = new TypeInfo(newTok, GoKind.ARRAY, "", "", size, elem.align,
+                    elem, null, n, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        long size = elem.size * n;
-        TypeInfo info = new TypeInfo(newTok, GoKind.ARRAY, "", "", size, elem.align,
-                elem, null, n, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /** sliceOf: token for []T (synthesized; no methods). */
@@ -1782,18 +1837,20 @@ public final class ReflectTypes {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
         String key = "slice:" + structuralKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            // Slice header: ptr, len, cap (3 words)
+            TypeInfo info = new TypeInfo(newTok, GoKind.SLICE, "", "", 24, 8,
+                    elem, null, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        // Slice header: ptr, len, cap (3 words)
-        TypeInfo info = new TypeInfo(newTok, GoKind.SLICE, "", "", 24, 8,
-                elem, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /** mapOf: token for map[K]V (synthesized; no methods). */
@@ -1802,18 +1859,20 @@ public final class ReflectTypes {
         TypeInfo key = table.info(keyTok);
         TypeInfo elem = table.info(elemTok);
         String keyStr = "map:" + structuralKey(key) + ":" + structuralKey(elem);
-        Long existing = table.keyToTok.get(keyStr);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(keyStr);
+            if (existing != null) {
+                return existing;
+            }
+            long newTok = table.byTok.size();
+            table.keyToTok.put(keyStr, newTok);
+            // Map is a pointer-sized header in the value model
+            TypeInfo info = new TypeInfo(newTok, GoKind.MAP, "", "", 8, 8,
+                    elem, key, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(keyStr, newTok);
-        // Map is a pointer-sized header in the value model
-        TypeInfo info = new TypeInfo(newTok, GoKind.MAP, "", "", 8, 8,
-                elem, key, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /** chanOf: token for chan T with direction (synthesized; no methods). */
@@ -1822,17 +1881,19 @@ public final class ReflectTypes {
         TypeInfo elem = table.info(elemTok);
         ChanDir dir = ChanDir.values()[dirOrdinal];
         String key = "chan:" + dir + ":" + structuralKey(elem);
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            TypeInfo info = new TypeInfo(newTok, GoKind.CHAN, "", "", 8, 8,
+                    elem, null, 0, dir, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, GoKind.CHAN, "", "", 8, 8,
-                elem, null, 0, dir, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /**
@@ -1870,48 +1931,50 @@ public final class ReflectTypes {
             return existing.tok;
         }
         String key = "dynamic:" + qname;
-        Long dup = table.keyToTok.get(key);
-        if (dup != null) {
-            // Unreachable in practice (infoForName above scans the same
-            // byTok entries this key denotes), but never alias blindly:
-            // the kind check applies here too.
-            TypeInfo dupInfo = table.info(dup);
-            if (dupInfo.kind != kind) {
-                throw new IllegalStateException(
-                        "reflect: dynamic type " + qname + " already exists with kind "
-                                + dupInfo.kind + ", not " + kind);
+        synchronized (table) {
+            Long dup = table.keyToTok.get(key);
+            if (dup != null) {
+                // Unreachable in practice (infoForName above scans the same
+                // byTok entries this key denotes), but never alias blindly:
+                // the kind check applies here too.
+                TypeInfo dupInfo = table.info(dup);
+                if (dupInfo.kind != kind) {
+                    throw new IllegalStateException(
+                            "reflect: dynamic type " + qname + " already exists with kind "
+                                    + dupInfo.kind + ", not " + kind);
+                }
+                return dup;
             }
-            return dup;
+            String basicName = switch (kind) {
+                case BOOL -> "bool";
+                case INT8 -> "int8";
+                case INT16 -> "int16";
+                case INT32 -> "int32";
+                case INT64 -> "int64";
+                case UINT8 -> "uint8";
+                case UINT16 -> "uint16";
+                case UINT32 -> "uint32";
+                case UINT64 -> "uint64";
+                case FLOAT32 -> "float32";
+                case FLOAT64 -> "float64";
+                case COMPLEX64 -> "complex64";
+                case COMPLEX128 -> "complex128";
+                case STRING -> "string";
+                case UNSAFE_POINTER -> "unsafe.Pointer";
+                default -> throw new IllegalStateException(
+                        "reflect: dynamic type " + qname + " has non-basic kind " + kind
+                                + " (no field/element metadata to synthesize from)");
+            };
+            int dot = qname.lastIndexOf('.');
+            String pkgPath = dot >= 0 ? qname.substring(0, dot) : "";
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            TypeInfo info = new TypeInfo(newTok, kind, qname, pkgPath, basicSize(kind), basicAlign(kind),
+                    null, null, 0, null, List.of(), List.of(),
+                    List.of(), List.of(), false, List.of(), basicName, -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        String basicName = switch (kind) {
-            case BOOL -> "bool";
-            case INT8 -> "int8";
-            case INT16 -> "int16";
-            case INT32 -> "int32";
-            case INT64 -> "int64";
-            case UINT8 -> "uint8";
-            case UINT16 -> "uint16";
-            case UINT32 -> "uint32";
-            case UINT64 -> "uint64";
-            case FLOAT32 -> "float32";
-            case FLOAT64 -> "float64";
-            case COMPLEX64 -> "complex64";
-            case COMPLEX128 -> "complex128";
-            case STRING -> "string";
-            case UNSAFE_POINTER -> "unsafe.Pointer";
-            default -> throw new IllegalStateException(
-                    "reflect: dynamic type " + qname + " has non-basic kind " + kind
-                            + " (no field/element metadata to synthesize from)");
-        };
-        int dot = qname.lastIndexOf('.');
-        String pkgPath = dot >= 0 ? qname.substring(0, dot) : "";
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, kind, qname, pkgPath, basicSize(kind), basicAlign(kind),
-                null, null, 0, null, List.of(), List.of(),
-                List.of(), List.of(), false, List.of(), basicName, -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /** funcOf: token for func(in...) out (synthesized; no methods). */
@@ -1935,17 +1998,19 @@ public final class ReflectTypes {
             keySb.append("variadic");
         }
         String key = keySb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            TypeInfo info = new TypeInfo(newTok, GoKind.FUNC, "", "", 8, 8,
+                    null, null, 0, null, List.of(), List.of(),
+                    ins, outs, variadic, List.of(), "", -1);
+            table.byTok.add(info);
+            return newTok;
         }
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        TypeInfo info = new TypeInfo(newTok, GoKind.FUNC, "", "", 8, 8,
-                null, null, 0, null, List.of(), List.of(),
-                ins, outs, variadic, List.of(), "", -1);
-        table.byTok.add(info);
-        return newTok;
     }
 
     /**
@@ -1983,30 +2048,32 @@ public final class ReflectTypes {
         }
         keySb.append('}');
         String key = keySb.toString();
-        Long existing = table.keyToTok.get(key);
-        if (existing != null) {
-            return existing;
+        synchronized (table) {
+            Long existing = table.keyToTok.get(key);
+            if (existing != null) {
+                return existing;
+            }
+            long size = alignUp(offset, maxAlign);
+            long newTok = table.byTok.size();
+            table.keyToTok.put(key, newTok);
+            List<FieldInfo> fieldInfos = List.copyOf(fields);
+            // Reserve the struct's index BEFORE promoteMethods appends wrapper
+            // func types: newTok must address the struct, not a wrapper.
+            TypeInfo info = new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
+                    null, null, 0, null, fieldInfos, List.of(),
+                    List.of(), List.of(), false, List.of(), "", -1);
+            table.byTok.add(info);
+            // Promoted methods from anonymous (embedded) fields, gc rules:
+            // shallower embedding depth wins; same-depth duplicates are
+            // ambiguous and dropped; only exported method names promote.
+            List<MethodInfo> promoted = promoteMethods(table, info, fieldInfos);
+            if (!promoted.isEmpty()) {
+                table.byTok.set((int) newTok, new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
+                        null, null, 0, null, fieldInfos, List.copyOf(promoted),
+                        List.of(), List.of(), false, List.of(), "", -1));
+            }
+            return newTok;
         }
-        long size = alignUp(offset, maxAlign);
-        long newTok = table.byTok.size();
-        table.keyToTok.put(key, newTok);
-        List<FieldInfo> fieldInfos = List.copyOf(fields);
-        // Reserve the struct's index BEFORE promoteMethods appends wrapper
-        // func types: newTok must address the struct, not a wrapper.
-        TypeInfo info = new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
-                null, null, 0, null, fieldInfos, List.of(),
-                List.of(), List.of(), false, List.of(), "", -1);
-        table.byTok.add(info);
-        // Promoted methods from anonymous (embedded) fields, gc rules:
-        // shallower embedding depth wins; same-depth duplicates are
-        // ambiguous and dropped; only exported method names promote.
-        List<MethodInfo> promoted = promoteMethods(table, info, fieldInfos);
-        if (!promoted.isEmpty()) {
-            table.byTok.set((int) newTok, new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
-                    null, null, 0, null, fieldInfos, List.copyOf(promoted),
-                    List.of(), List.of(), false, List.of(), "", -1));
-        }
-        return newTok;
     }
 
     private static long alignUp(long offset, int align) {
@@ -2086,13 +2153,20 @@ public final class ReflectTypes {
         List<TypeInfo> ins = new ArrayList<>();
         ins.add(outer);
         ins.addAll(m.funcType.ins.subList(1, m.funcType.ins.size()));
-        long wrapperTok = table.byTok.size();
-        TypeInfo wrapperType = new TypeInfo(wrapperTok, GoKind.FUNC,
-                "", "", 8, 8, null, null, 0, null,
-                List.of(), List.of(), List.copyOf(ins),
-                m.funcType.outs, m.funcType.variadic,
-                List.of(), "", -1);
-        table.byTok.add(wrapperType);
+        // Wrapper func types are minted into the table like any other
+        // token: under the Table monitor (re-entrant from structOf,
+        // acquired here from methodSetFor — lock order is
+        // METHOD_SET_CACHE → Table, never the reverse).
+        final TypeInfo wrapperType;
+        synchronized (table) {
+            long wrapperTok = table.byTok.size();
+            wrapperType = new TypeInfo(wrapperTok, GoKind.FUNC,
+                    "", "", 8, 8, null, null, 0, null,
+                    List.of(), List.of(), List.copyOf(ins),
+                    m.funcType.outs, m.funcType.variadic,
+                    List.of(), "", -1);
+            table.byTok.add(wrapperType);
+        }
         // gc reports PkgPath "" for promoted methods (observed).
         return new MethodInfo(m.name, "", wrapperType, wrapped,
                 m.pointerReceiver, index, m.implKey);
@@ -2162,6 +2236,10 @@ public final class ReflectTypes {
             if (cached != null) {
                 return cached;
             }
+            // Lock order: METHOD_SET_CACHE → Table monitor (promoteMethods
+            // mints wrapper func types under the Table monitor; see the
+            // Table lock-discipline note). No Table-locked code ever takes
+            // METHOD_SET_CACHE, so this nesting cannot deadlock.
             List<MethodInfo> promoted = new ArrayList<>(promoteMethods(table(), t, t.fields));
             promoted.sort((a, b) -> a.name.compareTo(b.name));
             List<MethodInfo> result = List.copyOf(promoted);
