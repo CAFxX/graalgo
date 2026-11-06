@@ -116,7 +116,7 @@ Related: [Makefile](../Makefile) (root build entry point),
       isolates (also the natural home of Phase 5's privileged runtime
       surface):
       [src/main/java/](../internal/backend/interop/src/main/java/) holds
-      phase-3 `graalgo.{iface,p3chan,p3crypto,p3link,p3math,p3net,p3os,
+      phase-3 `graalgo.{iface,p3chan,p3link,p3math,p3net,p3os,
       p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}` (stdlib bindings) plus
       [`graalgo.rtstack`](../internal/backend/interop/src/main/java/graalgo/rtstack/)
       (the synthetic `runtime` package's stack-inspection intrinsics:
