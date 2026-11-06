@@ -1,2 +1,2 @@
-reason: regexp/syntax requires unicode tables (Scripts, Categories, SimpleFold) from tier1a's unicode package, which is in progress
-retest: unicode + unicode/utf8 land in the frontend overlay (tier1a)
+reason: concrete method expression (*Regexp).Equal in value position (synth_regexpsyntax.go:3301) — frontend export.go:12018 exports x.X unguarded for concrete receivers, so exportIdent fails with internal error: identifier "Regexp" denotes *types.TypeName (verified 2026-11-06 on master 69957b40, gofrontend exit 2). The unicode trigger has fired (unicode + unicode/utf8 in syntheticSources; Categories/Scripts/SimpleFold defined) — the retest exposed this blocker instead.
+retest: concrete method expressions in value position land in the frontend (REVIEW-2026-11-05-05 P1-2; lane review-1105-regexp-methodexpr, fix committed 915a766a, unmerged)
