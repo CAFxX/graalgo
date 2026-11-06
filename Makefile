@@ -137,6 +137,7 @@ check:
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
+	python3 tools/gate1/test_run.py
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
@@ -210,13 +211,24 @@ test-v2:
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
 #   make gate1 PKG=foo — single package trial
 GATE1_PKGS ?= strconv errors sort strings bytes
+# NB (R-P1-10): no `|| true` here — a swallowed failure used to make the
+# pilot report success regardless of per-package results. Failures are
+# accumulated, not fail-fast, so every package still runs; the target then
+# fails if any package did. A bare removal of `|| true` would NOT fix it:
+# a for-loop's exit status is its last iteration's, so a failure in any
+# but the last package would still be swallowed.
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@fail=0; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || fail=$$((fail + 1)); \
+	done; \
+	if [ $$fail -ne 0 ]; then \
+		echo "gate1-pilot: $$fail package(s) failed (see tools/gate1/.tmp/*/verdict.txt)" >&2; \
+		exit 1; \
+	fi
 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build

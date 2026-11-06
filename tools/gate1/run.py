@@ -18,6 +18,52 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+def default_graalgo_run():
+    """Default graalgo-run launcher for direct `run.py <pkg>` use.
+
+    R-P1-11: the old default was <repo>/phases/phase1/graalgo-run, but the
+    phases/ tree was removed 2026-10-14, so direct invocation always
+    crashed with FileNotFoundError. The current launcher is
+    internal/backend/graalgo-run — the same path the Makefile passes
+    explicitly to --graalgo-run.
+    """
+    repo = os.path.abspath(os.path.join(HERE, "..", ".."))
+    return os.path.join(repo, "internal", "backend", "graalgo-run")
+
+def decide_verdict(rc_gc, rc_gr, gc_res, gr_res):
+    """Decide the gate verdict from the two driver runs.
+
+    Returns (verdict, divergences, note). Verdicts:
+      PASS    — both drivers ran (rc 0) and every test agrees.
+      SKIP    — gc failed while graalgo ran: the harness cannot validate
+                this package (a harness limitation, not a graalgo bug).
+      DIVERGE — graalgo disagrees with gc, or a driver failed in a way
+                that leaves no valid comparison.
+
+    R-P1-9: when BOTH drivers fail there is no comparison to make and the
+    result must never be PASS. The old code fell through to the per-test
+    comparison below, compared two empty result sets, found no
+    divergences, and reported PASS with exit 0.
+    """
+    if rc_gc != 0 and rc_gr == 0:
+        return ("SKIP", [],
+                f"gc driver failed (rc={rc_gc}); harness cannot validate this package")
+    if rc_gr != 0 and rc_gc == 0:
+        return ("DIVERGE", [],
+                f"graalgo driver failed (rc={rc_gr}) while gc passed")
+    if rc_gc != 0 and rc_gr != 0:
+        return ("DIVERGE", [],
+                f"both drivers failed (gc rc={rc_gc}, graalgo rc={rc_gr}); "
+                f"no comparison possible")
+    divergences = []
+    for name in sorted(set(gc_res) | set(gr_res)):
+        g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
+        if g != r:
+            divergences.append((name, g, r))
+    if divergences:
+        return "DIVERGE", divergences, ""
+    return "PASS", [], ""
+
 def run_cmd(cmd, env=None, timeout=300):
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
@@ -46,9 +92,10 @@ def main():
             i += 1
 
     if graalgo_run is None:
-        # Default: phase1 graalgo-run in this repo (HERE=tools/gate1)
-        repo = os.path.abspath(os.path.join(HERE, "..", ".."))
-        graalgo_run = os.path.join(repo, "phases", "phase1", "graalgo-run")
+        graalgo_run = default_graalgo_run()
+    if not os.path.isfile(graalgo_run) or not os.access(graalgo_run, os.X_OK):
+        sys.exit(f"graalgo-run not found or not executable: {graalgo_run} "
+                 f"(pass --graalgo-run PATH to the backend launcher)")
 
     workdir = outdir or tempfile.mkdtemp(prefix=f"gate1-{pkg}-")
     os.makedirs(workdir, exist_ok=True)
@@ -114,28 +161,17 @@ def main():
     print(f"gc:     rc={rc_gc} {gc_sum}")
     print(f"graalgo: rc={rc_gr} {gr_sum}")
 
-    verdict = "PASS"
-    divergences = []
-    if rc_gc != 0 and rc_gr == 0:
-        # gc itself failed (e.g. unsupported test helper) — harness issue, not graalgo
-        verdict = "SKIP"
-        print(f"SKIP: gc driver failed (rc={rc_gc}); harness cannot validate this package")
+    verdict, divergences, note = decide_verdict(rc_gc, rc_gr, gc_res, gr_res)
+    if note:
+        print(f"{verdict}: {note}")
+    if rc_gc != 0:
         print(f"gc stderr tail: {err_gc[-500:]}")
-    elif rc_gr != 0 and rc_gc == 0:
-        verdict = "DIVERGE"
-        print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
+    if rc_gr != 0:
         print(f"graalgo stderr tail: {err_gr[-800:]}")
-    else:
-        for name in sorted(set(gc_res) | set(gr_res)):
-            g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
-            if g != r:
-                divergences.append((name, g, r))
-        if divergences:
-            verdict = "DIVERGE"
-            for name, g, r in divergences:
-                print(f"  DIVERGE {name}: gc={g} graalgo={r}")
-        else:
-            print(f"  {len(gc_res)} tests agree")
+    for name, g, r in divergences:
+        print(f"  DIVERGE {name}: gc={g} graalgo={r}")
+    if verdict == "PASS":
+        print(f"  {len(gc_res)} tests agree")
 
     print(f"VERDICT {pkg}: {verdict}")
     with open(os.path.join(workdir, "verdict.txt"), "w") as f:
