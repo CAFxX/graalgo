@@ -172,6 +172,19 @@ func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
+	{
+		// REVIEW-2026-11-06-10 R-P1-3: func init() must fail loudly.
+		// The v2 runtime never calls init functions, so emitting one
+		// as an ordinary funcdecl would silently drop package
+		// initialization (a silent gc divergence). Matches the
+		// p3frontend contract (flatten.go rejectInitFunc).
+		name: "FuncInit",
+		src: `package main
+func init() { println("init") }
+func main() {}
+`,
+		want: "func init() is not supported",
+	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {

@@ -22,6 +22,16 @@ func (e *Emitter) node(kind string, n ast.Node, fields map[string]any) map[strin
 }
 
 func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
+	// Package-level func init() must fail loudly: the v2 runtime never
+	// calls init functions, so emitting one as an ordinary funcdecl
+	// would silently drop package initialization (a silent gc
+	// divergence). Same predicate as p3frontend's rejectInitFunc
+	// (flatten.go): a method named init (fd.Recv != nil) is an
+	// ordinary callable method, not package initialization, and is
+	// unaffected.
+	if fd.Recv == nil && fd.Name.Name == "init" {
+		return nil, fmt.Errorf("emit: func init() is not supported (the v2 runtime never calls init functions, so emitting it as an ordinary func would silently drop package initialization)")
+	}
 	obj := e.info.Info.Defs[fd.Name]
 	if obj == nil {
 		return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
