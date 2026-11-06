@@ -10,6 +10,19 @@
 #
 # The continuous adversarial track reserves the same interface:
 # run_soak.sh --seeds A:B runs one bounded batch.
+#
+# TIME BUDGET (all minutes): the 360 min job timeout below is the
+# GitHub-hosted ceiling — timeout-minutes cannot exceed it, so the soak
+# cannot be stretched by raising the timeout. The soak must fit inside
+# it alongside everything else in the job:
+#   job setup ~10 + Layer 4a soak + Layer 4b ~25 + upload ~5
+#   + soak batch-start margin 20 (run_soak.sh stops starting new batches
+#   20 min before its deadline so the last batch + minimize finishes
+#   inside the soak window instead of overrunning into Layer 4b)
+#   = 60 min reserve  =>  max soak = 360 - 60 = 300 min = 5 h.
+# The validation step below derives the max from the timeout and the
+# reserve and fails fast on an out-of-budget `hours` input, so a future
+# timeout/reserve change cannot silently resurrect the overrun.
 name: fuzz-soak
 
 on:
@@ -19,14 +32,22 @@ on:
   workflow_dispatch:
     inputs:
       hours:
-        description: 'Soak duration in hours'
+        description: 'Soak duration in hours (max 5: the 6 h GitHub-hosted job ceiling minus the 60 min reserve for setup, Layer 4b, upload and the batch-start margin)'
         required: false
-        default: '6'
+        default: '5'
 
 jobs:
   fuzz-soak:
     runs-on: ubuntu-24.04
+    # GitHub-hosted job ceiling (6 h). Do NOT raise: the platform kills
+    # the job at 360 min regardless of this value.
     timeout-minutes: 360
+    env:
+      # Single source of truth for the budget above; see the validation
+      # step for the derivation. Keep in sync with run_soak.sh's
+      # SOAK_BATCH_MARGIN_SECONDS (20 min) and Layer 4b's ~25 min.
+      JOB_TIMEOUT_MINUTES: 360
+      SOAK_RESERVE_MINUTES: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +69,22 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
+      - name: Validate soak hours against job timeout
+        run: |
+          max_hours=$(( (JOB_TIMEOUT_MINUTES - SOAK_RESERVE_MINUTES) / 60 ))
+          hours="${{ inputs.hours || '5' }}"
+          case "$hours" in
+            ''|*[!0-9]*)
+              echo "::error::hours must be a positive integer, got '$hours'"
+              exit 1 ;;
+          esac
+          if [ "$hours" -lt 1 ] || [ "$hours" -gt "$max_hours" ]; then
+            echo "::error::hours=$hours does not fit in the $JOB_TIMEOUT_MINUTES min job timeout ($SOAK_RESERVE_MINUTES min reserve for setup + Layer 4b + upload + batch-start margin => max $max_hours h)"
+            exit 1
+          fi
+          echo "SOAK_HOURS=$hours" >> "$GITHUB_ENV"
+          echo "soak budget: $hours h of $JOB_TIMEOUT_MINUTES min job timeout ($SOAK_RESERVE_MINUTES min reserve)"
+
       - name: Layer 4a — generative soak (seeded programs, differential)
         env:
           GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
@@ -57,7 +94,7 @@ jobs:
           mkdir -p "$GO_BIN_DIR"
           ln -sf "$(which go)" "$GO_BIN_DIR/go"
           ./tools/fuzz-soak/run_soak.sh \
-            --hours "${{ inputs.hours || '6' }}" \
+            --hours "$SOAK_HOURS" \
             --out "$GITHUB_WORKSPACE/fuzz-soak-out"
 
       - name: Layer 4b — native testing.F differential fuzzing
