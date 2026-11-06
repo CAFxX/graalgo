@@ -278,6 +278,16 @@ public final class GoDebugTest {
 
     private static final Path CORPUS = Paths.get("../../../test/corpus/phase2/godebug");
 
+    /**
+     * Bound on one subprocess run (NEW-P1-5). Was 300 s: a single stalled
+     * grandchild then ate half of PinAudit's 10-minute child budget, and
+     * two stalls guaranteed the child kill, discarding all later results.
+     * 120 s keeps one stall to a fifth of that budget; SchedTestRunner's
+     * 150 s per-test timeout exceeds this bound plus the 10 s output
+     * drain below, so the two timeouts cannot race.
+     */
+    private static final int SUBPROCESS_TIMEOUT_SECONDS = 120;
+
     private static final class ProcessResult {
         final String stdout;
         final String stderr;
@@ -306,7 +316,7 @@ public final class GoDebugTest {
         Process p = pb.start();
         java.util.concurrent.Future<String> outF = readAsync(p.getInputStream());
         java.util.concurrent.Future<String> errF = readAsync(p.getErrorStream());
-        boolean done = p.waitFor(300, TimeUnit.SECONDS);
+        boolean done = p.waitFor(SUBPROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         if (!done) {
             p.destroyForcibly();
             throw new AssertionError(program + ": subprocess timed out");
