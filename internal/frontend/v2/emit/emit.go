@@ -72,6 +72,14 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// and snapshot testing.
 	decls := sortedTopDecls(pkg)
 
+	// Reject //go:embed and //go:linkname before any node is emitted:
+	// both would otherwise be silently dropped (the emitter never
+	// reads Doc comments), producing a wrong program that reports
+	// success. Real support needs design; until then, fail loudly.
+	if err := e.rejectUnsupportedDirectives(pkg); err != nil {
+		return nil, err
+	}
+
 	// Pass 1: declare all top-level funcs and globals (assigning object
 	// ids) so bodies and initializers can reference them.
 	for _, d := range decls {

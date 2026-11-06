@@ -78,7 +78,7 @@ var structuralNodes = map[string]string{
 	"File":         "top-level container; iterated in emitDocument",
 	"Package":      "top-level container; iterated in emitDocument",
 	"ImportSpec":   "import resolution is checker's job; not emitted",
-	"Directive":    "compiler directives (//go:...); preserved via go/parser, not emitted as IR",
+	"Directive":    "compiler directives (//go:...); not emitted as IR — //go:embed and //go:linkname are rejected loudly by the emitter (directives.go), other directives carry no program semantics the emitter drops",
 }
 
 // nonNodeTypes are go/ast struct types that do NOT implement ast.Node.

@@ -21,9 +21,10 @@ import (
 
 // negativeCase is one unhandled construct.
 type negativeCase struct {
-	name string // AST node kind under test
-	src  string // minimal program containing it
-	want string // substring of the expected error
+	name  string            // AST node kind under test
+	src   string            // minimal program containing it
+	want  string            // substring of the expected error
+	files map[string]string // extra files to write beside the program (e.g. an embed target)
 }
 
 var negativeCases = []negativeCase{
@@ -172,6 +173,40 @@ func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
+	{
+		// REVIEW-2026-11-06-12 V12-P1-7: //go:embed must fail loudly.
+		// The emitter never reads Doc comments, so an embed var was
+		// emitted as a plain vardecl with no values — the zero value
+		// "" instead of the embedded file content. Real embed support
+		// needs design; until then the emitter rejects it.
+		name: "GoEmbed",
+		src: `package main
+import _ "embed"
+//go:embed hello.txt
+var s string
+func main() { println(s) }
+`,
+		want: "//go:embed is not supported",
+		files: map[string]string{
+			"hello.txt": "hello, embed\n",
+		},
+	},
+	{
+		// REVIEW-2026-11-06-12 V12-P1-7: //go:linkname must fail loudly.
+		// The emitter never reads Doc comments, so a linkname func was
+		// emitted as an ordinary bodyless funcdecl with the linkname
+		// gone; the backend receives a function with a null body and
+		// no way to resolve the symbol. Real linkname support needs
+		// design; until then the emitter rejects it.
+		name: "GoLinkname",
+		src: `package main
+import _ "unsafe"
+//go:linkname localname runtime.fastrand
+func localname() uint64
+func main() { println(localname()) }
+`,
+		want: "//go:linkname is not supported",
+	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {
@@ -181,6 +216,11 @@ func TestNegativeCasesFailLoudly(t *testing.T) {
 			fn := filepath.Join(dir, "neg.go")
 			if err := os.WriteFile(fn, []byte(tc.src), 0644); err != nil {
 				t.Fatal(err)
+			}
+			for name, content := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			pres, err := parser.ParseFiles([]string{fn})
