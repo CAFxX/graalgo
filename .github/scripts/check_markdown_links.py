@@ -6,7 +6,9 @@ Fails on:
     resolved relative to the doc's own directory),
   - dangling #anchors (no matching heading in the target file,
     GitHub slug rules),
-  - dead external URLs (non-2xx/3xx on HEAD, 10s timeout).
+  - dead external URLs (non-2xx/3xx on HEAD, 10s timeout). Transient
+    transport failures (connection reset, timeout, 5xx/429) are retried
+    with backoff before a URL is declared dead.
 
 Usage:
   python3 .github/scripts/check_markdown_links.py [--skip-external] [root]
@@ -16,9 +18,13 @@ Every file/directory named in our docs must be a working relative link;
 this script is the mechanical enforcement.
 """
 
+import http.client
 import os
 import re
+import socket
 import sys
+import time
+import urllib.error
 import urllib.request
 
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
@@ -65,7 +71,42 @@ BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
 
-def check_external(url):
+# Transport failures that mean "no answer arrived at all" — the host is
+# alive but this request was lost on the way (connection reset before
+# any response bytes, timeout, 5xx/429). These are retried with backoff;
+# only a failure that survives every attempt counts as a dead link.
+#
+# Mechanism, observed 2026-11-06 (CI run 42130033841): go.dev/cl
+# intermittently resets connections with zero bytes returned
+# (IncompleteRead(0 bytes read)) on ~15% of requests (8/54 in a local
+# probe, across HEAD/GET and both user agents), and the same URL passes
+# in one file and fails in another within a single run — so the reset
+# is per-request flakiness at the Google frontend, not a dead link.
+# The old code made 3 immediate attempts and declared the URL dead if
+# all 3 were reset, which a short outage window could do to several
+# URLs at once.
+_TRANSIENT_EXC = (
+    http.client.IncompleteRead,      # server closed connection, 0 bytes read
+    http.client.RemoteDisconnected,  # connection reset without response
+    http.client.BadStatusLine,       # empty/garbled reply (same family)
+    TimeoutError,                    # socket.timeout is an alias of this
+    socket.timeout,
+    ConnectionError,                 # ConnectionResetError, BrokenPipeError, ...
+)
+
+
+def _is_transient(exc):
+    """True if the failure is a lost request rather than a dead URL:
+    a 429/5xx answer, or a transport error raised before any response
+    arrived. A definitive 4xx (e.g. 404/410) is not transient."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code == 429 or 500 <= exc.code < 600
+    if isinstance(exc, urllib.error.URLError):
+        return isinstance(exc.reason, _TRANSIENT_EXC)
+    return isinstance(exc, _TRANSIENT_EXC)
+
+
+def check_external(url, sleep=time.sleep):
     if url in BOT_PROTECTED_URLS:
         return True  # manually verified live; bot protection blocks automation
     # Some sites 403 HEAD or non-browser user agents (bot protection);
@@ -75,15 +116,31 @@ def check_external(url):
         ("GET", "graalgo-linkcheck/1.0"),
         ("GET", BROWSER_UA),
     ]
-    for method, ua in attempts:
-        req = urllib.request.Request(url, method=method,
-                                     headers={"User-Agent": ua})
-        try:
-            with urllib.request.urlopen(req, timeout=10) as r:
-                if 200 <= r.status < 400:
-                    return True
-        except Exception:
-            continue
+    # Two rounds over the (method, UA) ladder. A transient failure
+    # sleeps with backoff before the next attempt so a short outage
+    # window cannot swallow the whole ladder; a second round runs only
+    # if every failure was transient. A definitive failure (4xx other
+    # than 429) moves to the next attempt immediately and never triggers
+    # a second round, so a genuinely dead link still fails fast.
+    for round_no in range(2):
+        saw_transient = False
+        for i, (method, ua) in enumerate(attempts):
+            req = urllib.request.Request(url, method=method,
+                                         headers={"User-Agent": ua})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    if 200 <= r.status < 400:
+                        return True
+            except Exception as e:
+                if _is_transient(e):
+                    saw_transient = True
+                    if i < len(attempts) - 1:
+                        sleep(2.0)
+                continue
+        if not saw_transient:
+            return False
+        if round_no == 0:
+            sleep(10.0)
     return False
 
 
