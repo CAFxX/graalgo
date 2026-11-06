@@ -275,4 +275,33 @@ public final class IfaceMethodTablesTest {
         assertTrue(out.containsKey("interface#0"),
                 "anonymous interface keys by interface#id");
     }
+
+    /**
+     * R13: a wire {@code "fieldAddr": true} entry (pointer-receiver
+     * method promoted via a value-embedded non-struct field) resolves
+     * to a supported target carrying fieldAddr — the dispatcher builds
+     * a cell pointer over the field. Absent "fieldAddr" stays false.
+     */
+    public void testFieldAddrResolves() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "named", "detail": {"name": "main.V", "underlying": 0,
+                     "methods": [{"name": "Inc", "obj": 3, "recv": "pointer", "index": [0],
+                                  "fieldAddr": true},
+                                 {"name": "Get", "obj": 4, "recv": "value", "index": [0]}]}},
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of(3, goFunc(), 4, goFunc()));
+        IfaceMethodTarget inc = out.get("main.V").get("Inc");
+        assertTrue(inc != null, "Inc present");
+        assertTrue(inc.supported(), "fieldAddr target is supported");
+        assertTrue(inc.fieldAddr(), "fieldAddr flag survives resolve");
+        assertTrue(inc.pointerReceiver(), "pointer receiver");
+        assertEquals(1, inc.recvPath().length, "embedding path length");
+        IfaceMethodTarget get = out.get("main.V").get("Get");
+        assertTrue(get != null && !get.fieldAddr(), "absent fieldAddr stays false");
+    }
 }

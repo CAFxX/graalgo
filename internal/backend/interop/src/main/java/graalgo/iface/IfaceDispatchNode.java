@@ -115,11 +115,14 @@ public final class IfaceDispatchNode extends GoExprNode {
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
         IfaceMethodTarget target = lookupPic(itab);
-        // R2 P2-7: an unsupported promotion (pointer receiver via a
-        // value-embedded field — wire "index" null) fails fast here, only
-        // when the method is actually dispatched. The itab build carries
-        // the unsupported target precisely so programs dispatching only
-        // supported methods through the interface keep working.
+        // R2 P2-7: an unsupported promotion (wire "index" null) fails
+        // fast here, only when the method is actually dispatched. The
+        // itab build carries the unsupported target precisely so
+        // programs dispatching only supported methods through the
+        // interface keep working. Since R13 no current export emits
+        // an unsupported promotion (a pointer receiver via a
+        // value-embedded field is supported via addrOf/fieldAddr) —
+        // this guards stale pre-R13 documents only.
         if (!target.supported()) {
             throw new FrontendException("interface dispatch: method \"" + methodName
                     + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
@@ -164,10 +167,17 @@ public final class IfaceDispatchNode extends GoExprNode {
         // exporter's "index" path from the dynamic value. A value-receiver
         // method promoted via a pointer-embedded field gets the trailing
         // dereference (gc's implicit (*p)).
-        callArgs[0] = target.isDirect()
-                ? data
-                : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
-                        !target.pointerReceiver(), this);
+        // R13: a fieldAddr target's receiver is a pointer to the field's
+        // storage cell (fieldCellPointer), not the field value — the
+        // value is a boxed scalar, i.e. a copy.
+        if (target.isDirect()) {
+            callArgs[0] = data;
+        } else if (target.fieldAddr()) {
+            callArgs[0] = fieldCellPointer(data, target.recvPath());
+        } else {
+            callArgs[0] = graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
+                    !target.pointerReceiver(), this);
+        }
         // P3-M9 (ecdsa/hash root fix): a desugared helper installed as a
         // method-table target may declare its receiver parameter as an
         // INTERFACE (e.g. hash.__hashWrite(h hash.Hash, p []byte)) instead
@@ -207,6 +217,63 @@ public final class IfaceDispatchNode extends GoExprNode {
                 state.setRecoverAllowed(prev);
             }
         }
+    }
+
+    /**
+     * R13: pointer to the storage cell of the embedded field at the
+     * end of {@code recvPath} within the dynamic value {@code data} —
+     * the address gc takes for a pointer-receiver method promoted
+     * via a value-embedded non-struct field (e.g. {@code Counter}
+     * in {@code struct{ Counter }}). Walks the path to the field's
+     * owner struct (single-step {@code SelectorNode.readFieldPath}
+     * calls, so pointer-embedded steps auto-deref exactly like the
+     * value read), then wraps the owner's field in a
+     * {@link graalgo.frontend.GoFieldCell} — the same P3-M9 cell
+     * {@code &s.f} builds — so {@code *p = v} writes the field
+     * itself. The owner struct is the live struct value (for dynamic
+     * type {@code *S}, the struct the interface data points at), so
+     * mutations through the pointer are visible to the outer struct
+     * and {@code p == &s.C} holds, exactly like gc. A nil pointer
+     * anywhere on the path is gc's nil-dereference panic (the same
+     * path {@code SelectorNode} takes). The field kind comes from
+     * the owner struct's own descriptor at the compiled index — the
+     * same index {@code FieldAddrNode} uses for {@code &s.f} — so
+     * this shares {@code &s.f}'s semantics, including its treatment
+     * of embedding-prefix shells.
+     */
+    private GoPointer fieldCellPointer(Object data, int[] recvPath) {
+        if (recvPath == null || recvPath.length == 0) {
+            // Unreachable: fieldAddr targets always carry a non-empty
+            // path (the exporter sets it only for promoted methods).
+            throw new FrontendException("interface dispatch: fieldAddr target with no recvPath"
+                    + " (internal error)");
+        }
+        Object owner = data;
+        for (int i = 0; i < recvPath.length - 1; i++) {
+            owner = graalgo.frontend.SelectorNode.readFieldPath(owner,
+                    new int[]{recvPath[i]}, false, this);
+        }
+        // The owner is the struct holding the field: deref a trailing
+        // pointer-embedded step (nil -> gc's nil-dereference panic,
+        // mirroring FieldAddrNode's unwrap).
+        if (owner instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
+            }
+            owner = gp.referent();
+        }
+        if (owner instanceof GoInterface gi) {
+            if (gi.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                throw new AssertionError("unreachable: Panic.throwPanic returned");
+            }
+            owner = gi.data();
+        }
+        graalgo.values.GoStruct ownerStruct = (graalgo.values.GoStruct) owner;
+        int fieldIndex = recvPath[recvPath.length - 1];
+        return new GoPointer(new graalgo.frontend.GoFieldCell(ownerStruct, fieldIndex,
+                ownerStruct.descriptor().field(fieldIndex).kind()));
     }
 
     /**

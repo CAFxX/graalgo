@@ -30,7 +30,9 @@ import graalgo.values.GoFunc;
  * name the factory mints at box sites. Method entries are {@code
  * {"name": ..., "obj": ..., "index": [...]}} ({@code "recv"} is
  * informational only; {@code "index"} is the receiver adaptation path,
- * empty for direct methods).
+ * empty for direct methods). {@code "fieldAddr"} marks a
+ * pointer-receiver method promoted via a value-embedded non-struct
+ * field (R13: the dispatcher builds a cell pointer over the field).
  *
  * <p>Fail-fast: a method entry without a name/obj, or an obj id absent
  * from {@code Program.functions()}, is a {@link FrontendException} naming
@@ -114,7 +116,8 @@ public final class IfaceMethodTables {
                     embMethods = List.of();
                 }
                 funcs.put(m.getKey(), new IfaceMethodTarget(f, ref.recvPath,
-                        ref.pointerReceiver, ref.addrOf, ref.embeddedIfaceId, embMethods));
+                        ref.pointerReceiver, ref.addrOf, ref.fieldAddr, ref.embeddedIfaceId,
+                        embMethods));
             }
             out.put(e.getKey(), funcs);
         }
@@ -123,7 +126,7 @@ public final class IfaceMethodTables {
 
     /** Wire method entry: object id + receiver adaptation data. */
     private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver, boolean addrOf,
-            int embeddedIfaceId) {}
+            boolean fieldAddr, int embeddedIfaceId) {}
 
     /**
      * Method names of the embedded interface's {@code interface}-kind
@@ -233,6 +236,15 @@ public final class IfaceMethodTables {
             if (av instanceof Json.Bool b) {
                 addrOf = b.value();
             }
+            // R13: "fieldAddr" marks a pointer-receiver method promoted via a
+            // value-embedded non-struct field — the dispatcher builds a cell
+            // pointer over the field's storage. Absent (pre-R13 documents)
+            // means false.
+            boolean fieldAddr = false;
+            Json.Value fav = eo.opt("fieldAddr");
+            if (fav instanceof Json.Bool fb) {
+                fieldAddr = fb.value();
+            }
             // P3-M9: embedded-interface redispatch entries carry the
             // embedded interface's interface-kind type-table id; absent
             // (-1) on ordinary entries.
@@ -243,7 +255,7 @@ public final class IfaceMethodTables {
             }
             out.put(eo.string("name", mp),
                     new MethodRef(eo.intValue("obj", mp), recvPath, pointerReceiver, addrOf,
-                            embeddedIfaceId));
+                            fieldAddr, embeddedIfaceId));
         }
         return out;
     }

@@ -1073,14 +1073,13 @@ func TestMentionsTypeParamAliasUnion(t *testing.T) {
 	}
 }
 
-// TestIfaceMethodTableValueEmbedPrimitiveUnsupported (P3-M9): a
+// TestIfaceMethodTableValueEmbedPrimitiveFieldAddr (R13): a
 // pointer-receiver method promoted via a VALUE-embedded non-struct field
-// (e.g. a defined int type) is still marked unsupported in the wire
-// ("index": null) — taking the address would need writeback for the
-// primitive field value (out of scope). The mark is lazy: the export
-// succeeds, and dispatch fails fast with a named P3-M3 scope error only
-// if the method is actually dispatched.
-func TestIfaceMethodTableValueEmbedPrimitiveUnsupported(t *testing.T) {
+// (e.g. a defined int type) is marked supported in the wire
+// ("index": [0], "fieldAddr": true) — the dispatcher builds a cell
+// pointer over the field's storage (GoFieldCell), so the method runs
+// against the live field, exactly like gc.
+func TestIfaceMethodTableValueEmbedPrimitiveFieldAddr(t *testing.T) {
 	const src = `package main
 
 type Counter int
@@ -1097,7 +1096,7 @@ func main() {
 `
 	out, err := ExportFile(writeIfaceProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: export must succeed (unsupported is lazy), got %v", err)
+		t.Fatalf("ExportFile: %v", err)
 	}
 	doc := decodeExport(t, out)
 	entries := typeEntries(t, doc)
@@ -1119,11 +1118,15 @@ func main() {
 				continue
 			}
 			found = true
-			if idx, ok := mm["index"]; !ok || idx != nil {
-				t.Fatalf("*V.Inc index = %v (%T), want JSON null (unsupported)", mm["index"], mm["index"])
+			idx, ok := mm["index"].([]any)
+			if !ok || len(idx) != 1 {
+				t.Fatalf("*V.Inc index = %v (%T), want [0] (supported with fieldAddr)", mm["index"], mm["index"])
 			}
 			if ao, ok := mm["addrOf"].(bool); !ok || ao {
 				t.Fatalf("*V.Inc addrOf = %v (%T), want false", mm["addrOf"], mm["addrOf"])
+			}
+			if fa, ok := mm["fieldAddr"].(bool); !ok || !fa {
+				t.Fatalf("*V.Inc fieldAddr = %v (%T), want true", mm["fieldAddr"], mm["fieldAddr"])
 			}
 		}
 	}

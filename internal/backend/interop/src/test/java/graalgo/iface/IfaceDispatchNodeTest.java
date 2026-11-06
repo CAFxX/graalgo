@@ -17,6 +17,7 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.PanicException;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 import graalgo.values.GoTypeDescriptor;
@@ -100,17 +101,22 @@ public final class IfaceDispatchNodeTest {
 
     /** Direct (non-promoted) method target. */
     private static IfaceMethodTarget target(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), new int[0], true, false, -1, null);
+        return new IfaceMethodTarget(goFunc(root), new int[0], true, false, false, -1, null);
     }
 
     /** Promoted method target: receiver adapted via the field path. */
     private static IfaceMethodTarget promotedTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath, true, false, -1, null);
+        return new IfaceMethodTarget(goFunc(root), recvPath, true, false, false, -1, null);
+    }
+
+    /** Promoted pointer-receiver target via a value-embedded non-struct field (R13). */
+    private static IfaceMethodTarget fieldAddrTarget(CaptureRoot root, int... recvPath) {
+        return new IfaceMethodTarget(goFunc(root), recvPath, true, false, true, -1, null);
     }
 
     /** Promoted value-receiver target: trailing dereference applies. */
     private static IfaceMethodTarget promotedValueTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath, false, false, -1, null);
+        return new IfaceMethodTarget(goFunc(root), recvPath, false, false, false, -1, null);
     }
 
     private static VirtualFrame frame() {
@@ -434,7 +440,7 @@ public final class IfaceDispatchNodeTest {
 
     /** Unsupported-promotion target (wire "index" null): fails fast only if dispatched. */
     private static IfaceMethodTarget unsupportedTarget(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), null, true, false, -1, null);
+        return new IfaceMethodTarget(goFunc(root), null, true, false, false, -1, null);
     }
 
     /**
@@ -494,7 +500,7 @@ public final class IfaceDispatchNodeTest {
     public void testEmbeddedInterfaceRedispatch() {
         CaptureRoot inner = new CaptureRoot(42L);
         IfaceMethodTarget redispatch =
-                new IfaceMethodTarget(null, new int[]{0}, false, false, 7, List.of("M"));
+                new IfaceMethodTarget(null, new int[]{0}, false, false, false, 7, List.of("M"));
         setUp(Map.of(
                 "main.Outer", Map.of("M", redispatch),
                 "main.Inner", Map.of("M", target(inner))));
@@ -512,6 +518,53 @@ public final class IfaceDispatchNodeTest {
             assertEquals(1, inner.seen.size(), "inner method invoked once");
             assertEquals("INNER-DATA", inner.seen.get(0)[1],
                     "receiver is the interface field value's data");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R13: a pointer-receiver method promoted via a value-embedded
+     * non-struct field receives a pointer to the field's STORAGE, not
+     * to a copy of the field value. The receiver must be a cell pointer
+     * over the outer struct's field: writing through it updates the
+     * struct (mutation persistence), and it addresses the same storage
+     * as {@code &s.C} (pointer identity). A plain pointer to the boxed
+     * field value would fail both (mutations lost to the copy). The
+     * dynamic type is {@code *V}, the only form whose method set holds
+     * the promoted pointer-receiver method, so the interface data is a
+     * pointer to the live struct.
+     * verifies: GG-0014
+     */
+    public void testFieldAddrReceiverCell() {
+        CaptureRoot root = new CaptureRoot(7L);
+        setUp(Map.of("*main.V", Map.of("M", fieldAddrTarget(root, 0))));
+        try {
+            // struct{ Counter } with Counter an int64-kind field at index 0.
+            GoStructDescriptor desc = new GoStructDescriptor("*main.V",
+                    List.of(new GoStructDescriptor.Field("Counter",
+                            GoKind.INT64, true, 0, -1, null, null, null)));
+            GoStruct outer =
+                    new GoStruct(desc, new long[]{41L}, new Object[0]);
+            GoPointer outerPtr = new GoPointer(outer);
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("*main.V", outerPtr), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(7L, n.executeLong(frame()), "fieldAddr dispatch result");
+            Object recvArg = root.seen.get(0)[1];
+            assertTrue(recvArg instanceof GoPointer,
+                    "params[0] is a pointer, not the field value: " + recvArg);
+            GoPointer ptr = (GoPointer) recvArg;
+            assertEquals(41L, ((Number) ptr.referent()).longValue(),
+                    "pointer reads the current field value");
+            // Mutation persistence: writing through the receiver updates
+            // the outer struct's field (a copy-pointer would lose this).
+            ptr.setReferent(42L);
+            assertEquals(42L, outer.getLong(0), "write through receiver lands in the field");
+            // Storage identity: the receiver addresses the same storage
+            // as &s.Counter (a fresh GoFieldCell over the same struct+field).
+            GoPointer fieldAddr =
+                    new GoPointer(new graalgo.frontend.GoFieldCell(outer, 0, GoKind.INT64));
+            assertTrue(ptr.sameStorageAs(fieldAddr), "receiver == &s.Counter storage");
         } finally {
             tearDown();
         }

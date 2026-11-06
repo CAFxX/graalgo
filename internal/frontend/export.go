@@ -10546,10 +10546,18 @@ func typeKeyOf(t types.Type) string {
 // "pointer"); "index" is the receiver adaptation path: Selection.Index()
 // minus its last entry (the method's own index in the declaring type) —
 // empty for direct methods, e.g. [0] for a method promoted via embedded
-// field 0, null for unsupported promotions. "addrOf" is true when the
+// field 0 (never null since R13 — every go/types-verified promotion
+// has a sound receiver adaptation). "addrOf" is true when the
 // dispatcher must take the address of the promoted field value: a
 // pointer-receiver method promoted via a value-embedded struct field
-// (P3-M9). The Java dispatcher walks "index" to adapt the receiver
+// (P3-M9). "fieldAddr" is true when the dispatcher must take the
+// address of the promoted field's storage cell instead: a
+// pointer-receiver method promoted via a value-embedded NON-struct
+// field (R13 fix, P3-M9 cell-pointer mechanism — e.g. Counter int with
+// func (c *Counter) Inc(); the field value is a boxed scalar, so
+// pointing at the value would target a copy; the cell aliases the
+// field, so mutations persist and &s.C == p holds, exactly like gc).
+// The Java dispatcher walks "index" to adapt the receiver
 // (P3-M3). Interface-declared methods (no funcdecl exists to point at)
 // are skipped. Template methods of concrete generic instantiations are
 // monomorphized (P3-M9 instantiation method tables): "obj" is the
@@ -10572,6 +10580,12 @@ type methodEntry struct {
 	implkey     string
 	unsupported bool
 	addrOf      bool
+	// fieldAddr marks a pointer-receiver method promoted via a
+	// value-embedded non-struct field (R13): the dispatcher builds a
+	// cell pointer over the field (GoFieldCell), not a pointer to
+	// the field value. Mutually exclusive with addrOf (struct
+	// fields) and unsupported (no longer set anywhere).
+	fieldAddr bool
 	// embeddedIface is the type-table id of the embedded interface's
 	// interface-kind entry when the method is promoted via an embedded
 	// interface field (P3-M9 redispatch, see embeddedInterfacePromotion);
@@ -10619,15 +10633,20 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 	// the promoted field value (gc's implicit &). P3-M9: this is
 	// sound for struct-typed fields (read by reference — the live
 	// field object), so mark supported with "addrOf": true. For
-	// non-struct fields (primitives etc.) address-taking would need
-	// writeback (out of scope): mark unsupported ("index": null)
-	// rather than failing the export — the failure fires only if the
-	// method is actually dispatched through an interface (fail fast
-	// at dispatch, named P3-M3 scope error — R2 P2-7 narrowed the
-	// old whole-itab fail-fast to per-method) — never for programs
-	// that merely declare the type.
+	// non-struct fields (primitives, arrays, etc.) the field value
+	// is a boxed scalar — pointing at the value would target a
+	// copy, so mark "fieldAddr": true instead (R13): the dispatcher
+	// builds a cell pointer over the field's storage (GoFieldCell,
+	// the same P3-M9 mechanism &s.f uses), so mutations persist and
+	// pointer identity holds, exactly like gc. Nothing is
+	// unsupported anymore: every go/types-verified promotion has a
+	// sound receiver adaptation, so the wire "index" is never null
+	// (the old unsupported marking retired the R13 dispatch
+	// fail-fast; the dispatcher still fails fast on a genuinely
+	// absent index, which is unreachable for well-formed exports).
 	unsupported := false
 	addrOf := false
+	fieldAddr := false
 	if len(path) > 0 && recv == "pointer" {
 		if ft := embeddedFieldType(t, path); ft != nil {
 			for {
@@ -10641,7 +10660,7 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 				if _, ok := ft.(*types.Struct); ok {
 					addrOf = true
 				} else {
-					unsupported = true
+					fieldAddr = true
 				}
 			}
 		}
@@ -10656,6 +10675,7 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 	}
 	return methodEntry{name: mobj.Name(), obj: obj, recv: recv, index: path,
 		implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf,
+		fieldAddr: fieldAddr,
 		embeddedIface: -1}, nil
 }
 
@@ -10885,7 +10905,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			idx = arr
 		}
 		m := map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv,
-			"index": idx, "implkey": en.implkey, "addrOf": en.addrOf}
+			"index": idx, "implkey": en.implkey, "addrOf": en.addrOf, "fieldAddr": en.fieldAddr}
 		// P3-M9: embedded-interface redispatch entries carry the
 		// embedded interface's interface-kind type-table id (obj is
 		// -1: no GoFunc to invoke). Only present on redispatch
