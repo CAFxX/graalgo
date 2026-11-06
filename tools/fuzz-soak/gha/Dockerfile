@@ -1,8 +1,14 @@
 # graalgo-fuzz GHA image: Go 1.27.1 + GraalVM JDK 25 + graalgo sources.
 #
-# The graalgo sources are baked as a slim tarball (phases/phase1/{src,lib,
-# frontend}, phases/phase2/src, phases/phase3/{src,fuzzing}; ~45MB).
-# Rebuild the tarball and re-push the Dockerfile when graalgo changes.
+# The graalgo sources are baked as a slim tarball of the Phase-4 tree:
+#   graalgo/{Makefile,
+#     internal/backend/truffle/{src,lib,Makefile},
+#     internal/backend/{runtime,interop}/{src,Makefile},
+#     internal/backend/{graalgo-run,graalgo-sync-run},
+#     internal/frontend, tools/fuzz-soak}
+# (the pre-Phase-4 layout was deleted 2026-10-14; see
+# gha/README.md for the exact tar command). Rebuild the tarball and
+# re-push the Dockerfile when graalgo changes.
 #
 # Build via the fanout build-image.yml workflow (push trigger on
 # projects/graalgo-fuzz/Dockerfile), or locally with docker build.
@@ -31,20 +37,27 @@ ENV PATH=/opt/graalvm/bin:$PATH
 ENV GRAALVM_HOME=/opt/graalvm
 
 # graalgo slim sources (tarball committed alongside this Dockerfile).
-# Layout inside tarball: graalgo/{phases/phase1/{src,lib,frontend,Makefile},
-# phases/phase2/{src,Makefile}, phases/phase3/{src,fuzzing,Makefile}}
+# Layout inside tarball: graalgo/{Makefile,
+#   internal/backend/truffle/{src,lib,Makefile},
+#   internal/backend/{runtime,interop}/{src,Makefile},
+#   internal/backend/{graalgo-run,graalgo-sync-run},
+#   internal/frontend, tools/fuzz-soak}
 COPY graalgo-slim.tar.gz /tmp/
 RUN mkdir -p /opt && tar -xz -C /opt -f /tmp/graalgo-slim.tar.gz \
     && rm /tmp/graalgo-slim.tar.gz
 
-# Pre-build the Java modules so shards start immediately.
-# (go build of the frontend happens on first use; cached in GOCACHE.)
+# Pre-build the backend so shards start immediately. Root `make build`
+# builds the truffle, runtime and interop Java modules AND the
+# gofrontend binary (via the truffle Makefile's $(GOFRONTEND)
+# dependency). GO must point at the image Go: the Makefiles default
+# GO to ~/tools/go/bin/go, which does not exist in this image.
 WORKDIR /opt/graalgo
-RUN make -C phases/phase3 main && echo "graalgo pre-build OK"
+RUN make build GO=/usr/local/go/bin/go && echo "graalgo pre-build OK"
 
 # Shard contract env (set by dispatch.yml at runtime).
 ENV OUT_DIR=/out SHARD_IDX=0 SHARD_COUNT=1
 
-# Fuzz driver + generator baked from the tarball.
+# Fuzz driver + generator baked from the tarball
+# (tools/fuzz-soak/gha/driver/fuzz_driver.py + gen/generator.py).
 WORKDIR /work
 CMD ["python3", "--version"]
