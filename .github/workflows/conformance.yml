@@ -1,5 +1,5 @@
 # Layer 2 — conformance (phases/phase3/PLAN.md §5, GG-0029/GG-0032):
-# GOROOT/test language suite (356 files), per-commit on frontend changes.
+# GOROOT/test language suite (356 files), per-commit on frontend and backend changes, plus a weekly run.
 #
 # The srctest adapter (test/differential/internal/srctest) classifies every
 # file (run / errorcheck / structural exclusions) and runs the
@@ -12,11 +12,22 @@ on:
   push:
     paths:
       - 'internal/frontend/**'
+      - 'internal/backend/**'
+      - 'cmd/graalgo/**'
+      - 'internal/driver/**'
       - 'test/differential/**'
   pull_request:
     paths:
       - 'internal/frontend/**'
+      - 'internal/backend/**'
+      - 'cmd/graalgo/**'
+      - 'internal/driver/**'
       - 'test/differential/**'
+  schedule:
+    # Weekly run: Sunday 05:00 UTC, offset from the stdlib-gate slot
+    # (Sunday 03:00 UTC) so conformance drift is caught even when no
+    # path filter matches. Path filters do not apply to scheduled runs.
+    - cron: '0 5 * * 0'
   workflow_dispatch:
 
 jobs:
