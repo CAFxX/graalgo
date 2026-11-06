@@ -850,7 +850,12 @@ PACKAGES = {
             'mime/mediatype.go',
             'mime/encodedword.go',
             'mime/grammar.go',
-            # Skip type.go and type_*.go (OS-specific MIME type database, not needed for corpus)
+            # type.go + type_unix.go (F1 follow-up, REVIEW-2026-11-06-15):
+            # disk net/http needs mime.TypeByExtension (fs.go); the
+            # unix variant matches the linux target (build tags are
+            # stripped by the generator). type_windows.go stays out.
+            'mime/type.go',
+            'mime/type_unix.go',
         ],
         'const_name': 'syntheticMimeSource',
         'pkg_prefix': 'mime',
@@ -969,12 +974,17 @@ var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
         '\tmultipartfiles    = godebug.New("#multipartfiles") // TODO: document and remove #\n\tmultipartmaxparts = godebug.New("multipartmaxparts")',
         '\tmultipartfiles    = &__mpGodebugSetting{name: "#multipartfiles"}\n\tmultipartmaxparts = &__mpGodebugSetting{name: "multipartmaxparts"}'
     )
-    src = src.replace('textproto.MIMEHeader', '__mpMIMEHeader')
+    # __mpMIMEHeader is an ALIAS for the real textproto.MIMEHeader, not a
+    # distinct named type (F1 follow-up, REVIEW-2026-11-06-15): real
+    # net/http (disk) assigns textproto.MIMEHeader values into
+    # multipart.FileHeader.Header (clone.go), and two distinct named
+    # types with the same underlying map are not assignable to each
+    # other - the old stub type broke every net/http export at
+    # type-check time. The alias keeps the generated code's __mp-
+    # spelling (readMIMEHeader's signature) while the methods come
+    # from net/textproto. Do NOT reintroduce a distinct stub type.
     src += '''
-type __mpMIMEHeader map[string][]string
-func (__mpMIMEHeader) Get(key string) string { return "" }
-func (__mpMIMEHeader) Del(key string) {}
-func (h __mpMIMEHeader) Set(key, value string) { h[key] = []string{value} }
+type __mpMIMEHeader = textproto.MIMEHeader
 type __mpTextprotoReader struct{}
 func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
 func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {

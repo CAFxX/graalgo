@@ -12,14 +12,17 @@ package main
 const syntheticMimeSource = `package mime
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -115,7 +118,7 @@ func FormatMediaType(t string, param map[string]string) string {
 
 
 func checkMediaTypeDisposition(s string) error {
-__mrtmp5 := __mimeconsumeToken(s); typ, rest := __mrtmp5.token, __mrtmp5.rest
+__mrtmp8 := __mimeconsumeToken(s); typ, rest := __mrtmp8.token, __mrtmp8.rest
 	if typ == "" {
 		return errNoMediaType
 	}
@@ -126,7 +129,7 @@ __mrtmp5 := __mimeconsumeToken(s); typ, rest := __mrtmp5.token, __mrtmp5.rest
 	if rest, ok = strings.CutPrefix(rest, "/"); !ok {
 		return errNoSlashAfterFirstToken
 	}
-__mrtmp6 := __mimeconsumeToken(rest); subtype, rest := __mrtmp6.token, __mrtmp6.rest
+__mrtmp9 := __mimeconsumeToken(rest); subtype, rest := __mrtmp9.token, __mrtmp9.rest
 	if subtype == "" {
 		return errNoTokenAfterSlash
 	}
@@ -227,7 +230,7 @@ __mrtmp2 := __mimeconsumeMediaParam(v); key, value, rest := __mrtmp2.param, __mr
 	for key, pieceMap := range continuation {
 		singlePartKey := key + "*"
 		if v, ok := pieceMap[singlePartKey]; ok {
-__mrtmp3 := __mimedecode2231Enc(v); if decv, ok := __mrtmp3.f0, __mrtmp3.f1; ok {
+__mrtmp6 := __mimedecode2231Enc(v); if decv, ok := __mrtmp6.f0, __mrtmp6.f1; ok {
 				params[key] = decv
 			}
 			continue
@@ -249,7 +252,7 @@ __mrtmp3 := __mimedecode2231Enc(v); if decv, ok := __mrtmp3.f0, __mrtmp3.f1; ok 
 			}
 			valid = true
 			if n == 0 {
-__mrtmp4 := __mimedecode2231Enc(v); if decv, ok := __mrtmp4.f0, __mrtmp4.f1; ok {
+__mrtmp7 := __mimedecode2231Enc(v); if decv, ok := __mrtmp7.f0, __mrtmp7.f1; ok {
 					buf.WriteString(decv)
 				}
 			} else {
@@ -408,7 +411,7 @@ func __mimeconsumeMediaParam(v string) __mimeconsumeMediaParamPair {
 	}
 
 	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
-__mrtmp7 := __mimeconsumeToken(rest); param, rest = __mrtmp7.token, __mrtmp7.rest
+__mrtmp10 := __mimeconsumeToken(rest); param, rest = __mrtmp10.token, __mrtmp10.rest
 	param = strings.ToLower(param)
 	if param == "" {
 		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
@@ -419,7 +422,7 @@ __mrtmp7 := __mimeconsumeToken(rest); param, rest = __mrtmp7.token, __mrtmp7.res
 		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
 	}
 	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
-__mrtmp8 := __mimeconsumeValue(rest); value, rest2 := __mrtmp8.value, __mrtmp8.rest
+__mrtmp11 := __mimeconsumeValue(rest); value, rest2 := __mrtmp11.value, __mrtmp11.rest
 	if value == "" && rest2 == rest {
 		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
 	}
@@ -738,7 +741,7 @@ func __mimeWordDecoderDecode(d *WordDecoder, word string) __mimeWordDecoderDecod
 		return __mimeWordDecoderDecodePair{f0: "", f1: errInvalidWord}
 	}
 
-__mrtmp12 := __mimedecode(encoding[0], text); content, err := __mrtmp12.f0, __mrtmp12.f1
+__mrtmp15 := __mimedecode(encoding[0], text); content, err := __mrtmp15.f0, __mrtmp15.f1
 	if err != nil {
 		return __mimeWordDecoderDecodePair{f0: "", f1: err}
 	}
@@ -809,7 +812,7 @@ func __mimeWordDecoderDecodeHeader(d *WordDecoder, header string) __mimeWordDeco
 		text := header[cur : cur+j]
 		end := cur + j + len("?=")
 
-__mrtmp13 := __mimedecode(encoding, text); content, err := __mrtmp13.f0, __mrtmp13.f1
+__mrtmp16 := __mimedecode(encoding, text); content, err := __mrtmp16.f0, __mrtmp16.f1
 		if err != nil {
 			betweenWords = false
 			buf.WriteString(header[:end])
@@ -935,7 +938,7 @@ func __mimeqDecode(s string) __mimeqDecodePair {
 			if i+2 >= len(s) {
 				return __mimeqDecodePair{f0: nil, f1: errInvalidWord}
 			}
-__mrtmp9 := __mimereadHexByte(s[i+1], s[i+2]); b, err := __mrtmp9.f0, __mrtmp9.f1
+__mrtmp12 := __mimereadHexByte(s[i+1], s[i+2]); b, err := __mrtmp12.f0, __mrtmp12.f1
 			if err != nil {
 				return __mimeqDecodePair{f0: nil, f1: err}
 			}
@@ -968,10 +971,10 @@ func __mimereadHexByte(a byte, b byte) __mimereadHexBytePair {
 
 	var hb, lb byte
 	var err error
-__mrtmp10 := __mimefromHex(a); if hb, err = __mrtmp10.f0, __mrtmp10.f1; err != nil {
+__mrtmp13 := __mimefromHex(a); if hb, err = __mrtmp13.f0, __mrtmp13.f1; err != nil {
 		return __mimereadHexBytePair{f0: 0, f1: err}
 	}
-__mrtmp11 := __mimefromHex(b); if lb, err = __mrtmp11.f0, __mrtmp11.f1; err != nil {
+__mrtmp14 := __mimefromHex(b); if lb, err = __mrtmp14.f0, __mrtmp14.f1; err != nil {
 		return __mimereadHexBytePair{f0: 0, f1: err}
 	}
 	return __mimereadHexBytePair{f0: hb<<4 | lb, f1: nil}
@@ -1095,6 +1098,421 @@ func isToken(s string) bool {
 		}
 	}
 	return true
+}
+
+
+
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package mime implements parts of the MIME spec.
+
+
+var (
+	mimeTypes      sync.Map // map[string]string; ".Z" => "application/x-compress"
+	mimeTypesLower sync.Map // map[string]string; ".z" => "application/x-compress"
+
+	// extensions maps from MIME type to list of lowercase file
+	// extensions: "image/jpeg" => [".jfif", ".jpg", ".jpeg", ".pjp", ".pjpeg"]
+	extensionsMu sync.Mutex // Guards stores (but not loads) on extensions.
+	extensions   sync.Map   // map[string][]string; slice values are append-only.
+)
+
+// setMimeTypes is used by initMime's non-test path, and by tests.
+func setMimeTypes(lowerExt, mixExt map[string]string) {
+	mimeTypes.Clear()
+	mimeTypesLower.Clear()
+	extensions.Clear()
+
+	for k, v := range lowerExt {
+		mimeTypesLower.Store(k, v)
+	}
+	for k, v := range mixExt {
+		mimeTypes.Store(k, v)
+	}
+
+	extensionsMu.Lock()
+	defer extensionsMu.Unlock()
+	for k, v := range lowerExt {
+__mrtmp3 := __mimeParseMediaType(v); justType, _, err := __mrtmp3.mediatype, __mrtmp3.params, __mrtmp3.err
+		if err != nil {
+			panic(err)
+		}
+		var exts []string
+		if ei, ok := extensions.Load(justType); ok {
+			exts = ei.([]string)
+		}
+		extensions.Store(justType, append(exts, k))
+	}
+}
+
+
+
+// A type is listed here if both Firefox and Chrome included them in their own
+// lists.  In the case where they contradict they are deconflicted using IANA's
+// listed media types https://www.iana.org/assignments/media-types/media-types.xhtml
+//
+// Chrome's MIME mappings to file extensions are defined at
+// https://chromium.googlesource.com/chromium/src.git/+/refs/heads/main/net/base/mime_util.cc
+//
+// Firefox's MIME types can be found at
+// https://github.com/mozilla-firefox/firefox/blob/main/netwerk/mime/nsMimeTypes.h
+// and the mappings to file extensions at
+// https://github.com/mozilla-firefox/firefox/blob/main/uriloader/exthandler/nsExternalHelperAppService.cpp
+var builtinTypesLower = map[string]string{
+	".ai":    "application/postscript",
+	".apk":   "application/vnd.android.package-archive",
+	".apng":  "image/apng",
+	".avif":  "image/avif",
+	".bin":   "application/octet-stream",
+	".bmp":   "image/bmp",
+	".com":   "application/octet-stream",
+	".css":   "text/css; charset=utf-8",
+	".csv":   "text/csv; charset=utf-8",
+	".doc":   "application/msword",
+	".docx":  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".ehtml": "text/html; charset=utf-8",
+	".eml":   "message/rfc822",
+	".eps":   "application/postscript",
+	".exe":   "application/octet-stream",
+	".flac":  "audio/flac",
+	".gif":   "image/gif",
+	".gz":    "application/gzip",
+	".htm":   "text/html; charset=utf-8",
+	".html":  "text/html; charset=utf-8",
+	".ico":   "image/vnd.microsoft.icon",
+	".ics":   "text/calendar; charset=utf-8",
+	".jfif":  "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".jpg":   "image/jpeg",
+	".js":    "text/javascript; charset=utf-8",
+	".json":  "application/json",
+	".m4a":   "audio/mp4",
+	".mjs":   "text/javascript; charset=utf-8",
+	".mp3":   "audio/mpeg",
+	".mp4":   "video/mp4",
+	".oga":   "audio/ogg",
+	".ogg":   "audio/ogg",
+	".ogv":   "video/ogg",
+	".opus":  "audio/ogg",
+	".pdf":   "application/pdf",
+	".pjp":   "image/jpeg",
+	".pjpeg": "image/jpeg",
+	".png":   "image/png",
+	".ppt":   "application/vnd.ms-powerpoint",
+	".pptx":  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".ps":    "application/postscript",
+	".rdf":   "application/rdf+xml",
+	".rtf":   "application/rtf",
+	".shtml": "text/html; charset=utf-8",
+	".svg":   "image/svg+xml",
+	".text":  "text/plain; charset=utf-8",
+	".tif":   "image/tiff",
+	".tiff":  "image/tiff",
+	".txt":   "text/plain; charset=utf-8",
+	".vtt":   "text/vtt; charset=utf-8",
+	".wasm":  "application/wasm",
+	".wav":   "audio/wav",
+	".weba":  "audio/webm",
+	".webm":  "video/webm",
+	".webp":  "image/webp",
+	".xbl":   "text/xml; charset=utf-8",
+	".xbm":   "image/x-xbitmap",
+	".xht":   "application/xhtml+xml",
+	".xhtml": "application/xhtml+xml",
+	".xls":   "application/vnd.ms-excel",
+	".xlsx":  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".xml":   "text/xml; charset=utf-8",
+	".xsl":   "text/xml; charset=utf-8",
+	".zip":   "application/zip",
+}
+
+var once sync.Once // guards initMime
+
+var testInitMime, osInitMime func()
+
+func initMime() {
+	if fn := testInitMime; fn != nil {
+		fn()
+	} else {
+		setMimeTypes(builtinTypesLower, builtinTypesLower)
+		osInitMime()
+	}
+}
+
+
+
+// TypeByExtension returns the MIME type associated with the file extension ext.
+// The extension ext should begin with a leading dot, as in ".html".
+// When ext has no associated type, TypeByExtension returns "".
+//
+// Extensions are looked up first case-sensitively, then case-insensitively.
+//
+// The built-in table is small but on unix it is augmented by the local
+// system's MIME-info database or mime.types file(s) if available under one or
+// more of these names:
+//
+//	/usr/local/share/mime/globs2
+//	/usr/share/mime/globs2
+//	/etc/mime.types
+//	/etc/apache2/mime.types
+//	/etc/apache/mime.types
+//	/etc/httpd/conf/mime.types
+//
+// On Windows, MIME types are extracted from the registry.
+//
+// Text types have the charset parameter set to "utf-8" by default.
+func TypeByExtension(ext string) string {
+	once.Do(initMime)
+
+	// Case-sensitive lookup.
+	if v, ok := mimeTypes.Load(ext); ok {
+		return v.(string)
+	}
+
+	// Case-insensitive lookup.
+	// Optimistically assume a short ASCII extension and be
+	// allocation-free in that case.
+	var buf [10]byte
+	lower := buf[:0]
+	const utf8RuneSelf = 0x80 // from utf8 package, but not importing it.
+	for i := 0; i < len(ext); i++ {
+		c := ext[i]
+		if c >= utf8RuneSelf {
+			// Slow path.
+			si, _ := mimeTypesLower.Load(strings.ToLower(ext))
+			s, _ := si.(string)
+			return s
+		}
+		if 'A' <= c && c <= 'Z' {
+			lower = append(lower, c+('a'-'A'))
+		} else {
+			lower = append(lower, c)
+		}
+	}
+	si, _ := mimeTypesLower.Load(string(lower))
+	s, _ := si.(string)
+	return s
+}
+
+
+
+// ExtensionsByType returns the extensions known to be associated with the MIME
+// type typ. The returned extensions will each begin with a leading dot, as in
+// ".html". When typ has no associated extensions, ExtensionsByType returns an
+// nil slice.
+//
+// The built-in table is small but on unix it is augmented by the local
+// system's MIME-info database or mime.types file(s) if available under one or
+// more of these names:
+//
+//	/usr/local/share/mime/globs2
+//	/usr/share/mime/globs2
+//	/etc/mime.types
+//	/etc/apache2/mime.types
+//	/etc/apache/mime.types
+//	/etc/httpd/conf/mime.types
+//
+// On Windows, extensions are extracted from the registry.
+type __mimeExtensionsByTypePair struct {
+	f0 []string
+	f1 error
+}
+
+func __mimeExtensionsByType(typ string) __mimeExtensionsByTypePair {
+
+__mrtmp4 := __mimeParseMediaType(typ); justType, _, err := __mrtmp4.mediatype, __mrtmp4.params, __mrtmp4.err
+	if err != nil {
+		return __mimeExtensionsByTypePair{f0: nil, f1: err}
+	}
+
+	once.Do(initMime)
+	s, ok := extensions.Load(justType)
+	if !ok {
+		return __mimeExtensionsByTypePair{f0: nil, f1: nil}
+	}
+	ret := append([]string(nil), s.([]string)...)
+	slices.Sort(ret)
+	return __mimeExtensionsByTypePair{f0: ret, f1: nil}
+}
+
+func ExtensionsByType(typ string) ([]string, error) {
+	panic("mime.ExtensionsByType: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+
+
+// AddExtensionType sets the MIME type associated with
+// the extension ext to typ. The extension should begin with
+// a leading dot, as in ".html".
+func AddExtensionType(ext, typ string) error {
+	if !strings.HasPrefix(ext, ".") {
+		return fmt.Errorf("mime: extension %q missing leading dot", ext)
+	}
+	once.Do(initMime)
+	return setExtensionType(ext, typ)
+}
+
+
+
+func setExtensionType(extension, mimeType string) error {
+__mrtmp5 := __mimeParseMediaType(mimeType); justType, param, err := __mrtmp5.mediatype, __mrtmp5.params, __mrtmp5.err
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(mimeType, "text/") && param["charset"] == "" {
+		param["charset"] = "utf-8"
+		mimeType = FormatMediaType(justType, param)
+	}
+	extLower := strings.ToLower(extension)
+
+	mimeTypes.Store(extension, mimeType)
+	mimeTypesLower.Store(extLower, mimeType)
+
+	extensionsMu.Lock()
+	defer extensionsMu.Unlock()
+	var exts []string
+	if ei, ok := extensions.Load(justType); ok {
+		exts = ei.([]string)
+	}
+	for _, v := range exts {
+		if v == extLower {
+			return nil
+		}
+	}
+	extensions.Store(justType, append(exts, extLower))
+	return nil
+}
+
+
+
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+
+
+
+func init() {
+	osInitMime = initMimeUnix
+}
+
+
+
+// See https://specifications.freedesktop.org/shared-mime-info-spec/shared-mime-info-spec-0.21.html
+// for the FreeDesktop Shared MIME-info Database specification.
+var mimeGlobs = []string{
+	"/usr/local/share/mime/globs2",
+	"/usr/share/mime/globs2",
+}
+
+// Common locations for mime.types files on unix.
+var typeFiles = []string{
+	"/etc/mime.types",
+	"/etc/apache2/mime.types",
+	"/etc/apache/mime.types",
+	"/etc/httpd/conf/mime.types",
+}
+
+func loadMimeGlobsFile(filename string) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		// Each line should be of format: weight:mimetype:glob[:morefields...]
+		fields := strings.Split(scanner.Text(), ":")
+		if len(fields) < 3 || len(fields[0]) < 1 || len(fields[2]) < 3 {
+			continue
+		} else if fields[0][0] == '#' || fields[2][0] != '*' || fields[2][1] != '.' {
+			continue
+		}
+
+		extension := fields[2][1:]
+		if strings.ContainsAny(extension, "?*[") {
+			// Not a bare extension, but a glob. Ignore for now:
+			// - we do not have an implementation for this glob
+			//   syntax (translation to path/filepath.Match could
+			//   be possible)
+			// - support for globs with weight ordering would have
+			//   performance impact to all lookups to support the
+			//   rarely seen glob entries
+			// - trying to match glob metacharacters literally is
+			//   not useful
+			continue
+		}
+		if _, ok := mimeTypes.Load(extension); ok {
+			// We've already seen this extension.
+			// The file is in weight order, so we keep
+			// the first entry that we see.
+			continue
+		}
+
+		setExtensionType(extension, fields[1])
+	}
+	if err := scanner.Err(); err != nil {
+		panic(err)
+	}
+	return nil
+}
+
+
+
+func loadMimeFile(filename string) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) <= 1 || fields[0][0] == '#' {
+			continue
+		}
+		mimeType := fields[0]
+		for _, ext := range fields[1:] {
+			if ext[0] == '#' {
+				break
+			}
+			setExtensionType("."+ext, mimeType)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		panic(err)
+	}
+}
+
+
+
+func initMimeUnix() {
+	for _, filename := range mimeGlobs {
+		if err := loadMimeGlobsFile(filename); err == nil {
+			return // Stop checking more files if mimetype database is found.
+		}
+	}
+
+	// Fallback if no system-generated mimetype database exists.
+	for _, filename := range typeFiles {
+		loadMimeFile(filename)
+	}
+}
+
+
+
+func initMimeForTests() map[string]string {
+	mimeGlobs = []string{""}
+	typeFiles = []string{"testdata/test.types"}
+	return map[string]string{
+		".T1":  "application/test",
+		".t2":  "text/test; charset=utf-8",
+		".png": "image/png",
+	}
 }
 
 

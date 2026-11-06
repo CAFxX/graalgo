@@ -56,6 +56,14 @@ const (
 	errnoEBADF       = 9
 )
 
+// shutdown(2) how values (Linux; cf. syscall.SHUT_RD/SHUT_WR). The
+// backend trap graalgo.net.shutdown validates how itself (EINVAL for
+// anything but 0/1/2).
+const (
+	shutdownRead  = 0
+	shutdownWrite = 1
+)
+
 // errno is a Linux error number.
 type errno int64
 
@@ -1067,6 +1075,9 @@ func netSockWrite(h int64, b []byte) int64 // n+1 or -errno
 //go:linkname netSockClose graalgo.os.close
 func netSockClose(h int64) int64 // 0 or -errno
 
+//go:linkname netSockShutdown graalgo.net.shutdown
+func netSockShutdown(h int64, how int64) int64 // 0 or -errno
+
 // ---------------------------------------------------------------------------
 // Netpoller linknames (internal/poll.*). The net package drives the
 // poller directly by cookie via linknames, avoiding a synthetic->synthetic
@@ -1233,6 +1244,24 @@ func (fd *netFD) close() error {
 	return nil
 }
 
+// closeRead shuts down the reading side of the connection (gc
+// fd_posix.go: fd.shutdown(SHUT_RD), via the graalgo.net.shutdown trap).
+func (fd *netFD) closeRead() error {
+	if r := netSockShutdown(fd.cookie, shutdownRead); r < 0 {
+		return &OpError{Op: "close", Net: fd.net, Err: errno(-r)}
+	}
+	return nil
+}
+
+// closeWrite shuts down the writing side of the connection (gc
+// fd_posix.go: fd.shutdown(SHUT_WR)).
+func (fd *netFD) closeWrite() error {
+	if r := netSockShutdown(fd.cookie, shutdownWrite); r < 0 {
+		return &OpError{Op: "close", Net: fd.net, Err: errno(-r)}
+	}
+	return nil
+}
+
 // mapPollErr converts a poll wait error to a net error.
 func (fd *netFD) mapPollErr(op string, err error) error {
 	if te, ok := err.(interface{ Timeout() bool }); ok && te.Timeout() {
@@ -1340,6 +1369,24 @@ func (c *TCPConn) RemoteAddr() Addr                   { return c.fd.raddr }
 func (c *TCPConn) SetDeadline(t time.Time) error    { return c.fd.setDeadline(t, 'r'+'w') }
 func (c *TCPConn) SetReadDeadline(t time.Time) error  { return c.fd.setDeadline(t, 'r') }
 func (c *TCPConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
+
+// CloseRead shuts down the reading side of the TCP connection.
+// Most callers should just use Close.
+func (c *TCPConn) CloseRead() error {
+	if c == nil || c.fd == nil {
+		return &OpError{Op: "close", Net: "tcp", Err: errno(errnoEINVAL)}
+	}
+	return c.fd.closeRead()
+}
+
+// CloseWrite shuts down the writing side of the TCP connection.
+// Most callers should just use Close.
+func (c *TCPConn) CloseWrite() error {
+	if c == nil || c.fd == nil {
+		return &OpError{Op: "close", Net: "tcp", Err: errno(errnoEINVAL)}
+	}
+	return c.fd.closeWrite()
+}
 
 func (fd *netFD) setDeadline(t time.Time, mode int) error {
 	var d int64
