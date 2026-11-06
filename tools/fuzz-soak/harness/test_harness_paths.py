@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Regression pins for NEW-P1-7: fuzz soak dead on deleted phases/ paths.
+"""Regression pins for NEW-P1-7: fuzz soak dead on deleted phases/ paths,
+and for REVIEW-2026-11-06-10 R-P1-13 residuals: the GHA driver + image
+still on phases/, and the overnight loop swallowing batch failures.
 
 The harness scripts (run_batch.py, diff_one.sh, triage.py,
 run_fuzz_native.sh, run_soak.sh) used to resolve the repo root through
@@ -11,12 +13,15 @@ killing the overnight soak.
 Run: python3 tools/fuzz-soak/harness/test_harness_paths.py
 No JVM, no build, no network: every test is cheap. The diff_one test
 only exercises the fail-fast / gc-build-fail paths, never the graalgo
-run (the program deliberately fails `go build`).
+run (the program deliberately fails `go build`). The run_soak tests
+run a copied harness tree with a stubbed run_batch.py, never the real
+build or JVM.
 """
 
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,6 +44,10 @@ HARNESS_FILES = [
     FUZZ_DIR / "harness" / "triage.py",
     FUZZ_DIR / "run_soak.sh",
     REPO_ROOT / "test" / "differential" / "fuzz" / "run_fuzz_native.sh",
+    # R-P1-13 residuals: the GHA driver + image bake the same layout.
+    FUZZ_DIR / "gha" / "driver" / "fuzz_driver.py",
+    FUZZ_DIR / "gha" / "Dockerfile",
+    FUZZ_DIR / "gha" / "README.md",
 ]
 
 STALE_MARKERS = ("phases/phase", "phases\\phase")
@@ -186,6 +195,186 @@ class TestGrResolution(unittest.TestCase):
                 self.assertNotIn("tools/fuzz-soak/internal", rec["detail"])
             else:
                 self.assertEqual(rec["result"], "GC_BUILD_FAIL")
+
+
+class TestGhaDriver(unittest.TestCase):
+    def _load_driver(self, graalgo_home):
+        """Import fuzz_driver.py with GRAALGO_HOME set/unset as given."""
+        saved = os.environ.pop("GRAALGO_HOME", None)
+        try:
+            if graalgo_home is not None:
+                os.environ["GRAALGO_HOME"] = graalgo_home
+            spec = importlib.util.spec_from_file_location(
+                "fuzz_driver_pin",
+                str(FUZZ_DIR / "gha" / "driver" / "fuzz_driver.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        finally:
+            os.environ.pop("GRAALGO_HOME", None)
+            if saved is not None:
+                os.environ["GRAALGO_HOME"] = saved
+
+    def test_driver_fuzz_resolves_to_tools_fuzz_soak(self):
+        # Image default: /opt/graalgo is the repo root in the image.
+        mod = self._load_driver(None)
+        self.assertEqual(Path(mod.FUZZ),
+                         Path("/opt/graalgo/tools/fuzz-soak"))
+        # Against this repo the harness files it needs must exist.
+        mod = self._load_driver(str(REPO_ROOT))
+        self.assertEqual(Path(mod.FUZZ), FUZZ_DIR)
+        for rel in ("gen/generator.py", "harness/diff_one.sh"):
+            self.assertTrue((FUZZ_DIR / rel).is_file(), rel)
+
+    def test_driver_fail_fasts_on_stale_image_layout(self):
+        # A tarball built from the old layout must fail at shard start,
+        # not fail every seed identically with a hidden cause.
+        src = (FUZZ_DIR / "gha" / "driver" / "fuzz_driver.py").read_text()
+        self.assertIn("FUZZ layout mismatch", src)
+        self.assertIn("sys.exit(2)", src)
+
+    def test_gha_image_prebuild_uses_root_make_build(self):
+        # The image Go is /usr/local/go/bin/go; the Makefiles default
+        # GO to ~/tools/go/bin/go, which does not exist in the image —
+        # the pre-build must pass GO explicitly, or `make build` would
+        # fail to build gofrontend and every shard would HARNESS_ERROR.
+        src = (FUZZ_DIR / "gha" / "Dockerfile").read_text()
+        self.assertIn("make build GO=/usr/local/go/bin/go", src)
+        self.assertNotIn("phases/phase3", src)
+
+
+class TestRunBatchExitCodes(unittest.TestCase):
+    def test_exit_code_contract(self):
+        # 0 clean, 1 divergences found, 2 the batch could not run
+        # (build/generator failure, HARNESS_ERROR). The overnight loop
+        # in run_soak.sh distinguishes 1 from 2; a single exit code
+        # for both would conflate "found bugs" with "harness broken".
+        src = (HARNESS_DIR / "run_batch.py").read_text()
+        self.assertIn("Exit codes", src)
+        self.assertIn("sys.exit(2)", src)
+        self.assertIn("return 2", src)
+        self.assertIn("HARNESS_ERROR", src)
+        # No bare sys.exit(1) left for infra failures: build and
+        # generator failures must exit 2.
+        self.assertNotIn("sys.exit(1)", src)
+
+
+# Behavioural pins for the run_soak.sh failure semantics (R-P1-13):
+# the single-batch slot must propagate the batch verdict after
+# minimizing, and the overnight loop must record failures and exit
+# nonzero instead of printing "failed; continuing" and exiting 0.
+# The tests run a COPIED harness tree with run_batch.py replaced by
+# a stub (no build, no JVM, no generator), so they are cheap.
+STUB_RUN_BATCH = """#!/usr/bin/env python3
+import os, sys
+print(f"stub run_batch: exiting {os.environ.get('STUB_RC', '0')}",
+      flush=True)
+sys.exit(int(os.environ.get("STUB_RC", "0")))
+"""
+
+# Fake `date +%s` on PATH: the first two calls return T0, later calls
+# T0+3601. run_soak.sh calls date once for START_TS and once per loop
+# check, so with --hours 1 the loop runs exactly one batch
+# (T0 < T0+3600) and then stops.
+FAKE_DATE = """#!/bin/bash
+count_file="$FAKE_DATE_COUNT"
+c=$(cat "$count_file" 2>/dev/null || echo 0)
+c=$((c + 1))
+printf '%s' "$c" > "$count_file"
+if [ "$c" -le 2 ]; then printf '1700000000\\n'; else printf '1700003601\\n'; fi
+"""
+
+
+class TestRunSoakFailureSemantics(unittest.TestCase):
+    def _run_soak_copy(self, stub_rc, args):
+        """Run run_soak.sh from a copied tree with a stubbed
+        run_batch.py. Returns (returncode, stdout, outdir, tempdir);
+        the caller must rmtree the temp dir (see the tests below)."""
+        td = tempfile.mkdtemp(prefix="soak-pin-")
+        fuzz_copy = Path(td) / "tools" / "fuzz-soak"
+        shutil.copytree(FUZZ_DIR, fuzz_copy,
+                        ignore=shutil.ignore_patterns(
+                            "findings", "__pycache__"))
+        (fuzz_copy / "harness" / "run_batch.py").write_text(STUB_RUN_BATCH)
+        shim_dir = Path(td) / "shims"
+        shim_dir.mkdir()
+        (shim_dir / "date").write_text(FAKE_DATE)
+        os.chmod(shim_dir / "date", 0o755)
+        outdir = Path(td) / "out"
+        env = {
+            "PATH": f"{shim_dir}:{os.environ['PATH']}",
+            "HOME": td,  # GOCACHE/TMPDIR defaults land in the temp dir
+            "STUB_RC": str(stub_rc),
+            "FAKE_DATE_COUNT": str(Path(td) / "date-count"),
+        }
+        r = subprocess.run(
+            ["bash", str(fuzz_copy / "run_soak.sh")] + args
+            + ["--out", str(outdir)],
+            capture_output=True, text=True, env=env, timeout=60)
+        return r, outdir, td
+
+    def _assert_soak_report(self, outdir, failed, divergent):
+        rep = json.loads((outdir / "soak-report.json").read_text())
+        self.assertEqual(rep["failed_batches"], failed)
+        self.assertEqual(rep["divergent_batches"], divergent)
+
+    def test_single_batch_propagates_infra_failure(self):
+        r, outdir, td = self._run_soak_copy(2, ["--seeds", "0:1"])
+        try:
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("batch verdict rc=2", r.stdout)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_single_batch_propagates_divergence(self):
+        r, outdir, td = self._run_soak_copy(1, ["--seeds", "0:1"])
+        try:
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("batch verdict rc=1", r.stdout)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_single_batch_clean_exits_zero(self):
+        r, outdir, td = self._run_soak_copy(0, ["--seeds", "0:1"])
+        try:
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("batch done:", r.stdout)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_overnight_loop_fails_loudly_on_infra_failure(self):
+        r, outdir, td = self._run_soak_copy(2, ["--hours", "1"])
+        try:
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("LOUD: batch 0 FAILED to run", r.stdout)
+            self.assertIn("SOAK FAILED", r.stdout)
+            self._assert_soak_report(outdir, [0], [])
+            marker = (outdir / "SOAK_FAILED").read_text()
+            self.assertIn("infrastructure failure", marker)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_overnight_loop_fails_loudly_on_divergence(self):
+        r, outdir, td = self._run_soak_copy(1, ["--hours", "1"])
+        try:
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("LOUD: batch 0 found divergences", r.stdout)
+            self.assertIn("SOAK FAILED", r.stdout)
+            self._assert_soak_report(outdir, [], [0])
+            marker = (outdir / "SOAK_FAILED").read_text()
+            self.assertIn("divergences found", marker)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_overnight_loop_clean_exits_zero(self):
+        r, outdir, td = self._run_soak_copy(0, ["--hours", "1"])
+        try:
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("SOAK CLEAN", r.stdout)
+            self._assert_soak_report(outdir, [], [])
+            self.assertFalse((outdir / "SOAK_FAILED").exists())
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
 
 
 if __name__ == "__main__":
