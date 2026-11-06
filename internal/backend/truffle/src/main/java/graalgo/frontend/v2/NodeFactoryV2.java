@@ -1,7 +1,6 @@
 package graalgo.frontend.v2;
 
 import com.oracle.truffle.api.RootCallTarget;
-import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.source.Source;
@@ -143,7 +142,7 @@ public final class NodeFactoryV2 {
             V2FuncRootNode root = new V2FuncRootNode(fn.frameDescriptor(), fn.body(),
                     fn.closureSlot(), fn.paramSlots(), fn.paramKinds(),
                     fn.resultKinds(), fn.name());
-            RootCallTarget target = Truffle.getRuntime().createCallTarget(root);
+            RootCallTarget target = root.getCallTarget();
             if (funcTable.put(fn.objId(), new GoFunc(target, null, null)) != null) {
                 throw new FrontendException("duplicate function object id " + fn.objId()
                         + " for " + fn.name());
