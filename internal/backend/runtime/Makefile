@@ -123,6 +123,9 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # GcInterop's finalizer-panicked message is excluded on the same grounds:
 # a panicking Go finalizer must be loud (gc crashes the program); letting
 # the finalizer thread die silently would lose the diagnostic.
+# GoFatal is the designated process-fatal printer (fatal error header + Go
+# stack, then exit 2) — production diagnostic, not debug leftover;
+# excluding it from the gate (review 2026-11-05, B-P1-4).
 # SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
@@ -132,7 +135,7 @@ check: main $(OUT_TEST)/.built
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java' | grep -v 'src/main/java/graalgo/runtime/GoFatal.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3; updated P3-M9) =="
@@ -141,7 +144,10 @@ check: main $(OUT_TEST)/.built
 	@# *code* references to netpoller paths in this module; the ParkReason.java javadoc
 	@# {@code GoNetpoll.pollWait} is documentation of the real interop-module API,
 	@# not a code path, and is excluded.
-	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java'; then \
+	@# GoFatal.java's {@code GoNetpoll.armDeadline} mention is the same class
+	@# (review 2026-11-05, B-P1-4): javadoc documenting why the timer thread
+	@# needs no fatal routing — excluded on the same grounds.
+	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java' | grep -v 'src/main/java/graalgo/runtime/GoFatal.java'; then \
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
 	@# Exclusion: ToolPaths (phase-1 launcher, startup-only, never
 	@# goroutine-reachable) imports java.net.URISyntaxException for

@@ -287,6 +287,39 @@ program importing it fails to build loudly (it is not silently
 ignored). Operators use `jfr print` / JMC on a recording with
 `graalgo.*` enabled instead (SPEC §3.10).
 
+## RV-2026-11-05 (independent codebase review: concurrent map access, B-P1-4)
+
+### DIV-RV1105-1: concurrent map write detection is CAS-strengthened (gc: check-then-set)
+
+gc's `hashWriting` guard is check-then-set: two racing `mapassign`s can
+both pass the check and both set the flag, silently corrupting the table —
+the exact failure this work exists to eliminate. graalgo uses
+`AtomicBoolean.compareAndSet` for the write guard
+([GoMap.java](../../../../internal/backend/truffle/src/main/java/graalgo/values/GoMap.java)),
+making write/write detection deterministic. No defined (race-free) program
+can observe a difference: the messages stay gc-exact
+(`concurrent map read and map write`,
+`concurrent map iteration and map write` — gc parity, gc's
+`mapiterinit` fatals on concurrent map iteration and map write —
+`concurrent map writes`), the fatal is unrecoverable, and the process
+dies with exit 2. A racy program that gc would *luckily* let survive now
+dies loudly — defensible and deliberate, but recorded here.
+
+### DIV-RV1105-2: a write starting mid-iteration is detected (gc: entry check only)
+
+gc detects iteration/write overlap only when the iterator is created
+while a write is in progress. graalgo additionally holds an iteration
+count across `keysSnapshot()` (the array build behind range-over-map)
+and fatals a writer that observes it — otherwise a write starting
+mid-snapshot could grow `size` past the snapshot array (surfacing as a
+Java `ArrayIndexOutOfBoundsException`, i.e. an "internal error") or tear
+the snapshot. Same consequence class as DIV-RV1105-1: a racy program
+that gc would only catch with `-race` now dies loudly with gc's exact
+iteration message. No defined program can observe a difference: the
+count is held only for the snapshot build, never across the range loop,
+so a legal single-goroutine write from the loop body (which completes
+before the next per-key read) never trips it.
+
 ## P2-M1/M2/M7/M8/M9 — no accepted divergences
 
 P2-M1 (scheduler core), P2-M2 (channels + select), P2-M7 (pinning audit),

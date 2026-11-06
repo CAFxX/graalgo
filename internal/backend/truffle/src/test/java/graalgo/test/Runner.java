@@ -32,6 +32,10 @@ public final class Runner {
         TESTS.add(graalgo.values.ValuesTest.class);
         TESTS.add(graalgo.values.CallSiteProbesTest.class);
         TESTS.add(graalgo.values.CellIdentityTest.class);
+        // Review 2026-11-05, B-P1-4: GoMap concurrency guard + GoFatalError
+        // unrecoverability.
+        TESTS.add(graalgo.values.GoMapGuardTest.class);
+        TESTS.add(graalgo.runtime.GoFatalTest.class);
         TESTS.add(graalgo.runtime.FreezeSignatureTest.class);
         TESTS.add(graalgo.frontend.SectionClampTest.class);
         TESTS.add(graalgo.frontend.WrapInterfaceTest.class);

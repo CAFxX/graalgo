@@ -1,5 +1,6 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.GoFatalError;
 import graalgo.sched.SchedulerCore;
 
 import java.util.concurrent.CountDownLatch;
@@ -69,6 +70,41 @@ public final class SyncStressTest {
             assertTrue(done.await(120, TimeUnit.SECONDS), "mutex stress timed out (deadlock?)");
             sched.awaitQuiescence();
             assertEquals((long) n * iters, counter.get(), "mutex exclusion violated");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * A Go fatal raised inside {@code sync.Once} must propagate unchanged,
+     * never wrapped in {@code RuntimeException}: the catch-all in
+     * {@code GoOnce.doOnce} used to wrap every non-{@code RuntimeException}
+     * throwable, which hid the fatal from the SchedulerCore spawn
+     * wrapper's {@code GoFatalError} catch and turned gc's loud fatal
+     * (exit 2) into a misleading "internal error" (exit 1). The test
+     * calls {@code doOnce} directly on the test thread (a scheduler is
+     * installed, so {@code current()} resolves) instead of via
+     * {@code spawn} — the spawn wrapper would {@code die()} on the fatal
+     * and kill the test JVM. verifies: review 2026-11-05 B-P1-4.
+     */
+    public void testOnceFatalPropagatesUnchanged() {
+        SchedulerCore sched = newScheduler(1);
+        try {
+            GoOnce once = new GoOnce();
+            GoFatalError thrown = new GoFatalError("concurrent map writes");
+            try {
+                once.doOnce(() -> {
+                    throw thrown;
+                });
+                throw new AssertionError("doOnce must rethrow the fatal");
+            } catch (GoFatalError f) {
+                assertTrue(f == thrown, "fatal must propagate as the same instance, not a copy");
+                assertTrue("concurrent map writes".equals(f.getMessage()),
+                        "fatal message must survive doOnce");
+            } catch (RuntimeException re) {
+                throw new AssertionError(
+                        "doOnce wrapped the fatal in RuntimeException: " + re, re);
+            }
         } finally {
             SchedulerCore.install(null);
         }

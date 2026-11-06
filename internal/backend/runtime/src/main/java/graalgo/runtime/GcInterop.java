@@ -117,6 +117,12 @@ public final class GcInterop {
             }
             try {
                 GoCalls.invoke(fn, new Object[] { null });
+            } catch (graalgo.runtime.GoFatalError f) {
+                // Review 2026-11-05, B-P1-4: unrecoverable — route to the
+                // shared die path. gc: a panicking finalizer crashes the
+                // program; a fatal in a finalizer likewise kills the
+                // process. Never returns.
+                graalgo.runtime.GoFatal.die(-1, f);
             } catch (Throwable t) {
                 // gc: a panicking finalizer crashes the program. We cannot
                 // crash the host from here; be loud instead.

@@ -379,6 +379,15 @@ public final class SchedulerCore {
                 JfrEvents.goroutineStart(h);
                 h.quantumDeadlineNanos = System.nanoTime() + quantumNanos;
                 body.run();
+            } catch (graalgo.runtime.GoFatalError f) {
+                // Review 2026-11-05, B-P1-4: unrecoverable Go fatal
+                // (concurrent map access). gc parity is immediate process
+                // death, exit 2 — never recordCrash("internal error"):
+                // without this catch the Error would kill the vthread
+                // uncaught and the launcher would hang waiting for
+                // quiescence. die() never returns (System.exit skips the
+                // finally below — harmless at process death).
+                graalgo.runtime.GoFatal.die(h.id, f);
             } catch (graalgo.runtime.PanicException pe) {
                 recordPanic(pe);
             } catch (graalgo.runtime.Goexit g) {

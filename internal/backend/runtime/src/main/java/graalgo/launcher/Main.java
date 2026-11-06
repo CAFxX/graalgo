@@ -242,6 +242,12 @@ public final class Main {
                 program.root().getCallTarget().call();
             }
             exitCode = EXIT_OK;
+        } catch (graalgo.runtime.GoFatalError f) {
+            // Review 2026-11-05, B-P1-4: unrecoverable Go fatal (concurrent
+            // map access). gc parity is immediate process death, exit 2 —
+            // not the JVM's default Error handler (exit 1, wrong format).
+            // die() never returns.
+            graalgo.runtime.GoFatal.die(1, f);
         } catch (graalgo.runtime.PanicException pe) {
             // M5 (WS F): uncaught Go panic → gc-comparable output, exit 2.
             reportPanic(pe);

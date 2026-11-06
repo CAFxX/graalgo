@@ -1,5 +1,6 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.GoFatalError;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
 
@@ -54,6 +55,18 @@ public final class GoOnce {
                 }
             }
             if (thrown != null) {
+                // Review 2026-11-05, B-P1-4: a Go fatal is unrecoverable
+                // process death, never a wrapped RuntimeException. The
+                // catch-all above must not convert it: wrapping would
+                // hide it from the SchedulerCore spawn wrapper's
+                // GoFatalError catch, and the program would die with a
+                // misleading "internal error" (exit 1) instead of gc's
+                // fatal error (exit 2). Re-raise unchanged so it reaches
+                // GoFatal.die; every other Throwable keeps the old
+                // wrap-in-RuntimeException discipline.
+                if (thrown instanceof GoFatalError f) {
+                    throw f;
+                }
                 if (thrown instanceof RuntimeException re) {
                     throw re;
                 }
