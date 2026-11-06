@@ -11,11 +11,16 @@ import com.oracle.truffle.api.nodes.ControlFlowException;
  * Truffle treats it as a fast local control transfer. The value is widened
  * to {@link Object} (D5); root nodes with result slots read the slot
  * instead (defer runs before the return completes).
+ *
+ * <p>Public (with a public payload) because the v2 root node
+ * ({@code graalgo.frontend.v2.V2FuncRootNode}) is the first cross-package
+ * consumer of the return protocol.
  */
-final class GoReturn extends ControlFlowException {
-    final Object value;
+public final class GoReturn extends ControlFlowException {
+    /** The returned value: a single D5 value, a {@code GoTuple} for a multi-value return, or null. */
+    public final Object value;
 
-    GoReturn(Object value) {
+    public GoReturn(Object value) {
         this.value = value;
     }
 }

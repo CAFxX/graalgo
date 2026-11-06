@@ -1,5 +1,7 @@
 package graalgo.frontend.v2;
 
+import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.source.Source;
@@ -18,6 +20,7 @@ import graalgo.frontend.ExprStmtNode;
 import graalgo.frontend.ForRepeatingNode;
 import graalgo.frontend.ForStmtNode;
 import graalgo.frontend.FrontendException;
+import graalgo.frontend.FuncConstNode;
 import graalgo.frontend.FuncValueCallNode;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.GoLoopNode;
@@ -41,13 +44,17 @@ import graalgo.frontend.ReturnNode;
 import graalgo.frontend.SelectorNode;
 import graalgo.frontend.SelectorWriteNode;
 import graalgo.frontend.SliceExprNode;
+import graalgo.frontend.TupleGetNode;
+import graalgo.frontend.TupleNode;
 import graalgo.frontend.UnaryOpNode;
 import graalgo.frontend.VarReadNode;
+import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -108,6 +115,12 @@ public final class NodeFactoryV2 {
         List<Object> objects = getList(doc, "objects", "document");
 
         List<Object> funcs = getList(doc, "funcs", "document");
+
+        // The function table is shared by reference with the bodies:
+        // function idents build FuncConstNode against this map, and it is
+        // filled only after every body is built, so (mutually) recursive
+        // functions resolve correctly (the v1 NodeFactory pattern).
+        Map<Integer, GoFunc> funcTable = new LinkedHashMap<>();
         List<V2Function> functions = new ArrayList<>();
         for (int i = 0; i < funcs.size(); i++) {
             Object f = funcs.get(i);
@@ -116,10 +129,28 @@ public final class NodeFactoryV2 {
             }
             @SuppressWarnings("unchecked")
             Map<String, Object> fnMap = (Map<String, Object>) f;
-            functions.add(buildFunction(fnMap, i, types, objects));
+            functions.add(buildFunction(fnMap, i, types, objects, funcTable));
         }
 
-        return new V2Program(functions);
+        // Second phase: wrap each body in its root node and publish the
+        // compiled function value. A bodyless declaration has no root
+        // and is not callable: it gets no table entry, so a call to it
+        // fails loudly at the call site instead of silently.
+        for (V2Function fn : functions) {
+            if (!fn.hasBody()) {
+                continue;
+            }
+            V2FuncRootNode root = new V2FuncRootNode(fn.frameDescriptor(), fn.body(),
+                    fn.closureSlot(), fn.paramSlots(), fn.paramKinds(),
+                    fn.resultKinds(), fn.name());
+            RootCallTarget target = Truffle.getRuntime().createCallTarget(root);
+            if (funcTable.put(fn.objId(), new GoFunc(target, null, null)) != null) {
+                throw new FrontendException("duplicate function object id " + fn.objId()
+                        + " for " + fn.name());
+            }
+        }
+
+        return new V2Program(functions, funcTable);
     }
 
     /**
@@ -129,12 +160,16 @@ public final class NodeFactoryV2 {
         final FrameDescriptor.Builder frames = FrameDescriptor.newBuilder();
         final Map<Integer, Integer> objToSlot = new HashMap<>();
         final Map<Integer, GoKind> objToKind = new HashMap<>();
+        final Map<String, Integer> slotsByName = new HashMap<>();
         final List<Object> types;
         final List<Object> objects;
+        /** Program function table, shared by reference (filled after all bodies are built). */
+        final Map<Integer, GoFunc> funcTable;
 
-        V2Scope(List<Object> types, List<Object> objects) {
+        V2Scope(List<Object> types, List<Object> objects, Map<Integer, GoFunc> funcTable) {
             this.types = types;
             this.objects = objects;
+            this.funcTable = funcTable;
         }
 
         /** Declares a new frame slot for an object id. Returns the slot index. */
@@ -146,7 +181,15 @@ public final class NodeFactoryV2 {
             int slot = frames.addSlot(kind.slotKind(), name, null);
             objToSlot.put(objId, slot);
             objToKind.put(objId, kind);
+            if (name != null && !"_".equals(name)) {
+                slotsByName.put(name, slot);
+            }
             return slot;
+        }
+
+        /** Allocates a frame slot for a synthetic temporary (no object id). */
+        int tempSlot(GoKind kind, String name) {
+            return frames.addSlot(kind.slotKind(), name, null);
         }
 
         /** Looks up the slot for an object id. Throws if not declared. */
@@ -226,6 +269,12 @@ public final class NodeFactoryV2 {
                 }
                 return GoKind.INTERFACE;
             }
+            case "tuple":
+                // A call's result type (V12-P1-1/R-P1-1): the tuple itself
+                // has no scalar kind. It decodes as INTERFACE (the
+                // GoTuple carrier is an Object); only destructuring sites
+                // (return/assign/vardecl) interpret it via tupleArity.
+                return GoKind.INTERFACE;
             default:
                 return GoKind.INTERFACE;
         }
@@ -247,12 +296,110 @@ public final class NodeFactoryV2 {
         return goKindForTypeId(types, objMap.get("type"), where);
     }
 
+    /** True when the objects-table entry for objId is a function (kind "func"). */
+    @SuppressWarnings("unchecked")
+    private static boolean isFuncObject(List<Object> objects, int objId) {
+        if (objId < 0 || objId >= objects.size()) {
+            return false;
+        }
+        Object o = objects.get(objId);
+        if (!(o instanceof Map)) {
+            return false;
+        }
+        return "func".equals(((Map<String, Object>) o).get("kind"));
+    }
+
+    /** The "type" field of a wire expression node (may be null when untyped). */
+    private static Object exprTypeOf(Map<String, Object> node, String where) {
+        Map<String, Object> f = getMap(node, "fields", where);
+        return f.get("type");
+    }
+
+    /**
+     * Arity of a tuple type id, or -1 when the type id is null or not a
+     * tuple. A call expression's "type" field is a tuple exactly when the
+     * call returns zero or two-or-more values (a one-value call's type is
+     * the value type itself).
+     */
+    @SuppressWarnings("unchecked")
+    private static int tupleArity(List<Object> types, Object typeIdObj, String where) {
+        if (!(typeIdObj instanceof Long)) {
+            return -1;
+        }
+        int typeId = ((Long) typeIdObj).intValue();
+        if (typeId < 0 || typeId >= types.size()) {
+            throw new FrontendException(where + ": bad type id " + typeId);
+        }
+        Object t = types.get(typeId);
+        if (!(t instanceof Map)) {
+            return -1;
+        }
+        Map<String, Object> typeMap = (Map<String, Object>) t;
+        if (!"tuple".equals(typeMap.get("kind"))) {
+            return -1;
+        }
+        Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+        if (detail == null || !(detail.get("elems") instanceof List)) {
+            throw new FrontendException(where + ": tuple type " + typeId + " has no elems");
+        }
+        return ((List<Object>) detail.get("elems")).size();
+    }
+
+    /** Element kinds of a tuple type id, in order (throws when not a tuple). */
+    @SuppressWarnings("unchecked")
+    private static GoKind[] tupleElemKinds(List<Object> types, Object typeIdObj, String where) {
+        int typeId = ((Long) typeIdObj).intValue();
+        Map<String, Object> typeMap = (Map<String, Object>) types.get(typeId);
+        Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+        List<Object> elems = (List<Object>) detail.get("elems");
+        GoKind[] kinds = new GoKind[elems.size()];
+        for (int i = 0; i < elems.size(); i++) {
+            kinds[i] = goKindForTypeId(types, elems.get(i), where + ".tuple[" + i + "]");
+        }
+        return kinds;
+    }
+
+    /** Result kinds of a signature type id (a funcdecl's "sig"), in order. */
+    @SuppressWarnings("unchecked")
+    private static GoKind[] resultKindsForSig(List<Object> types, Object sigIdObj, String where) {
+        if (!(sigIdObj instanceof Long)) {
+            throw new FrontendException(where + ": funcdecl has no sig type id");
+        }
+        int sigId = ((Long) sigIdObj).intValue();
+        if (sigId < 0 || sigId >= types.size()) {
+            throw new FrontendException(where + ": bad sig type id " + sigId);
+        }
+        Object t = types.get(sigId);
+        if (!(t instanceof Map)) {
+            throw new FrontendException(where + ": sig type " + sigId + " must be a map");
+        }
+        Map<String, Object> typeMap = (Map<String, Object>) t;
+        if (!"signature".equals(typeMap.get("kind"))) {
+            throw new FrontendException(where + ": sig type " + sigId + " is not a signature");
+        }
+        Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+        if (detail == null || !(detail.get("results") instanceof List)) {
+            throw new FrontendException(where + ": signature type " + sigId + " has no results");
+        }
+        List<Object> results = (List<Object>) detail.get("results");
+        GoKind[] kinds = new GoKind[results.size()];
+        for (int i = 0; i < results.size(); i++) {
+            Object r = results.get(i);
+            if (!(r instanceof Map)) {
+                throw new FrontendException(where + ": result " + i + " must be a map");
+            }
+            kinds[i] = goKindForTypeId(types, ((Map<String, Object>) r).get("type"),
+                    where + ".results[" + i + "]");
+        }
+        return kinds;
+    }
+
     /**
      * Builds a single function from its funcdecl node map.
      */
     @SuppressWarnings("unchecked")
     private V2Function buildFunction(Map<String, Object> fnMap, int index,
-            List<Object> types, List<Object> objects) {
+            List<Object> types, List<Object> objects, Map<Integer, GoFunc> funcTable) {
         String kind = getString(fnMap, "kind", "funcs[" + index + "]");
         if (!"funcdecl".equals(kind)) {
             throw new FrontendException(
@@ -260,11 +407,25 @@ public final class NodeFactoryV2 {
         }
         Map<String, Object> fields = getMap(fnMap, "fields", "funcdecl");
         String name = getString(fields, "name", "funcdecl.fields");
+        Object objIdObj = fields.get("obj");
+        if (!(objIdObj instanceof Long)) {
+            throw new FrontendException("funcdecl.fields: func " + name + " has no obj id");
+        }
+        int objId = ((Long) objIdObj).intValue();
+        String pkgPath = fields.get("pkgpath") instanceof String s ? s : "";
 
-        V2Scope scope = new V2Scope(types, objects);
+        V2Scope scope = new V2Scope(types, objects, funcTable);
 
-        // Declare parameters as frame slots.
+        // Slot 0 is the $closure slot (v1 convention): the root installs
+        // the GoFunc's closure frame there on entry. Plain functions
+        // have a null closure frame.
+        int closureSlot = scope.frames.addSlot(FrameSlotKind.Object, "$closure", null);
+
+        // Declare parameters as frame slots, in order (the root stores
+        // call arguments into these slots, args[1..] in order).
         List<Object> params = getList(fields, "params", "funcdecl.fields");
+        List<Integer> paramSlots = new ArrayList<>();
+        List<GoKind> paramKinds = new ArrayList<>();
         for (int i = 0; i < params.size(); i++) {
             Object p = params.get(i);
             if (!(p instanceof Map)) {
@@ -273,13 +434,19 @@ public final class NodeFactoryV2 {
             Map<String, Object> paramMap = (Map<String, Object>) p;
             Map<String, Object> pfields = getMap(paramMap, "fields", "param");
             String pname = getString(pfields, "name", "param.fields");
-            Object objIdObj = pfields.get("obj");
-            if (objIdObj instanceof Long) {
-                int objId = ((Long) objIdObj).intValue();
-                GoKind pkind = goKindForObj(types, objects, objId, "param");
-                scope.declareObj(objId, pname, pkind);
+            Object pObjIdObj = pfields.get("obj");
+            if (pObjIdObj instanceof Long) {
+                int pObjId = ((Long) pObjIdObj).intValue();
+                GoKind pkind = goKindForObj(types, objects, pObjId, "param");
+                paramSlots.add(scope.declareObj(pObjId, pname, pkind));
+                paramKinds.add(pkind);
             }
         }
+
+        // Result kinds, from the signature: the root uses them to check
+        // the returned value's shape and to synthesize zero results for
+        // a bare return / fall-off.
+        GoKind[] resultKinds = resultKindsForSig(types, fields.get("sig"), "funcdecl.fields");
 
         // Build the body block (may be null for declarations without bodies).
         Object bodyObj = fields.get("body");
@@ -288,7 +455,10 @@ public final class NodeFactoryV2 {
             body = buildStmt((Map<String, Object>) bodyObj, "funcdecl.fields.body", scope);
         }
 
-        return new V2Function(name, body, scope.frames.build());
+        return new V2Function(name, objId, pkgPath, body, scope.frames.build(),
+                closureSlot, paramSlots.stream().mapToInt(Integer::intValue).toArray(),
+                paramKinds.toArray(new GoKind[0]), resultKinds,
+                Map.copyOf(scope.slotsByName));
     }
 
     /**
@@ -331,11 +501,13 @@ public final class NodeFactoryV2 {
                 if (results.isEmpty()) {
                     return new ReturnNode(new NilNode(GoKind.INTERFACE, null));
                 }
-                // Build all results; for multi-value, wrap in a tuple-like.
-                // v2 currently supports single-value returns directly.
-                // Multi-value uses the first value (documented limitation for
-                // the factory; the emitter produces single-value in practice
-                // for the tested subset).
+                // Build all results, in order (Go evaluates them
+                // left-to-right). A single result returns as-is — including
+                // `return f()`, where the call itself yields the tuple.
+                // Two or more results pack into a GoTuple, which the owning
+                // root returns to the caller for destructuring (V12-P1-2):
+                // every result is evaluated, so side effects in results[1:]
+                // execute instead of being silently dropped.
                 List<GoExprNode> built = new ArrayList<>();
                 for (int i = 0; i < results.size(); i++) {
                     Object r = results.get(i);
@@ -347,10 +519,7 @@ public final class NodeFactoryV2 {
                 if (built.size() == 1) {
                     return new ReturnNode(built.get(0));
                 }
-                // Multi-result: build a block that evaluates all, return first.
-                // (Full multi-value return requires result slots; the v2
-                // factory uses single-value ReturnNode for the common case.)
-                return new ReturnNode(built.get(0));
+                return new ReturnNode(new TupleNode(built.toArray(new GoExprNode[0])));
             }
             case "if": {
                 Object initObj = fields.get("init");
@@ -491,8 +660,57 @@ public final class NodeFactoryV2 {
             }
         }
 
-        // Build assignments. Single-value common case; multi-assign pairs up.
+        // Pair each LHS with its RHS. A single tuple-typed RHS (a call
+        // returning two or more values) destructures: the call is
+        // evaluated once into a temporary slot, and each LHS reads its
+        // element from the tuple (V12-P1-2). The old code assigned the
+        // same call node to every LHS — duplicating the call's side
+        // effects per LHS and giving every variable the first value — a
+        // silent miscompilation, now removed: a single non-tuple RHS for
+        // several LHS fails loudly instead.
         List<GoStmtNode> assigns = new ArrayList<>();
+        List<GoExprNode> rhsForLhs = new ArrayList<>();
+        if (rhsList.size() == 1) {
+            Object rhsType = exprTypeOf((Map<String, Object>) rhsList.get(0), where + ".rhs[0]");
+            int arity = tupleArity(scope.types, rhsType, where + ".rhs[0]");
+            if (arity >= 0) {
+                if (arity != lhsList.size()) {
+                    throw new FrontendException(where + ": multi-value call returns "
+                            + arity + " values for " + lhsList.size() + " variables");
+                }
+                GoKind[] elemKinds = tupleElemKinds(scope.types, rhsType, where + ".rhs[0]");
+                int tmp = scope.tempSlot(GoKind.INTERFACE, "$tuple");
+                assigns.add(new AssignNode(tmp, GoKind.INTERFACE, rhsBuilt.get(0)));
+                for (int i = 0; i < lhsList.size(); i++) {
+                    rhsForLhs.add(new TupleGetNode(
+                            new VarReadNode(GoKind.INTERFACE, tmp), i, elemKinds[i]));
+                }
+            } else if (lhsList.size() == 1) {
+                rhsForLhs.add(rhsBuilt.get(0));
+            } else {
+                throw new FrontendException(where + ": mismatched lhs/rhs count: "
+                        + lhsList.size() + " variables, 1 value");
+            }
+        } else {
+            // Several RHS: none may be tuple-typed (a multi-value call
+            // can only appear as the sole RHS; anything else is a spread
+            // the factory does not support, and silently passing a tuple
+            // as one value would miscompile).
+            for (int i = 0; i < rhsList.size(); i++) {
+                Object rhsType = exprTypeOf((Map<String, Object>) rhsList.get(i),
+                        where + ".rhs[" + i + "]");
+                if (tupleArity(scope.types, rhsType, where + ".rhs[" + i + "]") >= 0) {
+                    throw new FrontendException(where + ".rhs[" + i + "]: multi-value call "
+                            + "used with other values (spread not supported)");
+                }
+            }
+            if (rhsBuilt.size() != lhsList.size()) {
+                throw new FrontendException(where + ": mismatched lhs/rhs count");
+            }
+            rhsForLhs.addAll(rhsBuilt);
+        }
+
+        // Build assignments. Single-value common case; multi-assign pairs up.
         for (int i = 0; i < lhsList.size(); i++) {
             Object l = lhsList.get(i);
             if (!(l instanceof Map)) {
@@ -501,15 +719,7 @@ public final class NodeFactoryV2 {
             Map<String, Object> lmap = (Map<String, Object>) l;
             String lkind = getString(lmap, "kind", where + ".lhs[" + i + "]");
 
-            // RHS: pair up, or use single RHS for all (e.g. a, b = f()).
-            GoExprNode rhs;
-            if (rhsBuilt.size() == lhsList.size()) {
-                rhs = rhsBuilt.get(i);
-            } else if (rhsBuilt.size() == 1) {
-                rhs = rhsBuilt.get(0);
-            } else {
-                throw new FrontendException(where + ": mismatched lhs/rhs count");
-            }
+            GoExprNode rhs = rhsForLhs.get(i);
 
             if ("ident".equals(lkind)) {
                 Map<String, Object> lfields = getMap(lmap, "fields", where + ".lhs.fields");
@@ -577,16 +787,76 @@ public final class NodeFactoryV2 {
             }
         }
 
-        // Build values and assign.
+        // Pair each name with its value. A single tuple-typed value (a
+        // call returning two or more values) destructures (V12-P1-2);
+        // the old positional loop assigned only the first name and
+        // silently dropped the rest, including their side effects.
         List<GoStmtNode> stmts = new ArrayList<>();
-        for (int i = 0; i < values.size() && i < names.size(); i++) {
-            Object v = values.get(i);
-            if (!(v instanceof Map)) {
-                continue;
+        List<GoExprNode> valsForNames = new ArrayList<>();
+        if (values.size() == 1) {
+            Object v0 = values.get(0);
+            if (!(v0 instanceof Map)) {
+                throw new FrontendException(where + ".values[0]: must be a map");
             }
-            GoExprNode val = buildExpr((Map<String, Object>) v, where + ".values[" + i + "]", scope);
+            Object valueType = exprTypeOf((Map<String, Object>) v0, where + ".values[0]");
+            int arity = tupleArity(scope.types, valueType, where + ".values[0]");
+            if (arity >= 0) {
+                if (arity != names.size()) {
+                    throw new FrontendException(where + ": multi-value call returns "
+                            + arity + " values for " + names.size() + " variables");
+                }
+                GoKind[] elemKinds = tupleElemKinds(scope.types, valueType, where + ".values[0]");
+                GoExprNode val = buildExpr((Map<String, Object>) v0, where + ".values[0]", scope);
+                int tmp = scope.tempSlot(GoKind.INTERFACE, "$tuple");
+                stmts.add(new AssignNode(tmp, GoKind.INTERFACE, val));
+                for (int i = 0; i < names.size(); i++) {
+                    valsForNames.add(new TupleGetNode(
+                            new VarReadNode(GoKind.INTERFACE, tmp), i, elemKinds[i]));
+                }
+            } else if (names.size() == 1) {
+                valsForNames.add(buildExpr((Map<String, Object>) v0, where + ".values[0]", scope));
+            } else {
+                throw new FrontendException(where + ": mismatched names/values count: "
+                        + names.size() + " names, 1 value");
+            }
+        } else {
+            if (!values.isEmpty() && values.size() != names.size()) {
+                // A tuple-typed value among several is a spread (see
+                // buildAssign); anything else is a checker-rejected
+                // mismatch — fail loudly instead of truncating.
+                for (int i = 0; i < values.size(); i++) {
+                    Object vi = values.get(i);
+                    if (!(vi instanceof Map)) {
+                        throw new FrontendException(where + ".values[" + i + "]: must be a map");
+                    }
+                    Object valueType = exprTypeOf((Map<String, Object>) vi,
+                            where + ".values[" + i + "]");
+                    if (tupleArity(scope.types, valueType, where + ".values[" + i + "]") >= 0) {
+                        throw new FrontendException(where + ".values[" + i + "]: multi-value call "
+                                + "used with other values (spread not supported)");
+                    }
+                }
+                throw new FrontendException(where + ": mismatched names/values count: "
+                        + names.size() + " names, " + values.size() + " values");
+            }
+            for (int i = 0; i < values.size(); i++) {
+                Object v = values.get(i);
+                if (!(v instanceof Map)) {
+                    throw new FrontendException(where + ".values[" + i + "]: must be a map");
+                }
+                valsForNames.add(buildExpr((Map<String, Object>) v, where + ".values[" + i + "]", scope));
+            }
+        }
+        for (int i = 0; i < names.size(); i++) {
+            if (i >= valsForNames.size()) {
+                break; // Declaration without values: slots hold zero values.
+            }
             String name = (String) names.get(i);
+            GoExprNode val = valsForNames.get(i);
             if ("_".equals(name)) {
+                // Blank: evaluate the value for side effects, discard.
+                // (In the tuple path the call already ran into the temp
+                // slot, so this read is side-effect free.)
                 stmts.add(new ExprStmtNode(val));
                 continue;
             }
@@ -988,6 +1258,12 @@ public final class NodeFactoryV2 {
         Object objIdObj = fields.get("obj");
         if (objIdObj instanceof Long) {
             int objId = ((Long) objIdObj).intValue();
+            if (isFuncObject(scope.objects, objId)) {
+                // A function value: resolves lazily through the program
+                // function table (filled after all bodies are built), so
+                // (mutually) recursive functions resolve correctly.
+                return new FuncConstNode(scope.funcTable, objId);
+            }
             int slot = scope.slotForObj(objId, where);
             GoKind k = scope.kindForObj(objId, where);
             return new VarReadNode(k, slot);
@@ -1036,6 +1312,15 @@ public final class NodeFactoryV2 {
             Object a = argsList.get(i);
             if (!(a instanceof Map)) {
                 throw new FrontendException(where + ".args[" + i + "]: must be a map");
+            }
+            // A multi-value call cannot be passed as one argument
+            // (that would be a spread: g(f()) with f returning two
+            // values). The tuple would silently arrive as a single
+            // wrong argument — fail loudly instead (V12-P1-2).
+            Object argType = exprTypeOf((Map<String, Object>) a, where + ".args[" + i + "]");
+            if (tupleArity(scope.types, argType, where + ".args[" + i + "]") >= 0) {
+                throw new FrontendException(where + ".args[" + i + "]: multi-value call "
+                        + "used as an argument (spread not supported)");
             }
             args.add(buildExpr((Map<String, Object>) a, where + ".args[" + i + "]", scope));
         }
@@ -1173,13 +1458,16 @@ public final class NodeFactoryV2 {
     // --- Result types ---
 
     /**
-     * A built v2 program: the list of functions with their Truffle bodies.
+     * A built v2 program: the list of functions with their Truffle bodies,
+     * plus the compiled function values keyed by object id.
      */
     public static final class V2Program {
         private final List<V2Function> functions;
+        private final Map<Integer, GoFunc> funcTable;
 
-        V2Program(List<V2Function> functions) {
+        V2Program(List<V2Function> functions, Map<Integer, GoFunc> funcTable) {
             this.functions = List.copyOf(functions);
+            this.funcTable = Map.copyOf(funcTable);
         }
 
         public List<V2Function> functions() {
@@ -1189,24 +1477,67 @@ public final class NodeFactoryV2 {
         public int functionCount() {
             return functions.size();
         }
+
+        /** The compiled function value for an object id (null when unknown). */
+        public GoFunc function(int objId) {
+            return funcTable.get(objId);
+        }
+
+        /** The compiled main function, or null when the program has none. */
+        public V2Function mainFunction() {
+            for (V2Function f : functions) {
+                if ("main".equals(f.name()) && "main".equals(f.pkgPath())) {
+                    return f;
+                }
+            }
+            return null;
+        }
     }
 
     /**
-     * A single built function: name, Truffle body, and frame descriptor.
+     * A single built function: name, object id, Truffle body, frame
+     * descriptor, and the calling-convention metadata its root node needs
+     * (closure slot, parameter slots/kinds, result kinds) plus the
+     * local-name → slot map tests use to observe results.
      */
     public static final class V2Function {
         private final String name;
+        private final int objId;
+        private final String pkgPath;
         private final GoStmtNode body;
         private final FrameDescriptor frameDescriptor;
+        private final int closureSlot;
+        private final int[] paramSlots;
+        private final GoKind[] paramKinds;
+        private final GoKind[] resultKinds;
+        private final Map<String, Integer> slotsByName;
 
-        V2Function(String name, GoStmtNode body, FrameDescriptor frameDescriptor) {
+        V2Function(String name, int objId, String pkgPath, GoStmtNode body,
+                   FrameDescriptor frameDescriptor, int closureSlot,
+                   int[] paramSlots, GoKind[] paramKinds, GoKind[] resultKinds,
+                   Map<String, Integer> slotsByName) {
             this.name = name;
+            this.objId = objId;
+            this.pkgPath = pkgPath;
             this.body = body;
             this.frameDescriptor = frameDescriptor;
+            this.closureSlot = closureSlot;
+            this.paramSlots = paramSlots;
+            this.paramKinds = paramKinds;
+            this.resultKinds = resultKinds;
+            this.slotsByName = slotsByName;
         }
 
         public String name() {
             return name;
+        }
+
+        public int objId() {
+            return objId;
+        }
+
+        public String pkgPath() {
+            return pkgPath;
         }
 
         public GoStmtNode body() {
@@ -1215,6 +1546,27 @@ public final class NodeFactoryV2 {
 
         public FrameDescriptor frameDescriptor() {
             return frameDescriptor;
+        }
+
+        public int closureSlot() {
+            return closureSlot;
+        }
+
+        public int[] paramSlots() {
+            return paramSlots.clone();
+        }
+
+        public GoKind[] paramKinds() {
+            return paramKinds.clone();
+        }
+
+        public GoKind[] resultKinds() {
+            return resultKinds.clone();
+        }
+
+        /** Frame slot for a local by name (null when the function has no such local). */
+        public Integer slotForName(String name) {
+            return slotsByName.get(name);
         }
 
         public boolean hasBody() {

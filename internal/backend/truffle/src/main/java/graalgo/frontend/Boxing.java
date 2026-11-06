@@ -42,8 +42,8 @@ public final class Boxing {
         };
     }
 
-    /** Writes a canonical boxed value to a frame slot of the given kind. */
-    static void setSlot(VirtualFrame frame, int slot, GoKind kind, Object boxed) {
+    /** Writes a canonical boxed value to a frame slot of the given kind. Public: the v2 root node writes parameter slots through it. */
+    public static void setSlot(VirtualFrame frame, int slot, GoKind kind, Object boxed) {
         switch (kind.slotKind()) {
             case Int -> frame.setInt(slot, ((Integer) boxed).intValue());
             case Long -> frame.setLong(slot, ((Long) boxed).longValue());
@@ -137,8 +137,8 @@ public final class Boxing {
         return value;
     }
 
-    /** Go's zero value in canonical boxed form (nil → null, except strings/structs). */
-    static Object zero(GoKind kind, GoStructDescriptor structDesc) {
+    /** Go's zero value in canonical boxed form (nil → null, except strings/structs). Public: the v2 root node synthesizes zero results through it. */
+    public static Object zero(GoKind kind, GoStructDescriptor structDesc) {
         return switch (kind.slotKind()) {
             case Int -> Integer.valueOf(0);
             case Long -> Long.valueOf(0L);

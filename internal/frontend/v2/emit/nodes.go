@@ -49,6 +49,15 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 		return nil, err
 	}
 
+	// The Java consumer resolves calls through the program function
+	// table keyed by object id, so the declaration must publish its
+	// id (Pass 1 already declared it). Without it, a call to this
+	// function has no target to resolve to.
+	objID, ok := e.objIDs[obj]
+	if !ok {
+		return nil, fmt.Errorf("emit: func %s has no object id", fn.Name())
+	}
+
 	// Receiver: methods carry their receiver explicitly (name, object,
 	// type). Without it, same-named methods on different types are
 	// indistinguishable in the Funcs list. The signature's Recv is the
@@ -145,6 +154,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 	fields := map[string]any{
 		"name":     fn.Name(),
+		"obj":      objID,
 		"sig":      sigID,
 		"receiver": recv,
 		"params":   params,
