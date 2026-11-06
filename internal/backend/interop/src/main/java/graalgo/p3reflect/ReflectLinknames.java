@@ -704,14 +704,27 @@ public final class ReflectLinknames {
                     ReflectTypes.table().info(fieldTok), np.tag(), offset,
                     new int[]{i}, np.embedded()));
         }
-        long newTok = table.byTok.size();
-        ReflectTypes.TypeInfo info = new ReflectTypes.TypeInfo(newTok, GoKind.STRUCT,
-                "", "", size, (int) align,
-                null, null, 0, null, java.util.List.copyOf(fields), java.util.List.of(),
-                java.util.List.of(), java.util.List.of(), false, java.util.List.of(), "", -1);
-        table.byTok.add(info);
-        DYN_STRUCT_TOKS.put(structType, newTok);
-        return newTok;
+        // The byTok mint takes the Table monitor (fix-0005-reflect-mint-race):
+        // without it this synthesizer and a direct mint caller (ptrTo etc.)
+        // can both read the same byTok.size() and mint the same token for
+        // different types. Only the mint is covered here — the field loop
+        // above calls tokForTypeArg, which takes AbiTypes locks, so it must
+        // stay outside (lock order is AbiTypes → Table, never the reverse).
+        // The DYN_STRUCT_TOKS memo check above is deliberately NOT covered:
+        // its check-then-memo race is owned by the DYN_SYNTH_LOCK change
+        // (commit 92fddee5, not in this tree yet), which serializes the
+        // whole synthesis; this lock nests inside it (DYN_SYNTH_LOCK →
+        // Table) when both land.
+        synchronized (table) {
+            long newTok = table.byTok.size();
+            ReflectTypes.TypeInfo info = new ReflectTypes.TypeInfo(newTok, GoKind.STRUCT,
+                    "", "", size, (int) align,
+                    null, null, 0, null, java.util.List.copyOf(fields), java.util.List.of(),
+                    java.util.List.of(), java.util.List.of(), false, java.util.List.of(), "", -1);
+            table.byTok.add(info);
+            DYN_STRUCT_TOKS.put(structType, newTok);
+            return newTok;
+        }
     }
 
     /**
