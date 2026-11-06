@@ -18,7 +18,9 @@ This directory holds end-to-end proofs: real published Go modules compiled
 
 ## Status
 
-`run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
-before it runs again — see the driver-hardening lane.
+`run_module.sh` invokes the product launcher
+[internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run)
+(`P3SyncMain`, `--gmp=1`/`--gmp=4` legs), with the repo root derived from
+the script's location. Run `make build` at the repo root first — the
+launcher never builds, and the script fails loudly when the backend is
+not built.

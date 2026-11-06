@@ -8,21 +8,20 @@
 # p3frontend/DESIGN.md §7). sy01 also runs with --gmp=1 (the cap-1 leg of
 # SyncStressTest; the in-flight cap is a launcher flag).
 set -uo pipefail
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+# Repo root, derived from this script's location (override with GR for an
+# out-of-tree checkout).
+GR="${GR:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P1="$GR/phases/phase1"
-P2="$GR/phases/phase2"
-export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
-
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# Graalgo backend: the product launcher (P3SyncMain) via
+# internal/backend/graalgo-sync-run. The wrapper never builds; run
+# `make build` at the repo root first. Fail loudly when the backend is
+# not built instead of silently building the wrong tree.
+GRAALGO_RUN="$GR/internal/backend/graalgo-sync-run"
+[ -x "$GRAALGO_RUN" ] || { echo "graalgo-sync-run missing/not executable; run 'make build' at the repo root first" >&2; exit 2; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "interop classes not built; run 'make build' at the repo root first" >&2; exit 2; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -37,7 +36,7 @@ run_one() { # $1 = go file, $2 = gmp
 
     go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
     "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
-    "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    "$GRAALGO_RUN" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
 
     local ok=1
     cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base (gmp=$gmp): stdout differs"; }

@@ -9,9 +9,8 @@
 #   stderr line is compared (wave3 convention).
 #
 # Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
+#   GR        repo root (default: derived from this script's location)
 #   GO        gc toolchain (default ~/tools/go/bin/go)
-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
 #   TMPDIR    scratch (default <probe-dir>/.tmp, created)
 #
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
@@ -19,23 +18,24 @@ set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Repo root, derived from this script's location (override with GR for an
+# out-of-tree checkout).
+GR="${GR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 GO="${GO:-$HOME/tools/go/bin/go}"
-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
-fi
+# Graalgo backend: the product launcher (P3SyncMain) via
+# internal/backend/graalgo-sync-run. The wrapper never builds; run
+# `make build` at the repo root first. Fail loudly when the backend is
+# not built instead of silently building the wrong tree. The wrapper
+# honors the exported TMPDIR for -Djava.io.tmpdir.
+GRAALGO_RUN="$GR/internal/backend/graalgo-sync-run"
+[ -x "$GRAALGO_RUN" ] || { echo "graalgo-sync-run missing/not executable; run 'make build' at the repo root first" >&2; exit 2; }
+[ -d "$GR/internal/backend/interop/out/classes" ] || { echo "interop classes not built; run 'make build' at the repo root first" >&2; exit 2; }
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
@@ -60,7 +60,7 @@ for c in "${cases[@]}"; do
     gc_exit=$?
     # graalgo legs
     for gmp in 1 4; do
-        "${GRAALGO_RUN[@]}" --gmp="$gmp" "$casedir/main.go" \
+        "$GRAALGO_RUN" --gmp="$gmp" "$casedir/main.go" \
             > "$TMPDIR/$c.gr$gmp.out" 2> "$TMPDIR/$c.gr$gmp.err"
         eval "gr${gmp}_exit=$?"
     done
