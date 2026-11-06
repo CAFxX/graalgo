@@ -20,6 +20,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -198,19 +199,33 @@ func isGraalgoRoot(dir string) bool {
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
 func graalgoRun(root string, args []string) int {
+	code, _ := graalgoRunCtx(context.Background(), root, args)
+	return code
+}
+
+// graalgoRunCtx invokes the backend like graalgoRun but bound to ctx:
+// when ctx expires the backend process is killed and timedOut reports
+// whether the context expired before the backend exited on its own.
+// The launcher execs the JVM directly (see
+// internal/backend/graalgo-sync-run), so killing the child kills the
+// backend itself — no orphaned grandchildren. A backend that exits on
+// its own always yields a real exit code, while a context-killed
+// process surfaces as exit code -1, so a -1 together with an expired
+// context is a timeout, never a backend failure.
+func graalgoRunCtx(ctx context.Context, root string, args []string) (code int, timedOut bool) {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
-	cmd := exec.Command(runner, args...)
+	cmd := exec.CommandContext(ctx, runner, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return ee.ExitCode()
+			return ee.ExitCode(), ctx.Err() != nil && ee.ExitCode() == -1
 		}
 		fmt.Fprintf(os.Stderr, "graalgo: %v\n", err)
-		return 1
+		return 1, ctx.Err() != nil
 	}
-	return 0
+	return 0, false
 }
 
 // graalgoRunProgram invokes the backend for `graalgo run` and emulates

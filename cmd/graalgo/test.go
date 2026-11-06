@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"go/build"
 	"os"
@@ -23,11 +24,14 @@ import (
 // graalgo-vs-gc behavior parity.
 func cmdTest(root string, args []string) int {
 	// Separate test flags from package args. We accept -run, -v, -count,
-	// and -cover (the last two for compatibility; see below).
+	// -cover, and -timeout (-count and -cover for compatibility;
+	// see below).
 	var runFilter string
 	var verbose bool
 	var count int = 1
 	var cover bool
+	// Like `go test`, the default timeout is 10 minutes; 0 disables it.
+	var timeout time.Duration = 10 * time.Minute
 	var pkgs []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -46,6 +50,8 @@ Flags:
 	-count=n		run tests n times (n=1 disables caching; graalgo
 			has no test cache, so every run is fresh)
 	-cover		enable coverage (not yet supported)
+	-timeout d	fail the package if the backend runs longer than d
+			(default 10m, like go test; 0 disables the timeout)
 `)
 			return 0
 		case a == "-run" && i+1 < len(args):
@@ -68,6 +74,21 @@ Flags:
 				return 2
 			}
 			count = n
+		case a == "-timeout" && i+1 < len(args):
+			i++
+			d, err := parseTimeout(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+				return 2
+			}
+			timeout = d
+		case strings.HasPrefix(a, "-timeout="):
+			d, err := parseTimeout(strings.TrimPrefix(a, "-timeout="))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+				return 2
+			}
+			timeout = d
 		case a == "-cover":
 			cover = true
 		case strings.HasPrefix(a, "-"):
@@ -100,7 +121,7 @@ Flags:
 		}
 	}
 
-	runner := newTestRunner(root, verbose, runRe, count)
+	runner := newTestRunner(root, verbose, runRe, count, timeout)
 	failed := false
 	for _, dir := range dirs {
 		// -count=n: run the package's tests n times, like `go test`.
@@ -125,6 +146,18 @@ func parseCount(s string) (int, error) {
 		return 0, fmt.Errorf("invalid -count %q: must be a positive integer", s)
 	}
 	return n, nil
+}
+
+// parseTimeout parses a -timeout value. Like `go test`, the default is
+// 10m and 0 disables the timeout; a negative value also disables it
+// (time.ParseDuration accepts it, and the runner treats timeout <= 0
+// as "no deadline").
+func parseTimeout(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid -timeout %q: %v", s, err)
+	}
+	return d, nil
 }
 
 // resolveTestDirs turns package arguments into directories to test.
@@ -160,10 +193,19 @@ type testRunner struct {
 	verbose bool
 	runRe   *regexp.Regexp
 	count   int
+	// timeout bounds each package's backend run (one backend invocation
+	// per package per -count iteration, like `go test`); <= 0 disables
+	// the deadline.
+	timeout time.Duration
+	// runBackend invokes the backend for one package. It is a field
+	// (default graalgoRunCtx) so tests can substitute a fake backend
+	// without the Truffle runtime; it reports whether the backend was
+	// killed by the context deadline.
+	runBackend func(ctx context.Context, root string, args []string) (code int, timedOut bool)
 }
 
-func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int) *testRunner {
-	return &testRunner{root: root, verbose: verbose, runRe: runRe, count: count}
+func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int, timeout time.Duration) *testRunner {
+	return &testRunner{root: root, verbose: verbose, runRe: runRe, count: count, timeout: timeout, runBackend: graalgoRunCtx}
 }
 
 // runPackage discovers and runs the tests in one directory.
@@ -248,7 +290,22 @@ func (r *testRunner) runPackage(dir string) bool {
 		if err != nil {
 			absDir = dir
 		}
-		if code := graalgoRun(r.root, []string{"--test-package-dir=" + absDir, driver}); code != 0 {
+		// Bound the backend run: a hung guest test must fail the
+		// package with a timeout line (like `go test -timeout`)
+		// instead of hanging the driver forever. Each -count
+		// iteration gets a fresh deadline, as in `go test`.
+		ctx := context.Background()
+		var cancel context.CancelFunc = func() {}
+		if r.timeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, r.timeout)
+		}
+		defer cancel()
+		code, timedOut := r.runBackend(ctx, r.root, []string{"--test-package-dir=" + absDir, driver})
+		switch {
+		case timedOut:
+			fmt.Printf("panic: test timed out after %s\n", r.timeout)
+			ok = false
+		case code != 0:
 			ok = false
 		}
 	} else if r.verbose {
