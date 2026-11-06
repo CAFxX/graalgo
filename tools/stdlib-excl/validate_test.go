@@ -18,10 +18,13 @@ package main
 //   (P1-2) TestResolveStdlibTreePinSkewFailsLoud — manifest/pin skew fails loud
 //   (P1-2) TestResolveStdlibTreeRejectsNonTreeDir — same-named non-tree dir refused
 //   (CI-41211913011) TestGoBinaryDiscovery — toolchain discovery order: STDLIB_EXCL_GO, $GO, PATH go, legacy ~/tools fallback
+//   (R-P1-7) TestValidateDefaultsAgainstFixtureRepo — the --list default
+//     resolves to tools/stdlib-fork/exclusions.yaml (no flags, fixture repo)
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -412,4 +415,77 @@ func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 		t.Fatal("non-tree dir: expected refusal, got a tree")
 	}
 	mustContain(t, err.Error(), "not a stdlib src root", "refusal diagnosis")
+}
+
+// runGit runs git with the given args in dir, failing the test on error.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+}
+
+// (R-P1-7) The --list default must point at the real exclusions file,
+// tools/stdlib-fork/exclusions.yaml. Every pre-existing test passes an
+// explicit --list/--src/--baseline, so the stale phases/phase3/ default
+// (tree deleted 2026-10-14) shipped with a green suite while the
+// documented default invocation always failed with "no such file or
+// directory". This test runs runValidate with NO flags inside a fixture
+// repo root, so it fails on the old default (missing file) and passes
+// on the fixed one. It exercises the full default path: --list from
+// repoRoot(), --src from the vendored tree under a fixture HOME,
+// --test-binaries counted from that tree, and the version-stale check
+// skipped (fixture file is new in the working tree, not in HEAD).
+func TestValidateDefaultsAgainstFixtureRepo(t *testing.T) {
+	home := t.TempDir()
+	ver := "go1.27.1"
+
+	// Fixture vendored tree: marker dirs + the two entry package dirs +
+	// 100 test-binary dirs (non-test .go + _test.go each) so the 5%
+	// clause binds at 5, above the fixture's 2 entries.
+	tree := fakeVendoredTree(t, home, ver)
+	for _, p := range []string{"runtime/cgo", "plugin"} {
+		dir := filepath.Join(tree, filepath.FromSlash(p))
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTemp(t, dir, "x.go", "package x\n")
+		writeTemp(t, dir, "x_test.go", "package x\n")
+	}
+	for i := 0; i < 100; i++ {
+		dir := filepath.Join(tree, fmt.Sprintf("pkg%03d", i))
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		writeTemp(t, dir, "x.go", "package x\n")
+		writeTemp(t, dir, "x_test.go", "package x\n")
+	}
+
+	// Fixture repo root: pin + manifest (fakeRepoRoot) + the exclusions
+	// file at the CURRENT default location, tools/stdlib-fork/.
+	root := fakeRepoRoot(t, ver, ver)
+	fork := filepath.Join(root, "tools", "stdlib-fork")
+	writeTemp(t, fork, "exclusions.yaml",
+		"# fixture\nversion: 1\n"+testVocab+"exclusions:\n"+
+			"- file: runtime/cgo\n  reason: CGO\n  detail: evidence\n"+
+			"- file: plugin\n  reason: PLATFORM\n  detail: evidence\n")
+
+	// A git repo (no commits) so repoRoot() resolves here; the
+	// version-stale baseline check is skipped for a file not in HEAD.
+	runGit(t, root, "init", "-q")
+	t.Chdir(root)
+	t.Setenv("HOME", home)
+
+	var stdout, stderr strings.Builder
+	if err := runValidate(nil, &stdout, &stderr); err != nil {
+		t.Fatalf("default invocation in fixture repo should pass, got: %v\nstdout: %s\nstderr: %s",
+			err, stdout.String(), stderr.String())
+	}
+	mustContain(t, stdout.String(), "validate: OK", "default-run accept")
+	mustContain(t, stdout.String(), "version 1", "default-run version")
+	mustContain(t, stdout.String(),
+		filepath.Join("tools", "stdlib-fork", "exclusions.yaml"),
+		"default list path")
 }

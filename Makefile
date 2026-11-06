@@ -30,7 +30,8 @@
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
-#               grep gates + the gofrontend gofmt/vet/tests gate
+#               grep gates + the gofrontend gofmt/vet/tests gate +
+#               the stdlib-excl validate gate (exclusions.yaml contract)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -137,6 +138,13 @@ check:
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
+	# stdlib exclusion-list gate (review R-P1-7): `stdlib-excl validate`
+	# enforces the exclusions.yaml contract (entry cap, version bump,
+	# freshness). The tool suite runs first so a broken validator fails
+	# here, not in CI; validate itself runs with NO flags so a future
+	# default-path regression fails this gate. Per-push via `make all`
+	# (ci.yml).
+	cd tools/stdlib-excl && GOTOOLCHAIN=local $(GO) test ./... && GOTOOLCHAIN=local GO="$(GO)" $(GO) run . validate
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
