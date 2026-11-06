@@ -30,7 +30,11 @@
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
-#               grep gates + the gofrontend gofmt/vet/tests gate
+#               grep gates + `internal/frontend/build.sh check`
+#               (gofrontend gofmt/vet/tests, vendoring diff gate, and the
+#               frontend/v1 wire-format validator over every golden doc
+#               plus fresh exports — the validator was shelfware until
+#               fix-0005-validator-kinds wired it in)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -137,6 +141,13 @@ check:
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
+	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
+	# wire-format validation (internal/frontend/build.sh check).
+	# /tmp is a 512M shared tmpfs: keep the fresh-export JSONs on the
+	# persistent disk (same pattern as test-v2/test-p3frontend).
+	mkdir -p $(CURDIR)/internal/frontend/.tmp && \
+	cd internal/frontend && TMPDIR="$(CURDIR)/internal/frontend/.tmp" \
+	GOTMPDIR="$(CURDIR)/internal/frontend/.tmp" GO="$(GO)" ./build.sh check
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

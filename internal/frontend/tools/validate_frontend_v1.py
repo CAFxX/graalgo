@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Schema validator for the graalgo frontend/v1 JSON wire format.
 
-Enforces the contract documented in ../../../phases/phase1/docs/frontend-v1.md:
+Enforces the contract documented in ../../docs/arch/frontend-v1.md:
   - top-level document shape and "frontend": "v1" version pin
   - type-table entries: known kinds, required detail fields, in-range refs
   - object-table entries
@@ -13,6 +13,8 @@ Usage:
 
 Exit 0: all documents valid. Exit 1: any validation error (details on stdout).
 --selftest runs the embedded negative cases; every one must be rejected.
+It also runs the kind-coverage check: every node kind the exporter
+constructs (internal/frontend/*.go) must have a branch in check_node.
 """
 
 import json
@@ -188,6 +190,34 @@ def check_node(ctx, path, node, expr):
         for j, s in enumerate(f.get(k, [])):
             check_node(ctx, f"{fp}.{k}[{j}]", s, False)
 
+    def node_list_opt(k):
+        if k in f and f[k] is not None:
+            for j, s in enumerate(f.get(k, [])):
+                check_node(ctx, f"{fp}.{k}[{j}]", s, False)
+
+    def type_list(k):
+        need(k)
+        for j, tid in enumerate(f.get(k, [])):
+            ctx.check_type_id(f"{fp}.{k}[{j}]", tid)
+
+    def obj_ref(k):
+        need(k)
+        if k in f:
+            ctx.check_obj_id(f"{fp}.{k}", f[k])
+
+    def str_field(k, values=None):
+        need(k)
+        v = f.get(k)
+        if not isinstance(v, str):
+            ctx.err(fp, f"kind {kind}: field {k!r} must be a string, got {v!r}")
+        elif values is not None and v not in values:
+            ctx.err(fp, f"kind {kind}: field {k!r} must be one of {sorted(values)}, got {v!r}")
+
+    def bool_field(k):
+        need(k)
+        if not isinstance(f.get(k), bool):
+            ctx.err(fp, f"kind {kind}: field {k!r} must be a bool")
+
     def expr_node(k):
         need(k)
         if k in f:
@@ -200,13 +230,27 @@ def check_node(ctx, path, node, expr):
             need(k)
 
     if kind == "funcdecl":
-        # handled structurally by caller; still validate common shape
-        for k in ("name", "sig", "params", "body"):
+        # handled structurally by caller; still validate common shape.
+        # Spec §6: the linkname form and the bodyless (`unimplemented`)
+        # form carry NO body; every other form requires one. `results`
+        # are param nodes; `instof`/`typeargs` pin monomorphizations.
+        for k in ("name", "sig", "params"):
             need(k)
         ctx.check_type_id(f"{fp}.sig", f.get("sig"))
         for j, prm in enumerate(f.get("params", [])):
             check_node(ctx, f"{fp}.params[{j}]", prm, False)
-        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        node_list_opt("results")
+        if "obj" in f and f["obj"] is not None:
+            ctx.check_obj_id(f"{fp}.obj", f["obj"])
+        if "instof" in f and f["instof"] is not None:
+            ctx.check_obj_id(f"{fp}.instof", f["instof"])
+        if "typeargs" in f and f["typeargs"] is not None:
+            type_list("typeargs")
+        if f.get("linkname") is not None or f.get("unimplemented") is True:
+            if f.get("body") is not None:
+                ctx.err(fp, "funcdecl: linkname/bodyless form must not carry a body")
+        else:
+            check_node(ctx, f"{fp}.body", f.get("body"), False)
     elif kind == "param":
         for k in ("name", "obj", "type"):
             need(k)
@@ -307,7 +351,13 @@ def check_node(ctx, path, node, expr):
         need("name")
         if "obj" in f and f["obj"] is not None:
             ctx.check_obj_id(f"{fp}.obj", f["obj"])
-        type_ref("type")
+        if "builtin" in f:
+            # Builtin form (spec §6): `name` + `builtin` str, no `type`
+            # (builtins have no go/types signature).
+            if not isinstance(f.get("builtin"), str):
+                ctx.err(fp, "ident: builtin must be a string")
+        else:
+            type_ref("type")
     elif kind == "basiclit":
         need("value")
         type_ref("type")
@@ -328,13 +378,28 @@ def check_node(ctx, path, node, expr):
         expr_node("x")
         type_ref("type")
     elif kind == "call":
-        expr_node("fun")
-        node_list("args")
-        type_ref("type", nullable=True)
+        if "gcinterop" in f or "goexit" in f:
+            # Marker calls: runtime.SetFinalizer/KeepAlive/GC (P2-M4) and
+            # runtime.Goexit. The marker REPLACES `fun` (and `type`) —
+            # the backend builds the intrinsic node directly
+            # (NodeFactory buildCall: "no \"fun\" key, like goexit").
+            if "fun" in f:
+                ctx.err(fp, "call: marker call (gcinterop/goexit) must not carry 'fun'")
+            if "gcinterop" in f:
+                str_field("gcinterop", {"SetFinalizer", "KeepAlive", "GC"})
+            if "goexit" in f and f.get("goexit") is not True:
+                ctx.err(fp, "call: goexit must be true")
+            node_list("args")
+        else:
+            expr_node("fun")
+            node_list("args")
+            type_ref("type", nullable=True)
     elif kind == "convert":
         expr_node("x")
         type_ref("to")
         type_ref("type")
+        if "from" in f and f["from"] is not None:
+            ctx.check_type_id(f"{fp}.from", f["from"])
     elif kind == "complit":
         type_ref("type")
         if not isinstance(f.get("keyed"), bool):
@@ -457,6 +522,229 @@ def check_node(ctx, path, node, expr):
         duration_field(ctx, fp, f)
         expr_node("func")
         type_ref("type")
+    elif kind == "defer":
+        # M5 (WS F): `defer f(args)` — the deferred call node.
+        expr_node("call")
+    elif kind == "gostmt":
+        # P2-M1 (WS A): `go f(args)` — the spawned call node.
+        expr_node("call")
+    elif kind == "funclit":
+        # M5 (WS F): function literal. `params`/`results` are param
+        # nodes; desugared funclits carry no `type`, real literals do.
+        node_list("params")
+        node_list("results")
+        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        type_ref("type", nullable=True)
+    elif kind == "nil":
+        # M3: the nil literal. The type is the switch tag's type for
+        # `case nil:` and the expression's type elsewhere.
+        type_ref("type")
+    elif kind == "addrof":
+        # `&x`, plus the `&a[i]` form (`array` + `index` instead of `x`).
+        if "array" in f or "index" in f:
+            expr_node("array")
+            expr_node("index")
+        else:
+            expr_node("x")
+        type_ref("type")
+    elif kind == "deref":
+        # `*p` (read and assignment-lhs forms share the node).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "methodref":
+        # M6 (WS H): method-call target — resolved function/instantiation
+        # object id, receiver expr, signature type id (receiver is
+        # params[0] of the callee funcdecl's sig).
+        obj_ref("obj")
+        expr_node("recv")
+        type_ref("type")
+    elif kind == "methodvalue":
+        # P3-M9 (WS H): method value `x.M` — object id, receiver expr
+        # (evaluated once at creation), static func type id (no receiver).
+        obj_ref("obj")
+        expr_node("recv")
+        type_ref("type")
+    elif kind == "ifacemethod":
+        # P3-M3 (WS D, ADR-0003): interface method call `w.M(args)` with
+        # dynamic dispatch. `type` is null when the call has no results.
+        expr_node("recv")
+        str_field("method")
+        type_ref("iface")
+        node_list("args")
+        type_ref("sig")
+        type_ref("type", nullable=True)
+    elif kind == "reflectop":
+        # Table-backed reflect operation. The `op` vocabulary is owned
+        # by the exporter (export.go reflect*MethodOp tables plus the
+        # `__reflect_*` intrinsic names in synth_reflect.go), so it is
+        # checked as a non-empty string, not a frozen enum.
+        str_field("op")
+        node_list("args")
+        type_ref("type")
+    elif kind == "minmax":
+        # WS G builtin: `min`/`max` — op is the builtin name, args are
+        # the operands.
+        str_field("op", {"min", "max"})
+        node_list("args")
+        type_ref("type")
+    elif kind == "clear":
+        # P4: `clear(x)` — void, no `type` field.
+        expr_node("x")
+    elif kind == "abifuncpc":
+        # internal/abi FuncPCABI0/FuncPCABIInternal: `kind` is the
+        # intrinsic name, `arg` the func value, `type` the uintptr result.
+        str_field("kind", {"FuncPCABI0", "FuncPCABIInternal"})
+        expr_node("arg")
+        type_ref("type")
+    elif kind == "sliceoverlap":
+        # crypto/internal/fips140/alias AnyOverlap/InexactOverlap:
+        # `inexact` is true for InexactOverlap.
+        expr_node("x")
+        expr_node("y")
+        bool_field("inexact")
+        type_ref("type")
+    elif kind == "atomicaddr":
+        # sync/atomic word-op address cell. `cell` is the word kind
+        # (export.go atomicWordOp); the backend wraps the address in a
+        # delegating AtomicLong/AtomicInteger cell.
+        expr_node("addr")
+        str_field("cell", {"int32", "int64", "bool"})
+    elif kind == "atomicptrop":
+        # atomic.SwapPointer/CompareAndSwapPointer: `op` is "swap"/"cas",
+        # `addr` the addressed word, `args` the remaining operands.
+        str_field("op", {"swap", "cas"})
+        expr_node("addr")
+        node_list("args")
+        type_ref("type")
+    elif kind == "syncop":
+        # sync/atomic word ops (Load/Store/Add/Swap/CompareAndSwap/And/Or
+        # over `atomic.*` synctyps, `recv` an atomicaddr cell) and
+        # sync.Map multi-result methods (Load/LoadOrStore/LoadAndDelete/
+        # Swap over synctyp "Map", `recv` the map expr).
+        str_field("op", {"Load", "Store", "Add", "Swap", "CompareAndSwap",
+                         "And", "Or", "LoadOrStore", "LoadAndDelete"})
+        str_field("synctyp")
+        expr_node("recv")
+        node_list("args")
+        type_ref("type")
+    elif kind == "runtimecaller":
+        # runtime.Caller(skip) multi-result desugar: `skip` is the skip
+        # count, `type` the pair type of the desugared temp.
+        expr_node("skip")
+        type_ref("type")
+    elif kind == "runtimecallers":
+        # runtime.Callers(skip, pc).
+        expr_node("skip")
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimecallersframes":
+        # runtime.CallersFrames(pcs).
+        expr_node("pcs")
+        type_ref("type")
+    elif kind == "runtimeframesnext":
+        # (*runtime.Frames).Next() multi-result desugar: `f` is the
+        # Frames receiver, `type` the pair type of the desugared temp.
+        expr_node("f")
+        type_ref("type")
+    elif kind == "runtimefuncfileline":
+        # (*runtime.Func).FileLine(pc) multi-result desugar.
+        expr_node("f")
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimefuncforpc":
+        # runtime.FuncForPC(pc).
+        expr_node("pc")
+        type_ref("type")
+    elif kind == "runtimefuncname":
+        # (*runtime.Func).Name(): `f` is the Func receiver.
+        expr_node("f")
+        type_ref("type")
+    elif kind == "runtimefuncentry":
+        # (*runtime.Func).Entry(): `f` is the Func receiver.
+        expr_node("f")
+        type_ref("type")
+    elif kind == "runtimegomaxprocs":
+        # runtime.GOMAXPROCS(n).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "runtimegoroot":
+        # runtime.GOROOT().
+        type_ref("type")
+    elif kind == "runtimegosched":
+        # runtime.Gosched() — statement node, no fields, no result.
+        pass
+    elif kind == "runtimenumcpu":
+        # runtime.NumCPU().
+        type_ref("type")
+    elif kind == "runtimenumgoroutine":
+        # runtime.NumGoroutine().
+        type_ref("type")
+    elif kind == "runtimereadmemstats":
+        # runtime.ReadMemStats(m) — void, no `type` field.
+        expr_node("m")
+    elif kind == "runtimestack":
+        # runtime.Stack(buf, all).
+        node_list("args")
+        type_ref("type")
+    elif kind == "runtimeversion":
+        # runtime.Version().
+        type_ref("type")
+    elif kind == "unsafeadd":
+        # unsafe.Add(ptr, len).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafederive":
+        # uintptr->unsafe.Pointer provenance-proven derivation: `base`
+        # is the pointer-derived term, `offset` the integer offset expr.
+        expr_node("base")
+        expr_node("offset")
+        type_ref("type")
+    elif kind == "unsafefromptr":
+        # *T / nil -> unsafe.Pointer.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafefromuint":
+        # uintptr -> unsafe.Pointer (non-provenance-proven fallback).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafeslice":
+        # unsafe.Slice(ptr, len).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafeslicedata":
+        # unsafe.SliceData(s).
+        expr_node("slice")
+        type_ref("type")
+    elif kind == "unsafestring":
+        # unsafe.String(ptr, len).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafestringdata":
+        # unsafe.StringData(s).
+        expr_node("s")
+        type_ref("type")
+    elif kind == "unsafetooptr":
+        # unsafe.Pointer -> *T. `elemSize` (bytes of T, from the same
+        # go/types Sizes oracle as unsafe.Sizeof) is present when T has
+        # a fixed size, absent otherwise.
+        expr_node("x")
+        type_ref("type")
+        if "elemSize" in f and f["elemSize"] is not None:
+            if not isinstance(f["elemSize"], int) or isinstance(f["elemSize"], bool) or f["elemSize"] < 0:
+                ctx.err(fp, "unsafetooptr: elemSize must be a non-negative int")
+    elif kind in ("mathf64bits", "mathf64frombits", "mathf32bits",
+                  "mathf32frombits", "mathsqrt", "mathfma"):
+        # Synthetic math intrinsics (exportMathIntrinsic, one wire kind
+        # per intrinsic): unary operand `x` for Bits/FromBits/Sqrt,
+        # `x`/`y`/`z` for FMA.
+        expr_node("x")
+        if kind == "mathfma":
+            expr_node("y")
+            expr_node("z")
+        type_ref("type")
     else:
         ctx.err(path, f"unknown node kind {kind!r}")
 
@@ -494,6 +782,59 @@ def validate(doc):
             if isinstance(fn, dict) and fn.get("kind") != "funcdecl":
                 ctx.err(f"funcs[{i}]", "top-level entries must be funcdecl")
     return ctx.errors
+
+
+def _exporter_kinds():
+    """Node kinds constructed by the exporter (internal/frontend/*.go).
+
+    Returns None when the exporter sources are not found next to this
+    script (standalone use outside the repo); otherwise the set of kind
+    strings from `.node("kind", ...)` literals, `kind = "kind"` /
+    `kind := "kind"` assignments, and the math-intrinsic map in
+    exportMathIntrinsic (synth_machinery.go), whose kinds are map values
+    rather than .node() literals.
+    """
+    import os
+    import re
+    here = os.path.dirname(os.path.abspath(__file__))
+    srcdir = os.path.normpath(os.path.join(here, ".."))
+    kinds = set()
+    found = False
+    try:
+        names = os.listdir(srcdir)
+    except OSError:
+        return None
+    for name in names:
+        if not name.endswith(".go") or name.endswith("_test.go"):
+            continue
+        found = True
+        with open(os.path.join(srcdir, name)) as fh:
+            src = fh.read()
+        kinds |= set(re.findall(r'\.node\("([a-z][a-z0-9]*)"', src))
+        kinds |= set(re.findall(r'\bkind\s*:?=\s*"([a-z][a-z0-9]*)"', src))
+    math_path = os.path.join(srcdir, "synth_machinery.go")
+    if os.path.exists(math_path):
+        with open(math_path) as fh:
+            src = fh.read()
+        m = re.search(r"func \(e \*exporter\) exportMathIntrinsic.*?map\[string\]string\{(.*?)\}",
+                      src, re.S)
+        if m:
+            kinds |= set(re.findall(r':\s*"([a-z][a-z0-9]*)"', m.group(1)))
+    return kinds if found else None
+
+
+def _validator_kinds():
+    """Node kinds with a branch in check_node (this file)."""
+    import os
+    import re
+    with open(os.path.abspath(__file__)) as fh:
+        src = fh.read()
+    m = re.search(r"def check_node\(.*?\ndef validate\(", src, re.S)
+    body = m.group(0)
+    kinds = set(re.findall(r'kind == "([a-z][a-z0-9]*)"', body))
+    for tup in re.findall(r'kind in \(([^)]*)\)', body):
+        kinds |= set(re.findall(r'"([a-z][a-z0-9]*)"', tup))
+    return kinds
 
 
 def selftest():
@@ -573,6 +914,128 @@ def selftest():
                         "to": 99}}),
         "dangling type id")
 
+    # Positive: one minimal node per kind added for NEW-P1-1 (42 exporter
+    # kinds + 6 math-intrinsic kinds). Each entry is the exact field
+    # shape the exporter emits (see the branch comments); a branch that
+    # requires a wrong field fails this case.
+    POS = {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}
+
+    def nd(kind, fields):
+        return {"kind": kind, "pos": dict(POS), "fields": fields}
+
+    def lit():
+        return nd("basiclit", {"value": "1", "type": 0})
+
+    def call():
+        return nd("call", {"fun": nd("ident", {"name": "f", "obj": 0, "type": 0}),
+                           "args": [], "type": 0})
+
+    NEW_KIND_FIELDS = {
+        "defer": {"call": call()},
+        "gostmt": {"call": call()},
+        "funclit": {"params": [], "results": [],
+                    "body": nd("block", {"stmts": []})},
+        "nil": {"type": 0},
+        "addrof": {"x": lit(), "type": 0},
+        "deref": {"x": lit(), "type": 0},
+        "methodref": {"obj": 0, "recv": lit(), "type": 0},
+        "methodvalue": {"obj": 0, "recv": lit(), "type": 0},
+        "ifacemethod": {"recv": lit(), "method": "M", "iface": 0,
+                        "args": [], "sig": 0, "type": 0},
+        "reflectop": {"op": "call", "args": [], "type": 0},
+        "minmax": {"op": "min", "args": [lit()], "type": 0},
+        "clear": {"x": lit()},
+        "abifuncpc": {"kind": "FuncPCABI0", "arg": lit(), "type": 0},
+        "sliceoverlap": {"x": lit(), "y": lit(), "inexact": False, "type": 0},
+        "atomicaddr": {"addr": lit(), "cell": "int64"},
+        "atomicptrop": {"op": "swap", "addr": lit(), "args": [], "type": 0},
+        "syncop": {"op": "Load", "synctyp": "atomic.Int64",
+                   "recv": nd("atomicaddr", {"addr": lit(), "cell": "int64"}),
+                   "args": [], "type": 0},
+        "runtimecaller": {"skip": lit(), "type": 0},
+        "runtimecallers": {"skip": lit(), "pc": lit(), "type": 0},
+        "runtimecallersframes": {"pcs": lit(), "type": 0},
+        "runtimeframesnext": {"f": lit(), "type": 0},
+        "runtimefuncfileline": {"f": lit(), "pc": lit(), "type": 0},
+        "runtimefuncforpc": {"pc": lit(), "type": 0},
+        "runtimefuncname": {"f": lit(), "type": 0},
+        "runtimefuncentry": {"f": lit(), "type": 0},
+        "runtimegomaxprocs": {"x": lit(), "type": 0},
+        "runtimegoroot": {"type": 0},
+        "runtimegosched": {},
+        "runtimenumcpu": {"type": 0},
+        "runtimenumgoroutine": {"type": 0},
+        "runtimereadmemstats": {"m": lit()},
+        "runtimestack": {"args": [lit()], "type": 0},
+        "runtimeversion": {"type": 0},
+        "unsafeadd": {"ptr": lit(), "len": lit(), "type": 0},
+        "unsafederive": {"base": lit(), "offset": lit(), "type": 0},
+        "unsafefromptr": {"x": lit(), "type": 0},
+        "unsafefromuint": {"x": lit(), "type": 0},
+        "unsafeslice": {"ptr": lit(), "len": lit(), "type": 0},
+        "unsafeslicedata": {"slice": lit(), "type": 0},
+        "unsafestring": {"ptr": lit(), "len": lit(), "type": 0},
+        "unsafestringdata": {"s": lit(), "type": 0},
+        "unsafetooptr": {"x": lit(), "type": 0, "elemSize": 8},
+        "mathf64bits": {"x": lit(), "type": 0},
+        "mathf64frombits": {"x": lit(), "type": 0},
+        "mathf32bits": {"x": lit(), "type": 0},
+        "mathf32frombits": {"x": lit(), "type": 0},
+        "mathsqrt": {"x": lit(), "type": 0},
+        "mathfma": {"x": lit(), "y": lit(), "z": lit(), "type": 0},
+    }
+
+    def add_new_kinds(d):
+        for kind, fields in NEW_KIND_FIELDS.items():
+            d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+                nd(kind, fields))
+
+    bad("ok-new-kinds", add_new_kinds, None)
+    bad("defer-missing-call",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("defer", {})),
+        "missing field 'call'")
+    bad("minmax-bad-op",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("minmax", {"op": "clamp", "args": [], "type": 0})),
+        "must be one of")
+    bad("reflectop-missing-args",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("reflectop", {"op": "call", "type": 0})),
+        "missing field 'args'")
+    bad("atomicaddr-bad-cell",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("atomicaddr", {"addr": lit(), "cell": "float64"})),
+        "must be one of")
+    bad("linkname-with-body",
+        lambda d: d["funcs"][0]["fields"].update(linkname="pkg.F"),
+        "must not carry a body")
+    bad("ok-builtin-ident",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "exprstmt", "pos": dict(POS),
+             "fields": {"x": nd("ident", {"name": "len", "builtin": "len"})}}),
+        None)
+    bad("ok-linkname-funcdecl",
+        lambda d: (d["funcs"][0]["fields"].update(linkname="pkg.F"),
+                   d["funcs"][0]["fields"].pop("body")),
+        None)
+    bad("ok-gcinterop-call",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("call", {"gcinterop": "GC", "args": []})),
+        None)
+    bad("ok-goexit-call",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("call", {"goexit": True, "args": []})),
+        None)
+    bad("gcinterop-bad-name",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("call", {"gcinterop": "Nope", "args": []})),
+        "must be one of")
+    bad("marker-call-with-fun",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("call", {"gcinterop": "GC", "fun": lit(), "args": []})),
+        "must not carry 'fun'")
+
     failures = 0
     for name, doc, want in cases:
         errs = validate(doc)
@@ -588,6 +1051,20 @@ def selftest():
                 failures += 1
             else:
                 print(f"selftest ok: {name} rejected")
+    # Kind coverage: every node kind the exporter constructs must have a
+    # validator branch. Without this, the next exporter kind silently
+    # rejoins the 42-kind gap (NEW-P1-1).
+    exp = _exporter_kinds()
+    if exp is None:
+        print("selftest skip: kind-coverage (exporter sources not found)")
+    else:
+        val = _validator_kinds()
+        missing = sorted(exp - val)
+        if missing:
+            print(f"SELFTEST FAIL kind-coverage: exporter kinds with no validator branch: {missing}")
+            failures += 1
+        else:
+            print(f"selftest ok: kind-coverage ({len(exp)} exporter kinds all have branches)")
     return failures
 
 

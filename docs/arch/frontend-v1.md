@@ -133,8 +133,8 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `unary` | `op` ∈ {`+`,`-`,`!`,`^`}, `x`, `type`: type id |
 | `paren` | `x`, `type`: type id |
 | `convert` | `to`: type id, `from`: source type id (M7; needed for string<->slice to get the element kind), `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
-| `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` — string spread *and* slice spread since `007b42f`; only `append` carries it, and only for `...` calls) |
-| `fmtcall` | `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). Only the seven D4 symbols resolve; any other `fmt.X` is a scope error naming Phase 3. |
+| `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null (or absent — the func-typed-field call path omits a nil `type`), `ellipsis`: bool (M7; true for `append(s, x...)` — string spread *and* slice spread since `007b42f`; only `append` carries it, and only for `...` calls) — or a marker call with no `fun`/`type`: `gcinterop` ∈ {`SetFinalizer`,`KeepAlive`,`GC`} with `args` (P2-M4 runtime GC interop), or `goexit`: true with `args` (runtime.Goexit); the marker replaces `fun` |
+| `fmtcall` | **Retired — no longer emitted** (nothing in the exporter constructs it, and the validator rejects it as unknown): historically `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). D4 calls now lower to ordinary `call` nodes against the synthesized fmt package. |
 | `if` | `init`: stmt node or null, `cond`: expr node, `then`: block node, `else`: stmt node or null (block or `if` for else-if) |
 | `for` | `init`: stmt node or null, `cond`: expr node or null, `post`: stmt node or null, `body`: block node |
 | `range` | `key`, `value`: object ids or null (absent/blank), `define`: bool, `x`: expr node, `body`: block node |
@@ -169,6 +169,48 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `timeafter` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.After(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `gostmt` | `call`: expr node — a `go` statement (P2-M1, WS A) |
+| `addrof` | `x`: expr node, `type`: type id — `&x`; or `array`, `index`: expr nodes for `&a[i]` |
+| `deref` | `x`: expr node, `type`: type id — `*p` (read and assignment-lhs forms share the node) |
+| `minmax` | `op` ∈ {`min`,`max`}, `args`: [expr nodes], `type`: type id — builtin `min`/`max` (WS G) |
+| `clear` | `x`: expr node — builtin `clear(x)` (maps/slices); void, no `type` field (P4) |
+| `abifuncpc` | `kind` ∈ {`FuncPCABI0`,`FuncPCABIInternal`}, `arg`: expr node (the func value), `type`: type id (uintptr) — internal/abi FuncPC* compile intrinsics |
+| `sliceoverlap` | `x`, `y`: expr nodes (the two []byte slices), `inexact`: bool, `type`: type id (bool) — crypto/internal/fips140/alias AnyOverlap/InexactOverlap |
+| `atomicaddr` | `addr`: expr node, `cell` ∈ {`int32`,`int64`,`bool`} — sync/atomic word-op address cell (the backend wraps the address in a delegating AtomicLong/AtomicInteger cell) |
+| `atomicptrop` | `op` ∈ {`swap`,`cas`}, `addr`: expr node, `args`: [expr nodes], `type`: type id — atomic.SwapPointer/CompareAndSwapPointer |
+| `syncop` | `op` ∈ {`Load`,`Store`,`Add`,`Swap`,`CompareAndSwap`,`And`,`Or`,`LoadOrStore`,`LoadAndDelete`}, `synctyp`: str (`atomic.*` or `Map`), `recv`: expr node (an atomicaddr cell for word ops, the map expr for sync.Map), `args`: [expr nodes], `type`: type id — sync/atomic word ops and sync.Map multi-result methods |
+| `reflectop` | `op`: str, `args`: [expr nodes], `type`: type id — a table-backed reflect operation (the `op` vocabulary is owned by the exporter: the reflect*MethodOp tables plus the `__reflect_*` intrinsic names) |
+| `runtimecaller` | `skip`: expr node, `type`: type id (the pair type of the desugared temp) — `runtime.Caller(skip)` multi-result desugar |
+| `runtimecallers` | `skip`, `pc`: expr nodes, `type`: type id — `runtime.Callers(skip, pc)` |
+| `runtimecallersframes` | `pcs`: expr node, `type`: type id — `runtime.CallersFrames(pcs)` |
+| `runtimeframesnext` | `f`: expr node (the Frames receiver), `type`: type id (the pair type of the desugared temp) — `(*runtime.Frames).Next()` multi-result desugar |
+| `runtimefuncfileline` | `f`, `pc`: expr nodes, `type`: type id (the pair type of the desugared temp) — `(*runtime.Func).FileLine(pc)` multi-result desugar |
+| `runtimefuncforpc` | `pc`: expr node, `type`: type id — `runtime.FuncForPC(pc)` |
+| `runtimefuncname` | `f`: expr node (the Func receiver), `type`: type id — `(*runtime.Func).Name()` |
+| `runtimefuncentry` | `f`: expr node (the Func receiver), `type`: type id — `(*runtime.Func).Entry()` |
+| `runtimegomaxprocs` | `x`: expr node, `type`: type id — `runtime.GOMAXPROCS(n)` |
+| `runtimegoroot` | `type`: type id — `runtime.GOROOT()` |
+| `runtimegosched` | (no fields) — `runtime.Gosched()`; a statement node, no result |
+| `runtimenumcpu` | `type`: type id — `runtime.NumCPU()` |
+| `runtimenumgoroutine` | `type`: type id — `runtime.NumGoroutine()` |
+| `runtimereadmemstats` | `m`: expr node — `runtime.ReadMemStats(m)`; void, no `type` field |
+| `runtimestack` | `args`: [expr nodes], `type`: type id — `runtime.Stack(buf, all)` |
+| `runtimeversion` | `type`: type id — `runtime.Version()` |
+| `unsafeadd` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.Add(ptr, len)` |
+| `unsafederive` | `base`, `offset`: expr nodes, `type`: type id — uintptr→unsafe.Pointer provenance-proven derivation (`base` is the pointer-derived term, `offset` the integer offset expr) |
+| `unsafefromptr` | `x`: expr node, `type`: type id — `*T`/nil → unsafe.Pointer |
+| `unsafefromuint` | `x`: expr node, `type`: type id — uintptr → unsafe.Pointer (non-provenance-proven fallback) |
+| `unsafeslice` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.Slice(ptr, len)` |
+| `unsafeslicedata` | `slice`: expr node, `type`: type id — `unsafe.SliceData(s)` |
+| `unsafestring` | `ptr`, `len`: expr nodes, `type`: type id — `unsafe.String(ptr, len)` |
+| `unsafestringdata` | `s`: expr node, `type`: type id — `unsafe.StringData(s)` |
+| `unsafetooptr` | `x`: expr node, `type`: type id, `elemSize`: int or absent (bytes of T, from the same go/types Sizes oracle as unsafe.Sizeof; absent when T has no fixed size) — unsafe.Pointer → `*T` |
+| `mathf64bits` | `x`: expr node, `type`: type id — `math.Float64bits(x)` |
+| `mathf64frombits` | `x`: expr node, `type`: type id — `math.Float64frombits(x)` |
+| `mathf32bits` | `x`: expr node, `type`: type id — `math.Float32bits(x)` |
+| `mathf32frombits` | `x`: expr node, `type`: type id — `math.Float32frombits(x)` |
+| `mathsqrt` | `x`: expr node, `type`: type id — `math.Sqrt(x)` |
+| `mathfma` | `x`, `y`, `z`: expr nodes, `type`: type id — `math.FMA(x, y, z)` |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).
@@ -247,7 +289,8 @@ the extension:
   the seven D4 symbols (`Print`, `Printf`, `Println`, `Sprint`, `Sprintf`,
   `Sprintln`, `Errorf`) with exact variadic signatures; any other `fmt.X`
   is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
-  `fmtcall` wire nodes.
+  ordinary `call` nodes against the synthesized package (the `fmtcall`
+  wire kind in §6 is retired and no longer emitted).
 - package-level declarations: `func main` plus any number of named
   functions, generic or not (M6, WS H); package-level `const` (references
   fold through go/types, iota included) and `var` (M7 — initialized in

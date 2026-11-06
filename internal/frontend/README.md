@@ -3,7 +3,7 @@
 Type-checks a single-file Go program with the vendored `go/*` packages and
 emits the `frontend/v1` typed-AST JSON document to stdout.
 
-- Wire format: [`../../phases/phase1/docs/frontend-v1.md`](../../docs/arch/frontend-v1.md) (normative)
+- Wire format: [`../../docs/arch/frontend-v1.md`](../../docs/arch/frontend-v1.md) (normative)
 - Vendoring: [`VENDORING.md`](VENDORING.md) (pinned revision, re-vendor procedure)
 - Java consumer: `graalgo.frontend.NodeFactory` ([`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/))
 
@@ -24,10 +24,10 @@ Requires stock Go on PATH (`export PATH=~/tools/go/bin:$PATH`).
 
 ```sh
 ./build.sh build   # overlay build -> ./gofrontend
-./build.sh check   # gofmt + go vet + go test + vendoring diff gate (all must pass)
+./build.sh check   # gofmt + go vet + go test + vendoring diff gate + frontend/v1 wire-format validation (all must pass)
 ./build.sh test    # go test only
-python3 tools/validate_frontend_v1.py testdata/straight01.json   # schema check
-python3 tools/validate_frontend_v1.py --selftest                 # validator self-test
+python3 tools/validate_frontend_v1.py testdata/straight01.json   # schema check (one doc; build.sh check validates all goldens + fresh exports)
+python3 tools/validate_frontend_v1.py --selftest                 # validator self-test (incl. exporter kind-coverage)
 ```
 
 Regenerating goldens after an *intentional* wire change (must ship with a
