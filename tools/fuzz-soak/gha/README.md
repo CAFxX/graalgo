@@ -16,16 +16,29 @@ projects/graalgo-fuzz/
 
 ## graalgo-slim.tar.gz
 
-Built from a graalgo worktree at the pinned commit:
+Built from a graalgo worktree at the pinned commit (Phase-4 tree;
+the pre-Phase-4 layout was deleted 2026-10-14):
 
 ```bash
-cd ~/workspace/graalgo-m9   # at the commit to fuzz
+cd ~/workspace/graalgo   # at the commit to fuzz
 tar -czf graalgo-slim.tar.gz \
-  phases/phase1/src phases/phase1/lib internal/frontend \
-  phases/phase1/Makefile \
-  phases/phase2/src phases/phase2/Makefile \
-  phases/phase3/src phases/phase3/fuzzing phases/phase3/Makefile
+  Makefile \
+  internal/backend/truffle/src internal/backend/truffle/lib \
+  internal/backend/truffle/Makefile \
+  internal/backend/runtime/src internal/backend/runtime/Makefile \
+  internal/backend/interop/src internal/backend/interop/Makefile \
+  internal/backend/graalgo-run internal/backend/graalgo-sync-run \
+  internal/frontend \
+  tools/fuzz-soak
 ```
+
+This is everything root `make build` (truffle + runtime + interop
+Java modules and the gofrontend binary) and the differential
+harness (`tools/fuzz-soak`: generator + `diff_one.sh` + driver)
+need. The image pre-builds it (`make build GO=/usr/local/go/bin/go`);
+the driver fail-fasts if the harness files are missing, so a
+tarball built from the old layout fails loudly at shard start
+instead of failing every seed.
 
 Rebuild and re-push the Dockerfile whenever the pinned graalgo commit
 changes (the image bakes the sources).

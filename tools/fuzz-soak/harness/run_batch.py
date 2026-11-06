@@ -7,6 +7,15 @@
 4. Classifies, dedups, writes results.jsonl + summary.
 
 Usage: run_batch.py --seeds START:END --out DIR [--jobs J] [--gmp N]
+
+Exit codes (the overnight soak in run_soak.sh distinguishes them):
+  0  every program PASSed or was SCOPE-rejected (clean batch)
+  1  the batch ran, but programs diverged (WRONG_OUTPUT, CRASH, HANG,
+     EXIT_MISMATCH, GO_PANIC_MISMATCH, GC_BUILD_FAIL) — findings, not a
+     harness failure; the soak records them and keeps going
+  2  the batch itself could not run correctly: backend build failed,
+     the generator failed, or any program ended HARNESS_ERROR
+     (missing launcher/classes/gofrontend, unparseable diff output)
 """
 import argparse
 import hashlib
@@ -56,7 +65,8 @@ def main():
         print("BUILD FAILED")
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
-        sys.exit(1)
+        # Exit 2: infrastructure failure, not a divergence finding.
+        sys.exit(2)
     print("build ok", flush=True)
 
     # 2. Generate programs.
@@ -67,7 +77,8 @@ def main():
         r = sh(f"python3 {FUZZ}/gen/generator.py --seed {s} --out {out}")
         if r.returncode != 0:
             print(f"generator failed for seed {s}: {r.stderr[:500]}")
-            sys.exit(1)
+            # Exit 2: infrastructure failure, not a divergence finding.
+            sys.exit(2)
 
     # 3. Differential runs in parallel.
     print(f"== differential: {len(seeds)} programs x {args.jobs} jobs ==",
@@ -124,10 +135,15 @@ def main():
     if scope_rate > 0.2:
         print("WARNING: scope-hit rate >20% — tune generator before scaling")
 
-    # Any non-PASS/non-SCOPE result (divergence, crash, hang, harness
-    # error) fails the batch: the single-batch slot is a gate, and the
-    # overnight soak records divergences in soak-report.json while
-    # continuing to the next batch.
+    # Any non-PASS/non-SCOPE result (divergence, crash, hang) fails the
+    # batch: the single-batch slot is a gate, and the overnight soak
+    # records divergences in soak-report.json while continuing to the
+    # next batch. HARNESS_ERROR is infrastructure failure (exit 2), not
+    # a finding (exit 1): a batch that cannot run must not be mistaken
+    # for a batch that ran and found bugs, or vice versa.
+    if counts.get("HARNESS_ERROR", 0):
+        print("HARNESS_ERROR present: batch infrastructure failed")
+        return 2
     bad = sum(v for k, v in counts.items() if k not in ("PASS", "SCOPE"))
     return 1 if bad else 0
 

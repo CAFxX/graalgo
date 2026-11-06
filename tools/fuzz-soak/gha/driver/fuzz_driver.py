@@ -9,7 +9,13 @@ Env:
   SHARD_IDX, SHARD_COUNT : shard identity
   OUT_DIR                : output directory
   SEEDS_PER_SHARD        : programs per shard (default 50)
-  GRAALGO_HOME           : /opt/graalgo (image default)
+  GRAALGO_HOME           : repo root in the image (/opt/graalgo default);
+                           the fuzz harness lives at
+                           $GRAALGO_HOME/tools/fuzz-soak (Phase-4 tree;
+                           the pre-Phase-4 layout was deleted
+                           2026-10-14 — the image tarball must be built
+                           from the current tree, see ../Dockerfile
+                           and ../README.md)
 
 Golden canary: seed 999999 is a known-pass program; if it doesn't PASS,
 the shard writes CANARY_FAIL and exits nonzero (batch quarantined).
@@ -21,7 +27,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 GRAALGO_HOME = os.environ.get("GRAALGO_HOME", "/opt/graalgo")
-FUZZ = os.path.join(GRAALGO_HOME, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GRAALGO_HOME, "tools", "fuzz-soak")
 OUT_DIR = os.environ.get("OUT_DIR", "/out")
 SHARD_IDX = int(os.environ.get("SHARD_IDX", "0"))
 SHARD_COUNT = int(os.environ.get("SHARD_COUNT", "1"))
@@ -47,6 +53,15 @@ def diff_one(gofile, workdir, gmp=1):
 
 
 def main():
+    # Fail fast on an image built from the old layout: without the
+    # generator and diff_one.sh every seed would fail identically, and
+    # the per-seed errors would hide the real cause (a stale tarball).
+    for rel in ("gen/generator.py", "harness/diff_one.sh"):
+        if not os.path.isfile(os.path.join(FUZZ, rel)):
+            print(f"FUZZ layout mismatch: {os.path.join(FUZZ, rel)} "
+                  "missing — rebuild the graalgo-slim tarball from the "
+                  "current tree (see ../README.md)")
+            sys.exit(2)
     os.makedirs(OUT_DIR, exist_ok=True)
     # Shard i owns seeds [i*N, (i+1)*N) offset by a base to avoid overlap
     # with local runs (local uses 0..; GHA uses 1_000_000..).
