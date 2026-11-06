@@ -670,6 +670,10 @@ func ExportFile(path string) (string, error) {
 // reads the environment for it.
 const testPackageDirFlag = "--test-package-dir="
 
+// tagsFlag is the gofrontend argv flag carrying the user build tags
+// (V12-P1-4): --tags=foo bar, space-separated like `go -tags`.
+const tagsFlag = "--tags="
+
 // importingDir returns the directory the frontend treats as the location
 // of the package being compiled, for Go's internal-visibility rule
 // (internalImportVisible). Defaults to the input files' directory; the

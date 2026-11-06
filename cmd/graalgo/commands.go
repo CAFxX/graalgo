@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/CAFxX/graalgo/internal/driver"
@@ -41,22 +42,30 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
-	if len(flagArgs) > 0 {
-		bf, err := parseBuildFlags(flagArgs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
-			return 2
-		}
-		if bf.ldflags != "" {
-			fmt.Fprintf(os.Stderr, "graalgo run: -ldflags: not yet supported\n")
-			return 1
-		}
-		// -o is meaningless for `run` (no binary produced); reject
-		// clearly rather than silently ignoring.
-		if bf.output != "" {
-			fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
-			return 1
-		}
+	bf, err := parseBuildFlags(flagArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
+		return 2
+	}
+	if bf.ldflags != "" {
+		fmt.Fprintf(os.Stderr, "graalgo run: -ldflags: not yet supported\n")
+		return 1
+	}
+	// -o is meaningless for `run` (no binary produced); reject
+	// clearly rather than silently ignoring.
+	if bf.output != "" {
+		fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
+		return 1
+	}
+	// V12-P1-4: -tags is forwarded to the backend as --tags= (argv
+	// flag, like --test-package-dir) and drives the driver's own
+	// package-file selection, so tag-gated files are never compiled
+	// without the tag. The backend honors the same tags when it
+	// selects files for imported packages.
+	tags := strings.Fields(bf.tags)
+	var backendFlags []string
+	if len(tags) > 0 {
+		backendFlags = []string{"--tags=" + bf.tags}
 	}
 
 	if len(rest) == 0 {
@@ -81,7 +90,8 @@ func cmdRun(root string, args []string) int {
 		// Program args are separated from the launcher's own flags by
 		// "--" (the launcher treats every bare "-..." before "--" as
 		// its own flag).
-		runArgs := append(append([]string{}, progFiles...), "--")
+		runArgs := append(append([]string{}, backendFlags...), progFiles...)
+		runArgs = append(runArgs, "--")
 		runArgs = append(runArgs, progArgs...)
 		return graalgoRunProgram(root, runArgs)
 	}
@@ -89,7 +99,7 @@ func cmdRun(root string, args []string) int {
 	// Package (directory or import path): find its main package files.
 	// _test.go files are excluded, like `go run` (they're not part of
 	// the package build).
-	files, err := resolveFiles([]string{target})
+	files, err := resolveFiles([]string{target}, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
@@ -105,10 +115,12 @@ func cmdRun(root string, args []string) int {
 		return 1
 	}
 	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	gateArgs := append(append([]string{"--check"}, backendFlags...), pkgFiles...)
+	if code := graalgoRun(root, gateArgs); code != 0 {
 		return code
 	}
-	runArgs := append(append([]string{}, pkgFiles...), "--")
+	runArgs := append(append([]string{}, backendFlags...), pkgFiles...)
+	runArgs = append(runArgs, "--")
 	runArgs = append(runArgs, progArgs...)
 	return graalgoRunProgram(root, runArgs)
 }
@@ -197,7 +209,14 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
 		return 1
 	}
-	files, err := resolveFiles(bf.pkgs)
+	// V12-P1-4: -tags is forwarded to the backend as --tags= (see
+	// cmdRun) and drives the driver's own package-file selection.
+	tags := strings.Fields(bf.tags)
+	var backendFlags []string
+	if len(tags) > 0 {
+		backendFlags = []string{"--tags=" + bf.tags}
+	}
+	files, err := resolveFiles(bf.pkgs, tags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
@@ -224,7 +243,7 @@ func cmdBuild(root string, args []string) int {
 	wirePath := wireFile.Name()
 	wireFile.Close()
 	defer os.Remove(wirePath)
-	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
+	emitArgs := append(append([]string{"--emit-wire=" + wirePath, "--check"}, backendFlags...), pkgFiles...)
 	if code := graalgoRun(root, emitArgs); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
 		return 1
@@ -256,14 +275,33 @@ func cmdBuild(root string, args []string) int {
 // then runs the static analyzers in internal/vet and reports diagnostics
 // in the same style as `go vet`.
 func cmdVet(root string, args []string) int {
-	files, err := resolveFiles(args)
+	files, err := resolveFiles(args, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	// One frontend --check per package, with all of the package's files
+	// together: the frontend type-checks the files it is given
+	// together, so a per-file --check fails on every multi-file
+	// package (identifiers from sibling files are undefined) and the
+	// analyzers never run. _test.go files are excluded from the gate:
+	// an external test package declares a different package name,
+	// which the frontend rejects as "not the same package"; vet.Run
+	// below still analyzes them.
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	dirs, groups := groupFilesByDir(files)
+	for _, dir := range dirs {
+		var pkgFiles []string
+		for _, f := range groups[dir] {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			pkgFiles = append(pkgFiles, f)
+		}
+		if len(pkgFiles) == 0 {
+			continue
+		}
+		if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
 			failed = true
 		}
 	}
@@ -286,11 +324,31 @@ func cmdVet(root string, args []string) int {
 	return 0
 }
 
+// groupFilesByDir groups files by their absolute directory and returns
+// the groups keyed by directory, with the directories sorted, so
+// per-package work runs deterministically across packages.
+func groupFilesByDir(files []string) (dirs []string, groups map[string][]string) {
+	groups = make(map[string][]string)
+	for _, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Dir(abs)
+		if _, ok := groups[dir]; !ok {
+			dirs = append(dirs, dir)
+		}
+		groups[dir] = append(groups[dir], f)
+	}
+	sort.Strings(dirs)
+	return dirs, groups
+}
+
 // cmdFmt implements `graalgo fmt [packages]`.
 //
 // Formats the Go source files using gofmt from the stock toolchain.
 func cmdFmt(root string, args []string) int {
-	files, err := resolveFiles(args)
+	files, err := resolveFiles(args, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo fmt: %v\n", err)
 		return 1

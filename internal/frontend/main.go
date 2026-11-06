@@ -4,7 +4,7 @@
 // go/* packages (see VENDORING.md) and emits the frontend/v1 typed-AST JSON
 // document (see ../docs/frontend-v1.md) to stdout.
 //
-// Usage: gofrontend [--test-package-dir=DIR] <file.go> [file.go...]
+// Usage: gofrontend [--test-package-dir=DIR] [--tags=TAGS] <file.go> [file.go...]
 // All files must declare the same package. They are type-checked together,
 // so cross-file references resolve.
 // --test-package-dir=DIR declares the package a synthesized `graalgo test`
@@ -12,6 +12,13 @@
 // launcher); the import gate applies Go's internal-visibility rule with
 // that package's privileges. Never read from the environment: a
 // user-exported variable must not confer the privilege.
+// --tags=TAGS carries the user's build tags (space-separated, like
+// `go -tags`), passed by the driver through the backend launcher
+// (V12-P1-4). Disk packages (imported from the module cache, GOPATH,
+// or GOROOT) are selected with these tags; the top-level files are
+// selected by the driver itself. Never read from the environment for
+// the same reason as --test-package-dir (the GRAALGO_BUILD_TAGS
+// environment override is separate and pre-existing).
 // Exit codes: 0 success, 1 usage error, 2 frontend error (details on stderr).
 //
 // Validation mode: gofrontend --check-synthetic <import-path>
@@ -41,16 +48,24 @@ func main() {
 	// ExportFiles — it is never read from the environment, so a
 	// user-exported variable cannot confer the privilege.
 	var testPackageDir string
+	var buildTags string
 	var rest []string
 	for _, a := range os.Args[1:] {
 		if strings.HasPrefix(a, testPackageDirFlag) {
 			testPackageDir = strings.TrimPrefix(a, testPackageDirFlag)
 			continue
 		}
+		if strings.HasPrefix(a, tagsFlag) {
+			buildTags = strings.TrimPrefix(a, tagsFlag)
+			continue
+		}
 		rest = append(rest, a)
 	}
+	// V12-P1-4: -tags, set once for the process before ExportFiles
+	// runs; buildDiskPackage joins these with GRAALGO_BUILD_TAGS.
+	userBuildTags = strings.Fields(buildTags)
 	if len(rest) < 1 {
-		fmt.Fprintf(os.Stderr, "usage: gofrontend [--test-package-dir=DIR] <file.go> [file.go...] | gofrontend --check-synthetic <import-path>\n")
+		fmt.Fprintf(os.Stderr, "usage: gofrontend [--test-package-dir=DIR] [--tags=TAGS] <file.go> [file.go...] | gofrontend --check-synthetic <import-path>\n")
 		os.Exit(1)
 	}
 	if rest[0] == "--check-synthetic" {

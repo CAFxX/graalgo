@@ -44,6 +44,14 @@ var (
 	diskBuilding = map[string]bool{}   // cycle guard for recursive imports
 )
 
+// userBuildTags holds the -tags values given on the gofrontend command
+// line (--tags=...), forwarded by the driver through the backend
+// launcher. Process-wide configuration, set once at startup before
+// ExportFiles runs (like GRAALGO_BUILD_TAGS, which it joins): the
+// gofrontend process serves a single export, so the tag set is fixed
+// for its lifetime. Tests set it directly and restore it.
+var userBuildTags []string
+
 // goModCache returns the local module cache directory.
 func goModCache() string {
 	if v := os.Getenv("GOMODCACHE"); v != "" {
@@ -291,7 +299,14 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
 	// forcing callers onto their generic paths.
 	ctxt := build.Default
-	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
+	// V12-P1-4: user build tags, from the driver's -tags via the
+	// launcher's --tags= flag (userBuildTags, set once at startup)
+	// plus the GRAALGO_BUILD_TAGS environment override. "purego"
+	// first: the overlay never uses cgo, so pure-Go selection is the
+	// base the user tags refine.
+	ctxt.BuildTags = append([]string{"purego"}, ctxt.BuildTags...)
+	ctxt.BuildTags = append(ctxt.BuildTags, userBuildTags...)
+	ctxt.BuildTags = append(ctxt.BuildTags, strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
 	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: cannot load package %q from %s: %w", importPath, dir, err)

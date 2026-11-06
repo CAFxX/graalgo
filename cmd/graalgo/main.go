@@ -21,6 +21,7 @@ package main
 
 import (
 	"fmt"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -239,7 +240,13 @@ func graalgoRunProgram(root string, args []string) int {
 // resolveFiles turns package/file arguments into a list of .go files.
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
-func resolveFiles(args []string) ([]string, error) {
+// tags selects files in directory expansions (V12-P1-4): when non-empty,
+// files excluded by the tag set never reach the backend (go/build
+// MatchFile: build constraints plus GOOS/GOARCH filename suffixes).
+// Explicitly named files are always kept, like `go run` with file
+// arguments; with no tags the historical include-everything behavior
+// is preserved.
+func resolveFiles(args []string, tags []string) ([]string, error) {
 	if len(args) == 0 {
 		matches, err := filepath.Glob("*.go")
 		if err != nil {
@@ -248,7 +255,7 @@ func resolveFiles(args []string) ([]string, error) {
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("no Go files in current directory")
 		}
-		return matches, nil
+		return filterByTags(".", matches, tags)
 	}
 	var files []string
 	for _, a := range args {
@@ -270,6 +277,10 @@ func resolveFiles(args []string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			matches, err = filterByTags(a, matches, tags)
+			if err != nil {
+				return nil, err
+			}
 			files = append(files, matches...)
 			continue
 		}
@@ -279,4 +290,27 @@ func resolveFiles(args []string) ([]string, error) {
 		return nil, fmt.Errorf("no Go files matched")
 	}
 	return files, nil
+}
+
+// filterByTags drops files excluded by the tag set (V12-P1-4): with no
+// tags every file is kept. dir is the directory the files were globbed
+// from ("." for the current directory); go/build MatchFile evaluates
+// build constraints plus GOOS/GOARCH filename suffixes against it.
+func filterByTags(dir string, files []string, tags []string) ([]string, error) {
+	if len(tags) == 0 {
+		return files, nil
+	}
+	ctxt := build.Default
+	ctxt.BuildTags = tags
+	var kept []string
+	for _, m := range files {
+		ok, err := ctxt.MatchFile(dir, filepath.Base(m))
+		if err != nil {
+			return nil, fmt.Errorf("matching %s: %v", m, err)
+		}
+		if ok {
+			kept = append(kept, m)
+		}
+	}
+	return kept, nil
 }
