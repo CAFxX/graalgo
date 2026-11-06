@@ -18,6 +18,12 @@ set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
+# Canonicalize to an absolute path: TMPDIR defaults under the probe dir
+# and the gc leg cds into it, so a relative PROBE_DIR would make TMPDIR
+# resolve against the wrong directory (go: "stat <probe>/.tmp: no such
+# file or directory").
+[ -d "$PROBE_DIR" ] || { echo "no such probe dir: $PROBE_DIR" >&2; exit 2; }
+PROBE_DIR="$(cd "$PROBE_DIR" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Repo root, derived from this script's location (override with GR for an
 # out-of-tree checkout).
