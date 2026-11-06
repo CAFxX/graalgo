@@ -14,32 +14,297 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
-// discoverTests returns the names of TestXxx functions in a _test.go file.
+// testingImportBinding reports how a file refers to the testing package:
+// local is the qualifier bound to import path "testing" (an explicit
+// alias, or "testing" for a plain import), dot is true when testing is
+// dot-imported, and ok is false when the file does not import testing
+// in a usable form (absent, or blank-imported).
+func testingImportBinding(f *ast.File) (local string, dot bool, ok bool) {
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, "\"") != "testing" {
+			continue
+		}
+		if imp.Name == nil {
+			return "testing", false, true
+		}
+		switch imp.Name.Name {
+		case ".":
+			return "", true, true
+		case "_":
+			// Blank import: testing's names are not usable.
+		default:
+			return imp.Name.Name, false, true
+		}
+	}
+	return "", false, false
+}
+
+// singleParamType returns the type of a function's sole parameter, and
+// false unless the function takes exactly one parameter. A field with
+// several names (func f(a, b *T)) counts as several parameters, exactly
+// as `go test` counts them.
+func singleParamType(fn *ast.FuncDecl) (ast.Expr, bool) {
+	if fn.Type.Params == nil {
+		return nil, false
+	}
+	var typ ast.Expr
+	count := 0
+	for _, field := range fn.Type.Params.List {
+		n := len(field.Names)
+		if n == 0 {
+			n = 1
+		}
+		count += n
+		typ = field.Type
+	}
+	if count != 1 {
+		return nil, false
+	}
+	return typ, true
+}
+
+// isTestingParamType reports whether typ is *testing.Sel, written either
+// as *local.Sel (local bound to import "testing") or, for a
+// dot-imported testing, as *Sel.
+func isTestingParamType(typ ast.Expr, local string, dot bool, sel string) bool {
+	star, ok := typ.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	if s, ok := star.X.(*ast.SelectorExpr); ok {
+		if id, ok := s.X.(*ast.Ident); ok && id.Name == local && s.Sel.Name == sel {
+			return true
+		}
+		return false
+	}
+	if dot {
+		if id, ok := star.X.(*ast.Ident); ok && id.Name == sel {
+			return true
+		}
+	}
+	return false
+}
+
+// isTestName mirrors gc's isTest (cmd/go/internal/load/test.go): a
+// name is a Test/Benchmark/Fuzz entry point only when the character
+// after the prefix is not a lowercase letter — bare "Test" counts.
+// "We don't want TesticularCancer": Testhelper, Testdata, Testfunc are
+// ordinary helpers, never tests, and gc never signature-checks them.
+func isTestName(name, prefix string) bool {
+	if !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	if len(name) == len(prefix) { // "Test" is ok
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(name[len(prefix):])
+	return !unicode.IsLower(r)
+}
+
+// isEntryPointName reports whether a top-level function name is an
+// entry point the driver skips when unselected: a Test/Benchmark/Fuzz
+// name under gc's isTest rule, or any Example-prefixed name (gc finds
+// examples via go/doc, whose names are all Example-prefixed). A
+// Testhelper-style name is an ordinary helper and is inlined, not
+// skipped — a selected test may call it.
+func isEntryPointName(n string) bool {
+	return isTestName(n, "Test") || isTestName(n, "Benchmark") ||
+		isTestName(n, "Fuzz") || strings.HasPrefix(n, "Example")
+}
+
+// isTestMainAsTest reports whether fn is a TestMain that gc runs as an
+// ordinary test named TestMain: exactly func(*testing.T)
+// (loadTestFuncs tries T before M). Such a TestMain is not the TestMain
+// entry point at all.
+func isTestMainAsTest(fn *ast.FuncDecl, f *ast.File) bool {
+	if fn.Recv != nil || fn.Name.Name != "TestMain" {
+		return false
+	}
+	if hasTypeParams(fn) || hasResults(fn) {
+		return false
+	}
+	typ, ok := singleParamType(fn)
+	if !ok {
+		return false
+	}
+	local, dot, ok := testingImportBinding(f)
+	if !ok {
+		return false
+	}
+	return isTestingParamType(typ, local, dot, "T")
+}
+
+// hasTypeParams reports whether fn declares type parameters, and
+// hasResults reports whether it declares results. Both disqualify a
+// Test/TestMain entry point: `go test` requires exactly
+// func TestXxx(t *testing.T) / func TestMain(m *testing.M).
+func hasTypeParams(fn *ast.FuncDecl) bool {
+	return fn.Type != nil && fn.Type.TypeParams != nil && len(fn.Type.TypeParams.List) > 0
+}
+
+func hasResults(fn *ast.FuncDecl) bool {
+	return fn.Type != nil && fn.Type.Results != nil && len(fn.Type.Results.List) > 0
+}
+
+// checkTestEntrySignature validates the shape of a Test/TestMain entry
+// point other than its parameter type: no type parameters, exactly one
+// parameter, and no results. A violation is rejected with a clear
+// diagnostic naming the required signature — `go test` rejects every
+// such form at setup ("wrong signature ... [setup failed]"), so
+// silently skipping it would let a package gc refuses to test pass
+// under graalgo. The parameter-type check itself stays with the
+// callers, which phrase it in terms of the file's testing import.
+func checkTestEntrySignature(fset *token.FileSet, fn *ast.FuncDecl, sel string) error {
+	if hasTypeParams(fn) {
+		return fmt.Errorf("%s: %s must be func(*testing.%s): it has type parameters", fset.Position(fn.Pos()), fn.Name.Name, sel)
+	}
+	if hasResults(fn) {
+		return fmt.Errorf("%s: %s must be func(*testing.%s): it returns a value", fset.Position(fn.Pos()), fn.Name.Name, sel)
+	}
+	if _, ok := singleParamType(fn); !ok {
+		return fmt.Errorf("%s: %s must be func(*testing.%s): it does not take exactly one parameter", fset.Position(fn.Pos()), fn.Name.Name, sel)
+	}
+	return nil
+}
+
+// isTestMainFunc reports whether fn is a TestMain entry point:
+// func TestMain(m *testing.M), with no type parameters and no results.
+// A TestMain with a *testing.T parameter is an ordinary test under gc,
+// not the entry point (see isTestMainAsTest), so it is not one here
+// either — synthesis inlines it through the normal test path. Any other
+// TestMain-shaped declaration is not an entry point here —
+// discoverTestMain rejects it — so synthesis never miscompiles it.
+func isTestMainFunc(fn *ast.FuncDecl, f *ast.File) bool {
+	if fn.Recv != nil || fn.Name.Name != "TestMain" {
+		return false
+	}
+	if hasTypeParams(fn) || hasResults(fn) {
+		return false
+	}
+	typ, ok := singleParamType(fn)
+	if !ok {
+		return false
+	}
+	local, dot, ok := testingImportBinding(f)
+	if !ok {
+		return false
+	}
+	if isTestingParamType(typ, local, dot, "T") {
+		return false
+	}
+	return isTestingParamType(typ, local, dot, "M")
+}
+
+// discoverTests returns the names of runnable TestXxx functions in a
+// _test.go file: Test-prefixed functions (other than TestMain) taking
+// exactly one *testing.T parameter. A name is a test only under gc's
+// isTest rule (see isTestName): Testhelper/Testdata are ordinary
+// helpers, never tests, and are skipped silently. A TestMain with a
+// valid *testing.T signature is a test named TestMain (gc tries T
+// before M); any other TestMain is not a test (see discoverTestMain)
+// and is never returned. Any other Test-prefixed non-method function
+// whose signature is not exactly func(*testing.T) — wrong arity, type
+// parameters, results, or a parameter of another type — is rejected
+// with a clear diagnostic instead of being miscompiled into a driver
+// that fails with a generated-code type error or silently skipped:
+// `go test` rejects every such form at setup, so skipping it would
+// let a package gc refuses to test pass under graalgo.
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
+	local, dot, hasTesting := testingImportBinding(f)
 	var tests []string
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil {
+		if !ok || fn.Recv != nil || !isTestName(fn.Name.Name, "Test") {
 			continue
 		}
-		name := fn.Name.Name
-		if !strings.HasPrefix(name, "Test") {
+		if fn.Name.Name == "TestMain" {
+			// gc runs a TestMain with a valid *testing.T signature
+			// as an ordinary test; any other TestMain belongs to
+			// discoverTestMain, never to the test list.
+			if isTestMainAsTest(fn, f) {
+				tests = append(tests, "TestMain")
+			}
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
-		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
-			continue
+		if err := checkTestEntrySignature(fset, fn, "T"); err != nil {
+			return nil, err
 		}
-		tests = append(tests, name)
+		// Arity is already validated by checkTestEntrySignature.
+		typ, _ := singleParamType(fn)
+		if !isTestingParamType(typ, local, dot, "T") {
+			if !hasTesting {
+				return nil, fmt.Errorf("%s: %s is not a runnable test: the file does not import testing, so it cannot take *testing.T", fset.Position(fn.Pos()), fn.Name.Name)
+			}
+			var buf bytes.Buffer
+			if err := printer.Fprint(&buf, fset, typ); err != nil {
+				buf.WriteString("?")
+			}
+			return nil, fmt.Errorf("%s: %s is not a runnable test: it takes %s, not *testing.T", fset.Position(fn.Pos()), fn.Name.Name, buf.String())
+		}
+		tests = append(tests, fn.Name.Name)
 	}
 	return tests, nil
+}
+
+// discoverTestMain reports whether a _test.go file defines a TestMain
+// entry point, func TestMain(m *testing.M). A TestMain with a valid
+// *testing.T signature is an ordinary test under gc, not an entry
+// point, so it is accepted here as not-a-TestMain. A TestMain whose
+// signature is not exactly func(*testing.M) — wrong arity, type
+// parameters, results, or a parameter of another type — is rejected:
+// the old driver miscompiled a one-parameter wrong-type TestMain as an
+// ordinary test and failed with a generated-code type error, and
+// silently ignoring any other malformed TestMain would let a package
+// gc refuses to test pass under graalgo with its setup never running.
+// A file cannot define two valid TestMains.
+func discoverTestMain(path string) (bool, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return false, fmt.Errorf("parse: %w", err)
+	}
+	local, dot, hasTesting := testingImportBinding(f)
+	found := false
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" {
+			continue
+		}
+		// A TestMain with a *testing.T parameter runs as an ordinary
+		// test under gc; it is not the TestMain entry point.
+		if isTestMainAsTest(fn, f) {
+			continue
+		}
+		if err := checkTestEntrySignature(fset, fn, "M"); err != nil {
+			return false, err
+		}
+		// Arity is already validated by checkTestEntrySignature.
+		typ, _ := singleParamType(fn)
+		if !isTestingParamType(typ, local, dot, "M") {
+			if !hasTesting {
+				return false, fmt.Errorf("%s: TestMain does not take *testing.M: the file does not import testing", fset.Position(fn.Pos()))
+			}
+			var buf bytes.Buffer
+			if err := printer.Fprint(&buf, fset, typ); err != nil {
+				buf.WriteString("?")
+			}
+			return false, fmt.Errorf("%s: TestMain must be func(*testing.M), not func(%s)", fset.Position(fn.Pos()), buf.String())
+		}
+		if found {
+			return false, fmt.Errorf("%s: duplicate TestMain definition", fset.Position(fn.Pos()))
+		}
+		found = true
+	}
+	return found, nil
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -214,6 +479,35 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	// Bubble up nested subtest results (already indented).
 	t.subresults = append(t.subresults, sub.subresults...)
 	return !sub.failed
+}
+
+// graalgoM is the driver's testing.M equivalent, passed to a package's
+// TestMain. Run executes the discovered tests exactly as the driver's
+// main would, and returns 0 when they all pass, 1 otherwise — the exit
+// code TestMain typically hands to os.Exit. The PASS/FAIL summary line
+// is printed here (not by main) so it still appears when TestMain exits
+// from inside its own body, matching go test output. Run may be called
+// repeatedly: each call re-executes the tests, updates the exit code,
+// and prints the summary again, exactly as go test does — it does
+// not panic on a second call.
+type graalgoM struct {
+	runCalled bool
+	exitCode  int
+}
+
+func (m *graalgoM) Run() int {
+	m.runCalled = true
+	failed := graalgoRunAllTests()
+	if failed > 0 {
+		m.exitCode = 1
+		println("FAIL")
+	} else {
+		m.exitCode = 0
+		if graalgoVerbose {
+			println("PASS")
+		}
+	}
+	return m.exitCode
 }
 
 func joinArgs(args ...interface{}) string {
@@ -719,6 +1013,22 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// disambiguate imports, and rename colliding external-test-package
 	// declarations, before anything is printed.
 
+	// testMainName/FilePkg record the package's TestMain entry point,
+	// when one is defined in a test file (selected or sibling: TestMain
+	// runs regardless of the -run filter, exactly as `go test` runs it).
+	// A second TestMain is a genuine duplicate, rejected loudly here
+	// rather than left to redeclare in the driver.
+	var testMainName, testMainFile, testMainFilePkg string
+	recordTestMain := func(path string, f *ast.File) error {
+		if testMainName != "" {
+			return fmt.Errorf("multiple TestMain functions defined (in %s and %s)", testMainFile, path)
+		}
+		testMainName = "TestMain"
+		testMainFile = path
+		testMainFilePkg = f.Name.Name
+		return nil
+	}
+
 	// Inline non-test source files (package clause stripped): funcs plus
 	// type/var/const declarations. Skip imports (emitted separately) and
 	// the main function (we generate our own). Skipped entirely when no
@@ -743,23 +1053,35 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 
 	// The test files: selected TestXxx functions (rewritten to *graalgoT
 	// with position-capturing diagnostic calls) plus each file's own
-	// non-test helpers and declarations.
+	// non-test helpers and declarations. A TestMain entry point is
+	// inlined (rewritten to take *graalgoM) and called from the
+	// generated main instead of being run as a test.
 	for _, tu := range testUnits {
 		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- tests from %s ---\n", filepath.Base(tu.path))})
 		for _, decl := range tu.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
+				if isTestMainFunc(d, tu.f) {
+					if err := recordTestMain(tu.path, tu.f); err != nil {
+						return "", err
+					}
+					rewriteParam(d, tu.f)
+					rewriteTestCalls(d, tu.fset)
+					gatherDecl(tu.f, tu.fset, d)
+					continue
+				}
 				n := d.Name.Name
 				isTest := tu.tests[n]
 				// Skip other entry points (Test/Benchmark/Fuzz/Example).
 				// Methods (Recv != nil) are always inlined — tests use
 				// them (e.g. badRand.Read implementing io.Reader).
-				isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
-					strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")
+				// Testhelper-style names are helpers, not entry
+				// points (see isEntryPointName), so they are inlined.
+				isEntry := isEntryPointName(n)
 				if !isTest && isEntry {
 					continue
 				}
-				rewriteParam(d)
+				rewriteParam(d, tu.f)
 				rewriteTestCalls(d, tu.fset)
 				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
@@ -771,20 +1093,30 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// Sibling test files: every non-entry-point declaration (helpers).
+	// Sibling test files: every non-entry-point declaration (helpers),
+	// plus a TestMain entry point, which runs regardless of which
+	// tests were selected.
 	for _, u := range sibUnits {
 		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- helpers from %s ---\n", filepath.Base(u.path))})
 		for _, decl := range u.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
+				if isTestMainFunc(d, u.f) {
+					if err := recordTestMain(u.path, u.f); err != nil {
+						return "", err
+					}
+					rewriteParam(d, u.f)
+					rewriteTestCalls(d, u.fset)
+					gatherDecl(u.f, u.fset, d)
+					continue
+				}
 				if d.Recv == nil {
 					n := d.Name.Name
-					if strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
-						strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example") {
+					if isEntryPointName(n) {
 						continue
 					}
 				}
-				rewriteParam(d)
+				rewriteParam(d, u.f)
 				rewriteTestCalls(d, u.fset)
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
@@ -847,7 +1179,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunAllTests", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -951,12 +1283,12 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	// Names the external test package must yield to: the package under
 	// test's declarations and the driver's own harness bindings (the
-	// generated main and the graalgoT shim).
+	// generated main, the test runner, and the graalgoT/graalgoM shims).
 	protected := make(map[string]bool)
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "graalgoRunAllTests", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1400,11 +1732,14 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		body.WriteString("\n")
 	}
 
-	// Shim + main runner. Per-test output mirrors `go test -v`:
+	// Shim + test runner + main. Per-test output mirrors `go test -v`:
 	// === RUN / --- PASS/FAIL/SKIP with (0.00s) timings, a single
 	// PASS/FAIL summary, and exit code 1 (no panic trace) on failure.
+	// The per-test blocks live in graalgoRunAllTests so both mains —
+	// the direct one and the TestMain one, via graalgoM.Run — run
+	// exactly the same tests.
 	body.WriteString(testShimSource(verbose))
-	body.WriteString("\nfunc main() {\n")
+	body.WriteString("\nfunc graalgoRunAllTests() int {\n")
 	body.WriteString("\tfailed := 0\n")
 	for _, tu := range testUnits {
 		for _, t := range tu.ordered {
@@ -1482,14 +1817,43 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t}\n")
 		}
 	}
-	body.WriteString("\tif failed > 0 {\n")
-	body.WriteString("\t\tprintln(\"FAIL\")\n")
-	body.WriteString("\t\tos.Exit(1)\n")
-	body.WriteString("\t}\n")
-	if verbose {
-		body.WriteString("\tprintln(\"PASS\")\n")
-	}
+	body.WriteString("\treturn failed\n")
 	body.WriteString("}\n")
+	if testMainName != "" {
+		// TestMain owns the run: it receives a graalgoM whose Run
+		// executes the discovered tests and returns their exit code,
+		// and typically exits with that code itself. If it returns
+		// instead, main exits with the Run result — 0 when Run was
+		// never called, i.e. TestMain chose not to run the tests,
+		// exactly as `go test` then exits 0. The PASS/FAIL summary
+		// was already printed by graalgoM.Run, so main prints none.
+		// A renamed external TestMain is called by its new name,
+		// like a renamed test above.
+		testMainCall := testMainName
+		if pkgNameErr == nil && testMainFilePkg != pkgName {
+			if nn, ok := eRenames[testMainName]; ok {
+				testMainCall = nn
+			}
+		}
+		body.WriteString("\nfunc main() {\n")
+		body.WriteString("\ttm := &graalgoM{}\n")
+		body.WriteString(fmt.Sprintf("\t%s(tm)\n", testMainCall))
+		body.WriteString("\tif tm.runCalled && tm.exitCode != 0 {\n")
+		body.WriteString("\t\tos.Exit(tm.exitCode)\n")
+		body.WriteString("\t}\n")
+		body.WriteString("}\n")
+	} else {
+		body.WriteString("\nfunc main() {\n")
+		body.WriteString("\tfailed := graalgoRunAllTests()\n")
+		body.WriteString("\tif failed > 0 {\n")
+		body.WriteString("\t\tprintln(\"FAIL\")\n")
+		body.WriteString("\t\tos.Exit(1)\n")
+		body.WriteString("\t}\n")
+		if verbose {
+			body.WriteString("\tprintln(\"PASS\")\n")
+		}
+		body.WriteString("}\n")
+	}
 
 	sb.WriteString(body.String())
 
@@ -1784,56 +2148,90 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 	sb.WriteString(buf.String())
 }
 
-// rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
-// the parameter list AND any nested function literals (e.g. the closure
-// passed to t.Run). Uses an AST walk so no testing.T reference survives.
-func rewriteParam(fn *ast.FuncDecl) {
+// rewriteParam rewrites *testing.T to *graalgoT and *testing.M to
+// *graalgoM everywhere in a FuncDecl: the parameter list AND any nested
+// function literals (e.g. the closure passed to t.Run). Uses an AST walk
+// so no testing.T/M reference survives. The testing qualifier is the
+// file's own binding for import "testing" (an explicit alias, or
+// "testing"); a dot-imported testing's bare T/M types are rewritten the
+// same way. A file that does not import testing has nothing to rewrite.
+func rewriteParam(fn *ast.FuncDecl, f *ast.File) {
+	local, dot, ok := testingImportBinding(f)
+	if !ok {
+		return
+	}
+	shimFor := func(sel string) (string, bool) {
+		switch sel {
+		case "T":
+			return "graalgoT", true
+		case "M":
+			return "graalgoM", true
+		}
+		return "", false
+	}
 	ast.Inspect(fn, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.StarExpr:
 			if sel, ok := t.X.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-					t.X = &ast.Ident{Name: "graalgoT"}
+				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == local {
+					if shim, ok := shimFor(sel.Sel.Name); ok {
+						t.X = &ast.Ident{Name: shim}
+					}
 				}
-			}
-		case *ast.SelectorExpr:
-			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
-				// testing.T as a bare type (not pointer): replace the
-				// selector with the graalgoT identifier.
-				// (Handled by replacing the parent; see below.)
+			} else if dot {
+				if ident, ok := t.X.(*ast.Ident); ok {
+					if shim, ok := shimFor(ident.Name); ok {
+						t.X = &ast.Ident{Name: shim}
+					}
+				}
 			}
 		}
 		return true
 	})
-	// Second pass: replace bare testing.T selector expressions (non-pointer
-	// type references) which ast.Inspect can't swap in place.
-	rewriteBareTestingT(fn.Type)
+	// Second pass: replace bare testing.T/M selector expressions
+	// (non-pointer type references) which ast.Inspect can't swap in
+	// place.
+	rewriteBareTestingTypes(fn.Type, local, dot)
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if fl, ok := n.(*ast.FuncLit); ok {
-			rewriteBareTestingT(fl.Type)
+			rewriteBareTestingTypes(fl.Type, local, dot)
 		}
 		return true
 	})
 }
 
-// rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
-// function type's params and results.
-func rewriteBareTestingT(ft *ast.FuncType) {
+// rewriteBareTestingTypes replaces testing.T/testing.M (non-pointer)
+// with graalgoT/graalgoM in a function type's params and results.
+func rewriteBareTestingTypes(ft *ast.FuncType, local string, dot bool) {
 	if ft == nil {
 		return
 	}
-	rewriteFieldList(ft.Params)
-	rewriteFieldList(ft.Results)
+	rewriteFieldList(ft.Params, local, dot)
+	rewriteFieldList(ft.Results, local, dot)
 }
 
-func rewriteFieldList(fl *ast.FieldList) {
+func rewriteFieldList(fl *ast.FieldList, local string, dot bool) {
 	if fl == nil {
 		return
 	}
 	for _, f := range fl.List {
 		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-				f.Type = &ast.Ident{Name: "graalgoT"}
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == local {
+				switch sel.Sel.Name {
+				case "T":
+					f.Type = &ast.Ident{Name: "graalgoT"}
+				case "M":
+					f.Type = &ast.Ident{Name: "graalgoM"}
+				}
+			}
+		} else if dot {
+			if ident, ok := f.Type.(*ast.Ident); ok {
+				switch ident.Name {
+				case "T":
+					f.Type = &ast.Ident{Name: "graalgoT"}
+				case "M":
+					f.Type = &ast.Ident{Name: "graalgoM"}
+				}
 			}
 		}
 	}

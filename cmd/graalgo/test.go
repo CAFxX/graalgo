@@ -206,13 +206,29 @@ func (r *testRunner) runPackage(dir string) bool {
 	}
 
 	// Discover the selected tests of every file, applying the -run
-	// filter (regex, like `go test`).
+	// filter (regex, like `go test`). TestMain is discovered
+	// separately: it is not a test, but it runs regardless of the
+	// -run filter, exactly as `go test` runs it — so a package with a
+	// TestMain still gets a driver even when no test is selected.
 	var ftList []fileTests
+	testMainFound := false
 	for _, tf := range runnableTests {
 		tests, err := discoverTests(tf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
 			return false
+		}
+		hasTestMain, err := discoverTestMain(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		if hasTestMain {
+			if testMainFound {
+				fmt.Fprintf(os.Stderr, "graalgo test: %s: multiple TestMain functions defined\n", tf)
+				return false
+			}
+			testMainFound = true
 		}
 		var selected []string
 		for _, t := range tests {
@@ -230,7 +246,7 @@ func (r *testRunner) runPackage(dir string) bool {
 	// exit means the package failed.
 	t0 := time.Now()
 	ok := true
-	if len(ftList) > 0 {
+	if len(ftList) > 0 || testMainFound {
 		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
