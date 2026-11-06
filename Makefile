@@ -104,7 +104,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch gate1 gate1-pilot
 
 all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
 
@@ -128,7 +128,14 @@ build:
 
 # The graalgo driver binary (Phase-4): `alias go=graalgo`.
 # Builds cmd/graalgo into ./graalgo.
-graalgo:
+# Sources of the driver binary: the driver command plus the internal/driver
+# and internal/vet packages it imports. `go build` tracks Go-level deps
+# itself; these make-level prerequisites make the dependency explicit (and
+# the literal `go.mod` entry fails fast on a botched checkout). The target
+# is .PHONY, so it rebuilds unconditionally; the prerequisites are not what
+# triggers the rebuild.
+GRAALGO_SRC := $(wildcard cmd/graalgo/*.go internal/driver/*.go internal/vet/*.go) go.mod
+graalgo: $(GRAALGO_SRC)
 	$(GO) build -o graalgo ./cmd/graalgo/
 
 check:
@@ -321,3 +328,4 @@ clean:
 	$(MAKE) -C internal/backend/truffle clean
 	$(MAKE) -C internal/backend/runtime clean
 	$(MAKE) -C internal/backend/interop clean
+	rm -f graalgo
