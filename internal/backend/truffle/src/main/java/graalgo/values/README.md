@@ -32,7 +32,8 @@ a Java object (or unboxed primitive) in its D5 carrier:
   backing array.
 - `GoMap` — open-addressing hash table; keys use `GoEquality` (Go `==`;
   NaN keys never match, matching Go); absent lookup returns null (the
-  map-access node substitutes the zero value — WS D).
+  map-access node substitutes the zero value — WS D). A nil interface key
+  is stored as the `GoInterface.NIL` singleton (never Java null).
 - `GoStruct` / `GoStructDescriptor` — descriptor-assigned `long[]`/`Object[]`
   carriers; value-copy assignment semantics.
 - `GoInterface` — `(descriptor, data)` + immutable itab (D6: itab

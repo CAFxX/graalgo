@@ -22,7 +22,12 @@ import graalgo.values.GoMap;
  * {@link GoInterface#NIL}.
  */
 public final class GoSyncMap {
-    /** Sentinel for nil interface keys (GoMap rejects Java-null keys). */
+    /**
+     * Sentinel for nil interface keys: a Java-null key (a nil interface
+     * key, legal in gc's sync.Map) maps to this private marker via
+     * {@link #normKey}, keeping sync.Map's nil-key representation local
+     * to this class.
+     */
     private static final Object NIL_KEY = new Object();
 
     private final GoMap map = new GoMap();

@@ -17,6 +17,7 @@ Differential tests for Go composite types, bit-identical vs stock gc 1.27.1
 | co08_multi.go | multi-dimensional: `[][]int`, `[]rec`, `map[string][]int`, `[]map[string]int`, `[2][3]int` (incl. elided literals) |
 | co09_string.go | string indexing (bytes), string slicing, byte-sum loop |
 | co10_assert.go | type assertion (single-valued, comma-ok present/wrong-type, named type) |
+| co11_map_nilkey.go | nil interface map key: insert/lookup/comma-ok/overwrite/range, typed-nil key distinct |
 
 ## Conventions
 

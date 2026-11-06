@@ -46,6 +46,7 @@ public final class CompositeCorpusTest {
     public void testCo08Multi() throws Exception { checkProgram("co08_multi"); }
     public void testCo09String() throws Exception { checkProgram("co09_string"); }
     public void testCo10Assert() throws Exception { checkProgram("co10_assert"); }
+    public void testCo11MapNilkey() throws Exception { checkProgram("co11_map_nilkey"); }
 
     static void checkProgram(String base) throws Exception {
         java.nio.file.Path src = java.nio.file.Path.of(
