@@ -453,23 +453,34 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 }
 
 func basicClass(b *types.Basic) string {
-	switch b.Info() & types.IsNumeric {
-	case types.IsBoolean:
+	// unsafe.Pointer carries no Info bits (Info 0), so detect it by kind
+	// before consulting Info: it is the only basic type GoKind.fromBasic
+	// accepts under class "pointer".
+	if b.Kind() == types.UnsafePointer {
+		return "pointer"
+	}
+	// Test the Info bits directly. Do NOT mask with IsNumeric first: the
+	// mask strips IsBoolean and IsUnsigned, which made the bool and uint
+	// arms dead (bool came out "unknown", every unsigned int "int").
+	// IsUnsigned must be tested before IsInteger because unsigned types
+	// carry both bits. Untyped kinds land in their base class (untyped
+	// bool -> "bool", untyped int -> "int"), which is what
+	// GoKind.fromBasic accepts; only untyped nil (no other bit set) falls
+	// through to "unknown".
+	info := b.Info()
+	switch {
+	case info&types.IsBoolean != 0:
 		return "bool"
-	case types.IsInteger:
-		return "int"
-	case types.IsUnsigned:
+	case info&types.IsUnsigned != 0:
 		return "uint"
-	case types.IsFloat:
+	case info&types.IsInteger != 0:
+		return "int"
+	case info&types.IsFloat != 0:
 		return "float"
-	case types.IsComplex:
+	case info&types.IsComplex != 0:
 		return "complex"
-	}
-	if b.Info()&types.IsString != 0 {
+	case info&types.IsString != 0:
 		return "string"
-	}
-	if b.Info()&types.IsUntyped != 0 {
-		return "untyped"
 	}
 	return "unknown"
 }
