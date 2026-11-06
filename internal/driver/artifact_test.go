@@ -116,10 +116,79 @@ func TestDefaultOutputName(t *testing.T) {
 	}
 }
 
+// writeStrictFakeBackend installs a fake graalgo-sync-run under fakeRoot
+// that enforces the REAL backend arg contract from P3SyncMain (not a
+// permissive mock): only `--wire-input=FILE` is accepted, a bare
+// `--wire-input` is rejected as an unknown flag, `--` must follow, and
+// the first post-`--` arg is the program's argv[0]. It records its args
+// to argsFile and copies the wire file aside (the launcher deletes it
+// on exit) to wireCopy, then exits 0. Any contract violation exits 1,
+// so a launcher regression fails the artifact run loudly instead of
+// passing against a mock that accepts anything.
+func writeStrictFakeBackend(t *testing.T, fakeRoot, argsFile, wireCopy string) {
+	t.Helper()
+	backendDir := filepath.Join(fakeRoot, "internal", "backend")
+	if err := os.MkdirAll(backendDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	backendScript := "#!/usr/bin/env bash\n" +
+		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
+		// $1 must be exactly --wire-input=<non-empty path>.
+		"wire=\"${1#--wire-input=}\"\n" +
+		"if [ \"$wire\" = \"$1\" ] || [ -z \"$wire\" ]; then\n" +
+		"  echo \"fake-backend: unknown flag or bad --wire-input: $1\" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"if [ \"$2\" != \"--\" ]; then\n" +
+		"  echo \"fake-backend: expected -- after --wire-input\" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"cp \"$wire\" " + wireCopy + "\n" +
+		"exit 0\n"
+	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
+	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStrictFakeBackendRejectsBareWireInput pins the strict fake
+// backend's fidelity to P3SyncMain: the separate `--wire-input FILE`
+// form must be rejected, and the `--wire-input=FILE` form accepted.
+// Without this, a future edit could silently weaken the mock back into
+// accepting anything, and TestEmitBinaryRuns would stop testing the
+// real contract.
+func TestStrictFakeBackendRejectsBareWireInput(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeRoot := filepath.Join(tmpDir, "fake-root")
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
+	writeStrictFakeBackend(t, fakeRoot, argsFile, wireCopy)
+	backendPath := filepath.Join(fakeRoot, "internal", "backend", "graalgo-sync-run")
+
+	wirePath := filepath.Join(tmpDir, "wire.json")
+	if err := os.WriteFile(wirePath, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Bare separate form: must fail (this is the O5 bug shape).
+	if out, err := exec.Command(backendPath, "--wire-input", wirePath, "--", "/prog").CombinedOutput(); err == nil {
+		t.Errorf("bare --wire-input accepted, want rejection (output: %s)", out)
+	}
+	// Equals form: must succeed and copy the wire file.
+	if out, err := exec.Command(backendPath, "--wire-input="+wirePath, "--", "/prog").CombinedOutput(); err != nil {
+		t.Errorf("equals --wire-input rejected: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(wireCopy); err != nil {
+		t.Errorf("equals form did not copy wire file: %v", err)
+	}
+}
+
 // TestEmitBinaryRuns is a smoke test that the produced binary actually
 // executes. It uses a fake backend script that records its arguments,
 // verifying the launcher passes --wire-input correctly. This does not
-// require a real graalgo backend.
+// require a real graalgo backend, but the fake enforces the real
+// backend's arg contract (see writeStrictFakeBackend), so the launcher
+// argv is verified against P3SyncMain's parsing rules, not a mock that
+// accepts anything.
 func TestEmitBinaryRuns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping binary execution test in short mode")
@@ -127,25 +196,13 @@ func TestEmitBinaryRuns(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// Fake backend: a script that writes its args to a file, copies the
-	// wire-input file aside (the launcher deletes it on exit), and exits 0.
+	// Fake backend: enforces the real P3SyncMain arg contract.
 	// We fake GRAALGO_HOME to point at a dir containing
 	// internal/backend/graalgo-sync-run.
 	fakeRoot := filepath.Join(tmpDir, "fake-root")
-	backendDir := filepath.Join(fakeRoot, "internal", "backend")
-	if err := os.MkdirAll(backendDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	argsFile := filepath.Join(tmpDir, "args.txt")
 	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
-	backendScript := "#!/usr/bin/env bash\n" +
-		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
-		"cp \"$2\" " + wireCopy + "\n" + // $2 is the --wire-input path
-		"exit 0\n"
-	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
-	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeStrictFakeBackend(t, fakeRoot, argsFile, wireCopy)
 
 	wireJSON := []byte(`{"frontend":"v1"}`)
 	out := filepath.Join(tmpDir, "prog")
@@ -164,17 +221,18 @@ func TestEmitBinaryRuns(t *testing.T) {
 		t.Fatalf("artifact run failed: %v\n%s", err, out)
 	}
 
-	// Verify the backend received --wire-input with a real JSON file.
+	// Verify the backend received --wire-input=<file> with a real JSON
+	// file, in the exact shape P3SyncMain accepts.
 	argsData, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("backend was not invoked (no args file): %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-	if len(args) < 4 {
-		t.Fatalf("backend args = %v, want at least [--wire-input FILE -- argv0 ...]", args)
+	if len(args) < 5 {
+		t.Fatalf("backend args = %v, want [--wire-input=FILE -- argv0 hello world]", args)
 	}
-	if args[0] != "--wire-input" {
-		t.Errorf("args[0] = %q, want --wire-input", args[0])
+	if !strings.HasPrefix(args[0], "--wire-input=") || len(args[0]) == len("--wire-input=") {
+		t.Errorf("args[0] = %q, want --wire-input=<file>", args[0])
 	}
 	// The backend copied the wire file before the launcher cleaned up.
 	wireData, err := os.ReadFile(wireCopy)
@@ -183,15 +241,15 @@ func TestEmitBinaryRuns(t *testing.T) {
 	} else if string(wireData) != string(wireJSON) {
 		t.Errorf("wire-input content mismatch: got %q, want %q", wireData, wireJSON)
 	}
-	if args[2] != "--" {
-		t.Errorf("args[2] = %q, want --", args[2])
+	if args[1] != "--" {
+		t.Errorf("args[1] = %q, want --", args[1])
 	}
 	// argv[0] for the program should be the artifact's absolute path.
-	if !filepath.IsAbs(args[3]) {
-		t.Errorf("program argv[0] = %q, want absolute path", args[3])
+	if !filepath.IsAbs(args[2]) {
+		t.Errorf("program argv[0] = %q, want absolute path", args[2])
 	}
 	// User args forwarded.
-	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
+	if args[3] != "hello" || args[4] != "world" {
 		t.Errorf("user args not forwarded: %v", args)
 	}
 }

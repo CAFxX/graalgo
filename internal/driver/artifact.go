@@ -31,7 +31,11 @@ type Artifact struct {
 // Emit writes the executable artifact described by a. The artifact is a
 // real binary (not a shell script): a small Go launcher that embeds the
 // frontend output and, at run time, feeds it to the graalgo backend via
-// `--wire-input`, forwarding its own arguments to the program.
+// `--wire-input=<file>`, forwarding its own arguments to the program.
+// The `=` form is mandatory: the backend (P3SyncMain) accepts only
+// `--wire-input=FILE` and rejects a bare `--wire-input` as an unknown
+// flag, and it takes the program's argv[0] from the first argument after
+// `--` when `--wire-input` is set.
 //
 // Unlike `go build`, which produces a native binary via AOT compilation,
 // graalgo's backend is a Truffle JIT on the JVM. A true native binary
@@ -188,7 +192,10 @@ func run() int {
 	if err != nil {
 		argv0 = os.Args[0]
 	}
-	args := []string{"--wire-input", tmpName, "--", argv0}
+	// The backend accepts only the --wire-input=<file> form (a bare
+	// --wire-input is rejected as an unknown flag), so the file path
+	// must be joined with = here, not passed as a separate argument.
+	args := []string{"--wire-input=" + tmpName, "--", argv0}
 	args = append(args, os.Args[1:]...)
 
 	cmd := exec.Command(runner, args...)
