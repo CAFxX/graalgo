@@ -6911,7 +6911,7 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
 		return nil, false
 	}
 	if sel.Sel.Name != "Gosched" {
@@ -8557,17 +8557,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// R2-P2-9: discriminate on the resolved object, not the identifier
 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
-		// local named runtime is not. The structural obj.Pkg().Name()
-		// check below stays as the second gate.
+		// local named runtime is not. The structural obj.Pkg().Path()
+		// check below is the decisive gate: only the real runtime
+		// overlay package (path "runtime") emits the goexit marker.
+		// Any other package's Goexit falls through to the general call
+		// path as an ordinary call — never a scope error.
 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
-					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
+					}
+					return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 				}
-				if len(c.Args) != 0 {
-					return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
-				}
-				return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 			}
 		}
 		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
@@ -8582,7 +8584,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
 		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
