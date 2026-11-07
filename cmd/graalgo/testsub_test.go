@@ -190,3 +190,208 @@ func TestSentinelTop(t *testing.T) {
 		mustNotContain(t, out, "--- SKIP: TestSentinelTop")
 	}
 }
+
+// Regression for FE-06: the previously-missing testing.T methods work
+// in a synthesized driver — Cleanup (LIFO, incl. context still live
+// during cleanups), TempDir (created, removed at test end), Setenv and
+// Chdir (restored at test end), Deadline (no deadline), Context,
+// testing.Short()/testing.Verbose(), and helpers taking testing.TB.
+func TestMissingTMethods(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"os"
+	"testing"
+)
+
+var (
+	cleanupOrder []string
+	tempDirPath  string
+	origWd       string
+)
+
+func helperTB(tb testing.TB) {
+	tb.Helper()
+	tb.Log("from TB helper")
+	if got := tb.Name(); got == "" {
+		tb.Errorf("TB Name empty")
+	}
+}
+
+func TestMethods(t *testing.T) {
+	helperTB(t)
+	origWd, _ = os.Getwd()
+	ctx := t.Context()
+	if ctx == nil {
+		t.Errorf("Context nil")
+	} else if ctx.Err() != nil {
+		t.Errorf("Context already cancelled during test: %v", ctx.Err())
+	}
+	// Registered first, so it runs last: the context must still be
+	// live while cleanups run (it is cancelled after them).
+	t.Cleanup(func() {
+		if ctx.Err() != nil {
+			cleanupOrder = append(cleanupOrder, "ctx-cancelled-early")
+		}
+	})
+	t.Cleanup(func() { cleanupOrder = append(cleanupOrder, "first") })
+	t.Cleanup(func() { cleanupOrder = append(cleanupOrder, "second") })
+	tempDirPath = t.TempDir()
+	if _, err := os.Stat(tempDirPath); err != nil {
+		t.Errorf("TempDir does not exist: %v", err)
+	}
+	t.Setenv("GRAALGO_DRV1_TEST", "hello")
+	if os.Getenv("GRAALGO_DRV1_TEST") != "hello" {
+		t.Errorf("Setenv did not take effect")
+	}
+	if testing.Short() {
+		t.Errorf("Short() true without -short")
+	}
+	if testing.Verbose() {
+		t.Log("verbose mode")
+	}
+	if _, ok := t.Deadline(); ok {
+		t.Errorf("Deadline ok without a deadline")
+	}
+	t.Chdir(tempDirPath)
+	if wd, _ := os.Getwd(); wd != tempDirPath {
+		t.Errorf("Chdir did not take effect: wd=%q", wd)
+	}
+}
+
+func TestCleanupRan(t *testing.T) {
+	// Cleanups run LIFO at the end of TestMethods; the context check
+	// appends nothing (the context was still live during cleanups).
+	if len(cleanupOrder) != 2 || cleanupOrder[0] != "second" || cleanupOrder[1] != "first" {
+		t.Errorf("cleanup order = %v, want [second first]", cleanupOrder)
+	}
+	if _, err := os.Stat(tempDirPath); !os.IsNotExist(err) {
+		t.Errorf("TempDir %q was not removed by cleanup", tempDirPath)
+	}
+	if v, ok := os.LookupEnv("GRAALGO_DRV1_TEST"); ok {
+		t.Errorf("Setenv not restored: GRAALGO_DRV1_TEST=%q", v)
+	}
+	if wd, _ := os.Getwd(); wd != origWd {
+		t.Errorf("Chdir not restored: wd=%q want %q", wd, origWd)
+	}
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
+		}
+		mustNotContain(t, out, "--- FAIL")
+		if verbose {
+			// Passing tests print nothing in non-verbose mode.
+			mustContain(t, out, "--- PASS: TestMethods")
+			mustContain(t, out, "--- PASS: TestCleanupRan")
+		}
+	}
+}
+
+// Regression for FE-06: a FailNow inside a subtest runs that subtest's
+// cleanups, still fails the subtest (and the parent), and does not
+// stop later tests from running.
+func TestFailNowRunsCleanups(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+var cleanupOrder []string
+
+func TestFailNowCleanup(t *testing.T) {
+	t.Cleanup(func() { cleanupOrder = append(cleanupOrder, "parent-cleanup") })
+	t.Run("failnow", func(t *testing.T) {
+		t.Cleanup(func() { cleanupOrder = append(cleanupOrder, "sub-cleanup") })
+		t.FailNow()
+	})
+	if len(cleanupOrder) == 0 || cleanupOrder[len(cleanupOrder)-1] != "sub-cleanup" {
+		t.Errorf("subtest FailNow did not run its cleanup: %v", cleanupOrder)
+	}
+}
+
+func TestFailNowCleanupRan(t *testing.T) {
+	if len(cleanupOrder) != 2 || cleanupOrder[0] != "sub-cleanup" || cleanupOrder[1] != "parent-cleanup" {
+		t.Errorf("cleanup order = %v, want [sub-cleanup parent-cleanup]", cleanupOrder)
+	}
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 1 {
+			t.Errorf("verbose=%v: driver exit = %d, want 1 (FailNow subtest must fail the package):\n%s", verbose, code, out)
+		}
+		mustContain(t, out, "--- FAIL: TestFailNowCleanup/failnow")
+		mustContain(t, out, "--- FAIL: TestFailNowCleanup")
+		mustNotContain(t, out, "--- FAIL: TestFailNowCleanupRan")
+		if verbose {
+			// Passing tests print nothing in non-verbose mode.
+			mustContain(t, out, "--- PASS: TestFailNowCleanupRan")
+		}
+	}
+}
+
+// Regression for FE-06: t.Parallel cannot run in the sequential
+// synthesized driver, so it must fail loudly with an explicit message
+// — never silently no-op (which could deadlock a test waiting for a
+// sibling parallel test) and never fail driver compilation.
+func TestParallelFailsLoudly(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestParallel(t *testing.T) {
+	t.Parallel()
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 1 {
+			t.Errorf("verbose=%v: driver exit = %d, want 1 (Parallel must fail loudly):\n%s", verbose, code, out)
+		}
+		mustContain(t, out, "t.Parallel is not supported")
+		mustContain(t, out, "--- FAIL: TestParallel")
+	}
+}
+
+// Regression for FE-08: diagnostics render real values — floats,
+// errors, slices, byte slices, maps, %q, %x, %T, %.2f — and a value
+// with no rendering prints the explicit "<unsupported value>" marker,
+// never the old "<value>" placeholder.
+func TestDiagnosticsRendering(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"errors"
+	"testing"
+)
+
+type point struct{ X, Y int }
+
+func TestRender(t *testing.T) {
+	t.Logf("float=%v err=%v slice=%v bytes=%v m=%v", 1.5, errors.New("boom"), []int{1, 2}, []byte{104, 105}, map[string]int{"b": 2, "a": 1})
+	t.Logf("quoted=%q hexint=%x hexstr=%x type=%T precise=%.2f", "hi", 255, "AB", 1.5, 1.234)
+	t.Logf("str=%v struct=%v", "s", point{1, 2})
+	t.Errorf("got %v, want %v", 1.5, 2.5)
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 1 {
+		t.Errorf("driver exit = %d, want 1 (Errorf must fail):\n%s", code, out)
+	}
+	mustContain(t, out, "float=1.5")
+	mustContain(t, out, "err=boom")
+	mustContain(t, out, "slice=[1 2]")
+	mustContain(t, out, "bytes=[104 105]")
+	mustContain(t, out, "m=map[a:1 b:2]")
+	mustContain(t, out, `quoted="hi"`)
+	mustContain(t, out, "hexint=ff")
+	mustContain(t, out, "hexstr=4142")
+	mustContain(t, out, "type=float64")
+	mustContain(t, out, "precise=1.23")
+	mustContain(t, out, "str=s")
+	mustContain(t, out, "struct=<unsupported value>")
+	mustContain(t, out, "got 1.5, want 2.5")
+	mustNotContain(t, out, "<value>")
+}

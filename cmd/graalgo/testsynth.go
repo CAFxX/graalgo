@@ -62,6 +62,9 @@ type graalgoT struct {
 	skipped    bool
 	output     []string // buffered detail lines (flushed on failure when !verbose)
 	subresults []string // buffered subtest result lines (flushed after own result)
+	cleanups   []func() // registered by Cleanup; run LIFO at test end
+	ctx        context.Context
+	ctxCancel  context.CancelFunc
 }
 
 // graalgoTestSignal is the panic value for Skip/Fatal control flow.
@@ -155,6 +158,194 @@ func (t *graalgoT) Skipped() bool {
 	return t.skipped
 }
 
+// Plain (non-position) diagnostic methods. The synthesis rewrites
+// diagnostic calls on *graalgoT parameters to the position-capturing
+// graalgo* variants above, but a call can still reach these: a helper
+// taking testing.TB, or a *testing.T stored in a field or passed
+// through an interface, is never rewritten. They behave exactly like
+// the testing methods of the same name, minus the file:line prefix.
+func (t *graalgoT) Error(args ...interface{}) {
+	t.failed = true
+	t.logLine("    " + joinArgs(args...))
+}
+
+func (t *graalgoT) Errorf(format string, args ...interface{}) {
+	t.failed = true
+	t.logLine("    " + sprintf(format, args...))
+}
+
+func (t *graalgoT) Fatal(args ...interface{}) {
+	t.failed = true
+	t.logLine("    " + joinArgs(args...))
+	panic(graalgoTestSignal{fatal: true})
+}
+
+func (t *graalgoT) Fatalf(format string, args ...interface{}) {
+	t.failed = true
+	t.logLine("    " + sprintf(format, args...))
+	panic(graalgoTestSignal{fatal: true})
+}
+
+func (t *graalgoT) Log(args ...interface{}) {
+	t.logLine("    " + joinArgs(args...))
+}
+
+func (t *graalgoT) Logf(format string, args ...interface{}) {
+	t.logLine("    " + sprintf(format, args...))
+}
+
+func (t *graalgoT) Skip(args ...interface{}) {
+	t.skipped = true
+	t.logLine("    " + joinArgs(args...))
+	panic(graalgoTestSignal{})
+}
+
+func (t *graalgoT) Skipf(format string, args ...interface{}) {
+	t.skipped = true
+	t.logLine("    " + sprintf(format, args...))
+	panic(graalgoTestSignal{})
+}
+
+func (t *graalgoT) SkipNow() {
+	t.skipped = true
+	panic(graalgoTestSignal{})
+}
+
+// FailNow marks the test failed and stops it immediately. The panic
+// unwinds to the test's deferred recover (Run, or the generated main
+// wrapper), which runs the registered cleanups before recording the
+// outcome — exactly like runtime.Goexit in testing.FailNow.
+func (t *graalgoT) FailNow() {
+	t.failed = true
+	panic(graalgoTestSignal{fatal: true})
+}
+
+// Cleanup registers f to run when the test ends, LIFO, even if the
+// test ends via FailNow/Fatal/Skip or a user panic: the runner's
+// deferred recover always runs runCleanups before recording the
+// outcome. A panicking cleanup fails the test but does not stop the
+// remaining cleanups.
+func (t *graalgoT) Cleanup(f func()) {
+	t.cleanups = append(t.cleanups, f)
+}
+
+// runCleanups runs the registered cleanups LIFO, then cancels the
+// test's context (testing cancels t.Context just after cleanups
+// complete). Idempotent: the list is cleared before running, so a
+// second call (e.g. a cleanup registered by another cleanup) is a
+// no-op for already-run entries.
+func (t *graalgoT) runCleanups() {
+	cleanups := t.cleanups
+	t.cleanups = nil
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.failed = true
+					t.logLine("panic in cleanup: " + toString(r))
+				}
+			}()
+			cleanups[i]()
+		}()
+	}
+	if t.ctxCancel != nil {
+		t.ctxCancel()
+		t.ctxCancel = nil
+	}
+}
+
+// Parallel is the one testing.T method the synthesized driver cannot
+// implement: it would need to pause this test until every
+// non-parallel test finished and then resume it alongside the other
+// parallel tests, but the driver runs tests sequentially in one
+// goroutine. A silent no-op would be worse — a test that waits for a
+// sibling parallel test would deadlock the driver instead of failing
+// loudly. So Parallel fails the test with an explicit message.
+func (t *graalgoT) Parallel() {
+	t.failed = true
+	t.logLine("t.Parallel is not supported by the graalgo test driver: the synthesized driver runs tests sequentially and cannot pause/resume parallel tests")
+	panic(graalgoTestSignal{fatal: true})
+}
+
+// TempDir creates a temporary directory and registers its removal as
+// a cleanup, matching testing.TempDir.
+func (t *graalgoT) TempDir() string {
+	dir, err := os.MkdirTemp("", "graalgo-test-")
+	if err != nil {
+		t.failed = true
+		t.logLine("TempDir: " + err.Error())
+		panic(graalgoTestSignal{fatal: true})
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// Setenv sets an environment variable for the duration of the test
+// and restores the previous value (or unsets it) in a cleanup,
+// matching testing.Setenv.
+func (t *graalgoT) Setenv(key, value string) {
+	old, ok := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.failed = true
+		t.logLine("Setenv: " + err.Error())
+		panic(graalgoTestSignal{fatal: true})
+	}
+	t.Cleanup(func() {
+		if ok {
+			os.Setenv(key, old)
+		} else {
+			os.Unsetenv(key)
+		}
+	})
+}
+
+// Chdir changes the process working directory for the duration of
+// the test and restores it in a cleanup, matching testing.Chdir.
+func (t *graalgoT) Chdir(dir string) {
+	old, err := os.Getwd()
+	if err != nil {
+		t.failed = true
+		t.logLine("Chdir: " + err.Error())
+		panic(graalgoTestSignal{fatal: true})
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.failed = true
+		t.logLine("Chdir: " + err.Error())
+		panic(graalgoTestSignal{fatal: true})
+	}
+	t.Cleanup(func() { os.Chdir(old) })
+}
+
+// Deadline reports the test's deadline. The driver sets none, so this
+// always returns the zero time and false — matching go test with no
+// -timeout flag.
+func (t *graalgoT) Deadline() (deadline time.Time, ok bool) {
+	return time.Time{}, false
+}
+
+// Context returns a context canceled just after the test's cleanups
+// complete, matching testing.Context.
+func (t *graalgoT) Context() context.Context {
+	if t.ctx == nil {
+		t.ctx, t.ctxCancel = context.WithCancel(context.Background())
+	}
+	return t.ctx
+}
+
+// graalgoShort reports whether the driver runs in short mode. The
+// synthesized driver has no -test.short flag, so this is always false
+// — matching go test without -short. It is the rewrite target for
+// testing.Short().
+func graalgoShort() bool {
+	return false
+}
+
+// graalgoIsVerbose reports whether the driver runs in verbose mode.
+// It is the rewrite target for testing.Verbose().
+func graalgoIsVerbose() bool {
+	return graalgoVerbose
+}
+
 func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
 	// === RUN lines are never indented, matching go test.
@@ -182,6 +373,9 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 					sub.logLine("panic: " + toString(r))
 				}
 			}
+			// Cleanups run whether the subtest returned, failed,
+			// skipped, or panicked — before the result line below.
+			sub.runCleanups()
 		}()
 		f(sub)
 	}()
@@ -228,24 +422,95 @@ func joinArgs(args ...interface{}) string {
 }
 
 func sprintf(format string, args ...interface{}) string {
-	// Minimal %v/%s/%d formatting sufficient for test diagnostics.
+	// Verbs: %v %s %d (via toString), %t, %q (quoted), %x (hex),
+	// %T (type name), %f %e %g (floats, honoring a .precision).
+	// Flags, width, and precision are skipped, not rendered: %.2f
+	// formats the float with precision 2 instead of printing "%.2f".
+	// An unknown verb is left literal and consumes no argument; a
+	// verb with no remaining argument prints %!verb(MISSING), as fmt
+	// does. Extra arguments are appended space-separated, as fmt does.
 	out := ""
 	ai := 0
 	for i := 0; i < len(format); i++ {
-		if format[i] == '%' && i+1 < len(format) && ai < len(args) {
-			i++
-			switch format[i] {
-			case 'v', 's', 'd', 'q', 'x':
-				out += toString(args[ai])
-				ai++
-			case '%':
-				out += "%"
-			default:
-				out += "%"
-				out += string(format[i])
-			}
-		} else {
+		if format[i] != '%' || i+1 >= len(format) {
 			out += string(format[i])
+			continue
+		}
+		i++
+		if format[i] == '%' {
+			out += "%"
+			continue
+		}
+		prec := -1
+		j := i
+		for j < len(format) && (format[j] == '-' || format[j] == '+' || format[j] == ' ' || format[j] == '#' || format[j] == '0') {
+			j++
+		}
+		for j < len(format) && format[j] >= '0' && format[j] <= '9' {
+			j++
+		}
+		if j < len(format) && format[j] == '.' {
+			j++
+			p := 0
+			for j < len(format) && format[j] >= '0' && format[j] <= '9' {
+				p = p*10 + int(format[j]-'0')
+				j++
+			}
+			prec = p
+		}
+		if j >= len(format) {
+			out += "%"
+			i = j - 1
+			continue
+		}
+		verb := format[j]
+		i = j
+		if ai >= len(args) {
+			out += "%!"
+			out += string(verb)
+			out += "(MISSING)"
+			continue
+		}
+		arg := args[ai]
+		switch verb {
+		case 'v', 'd':
+			out += toString(arg)
+			ai++
+		case 's':
+			// %s of a byte slice is the string it holds, not the
+			// decimal element list %v prints.
+			if b, ok := arg.([]byte); ok {
+				out += string(b)
+			} else {
+				out += toString(arg)
+			}
+			ai++
+		case 't':
+			if b, ok := arg.(bool); ok {
+				if b {
+					out += "true"
+				} else {
+					out += "false"
+				}
+			} else {
+				out += toString(arg)
+			}
+			ai++
+		case 'q':
+			out += quoteArg(arg)
+			ai++
+		case 'x':
+			out += hexArg(arg)
+			ai++
+		case 'T':
+			out += typeName(arg)
+			ai++
+		case 'f', 'e', 'g':
+			out += floatArg(arg, verb, prec)
+			ai++
+		default:
+			out += "%"
+			out += string(verb)
 		}
 	}
 	for ; ai < len(args); ai++ {
@@ -255,22 +520,427 @@ func sprintf(format string, args ...interface{}) string {
 	return out
 }
 
+// toString renders a value the way fmt's %v would, as far as the shim
+// can without reflect or fmt (neither is usable here: the shim is
+// inlined into a driver whose imports are pruned, and fmt may be the
+// package under test). The error case comes first, matching fmt's
+// precedence: a value whose dynamic type implements error renders via
+// Error(), whatever its underlying type. Anything with no rendering
+// below — notably structs and other composite types — prints the
+// explicit marker "<unsupported value>": never a placeholder that
+// could be mistaken for the value itself.
 func toString(v interface{}) string {
 	switch x := v.(type) {
+	case nil:
+		return "<nil>"
+	case error:
+		return x.Error()
 	case string:
 		return x
-	case int:
-		return itoa(int64(x))
-	case int64:
-		return itoa(x)
 	case bool:
 		if x {
 			return "true"
 		}
 		return "false"
+	case int:
+		return itoa(int64(x))
+	case int8:
+		return itoa(int64(x))
+	case int16:
+		return itoa(int64(x))
+	case int32:
+		return itoa(int64(x))
+	case int64:
+		return itoa(x)
+	case uint:
+		return utoa(uint64(x))
+	case uint8:
+		return utoa(uint64(x))
+	case uint16:
+		return utoa(uint64(x))
+	case uint32:
+		return utoa(uint64(x))
+	case uint64:
+		return utoa(x)
+	case uintptr:
+		return utoa(uint64(x))
+	case float32:
+		return strconv.FormatFloat(float64(x), 'g', -1, 32)
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case []byte:
+		return byteList(x)
+	case []string:
+		return joinStrings(x)
+	case []int:
+		return joinInts(x)
+	case []int64:
+		return joinInt64s(x)
+	case []bool:
+		return joinBools(x)
+	case []float64:
+		return joinFloat64s(x)
+	case []interface{}:
+		return joinAnys(x)
+	case map[string]string:
+		return mapStringString(x)
+	case map[string]int:
+		return mapStringInt(x)
+	case map[string]int64:
+		return mapStringInt64(x)
+	case map[string]bool:
+		return mapStringBool(x)
+	case map[string]float64:
+		return mapStringFloat64(x)
+	case map[string]interface{}:
+		return mapStringAny(x)
 	default:
-		return "<value>"
+		return "<unsupported value>"
 	}
+}
+
+// typeName renders a value's type the way fmt's %T would, for the
+// types toString can name. Anything else — notably errors (whose
+// dynamic type is unknowable without reflect) and structs — prints
+// "<unknown type>" rather than a guessed name.
+func typeName(v interface{}) string {
+	switch v.(type) {
+	case nil:
+		return "<nil>"
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case int:
+		return "int"
+	case int8:
+		return "int8"
+	case int16:
+		return "int16"
+	case int32:
+		return "int32"
+	case int64:
+		return "int64"
+	case uint:
+		return "uint"
+	case uint8:
+		return "uint8"
+	case uint16:
+		return "uint16"
+	case uint32:
+		return "uint32"
+	case uint64:
+		return "uint64"
+	case uintptr:
+		return "uintptr"
+	case float32:
+		return "float32"
+	case float64:
+		return "float64"
+	case []byte:
+		return "[]uint8"
+	case []string:
+		return "[]string"
+	case []int:
+		return "[]int"
+	case []int64:
+		return "[]int64"
+	case []bool:
+		return "[]bool"
+	case []float64:
+		return "[]float64"
+	case []interface{}:
+		return "[]interface {}"
+	case map[string]string:
+		return "map[string]string"
+	case map[string]int:
+		return "map[string]int"
+	case map[string]int64:
+		return "map[string]int64"
+	case map[string]bool:
+		return "map[string]bool"
+	case map[string]float64:
+		return "map[string]float64"
+	case map[string]interface{}:
+		return "map[string]interface {}"
+	default:
+		return "<unknown type>"
+	}
+}
+
+// quoteArg renders %q: strings and byte slices quoted, integers as
+// quoted runes (as fmt does); anything else falls back to %v.
+func quoteArg(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return strconv.Quote(x)
+	case []byte:
+		return strconv.Quote(string(x))
+	case int:
+		return strconv.QuoteRune(rune(x))
+	case int32:
+		return strconv.QuoteRune(x)
+	case int64:
+		return strconv.QuoteRune(rune(x))
+	default:
+		return toString(v)
+	}
+}
+
+// hexArg renders %x: strings and byte slices as lowercase hex of
+// their bytes, integers in base 16; anything else falls back to %v.
+func hexArg(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return hexBytes([]byte(x))
+	case []byte:
+		return hexBytes(x)
+	case int:
+		return strconv.FormatInt(int64(x), 16)
+	case int8:
+		return strconv.FormatInt(int64(x), 16)
+	case int16:
+		return strconv.FormatInt(int64(x), 16)
+	case int32:
+		return strconv.FormatInt(int64(x), 16)
+	case int64:
+		return strconv.FormatInt(x, 16)
+	case uint:
+		return strconv.FormatUint(uint64(x), 16)
+	case uint8:
+		return strconv.FormatUint(uint64(x), 16)
+	case uint16:
+		return strconv.FormatUint(uint64(x), 16)
+	case uint32:
+		return strconv.FormatUint(uint64(x), 16)
+	case uint64:
+		return strconv.FormatUint(x, 16)
+	case uintptr:
+		return strconv.FormatUint(uint64(x), 16)
+	default:
+		return toString(v)
+	}
+}
+
+func hexBytes(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := ""
+	for _, c := range b {
+		out += string(digits[c>>4])
+		out += string(digits[c&0xf])
+	}
+	return out
+}
+
+// floatArg renders %f/%e/%g. A non-float falls back to %v. Precision
+// defaults follow fmt: 6 for %f/%e, shortest for %g.
+func floatArg(v interface{}, verb byte, prec int) string {
+	var f float64
+	var bits int
+	switch x := v.(type) {
+	case float64:
+		f, bits = x, 64
+	case float32:
+		f, bits = float64(x), 32
+	default:
+		return toString(v)
+	}
+	format := verb
+	if format == 'g' && prec < 0 {
+		prec = -1
+	}
+	if (format == 'f' || format == 'e') && prec < 0 {
+		prec = 6
+	}
+	return strconv.FormatFloat(f, format, prec, bits)
+}
+
+// byteList renders a byte slice the way %v does: decimal elements in
+// brackets.
+func byteList(b []byte) string {
+	out := "["
+	for i, c := range b {
+		if i > 0 {
+			out += " "
+		}
+		out += utoa(uint64(c))
+	}
+	return out + "]"
+}
+
+func joinStrings(s []string) string {
+	out := "["
+	for i, e := range s {
+		if i > 0 {
+			out += " "
+		}
+		out += e
+	}
+	return out + "]"
+}
+
+func joinInts(s []int) string {
+	out := "["
+	for i, e := range s {
+		if i > 0 {
+			out += " "
+		}
+		out += itoa(int64(e))
+	}
+	return out + "]"
+}
+
+func joinInt64s(s []int64) string {
+	out := "["
+	for i, e := range s {
+		if i > 0 {
+			out += " "
+		}
+		out += itoa(e)
+	}
+	return out + "]"
+}
+
+func joinBools(s []bool) string {
+	out := "["
+	for i, e := range s {
+		if i > 0 {
+			out += " "
+		}
+		if e {
+			out += "true"
+		} else {
+			out += "false"
+		}
+	}
+	return out + "]"
+}
+
+func joinFloat64s(s []float64) string {
+	out := "["
+	for i, e := range s {
+		if i > 0 {
+			out += " "
+		}
+		out += strconv.FormatFloat(e, 'g', -1, 64)
+	}
+	return out + "]"
+}
+
+func joinAnys(s []interface{}) string {
+	out := "["
+	for i, e := range s {
+		if i > 0 {
+			out += " "
+		}
+		out += toString(e)
+	}
+	return out + "]"
+}
+
+// sortedKeys returns the map's keys in sorted order (insertion sort;
+// no sort import in the shim) so map rendering is deterministic.
+func sortedKeys(keys []string) []string {
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}
+
+func mapStringString(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	out := "map["
+	for i, k := range sortedKeys(keys) {
+		if i > 0 {
+			out += " "
+		}
+		out += k + ":" + m[k]
+	}
+	return out + "]"
+}
+
+func mapStringInt(m map[string]int) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	out := "map["
+	for i, k := range sortedKeys(keys) {
+		if i > 0 {
+			out += " "
+		}
+		out += k + ":" + itoa(int64(m[k]))
+	}
+	return out + "]"
+}
+
+func mapStringInt64(m map[string]int64) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	out := "map["
+	for i, k := range sortedKeys(keys) {
+		if i > 0 {
+			out += " "
+		}
+		out += k + ":" + itoa(m[k])
+	}
+	return out + "]"
+}
+
+func mapStringBool(m map[string]bool) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	out := "map["
+	for i, k := range sortedKeys(keys) {
+		if i > 0 {
+			out += " "
+		}
+		if m[k] {
+			out += k + ":true"
+		} else {
+			out += k + ":false"
+		}
+	}
+	return out + "]"
+}
+
+func mapStringFloat64(m map[string]float64) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	out := "map["
+	for i, k := range sortedKeys(keys) {
+		if i > 0 {
+			out += " "
+		}
+		out += k + ":" + strconv.FormatFloat(m[k], 'g', -1, 64)
+	}
+	return out + "]"
+}
+
+func mapStringAny(m map[string]interface{}) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	out := "map["
+	for i, k := range sortedKeys(keys) {
+		if i > 0 {
+			out += " "
+		}
+		out += k + ":" + toString(m[k])
+	}
+	return out + "]"
 }
 
 func itoa(n int64) string {
@@ -292,6 +962,20 @@ func itoa(n int64) string {
 	if neg {
 		i--
 		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+func utoa(n uint64) string {
+	if n == 0 {
+		return "0"
+	}
+	buf := [32]byte{}
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
 	}
 	return string(buf[i:])
 }
@@ -596,7 +1280,10 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		sibSet := token.NewFileSet()
 		sibAST, err := parser.ParseFile(sibSet, sib, nil, 0)
 		if err != nil {
-			continue
+			// Loud, like test-file parse errors above: silently
+			// dropping the file would let tests pass against a
+			// package that does not compile under gc.
+			return "", fmt.Errorf("parse %s: %w", sib, err)
 		}
 		testPkgNames = append(testPkgNames, sibAST.Name.Name)
 		sibUnits = append(sibUnits, srcUnit{sib, sibAST, sibSet})
@@ -637,18 +1324,27 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			sfset := token.NewFileSet()
 			sfAST, err := parser.ParseFile(sfset, sf, nil, 0)
 			if err != nil {
-				continue
+				// Loud, like test-file parse errors above:
+				// silently dropping the file would let tests
+				// pass against a package that does not compile
+				// under gc.
+				return "", fmt.Errorf("parse %s: %w", sf, err)
 			}
 			collectImports(sfAST)
 			units = append(units, srcUnit{sf, sfAST, sfset})
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main uses time and os directly; the shim uses
+	// context (t.Context) and strconv (diagnostic formatting).
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "context")
+	addImport("", "strconv")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "context"}] = true
+	usedImports[importSpec{"", "strconv"}] = true
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -731,10 +1427,21 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				if d.Name.Name == "main" && d.Recv == nil {
 					continue
 				}
+				// A source helper taking *testing.T must become
+				// *graalgoT like the test functions, or the driver
+				// will not compile; package-level testing calls
+				// get the same rewrite/loud failure as test files.
+				rewriteParam(d)
+				if err := rewriteTestingPackage(d, u.fset, fileImportsTesting(u.f)); err != nil {
+					return "", err
+				}
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
+				}
+				if err := rewriteTestingPackage(d, u.fset, fileImportsTesting(u.f)); err != nil {
+					return "", err
 				}
 				gatherDecl(u.f, u.fset, d)
 			}
@@ -761,10 +1468,16 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				}
 				rewriteParam(d)
 				rewriteTestCalls(d, tu.fset)
+				if err := rewriteTestingPackage(d, tu.fset, fileImportsTesting(tu.f)); err != nil {
+					return "", err
+				}
 				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
+				}
+				if err := rewriteTestingPackage(d, tu.fset, fileImportsTesting(tu.f)); err != nil {
+					return "", err
 				}
 				gatherDecl(tu.f, tu.fset, d)
 			}
@@ -786,10 +1499,16 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				}
 				rewriteParam(d)
 				rewriteTestCalls(d, u.fset)
+				if err := rewriteTestingPackage(d, u.fset, fileImportsTesting(u.f)); err != nil {
+					return "", err
+				}
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
+				}
+				if err := rewriteTestingPackage(d, u.fset, fileImportsTesting(u.f)); err != nil {
+					return "", err
 				}
 				gatherDecl(u.f, u.fset, d)
 			}
@@ -847,7 +1566,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -956,7 +1675,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1438,6 +2157,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + toString(r))\n")
 			body.WriteString("\t\t\t\t\t}\n")
 			body.WriteString("\t\t\t\t}\n")
+			// Cleanups run whether the test returned, failed,
+			// skipped, or panicked — before the outcome below.
+			body.WriteString("\t\t\t\ttt.runCleanups()\n")
 			body.WriteString("\t\t\t}()\n")
 			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
 			body.WriteString("\t\t}()\n")
@@ -1787,17 +2509,22 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 // rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
 // the parameter list AND any nested function literals (e.g. the closure
 // passed to t.Run). Uses an AST walk so no testing.T reference survives.
+// testing.TB is rewritten the same way: graalgoT implements the TB
+// method set (Cleanup, Error, Errorf, Fail, FailNow, Failed, Fatal,
+// Fatalf, Helper, Log, Logf, Name, Skip, SkipNow, Skipf, Skipped,
+// Chdir, Context, Setenv, TempDir), so a helper taking testing.TB
+// works unchanged against *graalgoT.
 func rewriteParam(fn *ast.FuncDecl) {
 	ast.Inspect(fn, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.StarExpr:
 			if sel, ok := t.X.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
+				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && (sel.Sel.Name == "T" || sel.Sel.Name == "TB") {
 					t.X = &ast.Ident{Name: "graalgoT"}
 				}
 			}
 		case *ast.SelectorExpr:
-			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
+			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && (t.Sel.Name == "T" || t.Sel.Name == "TB") {
 				// testing.T as a bare type (not pointer): replace the
 				// selector with the graalgoT identifier.
 				// (Handled by replacing the parent; see below.)
@@ -1816,8 +2543,8 @@ func rewriteParam(fn *ast.FuncDecl) {
 	})
 }
 
-// rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
-// function type's params and results.
+// rewriteBareTestingT replaces bare testing.T / testing.TB with
+// graalgoT / *graalgoT in a function type's params and results.
 func rewriteBareTestingT(ft *ast.FuncType) {
 	if ft == nil {
 		return
@@ -1832,9 +2559,161 @@ func rewriteFieldList(fl *ast.FieldList) {
 	}
 	for _, f := range fl.List {
 		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-				f.Type = &ast.Ident{Name: "graalgoT"}
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" {
+				switch sel.Sel.Name {
+				case "T":
+					f.Type = &ast.Ident{Name: "graalgoT"}
+				case "TB":
+					// TB is an interface: callers pass *testing.T,
+					// so the rewritten parameter type is *graalgoT,
+					// not the value type graalgoT (which no caller
+					// could satisfy).
+					f.Type = &ast.StarExpr{X: &ast.Ident{Name: "graalgoT"}}
+				}
 			}
 		}
 	}
+}
+
+// fileImportsTesting reports whether f imports "testing".
+func fileImportsTesting(f *ast.File) bool {
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, "\"") == "testing" {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteTestingPackage rewrites package-level testing calls in one
+// declaration to the shim's equivalents and fails loudly on any other
+// reference to the testing package, which the driver cannot satisfy:
+// collectImports drops the testing import because the graalgoT shim
+// replaces it.
+//
+//   - testing.Short() becomes graalgoShort() (always false: the driver
+//     has no -test.short flag, matching `go test` without -short).
+//   - testing.Verbose() becomes graalgoIsVerbose().
+//
+// Anything else (testing.B, testing.M, testing.CoverMode, a bare
+// testing.T/TB outside a function signature, ...) returns an error
+// naming the reference and its file:line, instead of failing driver
+// compilation with an unexplained "undefined: testing".
+//
+// The rewrite and the scan are both skipped for a declaration that
+// binds the identifier "testing" anywhere (a parameter, a := local, a
+// var): there "testing.X" may denote the local, not the package, and
+// a false loud error would be worse than the old obscure one. Any
+// real problem in such a declaration falls through to driver
+// compilation, exactly as before.
+func rewriteTestingPackage(decl ast.Decl, fset *token.FileSet, hasTestingImport bool) error {
+	if !hasTestingImport || bindsTesting(decl) {
+		return nil
+	}
+	// Rewrite Short/Verbose call targets.
+	ast.Inspect(decl, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "testing" {
+					switch sel.Sel.Name {
+					case "Short":
+						call.Fun = &ast.Ident{Name: "graalgoShort"}
+					case "Verbose":
+						call.Fun = &ast.Ident{Name: "graalgoIsVerbose"}
+					}
+				}
+			}
+		}
+		return true
+	})
+	var firstErr error
+	ast.Inspect(decl, func(n ast.Node) bool {
+		if firstErr != nil {
+			return false
+		}
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && id.Name == "testing" {
+				pos := fset.Position(sel.Pos())
+				firstErr = fmt.Errorf("unsupported testing.%s reference at %s:%d: the graalgo test driver provides only testing.Short() and testing.Verbose() as package-level calls (testing.T/TB parameters are rewritten to *graalgoT)", sel.Sel.Name, filepath.Base(pos.Filename), pos.Line)
+				return false
+			}
+		}
+		return true
+	})
+	return firstErr
+}
+
+// bindsTesting reports whether decl binds the identifier "testing" in
+// any scope it introduces: receivers, function parameters/results,
+// := locals, range variables, local var/const declarations, and type
+// declarations. Struct field names are a separate namespace and do
+// not count. A binding means a "testing.X" selector in that
+// declaration may denote the local, not the testing package.
+func bindsTesting(decl ast.Decl) bool {
+	bound := false
+	namesOf := func(fl *ast.FieldList) {
+		if fl == nil || bound {
+			return
+		}
+		for _, f := range fl.List {
+			for _, name := range f.Names {
+				if name.Name == "testing" {
+					bound = true
+					return
+				}
+			}
+		}
+	}
+	ast.Inspect(decl, func(n ast.Node) bool {
+		if bound {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.FuncDecl:
+			namesOf(x.Recv)
+			if x.Type != nil {
+				namesOf(x.Type.Params)
+				namesOf(x.Type.Results)
+				namesOf(x.Type.TypeParams)
+			}
+		case *ast.FuncLit:
+			if x.Type != nil {
+				namesOf(x.Type.Params)
+				namesOf(x.Type.Results)
+				namesOf(x.Type.TypeParams)
+			}
+		case *ast.AssignStmt:
+			if x.Tok == token.DEFINE {
+				for _, lhs := range x.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok && id.Name == "testing" {
+						bound = true
+						return false
+					}
+				}
+			}
+		case *ast.RangeStmt:
+			if x.Tok == token.DEFINE {
+				for _, kv := range []ast.Expr{x.Key, x.Value} {
+					if id, ok := kv.(*ast.Ident); ok && id.Name == "testing" {
+						bound = true
+						return false
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range x.Names {
+				if name.Name == "testing" {
+					bound = true
+					return false
+				}
+			}
+		case *ast.TypeSpec:
+			if x.Name.Name == "testing" {
+				bound = true
+				return false
+			}
+		}
+		return true
+	})
+	return bound
 }

@@ -100,7 +100,10 @@ func TestStdlibV2ImportKept(t *testing.T) {
 }
 
 // TestUnusedImportStillPruned ensures the pruning still drops imports the
-// body never references (Go rejects unused imports).
+// body never references (Go rejects unused imports). The unused import
+// here is "bytes": "strconv" can no longer serve as the example because
+// the shim itself uses it for diagnostic formatting, so it is always
+// kept — legitimately.
 func TestUnusedImportStillPruned(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "go.mod", "module example.com/prune\n\ngo 1.21\n")
@@ -108,7 +111,7 @@ func TestUnusedImportStillPruned(t *testing.T) {
 	writeFile(t, root, "a_test.go", `package prune
 
 import (
-	"strconv"
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -118,7 +121,7 @@ func TestUsed(t *testing.T) {
 }
 
 func TestNotSelected(t *testing.T) {
-	_ = strconv.Itoa(1)
+	_ = bytes.Contains([]byte("x"), []byte("y"))
 }
 `)
 	testFile := filepath.Join(root, "a_test.go")
@@ -133,7 +136,7 @@ func TestNotSelected(t *testing.T) {
 	if !strings.Contains(src, `"strings"`) {
 		t.Errorf("driver dropped a used import:\n%s", src)
 	}
-	if strings.Contains(src, `"strconv"`) {
+	if strings.Contains(src, `"bytes"`) {
 		t.Errorf("driver kept an unused import:\n%s", src)
 	}
 }
@@ -964,5 +967,180 @@ func TestB(t *testing.T) {
 	// The qualifier reference must have been rewritten to the alias.
 	if !strings.Contains(src, "p2.Hello()") {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
+	}
+}
+
+// TestSiblingParseErrorLoud is the FE-07 regression test: a sibling
+// test file with a syntax error must fail synthesis loudly instead of
+// being silently dropped (which would let tests pass against a package
+// that does not compile under gc).
+func TestSiblingParseErrorLoud(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/broken\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package broken\n")
+	writeFile(t, root, "a_test.go", `package broken
+
+import "testing"
+
+func TestA(t *testing.T) {}
+`)
+	writeFile(t, root, "b_test.go", `package broken
+
+import "testing"
+
+func helper() {
+	var x =
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPkgNameCache = map[string]string{}
+	_, err = synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")}, false)
+	if err == nil {
+		t.Fatal("synthesizeTestDriver succeeded with a syntax-broken sibling test file; want a parse error")
+	}
+	if !strings.Contains(err.Error(), "b_test.go") || !strings.Contains(err.Error(), "parse") {
+		t.Errorf("error = %v; want it to name the parse failure in b_test.go", err)
+	}
+}
+
+// TestSourceParseErrorLoud is the FE-07 regression test for package
+// sources: a non-test source file with a syntax error must fail
+// synthesis loudly instead of being silently dropped.
+func TestSourceParseErrorLoud(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/broken\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package broken\n")
+	writeFile(t, root, "broken.go", `package broken
+
+func Broken() {
+	var x =
+}
+`)
+	writeFile(t, root, "a_test.go", `package broken
+
+import "testing"
+
+func TestA(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPkgNameCache = map[string]string{}
+	_, err = synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go"), filepath.Join(root, "broken.go")}, false)
+	if err == nil {
+		t.Fatal("synthesizeTestDriver succeeded with a syntax-broken package source; want a parse error")
+	}
+	if !strings.Contains(err.Error(), "broken.go") || !strings.Contains(err.Error(), "parse") {
+		t.Errorf("error = %v; want it to name the parse failure in broken.go", err)
+	}
+}
+
+// TestTestingPackageCallsRewritten is the FE-06 static test:
+// testing.Short()/testing.Verbose() are rewritten to the shim's
+// equivalents, the new t methods exist on graalgoT, and no testing
+// import survives in the driver.
+func TestTestingPackageCallsRewritten(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tpkg\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package tpkg\n")
+	writeFile(t, root, "a_test.go", `package tpkg
+
+import "testing"
+
+func TestCalls(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	if testing.Verbose() {
+		t.Log("verbose")
+	}
+	t.Cleanup(func() {})
+	_ = t.TempDir()
+	_ = t.Context()
+	_, _ = t.Deadline()
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	if strings.Contains(src, `"testing"`) {
+		t.Errorf("driver still imports testing:\n%s", src)
+	}
+	if strings.Contains(src, "if testing.Short()") || strings.Contains(src, "if testing.Verbose()") {
+		t.Errorf("driver still calls testing.Short()/testing.Verbose() in the test body:\n%s", src)
+	}
+	if !strings.Contains(src, "if graalgoShort()") || !strings.Contains(src, "if graalgoIsVerbose()") {
+		t.Errorf("driver did not rewrite testing.Short()/testing.Verbose():\n%s", src)
+	}
+	for _, want := range []string{
+		"func (t *graalgoT) FailNow()",
+		"func (t *graalgoT) Cleanup(",
+		"func (t *graalgoT) Parallel()",
+		"func (t *graalgoT) TempDir()",
+		"func (t *graalgoT) Setenv(",
+		"func (t *graalgoT) Chdir(",
+		"func (t *graalgoT) Deadline()",
+		"func (t *graalgoT) Context()",
+		"func (t *graalgoT) Error(",
+		"func (t *graalgoT) Fatal(",
+		"func (t *graalgoT) Log(",
+		"func (t *graalgoT) Skip(",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("driver missing %q", want)
+		}
+	}
+	if !strings.Contains(src, `"context"`) || !strings.Contains(src, `"strconv"`) {
+		t.Errorf("driver missing the context/strconv imports the shim needs:\n%s", src)
+	}
+}
+
+// TestUnsupportedTestingRefFailsLoudly is the FE-06 loud-failure test:
+// any other package-level testing reference fails synthesis with an
+// error naming the call, instead of failing driver compilation with
+// an unexplained "undefined: testing".
+func TestUnsupportedTestingRefFailsLoudly(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/tpkg\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package tpkg\n")
+	writeFile(t, root, "a_test.go", `package tpkg
+
+import "testing"
+
+func TestCover(t *testing.T) {
+	if testing.CoverMode() != "" {
+		t.Skip("cover mode")
+	}
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPkgNameCache = map[string]string{}
+	_, err = synthesizeTestDriver(root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")}, false)
+	if err == nil {
+		t.Fatal("synthesizeTestDriver succeeded with testing.CoverMode(); want a loud unsupported-reference error")
+	}
+	if !strings.Contains(err.Error(), "testing.CoverMode") {
+		t.Errorf("error = %v; want it to name testing.CoverMode", err)
 	}
 }
