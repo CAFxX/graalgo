@@ -1,0 +1,241 @@
+diff -ruN '--exclude=gocache' '--exclude=gopath' fuzz-pristine/exec.go fuzz-fixed/exec.go
+--- fuzz-pristine/exec.go	2026-11-07 21:14:47.385871389 +0000
++++ fuzz-fixed/exec.go	2026-11-07 21:15:57.572909656 +0000
+@@ -2,12 +2,13 @@
+ 
+ // exec.go — backend execution for the M8 fuzzer.
+ //
+-// Two backends: stock gc (~/tools/go) and graalgo-run (phases/phase1).
++// Two backends: stock gc (~/tools/go) and graalgo-run (internal/backend).
+ // Each run captures build success, exit code, stdout, stderr.
+ 
+ import (
+ 	"bytes"
+ 	"context"
++	"fmt"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+@@ -15,7 +16,43 @@
+ )
+ 
+ var goBin = os.ExpandEnv("$HOME/tools/go/bin/go")
+-var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/phases/phase1/graalgo-run")
++
++// graalgoRun is the backend launcher for the graalgo leg. Default is the
++// live launcher at internal/backend/graalgo-run; GRAALGO_RUN overrides it
++// (alternate checkouts, worktrees, tests). R-06: the old default pointed at
++// phases/phase1/graalgo-run, deleted with the phases/ tree, so every graalgo
++// leg failed with buildCode=-1 and compare mapped that to vDiverged —
++// ~100% false divergences. checkBackends (called before any run) now fails
++// fast if the launcher is missing instead of misreporting per seed.
++var graalgoRun = resolveGraalRun()
++
++func resolveGraalRun() string {
++	if v := os.Getenv("GRAALGO_RUN"); v != "" {
++		return v
++	}
++	return os.ExpandEnv("$HOME/workspace/graalgo/internal/backend/graalgo-run")
++}
++
++// checkBackends fails fast when a backend binary is missing or not
++// executable. Without this, a missing graalgo-run makes runGraal return
++// buildOK=false/buildCode=-1 for every seed and compare reports each one
++// DIVERGED — a flood of false positives with zero signal (R-06). Checking
++// up front turns a silent per-seed misreport into one loud startup error.
++func checkBackends() error {
++	for _, b := range []struct{ name, path, hint string }{
++		{"go", goBin, "install the Go toolchain at ~/tools/go"},
++		{"graalgo-run", graalgoRun, "set GRAALGO_RUN to the launcher path"},
++	} {
++		fi, err := os.Stat(b.path)
++		if err != nil {
++			return fmt.Errorf("fuzz: %s backend not found at %s: %w (%s)", b.name, b.path, err, b.hint)
++		}
++		if fi.IsDir() || fi.Mode().Perm()&0111 == 0 {
++			return fmt.Errorf("fuzz: %s backend at %s is not an executable file (%s)", b.name, b.path, b.hint)
++		}
++	}
++	return nil
++}
+ 
+ type runResult struct {
+ 	buildOK   bool
+diff -ruN '--exclude=gocache' '--exclude=gopath' fuzz-pristine/exec_test.go fuzz-fixed/exec_test.go
+--- fuzz-pristine/exec_test.go	1970-01-01 00:00:00.000000000 +0000
++++ fuzz-fixed/exec_test.go	2026-11-07 21:16:25.011909445 +0000
+@@ -0,0 +1,143 @@
++package main
++
++// exec_test.go — R-06 regression tests.
++//
++// The graalgo leg's launcher default used to point at
++// phases/phase1/graalgo-run, deleted with the phases/ tree. Every graalgo
++// leg then failed with buildCode=-1 and compare mapped that to vDiverged,
++// so any fuzz run reported ~100% false divergences. These tests pin the
++// corrected default, the GRAALGO_RUN override, the fail-fast startup check,
++// and the compare behavior that makes the check necessary.
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestResolveGraalRunDefault(t *testing.T) {
++	t.Setenv("GRAALGO_RUN", "")
++	got := resolveGraalRun()
++	if strings.Contains(got, "phases/") {
++		t.Fatalf("default launcher still points at deleted phases/ tree: %q", got)
++	}
++	if !strings.HasSuffix(got, "internal/backend/graalgo-run") {
++		t.Fatalf("default launcher = %q, want suffix %q", got, "internal/backend/graalgo-run")
++	}
++}
++
++func TestResolveGraalRunEnvOverride(t *testing.T) {
++	t.Setenv("GRAALGO_RUN", "/x/y/graalgo-run")
++	if got := resolveGraalRun(); got != "/x/y/graalgo-run" {
++		t.Fatalf("GRAALGO_RUN override = %q, want %q", got, "/x/y/graalgo-run")
++	}
++}
++
++func TestCheckBackendsMissing(t *testing.T) {
++	oldGo, oldGr := goBin, graalgoRun
++	defer func() { goBin, graalgoRun = oldGo, oldGr }()
++
++	goBin = filepath.Join(t.TempDir(), "no-such-go")
++	graalgoRun = filepath.Join(t.TempDir(), "no-such-graalgo-run")
++	err := checkBackends()
++	if err == nil {
++		t.Fatal("checkBackends() = nil for missing backends, want error")
++	}
++	if !strings.Contains(err.Error(), "no-such-go") && !strings.Contains(err.Error(), "no-such-graalgo-run") {
++		t.Fatalf("error %q names neither missing backend", err)
++	}
++}
++
++func TestCheckBackendsMissingGraalOnly(t *testing.T) {
++	oldGr := graalgoRun
++	defer func() { graalgoRun = oldGr }()
++
++	// goBin is the real toolchain in this environment; only the graalgo
++	// launcher is missing, so the error must name it.
++	if _, err := os.Stat(goBin); err != nil {
++		t.Skipf("go toolchain not present at %s: %v", goBin, err)
++	}
++	graalgoRun = filepath.Join(t.TempDir(), "no-such-graalgo-run")
++	err := checkBackends()
++	if err == nil {
++		t.Fatal("checkBackends() = nil for missing graalgo-run, want error")
++	}
++	if !strings.Contains(err.Error(), "graalgo-run") {
++		t.Fatalf("error %q does not name the graalgo-run backend", err)
++	}
++	if !strings.Contains(err.Error(), "GRAALGO_RUN") {
++		t.Fatalf("error %q does not tell the user about the GRAALGO_RUN override", err)
++	}
++}
++
++func TestCheckBackendsNotExecutable(t *testing.T) {
++	oldGo, oldGr := goBin, graalgoRun
++	defer func() { goBin, graalgoRun = oldGo, oldGr }()
++
++	dir := t.TempDir()
++	goBin = filepath.Join(dir, "go")
++	graalgoRun = filepath.Join(dir, "graalgo-run")
++	for _, p := range []string{goBin, graalgoRun} {
++		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := checkBackends(); err == nil {
++		t.Fatal("checkBackends() = nil for non-executable backends, want error")
++	}
++}
++
++func TestCheckBackendsDirectory(t *testing.T) {
++	oldGo, oldGr := goBin, graalgoRun
++	defer func() { goBin, graalgoRun = oldGo, oldGr }()
++
++	dir := t.TempDir()
++	goBin = filepath.Join(dir, "go")
++	if err := os.WriteFile(goBin, []byte("x"), 0755); err != nil {
++		t.Fatal(err)
++	}
++	graalgoRun = dir // a directory, not a launcher
++	if err := checkBackends(); err == nil {
++		t.Fatal("checkBackends() = nil for directory graalgo-run, want error")
++	}
++}
++
++func TestCheckBackendsOK(t *testing.T) {
++	oldGo, oldGr := goBin, graalgoRun
++	defer func() { goBin, graalgoRun = oldGo, oldGr }()
++
++	dir := t.TempDir()
++	goBin = filepath.Join(dir, "go")
++	graalgoRun = filepath.Join(dir, "graalgo-run")
++	for _, p := range []string{goBin, graalgoRun} {
++		if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := checkBackends(); err != nil {
++		t.Fatalf("checkBackends() = %v, want nil", err)
++	}
++}
++
++// TestCompareMissingLauncherIsDiverged pins the compare behavior that makes
++// the startup check necessary: a graalgo leg that never ran (buildCode=-1,
++// e.g. launcher missing) is reported DIVERGED, not distinguished from a
++// real build failure. The fail-fast in checkBackends is what keeps this
++// mapping from producing false positives; do not "fix" it by special-casing
++// -1 here.
++func TestCompareMissingLauncherIsDiverged(t *testing.T) {
++	gc := runResult{buildOK: true, exit: 0, stdout: "hi\n"}
++	gr := runResult{buildOK: false, buildCode: -1}
++	if got := compare(gc, gr); got != vDiverged {
++		t.Fatalf("compare(missing launcher) = %v, want DIVERGED", got)
++	}
++}
++
++func TestCompareScopeRejectStillWorks(t *testing.T) {
++	gc := runResult{buildOK: true, exit: 0}
++	gr := runResult{buildOK: false, buildCode: 2, buildErr: "not supported: out of scope for phase 2"}
++	if got := compare(gc, gr); got != vScopeReject {
++		t.Fatalf("compare(scope error) = %v, want SCOPE_REJECT", got)
++	}
++}
+diff -ruN '--exclude=gocache' '--exclude=gopath' fuzz-pristine/main.go fuzz-fixed/main.go
+--- fuzz-pristine/main.go	2026-11-07 21:14:47.386040633 +0000
++++ fuzz-fixed/main.go	2026-11-07 21:16:08.000909576 +0000
+@@ -108,6 +108,13 @@
+ 	doMin := fs.Bool("min", true, "minimize divergences")
+ 	fs.Parse(os.Args[2:])
+ 
++	// Fail fast if a backend launcher is missing (R-06): without this, a
++	// missing graalgo-run misreports every seed as DIVERGED.
++	if err := checkBackends(); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(1)
++	}
++
+ 	os.MkdirAll(*workdir, 0755)
+ 	os.MkdirAll(filepath.Join(*workdir, "scratch"), 0755)
+ 	st := loadState(*workdir)
+@@ -185,6 +192,13 @@
+ 	fs := flag.NewFlagSet("regress", flag.ExitOnError)
+ 	workdir := fs.String("workdir", "work", "working directory")
+ 	fs.Parse(os.Args[2:])
++
++	// Fail fast if a backend launcher is missing (R-06) — see cmdRun.
++	if err := checkBackends(); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(1)
++	}
++
+ 	dir := filepath.Join(*workdir, "regressions")
+ 	ents, err := os.ReadDir(dir)
+ 	if err != nil {
