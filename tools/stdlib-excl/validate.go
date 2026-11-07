@@ -27,7 +27,7 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("validate: cannot locate repo root: %w", err)
 		}
-		*listPath = filepath.Join(root, "phases", "phase3", "stdlib-fork", "exclusions.yaml")
+		*listPath = defaultListPath(root)
 	}
 	var err error
 	*listPath, err = filepath.Abs(*listPath)
@@ -170,6 +170,15 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	fmt.Fprintf(stdout, "validate: OK: %s version %s, %d entries, cap %d (%s), src %s\n",
 		*listPath, ef.Version, len(ef.Exclusions), binding, bindingWhy, *srcRoot)
 	return nil
+}
+
+// defaultListPath is the default exclusion-list location: the Phase-4
+// home tools/stdlib-fork/exclusions.yaml. The pre-migration path
+// (phases/phase3/...) is dead — the directory no longer exists — so bare
+// `validate` (no --list) must keep resolving here (R-06,
+// REVIEW-2026-11-07-04). Pinned by TestDefaultListPath.
+func defaultListPath(root string) string {
+	return filepath.Join(root, "tools", "stdlib-fork", "exclusions.yaml")
 }
 
 // repoRoot returns the enclosing git repository root.

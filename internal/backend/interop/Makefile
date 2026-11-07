@@ -101,10 +101,16 @@ check: main $(OUT_TEST)/.built
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
+	# The gate runs bare `validate` (no --list) on purpose: the default list
+	# path (tools/stdlib-fork/exclusions.yaml) must stay live — it died
+	# silently in the phases/phase3 migration because no caller exercised
+	# it (R-06, REVIEW-2026-11-07-04). The module tests run first so the
+	# cap-13 test (TestValidateRejects14thPackage) executes in CI, not
+	# just the live-list validation.
 	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
 		GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
 		if [ -x "$$GO_BIN" ]; then \
-			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local "$$GO_BIN" run . validate --list ../stdlib-fork/exclusions.yaml; \
+			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local "$$GO_BIN" test ./... && GOTOOLCHAIN=local "$$GO_BIN" run . validate; \
 		else \
 			echo "WARNING: Go toolchain not found ($$GO_BIN); exclusion-list gate skipped"; \
 		fi; \
