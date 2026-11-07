@@ -1,0 +1,154 @@
+--- a/test/differential/cmd/diffharness/main.go
++++ b/test/differential/cmd/diffharness/main.go
+@@ -487,6 +487,12 @@
+ 	if err != nil {
+ 		return err
+ 	}
++	// R20-T01: fail loudly on zero comparisons. Run already errors on an
++	// empty kept set; this keeps the command correct if Run's contract
++	// ever changes, so the gate can never go green having compared nothing.
++	if len(comps) == 0 {
++		return fmt.Errorf("typeparam run: zero comparisons (scanned %d files): refusing a vacuous PASS", len(files))
++	}
+ 	div := 0
+ 	for _, c := range comps {
+ 		status := "SAME    "
+@@ -606,6 +612,12 @@
+ 	if err != nil {
+ 		return err
+ 	}
++	// R20-T01: fail loudly on zero comparisons. Run already errors on an
++	// empty kept set; this keeps the command correct if Run's contract
++	// ever changes, so the gate can never go green having compared nothing.
++	if len(comps) == 0 {
++		return fmt.Errorf("srctest run: zero comparisons (scanned %d files): refusing a vacuous PASS", len(files))
++	}
+ 	div := 0
+ 	for _, c := range comps {
+ 		status := "SAME    "
+--- a/test/differential/cmd/diffharness/snapshot.go
++++ b/test/differential/cmd/diffharness/snapshot.go
+@@ -307,6 +307,14 @@
+ 	if err != nil {
+ 		return err
+ 	}
++	// R20-T01: refuse to record a vacuous snapshot. DiscoverCorpus already
++	// errors on a corpus dir with no programs, so the reachable hole is
++	// an exclusions list covering every program: recording zero programs
++	// would let a later `snapshot check` with the same exclusions pass
++	// having verified nothing.
++	if len(progs) == 0 {
++		return fmt.Errorf("snapshot record: zero programs to record (corpus %s, %d excluded): refusing to write a vacuous snapshot", sf.corpus, len(skipped))
++	}
+ 	corpusRoot, err := filepath.Abs(sf.corpus)
+ 	if err != nil {
+ 		return fmt.Errorf("resolve corpus dir: %w", err)
+--- a/test/differential/cmd/diffharness/snapshot_test.go
++++ b/test/differential/cmd/diffharness/snapshot_test.go
+@@ -1,6 +1,8 @@
+ package main
+ 
+ import (
++	"os"
++	"path/filepath"
+ 	"strings"
+ 	"testing"
+ 
+@@ -98,3 +100,36 @@
+ 		t.Fatal("changed exclusion reason not detected")
+ 	}
+ }
++
++// TestSnapshotRecord_ZeroKeptSet pins R20-T01 (second-order hole): when
++// the config exclusions cover every corpus program, `snapshot record`
++// must fail instead of writing a 0-program snapshot that a later
++// `snapshot check` with the same exclusions would pass having verified
++// nothing. The dummy backend is never invoked: the guard fires before
++// any program runs.
++func TestSnapshotRecord_ZeroKeptSet(t *testing.T) {
++	dir := t.TempDir()
++	progDir := filepath.Join(dir, "corpus", "prog")
++	if err := os.MkdirAll(progDir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(progDir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	cfgPath := filepath.Join(dir, "backends.json")
++	cfg := `{"backends":[{"name":"graalgo","build":["/bin/false"],"run":["/bin/false"]}],"exclusions":[{"program":"prog","reason":"flaky"}],"timeoutSec":15}`
++	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	out := filepath.Join(dir, "snap.json")
++	err := cmdSnapshotRecord([]string{
++		"-config", cfgPath, "-corpus", filepath.Join(dir, "corpus"),
++		"-backend", "graalgo", "-out", out, "-toolchain", "go1.27.1", "-runs", "1",
++	})
++	if err == nil {
++		t.Fatal("snapshot record with every program excluded: want error, got nil (vacuous snapshot)")
++	}
++	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
++		t.Fatalf("snapshot record with zero programs wrote %s (want no file)", out)
++	}
++}
+--- a/test/differential/internal/typeparam/typeparam.go
++++ b/test/differential/internal/typeparam/typeparam.go
+@@ -300,6 +300,15 @@
+ 		}
+ 	}
+ 
++	// R20-T01: an empty kept set must fail loudly. Returning ([], nil)
++	// here made both `typeparam run` and `srctest run` print
++	// "0 comparisons, 0 diverged" and exit 0, so a wrong -dir or an
++	// exclusions file covering every program passed the conformance gate
++	// having compared nothing.
++	if len(included) == 0 {
++		return nil, fmt.Errorf("zero programs to compare (scanned %d files, all excluded or none found): refusing a vacuous PASS", len(files))
++	}
++
+ 	// Partition files among jobs; each job processes its share with one
+ 	// graalgo JVM via batch mode.
+ 	comps := make([]Comparison, len(included))
+--- a/test/differential/internal/typeparam/typeparam_test.go
++++ b/test/differential/internal/typeparam/typeparam_test.go
+@@ -4,6 +4,8 @@
+ 	"path/filepath"
+ 	"runtime"
+ 	"testing"
++
++	"diffharness/internal/harness"
+ )
+ 
+ // TestLoadExclusionsEdgeCases pins LoadExclusions' edge-case semantics.
+@@ -41,3 +43,31 @@
+ 		}
+ 	}
+ }
++
++// testRunConfig is the minimal config Run needs: both backends present.
++// No backend is ever invoked when the kept set is empty.
++func testRunConfig() *harness.Config {
++	return &harness.Config{Backends: []harness.Backend{{Name: "gc-a"}, {Name: "graalgo"}}}
++}
++
++// TestRunEmptyKeptSet pins R20-T01: when every scanned file is excluded,
++// Run must fail loudly instead of returning ([], nil), which made both
++// `typeparam run` and `srctest run` print "0 comparisons, 0 diverged"
++// and exit 0 — a vacuous PASS of the conformance gate.
++func TestRunEmptyKeptSet(t *testing.T) {
++	files := []TFile{
++		{Name: "a.go", Class: "exclude:deferred-parity"},
++		{Name: "b.go", Class: "exclude:backend-specific"},
++	}
++	if _, err := Run(testRunConfig(), files, "gc-a", "graalgo", 2); err == nil {
++		t.Fatal("Run with all files excluded: want error, got nil (vacuous PASS)")
++	}
++}
++
++// TestRunNoFiles pins the same R20-T01 hole for an empty scan: a wrong
++// -dir with no .go files must fail, not compare nothing and pass.
++func TestRunNoFiles(t *testing.T) {
++	if _, err := Run(testRunConfig(), nil, "gc-a", "graalgo", 2); err == nil {
++		t.Fatal("Run with no files: want error, got nil (vacuous PASS)")
++	}
++}
