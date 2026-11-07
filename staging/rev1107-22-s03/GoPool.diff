@@ -1,0 +1,221 @@
+--- GoPool.java.orig	2026-11-07 21:15:55.290909674 +0000
++++ GoPool.java	2026-11-07 21:22:13.731906758 +0000
+@@ -5,6 +5,7 @@
+ import java.util.Collections;
+ import java.util.Deque;
+ import java.util.IdentityHashMap;
++import java.util.Iterator;
+ import java.util.Set;
+ import java.util.concurrent.ConcurrentLinkedDeque;
+ import java.util.concurrent.atomic.AtomicReference;
+@@ -30,10 +31,17 @@
+  *       {@link java.util.concurrent.atomic.AtomicReference}, so an owner
+  *       racing a thief is safe. Stealing {@code private} is a deliberate
+  *       JVM adaptation (see the field doc): gc's {@code getSlow} skips it
+- *       because Ps are immortal; our threads are not. Locals of dead
+- *       threads stay registered — their items remain stealable. The
+- *       registry is bounded in practice by the scheduler's carrier pool
+- *       plus the threads that touch the pool.</li>
++ *       because Ps are immortal; our threads are not. A dead thread's
++ *       Local is reaped — its items drained to the global queue, so they
++ *       stay retrievable — once the registry grows past
++ *       {@code REAP_THRESHOLD} (see {@link #reapDeadLocalsLocked}).
++ *       The registry is therefore bounded by the live threads
++ *       touching the pool plus threads that died since the last reap
++ *       — a reap runs on every slow-path {@code get}, on every 1024th
++ *       pool operation per live thread, and (amortized) on
++ *       registration — not by every goroutine that ever touched it
++ *       (each goroutine is its own virtual thread, so without
++ *       reaping the set would grow without bound).</li>
+  *   <li>Victim cache + GC interaction: gc rotates primary→victim at each
+  *       GC stop-the-world ({@code poolCleanup}); there is no STW hook on
+  *       the JVM, so the victim holds {@link WeakReference}s. The JVM GC
+@@ -70,6 +78,19 @@
+      * spill into the weakly-held victim. */
+     private static final int GLOBAL_SHARED_CAP = 256;
+ 
++    /**
++     * Registry size at which the amortized reaping triggers consider
++     * a scan worthwhile. Below this size a linear scan of the registry
++     * is trivial, so the registration and fast-path triggers skip it;
++     * the slow path reaps unconditionally regardless of size (it
++     * already scans the registry twice, so one more same-order scan
++     * changes no asymptotics). At or above the threshold,
++     * registrations reap at most once per {@code REAP_THRESHOLD}
++     * registrations, so the set the slow path iterates stays near
++     * the live-thread count.
++     */
++    private static final int REAP_THRESHOLD = 64;
++
+     /** Per-thread pool (gc's {@code poolLocal}). */
+     private static final class Local {
+         /**
+@@ -91,6 +112,30 @@
+         /** Whether this Local is in {@link GoPool#allLocals}. Written
+          * under the pool lock; the benign read race is idempotent. */
+         boolean registered;
++        /**
++         * Fast-path operations performed by the owner since the last
++         * amortized reap check (owner-confined: only this thread's
++         * {@code local()} touches it). Every 1024th operation the
++         * owner checks whether dead-thread Locals need reaping, so a
++         * pool kept in use by live threads reaps even when no new
++         * thread ever registers and no slow path ever runs.
++         */
++        int opsSinceReapCheck;
++        /**
++         * The thread that owns this Local, held weakly. The owner is
++         * recorded at construction (each goroutine runs on its own
++         * virtual thread, so one Local is created per goroutine that
++         * touches the pool). A weak reference: a strong one would keep
++         * every dead goroutine's {@code Thread} — and its
++         * {@code ThreadLocal} map — alive exactly as long as the
++         * registry entry the reaper is meant to remove. A dead owner
++         * (cleared reference, or {@code !isAlive()}) is the reaper's
++         * trigger; the owner can never come back to life, and only
++         * thieves under the pool lock can touch a dead owner's Local,
++         * so draining it under the lock is race-free.
++         */
++        final WeakReference<Thread> owner =
++                new WeakReference<>(Thread.currentThread());
+     }
+ 
+     private final ThreadLocal<Local> locals = ThreadLocal.withInitial(Local::new);
+@@ -102,6 +147,13 @@
+             Collections.newSetFromMap(new IdentityHashMap<>());
+     private final Deque<Object> globalShared = new ArrayDeque<>();
+     private final Deque<WeakReference<Object>> victim = new ArrayDeque<>();
++    /**
++     * Registrations since the last reap in {@link #local()}, guarded by
++     * {@link #lock}. Amortizes reaping: a registry scan costs
++     * O({@code allLocals.size()}), so it runs at most once per
++     * {@code REAP_THRESHOLD} registrations.
++     */
++    private int registrationsSinceReap;
+ 
+     /** The New field ({@code func() any} as a GoFunc, or null). */
+     private volatile Object newFunc;
+@@ -116,19 +168,108 @@
+         newFunc = f;
+     }
+ 
++    /** Number of registered Locals, for tests. */
++    int registeredLocalsForTest() {
++        synchronized (lock) {
++            return allLocals.size();
++        }
++    }
++
+     /** The calling thread's Local, registered on first use. */
+     private Local local() {
+         Local l = locals.get();
++        if ((++l.opsSinceReapCheck & 1023) == 0) {
++            maybeReapStaleLocals();
++        }
+         if (!l.registered) {
+             synchronized (lock) {
++                if (allLocals.size() >= REAP_THRESHOLD
++                        && registrationsSinceReap >= REAP_THRESHOLD) {
++                    reapDeadLocalsLocked();
++                    registrationsSinceReap = 0;
++                }
+                 allLocals.add(l);
+                 l.registered = true;
++                registrationsSinceReap++;
+             }
+         }
+         return l;
+     }
+ 
+     /**
++     * Reaps dead-thread Locals if the registry is large enough to be
++     * worth scanning. Called from the fast path (amortized: every
++     * 1024th operation per thread), so it must not take the lock
++     * unconditionally: the unsynchronized size read is only a heuristic
++     * gate — stale values merely delay a reap — and the size is
++     * re-checked under the lock before any scan.
++     */
++    private void maybeReapStaleLocals() {
++        if (allLocals.size() < REAP_THRESHOLD) {
++            return;
++        }
++        synchronized (lock) {
++            if (allLocals.size() >= REAP_THRESHOLD) {
++                reapDeadLocalsLocked();
++            }
++        }
++    }
++
++    /**
++     * Drops every registered Local whose owner thread is dead,
++     * preserving its items: they are drained into the global queue
++     * (with the usual victim overflow), so a later {@code get} can
++     * still return them — exactly as if they had been stolen from the
++     * dead thread's Local. Caller must hold {@link #lock}.
++     *
++     * <p>Without this, {@code allLocals} would retain one entry per
++     * goroutine ever (each goroutine is its own virtual thread), and
++     * the slow path would scan all of them on every miss. With it,
++     * the registry holds the Locals of threads alive at the last reap
++     * plus those registered since — a reap runs on every slow-path
++     * {@code get}, on every 1024th pool operation per live thread, and
++     * (amortized) on registration, so dead-thread entries survive at
++     * most until the next such operation by a live thread. The one
++     * residual: a pool that is never touched again after its
++     * goroutines die keeps their Locals until it is next touched or
++     * collected — no pool operation runs to reap them, and taking a
++     * lock on the lock-free fast path to poll for that would cost
++     * every operation.
++     */
++    private void reapDeadLocalsLocked() {
++        Iterator<Local> it = allLocals.iterator();
++        while (it.hasNext()) {
++            Local o = it.next();
++            Thread owner = o.owner.get();
++            if (owner != null && owner.isAlive()) {
++                continue;
++            }
++            Object x = o.privateSlot.getAndSet(null);
++            if (x != null) {
++                spillToGlobalLocked(x);
++            }
++            while ((x = o.shared.pollFirst()) != null) {
++                spillToGlobalLocked(x);
++            }
++            o.registered = false;
++            it.remove();
++        }
++    }
++
++    /**
++     * Adds one item to the global queue, spilling the oldest items
++     * into the weakly-held victim past the cap. Caller must hold
++     * {@link #lock}. Same overflow discipline as {@link #put}'s
++     * spill path.
++     */
++    private void spillToGlobalLocked(Object x) {
++        globalShared.addLast(x);
++        while (globalShared.size() > GLOBAL_SHARED_CAP) {
++            victim.addLast(new WeakReference<>(globalShared.pollFirst()));
++        }
++    }
++
++    /**
+      * Puts x into the pool (gc's {@code Pool.Put}): a nil x is a no-op.
+      * Lock-free fast path on the calling thread's local pool; spills to
+      * the global queue (and then the victim) when the local queue is full.
+@@ -173,6 +314,14 @@
+             return x;
+         }
+         synchronized (lock) {
++            // Dead-thread Locals are reaped (their items drained to the
++            // global queue) before stealing, so the loops below iterate
++            // live threads only — not every goroutine that ever touched
++            // the pool. Unconditional: the slow path already scans the
++            // registry twice, so one more same-order scan changes no
++            // asymptotics, and it is what guarantees the bound after
++            // any slow-path get.
++            reapDeadLocalsLocked();
+             // Slow path (gc's getSlow): steal from other threads'
+             // shared queues, then their private slots (JVM adaptation —
+             // see the privateSlot field doc), then the global spillover,

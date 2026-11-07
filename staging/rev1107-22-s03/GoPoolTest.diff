@@ -1,0 +1,46 @@
+--- GoPoolTest.java.orig	2026-11-07 21:15:55.294909674 +0000
++++ GoPoolTest.java	2026-11-07 21:16:42.897909307 +0000
+@@ -95,6 +95,43 @@
+     }
+ 
+     /**
++     * Dead-thread reaping (S-03): 200 short-lived virtual threads — one
++     * per goroutine, as the scheduler spawns them — each Put one item
++     * and die. The pool must still drain every item (dead threads'
++     * items are drained to the global queue, not dropped with the
++     * Local), and the registry must not retain one entry per dead
++     * thread: after the drain only this thread's Local remains.
++     * Fails on the pre-fix pool (registry holds 201 entries).
++     */
++    public void testDeadThreadLocalsAreReaped() throws Exception {
++        GoPool pool = new GoPool();
++        int n = 200;
++        Object[] items = new Object[n];
++        for (int i = 0; i < n; i++) {
++            items[i] = new Object();
++        }
++        Thread[] putters = new Thread[n];
++        for (int i = 0; i < n; i++) {
++            final int idx = i;
++            putters[i] = Thread.ofVirtual().start(() -> pool.put(items[idx]));
++        }
++        for (int i = 0; i < n; i++) {
++            putters[i].join(10_000);
++            assertTrue(!putters[i].isAlive(), "putter " + i + " finished");
++        }
++        Set<Object> got = new HashSet<>();
++        for (int i = 0; i < n; i++) {
++            Object x = pool.get();
++            assertTrue(x != null, "reap drain returned null at " + i);
++            assertTrue(got.add(x), "duplicate item " + x);
++        }
++        assertEquals(n, got.size(), "reap drain size");
++        assertTrue(pool.get() == null, "pool drained after reap");
++        assertEquals(1, pool.registeredLocalsForTest(),
++                "registry holds only the live draining thread's Local");
++    }
++
++    /**
+      * Concurrent hammer: 8 threads x 500 puts, then a single-threaded
+      * drain recovers exactly every item — no loss, no duplication.
+      * The items array keeps every item strongly reachable: victim
