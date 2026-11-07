@@ -788,6 +788,20 @@ func internalImportVisible(importPath, importingDir string) bool {
 	return dirWithin(importingDir, root)
 }
 
+// frontendOnlySyntheticSources lists synthetic-source paths that exist
+// only for the frontend's own use and are never user-importable.
+// reflect_m7 is the retired reflect source, re-registered under a
+// distinct name in syntheticSources (synth_machinery.go) so the M7
+// desugarer can still load its __-helpers and pair types via
+// getSyntheticPackage (m7HelperPkgOverride, mrdesugar_m5.go) — that path
+// bypasses the import gate. A user program importing one of these paths
+// must get the same scope error gc gives for a nonexistent package.
+// Future frontend-only synthetics belong here, not in a per-package
+// carve-out at the call sites.
+var frontendOnlySyntheticSources = map[string]struct{}{
+	"reflect_m7": {},
+}
+
 // importAdmitted is the single frontend/v1 import gate (WS G), shared by
 // checkImportAllowed and needsOverlayImporter. General mechanism
 // (hunt-special-cases): instead of a per-package allow-list, admit:
@@ -796,6 +810,8 @@ func internalImportVisible(importPath, importingDir string) bool {
 //  2. Any package with a synthetic source (syntheticSources map) —
 //     including future additions, no allow-list update needed — except
 //     internal packages, which follow Go's internal-visibility rule.
+//     Frontend-only synthetic sources (frontendOnlySyntheticSources)
+//     are denied outright before this rule; see below.
 //  3. Internal packages (any path with an "internal" element) visible
 //     from the importing package under Go's internal-visibility rule:
 //     e.g. the `graalgo test` driver for a stdlib package compiles as
@@ -808,6 +824,15 @@ func importAdmitted(path, importingDir string) bool {
 	// The dedicated-constructor packages (sync and sync/atomic now resolve from disk).
 	if isDedicatedSyntheticStub(path) {
 		return true
+	}
+	// Frontend-only synthetic sources (R-20): reflect_m7 is the retired
+	// reflect source kept for the M7 desugarer's __-helpers and pair
+	// types. The desugarer loads it via getSyntheticPackage, which
+	// bypasses this gate; user code must never import it — gc rejects
+	// `import "reflect_m7"` (no such package). Deny before the
+	// syntheticSources admission below.
+	if _, ok := frontendOnlySyntheticSources[path]; ok {
+		return false
 	}
 	if _, ok := syntheticSources[path]; ok {
 		// Synthetic-internal packages (internal/*, crypto/internal/*):
