@@ -12,6 +12,8 @@ package main
 //   (+) TestValidateRejectsStaleEntry      — package must exist in the tree
 //   (+) TestValidateRejectsDuplicate      — no duplicate file entries
 //   (+) TestValidateFivePercentClause      — 5%-of-test-binaries binding cap
+//   (+) TestValidateRejects14thPackage     — go1.27.1 binding cap: 274 test binaries -> 13
+//   (+) TestDefaultListPath                — bare validate resolves to tools/stdlib-fork/exclusions.yaml (R-06)
 //   (+) TestValidateAcceptsValidList       — happy path stays green
 //   (P1-2) TestResolveStdlibTreePrefersVendored — vendored tree is USED when present
 //   (P1-2) TestResolveStdlibTreeFallsBackLoud  — no vendored tree: loud GOROOT fallback
@@ -223,6 +225,54 @@ func TestValidateFivePercentClause(t *testing.T) {
 	list5 := testList(t, dir, "list5.yaml", "1", okEntries.String())
 	if _, _, err := runValidateOK(t, list5, src, base, 100, 25); err != nil {
 		t.Fatalf("5 entries with 100 test binaries should pass, got: %v", err)
+	}
+}
+
+// The documented go1.27.1 binding cap is 13: with 274 stdlib test binaries,
+// 5% = 13, so a 14th entry must be rejected even though 14 < 25 (--max).
+// This pins the real binding cap; TestValidateFivePercentClause pins the
+// mechanism with a synthetic count (100 -> 5).
+func TestValidateRejects14thPackage(t *testing.T) {
+	dir := t.TempDir()
+	var pkgs []string
+	var entries strings.Builder
+	for i := 0; i < 14; i++ {
+		p := "pkg" + fmt.Sprint(i)
+		pkgs = append(pkgs, p)
+		entries.WriteString("- file: " + p + "\n  reason: PLATFORM\n  detail: evidence\n")
+	}
+	src := fixtureSrc(t, pkgs...)
+	list := testList(t, dir, "list.yaml", "1", entries.String())
+	base := testList(t, dir, "base.yaml", "0", "")
+	_, stderr, err := runValidateOK(t, list, src, base, 274, 25)
+	if err == nil {
+		t.Fatal("expected five-percent-clause rejection of 14 entries with 274 test binaries, got accept")
+	}
+	mustContain(t, stderr, "5% of 274 stdlib test binaries = 13", "14th-package rejection")
+	// Exactly 13 passes.
+	var okEntries strings.Builder
+	for i := 0; i < 13; i++ {
+		okEntries.WriteString("- file: pkg" + fmt.Sprint(i) + "\n  reason: PLATFORM\n  detail: evidence\n")
+	}
+	list13 := testList(t, dir, "list13.yaml", "1", okEntries.String())
+	if _, _, err := runValidateOK(t, list13, src, base, 274, 25); err != nil {
+		t.Fatalf("13 entries with 274 test binaries should pass, got: %v", err)
+	}
+}
+
+// The default list path is the Phase-4 home: bare `validate` (no --list)
+// must resolve to <repo>/tools/stdlib-fork/exclusions.yaml. The old
+// phases/phase3 path is dead (R-06, REVIEW-2026-11-07-04); a revert of
+// defaultListPath turns this red.
+func TestDefaultListPath(t *testing.T) {
+	root := filepath.Join("home", "user", "graalgo")
+	want := filepath.Join(root, "tools", "stdlib-fork", "exclusions.yaml")
+	if got := defaultListPath(root); got != want {
+		t.Fatalf("defaultListPath(%q) = %q, want %q", root, got, want)
+	}
+	// The pre-migration path must not resurface: phases/ no longer exists.
+	if strings.Contains(defaultListPath(root), "phases") {
+		t.Fatalf("default list path still references phases/: %q", defaultListPath(root))
 	}
 }
 
