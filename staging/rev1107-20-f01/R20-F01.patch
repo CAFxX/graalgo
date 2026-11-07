@@ -1,0 +1,134 @@
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -6911,7 +6911,10 @@
+ 		return nil, false
+ 	}
+ 	obj, ok := info.Uses[sel.Sel].(*types.Func)
+-	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
++	// R20-F01: gate on the resolved package PATH, not its name — a
++	// non-stdlib package named "runtime" (e.g. import runtime
++	// "example.com/x") defining Gosched must not be intercepted.
++	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
+ 		return nil, false
+ 	}
+ 	if sel.Sel.Name != "Gosched" {
+@@ -8557,17 +8560,21 @@
+ 		}
+ 		// R2-P2-9: discriminate on the resolved object, not the identifier
+ 		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
+-		// local named runtime is not. The structural obj.Pkg().Name()
+-		// check below stays as the second gate.
++		// local named runtime is not. R20-F01: the gate is the resolved
++		// package PATH ("runtime"), not its name — a non-stdlib package
++		// named runtime (e.g. import runtime "example.com/x") defining
++		// its own Goexit must fall through to the general call path
++		// below, never the overlay interception. The old negative gate
++		// (scope error when the resolved package was not named
++		// "runtime") wrongly rejected such valid Go code.
+ 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
+ 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
+-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+-					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
+-				}
+-				if len(c.Args) != 0 {
+-					return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
++				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
++					if len(c.Args) != 0 {
++						return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
++					}
++					return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
+ 				}
+-				return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
+ 			}
+ 		}
+ 		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
+@@ -8582,7 +8589,13 @@
+ 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
+ 		// v1 wire format (goexit-marker precedent) — no version bump.
+ 		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
+-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
++			// R20-F01: gate on the resolved package PATH, not its name —
++			// a non-stdlib package named "runtime" (e.g. import runtime
++			// "example.com/x") defining one of these names must fall
++			// through to the general call path below, never the overlay
++			// wire nodes. (The pkgIdent.Name pre-filter above only
++			// narrows: it can skip interception, never cause it.)
++			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
+ 				switch sel.Sel.Name {
+ 				case "SetFinalizer", "KeepAlive", "GC":
+ 					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
+--- /dev/null
++++ b/internal/frontend/runtime_nonstdlib_test.go
+@@ -0,0 +1,72 @@
++package main
++
++// Regression test for R20-F01 (REVIEW-2026-11-07-20): the exporter's
++// `runtime.*` interception must discriminate on the resolved package
++// PATH, not the package NAME. A non-stdlib package named "runtime"
++// (here: example.com/rev1107-20-f01/runtime, served from a temp GOPATH)
++// defining Version/NumCPU/Gosched/Goexit must compile through the
++// general call path — never the stdlib-runtime wire nodes, and never
++// the Goexit "did not resolve to the overlay package" scope error.
++//
++// RED on unpatched code: runtime.Version lowers to a "runtimeversion"
++// node, NumCPU to "runtimenumcpu", defer/go Gosched to "runtimegosched",
++// and Goexit to the goexit marker — all four assertions fail.
++// GREEN after the fix: none of those nodes appear and ExportFile
++// succeeds; the calls lower to ordinary "call" nodes via exportFuncCall.
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestNonStdlibRuntimePackageNotIntercepted(t *testing.T) {
++	gopath := t.TempDir()
++	fakeRuntime := filepath.Join(gopath, "src", "example.com", "rev1107-20-f01", "runtime")
++	if err := os.MkdirAll(fakeRuntime, 0755); err != nil {
++		t.Fatal(err)
++	}
++	fakeSrc := `package runtime
++
++// A non-stdlib package named "runtime": must never be intercepted as
++// stdlib runtime (R20-F01).
++
++func Version() string { return "fake-1.0" }
++func NumCPU() int     { return 42 }
++func Gosched()        {}
++func Goexit()         {}
++`
++	if err := os.WriteFile(filepath.Join(fakeRuntime, "runtime.go"), []byte(fakeSrc), 0644); err != nil {
++		t.Fatal(err)
++	}
++	t.Setenv("GOPATH", gopath)
++
++	src := `package main
++
++import runtime "example.com/rev1107-20-f01/runtime"
++
++func main() {
++	v := runtime.Version()
++	n := runtime.NumCPU()
++	_, _ = v, n
++	defer runtime.Gosched()
++	go runtime.Gosched()
++	runtime.Goexit()
++}
++`
++	out, err := ExportFile(writeSyncProg(t, src))
++	if err != nil {
++		t.Fatalf("ExportFile with non-stdlib runtime package: %v", err)
++	}
++	for _, forbidden := range []string{
++		`"kind": "runtimeversion"`,
++		`"kind": "runtimenumcpu"`,
++		`"kind": "runtimegosched"`,
++		`"goexit": true`,
++	} {
++		if strings.Contains(out, forbidden) {
++			t.Errorf("exported JSON contains %s: non-stdlib runtime call was intercepted as stdlib runtime", forbidden)
++		}
++	}
++}
