@@ -1,0 +1,523 @@
+diff --git a/cmd/graalgo/main.go b/cmd/graalgo/main.go
+--- a/cmd/graalgo/main.go
++++ b/cmd/graalgo/main.go
+@@ -24,6 +24,7 @@
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
++	"strings"
+ )
+ 
+ const version = "0.4.0"
+@@ -252,6 +253,15 @@
+ 		if a == "./..." {
+ 			return nil, fmt.Errorf("./... not yet supported")
+ 		}
++		// Bare names are import paths first, like `go`: resolve the
++		// argument to a package directory (same-module via the
++		// enclosing go.mod, stdlib via GOROOT, third-party via the
++		// module cache then GOPATH/src). Explicit filesystem
++		// arguments (./, ../, absolute paths, .go files) skip the
++		// lookup and keep today's filesystem handling.
++		if dir, ok := packageDirForArg(a); ok {
++			a = dir
++		}
+ 		fi, err := os.Stat(a)
+ 		if err != nil {
+ 			// Maybe a .go file that doesn't exist yet (typo) — let
+@@ -277,3 +287,46 @@
+ 	}
+ 	return files, nil
+ }
++
++// isFilesystemArg reports whether a is an explicit filesystem reference
++// rather than a bare package name: a relative (./, ../, .) or absolute
++// path, or a .go file. Such arguments are never import paths.
++func isFilesystemArg(a string) bool {
++	return strings.HasPrefix(a, ".") || filepath.IsAbs(a) || strings.HasSuffix(a, ".go")
++}
++
++// packageDirForArg maps a bare package argument to its source directory:
++// an import path resolved through the driver's existing import→directory
++// mapping (importDirForPath: same-module packages via the enclosing
++// go.mod, stdlib via GOROOT, third-party via the module cache then
++// GOPATH/src). It reports ok=false for explicit filesystem arguments
++// and for names that resolve to nothing, leaving the caller's existing
++// filesystem handling (including the local-directory fallback for bare
++// directory names) untouched.
++//
++// Precedence is import-first, like `go`: `graalgo build fmt` means the
++// stdlib package even when a ./fmt directory exists (use ./fmt for the
++// directory). This is a deliberate, documented change from the old
++// driver behavior, which always preferred the local directory; it
++// preserves every other bare-directory invocation, because a bare name
++// that is not a resolvable import path still falls through to the
++// caller's filesystem handling.
++//
++// Version note: module-cache lookup reuses findInModCache, which takes
++// the first matching cached version; the frontend's disk importer takes
++// the highest. Version selection policy (go.mod pins) is R20-F03's
++// territory — this function intentionally does not change it.
++func packageDirForArg(a string) (string, bool) {
++	if isFilesystemArg(a) {
++		return "", false
++	}
++	cwd, err := os.Getwd()
++	if err != nil {
++		cwd = "."
++	}
++	dir, err := importDirForPath(cwd, a)
++	if err != nil {
++		return "", false
++	}
++	return dir, true
++}
+diff --git a/cmd/graalgo/test.go b/cmd/graalgo/test.go
+--- a/cmd/graalgo/test.go
++++ b/cmd/graalgo/test.go
+@@ -141,6 +141,12 @@
+ 		if p == "./..." {
+ 			return nil, fmt.Errorf("./... not yet supported")
+ 		}
++		// Bare names are import paths first, like `go` (same
++		// resolution as resolveFiles; see packageDirForArg).
++		if dir, ok := packageDirForArg(p); ok {
++			dirs = append(dirs, dir)
++			continue
++		}
+ 		fi, err := os.Stat(p)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("no such file or directory: %s", p)
+diff --git a/cmd/graalgo/resolve_import_test.go b/cmd/graalgo/resolve_import_test.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/graalgo/resolve_import_test.go
+@@ -0,0 +1,428 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++)
++
++// R20-F04: resolveFiles and resolveTestDirs must resolve import paths to
++// package directories (same-module via the enclosing go.mod, stdlib via
++// GOROOT, third-party via the module cache then GOPATH/src), like `go`.
++// Previously both functions did os.Stat on each argument, so any import
++// path failed with "no such file or directory" even though the usage
++// strings advertise [packages].
++
++// tempModuleDir creates a scratch module with the given module path and
++// returns its root directory.
++func tempModuleDir(t *testing.T, modulePath string) string {
++	t.Helper()
++	dir := filepath.Join(t.TempDir(), "mod")
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	writeFile(t, dir, "go.mod", "module "+modulePath+"\n\ngo 1.21\n")
++	return dir
++}
++
++// chdirTo changes the working directory to dir for the duration of the test.
++func chdirTo(t *testing.T, dir string) {
++	t.Helper()
++	oldWd, err := os.Getwd()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Chdir(dir); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(oldWd) })
++}
++
++// setTestGoRoot points GOROOT at the toolchain that built the test binary,
++// so findGofmt/findGoBinary resolve deterministically in command tests.
++func setTestGoRoot(t *testing.T) {
++	t.Helper()
++	t.Setenv("GOROOT", runtime.GOROOT())
++}
++
++// containsFile fails unless want is exactly one of files.
++func containsFile(t *testing.T, files []string, want string) {
++	t.Helper()
++	for _, f := range files {
++		if f == want {
++			return
++		}
++	}
++	t.Errorf("files = %v, want %q included", files, want)
++}
++
++// writeFakeBackend creates a fake graalgo installation root whose
++// graalgo-sync-run records every invocation to a log file and:
++//   - exits 0 for --check invocations, and for --emit-wire invocations
++//     (writing a minimal wire JSON to the --emit-wire path),
++//   - otherwise prints FAKE-RUN with its arguments and exits 0.
++//
++// It returns the root and the invocation log path.
++func writeFakeBackend(t *testing.T) (root, logPath string) {
++	t.Helper()
++	root = filepath.Join(t.TempDir(), "fake-root")
++	backendDir := filepath.Join(root, "internal", "backend")
++	if err := os.MkdirAll(backendDir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	logPath = filepath.Join(t.TempDir(), "invocations.log")
++	script := "#!/usr/bin/env bash\n" +
++		"printf '%s\\n' \"INVOCATION: $*\" >> " + logPath + "\n" +
++		"for a in \"$@\"; do\n" +
++		"  case \"$a\" in\n" +
++		"    --emit-wire=*) printf '%s' '{\"frontend\":\"v1\",\"functions\":[]}' > \"${a#--emit-wire=}\" ;;\n" +
++		"  esac\n" +
++		"done\n" +
++		"if [ \"$1\" = \"--check\" ] || [ \"$2\" = \"--check\" ]; then exit 0; fi\n" +
++		"printf 'FAKE-RUN %s\\n' \"$*\"\n" +
++		"exit 0\n"
++	if err := os.WriteFile(filepath.Join(backendDir, "graalgo-sync-run"), []byte(script), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	return root, logPath
++}
++
++func TestResolveFilesImportPathSameModule(t *testing.T) {
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "cmd/hello/main.go", "package main\n\nfunc main() {}\n")
++	writeFile(t, mod, "cmd/hello/util.go", "package main\n\nfunc util() {}\n")
++	chdirTo(t, mod)
++
++	files, err := resolveFiles([]string{"example.com/m/cmd/hello"})
++	if err != nil {
++		t.Fatalf("resolveFiles(import path): %v", err)
++	}
++	containsFile(t, files, filepath.Join(mod, "cmd", "hello", "main.go"))
++	containsFile(t, files, filepath.Join(mod, "cmd", "hello", "util.go"))
++
++	// From a subdirectory of the same module: module lookup walks up.
++	chdirTo(t, filepath.Join(mod, "cmd", "hello"))
++	files, err = resolveFiles([]string{"example.com/m/cmd/hello"})
++	if err != nil {
++		t.Fatalf("resolveFiles(import path from subdir): %v", err)
++	}
++	containsFile(t, files, filepath.Join(mod, "cmd", "hello", "main.go"))
++}
++
++func TestResolveFilesImportPathModuleRoot(t *testing.T) {
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "main.go", "package main\n\nfunc main() {}\n")
++	chdirTo(t, mod)
++
++	files, err := resolveFiles([]string{"example.com/m"})
++	if err != nil {
++		t.Fatalf("resolveFiles(module path): %v", err)
++	}
++	containsFile(t, files, filepath.Join(mod, "main.go"))
++}
++
++func TestResolveFilesImportPathStdlib(t *testing.T) {
++	goroot := runtime.GOROOT()
++	if goroot == "" {
++		t.Skip("no GOROOT")
++	}
++	for _, tc := range []struct {
++		path string
++		file string
++	}{
++		{"fmt", filepath.Join(goroot, "src", "fmt", "print.go")},
++		{"net/http", filepath.Join(goroot, "src", "net", "http", "server.go")},
++	} {
++		files, err := resolveFiles([]string{tc.path})
++		if err != nil {
++			t.Fatalf("resolveFiles(%q): %v", tc.path, err)
++		}
++		if len(files) == 0 {
++			t.Fatalf("resolveFiles(%q) = no files", tc.path)
++		}
++		prefix := filepath.Join(goroot, "src", filepath.FromSlash(tc.path)) + string(filepath.Separator)
++		for _, f := range files {
++			if !strings.HasPrefix(f, prefix) {
++				t.Errorf("resolveFiles(%q): file %q is not under %q", tc.path, f, prefix)
++			}
++			if !strings.HasSuffix(f, ".go") {
++				t.Errorf("resolveFiles(%q): file %q is not a .go file", tc.path, f)
++			}
++		}
++		containsFile(t, files, tc.file)
++	}
++}
++
++func TestResolveFilesImportPathModuleCache(t *testing.T) {
++	// A single pinned version in a scratch module cache: the package and
++	// its subpackage both resolve. Which version is picked when several
++	// are cached is R20-F03's territory and is deliberately not pinned.
++	cache := t.TempDir()
++	writeFile(t, cache, filepath.Join("example.com", "thing@v1.2.3", "a.go"), "package thing\n\nfunc A() {}\n")
++	writeFile(t, cache, filepath.Join("example.com", "thing@v1.2.3", "sub", "b.go"), "package sub\n\nfunc B() {}\n")
++	t.Setenv("GOMODCACHE", cache)
++
++	files, err := resolveFiles([]string{"example.com/thing"})
++	if err != nil {
++		t.Fatalf("resolveFiles(module cache): %v", err)
++	}
++	containsFile(t, files, filepath.Join(cache, "example.com", "thing@v1.2.3", "a.go"))
++
++	files, err = resolveFiles([]string{"example.com/thing/sub"})
++	if err != nil {
++		t.Fatalf("resolveFiles(module cache subpackage): %v", err)
++	}
++	containsFile(t, files, filepath.Join(cache, "example.com", "thing@v1.2.3", "sub", "b.go"))
++}
++
++func TestResolveFilesImportPathGopath(t *testing.T) {
++	gp := t.TempDir()
++	writeFile(t, gp, filepath.Join("src", "example.com", "other", "c.go"), "package other\n\nfunc C() {}\n")
++	// An empty module cache, so the GOPATH/src fallback is exercised.
++	t.Setenv("GOMODCACHE", t.TempDir())
++	t.Setenv("GOPATH", gp)
++
++	files, err := resolveFiles([]string{"example.com/other"})
++	if err != nil {
++		t.Fatalf("resolveFiles(GOPATH): %v", err)
++	}
++	containsFile(t, files, filepath.Join(gp, "src", "example.com", "other", "c.go"))
++}
++
++func TestResolveFilesImportPathNotFound(t *testing.T) {
++	// Guards the error path: an unresolvable import path must still
++	// fail, naming the argument (this passed before the fix too — it
++	// pins the error, it does not demonstrate the fix).
++	t.Setenv("GOMODCACHE", t.TempDir())
++	t.Setenv("GOPATH", t.TempDir())
++	if _, err := resolveFiles([]string{"example.com/does/not/exist"}); err == nil {
++		t.Errorf("resolveFiles(unknown import path) = no error, want error")
++	} else if !strings.Contains(err.Error(), "example.com/does/not/exist") {
++		t.Errorf("resolveFiles(unknown import path) error = %v, want it to name the argument", err)
++	}
++}
++
++func TestResolveFilesImportPathDoesNotShadowStdlib(t *testing.T) {
++	// Import-first precedence, like `go`: a local directory named fmt
++	// does not shadow the stdlib package of the same name; use ./fmt
++	// for the directory. (Deliberate change from the old driver
++	// behavior, which always preferred the local directory.)
++	goroot := runtime.GOROOT()
++	if goroot == "" {
++		t.Skip("no GOROOT")
++	}
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, filepath.Join("fmt", "local.go"), "package main\n\nfunc main() {}\n")
++	chdirTo(t, mod)
++
++	files, err := resolveFiles([]string{"fmt"})
++	if err != nil {
++		t.Fatalf("resolveFiles(%q): %v", "fmt", err)
++	}
++	containsFile(t, files, filepath.Join(goroot, "src", "fmt", "print.go"))
++	for _, f := range files {
++		if f == filepath.Join(mod, "fmt", "local.go") {
++			t.Errorf("resolveFiles(%q) = %v, local ./fmt must not shadow stdlib fmt", "fmt", files)
++		}
++	}
++
++	// ... and the local directory is still reachable explicitly.
++	files, err = resolveFiles([]string{"./fmt"})
++	if err != nil {
++		t.Fatalf("resolveFiles(%q): %v", "./fmt", err)
++	}
++	containsFile(t, files, filepath.Join("fmt", "local.go"))
++}
++
++func TestResolveFilesFilesystemFormsStillWork(t *testing.T) {
++	// Guards for the argument forms that already worked: they must
++	// keep working exactly as before (these passed before the fix too).
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "pkg/a.go", "package pkg\n\nfunc A() {}\n")
++	writeFile(t, mod, "pkg/b_test.go", "package pkg\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {}\n")
++
++	// An explicitly named .go file passes through unchanged.
++	f := filepath.Join(mod, "pkg", "b_test.go")
++	files, err := resolveFiles([]string{f})
++	if err != nil {
++		t.Fatalf("resolveFiles(explicit file): %v", err)
++	}
++	if len(files) != 1 || files[0] != f {
++		t.Errorf("resolveFiles(explicit file) = %v, want [%q]", files, f)
++	}
++
++	// A directory argument expands to its .go files.
++	files, err = resolveFiles([]string{filepath.Join(mod, "pkg")})
++	if err != nil {
++		t.Fatalf("resolveFiles(directory): %v", err)
++	}
++	containsFile(t, files, filepath.Join(mod, "pkg", "a.go"))
++	containsFile(t, files, filepath.Join(mod, "pkg", "b_test.go"))
++
++	// "." expands the current directory (relative names, as today).
++	chdirTo(t, filepath.Join(mod, "pkg"))
++	files, err = resolveFiles([]string{"."})
++	if err != nil {
++		t.Fatalf("resolveFiles(%q): %v", ".", err)
++	}
++	containsFile(t, files, "a.go")
++
++	// A nonexistent .go file passes through for the backend to report.
++	missing := filepath.Join(mod, "pkg", "missing.go")
++	files, err = resolveFiles([]string{missing})
++	if err != nil {
++		t.Fatalf("resolveFiles(nonexistent .go file): %v", err)
++	}
++	if len(files) != 1 || files[0] != missing {
++		t.Errorf("resolveFiles(nonexistent .go file) = %v, want [%q]", files, missing)
++	}
++}
++
++func TestResolveTestDirsImportPath(t *testing.T) {
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "cmd/hello/main.go", "package main\n\nfunc main() {}\n")
++	writeFile(t, mod, "cmd/hello/main_test.go", "package main\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {}\n")
++	chdirTo(t, mod)
++
++	dirs, err := resolveTestDirs([]string{"example.com/m/cmd/hello"})
++	if err != nil {
++		t.Fatalf("resolveTestDirs(import path): %v", err)
++	}
++	want := filepath.Join(mod, "cmd", "hello")
++	if len(dirs) != 1 || dirs[0] != want {
++		t.Errorf("resolveTestDirs(import path) = %v, want [%q]", dirs, want)
++	}
++
++	// A single .go file still resolves to its directory.
++	dirs, err = resolveTestDirs([]string{filepath.Join(mod, "cmd", "hello", "main_test.go")})
++	if err != nil {
++		t.Fatalf("resolveTestDirs(.go file): %v", err)
++	}
++	if len(dirs) != 1 || dirs[0] != want {
++		t.Errorf("resolveTestDirs(.go file) = %v, want [%q]", dirs, want)
++	}
++
++	// An unknown import path still errors.
++	t.Setenv("GOMODCACHE", t.TempDir())
++	t.Setenv("GOPATH", t.TempDir())
++	if _, err := resolveTestDirs([]string{"example.com/nope"}); err == nil {
++		t.Errorf("resolveTestDirs(unknown import path) = no error, want error")
++	}
++}
++
++func TestCmdRunImportPath(t *testing.T) {
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "cmd/hello/main.go", "package main\n\nfunc main() {}\n")
++	writeFile(t, mod, "cmd/hello/util.go", "package main\n\nfunc util() {}\n")
++	chdirTo(t, mod)
++	root, logPath := writeFakeBackend(t)
++
++	// Import path, with program arguments after it.
++	if code := cmdRun(root, []string{"example.com/m/cmd/hello", "a1", "--flag"}); code != 0 {
++		t.Fatalf("cmdRun(import path) = %d, want 0", code)
++	}
++	log, err := os.ReadFile(logPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// The backend must have been invoked with the resolved package
++	// files (not the import path) plus the program arguments.
++	if !strings.Contains(string(log), filepath.Join(mod, "cmd", "hello", "main.go")) {
++		t.Errorf("backend log = %q, want the resolved main.go in the run invocation", log)
++	}
++	if !strings.Contains(string(log), "-- a1 --flag") {
++		t.Errorf("backend log = %q, want program args after --", log)
++	}
++
++	// A directory argument still works.
++	if code := cmdRun(root, []string{"cmd/hello"}); code != 0 {
++		t.Errorf("cmdRun(directory) = %d, want 0", code)
++	}
++	// Explicit .go files still work (they bypass package resolution).
++	if code := cmdRun(root, []string{filepath.Join(mod, "cmd", "hello", "main.go")}); code != 0 {
++		t.Errorf("cmdRun(.go file) = %d, want 0", code)
++	}
++}
++
++func TestCmdBuildImportPath(t *testing.T) {
++	setTestGoRoot(t)
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "cmd/hello/main.go", "package main\n\nfunc main() {}\n")
++	chdirTo(t, mod)
++	root, _ := writeFakeBackend(t)
++
++	out := filepath.Join(t.TempDir(), "hello")
++	if code := cmdBuild(root, []string{"-o", out, "example.com/m/cmd/hello"}); code != 0 {
++		t.Fatalf("cmdBuild(import path) = %d, want 0", code)
++	}
++	fi, err := os.Stat(out)
++	if err != nil {
++		t.Fatalf("artifact %s not created: %v", out, err)
++	}
++	if fi.Mode()&0o111 == 0 {
++		t.Errorf("artifact %s is not executable (mode %v)", out, fi.Mode())
++	}
++	if fi.Size() == 0 {
++		t.Errorf("artifact %s is empty", out)
++	}
++}
++
++func TestCmdVetImportPath(t *testing.T) {
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "cmd/hello/main.go", "package main\n\nfunc main() {}\n")
++	chdirTo(t, mod)
++	root, _ := writeFakeBackend(t)
++
++	if code := cmdVet(root, []string{"example.com/m/cmd/hello"}); code != 0 {
++		t.Fatalf("cmdVet(import path) = %d, want 0", code)
++	}
++	if code := cmdVet(root, []string{"cmd/hello"}); code != 0 {
++		t.Errorf("cmdVet(directory) = %d, want 0", code)
++	}
++}
++
++func TestCmdFmtImportPath(t *testing.T) {
++	setTestGoRoot(t)
++	mod := tempModuleDir(t, "example.com/m")
++	mainGo := filepath.Join(mod, "cmd", "hello", "main.go")
++	unformatted := "package main\n\nfunc  main()  {  println(\"x\")  }\n"
++	writeFile(t, mod, "cmd/hello/main.go", unformatted)
++	chdirTo(t, mod)
++	root := filepath.Join(t.TempDir(), "fake-root") // cmdFmt ignores root
++
++	format := func(args ...string) {
++		t.Helper()
++		if code := cmdFmt(root, args); code != 0 {
++			t.Fatalf("cmdFmt(%v) = %d, want 0", args, code)
++		}
++		data, err := os.ReadFile(mainGo)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if strings.Contains(string(data), "func  main") {
++			t.Fatalf("cmdFmt(%v) did not format the file: %q", args, data)
++		}
++	}
++	// Import path form.
++	format("example.com/m/cmd/hello")
++	// Directory form.
++	writeFile(t, mod, "cmd/hello/main.go", unformatted)
++	format("cmd/hello")
++	// Explicit .go file form.
++	writeFile(t, mod, "cmd/hello/main.go", unformatted)
++	format(mainGo)
++}
++
++func TestCmdTestImportPath(t *testing.T) {
++	mod := tempModuleDir(t, "example.com/m")
++	writeFile(t, mod, "cmd/hello/main.go", "package main\n\nfunc Add(a, b int) int { return a + b }\n")
++	writeFile(t, mod, "cmd/hello/main_test.go", "package main\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal(\"bad add\") } }\n")
++	chdirTo(t, mod)
++	root, _ := writeFakeBackend(t)
++
++	if code := cmdTest(root, []string{"example.com/m/cmd/hello"}); code != 0 {
++		t.Fatalf("cmdTest(import path) = %d, want 0", code)
++	}
++}
