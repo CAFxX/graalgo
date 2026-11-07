@@ -1,0 +1,2890 @@
+diff --git a/docs/arch/bridge-inventory.md b/docs/arch/bridge-inventory.md
+index a429d07..dd0f947 100644
+--- a/docs/arch/bridge-inventory.md
++++ b/docs/arch/bridge-inventory.md
+@@ -35,6 +35,12 @@ deliverable until the design lands.
+   allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
+   intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
+   `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
++  (Partial, 2026-11-07, rev1107-22-f1: the `tools/stdlib-linkdiff`
++  synthetic-scan machinery was deleted early — tool v2.0.0 no longer scans
++  synthetic sources, credits their exports, or marks files shadowed — so
++  the skip-list measures the true gap while the packages remain. The
++  per-package retirement list is
++  [synthetic-retirement-inventory.md](synthetic-retirement-inventory.md).)
+ - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
+   parser→checker→emitter pipeline) replaces the name-keyed export machinery
+   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
+@@ -138,6 +144,13 @@ deliverable until the design lands.
+   general disk mechanism"), `real-nethttp` (`net`/`net/http`),
+   `real-reflect2` (`reflect`).
+ - **Phase:** 1 (the four in-flight packages) → 2 (remainder).
++- **Partial retirement (rev1107-22-f1, 2026-11-07):** the linkdiff
++  synthetic-scan machinery is deleted (tool v2.0.0); the per-package
++  retirement inventory is
++  [synthetic-retirement-inventory.md](synthetic-retirement-inventory.md).
++  Finding recorded there: none of the 130 live packages states a
++  retirement condition in its file header — every row is "needs design"
++  until a Phase 3 lane fills it in.
+ 
+ ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing
+ 
+diff --git a/docs/arch/synthetic-retirement-inventory.md b/docs/arch/synthetic-retirement-inventory.md
+new file mode 100644
+index 0000000..6798047
+--- /dev/null
++++ b/docs/arch/synthetic-retirement-inventory.md
+@@ -0,0 +1,215 @@
++# Synthetic stdlib retirement inventory
++
++Per-package retirement inventory for the graalgo synthetic stdlib
++packages (REVIEW-2026-11-07-22 F1/F2, lane rev1107-22-f1).
++Companion to the bridge inventory
++([bridge-inventory.md](bridge-inventory.md) B-4) and to the
++`stdlib-linkdiff` v2.0.0 change in the same lane: the tool no longer
++credits synthetic packages, so its skip-list is now the honest
++worklist, and this file is the per-package side of that worklist —
++one row per synthetic package, with the root-cause fix that retires it
++once that fix is known.
++
++## Method
++
++- Source of truth: the `syntheticSources` map in
++  [internal/frontend/synth_machinery.go](../../internal/frontend/synth_machinery.go)
++  plus the `dedicatedSyntheticStubs` map in
++  [internal/frontend/export.go](../../internal/frontend/export.go), both read at
++  HEAD `59f0a247` (2026-11-07). Keys, source consts and declaring files
++  were extracted mechanically (AST-level key parse + const lookup); the
++  retirement condition for each row was taken from the declaring file's
++  header comment (sentences containing "retir*"), falling back to
++  "needs design" when the header states none.
++- Counts: **130** `syntheticSources` keys + **2** dedicated stubs
++  (`runtime`, `unsafe`) = **132** shadowed import paths. (The review's
++  "140 top-level `synth_*.go` files" counts files, not packages — a
++  different unit: several files carry multiple packages' sources, and
++  a few carry none, e.g. test helpers.)
++- `reflect_m7` is a pseudo-package, not a real import path: the retired
++  `synth_reflect.go` source re-registered under a distinct name so the M7
++  desugaring helpers (`__reflect_taglookup`, `reflectTagPair`) keep
++  resolving. It retires when the M7 desugaring no longer needs those
++  helpers — needs design.
++
++## Finding: no per-package retirement condition is recorded
++
++**All 130 live packages are "needs design".** The synth file headers
++describe the mechanism (embedded real-Go source, overlay import, wire
++emission) and cite design docs, but none states what root-cause fix
++retires that package. The bridge inventory (B-4) requires each synthetic
++to survive only "with a documented, specific, verifiable reason" — the
++reason is documented per file, but the *retirement* side is not. Filling
++in this column is the Phase 3 program's first step; the retired rows
++below are the model for what a filled-in row looks like.
++
++## Live synthetic packages (130)
++
++| import path | source const | declaring file | retires when |
++|---|---|---|---|
++| `archive/tar` | `syntheticArchiveTarSource` | `synth_archive_tar.go` | needs design — no retirement condition stated in the file header |
++| `archive/zip` | `syntheticArchiveZipSource` | `synth_archive_zip.go` | needs design — no retirement condition stated in the file header |
++| `bufio` | `syntheticBufioSource` | `synth_bufio.go` | needs design — no retirement condition stated in the file header |
++| `bytes` | `syntheticBytesSource` | `synth_bytes.go` | needs design — no retirement condition stated in the file header |
++| `cmp` | `syntheticCmpSource` | `synth_cmp.go` | needs design — no retirement condition stated in the file header |
++| `compress/bzip2` | `syntheticCompressBzip2Source` | `synth_compress_bzip2.go` | needs design — no retirement condition stated in the file header |
++| `compress/flate` | `syntheticCompressFlateSource` | `synth_compress_flate.go` | needs design — no retirement condition stated in the file header |
++| `compress/gzip` | `syntheticCompressGzipSource` | `synth_compress_gzip.go` | needs design — no retirement condition stated in the file header |
++| `compress/lzw` | `syntheticCompressLzwSource` | `synth_compress_lzw.go` | needs design — no retirement condition stated in the file header |
++| `compress/zlib` | `syntheticCompressZlibSource` | `synth_compress_zlib.go` | needs design — no retirement condition stated in the file header |
++| `container/heap` | `syntheticContainerHeapSource` | `synth_container_heap.go` | needs design — no retirement condition stated in the file header |
++| `container/list` | `syntheticContainerListSource` | `synth_container_list.go` | needs design — no retirement condition stated in the file header |
++| `container/ring` | `syntheticContainerRingSource` | `synth_container_ring.go` | needs design — no retirement condition stated in the file header |
++| `context` | `syntheticContextSource` | `synth_time_context.go` | needs design — no retirement condition stated in the file header |
++| `crypto` | `syntheticCryptoSource` | `synth_crypto.go` | needs design — no retirement condition stated in the file header |
++| `crypto/aes` | `syntheticAesSource` | `synth_crypto_aes.go` | needs design — no retirement condition stated in the file header |
++| `crypto/cipher` | `syntheticCipherSource, syntheticCipherGcmSource` | `synth_crypto_cipher.go, synth_crypto_cipher_gcm.go` | needs design — no retirement condition stated in the file header |
++| `crypto/des` | `syntheticDesSource` | `synth_crypto_des.go` | needs design — no retirement condition stated in the file header |
++| `crypto/dsa` | `syntheticCryptoDsaSource` | `synth_crypto_dsa.go` | needs design — no retirement condition stated in the file header |
++| `crypto/ecdh` | `syntheticCryptoEcdhSource` | `synth_crypto_ecdh.go` | needs design — no retirement condition stated in the file header |
++| `crypto/ecdsa` | `syntheticCryptoEcdsaSource` | `synth_crypto_ecdsa.go` | needs design — no retirement condition stated in the file header |
++| `crypto/ed25519` | `syntheticCryptoEd25519Source` | `synth_crypto_ed25519.go` | needs design — no retirement condition stated in the file header |
++| `crypto/elliptic` | `syntheticCryptoEllipticSource` | `synth_crypto_elliptic.go` | needs design — no retirement condition stated in the file header |
++| `crypto/hkdf` | `syntheticCryptoHkdfSource` | `synth_crypto_hkdf.go` | needs design — no retirement condition stated in the file header |
++| `crypto/hmac` | `syntheticHmacSource` | `synth_crypto_hmac.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/boring` | `syntheticCryptoBoringSource` | `synth_crypto_boring.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/boring/bbig` | `syntheticCryptoBbigSource` | `synth_crypto_bbig.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/constanttime` | `syntheticCryptoConstanttimeSource` | `synth_crypto_constanttime.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140` | `syntheticCryptoFips140Source` | `synth_crypto_fips140.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/alias` | `syntheticCryptoFips140AliasSource` | `synth_crypto_fips140_alias.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/bigmod` | `syntheticCryptoFips140BigmodSource` | `synth_crypto_fips140_bigmod.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/check` | `syntheticCryptoFips140CheckSource` | `synth_crypto_fips140_check.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/drbg` | `syntheticCryptoFips140DrbgSource` | `synth_crypto_fips140_drbg.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/ecdh` | `syntheticCryptoFips140EcdhSource` | `synth_crypto_fips140_ecdh.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/ecdsa` | `syntheticCryptoFips140EcdsaSource` | `synth_crypto_fips140_ecdsa.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/ed25519` | `syntheticCryptoFips140Ed25519Source` | `synth_crypto_fips140_ed25519.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/edwards25519` | `syntheticCryptoFips140Edwards25519Source` | `synth_crypto_fips140_edwards25519.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/edwards25519/field` | `syntheticCryptoFips140Edwards25519FieldSource` | `synth_crypto_fips140_edwards25519_field.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/hkdf` | `syntheticCryptoFips140HkdfSource` | `synth_crypto_fips140_hkdf.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/hmac` | `syntheticCryptoFips140HmacSource` | `synth_crypto_fips140_hmac.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/nistec` | `syntheticCryptoFips140NistecSource` | `synth_crypto_fips140_nistec.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/nistec/fiat` | `syntheticCryptoFips140NistecFiatSource` | `synth_crypto_fips140_nistec_fiat.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/pbkdf2` | `syntheticCryptoFips140Pbkdf2Source` | `synth_crypto_fips140_pbkdf2.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/rsa` | `syntheticCryptoFips140RsaSource` | `synth_crypto_fips140_rsa.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/sha256` | `syntheticCryptoFips140Sha256Source` | `synth_crypto_fips140_sha256.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/sha3` | `syntheticCryptoFips140Sha3Source` | `synth_crypto_fips140_sha3.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/sha512` | `syntheticCryptoFips140Sha512Source` | `synth_crypto_fips140_sha512.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140/subtle` | `syntheticCryptoFips140SubtleSource` | `synth_crypto_fips140_subtle.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140cache` | `syntheticCryptoFips140cacheSource` | `synth_crypto_fips140cache.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140deps/byteorder` | `syntheticCryptoFips140depsByteorderSource` | `synth_crypto_fips140deps_byteorder.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140hash` | `syntheticCryptoFips140hashSource` | `synth_crypto_fips140hash.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/fips140only` | `syntheticCryptoFips140onlySource` | `synth_crypto_fips140only.go` | needs design — no retirement condition stated in the file header |
++| `crypto/internal/rand` | `syntheticCryptoInternalRandSource` | `synth_crypto_internal_rand.go` | needs design — no retirement condition stated in the file header |
++| `crypto/md5` | `syntheticMd5Source` | `synth_crypto_md5.go` | needs design — no retirement condition stated in the file header |
++| `crypto/pbkdf2` | `syntheticCryptoPbkdf2Source` | `synth_crypto_pbkdf2.go` | needs design — no retirement condition stated in the file header |
++| `crypto/rand` | `syntheticRandSource` | `synth_crypto_rand.go` | needs design — no retirement condition stated in the file header |
++| `crypto/rc4` | `syntheticRc4Source` | `synth_crypto_rc4.go` | needs design — no retirement condition stated in the file header |
++| `crypto/rsa` | `syntheticCryptoRsaSource` | `synth_crypto_rsa.go` | needs design — no retirement condition stated in the file header |
++| `crypto/sha1` | `syntheticSha1Source` | `synth_crypto_sha1.go` | needs design — no retirement condition stated in the file header |
++| `crypto/sha256` | `syntheticSha256Source` | `synth_crypto_sha256.go` | needs design — no retirement condition stated in the file header |
++| `crypto/sha3` | `syntheticSha3Source` | `synth_crypto_sha3.go` | needs design — no retirement condition stated in the file header |
++| `crypto/sha512` | `syntheticSha512Source` | `synth_crypto_sha512.go` | needs design — no retirement condition stated in the file header |
++| `crypto/subtle` | `syntheticSubtleSource` | `synth_crypto_subtle.go` | needs design — no retirement condition stated in the file header |
++| `crypto/tls` | `syntheticCryptoTlsSource` | `synth_crypto_tls.go` | needs design — no retirement condition stated in the file header |
++| `crypto/x509` | `syntheticCryptoX509Source` | `synth_crypto_x509.go` | needs design — no retirement condition stated in the file header |
++| `crypto/x509/pkix` | `syntheticCryptoX509PkixSource` | `synth_crypto_x509_pkix.go` | needs design — no retirement condition stated in the file header |
++| `encoding` | `syntheticEncodingSource` | `synth_encoding.go` | needs design — no retirement condition stated in the file header |
++| `encoding/ascii85` | `syntheticAscii85Source` | `synth_ascii85.go` | needs design — no retirement condition stated in the file header |
++| `encoding/asn1` | `syntheticAsn1Source` | `synth_asn1.go` | needs design — no retirement condition stated in the file header |
++| `encoding/base32` | `syntheticBase32Source` | `synth_base32.go` | needs design — no retirement condition stated in the file header |
++| `encoding/base64` | `syntheticBase64Source` | `synth_base64.go` | needs design — no retirement condition stated in the file header |
++| `encoding/binary` | `syntheticBinarySource` | `synth_binary.go` | needs design — no retirement condition stated in the file header |
++| `encoding/csv` | `syntheticCsvSource` | `synth_enc_csv_gob.go` | needs design — no retirement condition stated in the file header |
++| `encoding/gob` | `syntheticGobSource` | `synth_enc_csv_gob.go` | needs design — no retirement condition stated in the file header |
++| `encoding/hex` | `syntheticHexSource` | `synth_hex.go` | needs design — no retirement condition stated in the file header |
++| `encoding/json` | `syntheticJsonSource` | `synth_json.go` | needs design — no retirement condition stated in the file header |
++| `encoding/pem` | `syntheticPemSource` | `synth_pem.go` | needs design — no retirement condition stated in the file header |
++| `encoding/xml` | `syntheticXmlSource` | `synth_xml.go` | needs design — no retirement condition stated in the file header |
++| `errors` | `syntheticErrorsSource` | `synth_errors.go` | needs design — no retirement condition stated in the file header |
++| `flag` | `syntheticFlagSource` | `synth_flag.go` | needs design — no retirement condition stated in the file header |
++| `golang.org/x/crypto/cryptobyte` | `syntheticCryptobyteSource` | `synth_cryptobyte.go` | needs design — no retirement condition stated in the file header |
++| `golang.org/x/crypto/cryptobyte/asn1` | `syntheticCryptobyteAsn1Source` | `synth_cryptobyte_asn1.go` | needs design — no retirement condition stated in the file header |
++| `hash` | `syntheticHashSource` | `synth_crypto_hash.go` | needs design — no retirement condition stated in the file header |
++| `hash/adler32` | `syntheticAdler32Source` | `synth_hash_adler32.go` | needs design — no retirement condition stated in the file header |
++| `hash/crc32` | `syntheticCrc32Source` | `synth_hash_crc32.go` | needs design — no retirement condition stated in the file header |
++| `hash/crc64` | `syntheticCrc64Source` | `synth_hash_crc64.go` | needs design — no retirement condition stated in the file header |
++| `hash/fnv` | `syntheticFnvSource` | `synth_hash_fnv.go` | needs design — no retirement condition stated in the file header |
++| `hash/maphash` | `syntheticMaphashSource` | `synth_hash_maphash.go` | needs design — no retirement condition stated in the file header |
++| `internal/bytealg` | `syntheticBytealgSource` | `synth_bytealg.go` | needs design — no retirement condition stated in the file header |
++| `internal/byteorder` | `syntheticByteorderSource` | `synth_byteorder.go` | needs design — no retirement condition stated in the file header |
++| `internal/graalgo/fmtstate` | `syntheticFmtstateSource` | `synth_fmtstate.go` | needs design — no retirement condition stated in the file header |
++| `internal/nettrace` | `syntheticNettraceSource` | `synth_nettrace.go` | needs design — no retirement condition stated in the file header |
++| `internal/poll` | `syntheticPollSource` | `synth_poll.go` | needs design — no retirement condition stated in the file header |
++| `internal/singleflight` | `syntheticSingleflightSource` | `synth_singleflight.go` | needs design — no retirement condition stated in the file header |
++| `io` | `syntheticIoSource` | `synth_io.go` | needs design — no retirement condition stated in the file header |
++| `io/fs` | `syntheticIoFsSource` | `synth_iofs.go` | needs design — no retirement condition stated in the file header |
++| `iter` | `syntheticIterSource` | `synth_reflect.go` | needs design — no retirement condition stated in the file header |
++| `maps` | `syntheticMapsSource` | `synth_maps.go` | needs design — no retirement condition stated in the file header |
++| `math` | `syntheticMathSource` | `synth_math.go` | needs design — no retirement condition stated in the file header |
++| `math/big` | `syntheticMathBigSource` | `synth_math_big.go` | needs design — no retirement condition stated in the file header |
++| `math/bits` | `syntheticMathBitsSource` | `synth_mathbits.go` | needs design — no retirement condition stated in the file header |
++| `math/cmplx` | `syntheticMathCmplxSource` | `synth_mathcmplx.go` | needs design — no retirement condition stated in the file header |
++| `math/rand` | `syntheticMathRandFullSource` | `synth_mathrand.go` | needs design — no retirement condition stated in the file header |
++| `math/rand/v2` | `syntheticMathRandV2Source` | `synth_mathrandv2.go` | needs design — no retirement condition stated in the file header |
++| `mime` | `syntheticMimeSource` | `synth_mime.go` | needs design — no retirement condition stated in the file header |
++| `mime/multipart` | `syntheticMimeMultipartSource` | `synth_mime_multipart.go` | needs design — no retirement condition stated in the file header |
++| `mime/quotedprintable` | `syntheticMimeQuotedprintableSource` | `synth_mime_quotedprintable.go` | needs design — no retirement condition stated in the file header |
++| `net` | `syntheticNetSource` | `synth_net.go` | needs design — no retirement condition stated in the file header |
++| `net/netip` | `syntheticNetipSource` | `synth_netip.go` | needs design — no retirement condition stated in the file header |
++| `net/textproto` | `syntheticTextprotoSource` | `synth_textproto.go` | needs design — no retirement condition stated in the file header |
++| `net/url` | `syntheticNeturlSource` | `synth_neturl.go` | needs design — no retirement condition stated in the file header |
++| `os` | `syntheticOsSource` | `synth_os.go` | needs design — no retirement condition stated in the file header |
++| `path` | `syntheticPathSource` | `synth_path.go` | needs design — no retirement condition stated in the file header |
++| `reflect_m7` | `syntheticReflectSource` | `synth_reflect.go` | needs design — no retirement condition stated in the file header |
++| `regexp/syntax` | `syntheticRegexpSyntaxSource` | `synth_regexpsyntax.go` | needs design — no retirement condition stated in the file header |
++| `slices` | `syntheticSlicesSource` | `synth_slices.go` | needs design — no retirement condition stated in the file header |
++| `sort` | `syntheticSortSource` | `synth_sort.go` | needs design — no retirement condition stated in the file header |
++| `strconv` | `syntheticStrconvSource` | `synth_strconv.go` | needs design — no retirement condition stated in the file header |
++| `strings` | `syntheticStringsSource` | `synth_strings.go` | needs design — no retirement condition stated in the file header |
++| `structs` | `syntheticStructsSource` | `synth_structs.go` | needs design — no retirement condition stated in the file header |
++| `syscall` | `syntheticSyscallSource` | `synth_syscall.go` | needs design — no retirement condition stated in the file header |
++| `testing` | `syntheticTestingSource` | `synth_testing.go` | needs design — no retirement condition stated in the file header |
++| `testing/iotest` | `syntheticTestingIotestSource` | `synth_testing_iotest.go` | needs design — no retirement condition stated in the file header |
++| `testing/quick` | `syntheticTestingQuickSource` | `synth_testing_quick.go` | needs design — no retirement condition stated in the file header |
++| `text/scanner` | `syntheticTextScannerSource` | `synth_textscanner.go` | needs design — no retirement condition stated in the file header |
++| `time` | `syntheticTimeSource` | `synth_time_context.go` | needs design — no retirement condition stated in the file header |
++| `unicode` | `syntheticUnicodeSource` | `synth_unicode.go` | needs design — no retirement condition stated in the file header |
++| `unicode/utf16` | `syntheticUnicodeUtf16Source` | `synth_unicode_utf16.go` | needs design — no retirement condition stated in the file header |
++| `unicode/utf8` | `syntheticUnicodeUtf8Source` | `synth_unicode_utf8.go` | needs design — no retirement condition stated in the file header |
++| `unique` | `syntheticUniqueSource` | `synth_unique.go` | needs design — no retirement condition stated in the file header |
++
++## Dedicated synthetic stubs (2, not in `syntheticSources`)
++
++| import path | constructor | retires when |
++|---|---|---|
++| `runtime` | `syntheticRuntimePackage` in `export.go` | needs design — signature-only stub; retires when the real `runtime` package compiles from disk (same bar as the `fmt`/`sync` retirements) |
++| `unsafe` | `syntheticUnsafePackage` in `export.go` | needs design — retires with a byte-addressed value model or a documented trap contract (bridge-inventory B-6) |
++
++## Retired precedents (model rows — what a filled-in retirement looks like)
++
++| import path | retired | how |
++|---|---|---|
++| `reflect` | 2026 (real-reflect lane) | real `reflect` compiles from GOROOT via the disk importer; the wire type table carries field offsets/tags/method tables/signatures |
++| `internal/reflectlite` | 2026 (real-reflect lane) | real `internal/reflectlite` from GOROOT via the disk importer (needed by real `reflect` and real `errors`) |
++| `fmt` | 2026-11-05 (REVIEW-2026-11-05-11) | real `fmt` compiles from GOROOT via the disk importer; p3frontend mirror deleted |
++| `sync` | 2026-11-05 (REVIEW-2026-11-05-11) | real `sync` compiles from GOROOT via the disk importer; p3frontend mirror deleted |
++| `sync/atomic` | 2026-11-05 (REVIEW-2026-11-05-11) | real `sync/atomic` compiles from GOROOT via the disk importer; p3frontend mirror deleted |
++| `net/http` | 2026 (real-nethttp) | real `net/http` compiles from GOROOT via the disk importer |
++| `runtime` (p3frontend mirror) | 2026-11-05 (REVIEW-2026-11-05-11) | p3frontend `runtime` mirror deleted; the live `export.go` stub is NOT retired (see dedicated stubs above) |
++
++## How to use this file
++
++1. A Phase 3 lane picks a row, lands the root-cause fix (real stdlib
++   compiles from disk, or a new P3-M4 intrinsic registration), deletes
++   the `syntheticSources` entry (and the `synth_*.go` source when the
++   last package using it goes), and deletes the row here in the same
++   change — docs are part of the change.
++2. The `stdlib-linkdiff` v2 report after the retirement must show the
++   package's targets leaving the skip-list (or gaining registry
++   provision); a retirement that does not move the v2 skip-list did
++   not retire anything the tool can see.
++3. When the last row is deleted, delete the machinery wholesale per
++   bridge-inventory Phase 3 (`syntheticSources` + import overlay +
++   linkname allowlist + intrinsic predicates + `syncop`/`runtimecaller`
++   wire nodes) and delete this file with it.
++
+diff --git a/tools/stdlib-linkdiff/README.md b/tools/stdlib-linkdiff/README.md
+index ddd7073..9ff1339 100644
+--- a/tools/stdlib-linkdiff/README.md
++++ b/tools/stdlib-linkdiff/README.md
+@@ -11,6 +11,19 @@ growth > 15 twice per release.
+ 
+ No external dependencies. `go vet` clean.
+ 
++## Version note — v2.0.0 baseline reset (rev1107-22-f1, 2026-11-07)
++
++v2.0.0 deletes the synthetic-package machinery: the tool no longer
++scans graalgo's embedded synthetic stdlib packages, no longer credits
++their exports in the provided set, and no longer marks real-stdlib
++files as shadowed. Targets provided only by a synthetic package are
++now MISSING, so `skip_list_size` jumps at the v2 cutover — that jump
++is the honest measurement of the bridge debt, not a regression.
++**Compare v2 reports only against v2 reports** (the SPEC §3.6 growth
++check restarts at the first v2 report); v1.x reports
++(`tools/stdlib-fork/linkname-worklist-m10.md`, `linkname-trial-*`)
++describe the bridged counts and are superseded, not comparable.
++
+ ## Provided set — exactly where each list comes from
+ 
+ The provided symbol set is extracted mechanically from the graalgo tree
+@@ -20,39 +33,29 @@ diff rather than silent staleness.
+ 
+ 1. **P3-M4 intrinsic registry** — `Linknames.register("symbol", …)` calls in
+    `internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java`
+-   (Go→intrinsic direction). Today: `runtime.fastrand`,
+-   `runtime.fastrandn`, `runtime.nanotime`,
+-   `graalgo.runtime.Linknames.callGo`.
+-2. **Synthetic `time`, `context`** — `syntheticTimePackage` /
+-   `syntheticContextPackage` in
+-   `internal/frontend/p3frontend/synth_time_context.go`.
+-   (Retired: the synthetic `runtime`, `fmt`, `sync`, `sync/atomic`
+-   builders in `internal/frontend/p3frontend/importer.go` were
+-   deleted with the fmt/sync retirement (REVIEW-2026-11-05-11) —
+-   those packages now compile from GOROOT via the disk importer,
+-   so no synthetic source provides them, exactly like the earlier
+-   reflect/net/http retirements. The live `runtime` stub in
+-   `internal/frontend/export.go` is likewise not extracted.
+-   Measured consequence: three scanned linknames flip SATISFIED to
+-   MISSING — `sync/atomic.{CompareAndSwap,Store,Swap}Uintptr`
+-   from the shadowed `runtime/atomic_pointer.go` (shadowed-only
+-   bucket; the live MISSING count is unchanged). They ARE provided
+-   by real `sync/atomic` from disk; the tool has no source that
+-   says so.)
+-4. **Normative `time`/`context` sources** — the `syntheticTimeSource` /
+-   `syntheticContextSource` embedded Go sources in
+-   [internal/frontend/synth_time_context.go](../../internal/frontend/synth_time_context.go)
+-   (parsed with go/parser;
+-   only exported declarations are taken). The p3frontend mirrors of (3)
+-   pin these via signature-equality tests.
+-5. **Embedded synthetic stdlib packages (M10)** — every package in the
+-   `syntheticSources` registry
+-   ([internal/frontend/synth_machinery.go](../../internal/frontend/synth_machinery.go)): the embedded Go source
+-   is resolved mechanically (const fragments, `+` chains, parenthesized
+-   concatenations) and parsed with go/parser; exported declarations are
+-   qualified by import path. A source that fails to parse is recorded
+-   on the report's `synthetic_parse_errors` (loud, never silent) and
+-   skipped — one broken synthetic package must not block the diff.
++   (Go→intrinsic direction). This is the ONLY source. The registry
++   includes the `graalgo.*` frozen namespaces (`graalgo.os.open`,
++   `graalgo.net.socket`, `graalgo.x509.parse`, `graalgo.tls.*`) — those
++   are intrinsic registrations, not synthetic credit, and stay provided.
++
++Synthetic stdlib packages are **not** a source (v2.0.0): the former
++sources — the `syntheticTimePackage` / `syntheticContextPackage`
++builders and `syntheticTimeSource` / `syntheticContextSource` embedded
++sources in `internal/frontend/p3frontend/synth_time_context.go`, and
++every package in the `syntheticSources` registry
++(`internal/frontend/synth_machinery.go`) — were deleted from this tool
++by rev1107-22-f1 (REVIEW-2026-11-07-22 F1/F2). The packages themselves
++still exist in `internal/frontend/` (their removal is the Phase 3
++program, per [docs/arch/synthetic-retirement-inventory.md](../../docs/arch/synthetic-retirement-inventory.md));
++this tool simply stops crediting them, so the skip-list measures what
++the intrinsic surface + real-stdlib compilation actually provide.
++
++(Retired earlier, for the record: the synthetic `runtime`, `fmt`,
++`sync`, `sync/atomic` builders in `internal/frontend/p3frontend/importer.go`
++were deleted with the fmt/sync retirement (REVIEW-2026-11-05-11) —
++those packages now compile from GOROOT via the disk importer, exactly
++like the earlier reflect/net/http retirements. The live `runtime` stub
++in `internal/frontend/export.go` was likewise never extracted.)
+ 
+ `--snapshot PATH` writes the extracted set as JSON for the per-release
+ record; `--provided PATH` reads a snapshot instead of extracting.
+@@ -68,20 +71,18 @@ justification and source).
+ 
+ `--json PATH` (default stdout), `--md PATH` (Markdown summary).
+ Top-level `skip_list_size` plus the full `skip_list` (distinct MISSING
+-targets, each with ref count, live ref count, example files, reason),
+-per-linkname `entries` (each carrying `shadowed_by` when its
+-real-stdlib file is superseded by a synthetic package), `duplicates`
++targets, each with ref count, example files, reason),
++per-linkname `entries`, `duplicates`
+ (local names linked more than once), `provided_by_source` counts,
+ `routes_applied`, `stale_routes` (routes that matched zero linknames --
+-also warned about loudly on stderr), `synthetic_parse_errors`
+-(embedded synthetic sources that failed to parse -- loud, never
+-silent), and the `constraint_excluded_sample`.
+-
+-Two headline sizes: `skip_list_size` (the whole scan population --
+-comparable across releases for the SPEC §3.6 growth check) and
+-`live_skip_list_size` (targets referenced by at least one live entry:
+-code graalgo actually compiles -- the actionable work-list subset).
+-The Markdown report renders the live skip-list grouped by target
++also warned about loudly on stderr), and the
++`constraint_excluded_sample`.
++
++There is one headline size, `skip_list_size`: every scanned file is
++real stdlib and every skip-list target is actionable (v2.0.0 removed
++the `live_skip_list_size` / `live refs` split, which existed only
++because synthetic packages superseded real-stdlib files).
++The Markdown report renders the skip-list grouped by target
+ package.
+ 
+ ### Tree resolution
+@@ -125,9 +126,12 @@ Run this on every Go upgrade, as part of the upgrade's Phase 2
+ 3. **Read `SKIP_LIST_SIZE`** from the JSON. Compare against the previous
+    release's report. SPEC §3.6 kill trigger: growth > 15 twice.
+ 4. **Triage new MISSING targets**: for each new skip-list entry decide —
+-   implement the symbol (lands in the P3-M4 registry or a synthetic
+-   package), add a [routes.txt](routes.txt) route with justification, or accept it
+-   onto the skip-list with a recorded reason.
++   implement the symbol (a P3-M4 intrinsic registration, or a
++   root-cause fix that lets the real stdlib package compile from disk),
++   add a [routes.txt](routes.txt) route with justification, or accept it
++   onto the skip-list with a recorded reason. A synthetic package is
++   NOT an acceptable implementation (v2.0.0) — see
++   [docs/arch/synthetic-retirement-inventory.md](../../docs/arch/synthetic-retirement-inventory.md).
+ 5. **Diff [routes.txt](routes.txt)** against the previous release; every added or
+    removed route needs its justification reviewed.
+ 6. **Diff the provided snapshot** (`provided-<ver>.json`) against the
+@@ -137,22 +141,15 @@ Run this on every Go upgrade, as part of the upgrade's Phase 2
+ The trial report naming convention is
+ `tools/stdlib-fork/linkname-trial-<go-version>.{json,md}`.
+ 
+-The shadowed set (which real-stdlib files the overlay supersedes) is
+-derived mechanically from the overlay's general mechanism, not from a
+-per-package list: every key of `syntheticSources` in
+-[internal/frontend/synth_machinery.go](../../internal/frontend/synth_machinery.go)
+-plus every key of `dedicatedSyntheticStubs` in
+-[internal/frontend/export.go](../../internal/frontend/export.go).
+-Packages that now resolve from disk (real packages) — e.g. `fmt`,
+-`sync`, `reflect`, `net/http` — are therefore NOT shadowed, even
+-though older reports listed them.
+-
+ ## Testing
+ 
+-`go test ./...` — 13 tests over the synthetic fixture tree in
++`go test ./...` — tests over the fixture tree in
+ [testdata/fixture/](testdata/fixture/) (a fake GOROOT) plus the real graalgo tree for
+-provided-set extraction. Red-green evidence for the build-tag filter
+-lives in [redgreen/](redgreen/): `green.log` (all green), `mutation-tagfilter.patch`
++provided-set extraction. `nosynth_test.go` pins the v2.0.0 removal
++(no synthetic credit, no synthetic report fields, synthetic-only
++targets MISSING); `TestProvidedExtraction` pins the provided set to
++exactly the P3-M4 registry's distinct symbols. Red-green evidence for
++the build-tag filter lives in [redgreen/](redgreen/): `green.log` (all green), `mutation-tagfilter.patch`
+ (the filter disabled), `red-tagfilter.log`
+ (`TestBuildTagGatedExcluded` red under the mutation), `green-rerun.log`
+ (green after restore).
+diff --git a/tools/stdlib-linkdiff/main.go b/tools/stdlib-linkdiff/main.go
+index 5a7ae8c..8cac407 100644
+--- a/tools/stdlib-linkdiff/main.go
++++ b/tools/stdlib-linkdiff/main.go
+@@ -8,7 +8,11 @@
+ // symbol set graalgo provides:
+ //
+ //   - SATISFIED: the linkname target is provided by graalgo
+-//     (P3-M4 intrinsic registry or a synthetic package export).
++//     (P3-M4 intrinsic registry — LinknameIntrinsics.java — only.
++//     Synthetic stdlib packages are NOT credited: a target provided
++//     only by a synthetic package is MISSING, so the skip-list is
++//     the honest retirement worklist, not a bridged count.
++//     v2.0.0; see README.md.)
+ //   - ROUTED: the target is explicitly routed to a replacement
+ //     (routes.txt, with the route recorded).
+ //   - MISSING: the target is not provided. Every MISSING target lands
+@@ -45,10 +49,12 @@ Scans a Go source tree for //go:linkname directives and classifies each
+ target as SATISFIED (provided by graalgo), ROUTED (explicit routes.txt
+ entry) or MISSING (lands on the skip-list, never silently dropped).
+ 
+-Also scans graalgo's embedded synthetic stdlib packages (their linknames
+-are real needs) and marks vendored-tree entries superseded by the
+-overlay as shadowed, so the report splits the skip-list into the
+-comparable total and the live (actionable) subset.
++Also scans no synthetic packages: the provided set is the P3-M4
++intrinsic registry only, and every scanned file is a real-stdlib
++file, so there is no shadowed/live split — every MISSING target is
++live and actionable. (v2.0.0: the synthetic-scan machinery and the
++shadow marking were deleted by rev1107-22-f1; reports from v1.x are
++not comparable — the v2 baseline resets at this version.)
+ 
+ Usage:
+   stdlib-linkdiff [--goroot DIR] [--graalgo DIR] [--goos OS] [--goarch ARCH]
+@@ -249,27 +255,6 @@ func run(args []string) int {
+ 		return 1
+ 	}
+ 
+-	// M10: the embedded synthetic packages are compiled by graalgo, so
+-	// their //go:linkname directives are real needs (the exporter's
+-	// linkname scan covers them). Mark vendored-tree entries whose
+-	// package is superseded by the overlay as shadowed.
+-	reg, err := loadSyntheticRegistry(o.graalgo)
+-	if err != nil {
+-		fmt.Fprintln(os.Stderr, "stdlib-linkdiff: synthetic registry: "+err.Error())
+-		return 1
+-	}
+-	synthLNs, synthDecls, synthSkipped := scanSyntheticLinknames(reg)
+-	scan.Linknames = append(scan.Linknames, synthLNs...)
+-	for file, names := range synthDecls {
+-		scan.addFileDecls(file, names)
+-	}
+-	scan.SyntheticSourcesScanned = len(reg.Sources)
+-	scan.SyntheticSkipped = synthSkipped
+-	markShadowed(scan, reg.Shadowed)
+-	for _, s := range synthSkipped {
+-		fmt.Fprintf(os.Stderr, "stdlib-linkdiff: WARNING: synthetic scan skipped: %s\n", s)
+-	}
+-
+ 	rep := Classify(scan, provided, routes, o)
+ 	if len(rep.StaleRoutes) > 0 {
+ 		fmt.Fprintf(os.Stderr, "stdlib-linkdiff: WARNING: %d route(s) matched zero linknames (stale or mistyped): %s\n",
+diff --git a/tools/stdlib-linkdiff/main_test.go b/tools/stdlib-linkdiff/main_test.go
+index e2ebc0f..8e21612 100644
+--- a/tools/stdlib-linkdiff/main_test.go
++++ b/tools/stdlib-linkdiff/main_test.go
+@@ -1,7 +1,7 @@
+ package main
+ 
+ // Tests for stdlib-linkdiff. Every test is written against the
+-// synthetic fixture tree in testdata/fixture (a fake GOROOT) plus the
++// fixture tree in testdata/fixture (a fake GOROOT) plus the
+ // real graalgo tree for provided-set extraction.
+ //
+ // Non-tautology design: each test asserts a specific classification
+@@ -16,8 +16,8 @@ import (
+ 	"encoding/json"
+ 	"os"
+ 	"path/filepath"
+-	"regexp"
+ 	"runtime"
++	"strconv"
+ 	"strings"
+ 	"testing"
+ )
+@@ -301,94 +301,70 @@ func TestProvidedExtraction(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatalf("loadProvided: %v", err)
+ 	}
+-	// Spot checks across every source family.
+-	want := []string{
+-		"runtime.fastrand", "runtime.fastrandn", "runtime.nanotime",
+-		"graalgo.runtime.Linknames.callGo",
+-		"time.Now", "time.Duration", "time.Nanosecond", "time.Time",
+-		"time.Duration.String", "time.(*Timer).Stop", "time.Month.String",
+-		"context.Background", "context.Context", "context.Canceled",
+-		"context.Context.Done",
+-		// M10: embedded synthetic packages (syntheticSources registry).
+-		"graalgo.os.open", "graalgo.net.socket", "graalgo.x509.parse",
+-		"graalgo.tls.newClientEngine",
+-		"os.Open", "os.ReadFile",
+-		"internal/poll.runtime_pollOpen",
+-		// reflect, net/http, internal/reflectlite, fmt, sync,
+-		// sync/atomic and runtime are NOT here: their synthetic
+-		// sources/mirrors were retired and the real packages now
+-		// compile from GOROOT via the disk importer (runtime: the
+-		// live export.go stub is not extracted), so no synthetic
+-		// source provides them (see TestSyntheticShadowSet).
+-		"encoding/json.Marshal", "crypto/sha256.New",
+-		"syscall.Getenv", "maps.Clone",
+-	}
+-	for _, w := range want {
+-		if !provided.has(w) {
+-			t.Errorf("provided set missing %q", w)
+-		}
++	// The provided set IS the P3-M4 intrinsic registry, nothing else:
++	// it must equal the registry's distinct symbols exactly. A missing
++	// or extra symbol is extraction drift, not a judgment call — the
++	// registry file itself is the oracle, read mechanically here.
++	regPath := filepath.Join(graalgoRoot(t), "internal", "backend", "interop",
++		"src", "main", "java", "graalgo", "p3link", "LinknameIntrinsics.java")
++	src, err := os.ReadFile(regPath)
++	if err != nil {
++		t.Fatalf("read registry: %v", err)
+ 	}
+-	// No unexported names may leak, except the genuine lowercase
+-	// targets from the linkname registry (LinknameIntrinsics.java
+-	// Go→intrinsic direction): runtime.fastrand, the graalgo.*
+-	// frozen namespaces (lowercase by design — os.md §2.4), the
+-	// internal/poll.* netpoller table, etc. Provenance — not a
+-	// hardcoded list — decides: anything the registry genuinely
+-	// registers is exempt.
+-	finalIdent := regexp.MustCompile(`([A-Za-z_][\w]*)$`)
+-	for s, prov := range provided.Symbols {
+-		if strings.HasPrefix(prov, "p3link LinknameIntrinsics.java") {
+-			continue
+-		}
+-		m := finalIdent.FindStringSubmatch(s)
+-		if m == nil || !(m[1][0] >= 'A' && m[1][0] <= 'Z') {
+-			t.Errorf("unexported symbol leaked into provided set: %q", s)
++	want := map[string]bool{}
++	for _, m := range registerRe.FindAllSubmatch(src, -1) {
++		sym, err := strconv.Unquote(`"` + string(m[1]) + `"`)
++		if err != nil {
++			t.Fatalf("unquote registry symbol: %v", err)
+ 		}
++		want[sym] = true
+ 	}
+-	if len(provided.Symbols) < 200 {
+-		t.Errorf("provided set suspiciously small: %d symbols", len(provided.Symbols))
++	if len(want) == 0 {
++		t.Fatal("registry has no Linknames.register calls")
+ 	}
+-}
+-
+-// TestMirrorExtractionReceivers pins the synthExtractor's fidelity on the
+-// time mirror (syntheticTimePackage): method names from a ranged table
+-// resolve against THAT loop's table (not a same-named loop's table), and
+-// pointer receivers are recognised (NewParam's type argument, not its
+-// name). Regression: the extractor used to attribute every table-driven
+-// Time method to time.Duration (rangeSrc keyed by var name only — the
+-// Duration and Time loops share `m`) and to emit pointer-receiver
+-// methods in value form (methodIsPointer read the name argument).
+-func TestMirrorExtractionReceivers(t *testing.T) {
+-	provided := &ProvidedSet{}
+-	if err := provided.extractP3FrontendFile(filepath.Join(graalgoRoot(t),
+-		"internal", "frontend", "p3frontend", "synth_time_context.go")); err != nil {
+-		t.Fatalf("extractP3FrontendFile: %v", err)
+-	}
+-	// Table-driven Time methods must land on Time, never Duration.
+-	for _, m := range []string{"Add", "Unix", "Format", "AppendFormat", "Hour", "Local", "YearDay"} {
+-		if provided.has("time.Duration." + m) {
+-			t.Errorf("mirror extraction mis-attributes Time.%s to Duration", m)
++	for sym, prov := range provided.Symbols {
++		if !want[sym] {
++			t.Errorf("provided set has non-registry symbol %q (provenance %q)", sym, prov)
+ 		}
+-		if !provided.has("time.Time." + m) {
+-			t.Errorf("mirror extraction missing time.Time.%s", m)
++		if prov != "p3link LinknameIntrinsics.java Linknames.register" {
++			t.Errorf("symbol %q has non-registry provenance %q", sym, prov)
+ 		}
+ 	}
+-	// Month consts must resolve against the month table, not the weekday
+-	// table (both loops share the range var `c`).
+-	for _, m := range []string{"January", "December"} {
+-		if !provided.has("time." + m) {
+-			t.Errorf("mirror extraction missing time.%s", m)
++	for sym := range want {
++		if !provided.has(sym) {
++			t.Errorf("provided set missing registry symbol %q", sym)
+ 		}
+ 	}
+-	// Pointer receivers emit pointer form, not value form.
+-	for _, sym := range []string{"time.(*Timer).Stop", "time.(*Ticker).Reset", "time.(*Location).String"} {
+-		if !provided.has(sym) {
+-			t.Errorf("mirror extraction missing %s (pointer form)", sym)
++	// Spot checks across registry families (incl. the graalgo.*
++	// frozen namespaces, which are registry symbols, not synthetic
++	// credit — they stay provided in v2.0.0).
++	for _, w := range []string{
++		"runtime.fastrand", "runtime.fastrandn", "runtime.nanotime",
++		"graalgo.runtime.Linknames.callGo",
++		"graalgo.os.open", "graalgo.net.socket",
++		"graalgo.x509.parse", "graalgo.tls.newClientEngine",
++		"internal/poll.runtime_pollOpen",
++		"sync.runtime_Semacquire", "internal/synctest.Run",
++	} {
++		if !provided.has(w) {
++			t.Errorf("provided set missing %q", w)
+ 		}
+ 	}
+-	for _, sym := range []string{"time.Timer.Stop", "time.Ticker.Reset", "time.Location.String"} {
+-		if provided.has(sym) {
+-			t.Errorf("mirror extraction emitted value form %s for a pointer-receiver method", sym)
++	// Synthetic-only symbols must NOT be credited any more (v2.0.0):
++	// these were provided by synthetic packages in v1.x and are now
++	// MISSING by design — the skip-list is the retirement worklist.
++	// (If a symbol below ever gains a registry registration, move it
++	// to the spot-check list above instead of deleting this loop.)
++	for _, w := range []string{
++		"os.Open", "os.ReadFile",
++		"time.Now", "time.Duration", "time.Duration.String",
++		"time.(*Timer).Stop",
++		"context.Background", "context.Context", "context.Canceled",
++		"encoding/json.Marshal", "crypto/sha256.New",
++		"syscall.Getenv", "maps.Clone",
++	} {
++		if provided.has(w) {
++			t.Errorf("provided set still credits synthetic-only symbol %q", w)
+ 		}
+ 	}
+ }
+diff --git a/tools/stdlib-linkdiff/nosynth_test.go b/tools/stdlib-linkdiff/nosynth_test.go
+new file mode 100644
+index 0000000..afb6619
+--- /dev/null
++++ b/tools/stdlib-linkdiff/nosynth_test.go
+@@ -0,0 +1,155 @@
++package main
++
++// v2.0.0 no-synthetic-credit tests (rev1107-22-f1, REVIEW-2026-11-07-22
++// F1/F2): the synthetic-scan machinery and the synthetic provided-set
++// sources are deleted. These tests pin the removal — each one fails
++// against the v1.x code (which credited synthetic packages) and passes
++// only when no synthetic mechanism remains.
++//
++// Non-tautology design: each test asserts a specific mechanical fact
++// that flips if synthetic crediting comes back — a synthetic-only
++// symbol classifying MISSING, a JSON report with no synthetic fields,
++// a provided set whose every provenance is the intrinsic registry.
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++)
++
++func TestNoSyntheticCredit(t *testing.T) {
++	provided, err := loadProvided(options{graalgo: graalgoRoot(t)})
++	if err != nil {
++		t.Fatalf("loadProvided: %v", err)
++	}
++	// Every provenance must be the P3-M4 intrinsic registry.
++	for sym, prov := range provided.Symbols {
++		if prov != "p3link LinknameIntrinsics.java Linknames.register" {
++			t.Errorf("symbol %q has non-registry provenance %q", sym, prov)
++		}
++	}
++	// No synthetic-only symbol may be provided, from any family.
++	for _, w := range []string{
++		"os.Open", "os.ReadFile", "os.Args",
++		"time.Now", "time.Sleep", "time.Time", "time.Duration",
++		"context.Background", "context.TODO",
++		"encoding/json.Marshal", "encoding/json.Unmarshal",
++		"crypto/sha256.New", "crypto/sha512.New",
++		"syscall.Getenv", "syscall.Exit",
++		"maps.Clone", "slices.Sort",
++		"strings.Builder", "bytes.Buffer",
++		"errors.New", "sort.Ints",
++		"internal/bytealg.MakeNoZero",
++	} {
++		if provided.has(w) {
++			t.Errorf("provided set credits synthetic-only symbol %q", w)
++		}
++	}
++	// Registry symbols in the graalgo.* namespaces stay provided —
++	// they are intrinsic registrations, not synthetic credit.
++	for _, w := range []string{
++		"graalgo.os.open", "graalgo.net.socket",
++		"graalgo.x509.parse", "graalgo.tls.newClientEngine",
++	} {
++		if !provided.has(w) {
++			t.Errorf("provided set missing registry symbol %q", w)
++		}
++	}
++}
++
++func TestReportHasNoSyntheticFields(t *testing.T) {
++	rep := fixtureReport(t)
++	data, err := json.Marshal(rep)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, banned := range []string{
++		"shadowed_by", "synthetic_", "live_refs", "live_skip_list_size",
++		"synthetic/",
++	} {
++		if strings.Contains(string(data), banned) {
++			t.Errorf("JSON report still contains %q", banned)
++		}
++	}
++	if rep.Version != "2.0.0" {
++		t.Errorf("report version = %q, want 2.0.0", rep.Version)
++	}
++	for _, e := range rep.Entries {
++		if strings.HasPrefix(e.File, "synthetic/") {
++			t.Errorf("report still contains a synthetic-source entry: %+v", e)
++		}
++	}
++}
++
++func TestSyntheticTargetIsMissing(t *testing.T) {
++	provided := &ProvidedSet{Symbols: map[string]string{
++		"runtime.fastrand": "p3link LinknameIntrinsics.java Linknames.register",
++	}}
++	scan := &ScanResult{}
++	scan.addFileDecls("runtime/runtime.go", []string{"a", "b", "c"})
++	scan.addFileDecls("syscall/syscall_linux.go", []string{"d"})
++	scan.Linknames = []Linkname{
++		// Previously SATISFIED via the synthetic syscall package:
++		// now MISSING with the intrinsic-surface reason.
++		{File: "syscall/syscall_linux.go", Package: "syscall", Local: "d", Declared: "d", Target: "syscall.Exit"},
++		// Registry-provided target: still SATISFIED.
++		{File: "runtime/runtime.go", Package: "runtime", Local: "a", Declared: "a", Target: "runtime.fastrand"},
++		// Self-link: SATISFIED by construction (no shadow concept
++		// any more — every self-link is a provision).
++		{File: "runtime/runtime.go", Package: "runtime", Local: "b", Declared: "b", SelfLink: true},
++		// Undeclared self-link: gc rejects, still MISSING.
++		{File: "runtime/runtime.go", Package: "runtime", Local: "other", Declared: "c", SelfLink: true},
++	}
++	rep := Classify(scan, provided, nil, options{})
++	byTarget := map[string]*Entry{}
++	for i := range rep.Entries {
++		byTarget[rep.Entries[i].Target] = &rep.Entries[i]
++	}
++	if e := byTarget["syscall.Exit"]; e == nil || e.Status != StatusMissing {
++		t.Fatalf("syscall.Exit: got %+v, want MISSING", e)
++	} else if !strings.Contains(e.Reason, "P3-M4 intrinsic surface") {
++		t.Errorf("syscall.Exit reason = %q, want the intrinsic-surface reason", e.Reason)
++	}
++	if e := byTarget["runtime.fastrand"]; e == nil || e.Status != StatusSatisfied {
++		t.Fatalf("runtime.fastrand: got %+v, want SATISFIED", e)
++	}
++	if e := byTarget["runtime.b"]; e == nil || e.Status != StatusSatisfied {
++		t.Fatalf("self-link runtime.b: got %+v, want SATISFIED", e)
++	} else if e.ProvidedFrom != "self" {
++		t.Errorf("self-link runtime.b: ProvidedFrom = %q, want %q", e.ProvidedFrom, "self")
++	}
++	if e := byTarget["runtime.other"]; e == nil || e.Status != StatusMissing {
++		t.Fatalf("undeclared self-link runtime.other: got %+v, want MISSING", e)
++	}
++	// Skip-list holds exactly the two MISSING targets (no live/total
++	// split: every skip-list entry is actionable).
++	if rep.SkipListSize != 2 {
++		t.Fatalf("SkipListSize = %d, want 2", rep.SkipListSize)
++	}
++	for _, s := range rep.SkipList {
++		if s.Target != "syscall.Exit" && s.Target != "runtime.other" {
++			t.Fatalf("unexpected skip-list target %q", s.Target)
++		}
++	}
++}
++
++// TestTargetPackage pins the grouping helper that moved to report.go
++// with the synth.go deletion (it never depended on any synthetic
++// mechanism, so its cases are unchanged).
++func TestTargetPackage(t *testing.T) {
++	cases := map[string]string{
++		"runtime.fastrand":                "runtime",
++		"internal/poll.runtime_pollOpen":  "internal/poll",
++		"reflect.(*rtype).Name":           "reflect",
++		"net/http.(*Transport).RoundTrip": "net/http",
++		"go/types.(*Checker).infer":       "go/types",
++		"http.cloneTLSConfig":             "http",
++		"go:fipsinfo":                     "go:fipsinfo",
++		"time.Duration.String":            "time",
++	}
++	for target, want := range cases {
++		if got := targetPackage(target); got != want {
++			t.Errorf("targetPackage(%q) = %q, want %q", target, got, want)
++		}
++	}
++}
+diff --git a/tools/stdlib-linkdiff/provided.go b/tools/stdlib-linkdiff/provided.go
+index f788ec5..b93b2bf 100644
+--- a/tools/stdlib-linkdiff/provided.go
++++ b/tools/stdlib-linkdiff/provided.go
+@@ -2,34 +2,28 @@ package main
+ 
+ // ProvidedSet is the set of linkname target symbols graalgo provides,
+ // each with a provenance string naming the exact source it was
+-// extracted from. Extraction is mechanical (AST/regex over the graalgo
++// extracted from. Extraction is mechanical (regex over the graalgo
+ // tree), never hand-maintained, so per-release drift shows up as a
+ // snapshot diff rather than silent staleness.
+ //
+-// Sources (see README.md § "Provided set"):
++// Source (v2.0.0 — the ONLY source):
+ //  1. internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
+ //     Linknames.register("symbol", ...) calls (Go→intrinsic direction).
+-//  2. internal/frontend/p3frontend/synth_time_context.go —
+-//     syntheticTimePackage, syntheticContextPackage.
+-//  3. internal/frontend/synth_time_context.go — syntheticTimeSource /
+-//     syntheticContextSource embedded Go sources (normative; the
+-//     p3frontend mirrors of (2) pin them via signature-equality tests).
+-//  4. M10: every embedded synthetic package in the syntheticSources
+-//     registry (internal/frontend/synth_machinery.go) — exported
+-//     symbols qualified by import path (see synth.go).
+ //
+-// NOT a source: the p3frontend fmt/sync/sync-atomic/runtime mirrors
+-// were retired (REVIEW-2026-11-05-11) — fmt, sync and sync/atomic now
+-// compile from GOROOT via the disk importer, so no synthetic source
+-// provides them (same precedent as reflect/net/http, see
+-// TestProvidedExtraction). The live runtime stub
+-// (internal/frontend/export.go syntheticRuntimePackage) is likewise not
+-// extracted. Consequence, measured 2026-11-05 against the vendored
+-// go1.27.1 tree: exactly three scanned linknames flip SATISFIED to
+-// MISSING — sync/atomic.{CompareAndSwap,Store,Swap}Uintptr from the
+-// shadowed runtime/atomic_pointer.go (shadowed-only bucket; the live
+-// MISSING count is unchanged). They ARE provided by real sync/atomic
+-// from disk; the tool just has no source that says so.
++// NOT sources (deleted by rev1107-22-f1, REVIEW-2026-11-07-22 F1/F2):
++// synthetic stdlib packages are bridges, and this tool must not credit
++// them. The deleted sources were:
++//  - internal/frontend/p3frontend/synth_time_context.go —
++//    syntheticTimePackage / syntheticContextPackage builders;
++//  - internal/frontend/synth_time_context.go — syntheticTimeSource /
++//    syntheticContextSource embedded Go sources;
++//  - every embedded synthetic package in the syntheticSources registry
++//    (internal/frontend/synth_machinery.go).
++// A target provided only by a synthetic package is now MISSING: the
++// skip-list is the honest retirement worklist. Retiring a synthetic
++// package the honest way is a root-cause fix (real stdlib compiles from
++// disk, or a new P3-M4 intrinsic registration) — see
++// docs/arch/synthetic-retirement-inventory.md for the per-package list.
+ //
+ // Symbol forms: path.Name (func/var/const/type), path.Type.Method
+ // (value-receiver or interface method), path.(*Type).Method
+@@ -38,23 +32,19 @@ package main
+ 
+ import (
+ 	"fmt"
+-	"go/ast"
+-	"go/parser"
+-	"go/token"
+ 	"os"
+ 	"path/filepath"
+ 	"regexp"
+ 	"strconv"
+-	"strings"
+-	"unicode"
+-	"unicode/utf8"
+ )
+ 
+ // ProvidedSet maps symbol -> provenance.
+ type ProvidedSet struct {
+ 	Symbols map[string]string
+-	// Skipped records synthetic sources that failed to parse during
+-	// extraction (loud in the report; never silently dropped).
++	// Skipped is legacy: pre-v2.0.0 snapshots may carry synthetic
++	// sources that failed to parse during extraction. Fresh extraction
++	// never populates it (there is no synthetic extraction any more);
++	// the field survives only so old snapshots still load.
+ 	Skipped []string
+ }
+ 
+@@ -75,7 +65,7 @@ func (p *ProvidedSet) has(sym string) bool {
+ 
+ // loadProvided loads the provided set: from a snapshot file when
+ // --provided is given, otherwise by mechanical extraction from the
+-// graalgo tree at o.graalgo.
++// graalgo tree at o.graalgo (the P3-M4 intrinsic registry only).
+ func loadProvided(o options) (*ProvidedSet, error) {
+ 	if o.provided != "" {
+ 		return readSnapshot(o.provided)
+@@ -85,27 +75,6 @@ func loadProvided(o options) (*ProvidedSet, error) {
+ 		"graalgo", "p3link", "LinknameIntrinsics.java")); err != nil {
+ 		return nil, err
+ 	}
+-	// Only synth_time_context.go is extracted: importer.go no longer
+-	// defines any synthetic-package builder (its fmt/sync/sync-atomic/
+-	// runtime mirrors were retired — see the header comment).
+-	p3fe := filepath.Join(o.graalgo, "internal", "frontend", "p3frontend")
+-	if err := p.extractP3FrontendFile(filepath.Join(p3fe, "synth_time_context.go")); err != nil {
+-		return nil, err
+-	}
+-	if err := p.extractEmbeddedSynthetics(filepath.Join(o.graalgo, "internal",
+-		"frontend", "synth_time_context.go")); err != nil {
+-		return nil, err
+-	}
+-	// M10 (WS I): the post-M9 embedded synthetic stdlib packages
+-	// (syntheticSources registry in synth_machinery.go). Mechanical
+-	// extraction like every other source — never hand-maintained.
+-	reg, err := loadSyntheticRegistry(o.graalgo)
+-	if err != nil {
+-		return nil, err
+-	}
+-	if err := p.extractSyntheticProvided(reg); err != nil {
+-		return nil, err
+-	}
+ 	return p, nil
+ }
+ 
+@@ -132,811 +101,3 @@ func (p *ProvidedSet) extractRegistry(path string) error {
+ 	}
+ 	return nil
+ }
+-
+-// synthFuncToPkg maps synthetic-package builder function names to the
+-// import path of the package they synthesize.
+-// synthFuncToPkg maps synthetic-package builder function names to the
+-// import path of the package they synthesize. Only time/context remain:
+-// the runtime/fmt/sync/sync-atomic builders were deleted with the
+-// fmt/sync retirement (REVIEW-2026-11-05-11).
+-var synthFuncToPkg = map[string]string{
+-	"syntheticTimePackage":    "time",
+-	"syntheticContextPackage": "context",
+-}
+-
+-func isExported(name string) bool {
+-	r, _ := utf8.DecodeRuneInString(name)
+-	return unicode.IsUpper(r)
+-}
+-
+-// extractP3FrontendFile extracts synthetic package surfaces from one
+-// p3frontend Go source file: the synthetic*Package builders in
+-// synthFuncToPkg (time/context only — the runtime/fmt/sync/
+-// sync-atomic builders were deleted with the fmt/sync retirement).
+-func (p *ProvidedSet) extractP3FrontendFile(path string) error {
+-	fset := token.NewFileSet()
+-	f, err := parser.ParseFile(fset, path, nil, 0)
+-	if err != nil {
+-		return fmt.Errorf("parse %s: %w", path, err)
+-	}
+-	base := filepath.Base(path)
+-	found := false
+-	for _, decl := range f.Decls {
+-		d, ok := decl.(*ast.FuncDecl)
+-		if !ok {
+-			continue
+-		}
+-		pkgPath, ok := synthFuncToPkg[d.Name.Name]
+-		if !ok || d.Body == nil {
+-			continue
+-		}
+-		found = true
+-		x := newSynthExtractor(pkgPath,
+-			fmt.Sprintf("synthetic %q: p3frontend/%s %s()", pkgPath, base, d.Name.Name), p)
+-		x.run(d.Body)
+-	}
+-	if !found {
+-		return fmt.Errorf("%s: no synthetic package surface found (source drift?)", path)
+-	}
+-	return nil
+-}
+-
+-// synthExtractor accumulates one synthetic package's surface from the
+-// AST of its builder function body.
+-type synthExtractor struct {
+-	pkg  string
+-	out  *ProvidedSet
+-	prov string
+-
+-	typeNameOf     map[string]string   // var -> T from v := types.NewTypeName(...,"T",...)
+-	namedOf        map[string]string   // var -> T from v := types.NewNamed(w,...), w->T
+-	listOf         map[string][]string // var -> methods from v := []*types.Func{...}
+-	fieldsOf       map[string][]string // var -> names from v := []struct{ name string ... }{...}
+-	wrapperOf      map[string]string   // var -> T from v := newWrapper("T")
+-	rangeSrc       map[string]string   // range var -> ranged var, for _, v := range X (prepass fallback; the walk threads the binding via walkCtx.rangeVars)
+-	ifaceListOf    map[string]string   // named var -> []*types.Func list var (interfaces)
+-	fiveOpsTypes   []string            // newWrapper("T") types passed to fiveOps(...)
+-	fiveOpsMethods []string            // method names added inside the fiveOps closure
+-	strSetOf       map[string][]string // var -> strings from v := map[K]string{...:"S"...}[k]
+-}
+-
+-func newSynthExtractor(pkg, prov string, out *ProvidedSet) *synthExtractor {
+-	return &synthExtractor{
+-		pkg: pkg, prov: prov, out: out,
+-		typeNameOf: map[string]string{}, namedOf: map[string]string{},
+-		listOf: map[string][]string{}, fieldsOf: map[string][]string{},
+-		wrapperOf: map[string]string{}, rangeSrc: map[string]string{},
+-		ifaceListOf: map[string]string{}, strSetOf: map[string][]string{},
+-	}
+-}
+-
+-// run executes the prepass (name tables) then the extraction walk.
+-func (x *synthExtractor) run(body *ast.BlockStmt) {
+-	x.prepass(body)
+-	x.walk(body, walkCtx{})
+-	x.emitInterfaceMethods()
+-}
+-
+-// prepass builds the name tables the walk needs.
+-func (x *synthExtractor) prepass(body *ast.BlockStmt) {
+-	// ifaceVar -> listVar, from v := types.NewInterfaceType(listv,...)[.Complete()]
+-	ifaceVarList := map[string]string{}
+-	ast.Inspect(body, func(n ast.Node) bool {
+-		switch s := n.(type) {
+-		case *ast.AssignStmt:
+-			x.prepassAssign(s, ifaceVarList)
+-		case *ast.RangeStmt:
+-			if s.Tok == token.DEFINE {
+-				if id, ok := s.Value.(*ast.Ident); ok {
+-					if w, ok := identName(s.X); ok {
+-						x.rangeSrc[id.Name] = w
+-					}
+-				}
+-			}
+-		}
+-		return true
+-	})
+-	// named var -> list var, from v := types.NewNamed(tnv, ifacev, ...)
+-	ast.Inspect(body, func(n ast.Node) bool {
+-		as, ok := n.(*ast.AssignStmt)
+-		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+-			return true
+-		}
+-		lhs, ok := identName(as.Lhs[0])
+-		if !ok {
+-			return true
+-		}
+-		call, ok := as.Rhs[0].(*ast.CallExpr)
+-		if !ok || callExprFun(call) != "types.NewNamed" || len(call.Args) < 2 {
+-			return true
+-		}
+-		ifaceVar, ok := identName(call.Args[1])
+-		if !ok {
+-			return true
+-		}
+-		if listVar, ok := ifaceVarList[ifaceVar]; ok {
+-			x.ifaceListOf[lhs] = listVar
+-		}
+-		return true
+-	})
+-}
+-
+-func (x *synthExtractor) prepassAssign(s *ast.AssignStmt, ifaceVarList map[string]string) {
+-	if len(s.Lhs) != 1 || len(s.Rhs) != 1 {
+-		return
+-	}
+-	lhs, ok := identName(s.Lhs[0])
+-	if !ok {
+-		return
+-	}
+-	switch rhs := s.Rhs[0].(type) {
+-	case *ast.CallExpr:
+-		switch callExprFun(rhs) {
+-		case "types.NewTypeName":
+-			if name := nameArg(rhs, 2); name != "" {
+-				x.typeNameOf[lhs] = name
+-			}
+-		case "types.NewNamed":
+-			if len(rhs.Args) > 0 {
+-				if w, ok := identName(rhs.Args[0]); ok {
+-					if t, ok := x.typeNameOf[w]; ok {
+-						x.namedOf[lhs] = t
+-					}
+-				}
+-			}
+-		case "types.NewInterfaceType":
+-			if len(rhs.Args) > 0 {
+-				if w, ok := identName(rhs.Args[0]); ok {
+-					ifaceVarList[lhs] = w
+-				}
+-			}
+-		case "newWrapper":
+-			if name := nameArg(rhs, 0); name != "" {
+-				x.wrapperOf[lhs] = name
+-			}
+-		default:
+-			// Unwrap `.Complete()` on NewInterfaceType.
+-			if sel, ok := rhs.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Complete" {
+-				if inner, ok := sel.X.(*ast.CallExpr); ok &&
+-					callExprFun(inner) == "types.NewInterfaceType" && len(inner.Args) > 0 {
+-					if w, ok := identName(inner.Args[0]); ok {
+-						ifaceVarList[lhs] = w
+-					}
+-				}
+-			}
+-		}
+-	case *ast.CompositeLit:
+-		x.prepassComposite(lhs, rhs)
+-	}
+-}
+-
+-// prepassComposite handles v := []*types.Func{...} and
+-// v := []struct{ name string; ... }{...} literals.
+-func (x *synthExtractor) prepassComposite(lhs string, lit *ast.CompositeLit) {
+-	arr, ok := lit.Type.(*ast.ArrayType)
+-	if !ok {
+-		return
+-	}
+-	switch et := arr.Elt.(type) {
+-	case *ast.StarExpr:
+-		sel, ok := et.X.(*ast.SelectorExpr)
+-		if !ok || sel.Sel.Name != "Func" {
+-			return
+-		}
+-		var ms []string
+-		for _, e := range lit.Elts {
+-			if kv, ok := e.(*ast.KeyValueExpr); ok {
+-				e = kv.Value
+-			}
+-			call, ok := e.(*ast.CallExpr)
+-			if !ok || callExprFun(call) != "types.NewFunc" {
+-				continue
+-			}
+-			if name := nameArg(call, 2); name != "" {
+-				ms = append(ms, name)
+-			}
+-		}
+-		x.listOf[lhs] = ms
+-	case *ast.StructType:
+-		var names []string
+-		for _, e := range lit.Elts {
+-			if kv, ok := e.(*ast.KeyValueExpr); ok {
+-				e = kv.Value
+-			}
+-			cl, ok := e.(*ast.CompositeLit)
+-			if !ok || len(cl.Elts) == 0 {
+-				continue
+-			}
+-			if bl, ok := cl.Elts[0].(*ast.BasicLit); ok && bl.Kind == token.STRING {
+-				if s, err := strconv.Unquote(bl.Value); err == nil {
+-					names = append(names, s)
+-				}
+-			}
+-		}
+-		x.fieldsOf[lhs] = names
+-	}
+-}
+-
+-// walkCtx carries ancestor context for the extraction walk.
+-type walkCtx struct {
+-	inAddMethod bool // inside an X.AddMethod(...) call
+-	inFuncList  bool // inside a []*types.Func{...} literal
+-	inFiveOps   bool // inside the fiveOps closure body
+-	// rangeVars binds range variables to the table they range over,
+-	// for the enclosing range statement only (see walk's RangeStmt
+-	// case). It shadows the prepass's global rangeSrc, which is only
+-	// a fallback for shapes the walk does not thread.
+-	rangeVars map[string]string
+-}
+-
+-// walk extracts package members and methods with ancestor context.
+-func (x *synthExtractor) walk(n ast.Node, ctx walkCtx) {
+-	if n == nil {
+-		return
+-	}
+-	switch s := n.(type) {
+-	case *ast.BlockStmt:
+-		for _, st := range s.List {
+-			x.walk(st, ctx)
+-		}
+-		return
+-	case *ast.FuncLit:
+-		// The fiveOps closure: its addMethod calls are handled via
+-		// the fiveOps call sites, not here.
+-		if ctx.inFiveOps {
+-			return
+-		}
+-	case *ast.RangeStmt:
+-		// Range context: `for _, v := range X` binds v to X for the
+-		// loop body only. The prepass's global rangeSrc (keyed by var
+-		// name) is wrong when two loops share a var name — the time
+-		// mirror ranges durationMethods and timeMethods both as `m`,
+-		// so the last loop won and the first loop's method names
+-		// resolved against the wrong table (every table-driven Time
+-		// method was attributed to time.Duration). Thread the binding
+-		// through the walk context instead (shadowing-safe: a nested
+-		// loop reusing the var name shadows within its own body).
+-		child := ctx
+-		if s.Tok == token.DEFINE {
+-			if v, ok := s.Value.(*ast.Ident); ok {
+-				if tab, ok := s.X.(*ast.Ident); ok {
+-					child.rangeVars = make(map[string]string, len(ctx.rangeVars)+1)
+-					for k, val := range ctx.rangeVars {
+-						child.rangeVars[k] = val
+-					}
+-					child.rangeVars[v.Name] = tab.Name
+-				}
+-			}
+-		}
+-		x.walk(s.Key, ctx)
+-		x.walk(s.Value, ctx)
+-		x.walk(s.X, ctx)
+-		x.walk(s.Body, child)
+-		return
+-	}
+-	// Detect the fiveOps closure assignment and map-index value sets.
+-	if as, ok := n.(*ast.AssignStmt); ok {
+-		if len(as.Lhs) == 1 && len(as.Rhs) == 1 {
+-			if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name == "fiveOps" {
+-				if _, ok := as.Rhs[0].(*ast.FuncLit); ok {
+-					x.walkFiveOpsClosure(as.Rhs[0].(*ast.FuncLit))
+-					return // handled; skip general walk of the closure
+-				}
+-			}
+-			// nm := map[K]string{k1: "S1", ...}[k] — value set for
+-			// "Prefix"+nm name construction (pattern formerly used by
+-			// the retired syntheticAtomicPackage builder).
+-			if id, ok := as.Lhs[0].(*ast.Ident); ok {
+-				if idx, ok := as.Rhs[0].(*ast.IndexExpr); ok {
+-					if ml, ok := idx.X.(*ast.CompositeLit); ok {
+-						if _, ok := ml.Type.(*ast.MapType); ok {
+-							var vals []string
+-							for _, e := range ml.Elts {
+-								if kv, ok := e.(*ast.KeyValueExpr); ok {
+-									if bl, ok := kv.Value.(*ast.BasicLit); ok && bl.Kind == token.STRING {
+-										if s, err := strconv.Unquote(bl.Value); err == nil {
+-											vals = append(vals, s)
+-										}
+-									}
+-								}
+-							}
+-							if len(vals) > 0 {
+-								x.strSetOf[id.Name] = vals
+-							}
+-						}
+-					}
+-				}
+-			}
+-		}
+-	}
+-	if call, ok := n.(*ast.CallExpr); ok {
+-		x.walkCall(call, ctx)
+-		// Recurse into call args with updated context.
+-		nc := ctx
+-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "AddMethod" {
+-			nc.inAddMethod = true
+-		}
+-		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "addMethod" {
+-			nc.inAddMethod = true
+-		}
+-		x.walk(call.Fun, nc)
+-		for _, a := range call.Args {
+-			x.walk(a, nc)
+-		}
+-		return
+-	}
+-	if comp, ok := n.(*ast.CompositeLit); ok {
+-		nc := ctx
+-		if arr, ok := comp.Type.(*ast.ArrayType); ok {
+-			if star, ok := arr.Elt.(*ast.StarExpr); ok {
+-				if sel, ok := star.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "Func" {
+-					nc.inFuncList = true
+-				}
+-			}
+-		}
+-		if comp.Type != nil {
+-			x.walk(comp.Type, nc)
+-		}
+-		for _, e := range comp.Elts {
+-			x.walk(e, nc)
+-		}
+-		return
+-	}
+-	// Generic recursion for all other nodes.
+-	ast.Inspect(n, func(m ast.Node) bool {
+-		if m == n {
+-			return true
+-		}
+-		x.walk(m, ctx)
+-		return false
+-	})
+-}
+-
+-// walkFiveOpsClosure handles `fiveOps := func(named, t) { ... }`:
+-// method names from addMethod calls inside, applied to the wrapper
+-// types at fiveOps(newWrapper("T"), ...) call sites (collected by the
+-// caller of run via a second inspection — see below).
+-func (x *synthExtractor) walkFiveOpsClosure(fl *ast.FuncLit) {
+-	var methods []string
+-	ast.Inspect(fl.Body, func(n ast.Node) bool {
+-		call, ok := n.(*ast.CallExpr)
+-		if !ok {
+-			return true
+-		}
+-		fun := callExprFun(call)
+-		isAdd := fun == "addMethod"
+-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "AddMethod" {
+-			isAdd = true
+-		}
+-		if !isAdd || len(call.Args) < 2 {
+-			return true
+-		}
+-		if lit, ok := call.Args[1].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+-			if m, err := strconv.Unquote(lit.Value); err == nil && isExported(m) {
+-				methods = append(methods, m)
+-			}
+-		}
+-		return true
+-	})
+-	x.fiveOpsMethods = methods
+-}
+-
+-// walkCall classifies one call expression.
+-func (x *synthExtractor) walkCall(call *ast.CallExpr, ctx walkCtx) {
+-	fun := callExprFun(call)
+-
+-	// fiveOps(newWrapper("T"), ...): record the wrapper type.
+-	if fun == "fiveOps" && !ctx.inFiveOps {
+-		if len(call.Args) > 0 {
+-			if w, ok := call.Args[0].(*ast.CallExpr); ok && callExprFun(w) == "newWrapper" {
+-				if name := nameArg(w, 0); name != "" && isExported(name) {
+-					x.fiveOpsTypes = append(x.fiveOpsTypes, name)
+-					x.out.add(x.pkg+"."+name, x.prov+" type")
+-				}
+-			}
+-		}
+-		return
+-	}
+-
+-	// Method definitions: X.AddMethod(...) or addMethod(x, "M", ...).
+-	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "AddMethod" {
+-		recv, _ := identName(sel.X)
+-		x.methodCall(recv, call, ctx)
+-		return
+-	}
+-	if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "addMethod" && !ctx.inFiveOps {
+-		// Direct wrapper method: addMethod(b, "M", ...), b in wrapperOf.
+-		if len(call.Args) >= 2 {
+-			recv, _ := identName(call.Args[0])
+-			if t, ok := x.wrapperOf[recv]; ok && isExported(t) {
+-				if lit, ok := call.Args[1].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+-					if m, err := strconv.Unquote(lit.Value); err == nil && isExported(m) {
+-						x.out.add(x.pkg+".(*"+t+")."+m, x.prov+" method")
+-					}
+-				}
+-			}
+-		}
+-		return
+-	}
+-
+-	if ctx.inAddMethod || ctx.inFuncList || ctx.inFiveOps {
+-		return
+-	}
+-	switch fun {
+-	case "types.NewFunc", "types.NewVar", "types.NewConst":
+-		if name := nameArg(call, 2); name != "" && isExported(name) {
+-			x.out.add(x.pkg+"."+name, x.prov)
+-		} else if sel, ok := nameSelector(call, 2); ok {
+-			// c.name / m.name over a ranged []struct{name...} literal.
+-			for _, name := range x.selectorNames(sel, ctx) {
+-				if isExported(name) {
+-					x.out.add(x.pkg+"."+name, x.prov)
+-				}
+-			}
+-		}
+-	case "insert", "insertFunc", "addFunc":
+-		for _, name := range x.callNameSet(call) {
+-			if isExported(name) {
+-				x.out.add(x.pkg+"."+name, x.prov+" func")
+-			}
+-		}
+-	}
+-}
+-
+-// callNameSet resolves the name argument of an insert/insertFunc/addFunc
+-// call: a string literal, or "Prefix"+v where v's value set was recorded
+-// from a map-index assignment.
+-func (x *synthExtractor) callNameSet(call *ast.CallExpr) []string {
+-	if len(call.Args) == 0 {
+-		return nil
+-	}
+-	if lit, ok := call.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+-		if s, err := strconv.Unquote(lit.Value); err == nil {
+-			return []string{s}
+-		}
+-		return nil
+-	}
+-	if bin, ok := call.Args[0].(*ast.BinaryExpr); ok && bin.Op == token.ADD {
+-		lit, ok := bin.X.(*ast.BasicLit)
+-		if !ok || lit.Kind != token.STRING {
+-			return nil
+-		}
+-		prefix, err := strconv.Unquote(lit.Value)
+-		if err != nil {
+-			return nil
+-		}
+-		id, ok := bin.Y.(*ast.Ident)
+-		if !ok {
+-			return nil
+-		}
+-		var out []string
+-		for _, s := range x.strSetOf[id.Name] {
+-			out = append(out, prefix+s)
+-		}
+-		return out
+-	}
+-	return nil
+-}
+-
+-// methodCall records methods from X.AddMethod(types.NewFunc(..., name, ...)).
+-func (x *synthExtractor) methodCall(recv string, call *ast.CallExpr, ctx walkCtx) {
+-	if len(call.Args) == 0 {
+-		return
+-	}
+-	nf, ok := call.Args[0].(*ast.CallExpr)
+-	if !ok || callExprFun(nf) != "types.NewFunc" {
+-		return
+-	}
+-	t := x.namedOf[recv]
+-	if t == "" {
+-		t = x.typeNameOf[recv]
+-	}
+-	if t == "" || !isExported(t) {
+-		return
+-	}
+-	for _, m := range x.newFuncNames(nf, ctx) {
+-		if !isExported(m) {
+-			continue
+-		}
+-		sym := x.pkg + "." + t + "." + m
+-		if methodIsPointer(nf) {
+-			sym = x.pkg + ".(*" + t + ")." + m
+-		}
+-		x.out.add(sym, x.prov+" method")
+-	}
+-}
+-
+-// newFuncNames resolves the name argument of types.NewFunc: a string
+-// literal, or a v.name selector over a ranged []struct{name...} list.
+-func (x *synthExtractor) newFuncNames(nf *ast.CallExpr, ctx walkCtx) []string {
+-	if len(nf.Args) < 3 {
+-		return nil
+-	}
+-	switch a := nf.Args[2].(type) {
+-	case *ast.BasicLit:
+-		if a.Kind == token.STRING {
+-			if s, err := strconv.Unquote(a.Value); err == nil {
+-				return []string{s}
+-			}
+-		}
+-	case *ast.SelectorExpr:
+-		if id, ok := a.X.(*ast.Ident); ok {
+-			return x.selectorNames(id.Name, ctx)
+-		}
+-	}
+-	return nil
+-}
+-
+-// selectorNames resolves `v.name` where `for _, v := range X` and X is
+-// a recorded []struct{name...} literal. The enclosing range's binding
+-// (walkCtx.rangeVars) wins; the prepass's global rangeSrc is only a
+-// fallback for shapes the walk does not thread.
+-func (x *synthExtractor) selectorNames(v string, ctx walkCtx) []string {
+-	if src, ok := ctx.rangeVars[v]; ok {
+-		return x.fieldsOf[src]
+-	}
+-	if src, ok := x.rangeSrc[v]; ok {
+-		return x.fieldsOf[src]
+-	}
+-	return nil
+-}
+-
+-// nameSelector returns the range-variable name when arg i is a
+-// `v.name`-style selector.
+-func nameSelector(call *ast.CallExpr, i int) (string, bool) {
+-	if i >= len(call.Args) {
+-		return "", false
+-	}
+-	sel, ok := call.Args[i].(*ast.SelectorExpr)
+-	if !ok {
+-		return "", false
+-	}
+-	id, ok := sel.X.(*ast.Ident)
+-	if !ok {
+-		return "", false
+-	}
+-	return id.Name, true
+-}
+-
+-// emitInterfaceMethods emits pkg.Iface.Method for interface types built
+-// via NewInterfaceType(listv) + NewNamed.
+-func (x *synthExtractor) emitInterfaceMethods() {
+-	for namedVar, listVar := range x.ifaceListOf {
+-		t := x.namedOf[namedVar]
+-		if t == "" {
+-			t = x.typeNameOf[namedVar]
+-		}
+-		if t == "" || !isExported(t) {
+-			continue
+-		}
+-		x.out.add(x.pkg+"."+t, x.prov+" type")
+-		for _, m := range x.listOf[listVar] {
+-			if isExported(m) {
+-				x.out.add(x.pkg+"."+t+"."+m, x.prov+" interface method")
+-			}
+-		}
+-	}
+-	// Package-level types from NewTypeName / newWrapper not otherwise
+-	// emitted (NewNamed covers most; this catches bare insertions).
+-	for _, t := range x.typeNameOf {
+-		if isExported(t) {
+-			x.out.add(x.pkg+"."+t, x.prov+" type")
+-		}
+-	}
+-	for _, t := range x.wrapperOf {
+-		if isExported(t) {
+-			x.out.add(x.pkg+"."+t, x.prov+" type")
+-		}
+-	}
+-	// fiveOps wrapper types × fiveOps methods (pointer receivers —
+-	// addMethod builds types.NewPointer receivers).
+-	for _, t := range x.fiveOpsTypes {
+-		for _, m := range x.fiveOpsMethods {
+-			x.out.add(x.pkg+".(*"+t+")."+m, x.prov+" method")
+-		}
+-	}
+-}
+-
+-// methodIsPointer reports whether the NewFunc's signature carries a
+-// pointer receiver. The builders' convention: the receiver NewParam's
+-// type is an ident ending in "Ptr" (timerPtr, tickerPtr) for pointer
+-// receivers.
+-func methodIsPointer(nf *ast.CallExpr) bool {
+-	if len(nf.Args) < 4 {
+-		return false
+-	}
+-	sig, ok := nf.Args[3].(*ast.CallExpr)
+-	if !ok || callExprFun(sig) != "types.NewSignatureType" || len(sig.Args) == 0 {
+-		return false
+-	}
+-	recv, ok := sig.Args[0].(*ast.CallExpr)
+-	if !ok || callExprFun(recv) != "types.NewParam" || len(recv.Args) == 0 {
+-		return false
+-	}
+-	// The receiver TYPE is NewParam's last argument (pos, pkg, name,
+-	// type): a *Ptr-suffixed ident (timerPtr — pointer vars are named
+-	// *Ptr by convention) or an inline types.NewPointer(...) call.
+-	// (The old code read Args[2], the NAME — always "" for method
+-	// receivers — so it always returned false and every AddMethod
+-	// method was emitted in value form, e.g. time.Timer.Stop for the
+-	// pointer-receiver Stop.)
+-	typ := recv.Args[len(recv.Args)-1]
+-	if id, ok := typ.(*ast.Ident); ok {
+-		return strings.HasSuffix(id.Name, "Ptr")
+-	}
+-	if call, ok := typ.(*ast.CallExpr); ok {
+-		return callExprFun(call) == "types.NewPointer"
+-	}
+-	return false
+-}
+-
+-// extractEmbeddedSynthetics extracts exported symbols from the embedded
+-// synthetic time/context Go sources in internal/frontend/
+-// synth_time_context.go (the syntheticTimeSource/syntheticContextSource
+-// string constants — the same technique p3frontend's timecontext_test.go
+-// uses). Exported package-level funcs/types/vars/consts become
+-// path.Name; exported methods of exported named types become
+-// path.T.M / path.(*T).M by receiver form.
+-func (p *ProvidedSet) extractEmbeddedSynthetics(path string) error {
+-	fset := token.NewFileSet()
+-	f, err := parser.ParseFile(fset, path, nil, 0)
+-	if err != nil {
+-		return fmt.Errorf("parse %s: %w", path, err)
+-	}
+-	found := false
+-	for _, decl := range f.Decls {
+-		gd, ok := decl.(*ast.GenDecl)
+-		if !ok || gd.Tok != token.CONST {
+-			continue
+-		}
+-		for _, spec := range gd.Specs {
+-			vs, ok := spec.(*ast.ValueSpec)
+-			if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+-				continue
+-			}
+-			name := vs.Names[0].Name
+-			if name != "syntheticTimeSource" && name != "syntheticContextSource" {
+-				continue
+-			}
+-			lit, ok := vs.Values[0].(*ast.BasicLit)
+-			if !ok || lit.Kind != token.STRING {
+-				return fmt.Errorf("%s: %s is not a string literal", path, name)
+-			}
+-			src, err := strconv.Unquote(lit.Value)
+-			if err != nil {
+-				return fmt.Errorf("%s: unquote %s: %w", path, name, err)
+-			}
+-			found = true
+-			if err := p.extractGoSource(src, fmt.Sprintf(
+-				"synthetic: internal/frontend/synth_time_context.go %s", name)); err != nil {
+-				return err
+-			}
+-		}
+-	}
+-	if !found {
+-		return fmt.Errorf("%s: synthetic sources not found (source drift?)", path)
+-	}
+-	return nil
+-}
+-
+-// extractGoSource collects exported symbols from one parsed Go source,
+-// qualified by the source's own package clause.
+-func (p *ProvidedSet) extractGoSource(src, prov string) error {
+-	fset := token.NewFileSet()
+-	f, err := parser.ParseFile(fset, "synth.go", src, 0)
+-	if err != nil {
+-		return fmt.Errorf("parse embedded synthetic source: %w", err)
+-	}
+-	return p.extractGoSourceFile(f, f.Name.Name, prov)
+-}
+-
+-// extractGoSourceAs collects exported symbols from one Go source,
+-// qualified by the explicit package path (the qualifier linkname
+-// targets use — the embedded source's package clause may differ from
+-// its import path).
+-func (p *ProvidedSet) extractGoSourceAs(pkgPath, src, prov string) error {
+-	fset := token.NewFileSet()
+-	f, err := parser.ParseFile(fset, "synth.go", src, 0)
+-	if err != nil {
+-		return fmt.Errorf("parse embedded synthetic source: %w", err)
+-	}
+-	return p.extractGoSourceFile(f, pkgPath, prov)
+-}
+-
+-// extractGoSourceFile walks one parsed file's declarations.
+-func (p *ProvidedSet) extractGoSourceFile(f *ast.File, pkg, prov string) error {
+-	for _, decl := range f.Decls {
+-		switch d := decl.(type) {
+-		case *ast.FuncDecl:
+-			if !isExported(d.Name.Name) {
+-				continue
+-			}
+-			if d.Recv == nil {
+-				p.add(pkg+"."+d.Name.Name, prov+" func")
+-				continue
+-			}
+-			// Method: resolve receiver type name + pointer form.
+-			if len(d.Recv.List) == 0 {
+-				continue
+-			}
+-			t, ptr := recvTypeName(d.Recv.List[0].Type)
+-			if t == "" || !isExported(t) {
+-				continue
+-			}
+-			sym := pkg + "." + t + "." + d.Name.Name
+-			if ptr {
+-				sym = pkg + ".(*" + t + ")." + d.Name.Name
+-			}
+-			p.add(sym, prov+" method")
+-		case *ast.GenDecl:
+-			for _, spec := range d.Specs {
+-				switch s := spec.(type) {
+-				case *ast.TypeSpec:
+-					if isExported(s.Name.Name) {
+-						p.add(pkg+"."+s.Name.Name, prov+" type")
+-					}
+-				case *ast.ValueSpec:
+-					for _, n := range s.Names {
+-						if isExported(n.Name) {
+-							p.add(pkg+"."+n.Name, prov)
+-						}
+-					}
+-				}
+-			}
+-		}
+-	}
+-	return nil
+-}
+-
+-// recvTypeName returns the named type and pointer-ness of a receiver
+-// type expression.
+-func recvTypeName(e ast.Expr) (string, bool) {
+-	switch t := e.(type) {
+-	case *ast.StarExpr:
+-		name, _ := identName(t.X)
+-		return name, true
+-	case *ast.Ident:
+-		return t.Name, false
+-	}
+-	return "", false
+-}
+-
+-// --- small AST helpers ---
+-
+-func identName(e ast.Expr) (string, bool) {
+-	id, ok := e.(*ast.Ident)
+-	if !ok {
+-		return "", false
+-	}
+-	return id.Name, true
+-}
+-
+-// nameArg returns the unquoted string literal at argument position i.
+-func nameArg(call *ast.CallExpr, i int) string {
+-	if i >= len(call.Args) {
+-		return ""
+-	}
+-	lit, ok := call.Args[i].(*ast.BasicLit)
+-	if !ok || lit.Kind != token.STRING {
+-		return ""
+-	}
+-	s, err := strconv.Unquote(lit.Value)
+-	if err != nil {
+-		return ""
+-	}
+-	return s
+-}
+-
+-// callExprFun returns the dotted callee name of a call expression.
+-func callExprFun(call *ast.CallExpr) string {
+-	switch f := call.Fun.(type) {
+-	case *ast.SelectorExpr:
+-		if id, ok := f.X.(*ast.Ident); ok {
+-			return id.Name + "." + f.Sel.Name
+-		}
+-		return f.Sel.Name
+-	case *ast.Ident:
+-		return f.Name
+-	}
+-	return ""
+-}
+diff --git a/tools/stdlib-linkdiff/report.go b/tools/stdlib-linkdiff/report.go
+index ee362cf..91ffa3f 100644
+--- a/tools/stdlib-linkdiff/report.go
++++ b/tools/stdlib-linkdiff/report.go
+@@ -8,6 +8,8 @@ import (
+ 	"sort"
+ 	"strings"
+ 	"time"
++	"unicode"
++	"unicode/utf8"
+ )
+ 
+ // Statuses for a classified linkname.
+@@ -29,25 +31,14 @@ type Entry struct {
+ 	Route        string `json:"route,omitempty"`        // ROUTED: target -> replacement
+ 	RouteReason  string `json:"route_reason,omitempty"` // ROUTED: why
+ 	ProvidedFrom string `json:"provided_from,omitempty"`
+-	// ShadowedBy names the synthetic import path superseding this entry's
+-	// real-stdlib file ("" when live). Omitted for live entries.
+-	ShadowedBy string `json:"shadowed_by,omitempty"`
+ }
+ 
+ // SkipEntry is one skip-list row: a distinct MISSING target.
+ type SkipEntry struct {
+ 	Target       string   `json:"target"`
+ 	LinknameRefs int      `json:"linkname_refs"`
+-	// LiveRefs counts references from code graalgo actually compiles
+-	// (non-shadowed stdlib files plus synthetic sources). A target with
+-	// LiveRefs == 0 is referenced only by real-stdlib files superseded
+-	// by a synthetic package.
+-	LiveRefs     int      `json:"live_refs"`
+ 	ExampleFiles []string `json:"example_files"`
+-	// LiveExampleFiles are up to 5 files with live (non-shadowed)
+-	// references to the target.
+-	LiveExampleFiles []string `json:"live_example_files"`
+-	Reason           string   `json:"reason"`
++	Reason       string   `json:"reason"`
+ }
+ 
+ // Duplicate records a local name declared by linkname more than once.
+@@ -76,45 +67,31 @@ type Report struct {
+ 		TestFilesExcluded  int `json:"test_files_excluded"`
+ 		ConstraintExcluded int `json:"constraint_excluded_files"`
+ 		ParseErrors        int `json:"parse_errors"`
+-		// M10: embedded synthetic sources are scanned alongside the
+-		// vendored tree (their linknames are real needs — the exporter's
+-		// linkname scan covers them). Counted separately so the
+-		// vendored-tree population stays comparable across releases.
+-		SyntheticSourcesScanned int `json:"synthetic_sources_scanned"`
+-		SyntheticLinknames      int `json:"synthetic_linknames"`
+ 	} `json:"counts"`
+ 
+ 	// SkipListSize is the headline kill-trigger metric (SPEC §3.6:
+ 	// skip-list growth > 15 twice per release). Duplicated at top level
+ 	// so release tooling can read it without walking the report.
++	// v2.0.0: there is no live/total split any more — every scanned
++	// file is real stdlib, so every skip-list target is actionable.
+ 	SkipListSize int         `json:"skip_list_size"`
+ 	SkipList     []SkipEntry `json:"skip_list"`
+-	// LiveSkipListSize counts skip-list targets referenced by at least
+-	// one live entry (LiveRefs > 0): the actionable subset of the
+-	// skip-list — targets referenced only by shadowed (superseded)
+-	// real-stdlib files are not compiled by graalgo.
+-	LiveSkipListSize int `json:"live_skip_list_size"`
+ 
+ 	Entries    []Entry     `json:"entries"`
+ 	Duplicates []Duplicate `json:"duplicates"`
+ 
+-	ProvidedCount   int               `json:"provided_symbol_count"`
+-	ProvidedSources map[string]int    `json:"provided_by_source"`
+-	RoutesApplied   []Route           `json:"routes_applied"`
++	ProvidedCount   int            `json:"provided_symbol_count"`
++	ProvidedSources map[string]int `json:"provided_by_source"`
++	RoutesApplied   []Route        `json:"routes_applied"`
+ 	// StaleRoutes lists routes that matched zero linknames in this
+ 	// scan: a route whose target disappeared from the tree (or was
+ 	// mistyped) must not sit silently. Always emitted (possibly []).
+-	StaleRoutes     []string          `json:"stale_routes"`
+-	ParseErrors     []string          `json:"parse_errors_detail,omitempty"`
+-	ExcludedSample  []string          `json:"constraint_excluded_sample,omitempty"`
+-	// SyntheticParseErrors records embedded synthetic sources that
+-	// failed to parse during provided-set extraction or the synthetic
+-	// scan. Always emitted (possibly []): a broken synthetic source
+-	// would panic the frontend's buildSyntheticPackage on import.
+-	SyntheticParseErrors []string `json:"synthetic_parse_errors"`
++	StaleRoutes    []string `json:"stale_routes"`
++	ParseErrors    []string `json:"parse_errors_detail,omitempty"`
++	ExcludedSample []string `json:"constraint_excluded_sample,omitempty"`
+ }
+ 
+-const toolVersion = "1.1.0"
++const toolVersion = "2.0.0"
+ 
+ // normalizeTarget resolves a raw linkname target to the symbol used for
+ // classification: unqualified targets are qualified with the file's
+@@ -149,24 +126,8 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 	rep.Counts.TestFilesExcluded = scan.TestFilesExcluded
+ 	rep.Counts.ConstraintExcluded = scan.ConstraintExcluded
+ 	rep.Counts.ParseErrors = len(scan.ParseErrors)
+-	rep.Counts.SyntheticSourcesScanned = scan.SyntheticSourcesScanned
+ 	rep.ParseErrors = scan.ParseErrors
+ 	rep.ExcludedSample = scan.ExcludedByConstraint
+-	// Dedupe by synthetic import path: extraction and scan hit the same
+-	// broken source with slightly different messages; one row per source.
+-	seenSynth := map[string]bool{}
+-	for _, s := range append(append([]string{}, provided.Skipped...), scan.SyntheticSkipped...) {
+-		key := s
+-		if i := strings.Index(s, `"`); i >= 0 {
+-			if j := strings.Index(s[i+1:], `"`); j >= 0 {
+-				key = s[i+1 : i+1+j]
+-			}
+-		}
+-		if !seenSynth[key] {
+-			seenSynth[key] = true
+-			rep.SyntheticParseErrors = append(rep.SyntheticParseErrors, s)
+-		}
+-	}
+ 
+ 	routeByTarget := map[string]Route{}
+ 	for _, r := range routes {
+@@ -177,23 +138,17 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 
+ 	skipIdx := map[string]int{}
+ 	skipCount := map[string]int{}
+-	skipLive := map[string]int{}
+ 	skipFiles := map[string][]string{}
+-	skipLiveFiles := map[string][]string{}
+ 	skipReason := map[string]string{}
+ 	dupFiles := map[string][]string{}
+ 
+ 	for _, ln := range scan.Linknames {
+ 		e := Entry{
+-			File:       ln.File,
+-			Package:    ln.Package,
+-			Local:      ln.Local,
+-			Declared:   ln.Declared,
+-			Target:     normalizeTarget(ln),
+-			ShadowedBy: ln.ShadowedBy,
+-		}
+-		if strings.HasPrefix(ln.File, "synthetic/") {
+-			rep.Counts.SyntheticLinknames++
++			File:     ln.File,
++			Package:  ln.Package,
++			Local:    ln.Local,
++			Declared: ln.Declared,
++			Target:   normalizeTarget(ln),
+ 		}
+ 		dupKey := ln.Package + "." + ln.Local
+ 		dupFiles[dupKey] = append(dupFiles[dupKey], ln.File)
+@@ -211,13 +166,11 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 			e.Status = StatusMissing
+ 			e.Reason = fmt.Sprintf("local name %q matches no declared function or variable in its package (gc rejects this)",
+ 				ln.Local)
+-		case ln.SelfLink && ln.ShadowedBy == "":
+-			// M10: the single-field form (//go:linkname name) on the
++		case ln.SelfLink:
++			// The single-field form (//go:linkname name) on the
+ 			// declaration of name is a provision, not a need — the
+ 			// target IS the declared symbol, which the compiled
+-			// package provides by construction. (Shadowed self-links
+-			// fall through to the normal check: the synthetic
+-			// replacement may or may not provide the symbol.)
++			// package provides by construction.
+ 			e.Status = StatusSatisfied
+ 			e.Reason = "self-link: target is the declared symbol itself"
+ 			e.ProvidedFrom = "self"
+@@ -232,7 +185,7 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 				e.ProvidedFrom = prov
+ 			} else {
+ 				e.Status = StatusMissing
+-				e.Reason = "target not provided by graalgo (P3-M4 intrinsic surface + synthetic packages)"
++				e.Reason = "target not provided by graalgo (P3-M4 intrinsic surface)"
+ 			}
+ 		}
+ 
+@@ -244,9 +197,6 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 		case StatusMissing:
+ 			rep.Counts.Missing++
+ 			skipCount[e.Target]++
+-			if e.ShadowedBy == "" {
+-				skipLive[e.Target]++
+-			}
+ 			if _, ok := skipIdx[e.Target]; !ok {
+ 				skipIdx[e.Target] = len(rep.SkipList)
+ 				rep.SkipList = append(rep.SkipList, SkipEntry{Target: e.Target})
+@@ -255,9 +205,6 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 			if len(skipFiles[e.Target]) < 5 {
+ 				skipFiles[e.Target] = append(skipFiles[e.Target], e.File)
+ 			}
+-			if e.ShadowedBy == "" && len(skipLiveFiles[e.Target]) < 5 {
+-				skipLiveFiles[e.Target] = append(skipLiveFiles[e.Target], e.File)
+-			}
+ 		}
+ 		rep.Counts.Linknames++
+ 		rep.Entries = append(rep.Entries, e)
+@@ -275,13 +222,8 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
+ 	for i := range rep.SkipList {
+ 		t := rep.SkipList[i].Target
+ 		rep.SkipList[i].LinknameRefs = skipCount[t]
+-		rep.SkipList[i].LiveRefs = skipLive[t]
+ 		rep.SkipList[i].ExampleFiles = skipFiles[t]
+-		rep.SkipList[i].LiveExampleFiles = skipLiveFiles[t]
+ 		rep.SkipList[i].Reason = skipReason[t]
+-		if skipLive[t] > 0 {
+-			rep.LiveSkipListSize++
+-		}
+ 	}
+ 	sort.Slice(rep.SkipList, func(i, j int) bool { return rep.SkipList[i].Target < rep.SkipList[j].Target })
+ 	rep.SkipListSize = len(rep.SkipList)
+@@ -383,13 +325,10 @@ func markdownSummary(rep *Report) string {
+ 	fmt.Fprintf(&b, "| ROUTED | %d |\n", rep.Counts.Routed)
+ 	fmt.Fprintf(&b, "| MISSING | %d |\n", rep.Counts.Missing)
+ 	fmt.Fprintf(&b, "| **SKIP_LIST_SIZE** | **%d** |\n", rep.SkipListSize)
+-	fmt.Fprintf(&b, "| **LIVE_SKIP_LIST_SIZE** | **%d** |\n", rep.LiveSkipListSize)
+ 	fmt.Fprintf(&b, "| files scanned | %d |\n", rep.Counts.FilesScanned)
+ 	fmt.Fprintf(&b, "| files with linknames | %d |\n", rep.Counts.FilesWithLinknames)
+ 	fmt.Fprintf(&b, "| _test.go files excluded | %d |\n", rep.Counts.TestFilesExcluded)
+ 	fmt.Fprintf(&b, "| constraint-excluded files | %d |\n", rep.Counts.ConstraintExcluded)
+-	fmt.Fprintf(&b, "| synthetic sources scanned | %d |\n", rep.Counts.SyntheticSourcesScanned)
+-	fmt.Fprintf(&b, "| synthetic linkname directives | %d |\n", rep.Counts.SyntheticLinknames)
+ 	fmt.Fprintf(&b, "| provided symbols | %d |\n", rep.ProvidedCount)
+ 	b.WriteString("\n> SPEC §3.6 kill trigger: skip-list growth > 15 twice per release.\n")
+ 	b.WriteString("> Compare SKIP_LIST_SIZE against the previous release's snapshot.\n\n")
+@@ -408,20 +347,14 @@ func markdownSummary(rep *Report) string {
+ 		b.WriteString("\n")
+ 	}
+ 	b.WriteString("## Skip-list (distinct MISSING targets)\n\n")
+-	b.WriteString("`live refs` counts references from code graalgo actually compiles " +
+-		"(non-shadowed stdlib files + synthetic sources); a target with 0 live refs is " +
+-		"referenced only by real-stdlib files superseded by a synthetic package.\n\n")
+-	b.WriteString("| target | refs | live refs | reason |\n|---|---|---|---|\n")
++	b.WriteString("| target | refs | reason |\n|---|---|---|\n")
+ 	for _, s := range rep.SkipList {
+-		fmt.Fprintf(&b, "| `%s` | %d | %d | %s |\n", s.Target, s.LinknameRefs, s.LiveRefs, s.Reason)
++		fmt.Fprintf(&b, "| `%s` | %d | %s |\n", s.Target, s.LinknameRefs, s.Reason)
+ 	}
+-	// Live skip-list grouped by target package: the actionable work list.
+-	b.WriteString("\n## Live skip-list by target package\n\n")
++	// Skip-list grouped by target package: the actionable work list.
++	b.WriteString("\n## Skip-list by target package\n\n")
+ 	byPkg := map[string][]SkipEntry{}
+ 	for _, s := range rep.SkipList {
+-		if s.LiveRefs == 0 {
+-			continue
+-		}
+ 		pkg := targetPackage(s.Target)
+ 		byPkg[pkg] = append(byPkg[pkg], s)
+ 	}
+@@ -433,8 +366,8 @@ func markdownSummary(rep *Report) string {
+ 	for _, pkg := range pkgs {
+ 		fmt.Fprintf(&b, "### `%s` (%d)\n\n", pkg, len(byPkg[pkg]))
+ 		for _, s := range byPkg[pkg] {
+-			fmt.Fprintf(&b, "- `%s` — %d live ref(s), e.g. %s\n",
+-				s.Target, s.LiveRefs, strings.Join(s.LiveExampleFiles, ", "))
++			fmt.Fprintf(&b, "- `%s` — %d ref(s), e.g. %s\n",
++				s.Target, s.LinknameRefs, strings.Join(s.ExampleFiles, ", "))
+ 		}
+ 		b.WriteString("\n")
+ 	}
+@@ -450,15 +383,6 @@ func markdownSummary(rep *Report) string {
+ 			fmt.Fprintf(&b, "- %s\n", pe)
+ 		}
+ 	}
+-	if len(rep.SyntheticParseErrors) > 0 {
+-		b.WriteString("\n## Synthetic sources that failed to parse\n\n")
+-		b.WriteString("These embedded synthetic packages contribute no provided " +
+-			"symbols and no scanned linknames in this run; the frontend's " +
+-			"buildSyntheticPackage would panic importing them.\n\n")
+-		for _, pe := range rep.SyntheticParseErrors {
+-			fmt.Fprintf(&b, "- %s\n", pe)
+-		}
+-	}
+ 	b.WriteString("\n## Provided symbols by source\n\n")
+ 	var fams []string
+ 	for fam := range rep.ProvidedSources {
+@@ -510,3 +434,35 @@ func readSnapshot(path string) (*ProvidedSet, error) {
+ 	}
+ 	return &ProvidedSet{Symbols: snap.Symbols, Skipped: snap.Skipped}, nil
+ }
++
++// targetPackage returns the package qualifier of a normalized linkname
++// target for grouping: the import path for pkg.sym, the receiver-less
++// prefix for pkg.(*T).M / pkg.T.M method targets.
++// (Moved here from the deleted synth.go: the Markdown grouping still
++// needs it; it never depended on any synthetic mechanism.)
++func targetPackage(t string) string {
++	if i := strings.Index(t, ".("); i >= 0 {
++		return t[:i]
++	}
++	rest := t
++	if i := strings.Index(t, "."); i >= 0 {
++		// Value-receiver method form pkg.T.M: the type segment starts
++		// uppercase and is followed by another dot-segment.
++		seg := t[i+1:]
++		if j := strings.Index(seg, "."); j >= 0 {
++			if typ := seg[:j]; typ != "" && isExported(typ) {
++				return t[:i]
++			}
++		}
++		rest = t
++	}
++	if i := strings.LastIndex(rest, "."); i >= 0 {
++		return rest[:i]
++	}
++	return t
++}
++
++func isExported(name string) bool {
++	r, _ := utf8.DecodeRuneInString(name)
++	return unicode.IsUpper(r)
++}
+diff --git a/tools/stdlib-linkdiff/scan.go b/tools/stdlib-linkdiff/scan.go
+index f40cc98..568da12 100644
+--- a/tools/stdlib-linkdiff/scan.go
++++ b/tools/stdlib-linkdiff/scan.go
+@@ -15,16 +15,12 @@ import (
+ // Linkname is one //go:linkname directive found in the scanned tree.
+ type Linkname struct {
+ 	File      string // path relative to the tree root, slash-separated
+-	Package   string // package clause of the file (import path for synthetic sources)
++	Package   string // package clause of the file
+ 	Local     string // fields[0] (the local name)
+ 	Declared  string // identifier the directive is attached to
+ 	Target    string // raw target symbol (fields[1]); "" for self-links
+ 	SelfLink  bool   // single-field form: target is Package.Local
+ 	Malformed string // non-empty when the directive is malformed (never dropped)
+-	// ShadowedBy names the synthetic import path whose package supersedes
+-	// this file's real-stdlib package ("" when the file is live). Set by
+-	// markShadowed; synthetic-source entries are always live.
+-	ShadowedBy string
+ }
+ 
+ // ScanResult is the outcome of scanning one Go source tree.
+@@ -43,15 +39,8 @@ type ScanResult struct {
+ 	// (capped) so the filter's effect stays auditable.
+ 	ExcludedByConstraint []string
+ 	ParseErrors          []string
+-	// SyntheticSourcesScanned counts embedded synthetic sources merged
+-	// into Linknames by the caller (File "synthetic/<importPath>").
+-	SyntheticSourcesScanned int
+-	// SyntheticSkipped records synthetic sources that failed to parse
+-	// during the synthetic scan (loud in the report, never fatal).
+-	SyntheticSkipped []string
+ 	// DeclNames maps a scanned file's directory (slash-separated,
+-	// tree-relative; "synthetic/<importPath>" for synthetic sources) to
+-	// the set of top-level declared function/variable names. gc resolves
++	// tree-relative) to the set of top-level declared function/variable
+ 	// a //go:linkname local name against the package's declarations
+ 	// (verified empirically: the runtime/cgo x_/ _-pair pattern), not
+ 	// just the declaration the comment is attached to.
+@@ -216,9 +205,8 @@ func extractLinknames(root, path string) ([]Linkname, []string, error) {
+ }
+ 
+ // linknamesInDecls extracts the //go:linkname directives attached to
+-// top-level declarations. Shared by the tree scan (file = tree-relative
+-// path, pkg = package clause) and the synthetic-source scan (file =
+-// "synthetic/<importPath>", pkg = import path).
++// top-level declarations. The caller is the tree scan (file =
++// tree-relative path, pkg = package clause).
+ func linknamesInDecls(decls []ast.Decl, file, pkg string) []Linkname {
+ 	var out []Linkname
+ 	emit := func(doc *ast.CommentGroup, declared string) {
+diff --git a/tools/stdlib-linkdiff/synth.go b/tools/stdlib-linkdiff/synth.go
+deleted file mode 100644
+index ba1f980..0000000
+--- a/tools/stdlib-linkdiff/synth.go
++++ /dev/null
+@@ -1,465 +0,0 @@
+-package main
+-
+-// M10 (WS I): the post-M9 provided surface and need set include the
+-// embedded synthetic stdlib packages. Two registries are read
+-// mechanically from the graalgo tree every run — never hand-maintained:
+-//
+-//   - internal/frontend/synth_machinery.go's syntheticSources map
+-//     (import path -> embedded-source const expression): the sources
+-//     themselves, resolved through const string fragments, '+'
+-//     concatenations, and parenthesized forms.
+-//   - The overlay's shadowed set, derived from the general mechanism
+-//     in internal/frontend/export.go's overlayImporter.Import (no
+-//     per-package switch since the hunt-special-cases change): every
+-//     key of syntheticSources, plus every key of the
+-//     dedicatedSyntheticStubs map (packages with dedicated synthetic
+-//     constructors, not in syntheticSources). Anything else resolves
+-//     from disk (real packages) and is NOT shadowed — e.g. fmt, sync,
+-//     sync/atomic, reflect and net/http, whose synthetic sources were
+-//     retired, must not appear here.
+-//
+-// A vendored-tree linkname whose file's import path is shadowed is still
+-// scanned (the P3-M6 population is preserved for the SPEC §3.6
+-// skip-list-growth comparison) but marked ShadowedBy, so the report can
+-// split the skip-list into the comparable total and the live subset
+-// (targets referenced by code graalgo actually compiles: non-shadowed
+-// stdlib files plus the synthetic sources).
+-
+-import (
+-	"fmt"
+-	"go/ast"
+-	"go/parser"
+-	"go/token"
+-	"path/filepath"
+-	"sort"
+-	"strconv"
+-	"strings"
+-)
+-
+-// synthRegistry is the resolved synthetic-package registry.
+-type synthRegistry struct {
+-	// Sources maps import path -> full embedded Go source.
+-	Sources map[string]string
+-	// ConstOf maps import path -> primary const name (provenance).
+-	ConstOf map[string]string
+-	// FileOf maps import path -> frontend file declaring the const.
+-	FileOf map[string]string
+-	// Shadowed is the set of import paths substituted by the overlay
+-	// importer: their real-stdlib files are never compiled by graalgo.
+-	Shadowed map[string]bool
+-}
+-
+-var synthRegCache = map[string]*synthRegistry{}
+-
+-// frontendDir is internal/frontend under the graalgo root.
+-func frontendDir(graalgo string) string {
+-	return filepath.Join(graalgo, "internal", "frontend")
+-}
+-
+-// loadSyntheticRegistry resolves the synthetic registry for the graalgo
+-// tree, cached per directory. It fails loudly on drift (missing map,
+-// unresolvable const, empty result) rather than silently under-scanning.
+-func loadSyntheticRegistry(graalgo string) (*synthRegistry, error) {
+-	dir := frontendDir(graalgo)
+-	if c, ok := synthRegCache[dir]; ok {
+-		return c, nil
+-	}
+-	reg, err := buildSyntheticRegistry(dir)
+-	if err != nil {
+-		return nil, err
+-	}
+-	synthRegCache[dir] = reg
+-	return reg, nil
+-}
+-
+-func buildSyntheticRegistry(dir string) (*synthRegistry, error) {
+-	reg := &synthRegistry{
+-		Sources:  map[string]string{},
+-		ConstOf:  map[string]string{},
+-		FileOf:   map[string]string{},
+-		Shadowed: map[string]bool{},
+-	}
+-	mapVals, err := parseSyntheticSourcesMap(dir)
+-	if err != nil {
+-		return nil, err
+-	}
+-	frags, fragFiles, err := collectConstStrings(dir)
+-	if err != nil {
+-		return nil, err
+-	}
+-	strs := resolveAllConsts(frags)
+-	for path, vexpr := range mapVals {
+-		src, ok := resolveConstExprStr(vexpr, strs)
+-		if !ok {
+-			return nil, fmt.Errorf("syntheticSources[%q]: cannot resolve source expression (source drift?)", path)
+-		}
+-		reg.Sources[path] = src
+-		reg.ConstOf[path] = primaryIdent(vexpr)
+-		reg.FileOf[path] = fragFiles[primaryIdent(vexpr)]
+-	}
+-	if len(reg.Sources) == 0 {
+-		return nil, fmt.Errorf("syntheticSources map: no entries resolved (source drift?)")
+-	}
+-	// The shadowed set is the general mechanism itself: every
+-	// syntheticSources key, plus the dedicated stubs. mapVals was
+-	// already parsed above, so reuse it instead of re-parsing
+-	// synth_machinery.go; only the dedicated-stub map needs a
+-	// separate parse of export.go.
+-	stubs, err := dedicatedSyntheticStubs(dir)
+-	if err != nil {
+-		return nil, err
+-	}
+-	for path := range mapVals {
+-		reg.Shadowed[path] = true
+-	}
+-	for path := range stubs {
+-		reg.Shadowed[path] = true
+-	}
+-	if len(reg.Shadowed) == 0 {
+-		return nil, fmt.Errorf("overlay shadowed set is empty (source drift?)")
+-	}
+-	return reg, nil
+-}
+-
+-// parseSyntheticSourcesMap parses synth_machinery.go and returns the
+-// syntheticSources map literal: import path -> value expression.
+-func parseSyntheticSourcesMap(dir string) (map[string]ast.Expr, error) {
+-	path := filepath.Join(dir, "synth_machinery.go")
+-	fset := token.NewFileSet()
+-	f, err := parser.ParseFile(fset, path, nil, 0)
+-	if err != nil {
+-		return nil, fmt.Errorf("parse %s: %w", path, err)
+-	}
+-	out := map[string]ast.Expr{}
+-	found := false
+-	for _, decl := range f.Decls {
+-		gd, ok := decl.(*ast.GenDecl)
+-		if !ok || gd.Tok != token.VAR {
+-			continue
+-		}
+-		for _, spec := range gd.Specs {
+-			vs, ok := spec.(*ast.ValueSpec)
+-			if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "syntheticSources" ||
+-				len(vs.Values) != 1 {
+-				continue
+-			}
+-			lit, ok := vs.Values[0].(*ast.CompositeLit)
+-			if !ok {
+-				return nil, fmt.Errorf("%s: syntheticSources is not a map literal", path)
+-			}
+-			found = true
+-			for _, el := range lit.Elts {
+-				kv, ok := el.(*ast.KeyValueExpr)
+-				if !ok {
+-					continue
+-				}
+-				key, ok := kv.Key.(*ast.BasicLit)
+-				if !ok || key.Kind != token.STRING {
+-					continue
+-				}
+-				p, err := strconv.Unquote(key.Value)
+-				if err != nil {
+-					return nil, fmt.Errorf("%s: bad map key: %w", path, err)
+-				}
+-				out[p] = kv.Value
+-			}
+-		}
+-	}
+-	if !found {
+-		return nil, fmt.Errorf("%s: syntheticSources map not found (source drift?)", path)
+-	}
+-	return out, nil
+-}
+-
+-// collectConstStrings gathers every `const Name = <string expr>` from
+-// the synth_*.go files: const name -> value expression, plus the
+-// declaring file (base name) for provenance.
+-func collectConstStrings(dir string) (map[string]ast.Expr, map[string]string, error) {
+-	frags := map[string]ast.Expr{}
+-	files := map[string]string{}
+-	matches, err := filepath.Glob(filepath.Join(dir, "synth_*.go"))
+-	if err != nil {
+-		return nil, nil, err
+-	}
+-	for _, path := range matches {
+-		// Skip test files: their consts are fixtures, not sources.
+-		if strings.HasSuffix(path, "_test.go") {
+-			continue
+-		}
+-		fset := token.NewFileSet()
+-		f, err := parser.ParseFile(fset, path, nil, 0)
+-		if err != nil {
+-			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
+-		}
+-		for _, decl := range f.Decls {
+-			gd, ok := decl.(*ast.GenDecl)
+-			if !ok || gd.Tok != token.CONST {
+-				continue
+-			}
+-			for _, spec := range gd.Specs {
+-				vs, ok := spec.(*ast.ValueSpec)
+-				if !ok || len(vs.Names) != 1 || len(vs.Values) != 1 {
+-					continue
+-				}
+-				name := vs.Names[0].Name
+-				if !strings.HasPrefix(name, "synthetic") {
+-					continue
+-				}
+-				frags[name] = vs.Values[0]
+-				files[name] = filepath.Base(path)
+-			}
+-		}
+-	}
+-	return frags, files, nil
+-}
+-
+-// resolveAllConsts resolves every collected const expression to its
+-// string value by fixpoint iteration (fragments reference each other
+-// across files, e.g. syntheticOsPart1..7 -> syntheticOsSource).
+-func resolveAllConsts(frags map[string]ast.Expr) map[string]string {
+-	strs := map[string]string{}
+-	// Seed: consts whose expression is directly a string literal.
+-	for name, expr := range frags {
+-		if s, ok := resolveConstExprStr(expr, strs); ok {
+-			strs[name] = s
+-		}
+-	}
+-	// Fixpoint: resolve the rest through already-resolved idents.
+-	for {
+-		progress := false
+-		for name, expr := range frags {
+-			if _, ok := strs[name]; ok {
+-				continue
+-			}
+-			if s, ok := resolveConstExprStr(expr, strs); ok {
+-				strs[name] = s
+-				progress = true
+-			}
+-		}
+-		if !progress {
+-			break
+-		}
+-	}
+-	return strs
+-}
+-
+-// resolveConstExprStr evaluates a const string expression: string
+-// literals (raw or interpreted), identifiers (via strs), '+'
+-// concatenations, and parenthesized forms. ok=false when an identifier
+-// is not yet resolved.
+-func resolveConstExprStr(expr ast.Expr, strs map[string]string) (string, bool) {
+-	switch e := expr.(type) {
+-	case *ast.BasicLit:
+-		if e.Kind != token.STRING {
+-			return "", false
+-		}
+-		s, err := strconv.Unquote(e.Value)
+-		if err != nil {
+-			return "", false
+-		}
+-		return s, true
+-	case *ast.Ident:
+-		s, ok := strs[e.Name]
+-		return s, ok
+-	case *ast.BinaryExpr:
+-		if e.Op != token.ADD {
+-			return "", false
+-		}
+-		l, ok := resolveConstExprStr(e.X, strs)
+-		if !ok {
+-			return "", false
+-		}
+-		r, ok := resolveConstExprStr(e.Y, strs)
+-		if !ok {
+-			return "", false
+-		}
+-		return l + r, true
+-	case *ast.ParenExpr:
+-		return resolveConstExprStr(e.X, strs)
+-	}
+-	return "", false
+-}
+-
+-// primaryIdent returns the first identifier of a source expression
+-// (for provenance): the ident itself, or the leftmost ident of a '+'
+-// chain.
+-func primaryIdent(expr ast.Expr) string {
+-	switch e := expr.(type) {
+-	case *ast.Ident:
+-		return e.Name
+-	case *ast.BinaryExpr:
+-		if e.Op == token.ADD {
+-			return primaryIdent(e.X)
+-		}
+-	case *ast.ParenExpr:
+-		return primaryIdent(e.X)
+-	}
+-	return ""
+-}
+-
+-// dedicatedSyntheticStubs parses export.go's dedicatedSyntheticStubs
+-// map literal and returns its keys: the import paths with dedicated
+-// synthetic constructors (not in syntheticSources) that the overlay
+-// substitutes. The keys are read mechanically — never hardcoded here —
+-// so adding or retiring a dedicated stub updates the shadowed set
+-// automatically. This deliberately does NOT parse
+-// overlayImporter.Import's body: since the hunt-special-cases change
+-// that method has no per-package switch; it consults this map and then
+-// syntheticSources generally, and re-introducing a per-package switch
+-// in export.go to satisfy this tool is forbidden.
+-func dedicatedSyntheticStubs(dir string) (map[string]bool, error) {
+-	path := filepath.Join(dir, "export.go")
+-	fset := token.NewFileSet()
+-	f, err := parser.ParseFile(fset, path, nil, 0)
+-	if err != nil {
+-		return nil, fmt.Errorf("parse %s: %w", path, err)
+-	}
+-	out := map[string]bool{}
+-	found := false
+-	for _, decl := range f.Decls {
+-		gd, ok := decl.(*ast.GenDecl)
+-		if !ok || gd.Tok != token.VAR {
+-			continue
+-		}
+-		for _, spec := range gd.Specs {
+-			vs, ok := spec.(*ast.ValueSpec)
+-			if !ok || len(vs.Names) != 1 || vs.Names[0].Name != "dedicatedSyntheticStubs" ||
+-				len(vs.Values) != 1 {
+-				continue
+-			}
+-			lit, ok := vs.Values[0].(*ast.CompositeLit)
+-			if !ok {
+-				return nil, fmt.Errorf("%s: dedicatedSyntheticStubs is not a map literal", path)
+-			}
+-			found = true
+-			for _, el := range lit.Elts {
+-				kv, ok := el.(*ast.KeyValueExpr)
+-				if !ok {
+-					continue
+-				}
+-				key, ok := kv.Key.(*ast.BasicLit)
+-				if !ok || key.Kind != token.STRING {
+-					continue
+-				}
+-				s, err := strconv.Unquote(key.Value)
+-				if err != nil {
+-					return nil, fmt.Errorf("%s: bad dedicatedSyntheticStubs key: %w", path, err)
+-				}
+-				out[s] = true
+-			}
+-		}
+-	}
+-	if !found {
+-		return nil, fmt.Errorf("%s: dedicatedSyntheticStubs map not found (source drift?)", path)
+-	}
+-	return out, nil
+-}
+-
+-// sortedKeys returns the map's keys in sorted order (deterministic
+-// reports).
+-func sortedKeys(m map[string]string) []string {
+-	ks := make([]string, 0, len(m))
+-	for k := range m {
+-		ks = append(ks, k)
+-	}
+-	sort.Strings(ks)
+-	return ks
+-}
+-
+-// extractSyntheticProvided adds every embedded synthetic package's
+-// exported symbols, qualified by import path (the qualifier linkname
+-// targets use), to the provided set. A source that does not parse is
+-// recorded on Skipped — loudly in the report — and does not abort the
+-// extraction (one broken synthetic package must not block the diff;
+-// cf. ScanResult.ParseErrors, same precedent).
+-func (p *ProvidedSet) extractSyntheticProvided(reg *synthRegistry) error {
+-	for _, path := range sortedKeys(reg.Sources) {
+-		prov := fmt.Sprintf("synthetic %q: internal/frontend/%s %s",
+-			path, reg.FileOf[path], reg.ConstOf[path])
+-		if err := p.extractGoSourceAs(path, reg.Sources[path], prov); err != nil {
+-			p.Skipped = append(p.Skipped,
+-				fmt.Sprintf("synthetic %q: %s", path, err))
+-		}
+-	}
+-	return nil
+-}
+-
+-// scanSyntheticLinknames extracts //go:linkname directives from every
+-// embedded synthetic source (the exporter's linkname scan covers them —
+-// synth_machinery.go buildSyntheticPackage parses with comments — so
+-// they are real needs). File is "synthetic/<importPath>"; Package is the
+-// import path, the qualifier linkname targets use. It also returns each
+-// source's top-level declared names (gc's package-scope local-name rule).
+-// Unparseable sources are reported via skipped, not fatal (same precedent
+-// as extractSyntheticProvided).
+-func scanSyntheticLinknames(reg *synthRegistry) (out []Linkname, decls map[string][]string, skipped []string) {
+-	decls = map[string][]string{}
+-	for _, path := range sortedKeys(reg.Sources) {
+-		src := reg.Sources[path]
+-		fset := token.NewFileSet()
+-		f, err := parser.ParseFile(fset, "synthetic/"+path+".go", src, parser.ParseComments)
+-		if err != nil {
+-			skipped = append(skipped,
+-				fmt.Sprintf("synthetic %q: %s", path, err))
+-			continue
+-		}
+-		out = append(out, linknamesInDecls(f.Decls, "synthetic/"+path, path)...)
+-		decls["synthetic/"+path] = declaredNames(f)
+-	}
+-	return out, decls, skipped
+-}
+-
+-// importPathOfRel maps a tree-relative file path to its import path:
+-// the slash-separated directory, with the cmd/vendor/ prefix stripped
+-// (vendored golang.org/x/... packages import as golang.org/x/...).
+-func importPathOfRel(rel string) string {
+-	dir := filepath.ToSlash(filepath.Dir(rel))
+-	if dir == "." {
+-		return ""
+-	}
+-	if strings.HasPrefix(dir, "cmd/vendor/") {
+-		return strings.TrimPrefix(dir, "cmd/vendor/")
+-	}
+-	return dir
+-}
+-
+-// markShadowed records, on each scanned linkname, the synthetic import
+-// path whose package supersedes the file's real-stdlib package (""
+-// when the file is live). Synthetic-source entries (File
+-// "synthetic/...") are always live: they are the code graalgo compiles.
+-func markShadowed(scan *ScanResult, shadowed map[string]bool) {
+-	for i := range scan.Linknames {
+-		ln := &scan.Linknames[i]
+-		if strings.HasPrefix(ln.File, "synthetic/") {
+-			continue
+-		}
+-		if ip := importPathOfRel(ln.File); ip != "" && shadowed[ip] {
+-			ln.ShadowedBy = ip
+-		}
+-	}
+-}
+-
+-// targetPackage returns the package qualifier of a normalized linkname
+-// target for grouping: the import path for pkg.sym, the receiver-less
+-// prefix for pkg.(*T).M / pkg.T.M method targets.
+-func targetPackage(t string) string {
+-	if i := strings.Index(t, ".("); i >= 0 {
+-		return t[:i]
+-	}
+-	rest := t
+-	if i := strings.Index(t, "."); i >= 0 {
+-		// Value-receiver method form pkg.T.M: the type segment starts
+-		// uppercase and is followed by another dot-segment.
+-		seg := t[i+1:]
+-		if j := strings.Index(seg, "."); j >= 0 {
+-			if typ := seg[:j]; typ != "" && isExported(typ) {
+-				return t[:i]
+-			}
+-		}
+-		rest = t
+-	}
+-	if i := strings.LastIndex(rest, "."); i >= 0 {
+-		return rest[:i]
+-	}
+-	return t
+-}
+diff --git a/tools/stdlib-linkdiff/synth_test.go b/tools/stdlib-linkdiff/synth_test.go
+deleted file mode 100644
+index 1991d30..0000000
+--- a/tools/stdlib-linkdiff/synth_test.go
++++ /dev/null
+@@ -1,310 +0,0 @@
+-package main
+-
+-// M10 (WS I) tests: the synthetic registry, the synthetic-source scan,
+-// shadow marking, and the live skip-list split.
+-//
+-// Non-tautology design: each test asserts a specific mechanical fact
+-// that flips if the wiring breaks — the registry resolving a known
+-// source, the shadow set containing a known overlaid package and
+-// excluding a non-overlaid one, markShadowed tagging a fake scan, the
+-// synthetic os directive landing in the scan with Package "os".
+-
+-import (
+-	"strings"
+-	"testing"
+-)
+-
+-func testRegistry(t *testing.T) *synthRegistry {
+-	t.Helper()
+-	reg, err := loadSyntheticRegistry(graalgoRoot(t))
+-	if err != nil {
+-		t.Fatalf("loadSyntheticRegistry: %v", err)
+-	}
+-	return reg
+-}
+-
+-func TestSyntheticRegistryResolves(t *testing.T) {
+-	reg := testRegistry(t)
+-	if len(reg.Sources) < 100 {
+-		t.Fatalf("registry resolved %d sources, want >= 100", len(reg.Sources))
+-	}
+-	// net/http and reflect were retired from syntheticSources (real
+-	// packages now compile from GOROOT via the disk importer —
+-	// synth_machinery.go); net and crypto/tls are synthetic packages
+-	// that still resolve through the registry.
+-	for _, path := range []string{"os", "net", "crypto/tls", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
+-		src, ok := reg.Sources[path]
+-		if !ok {
+-			t.Errorf("registry missing source for %q", path)
+-			continue
+-		}
+-		if !strings.Contains(src, "package ") {
+-			t.Errorf("source for %q has no package clause", path)
+-		}
+-		if reg.ConstOf[path] == "" || reg.FileOf[path] == "" {
+-			t.Errorf("source for %q lacks provenance (const/file)", path)
+-		}
+-	}
+-	// Every shadowed path backed by the registry must resolve to
+-	// a non-empty source: the map<->const wiring must not rot.
+-	// (Shadowed = syntheticSources keys + dedicatedSyntheticStubs keys;
+-	// the builder-synthesized dedicated stubs, runtime/unsafe, have no
+-	// registry source and are skipped by the inMap check below.)
+-	for path := range reg.Shadowed {
+-		if _, inMap := reg.Sources[path]; !inMap {
+-			continue // builder-synthesized (runtime/fmt/sync/...) or unsafe
+-		}
+-		if reg.Sources[path] == "" {
+-			t.Errorf("registry source for %q resolved empty", path)
+-		}
+-	}
+-}
+-
+-func TestSyntheticShadowSet(t *testing.T) {
+-	reg := testRegistry(t)
+-	// Shadowed = syntheticSources keys + dedicatedSyntheticStubs keys
+-	// (runtime, unsafe) per export.go's general overlay lookup.
+-	for _, path := range []string{"os", "runtime", "unsafe", "time", "context",
+-		"internal/poll", "syscall", "encoding/json", "crypto/sha256"} {
+-		if !reg.Shadowed[path] {
+-			t.Errorf("shadow set missing overlaid package %q", path)
+-		}
+-	}
+-	// Not overlaid: their real-stdlib files are compiled (from disk).
+-	// fmt, sync, sync/atomic no longer appear in the PROVIDED set
+-	// either — their p3frontend mirrors were retired
+-	// (REVIEW-2026-11-05-11), so no synthetic source provides them —
+-	// but the frontend overlay resolves them from disk: provided ≠
+-	// shadowed. reflect, net/http and internal/reflectlite synthetic
+-	// sources were retired in the same way (synth_machinery.go
+-	// retirement comments).
+-	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo",
+-		"fmt", "sync", "sync/atomic", "reflect", "net/http"} {
+-		if reg.Shadowed[path] {
+-			t.Errorf("shadow set wrongly contains non-overlaid package %q", path)
+-		}
+-	}
+-}
+-
+-func TestSyntheticParseErrorsSurfaced(t *testing.T) {
+-	reg := testRegistry(t)
+-	provided, err := loadProvided(options{graalgo: graalgoRoot(t)})
+-	if err != nil {
+-		t.Fatalf("loadProvided: %v", err)
+-	}
+-	// Skipped sources must be registry members: nothing may be dropped
+-	// that the registry does not know about, and nothing skipped may
+-	// pass silently (the report carries synthetic_parse_errors).
+-	for _, s := range provided.Skipped {
+-		// Format: synthetic "<path>": <err>.
+-		start := strings.Index(s, `"`)
+-		end := strings.LastIndex(s, `"`)
+-		if start < 0 || end <= start {
+-			t.Fatalf("skipped entry malformed: %q", s)
+-		}
+-		path := s[start+1 : end]
+-		if _, ok := reg.Sources[path]; !ok {
+-			t.Errorf("skipped %q is not a registry source", path)
+-		}
+-	}
+-	// The synthetic regexp/syntax source is currently unparseable (a
+-	// second import block from stringer output — buildSyntheticPackage
+-	// would panic importing it). It must appear on Skipped, never
+-	// vanish silently. If the source is repaired, Skipped shrinks and
+-	// this loop simply stops matching.
+-	found := false
+-	for _, s := range provided.Skipped {
+-		if strings.Contains(s, `"regexp/syntax"`) {
+-			found = true
+-		}
+-	}
+-	if src, ok := reg.Sources["regexp/syntax"]; ok && strings.Count(src, "\nimport ") > 1 {
+-		if !found {
+-			t.Error("broken synthetic regexp/syntax source not on Skipped")
+-		}
+-	}
+-}
+-
+-func TestShadowMarking(t *testing.T) {
+-	reg := testRegistry(t)
+-	scan := &ScanResult{Linknames: []Linkname{
+-		{File: "os/file.go", Package: "os", Local: "a", Target: "runtime.b"},
+-		{File: "runtime/proc.go", Package: "runtime", Local: "c", Target: "runtime.d"},
+-		{File: "cmd/vendor/golang.org/x/sys/unix/auxv.go", Package: "unix", Local: "e", Target: "runtime.f"},
+-		{File: "database/sql/sql.go", Package: "sql", Local: "g", Target: "runtime.h"},
+-		{File: "synthetic/os", Package: "os", Local: "i", Target: "graalgo.os.open"},
+-	}}
+-	markShadowed(scan, reg.Shadowed)
+-	want := map[string]string{
+-		"os/file.go": "os", "runtime/proc.go": "runtime",
+-		"cmd/vendor/golang.org/x/sys/unix/auxv.go": "",
+-		"database/sql/sql.go":                      "", "synthetic/os": "",
+-	}
+-	for _, ln := range scan.Linknames {
+-		if ln.ShadowedBy != want[ln.File] {
+-			t.Errorf("File %s: ShadowedBy = %q, want %q", ln.File, ln.ShadowedBy, want[ln.File])
+-		}
+-	}
+-}
+-
+-func TestSyntheticDirectivesScanned(t *testing.T) {
+-	reg := testRegistry(t)
+-	lns, _, skipped := scanSyntheticLinknames(reg)
+-	if len(lns) == 0 {
+-		t.Fatal("synthetic scan found no linkname directives")
+-	}
+-	// The synthetic os package linknames graalgo.os.open: Package must
+-	// be the import path "os" (the qualifier linkname targets use).
+-	found := false
+-	for _, ln := range lns {
+-		if ln.Target == "graalgo.os.open" {
+-			found = true
+-			if ln.Package != "os" {
+-				t.Errorf("graalgo.os.open directive: Package = %q, want \"os\"", ln.Package)
+-			}
+-			if !strings.HasPrefix(ln.File, "synthetic/") {
+-				t.Errorf("graalgo.os.open directive: File = %q, want synthetic/ prefix", ln.File)
+-			}
+-		}
+-		if ln.ShadowedBy != "" {
+-			t.Errorf("synthetic directive %s wrongly marked shadowed", ln.Target)
+-		}
+-	}
+-	if !found {
+-		t.Error("synthetic scan missed the os -> graalgo.os.open directive")
+-	}
+-	// Skipped sources are reported, never fatal.
+-	for _, s := range skipped {
+-		if !strings.Contains(s, "synthetic") {
+-			t.Errorf("skipped entry malformed: %q", s)
+-		}
+-	}
+-}
+-
+-func TestSelfLinkSatisfiedByConstruction(t *testing.T) {
+-	provided := &ProvidedSet{Symbols: map[string]string{}}
+-	scan := &ScanResult{}
+-	scan.addFileDecls("math/big/arith.go", []string{"addVW", "subVW"})
+-	scan.addFileDecls("p/q.go", []string{"decl"})
+-	scan.Linknames = []Linkname{
+-		// Live self-link: the target is the declared symbol itself.
+-		{File: "math/big/arith.go", Package: "big", Local: "addVW", Declared: "addVW", SelfLink: true},
+-		// Shadowed self-link: falls through to the normal check
+-		// (here: MISSING, still marked shadowed, zero live refs).
+-		{File: "math/big/arith.go", Package: "big", Local: "subVW", Declared: "subVW", SelfLink: true, ShadowedBy: "math/big"},
+-		// Undeclared self-link: gc rejects, still MISSING.
+-		{File: "p/q.go", Package: "q", Local: "other", Declared: "decl", SelfLink: true},
+-	}
+-	rep := Classify(scan, provided, nil, options{})
+-	byTarget := map[string]*Entry{}
+-	for i := range rep.Entries {
+-		byTarget[rep.Entries[i].Target] = &rep.Entries[i]
+-	}
+-	if e := byTarget["big.addVW"]; e == nil || e.Status != StatusSatisfied {
+-		t.Fatalf("live self-link big.addVW: got %+v, want SATISFIED", e)
+-	} else if e.ProvidedFrom != "self" {
+-		t.Errorf("live self-link big.addVW: ProvidedFrom = %q, want %q", e.ProvidedFrom, "self")
+-	}
+-	if e := byTarget["big.subVW"]; e == nil || e.Status != StatusMissing {
+-		t.Fatalf("shadowed self-link big.subVW: got %+v, want MISSING", e)
+-	} else if e.ShadowedBy != "math/big" {
+-		t.Errorf("shadowed self-link big.subVW lost its shadow mark")
+-	}
+-	if e := byTarget["q.other"]; e == nil || e.Status != StatusMissing {
+-		t.Fatalf("mismatched self-link: got %+v, want MISSING", e)
+-	}
+-	if rep.SkipListSize != 2 {
+-		t.Fatalf("SkipListSize = %d, want 2 (live self-link must not be listed)", rep.SkipListSize)
+-	}
+-}
+-
+-// TestLocalNamePackageScope: gc resolves a //go:linkname local name
+-// against the package's declarations, not just the declaration the
+-// comment is attached to (verified empirically against the gc
+-// toolchain: the runtime/cgo x_cgo_*/_cgo_* pair pattern is accepted
+-// iff the local name is declared somewhere in the package).
+-func TestLocalNamePackageScope(t *testing.T) {
+-	provided := &ProvidedSet{Symbols: map[string]string{"runtime.ok": "test"}}
+-	scan := &ScanResult{}
+-	scan.addFileDecls("cgo/callbacks.go", []string{"x_cgo_init", "_cgo_init"})
+-	scan.addFileDecls("cgo/other.go", []string{"unrelated"})
+-	scan.Linknames = []Linkname{
+-		// Local declared on a *different* declaration in the same
+-		// package: well-formed (the cgo pair pattern).
+-		{File: "cgo/callbacks.go", Package: "cgo", Local: "_cgo_init", Declared: "x_cgo_init", Target: "runtime.ok"},
+-		// Local declared nowhere in the package: gc rejects.
+-		{File: "cgo/other.go", Package: "cgo", Local: "_cgo_nope", Declared: "unrelated", Target: "runtime.ok"},
+-	}
+-	rep := Classify(scan, provided, nil, options{})
+-	byLocal := map[string]*Entry{}
+-	for i := range rep.Entries {
+-		byLocal[rep.Entries[i].Local] = &rep.Entries[i]
+-	}
+-	if e := byLocal["_cgo_init"]; e == nil || e.Status != StatusSatisfied {
+-		t.Fatalf("_cgo_init (package-scope declared): got %+v, want SATISFIED", e)
+-	}
+-	if e := byLocal["_cgo_nope"]; e == nil || e.Status != StatusMissing {
+-		t.Fatalf("_cgo_nope (undeclared): got %+v, want MISSING", e)
+-	} else if !strings.Contains(e.Reason, "gc rejects") {
+-		t.Errorf("_cgo_nope reason = %q, want the gc-rejects reason", e.Reason)
+-	}
+-}
+-
+-func TestTargetPackage(t *testing.T) {
+-	cases := map[string]string{
+-		"runtime.fastrand":                "runtime",
+-		"internal/poll.runtime_pollOpen":  "internal/poll",
+-		"reflect.(*rtype).Name":           "reflect",
+-		"net/http.(*Transport).RoundTrip": "net/http",
+-		"go/types.(*Checker).infer":       "go/types",
+-		"http.cloneTLSConfig":             "http",
+-		"go:fipsinfo":                     "go:fipsinfo",
+-		"time.Duration.String":            "time",
+-	}
+-	for target, want := range cases {
+-		if got := targetPackage(target); got != want {
+-			t.Errorf("targetPackage(%q) = %q, want %q", target, got, want)
+-		}
+-	}
+-}
+-
+-func TestLiveSkipListSplit(t *testing.T) {
+-	provided := &ProvidedSet{Symbols: map[string]string{"runtime.ok": "test"}}
+-	scan := &ScanResult{}
+-	scan.addFileDecls("database/sql/sql.go", []string{"a"})
+-	scan.addFileDecls("os/file.go", []string{"b"})
+-	scan.addFileDecls("x/y.go", []string{"c"})
+-	scan.Linknames = []Linkname{
+-		// Live MISSING: non-shadowed file.
+-		{File: "database/sql/sql.go", Package: "sql", Local: "a", Declared: "a", Target: "runtime.missing1"},
+-		// Shadowed MISSING: superseded real-stdlib file.
+-		{File: "os/file.go", Package: "os", Local: "b", Declared: "b", Target: "runtime.missing2", ShadowedBy: "os"},
+-		// Satisfied.
+-		{File: "x/y.go", Package: "y", Local: "c", Declared: "c", Target: "runtime.ok"},
+-	}
+-	rep := Classify(scan, provided, nil, options{})
+-	if rep.SkipListSize != 2 {
+-		t.Fatalf("SkipListSize = %d, want 2", rep.SkipListSize)
+-	}
+-	if rep.LiveSkipListSize != 1 {
+-		t.Fatalf("LiveSkipListSize = %d, want 1", rep.LiveSkipListSize)
+-	}
+-	for _, s := range rep.SkipList {
+-		switch s.Target {
+-		case "runtime.missing1":
+-			if s.LiveRefs != 1 {
+-				t.Errorf("missing1 LiveRefs = %d, want 1", s.LiveRefs)
+-			}
+-		case "runtime.missing2":
+-			if s.LiveRefs != 0 {
+-				t.Errorf("missing2 LiveRefs = %d, want 0", s.LiveRefs)
+-			}
+-		}
+-	}
+-	// Entries carry the shadow mark through to the report.
+-	for _, e := range rep.Entries {
+-		if e.Target == "runtime.missing2" && e.ShadowedBy != "os" {
+-			t.Errorf("missing2 entry lost its shadow mark")
+-		}
+-	}
+-}
