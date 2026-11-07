@@ -1,0 +1,40 @@
+HEAD: 59f0a247088f0e0b6db7e0623076866727dd873c
+tree: 0 dirty files
+
+== dead CP entries (from run_battery.sh:11, gmp_matrix.sh:17, stress_differential.sh:12) ==
+MISSING: out/test-classes
+MISSING: out/classes
+MISSING: ../phase1/out/classes
+MISSING: ../phase1/lib/collections-25.0.4.1.1.jar
+
+== live layout ==
+internal/backend/interop/out/classes
+internal/backend/runtime/out/classes
+internal/backend/runtime/out/test-classes
+internal/backend/truffle/lib
+internal/backend/truffle/out/classes
+
+== java launch with dead CP (read-only) ==
+Error: Could not find or load main class graalgo.sched.torture.TortureBattery
+Caused by: java.lang.ClassNotFoundException: graalgo.sched.torture.TortureBattery
+
+== hidden_files refs in torture scripts ==
+tools/torture/gmp_matrix.sh:18:CORPUS="hidden_files/torture/corpus"
+tools/torture/gmp_matrix.sh:19:OUTDIR="hidden_files/torture/gmp-matrix"
+tools/torture/run_battery.sh:4:# Runs every leg, archives logs to hidden_files/torture/logs/, prints a
+tools/torture/run_battery.sh:12:OUTDIR="hidden_files/torture/logs"
+tools/torture/stress_differential.sh:13:CORPUS="hidden_files/torture/corpus"
+tools/torture/stress_differential.sh:14:OUTDIR="hidden_files/torture/stress-differential"
+
+== Makefile/CI invocations of the three scripts ==
+(none found)
+
+== prior lane rv1107-03 ==
+  "status": "active",
+  "created": "2026-11-07T06:15:37+00:00",
+  "heartbeat": "2026-11-07T06:15:37+00:00",
+  wt/graalgo-independent-codebase-review/rv1107-03
+ls: cannot access '/home/hatch/workspace/worktrees/graalgo/rv1107-03': No such file or directory
+
+== own registry ==
+-rw-rw---- 1 root nogroup 0 Nov  7 08:06 /home/hatch/workspace/system/work-registry/graalgo-r1107-07-r11.json.tmp

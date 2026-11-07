@@ -1,0 +1,649 @@
+diff --git a/docs/REPO_STRUCTURE.md b/docs/REPO_STRUCTURE.md
+index e2c2110a..4853d3bb 100644
+--- a/docs/REPO_STRUCTURE.md
++++ b/docs/REPO_STRUCTURE.md
+@@ -189,7 +189,8 @@ Related: [Makefile](../Makefile) (root build entry point),
+   tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
+   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
+   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
+-  [torture/](../tools/torture/) (scheduler torture),
++  [torture/](../tools/torture/) (scheduler torture: battery/matrix/differential
++  scripts + committed [corpus/](../tools/torture/corpus/)),
+   [godebug-diff/](../tools/godebug-diff/),
+   [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
+   [req/](../tools/req/) (requirements CLI), and
+diff --git a/internal/backend/runtime/Makefile b/internal/backend/runtime/Makefile
+index e48aa6f5..acc80d9c 100644
+--- a/internal/backend/runtime/Makefile
++++ b/internal/backend/runtime/Makefile
+@@ -200,14 +200,34 @@ pin-audit: main $(OUT_TEST)/.built
+ 	--corpus $(P1_CORPUS) --corpus $(P2_CORPUS) --tests --gmp 2 \
+ 	--out out/pinaudit-report.md
+ 
++# The truffle stubs build in the truffle module (against this module's
++# classes); the battery needs them on its classpath (see torture below).
++$(TRUFFLE_CLASSES)/.built:
++	$(MAKE) -C $(TRUFFLE) main
++
+ # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
+-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
+-torture: main $(OUT_TEST)/.built
++# Takes ~10 min. Logs under out/torture/logs/ (gitignored). The battery's
++# classpath needs the truffle stubs (truffle/out/classes), which the runtime
++# joint round does not produce — the target builds them first (2026-11-05:
++# a fresh checkout failed the script's fail-fast check here because this
++# prerequisite was missing; the Oct repoint had only ever run on a tree
++# where truffle/out/classes already existed).
++torture: main $(OUT_TEST)/.built $(TRUFFLE_CLASSES)/.built
+ 	bash ../../../tools/torture/run_battery.sh
+ 
+-# P2-M8 GOMAXPROCS matrix (differential vs gc).
++# P2-M8 GOMAXPROCS matrix (differential vs gc). Needs the gofrontend
++# binary (internal/frontend/build.sh); the interop module (product launcher)
++# is built first. Logs under out/torture/gmp-matrix/.
+ gmp-matrix: main $(OUT_TEST)/.built
++	$(MAKE) -C ../interop main
+ 	bash ../../../tools/torture/gmp_matrix.sh
+ 
++# P2-M8 stress-corpus differential (Go runtime/context patterns vs gc).
++# Needs the gofrontend binary; the interop module (product launcher)
++# is built first. Logs under out/torture/stress-differential/.
++stress-differential: main $(OUT_TEST)/.built
++	$(MAKE) -C ../interop main
++	bash ../../../tools/torture/stress_differential.sh
++
+ clean:
+ 	rm -rf out
+diff --git a/tools/torture/README.md b/tools/torture/README.md
+new file mode 100644
+index 00000000..130e3caa
+--- /dev/null
++++ b/tools/torture/README.md
+@@ -0,0 +1,63 @@
++# Scheduler torture scripts
++
++Three scripts that torture the P2 userspace scheduler on the production
++path (spike 2b F1–F6), differential against `gc` where Go source is
++involved. Remediation of review findings QN-12/T13 (stale scripts) and
++T17 (shell hygiene).
++
++| Script | What it does |
++|---|---|
++| [run_battery.sh](run_battery.sh) | Runs every `TortureBattery` leg (F1/F3/F4/F5/F5b/F6) with several scheduler configs; exit 0 iff all legs pass |
++| [gmp_matrix.sh](gmp_matrix.sh) | GOMAXPROCS × workload matrix (`{1,2,4,N}` × `{compute,mixed}`): each [corpus](corpus/) program runs under graalgo (`--gmp=N`) and under `gc` (`GOMAXPROCS=N`); stderr compared byte-for-byte (corpus prints via `println`) |
++| [stress_differential.sh](stress_differential.sh) | Runs each [corpus](corpus/) program under graalgo and `gc`; `exact` mode compares stderr byte-for-byte, `completion` mode only requires clean completion on both |
++
++## Layout
++
++- Scripts: this directory. Logs: `internal/backend/runtime/out/torture/<name>/`
++  (gitignored via `out/` — per the repo [no-debris rule](../../AGENTS.md#5-no-debris-rule),
++  run evidence never lands in the tree).
++- Corpus: [corpus/](corpus/) (committed). Each program is deterministic by
++  construction (order-independent reductions), so `exact` comparisons are
++  schedule-independent.
++
++## Corpus constraints
++
++The corpus is deliberately restricted to what the Go toolchain can execute
++through the product launcher **on the current base**: goroutines, channels,
++plain (multi-value) calls, and the `println` builtin. The `fmt`/`os`/
++`context`/`runtime`/`sync/atomic` packages are not yet usable end-to-end
++(pre-existing toolchain gaps: a 3-valued `ifacemethod` assignment in the
++`fmt` closure breaks the backend's `buildAssign`; `os.Stdout` hits an NPE;
++`context` hits an interface-dispatch gap; `runtime` hangs). Because `fmt`
++is unavailable, programs print via the `println` builtin — which writes to
++**stderr** on both `gc` and graalgo — so the differential scripts compare
++stderr, not stdout. JVM/launcher warnings also land on stderr and will
++fail a cell; that is intended (toolchain noise is a signal).
++When the toolchain gaps close, extend the corpus (context cancellation,
++finalizers) — the `exact`/`completion` modes already support it.
++
++## Prerequisites
++
++- GraalVM at `$GRAALVM_HOME` (default `~/tools/graalvm-jdk-25`).
++- The backend modules built:
++  `make -C ../../internal/backend/truffle main` (runtime + truffle classes),
++  `make -C ../../internal/backend/interop main` (product-launcher classes)
++  — or run the make targets below, which build what they need.
++- For the two differential scripts: the `gofrontend` binary built
++  (see [internal/frontend/build.sh](../../internal/frontend/build.sh)) and
++  stock Go at `$GO` (default `~/tools/go/bin/go`).
++- Go programs run through the product launcher
++  (`internal/backend/graalgo-sync-run`, P3SyncMain): it drives the same
++  `SchedulerCore` under test with channels/select and the full stdlib
++  surface. The raw scheduler entry point
++  (`graalgo.sched.launcher.SchedMain`) cannot run real Go programs on the
++  current base (its Truffle `NodeFactory` lacks the `ifacemethod`/`makechan`
++  hooks), so the differential scripts deliberately do not use it.
++
++## Make targets
++
++In [internal/backend/runtime](../../internal/backend/runtime/):
++
++- `make torture` — the battery
++- `make gmp-matrix` — the GOMAXPROCS matrix
++- `make stress-differential` — the stress corpus differential
+diff --git a/tools/torture/corpus/cancel_broadcast.go b/tools/torture/corpus/cancel_broadcast.go
+new file mode 100644
+index 00000000..f42cd498
+--- /dev/null
++++ b/tools/torture/corpus/cancel_broadcast.go
+@@ -0,0 +1,29 @@
++package main
++
++// cancel_broadcast: deterministic broadcast-cancellation pattern.
++//
++// Eight workers block on a done channel; the main goroutine closes it,
++// each worker reports through a buffered channel, and the main goroutine
++// sums the worker ids. The sum (0+1+...+7 = 28) is schedule-independent,
++// so the printed line is identical under graalgo and gc. This exercises
++// the same broadcast-wakeup path as context cancellation without importing
++// the context package (not yet executable through the product launcher on
++// the current base); see gmp_compute.go.
++//
++// The stress-differential script compares output byte-for-byte.
++func main() {
++	done := make(chan struct{})
++	ack := make(chan int, 8)
++	for w := 0; w < 8; w++ {
++		go func(w int) {
++			<-done
++			ack <- w
++		}(w)
++	}
++	close(done)
++	sum := 0
++	for w := 0; w < 8; w++ {
++		sum += <-ack
++	}
++	println("canceled", sum)
++}
+diff --git a/tools/torture/corpus/gmp_compute.go b/tools/torture/corpus/gmp_compute.go
+new file mode 100644
+index 00000000..f04071f6
+--- /dev/null
++++ b/tools/torture/corpus/gmp_compute.go
+@@ -0,0 +1,33 @@
++package main
++
++// gmp_compute: deterministic parallel compute workload.
++//
++// Eight workers each sum the squares of their strided slice of 1..N; the
++// partial sums are added in a fixed order, so the printed total is
++// identical under any goroutine schedule and any GOMAXPROCS. The
++// gmp-matrix and stress-differential scripts compare graalgo's output
++// byte-for-byte against gc's.
++//
++// NOTE: output goes through the println builtin (stderr on both gc and
++// graalgo) because the fmt/os packages are not yet executable through the
++// product launcher on the current base (pre-existing toolchain gaps, not
++// script issues); see tools/torture/README.md.
++func main() {
++	const N = 200000
++	const workers = 8
++	ch := make(chan int64, workers)
++	for w := 0; w < workers; w++ {
++		go func(w int) {
++			var sum int64
++			for i := w + 1; i <= N; i += workers {
++				sum += int64(i) * int64(i)
++			}
++			ch <- sum
++		}(w)
++	}
++	var total int64
++	for w := 0; w < workers; w++ {
++		total += <-ch
++	}
++	println(total)
++}
+diff --git a/tools/torture/corpus/gmp_mixed.go b/tools/torture/corpus/gmp_mixed.go
+new file mode 100644
+index 00000000..be3b3347
+--- /dev/null
++++ b/tools/torture/corpus/gmp_mixed.go
+@@ -0,0 +1,40 @@
++package main
++
++// gmp_mixed: deterministic mixed compute+communication workload.
++//
++// A producer feeds 1..N into a channel; four worker goroutines square each
++// value and forward it; the main goroutine sums the squares. Addition is
++// order-independent, so the printed total is identical under any schedule
++// and any GOMAXPROCS. The gmp-matrix and stress-differential scripts compare
++// graalgo's output byte-for-byte against gc's.
++//
++// NOTE: output goes through the println builtin (stderr on both gc and
++// graalgo); see gmp_compute.go for why fmt is not used.
++func main() {
++	const N = 5000
++	const workers = 4
++	in := make(chan int)
++	out := make(chan int)
++	for w := 0; w < workers; w++ {
++		go func() {
++			for {
++				v, ok := <-in
++				if !ok {
++					return
++				}
++				out <- v * v
++			}
++		}()
++	}
++	go func() {
++		for i := 1; i <= N; i++ {
++			in <- i
++		}
++		close(in)
++	}()
++	var total int64
++	for i := 0; i < N; i++ {
++		total += int64(<-out)
++	}
++	println(total)
++}
+diff --git a/tools/torture/corpus/goroutine_storm.go b/tools/torture/corpus/goroutine_storm.go
+new file mode 100644
+index 00000000..f7933db6
+--- /dev/null
++++ b/tools/torture/corpus/goroutine_storm.go
+@@ -0,0 +1,35 @@
++package main
++
++// goroutine_storm: scheduler admission under a spawn burst.
++//
++// Spawns 500 goroutines; each does a small amount of compute, then signals
++// completion through a buffered channel. The main goroutine drains the
++// channel and prints the count. The count is deterministic (500); the gate
++// is clean completion (exit 0, no lost wakeup, no hang) on both graalgo
++// and gc — a scheduler-level stress the Java-side F6 leg also covers.
++//
++// (A finalizer storm would be the ideal runtime-pattern counterpart, but
++// runtime.SetFinalizer is not yet executable through the product launcher
++// on the current base; see gmp_compute.go.)
++//
++// The stress-differential script runs this in "completion" mode.
++func main() {
++	const N = 500
++	done := make(chan int, N)
++	for i := 0; i < N; i++ {
++		go func(i int) {
++			x := i
++			for k := 0; k < 100; k++ {
++				x = x*31 + k
++			}
++			_ = x
++			done <- i
++		}(i)
++	}
++	count := 0
++	for i := 0; i < N; i++ {
++		<-done
++		count++
++	}
++	println("done", count)
++}
+diff --git a/tools/torture/gmp_matrix.sh b/tools/torture/gmp_matrix.sh
+index 7afdf2cf..e576a7eb 100755
+--- a/tools/torture/gmp_matrix.sh
++++ b/tools/torture/gmp_matrix.sh
+@@ -4,72 +4,116 @@
+ # Matrix: GOMAXPROCS in {1, 2, 4, N} x workload in {compute, mixed}.
+ # (N = host CPUs; 4 on a 2-CPU VM exercises the oversubscription clamp.)
+ # Each cell: run under graalgo (--gmp=N) and under gc (GOMAXPROCS=N),
+-# compare stdout byte-for-byte. Any systematic divergence is a
++# compare stderr byte-for-byte (the corpus prints via the println builtin,
++# which writes to stderr on both). Any systematic divergence is a
+ # kill-criterion trigger (PLAN.md risk: "in-flight-cap economics").
+ #
+ # Channel-heavy cells are Java-level (TortureBattery F1); Go channel ops
+ # are WS E/F (not in Go source scope).
+-set -u
++#
++# Logs go to internal/backend/runtime/out/torture/gmp-matrix/ (gitignored
++# via out/). The Go corpus lives in tools/torture/corpus/ (committed).
++#
++# Go programs run through the product launcher internal/backend/graalgo-sync-run
++# (P3SyncMain): it drives the same SchedulerCore under test and supports
++# channels/select and the full stdlib surface. The raw scheduler entry point
++# (graalgo.sched.launcher.SchedMain) cannot run real Go programs on this base
++# (its Truffle NodeFactory lacks the ifacemethod/makechan hooks) — using it
++# here would fail every cell for the wrong reason.
++#
++# Prerequisites: the backend modules built:
++#   make -C internal/backend/truffle main     # runtime + truffle classes
++#   make -C internal/backend/interop main     # product launcher classes
++#   (see internal/frontend/build.sh for the gofrontend binary)
++set -euo pipefail
+ cd "$(dirname "$0")/../.." || exit 1
++GR="$PWD"
+ 
+-GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+-GO="$HOME/tools/go/bin/go"
+-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
+-CORPUS="hidden_files/torture/corpus"
+-OUTDIR="hidden_files/torture/gmp-matrix"
+-mkdir -p "$OUTDIR"
++SYNC_RUN="internal/backend/graalgo-sync-run"
++[ -x "$SYNC_RUN" ] || { echo "ERROR: $SYNC_RUN missing/not executable" >&2; exit 1; }
++[ -d internal/backend/interop/out/classes ] || {
++  echo "ERROR: interop classes missing — build first: make -C internal/backend/interop main" >&2; exit 1; }
++[ -d internal/backend/runtime/out/classes ] || {
++  echo "ERROR: runtime classes missing — build first: make -C internal/backend/truffle main" >&2; exit 1; }
++GO="${GO:-$HOME/tools/go/bin/go}"
++[ -x "$GO" ] || { echo "ERROR: no go at $GO (set GO)" >&2; exit 1; }
++# gofrontend resolution mirrors graalgo.launcher.ToolPaths: an explicit
++# GRAALGO_GOFRONTEND wins if executable, else the in-tree build location.
++GOFRONTEND="${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}"
++[ -x "$GOFRONTEND" ] || { echo "ERROR: gofrontend not executable at $GOFRONTEND — build it (see internal/frontend/build.sh)" >&2; exit 1; }
++export GRAALGO_GOFRONTEND="$GOFRONTEND"
++
++CORPUS="tools/torture/corpus"
++OUTDIR="internal/backend/runtime/out/torture/gmp-matrix"
++mkdir -p "$OUTDIR" || { echo "ERROR: cannot create $OUTDIR" >&2; exit 1; }
++# Keep the JVM's temp files out of /tmp (small shared tmpfs); the launcher
++# honors TMPDIR for -Djava.io.tmpdir.
++export TMPDIR="$OUTDIR"
++# Cap the per-cell JVM heap: the box is memory-tight and an uncapped
++# truffle JVM risks the OOM killer (observed SIGKILL, exit 137).
++export _JAVA_OPTIONS="-Xmx1g"
++
++# strip_picked_up <file>: drop the JVM's _JAVA_OPTIONS "Picked up" notice
++# from a captured stderr file. Retried (3x, 5s apart): the strip is cosmetic
++# and a transient quota flap must never abort the run under set -e (a matrix
++# run died mid-cell on exactly this: sed -i could not create its temp file).
++# If all retries fail the notice stays and the cell fails honestly on
++# comparison instead of the whole run dying.
++strip_picked_up() {
++  local f="$1" i
++  for i in 1 2 3; do
++    sed -i '/^Picked up _JAVA_OPTIONS/d' "$f" && return 0
++    sleep 5
++  done
++  echo "WARNING: could not strip _JAVA_OPTIONS notice from $f (quota?)" >&2
++  return 0
++}
+ 
+ NPROC=$(nproc)
+ PASS=0
+ FAIL=0
+ FAILED_CELLS=""
+ 
+-# Note: on hosts where NPROC is 1, 2, or 4, the gmp=N run duplicates an
+-# earlier cell; we still run it (distinct evidence) but tag the files
+-# -n<N> to avoid overwriting.
++cell() {
++  local wl="$1" gmp="$2" tag="$3"
++  local prog="$CORPUS/gmp_$wl.go"
++  [ -f "$prog" ] || { echo "ERROR: corpus program missing: $prog" >&2; exit 1; }
++  local grc=0 gcrc=0
++  # graalgo (product launcher: same SchedulerCore, full stdlib surface).
++  # The corpus prints via the println builtin, which writes to stderr on
++  # both gc and graalgo — so the differential comparison is on stderr.
++  # (JVM/launcher warnings would also land on stderr and fail the cell;
++  # that is intended: toolchain noise is a signal, not to be filtered.
++  # The _JAVA_OPTIONS "Picked up" notice is the sole exception: it is
++  # JVM-launcher chatter, stripped before comparison.)
++  timeout 180 "$SYNC_RUN" --gmp="$gmp" "$GR/$prog" \
++    > "$OUTDIR/${wl}_${tag}.graalgo.stdout" 2> "$OUTDIR/${wl}_${tag}.graalgo.stderr" || grc=$?
++  strip_picked_up "$OUTDIR/${wl}_${tag}.graalgo.stderr"
++  # gc
++  GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
++    > "$OUTDIR/${wl}_${tag}.gc.stdout" 2> "$OUTDIR/${wl}_${tag}.gc.stderr" || gcrc=$?
++  if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
++     cmp -s "$OUTDIR/${wl}_${tag}.graalgo.stderr" "$OUTDIR/${wl}_${tag}.gc.stderr"; then
++    echo "PASS wl=$wl gmp=$gmp"
++    PASS=$((PASS + 1))
++  else
++    echo "FAIL wl=$wl gmp=$gmp (graalgo_exit=$grc gc_exit=$gcrc)"
++    FAILED_CELLS="$FAILED_CELLS $wl/gmp$gmp"
++    FAIL=$((FAIL + 1))
++  fi
++}
++
+ for gmp in 1 2 4; do
+   for wl in compute mixed; do
+-    tag="gmp${gmp}"
+-    prog="$CORPUS/gmp_$wl.go"
+-    # graalgo
+-    timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
+-      graalgo.sched.launcher.SchedMain --gmp="$gmp" "$prog" \
+-      > "$OUTDIR/${wl}_${tag}.graalgo.out" 2> "$OUTDIR/${wl}_${tag}.graalgo.err"
+-    grc=$?
+-    # gc
+-    GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
+-      > "$OUTDIR/${wl}_${tag}.gc.out" 2> "$OUTDIR/${wl}_${tag}.gc.err"
+-    gcrc=$?
+-    if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
+-       cmp -s "$OUTDIR/${wl}_${tag}.graalgo.out" "$OUTDIR/${wl}_${tag}.gc.out"; then
+-      echo "PASS wl=$wl gmp=$gmp"
+-      PASS=$((PASS + 1))
+-    else
+-      echo "FAIL wl=$wl gmp=$gmp (graalgo_exit=$grc gc_exit=$gcrc)"
+-      FAILED_CELLS="$FAILED_CELLS $wl/gmp$gmp"
+-      FAIL=$((FAIL + 1))
+-    fi
++    cell "$wl" "$gmp" "gmp${gmp}"
+   done
+ done
+ # gmp=N (distinct cell even when N coincides numerically: separate files).
++# Note: on hosts where NPROC is 1, 2, or 4, the gmp=N run duplicates an
++# earlier cell; we still run it (distinct evidence) but tag the files
++# -n<N> to avoid overwriting.
+ for wl in compute mixed; do
+-  prog="$CORPUS/gmp_$wl.go"
+-  timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
+-    graalgo.sched.launcher.SchedMain --gmp="$NPROC" "$prog" \
+-    > "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.out" 2> "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.err"
+-  grc=$?
+-  GOMAXPROCS="$NPROC" timeout 120 "$GO" run "$prog" \
+-    > "$OUTDIR/${wl}_gmpN.n$NPROC.gc.out" 2> "$OUTDIR/${wl}_gmpN.n$NPROC.gc.err"
+-  gcrc=$?
+-  if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
+-     cmp -s "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.out" "$OUTDIR/${wl}_gmpN.n$NPROC.gc.out"; then
+-    echo "PASS wl=$wl gmp=N($NPROC)"
+-    PASS=$((PASS + 1))
+-  else
+-    echo "FAIL wl=$wl gmp=N($NPROC) (graalgo_exit=$grc gc_exit=$gcrc)"
+-    FAILED_CELLS="$FAILED_CELLS $wl/gmpN"
+-    FAIL=$((FAIL + 1))
+-  fi
++  cell "$wl" "$NPROC" "gmpN.n$NPROC"
+ done
+ 
+ echo "---"
+diff --git a/tools/torture/run_battery.sh b/tools/torture/run_battery.sh
+index a9db42fb..15a503c8 100755
+--- a/tools/torture/run_battery.sh
++++ b/tools/torture/run_battery.sh
+@@ -1,34 +1,56 @@
+ #!/bin/bash
+ # P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path.
+ #
+-# Runs every leg, archives logs to hidden_files/torture/logs/, prints a
+-# summary. Exit 0 iff every leg passes. A single failing leg is a bug to
+-# fix; systematic divergence across legs is the kill trigger (PLAN.md §7).
+-set -u
++# Runs every leg, archives logs to internal/backend/runtime/out/torture/logs/
++# (gitignored via out/), prints a summary. Exit 0 iff every leg passes.
++# A single failing leg is a bug to fix; systematic divergence across legs
++# is the kill trigger (PLAN.md §7).
++#
++# Prerequisites: the backend runtime module built
++#   make -C internal/backend/runtime main
++# (the `torture` make target in that module builds it first).
++set -euo pipefail
+ cd "$(dirname "$0")/../.." || exit 1
++RT="internal/backend/runtime"
+ 
+ GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
+-OUTDIR="hidden_files/torture/logs"
+-mkdir -p "$OUTDIR"
+ JAVA="$GRAALVM_HOME/bin/java"
++[ -x "$JAVA" ] || { echo "ERROR: no java at $JAVA (set GRAALVM_HOME)" >&2; exit 1; }
++
++# Classpath mirrors the runtime module's TEST_CP (see
++# internal/backend/runtime/Makefile): test classes first, then main
++# classes, the truffle module's classes (the 8 frozen stubs — shadowed by
++# the phase-2 replacements that come earlier on the classpath), the
++# interop module's classes, then the truffle lib jars.
++TRUFFLE="internal/backend/truffle"
++for d in "$RT/out/test-classes" "$RT/out/classes" "$TRUFFLE/out/classes"; do
++  [ -d "$d" ] || { echo "ERROR: $d missing — build the backend first: make -C $RT torture" >&2; exit 1; }
++done
++[ -d "$TRUFFLE/lib" ] || { echo "ERROR: $TRUFFLE/lib missing" >&2; exit 1; }
++CP="$RT/out/test-classes:$RT/out/classes:$TRUFFLE/out/classes:internal/backend/interop/out/classes:$TRUFFLE/lib/*"
++# Same JVM flags as the runtime module's own test invocations.
++JAVA_FLAGS=(--enable-native-access=ALL-UNNAMED -Xss32m)
++
++OUTDIR="$RT/out/torture/logs"
++mkdir -p "$OUTDIR" || { echo "ERROR: cannot create $OUTDIR" >&2; exit 1; }
+ 
+ # leg <logname> <JFLAGS> -- <LEG> [leg args...]
+ leg() {
+   local logname="$1"; shift
+   local jflags=()
+-  while [ "$1" != "--" ]; do
++  while [ "${1:-}" != "--" ]; do
+     jflags+=("$1"); shift
+   done
+   shift # drop --
+   local legname="$1"; shift
+   local log="$OUTDIR/$logname.log"
+   echo "--- leg $logname ($legname $*) ---"
+-  timeout 300 "$JAVA" "${jflags[@]}" -cp "$CP" \
++  local rc=0
++  timeout 300 "$JAVA" "${JAVA_FLAGS[@]}" "${jflags[@]}" -cp "$CP" \
+     graalgo.sched.torture.TortureBattery "$legname" "$@" \
+-    > "$log" 2>&1
+-  local rc=$?
+-  grep -E "^(F[0-9]|RESULT)" "$log" | tail -4
++    > "$log" 2>&1 || rc=$?
++  # Display-only pipeline: must not gate the verdict under pipefail.
++  grep -E "^(F[0-9]|RESULT)" "$log" | tail -4 || true
+   if [ $rc -ne 0 ]; then
+     echo "LEG $logname FAILED (exit $rc); log: $log"
+     return 1
+diff --git a/tools/torture/stress_differential.sh b/tools/torture/stress_differential.sh
+index cfe72c16..ec4bf0d3 100755
+--- a/tools/torture/stress_differential.sh
++++ b/tools/torture/stress_differential.sh
+@@ -2,34 +2,89 @@
+ # P2-M8 stress-corpus differential: runtime/context-pattern Go programs vs gc.
+ #
+ # Each program runs under graalgo (--gmp=2) and under gc; outputs compared.
+-# rt_finalizer_storm's finalizer count is timing-dependent (informational);
+-# the gate is clean completion (exit 0, no crash/hang) on both.
+-set -u
++# goroutine_storm's spawn burst is a completion gate (exit 0, no crash/hang),
++# since the printed count is deterministic (500).
++#
++# Logs go to internal/backend/runtime/out/torture/stress-differential/
++# (gitignored via out/). The Go corpus lives in tools/torture/corpus/
++# (committed).
++#
++# Go programs run through the product launcher internal/backend/graalgo-sync-run
++# (P3SyncMain): it drives the same SchedulerCore under test and supports
++# channels/select and the full stdlib surface. The raw scheduler entry point
++# (graalgo.sched.launcher.SchedMain) cannot run real Go programs on this base
++# (its Truffle NodeFactory lacks the ifacemethod/makechan hooks) — using it
++# here would fail every program for the wrong reason.
++#
++# Prerequisites: the backend modules built:
++#   make -C internal/backend/truffle main     # runtime + truffle classes
++#   make -C internal/backend/interop main     # product launcher classes
++#   (see internal/frontend/build.sh for the gofrontend binary)
++set -euo pipefail
+ cd "$(dirname "$0")/../.." || exit 1
++GR="$PWD"
+ 
+-GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+-GO="$HOME/tools/go/bin/go"
+-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
+-CORPUS="hidden_files/torture/corpus"
+-OUTDIR="hidden_files/torture/stress-differential"
+-mkdir -p "$OUTDIR"
++SYNC_RUN="internal/backend/graalgo-sync-run"
++[ -x "$SYNC_RUN" ] || { echo "ERROR: $SYNC_RUN missing/not executable" >&2; exit 1; }
++[ -d internal/backend/interop/out/classes ] || {
++  echo "ERROR: interop classes missing — build first: make -C internal/backend/interop main" >&2; exit 1; }
++[ -d internal/backend/runtime/out/classes ] || {
++  echo "ERROR: runtime classes missing — build first: make -C internal/backend/truffle main" >&2; exit 1; }
++GO="${GO:-$HOME/tools/go/bin/go}"
++[ -x "$GO" ] || { echo "ERROR: no go at $GO (set GO)" >&2; exit 1; }
++# gofrontend resolution mirrors graalgo.launcher.ToolPaths: an explicit
++# GRAALGO_GOFRONTEND wins if executable, else the in-tree build location.
++GOFRONTEND="${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}"
++[ -x "$GOFRONTEND" ] || { echo "ERROR: gofrontend not executable at $GOFRONTEND — build it (see internal/frontend/build.sh)" >&2; exit 1; }
++export GRAALGO_GOFRONTEND="$GOFRONTEND"
++
++CORPUS="tools/torture/corpus"
++OUTDIR="internal/backend/runtime/out/torture/stress-differential"
++mkdir -p "$OUTDIR" || { echo "ERROR: cannot create $OUTDIR" >&2; exit 1; }
++# Keep the JVM's temp files out of /tmp (small shared tmpfs); the launcher
++# honors TMPDIR for -Djava.io.tmpdir.
++export TMPDIR="$OUTDIR"
++# Cap the per-program JVM heap: the box is memory-tight and an uncapped
++# truffle JVM risks the OOM killer (observed SIGKILL, exit 137).
++export _JAVA_OPTIONS="-Xmx1g"
++
++# strip_picked_up <file>: drop the JVM's _JAVA_OPTIONS "Picked up" notice
++# from a captured stderr file. Retried (3x, 5s apart): the strip is cosmetic
++# and a transient quota flap must never abort the run under set -e (a matrix
++# run died mid-cell on exactly this: sed -i could not create its temp file).
++# If all retries fail the notice stays and the cell fails honestly on
++# comparison instead of the whole run dying.
++strip_picked_up() {
++  local f="$1" i
++  for i in 1 2 3; do
++    sed -i '/^Picked up _JAVA_OPTIONS/d' "$f" && return 0
++    sleep 5
++  done
++  echo "WARNING: could not strip _JAVA_OPTIONS notice from $f (quota?)" >&2
++  return 0
++}
+ 
+ PASS=0; FAIL=0; FAILED=""
+ 
+ # differential <name> <mode: exact|completion>
++# The corpus prints via the println builtin (stderr on both gc and graalgo),
++# so the exact-mode comparison is on stderr. (JVM/launcher warnings would
++# also land on stderr and fail the check; that is intended.)
+ differential() {
+   local name="$1" mode="$2"
+   local prog="$CORPUS/$name.go"
+-  timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
+-    graalgo.sched.launcher.SchedMain --gmp=2 "$prog" \
+-    > "$OUTDIR/$name.graalgo.out" 2> "$OUTDIR/$name.graalgo.err"
+-  local grc=$?
++  [ -f "$prog" ] || { echo "ERROR: corpus program missing: $prog" >&2; exit 1; }
++  local grc=0 gcrc=0
++  timeout 180 "$SYNC_RUN" --gmp=2 "$GR/$prog" \
++    > "$OUTDIR/$name.graalgo.stdout" 2> "$OUTDIR/$name.graalgo.stderr" || grc=$?
++  # Strip the JVM's _JAVA_OPTIONS "Picked up" notice (launcher chatter on
++  # stderr); any other stderr output is program output and is compared.
++  strip_picked_up "$OUTDIR/$name.graalgo.stderr"
+   timeout 120 "$GO" run "$prog" \
+-    > "$OUTDIR/$name.gc.out" 2> "$OUTDIR/$name.gc.err"
+-  local gcrc=$?
++    > "$OUTDIR/$name.gc.stdout" 2> "$OUTDIR/$name.gc.stderr" || gcrc=$?
+   local ok=1
+   if [ "$mode" = "exact" ]; then
+-    cmp -s "$OUTDIR/$name.graalgo.out" "$OUTDIR/$name.gc.out" || ok=0
++    cmp -s "$OUTDIR/$name.graalgo.stderr" "$OUTDIR/$name.gc.stderr" || ok=0
+   fi
+   [ $grc -eq 0 ] || ok=0
+   [ $gcrc -eq 0 ] || ok=0
+@@ -44,8 +99,8 @@ differential() {
+ 
+ differential gmp_compute exact
+ differential gmp_mixed exact
+-differential ctx_cancel exact
+-differential rt_finalizer_storm completion
++differential cancel_broadcast exact
++differential goroutine_storm completion
+ 
+ echo "---"
+ echo "stress differential: $PASS pass, $FAIL fail"
