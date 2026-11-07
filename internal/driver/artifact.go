@@ -51,6 +51,18 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("no graalgo root")
 	}
 
+	// Resolve the output path against the caller's working directory
+	// BEFORE building: `go build -o` below runs with cmd.Dir set to
+	// the temp build dir, so a relative OutputPath would land inside
+	// tmpDir and be deleted with it (R-21: silent success with no
+	// artifact). Absolutizing here makes the artifact land where the
+	// caller asked, whatever the build dir is.
+	absOut, err := filepath.Abs(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve output path %s: %v", a.OutputPath, err)
+	}
+	a.OutputPath = absOut
+
 	// Compress the JSON. Frontend output can be large (100MB+ for big
 	// programs); JSON compresses well with gzip.
 	var compressed bytes.Buffer
@@ -89,9 +101,25 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("cannot write go.mod: %v", err)
 	}
 
-	// Compile the launcher to a real binary.
+	// Compile the launcher to a real binary, staging it in a temp
+	// directory inside the output directory and renaming it into place
+	// only on success. Two reasons: `go build -o` refuses to overwrite
+	// a pre-existing non-object file, so a stale file at the output
+	// path would otherwise make the build fail — and in the old code
+	// the stale file also masked silent success (the binary landed in
+	// tmpDir and was deleted with it while chmod acted on the stale
+	// file and Emit returned nil). Staging also preserves the previous
+	// artifact when the build fails (R-21).
+	outDir := filepath.Dir(a.OutputPath)
+	stageDir, err := os.MkdirTemp(outDir, ".graalgo-build-*")
+	if err != nil {
+		return fmt.Errorf("cannot create staging dir in %s: %v", outDir, err)
+	}
+	defer os.RemoveAll(stageDir)
+	stagePath := filepath.Join(stageDir, "artifact")
+
 	goBin := findGoBinary()
-	cmd := exec.Command(goBin, "build", "-o", a.OutputPath, ".")
+	cmd := exec.Command(goBin, "build", "-o", stagePath, ".")
 	cmd.Dir = tmpDir
 	// Don't inherit GOFLAGS that might break the build; keep it hermetic.
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
@@ -102,8 +130,21 @@ func Emit(a Artifact) error {
 	}
 
 	// go build sets the executable bit, but ensure it (umask-safe).
-	if err := os.Chmod(a.OutputPath, 0o755); err != nil {
-		return fmt.Errorf("cannot chmod %s: %v", a.OutputPath, err)
+	if err := os.Chmod(stagePath, 0o755); err != nil {
+		return fmt.Errorf("cannot chmod %s: %v", stagePath, err)
+	}
+
+	// The artifact must exist after a successful build: never report
+	// success while producing nothing (R-21).
+	if fi, err := os.Stat(stagePath); err != nil {
+		return fmt.Errorf("artifact %s missing after build: %v", a.OutputPath, err)
+	} else if fi.Size() == 0 {
+		return fmt.Errorf("artifact %s is empty after build", a.OutputPath)
+	}
+
+	// Install the staged binary at the requested path.
+	if err := os.Rename(stagePath, a.OutputPath); err != nil {
+		return fmt.Errorf("cannot install artifact %s: %v", a.OutputPath, err)
 	}
 	return nil
 }

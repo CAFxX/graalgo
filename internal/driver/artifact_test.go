@@ -196,6 +196,60 @@ func TestEmitBinaryRuns(t *testing.T) {
 	}
 }
 
+// TestEmitRelativeOutputPath is the regression test for R-21: Emit with
+// a relative OutputPath must produce the artifact in the caller's
+// directory. Before the fix, `go build -o` ran with cmd.Dir set to the
+// temp build dir, so the binary landed inside tmpDir and was deleted
+// with it — while the chmod and the success return acted on the
+// caller's directory. With no pre-existing file the build failed
+// loudly at chmod; with a stale file of the same name it reported
+// success without producing a fresh artifact. The stale file below
+// covers the silent-success variant; the test asserts a fresh ELF
+// binary either way.
+func TestEmitRelativeOutputPath(t *testing.T) {
+	tmp := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	// A stale file with the same name must not mask the defect: before
+	// the fix, the chmod acted on this stale file and Emit returned nil
+	// without producing a fresh artifact (silent success).
+	if err := os.WriteFile("prog", []byte("stale junk, not a binary"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
+	if err := Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    wireJSON,
+	}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+
+	out := filepath.Join(tmp, "prog")
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("artifact %s missing after Emit with relative OutputPath: %v", out, err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact %s is not executable (mode %v)", out, fi.Mode())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary (first bytes: %q)", data[:min(32, len(data))])
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
