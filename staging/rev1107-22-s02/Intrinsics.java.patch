@@ -1,0 +1,25 @@
+--- a/internal/backend/runtime/src/main/java/graalgo/runtime/Intrinsics.java
++++ b/internal/backend/runtime/src/main/java/graalgo/runtime/Intrinsics.java
+@@ -222,6 +222,22 @@
+                 throw new IllegalArgumentException(
+                         "growslice: ARRAY element with elemSizeBytes=0 (frontend bug)");
+             }
++            // S-02 (review-2026-11-07-07): same bug class for STRUCT. A
++            // struct also reports elemSizeBytes == 0 (elemSizeBytes returns
++            // 0 for STRUCT by design; the caller supplies the ABI size),
++            // so a zero elemSizeBytes for a non-empty struct would take
++            // this path and silently drop all existing elements on growth.
++            // Verify via the descriptor that the struct is genuinely
++            // zero-size; a null descriptor cannot be verified, so it fails
++            // fast too (the 3-arg convenience overload passes null — its
++            // STRUCT callers previously dropped data silently).
++            if (elemKind == GoKind.STRUCT) {
++                if (elemDesc == null || structSizeBytes(elemDesc) != 0) {
++                    throw new IllegalArgumentException(
++                            "growslice: STRUCT element with elemSizeBytes=0 but non-zero or "
++                                    + "unknown ABI size (frontend bug)");
++                }
++            }
+             // gc: slice{zerobase, newLen, newLen} — no backing allocation,
+             // cap grows to exactly newLen (never doubled). A zero-size type
+             // has exactly one value, so there is nothing to copy from the
