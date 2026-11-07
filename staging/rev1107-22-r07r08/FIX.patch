@@ -1,0 +1,47 @@
+--- a/Makefile
++++ b/Makefile
+@@ -108,7 +108,10 @@
+ 
+ GO ?= $(HOME)/tools/go/bin/go
+ 
+-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
++# graalgo, gate1-pilot and gate1 are .PHONY: graalgo has no prerequisites,
++# so without this make treats an existing ./graalgo file as up-to-date and
++# test-regression would silently test a stale driver binary.
++.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch graalgo gate1-pilot gate1
+ 
+ all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+ 
+@@ -220,14 +223,24 @@
+ # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
+ #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
+ #   make gate1 PKG=foo — single package trial
++# gate1-pilot is a differential GATE, not a probe: run.py exits nonzero on
++# any non-PASS verdict (DIVERGE or SKIP), and the target must fail when any
++# package fails. The loop runs all packages before reporting (so one failure
++# does not hide the rest), then exits 1 if any package failed. Do NOT add
++# `|| true` here — it makes the gate unable to fail.
+ GATE1_PKGS ?= strconv errors sort strings bytes
+ gate1-pilot: build
+-	@for pkg in $(GATE1_PKGS); do \
++	@failed=0; \
++	for pkg in $(GATE1_PKGS); do \
+ 		echo "=== gate1 $$pkg ==="; \
+ 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
+ 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
+-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
+-	done
++			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || failed=1; \
++	done; \
++	if [ "$$failed" -ne 0 ]; then \
++		echo "Gate 1 pilot FAILED: see tools/gate1/.tmp/*/verdict.txt"; \
++		exit 1; \
++	fi
+ 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
+ 
+ gate1: build
+@@ -332,3 +345,4 @@
+ 	$(MAKE) -C internal/backend/truffle clean
+ 	$(MAKE) -C internal/backend/runtime clean
+ 	$(MAKE) -C internal/backend/interop clean
++	rm -f ./graalgo

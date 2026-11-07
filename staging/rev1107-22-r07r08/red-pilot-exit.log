@@ -1,0 +1,23 @@
+make -C internal/backend/truffle main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle'
+stub backend main in /tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle'
+make -C internal/backend/runtime main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime'
+stub backend main in /tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime'
+make -C internal/backend/interop main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/interop'
+stub backend main in /tmp/rev1107-22-r07r08/verify/red/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/interop'
+=== gate1 strconv ===
+VERDICT strconv: PASS
+=== gate1 errors ===
+VERDICT errors: DIVERGE
+=== gate1 sort ===
+VERDICT sort: PASS
+=== gate1 strings ===
+VERDICT strings: PASS
+=== gate1 bytes ===
+VERDICT bytes: PASS
+Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt

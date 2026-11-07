@@ -1,0 +1,146 @@
+=== R-07 RED (original Makefile) ===
+make: 'graalgo' is up to date.
+make: 'graalgo' is up to date.
+PASS: R-07 RED: stub-go BUILD invocations across two makes (expected=0 actual=0)
+=== R-07 GREEN (patched Makefile) ===
+./stub-go build -o graalgo ./cmd/graalgo/
+./stub-go build -o graalgo ./cmd/graalgo/
+PASS: R-07 GREEN: stub-go BUILD invocations across two makes (expected=2 actual=2)
+=== clean RED ===
+make -C internal/backend/truffle clean
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle'
+stub backend clean in /tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle'
+make -C internal/backend/runtime clean
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime'
+stub backend clean in /tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime'
+make -C internal/backend/interop clean
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/interop'
+stub backend clean in /tmp/rev1107-22-r07r08/verify/red/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/interop'
+PASS: clean RED: ./graalgo after make clean (expected=present actual=present)
+=== clean GREEN ===
+make -C internal/backend/truffle clean
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+stub backend clean in /tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+make -C internal/backend/runtime clean
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+stub backend clean in /tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+make -C internal/backend/interop clean
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+stub backend clean in /tmp/rev1107-22-r07r08/verify/green/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+rm -f ./graalgo
+PASS: clean GREEN: ./graalgo after make clean (expected=absent actual=absent)
+=== R-08 RED (one diverging package) ===
+make -C internal/backend/truffle main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle'
+stub backend main in /tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/truffle'
+make -C internal/backend/runtime main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime'
+stub backend main in /tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/runtime'
+make -C internal/backend/interop main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/interop'
+stub backend main in /tmp/rev1107-22-r07r08/verify/red/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/red/internal/backend/interop'
+=== gate1 strconv ===
+VERDICT strconv: PASS
+=== gate1 errors ===
+VERDICT errors: DIVERGE
+=== gate1 sort ===
+VERDICT sort: PASS
+=== gate1 strings ===
+VERDICT strings: PASS
+=== gate1 bytes ===
+VERDICT bytes: PASS
+Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt
+PASS: R-08 RED: pilot exit code with 1/5 diverging (expected=0 actual=0)
+PASS: R-08 RED: packages run (expected=5 actual=5)
+=== R-08 GREEN (one diverging package) ===
+make -C internal/backend/truffle main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+make -C internal/backend/runtime main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+make -C internal/backend/interop main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+=== gate1 strconv ===
+VERDICT strconv: PASS
+=== gate1 errors ===
+VERDICT errors: DIVERGE
+=== gate1 sort ===
+VERDICT sort: PASS
+=== gate1 strings ===
+VERDICT strings: PASS
+=== gate1 bytes ===
+VERDICT bytes: PASS
+Gate 1 pilot FAILED: see tools/gate1/.tmp/*/verdict.txt
+make: *** [Makefile:233: gate1-pilot] Error 1
+PASS: R-08 GREEN: pilot exit code with 1/5 diverging (non-zero) (expected=nonzero actual=nonzero)
+PASS: R-08 GREEN: packages run (expected=5 actual=5)
+PASS: R-08 GREEN: FAILED banner printed
+=== R-08 GREEN (all pass) ===
+make -C internal/backend/truffle main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+make -C internal/backend/runtime main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+make -C internal/backend/interop main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+=== gate1 strconv ===
+VERDICT strconv: PASS
+=== gate1 errors ===
+VERDICT errors: PASS
+=== gate1 sort ===
+VERDICT sort: PASS
+=== gate1 strings ===
+VERDICT strings: PASS
+=== gate1 bytes ===
+VERDICT bytes: PASS
+Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt
+PASS: R-08 GREEN all-pass: pilot exit code (expected=0 actual=0)
+PASS: R-08 GREEN all-pass: packages run (expected=5 actual=5)
+=== R-08 GREEN (all diverge) ===
+make -C internal/backend/truffle main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/truffle'
+make -C internal/backend/runtime main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/runtime'
+make -C internal/backend/interop main
+make[1]: Entering directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+stub backend main in /tmp/rev1107-22-r07r08/verify/green/internal/backend/interop
+make[1]: Leaving directory '/tmp/rev1107-22-r07r08/verify/green/internal/backend/interop'
+=== gate1 strconv ===
+VERDICT strconv: DIVERGE
+=== gate1 errors ===
+VERDICT errors: DIVERGE
+=== gate1 sort ===
+VERDICT sort: DIVERGE
+=== gate1 strings ===
+VERDICT strings: DIVERGE
+=== gate1 bytes ===
+VERDICT bytes: DIVERGE
+Gate 1 pilot FAILED: see tools/gate1/.tmp/*/verdict.txt
+make: *** [Makefile:233: gate1-pilot] Error 1
+PASS: R-08 GREEN all-diverge: pilot exit code (non-zero) (expected=nonzero actual=nonzero)
+PASS: R-08 GREEN all-diverge: packages run (expected=5 actual=5)
+=== SUMMARY ===
+ALL PROOFS PASSED
