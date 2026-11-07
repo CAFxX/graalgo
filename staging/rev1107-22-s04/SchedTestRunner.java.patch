@@ -1,0 +1,10 @@
+--- a/internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java
++++ b/internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java
+@@ -51,6 +51,7 @@
+         TESTS.add(graalgo.launcher.LauncherOverlayTest.class);
+         TESTS.add(graalgo.launcher.LauncherOsArgsTest.class);
+         TESTS.add(graalgo.runtime.TimerTest.class);
++        TESTS.add(graalgo.runtime.GoFloatFmtTest.class);
+         TESTS.add(graalgo.runtime.FreezeGapTest.class);
+         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
+         TESTS.add(graalgo.runtime.StructSizeNestedTest.class);

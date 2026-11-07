@@ -1,0 +1,905 @@
+package graalgo.runtime;
+
+/**
+ * Direct unit tests for {@link GoFloatFmt} (REVIEW-2026-11-07-07 S-04 /
+ * REVIEW-2026-11-07-22 S-04): the hand-rolled shortest-digits port had no
+ * direct tests — only indirect differential-corpus coverage, if a corpus
+ * program happened to print a float.
+ *
+ * <p>Every expected string in this file was computed by gc
+ * ({@code strconv.FormatFloat}/{@code strconv.FormatComplex}, go1.27.1,
+ * {@code ~/tools/go}) from the IEEE bit pattern of the input — never by
+ * running the code under test. To regenerate, feed the bit patterns below
+ * through {@code strconv.FormatFloat}/{@code strconv.FormatComplex} with
+ * the same verb/precision/bitSize; the generator program that produced
+ * these vectors is preserved with the lane's review evidence. A test that
+ * copied the implementation's outputs would be tautological.
+ *
+ * <p>One branch is deliberately unpinned: the even-tie-break inside
+ * {@code shortestSubnormalParts} (closest, then even last digit) cannot
+ * fire on any input — an exact tie would need the subnormal's exact value
+ * to sit exactly halfway between two adjacent k-digit decimals, which
+ * requires 5^(k-1-e) to divide a (2m+1) with m &lt; 10^k (k &le; 17 for
+ * float64, &le; 9 for float32); no such tie exists. Corroborated by an
+ * instrumented scan of subnormal bit patterns 1..5000 (both sizes) plus
+ * structured large subnormals: zero ties. The branch stays as
+ * defense-in-depth matching Go's stated tie rule.
+ *
+ * <p>Coverage: shortest {@code %g} (float64 + float32) including subnormals
+ * (5e-324, 9.88e-324, and the float32 1.4e-45 family) and the subnormal
+ * tie-break path, the {@code %g} e/f boundary (exp -4/-5 and exp &gt;=
+ * eprec), fixed-precision {@code %e}/{@code %f} including half-to-even
+ * rounding (0.125 -&gt; "0.12", 2.5 -&gt; "2", 3.5 -&gt; "4"), values that
+ * round to zero (1e-300 {@code %f}), rounding carries (999999.5 {@code %f}
+ * prec 0 -&gt; "1000000"), specials (NaN, &plusmn;Inf, &plusmn;0) at every
+ * verb, hex float {@code %x}/{@code %X} (prec -1..20, incl. the prec-15
+ * rounding edge), binary {@code %b}, and complex formatting
+ * (complex64/complex128, incl. subnormal and NaN/Inf components).
+ */
+public final class GoFloatFmtTest {
+
+    private static void assertEquals(String expected, String actual, String msg) {
+        if (!expected.equals(actual)) {
+            throw new AssertionError(msg + " expected=" + expected + " actual=" + actual);
+        }
+    }
+
+    private static void check(long bits, char fmt, int prec, int bitSize, String expected) {
+        String actual = GoFloatFmt.formatFloat(Double.longBitsToDouble(bits), fmt, prec, bitSize);
+        assertEquals(expected, actual,
+                "formatFloat(0x" + Long.toHexString(bits) + ", '" + fmt + "', " + prec + ", " + bitSize + ")");
+    }
+
+    private static void check32(int bits, char fmt, int prec, String expected) {
+        String actual = GoFloatFmt.formatFloat((double) Float.intBitsToFloat(bits), fmt, prec, 32);
+        assertEquals(expected, actual,
+                "formatFloat32(0x" + Integer.toHexString(bits) + ", '" + fmt + "', " + prec + ")");
+    }
+
+    private static void checkHex(long bits, char fmt, int prec, int bitSize, String expected) {
+        String actual = GoFloatFmt.formatHex(Double.longBitsToDouble(bits), fmt, prec, bitSize);
+        assertEquals(expected, actual,
+                "formatHex(0x" + Long.toHexString(bits) + ", '" + fmt + "', " + prec + ", " + bitSize + ")");
+    }
+
+    private static void checkHex32(int bits, char fmt, int prec, String expected) {
+        String actual = GoFloatFmt.formatHex((double) Float.intBitsToFloat(bits), fmt, prec, 32);
+        assertEquals(expected, actual,
+                "formatHex32(0x" + Integer.toHexString(bits) + ", '" + fmt + "', " + prec + ")");
+    }
+
+    private static void checkBinary(long bits, int bitSize, String expected) {
+        String actual = GoFloatFmt.formatBinary(Double.longBitsToDouble(bits), bitSize);
+        assertEquals(expected, actual,
+                "formatBinary(0x" + Long.toHexString(bits) + ", " + bitSize + ")");
+    }
+
+    private static void checkBinary32(int bits, String expected) {
+        String actual = GoFloatFmt.formatBinary((double) Float.intBitsToFloat(bits), 32);
+        assertEquals(expected, actual,
+                "formatBinary32(0x" + Integer.toHexString(bits) + ")");
+    }
+
+    private static void checkComplex(long reBits, long imBits, char fmt, int prec, int bitSize, String expected) {
+        String actual = GoFloatFmt.formatComplex(
+                Double.longBitsToDouble(reBits), Double.longBitsToDouble(imBits), fmt, prec, bitSize);
+        assertEquals(expected, actual,
+                "formatComplex(0x" + Long.toHexString(reBits) + ", 0x" + Long.toHexString(imBits)
+                        + ", '" + fmt + "', " + prec + ", " + bitSize + ")");
+    }
+
+    private static void checkComplex32(int reBits, int imBits, char fmt, int prec, String expected) {
+        String actual = GoFloatFmt.formatComplex(
+                (double) Float.intBitsToFloat(reBits), (double) Float.intBitsToFloat(imBits), fmt, prec, 64);
+        assertEquals(expected, actual,
+                "formatComplex32(0x" + Integer.toHexString(reBits) + ", 0x" + Integer.toHexString(imBits)
+                        + ", '" + fmt + "', " + prec + ")");
+    }
+
+    /**
+     * Shortest %g (prec -1) for float64: normals, the 1e-4/1e-5 and 1e20/1e21
+     * e/f boundaries, max/min-normal, and the whole subnormal family
+     * (bits 1..16, largest subnormal) incl. the 9.88e-324 power-of-ten
+     * carry that exercises the second unit alignment in
+     * shortestSubnormalParts.
+     */
+    public void testShortestFloat64() {
+        check(0x0000000000000000L, 'g', -1, 64, "0");
+        check(0x8000000000000000L, 'g', -1, 64, "-0");
+        check(0x3FF0000000000000L, 'g', -1, 64, "1");
+        check(0xBFF0000000000000L, 'g', -1, 64, "-1");
+        check(0x3FB999999999999AL, 'g', -1, 64, "0.1");
+        check(0x3FB9999999999999L, 'g', -1, 64, "0.09999999999999999");
+        check(0x3FB999999999999BL, 'g', -1, 64, "0.10000000000000002");
+        check(0x444B1AE4D6E2EF50L, 'g', -1, 64, "1e+21");
+        check(0x4415AF1D78B58C40L, 'g', -1, 64, "1e+20");
+        check(0x40FE240000000000L, 'g', -1, 64, "123456");
+        check(0x4132D68700000000L, 'g', -1, 64, "1.234567e+06");
+        check(0x3F1A36E2EB1C432DL, 'g', -1, 64, "0.0001");
+        check(0x3EE4F8B588E368F1L, 'g', -1, 64, "1e-05");
+        check(0x419D6F34547E6B75L, 'g', -1, 64, "1.2345678912345679e+08");
+        check(0x7FEFFFFFFFFFFFFFL, 'g', -1, 64, "1.7976931348623157e+308");
+        check(0x0010000000000000L, 'g', -1, 64, "2.2250738585072014e-308");
+        check(0x000FFFFFFFFFFFFFL, 'g', -1, 64, "2.225073858507201e-308");
+        check(0x0000000000000001L, 'g', -1, 64, "5e-324");
+        check(0x0000000000000002L, 'g', -1, 64, "1e-323");
+        check(0x0000000000000003L, 'g', -1, 64, "1.5e-323");
+        check(0x0000000000000004L, 'g', -1, 64, "2e-323");
+        check(0x0000000000000005L, 'g', -1, 64, "2.5e-323");
+        check(0x000000000000000AL, 'g', -1, 64, "5e-323");
+        check(0x000000000000000FL, 'g', -1, 64, "7.4e-323");
+        check(0x0000000000000010L, 'g', -1, 64, "8e-323");
+        check(0x0000000000000100L, 'g', -1, 64, "1.265e-321");
+        check(0x0008000000000001L, 'g', -1, 64, "1.112536929253601e-308");
+        check(0x3FC3333333333333L, 'g', -1, 64, "0.15");
+        check(0x3FD3333333333333L, 'g', -1, 64, "0.3");
+        check(0x3FD5555555555555L, 'g', -1, 64, "0.3333333333333333");
+        check(0x3FE5555555555555L, 'g', -1, 64, "0.6666666666666666");
+        check(0x400921FB54442D18L, 'g', -1, 64, "3.141592653589793");
+        check(0x430C6BF526340004L, 'g', -1, 64, "1.0000000000000005e+15");
+        check(0x3FF8000000000000L, 'g', -1, 64, "1.5");
+        check(0xC004000000000000L, 'g', -1, 64, "-2.5");
+        check(0x7FF8000000000000L, 'g', -1, 64, "NaN");
+        check(0x7FF0000000000000L, 'g', -1, 64, "+Inf");
+        check(0xFFF0000000000000L, 'g', -1, 64, "-Inf");
+        check(0x0010000000000001L, 'g', -1, 64, "2.225073858507202e-308");
+        check(0x0000000000000008L, 'g', -1, 64, "4e-323");
+        check(0x3EE4F8B588E368F0L, 'g', -1, 64, "9.999999999999999e-06");
+        check(0x3EE4F8B588E368F2L, 'g', -1, 64, "1.0000000000000003e-05");
+        check(0x412E847F00000000L, 'g', -1, 64, "999999.5");
+        check(0x4415AF1D78B58C3FL, 'g', -1, 64, "9.999999999999998e+19");
+        check(0x4415AF1D78B58C41L, 'g', -1, 64, "1.0000000000000002e+20");
+    }
+
+    /**
+     * Shortest %g for float32: normals, max/min-normal, and the subnormal
+     * family down to 1.4e-45 (bits 1..16, largest subnormal).
+     */
+    public void testShortestFloat32() {
+        check32(0x00000000, 'g', -1, "0");
+        check32(0x00000000, 'G', -1, "0");
+        check32(0x80000000, 'g', -1, "-0");
+        check32(0x80000000, 'G', -1, "-0");
+        check32(0x3F800000, 'g', -1, "1");
+        check32(0x3F800000, 'G', -1, "1");
+        check32(0xBF800000, 'g', -1, "-1");
+        check32(0xBF800000, 'G', -1, "-1");
+        check32(0x3DCCCCCD, 'g', -1, "0.1");
+        check32(0x3DCCCCCD, 'G', -1, "0.1");
+        check32(0x3DCCCCCC, 'g', -1, "0.099999994");
+        check32(0x3DCCCCCC, 'G', -1, "0.099999994");
+        check32(0x3DCCCCCE, 'g', -1, "0.10000001");
+        check32(0x3DCCCCCE, 'G', -1, "0.10000001");
+        check32(0x7F7FFFFF, 'g', -1, "3.4028235e+38");
+        check32(0x7F7FFFFF, 'G', -1, "3.4028235E+38");
+        check32(0x00800000, 'g', -1, "1.1754944e-38");
+        check32(0x00800000, 'G', -1, "1.1754944E-38");
+        check32(0x007FFFFF, 'g', -1, "1.1754942e-38");
+        check32(0x007FFFFF, 'G', -1, "1.1754942E-38");
+        check32(0x00000001, 'g', -1, "1e-45");
+        check32(0x00000001, 'G', -1, "1E-45");
+        check32(0x00000002, 'g', -1, "3e-45");
+        check32(0x00000002, 'G', -1, "3E-45");
+        check32(0x00000003, 'g', -1, "4e-45");
+        check32(0x00000003, 'G', -1, "4E-45");
+        check32(0x00000004, 'g', -1, "6e-45");
+        check32(0x00000004, 'G', -1, "6E-45");
+        check32(0x00000005, 'g', -1, "7e-45");
+        check32(0x00000005, 'G', -1, "7E-45");
+        check32(0x0000000A, 'g', -1, "1.4e-44");
+        check32(0x0000000A, 'G', -1, "1.4E-44");
+        check32(0x00000010, 'g', -1, "2.2e-44");
+        check32(0x00000010, 'G', -1, "2.2E-44");
+        check32(0x00000100, 'g', -1, "3.59e-43");
+        check32(0x00000100, 'G', -1, "3.59E-43");
+        check32(0x3FC00000, 'g', -1, "1.5");
+        check32(0x3FC00000, 'G', -1, "1.5");
+        check32(0x4B000000, 'g', -1, "8.388608e+06");
+        check32(0x4B000000, 'G', -1, "8.388608E+06");
+        check32(0x4B000001, 'g', -1, "8.388609e+06");
+        check32(0x4B000001, 'G', -1, "8.388609E+06");
+        check32(0x7F800000, 'g', -1, "+Inf");
+        check32(0x7F800000, 'G', -1, "+Inf");
+        check32(0xFF800000, 'g', -1, "-Inf");
+        check32(0xFF800000, 'G', -1, "-Inf");
+        check32(0x7FC00000, 'g', -1, "NaN");
+        check32(0x7FC00000, 'G', -1, "NaN");
+        check32(0x33D6BF95, 'g', -1, "1e-07");
+        check32(0x33D6BF95, 'G', -1, "1E-07");
+        check32(0x322BCC77, 'g', -1, "1e-08");
+        check32(0x322BCC77, 'G', -1, "1E-08");
+    }
+
+    /**
+     * Fixed-precision %g/%G: the e/f decision at exp -4/-5 and exp &gt;= eprec
+     * (1234567 prec 6 -&gt; e, prec 7 -&gt; f; 100000 prec 5 -&gt; e), prec 0
+     * (one significant digit), prec 17/21 expansions, and rounding of
+     * 1.5/2.5/3.5 to one digit.
+     */
+    public void testGPrecision() {
+        check(0x4132D68700000000L, 'g', 6, 64, "1.23457e+06");
+        check(0x4132D68700000000L, 'G', 6, 64, "1.23457E+06");
+        check(0x40FE240000000000L, 'g', 6, 64, "123456");
+        check(0x40FE240000000000L, 'G', 6, 64, "123456");
+        check(0x40F86A0000000000L, 'g', 6, 64, "100000");
+        check(0x40F86A0000000000L, 'G', 6, 64, "100000");
+        check(0x4132D68700000000L, 'g', 7, 64, "1234567");
+        check(0x4132D68700000000L, 'G', 7, 64, "1234567");
+        check(0x4132D68700000000L, 'g', 5, 64, "1.2346e+06");
+        check(0x4132D68700000000L, 'G', 5, 64, "1.2346E+06");
+        check(0x4132D68700000000L, 'g', 1, 64, "1e+06");
+        check(0x4132D68700000000L, 'G', 1, 64, "1E+06");
+        check(0x4132D68700000000L, 'g', 0, 64, "1e+06");
+        check(0x4132D68700000000L, 'G', 0, 64, "1E+06");
+        check(0x3F1A36E2EB1C432DL, 'g', 6, 64, "0.0001");
+        check(0x3F1A36E2EB1C432DL, 'G', 6, 64, "0.0001");
+        check(0x3EE4F8B588E368F1L, 'g', 6, 64, "1e-05");
+        check(0x3EE4F8B588E368F1L, 'G', 6, 64, "1E-05");
+        check(0x3F1A36E2EB1C432DL, 'g', 1, 64, "0.0001");
+        check(0x3F1A36E2EB1C432DL, 'G', 1, 64, "0.0001");
+        check(0x3FB999999999999AL, 'g', 0, 64, "0.1");
+        check(0x3FB999999999999AL, 'G', 0, 64, "0.1");
+        check(0x3FB999999999999AL, 'g', 1, 64, "0.1");
+        check(0x3FB999999999999AL, 'G', 1, 64, "0.1");
+        check(0x3FB999999999999AL, 'g', 2, 64, "0.1");
+        check(0x3FB999999999999AL, 'G', 2, 64, "0.1");
+        check(0x3FB999999999999AL, 'g', 17, 64, "0.10000000000000001");
+        check(0x3FB999999999999AL, 'G', 17, 64, "0.10000000000000001");
+        check(0x3FB999999999999AL, 'g', 21, 64, "0.100000000000000005551");
+        check(0x3FB999999999999AL, 'G', 21, 64, "0.100000000000000005551");
+        check(0x40F86A0000000000L, 'g', 5, 64, "1e+05");
+        check(0x40F86A0000000000L, 'G', 5, 64, "1E+05");
+        check(0x40F86A0000000000L, 'g', 4, 64, "1e+05");
+        check(0x40F86A0000000000L, 'G', 4, 64, "1E+05");
+        check(0x412E847F00000000L, 'g', 6, 64, "1e+06");
+        check(0x412E847F00000000L, 'G', 6, 64, "1E+06");
+        check(0x412E847F00000000L, 'g', 7, 64, "999999.5");
+        check(0x412E847F00000000L, 'G', 7, 64, "999999.5");
+        check(0x3FF8000000000000L, 'g', 1, 64, "2");
+        check(0x3FF8000000000000L, 'G', 1, 64, "2");
+        check(0x3FF8000000000000L, 'g', 0, 64, "2");
+        check(0x3FF8000000000000L, 'G', 0, 64, "2");
+        check(0x4004000000000000L, 'g', 1, 64, "2");
+        check(0x4004000000000000L, 'G', 1, 64, "2");
+        check(0x4008000000000000L, 'g', 1, 64, "3");
+        check(0x4008000000000000L, 'G', 1, 64, "3");
+        check(0x3FF0000000000000L, 'g', 17, 64, "1");
+        check(0x3FF0000000000000L, 'G', 17, 64, "1");
+        check(0x3FF0000000000000L, 'g', 21, 64, "1");
+        check(0x3FF0000000000000L, 'G', 21, 64, "1");
+        check(0x0000000000000000L, 'g', 2, 64, "0");
+        check(0x0000000000000000L, 'G', 2, 64, "0");
+        check(0x8000000000000000L, 'g', 2, 64, "-0");
+        check(0x8000000000000000L, 'G', 2, 64, "-0");
+        check(0x7FF8000000000000L, 'g', 2, 64, "NaN");
+        check(0x7FF8000000000000L, 'G', 2, 64, "NaN");
+        check(0x7FF0000000000000L, 'g', 2, 64, "+Inf");
+        check(0x7FF0000000000000L, 'G', 2, 64, "+Inf");
+        check(0xFFF0000000000000L, 'g', 2, 64, "-Inf");
+        check(0xFFF0000000000000L, 'G', 2, 64, "-Inf");
+        check32(0x00000000, 'g', 6, "0");
+        check32(0x80000000, 'g', 6, "-0");
+        check32(0x3F800000, 'g', 6, "1");
+        check32(0xBF800000, 'g', 6, "-1");
+        check32(0x3DCCCCCD, 'g', 6, "0.1");
+        check32(0x3DCCCCCC, 'g', 6, "0.1");
+        check32(0x3DCCCCCE, 'g', 6, "0.1");
+        check32(0x7F7FFFFF, 'g', 6, "3.40282e+38");
+        check32(0x00800000, 'g', 6, "1.17549e-38");
+        check32(0x007FFFFF, 'g', 6, "1.17549e-38");
+        check32(0x00000001, 'g', 6, "1.4013e-45");
+        check32(0x00000002, 'g', 6, "2.8026e-45");
+        check32(0x00000003, 'g', 6, "4.2039e-45");
+        check32(0x00000004, 'g', 6, "5.60519e-45");
+        check32(0x00000005, 'g', 6, "7.00649e-45");
+        check32(0x0000000A, 'g', 6, "1.4013e-44");
+        check32(0x00000010, 'g', 6, "2.24208e-44");
+        check32(0x00000100, 'g', 6, "3.58732e-43");
+        check32(0x3FC00000, 'g', 6, "1.5");
+        check32(0x4B000000, 'g', 6, "8.38861e+06");
+        check32(0x4B000001, 'g', 6, "8.38861e+06");
+        check32(0x7F800000, 'g', 6, "+Inf");
+        check32(0xFF800000, 'g', 6, "-Inf");
+        check32(0x7FC00000, 'g', 6, "NaN");
+        check32(0x33D6BF95, 'g', 6, "1e-07");
+        check32(0x322BCC77, 'g', 6, "1e-08");
+        check32(0x3E800000, 'g', 0, "0.2");
+        check32(0x3EC00000, 'g', 0, "0.4");
+        check32(0x3F000000, 'g', 0, "0.5");
+        check32(0x3F400000, 'g', 0, "0.8");
+        check32(0x40000000, 'g', 0, "2");
+        check32(0x40400000, 'g', 0, "3");
+        check32(0x40400000, 'g', 1, "3");
+        check32(0x00000001, 'g', 2, "1.4e-45");
+    }
+
+    /**
+     * Fixed-precision %e/%E/%f: half-to-even rounding on exact binary halves
+     * (0.125 -&gt; "0.12", 0.375 -&gt; "0.38", 0.625 -&gt; "0.62", 2.5 -&gt; "2",
+     * 3.5 -&gt; "4"), values rounding to zero (5e-324, 1e-300 %f), the
+     * 999999.5 carry to "1000000"/"1e+06", subnormals at %e prec 0/2/6,
+     * and specials (&plusmn;0, NaN, &plusmn;Inf) at fixed precision.
+     */
+    public void testFixedEAndF() {
+        check(0x4008000000000000L, 'e', 0, 64, "3e+00");
+        check(0x4008000000000000L, 'f', 0, 64, "3");
+        check(0x4008000000000000L, 'E', 0, 64, "3E+00");
+        check(0x4004000000000000L, 'e', 0, 64, "2e+00");
+        check(0x4004000000000000L, 'f', 0, 64, "2");
+        check(0x4004000000000000L, 'E', 0, 64, "2E+00");
+        check(0x3FC0000000000000L, 'e', 2, 64, "1.25e-01");
+        check(0x3FC0000000000000L, 'f', 2, 64, "0.12");
+        check(0x3FC0000000000000L, 'E', 2, 64, "1.25E-01");
+        check(0x3FD8000000000000L, 'e', 2, 64, "3.75e-01");
+        check(0x3FD8000000000000L, 'f', 2, 64, "0.38");
+        check(0x3FD8000000000000L, 'E', 2, 64, "3.75E-01");
+        check(0x3FE4000000000000L, 'e', 2, 64, "6.25e-01");
+        check(0x3FE4000000000000L, 'f', 2, 64, "0.62");
+        check(0x3FE4000000000000L, 'E', 2, 64, "6.25E-01");
+        check(0x3FE8000000000000L, 'e', 2, 64, "7.50e-01");
+        check(0x3FE8000000000000L, 'f', 2, 64, "0.75");
+        check(0x3FE8000000000000L, 'E', 2, 64, "7.50E-01");
+        check(0x3FEC000000000000L, 'e', 2, 64, "8.75e-01");
+        check(0x3FEC000000000000L, 'f', 2, 64, "0.88");
+        check(0x3FEC000000000000L, 'E', 2, 64, "8.75E-01");
+        check(0x3FC0000000000000L, 'e', 0, 64, "1e-01");
+        check(0x3FC0000000000000L, 'f', 0, 64, "0");
+        check(0x3FC0000000000000L, 'E', 0, 64, "1E-01");
+        check(0x3FD8000000000000L, 'e', 0, 64, "4e-01");
+        check(0x3FD8000000000000L, 'f', 0, 64, "0");
+        check(0x3FD8000000000000L, 'E', 0, 64, "4E-01");
+        check(0x3FE4000000000000L, 'e', 0, 64, "6e-01");
+        check(0x3FE4000000000000L, 'f', 0, 64, "1");
+        check(0x3FE4000000000000L, 'E', 0, 64, "6E-01");
+        check(0x3FE8000000000000L, 'e', 0, 64, "8e-01");
+        check(0x3FE8000000000000L, 'f', 0, 64, "1");
+        check(0x3FE8000000000000L, 'E', 0, 64, "8E-01");
+        check(0x0000000000000001L, 'e', 2, 64, "4.94e-324");
+        check(0x0000000000000001L, 'f', 2, 64, "0.00");
+        check(0x0000000000000001L, 'E', 2, 64, "4.94E-324");
+        check(0x0000000000000001L, 'e', 0, 64, "5e-324");
+        check(0x0000000000000001L, 'f', 0, 64, "0");
+        check(0x0000000000000001L, 'E', 0, 64, "5E-324");
+        check(0x0000000000000001L, 'e', 6, 64, "4.940656e-324");
+        check(0x0000000000000001L, 'f', 6, 64, "0.000000");
+        check(0x0000000000000001L, 'E', 6, 64, "4.940656E-324");
+        check(0x0000000000000002L, 'e', 6, 64, "9.881313e-324");
+        check(0x0000000000000002L, 'f', 6, 64, "0.000000");
+        check(0x0000000000000002L, 'E', 6, 64, "9.881313E-324");
+        check(0x0000000000000002L, 'e', 2, 64, "9.88e-324");
+        check(0x0000000000000002L, 'f', 2, 64, "0.00");
+        check(0x0000000000000002L, 'E', 2, 64, "9.88E-324");
+        check(0x0000000000000002L, 'e', 0, 64, "1e-323");
+        check(0x0000000000000002L, 'f', 0, 64, "0");
+        check(0x0000000000000002L, 'E', 0, 64, "1E-323");
+        check(0x000FFFFFFFFFFFFFL, 'e', 6, 64, "2.225074e-308");
+        check(0x000FFFFFFFFFFFFFL, 'f', 6, 64, "0.000000");
+        check(0x000FFFFFFFFFFFFFL, 'E', 6, 64, "2.225074E-308");
+        check(0x0010000000000000L, 'e', 6, 64, "2.225074e-308");
+        check(0x0010000000000000L, 'f', 6, 64, "0.000000");
+        check(0x0010000000000000L, 'E', 6, 64, "2.225074E-308");
+        check(0x0000000000000001L, 'e', 324, 64, "4.940656458412465441765687928682213723650598026143247644255856825006755072702087518652998363616359923797965646954457177309266567103559397963987747960107818781263007131903114045278458171678489821036887186360569987307230500063874091535649843873124733972731696151400317153853980741262385655911710266585566867681870395603106249319e-324");
+        check(0x0000000000000001L, 'f', 324, 64, "0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005");
+        check(0x0000000000000001L, 'E', 324, 64, "4.940656458412465441765687928682213723650598026143247644255856825006755072702087518652998363616359923797965646954457177309266567103559397963987747960107818781263007131903114045278458171678489821036887186360569987307230500063874091535649843873124733972731696151400317153853980741262385655911710266585566867681870395603106249319E-324");
+        check(0x0000000000000001L, 'e', 323, 64, "4.94065645841246544176568792868221372365059802614324764425585682500675507270208751865299836361635992379796564695445717730926656710355939796398774796010781878126300713190311404527845817167848982103688718636056998730723050006387409153564984387312473397273169615140031715385398074126238565591171026658556686768187039560310624932e-324");
+        check(0x0000000000000001L, 'f', 323, 64, "0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
+        check(0x0000000000000001L, 'E', 323, 64, "4.94065645841246544176568792868221372365059802614324764425585682500675507270208751865299836361635992379796564695445717730926656710355939796398774796010781878126300713190311404527845817167848982103688718636056998730723050006387409153564984387312473397273169615140031715385398074126238565591171026658556686768187039560310624932E-324");
+        check(0x4132D68700000000L, 'e', 0, 64, "1e+06");
+        check(0x4132D68700000000L, 'f', 0, 64, "1234567");
+        check(0x4132D68700000000L, 'E', 0, 64, "1E+06");
+        check(0x4132D68700000000L, 'e', 1, 64, "1.2e+06");
+        check(0x4132D68700000000L, 'f', 1, 64, "1234567.0");
+        check(0x4132D68700000000L, 'E', 1, 64, "1.2E+06");
+        check(0x4132D68700000000L, 'e', 6, 64, "1.234567e+06");
+        check(0x4132D68700000000L, 'f', 6, 64, "1234567.000000");
+        check(0x4132D68700000000L, 'E', 6, 64, "1.234567E+06");
+        check(0x4132D68700000000L, 'e', 2, 64, "1.23e+06");
+        check(0x4132D68700000000L, 'f', 2, 64, "1234567.00");
+        check(0x4132D68700000000L, 'E', 2, 64, "1.23E+06");
+        check(0x3F1A36E2EB1C432DL, 'e', 6, 64, "1.000000e-04");
+        check(0x3F1A36E2EB1C432DL, 'f', 6, 64, "0.000100");
+        check(0x3F1A36E2EB1C432DL, 'E', 6, 64, "1.000000E-04");
+        check(0x01A56E1FC2F8F359L, 'e', 2, 64, "1.00e-300");
+        check(0x01A56E1FC2F8F359L, 'f', 2, 64, "0.00");
+        check(0x01A56E1FC2F8F359L, 'E', 2, 64, "1.00E-300");
+        check(0x01A56E1FC2F8F359L, 'e', 6, 64, "1.000000e-300");
+        check(0x01A56E1FC2F8F359L, 'f', 6, 64, "0.000000");
+        check(0x01A56E1FC2F8F359L, 'E', 6, 64, "1.000000E-300");
+        check(0x412E847F00000000L, 'e', 0, 64, "1e+06");
+        check(0x412E847F00000000L, 'f', 0, 64, "1000000");
+        check(0x412E847F00000000L, 'E', 0, 64, "1E+06");
+        check(0x430C6BF526340004L, 'e', 6, 64, "1.000000e+15");
+        check(0x430C6BF526340004L, 'f', 6, 64, "1000000000000000.500000");
+        check(0x430C6BF526340004L, 'E', 6, 64, "1.000000E+15");
+        check(0x7FEFFFFFFFFFFFFFL, 'e', 6, 64, "1.797693e+308");
+        check(0x7FEFFFFFFFFFFFFFL, 'f', 6, 64, "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.000000");
+        check(0x7FEFFFFFFFFFFFFFL, 'E', 6, 64, "1.797693E+308");
+        check(0x7FEFFFFFFFFFFFFFL, 'e', 2, 64, "1.80e+308");
+        check(0x7FEFFFFFFFFFFFFFL, 'f', 2, 64, "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.00");
+        check(0x7FEFFFFFFFFFFFFFL, 'E', 2, 64, "1.80E+308");
+        check(0xBFF0000000000000L, 'e', 2, 64, "-1.00e+00");
+        check(0xBFF0000000000000L, 'f', 2, 64, "-1.00");
+        check(0xBFF0000000000000L, 'E', 2, 64, "-1.00E+00");
+        check(0x8000000000000000L, 'e', 2, 64, "-0.00e+00");
+        check(0x8000000000000000L, 'f', 2, 64, "-0.00");
+        check(0x8000000000000000L, 'E', 2, 64, "-0.00E+00");
+        check(0x8000000000000000L, 'e', 0, 64, "-0e+00");
+        check(0x8000000000000000L, 'f', 0, 64, "-0");
+        check(0x8000000000000000L, 'E', 0, 64, "-0E+00");
+        check(0x3FDCCCCCCCCCCCCDL, 'e', 2, 64, "4.50e-01");
+        check(0x3FDCCCCCCCCCCCCDL, 'f', 2, 64, "0.45");
+        check(0x3FDCCCCCCCCCCCCDL, 'E', 2, 64, "4.50E-01");
+        check(0x3FD6666666666666L, 'e', 2, 64, "3.50e-01");
+        check(0x3FD6666666666666L, 'f', 2, 64, "0.35");
+        check(0x3FD6666666666666L, 'E', 2, 64, "3.50E-01");
+        check(0x3FD999999999999AL, 'e', 2, 64, "4.00e-01");
+        check(0x3FD999999999999AL, 'f', 2, 64, "0.40");
+        check(0x3FD999999999999AL, 'E', 2, 64, "4.00E-01");
+        check(0x3FE6666666666666L, 'e', 2, 64, "7.00e-01");
+        check(0x3FE6666666666666L, 'f', 2, 64, "0.70");
+        check(0x3FE6666666666666L, 'E', 2, 64, "7.00E-01");
+        check(0x3FF199999999999AL, 'e', 2, 64, "1.10e+00");
+        check(0x3FF199999999999AL, 'f', 2, 64, "1.10");
+        check(0x3FF199999999999AL, 'E', 2, 64, "1.10E+00");
+        check(0x3FF3333333333333L, 'e', 2, 64, "1.20e+00");
+        check(0x3FF3333333333333L, 'f', 2, 64, "1.20");
+        check(0x3FF3333333333333L, 'E', 2, 64, "1.20E+00");
+        check(0x3FF8000000000000L, 'e', 2, 64, "1.50e+00");
+        check(0x3FF8000000000000L, 'f', 2, 64, "1.50");
+        check(0x3FF8000000000000L, 'E', 2, 64, "1.50E+00");
+        check(0x3FF999999999999AL, 'e', 2, 64, "1.60e+00");
+        check(0x3FF999999999999AL, 'f', 2, 64, "1.60");
+        check(0x3FF999999999999AL, 'E', 2, 64, "1.60E+00");
+        check(0x0000000000000000L, 'e', 2, 64, "0.00e+00");
+        check(0x0000000000000000L, 'f', 2, 64, "0.00");
+        check(0x0000000000000000L, 'E', 2, 64, "0.00E+00");
+        check(0x7FF8000000000000L, 'e', 2, 64, "NaN");
+        check(0x7FF8000000000000L, 'f', 2, 64, "NaN");
+        check(0x7FF8000000000000L, 'E', 2, 64, "NaN");
+        check(0x7FF0000000000000L, 'e', 2, 64, "+Inf");
+        check(0x7FF0000000000000L, 'f', 2, 64, "+Inf");
+        check(0x7FF0000000000000L, 'E', 2, 64, "+Inf");
+        check(0xFFF0000000000000L, 'e', 2, 64, "-Inf");
+        check(0xFFF0000000000000L, 'f', 2, 64, "-Inf");
+        check(0xFFF0000000000000L, 'E', 2, 64, "-Inf");
+        check32(0x00000000, 'e', 2, "0.00e+00");
+        check32(0x00000000, 'f', 2, "0.00");
+        check32(0x80000000, 'e', 2, "-0.00e+00");
+        check32(0x80000000, 'f', 2, "-0.00");
+        check32(0x3F800000, 'e', 2, "1.00e+00");
+        check32(0x3F800000, 'f', 2, "1.00");
+        check32(0xBF800000, 'e', 2, "-1.00e+00");
+        check32(0xBF800000, 'f', 2, "-1.00");
+        check32(0x3DCCCCCD, 'e', 2, "1.00e-01");
+        check32(0x3DCCCCCD, 'f', 2, "0.10");
+        check32(0x3DCCCCCC, 'e', 2, "1.00e-01");
+        check32(0x3DCCCCCC, 'f', 2, "0.10");
+        check32(0x3DCCCCCE, 'e', 2, "1.00e-01");
+        check32(0x3DCCCCCE, 'f', 2, "0.10");
+        check32(0x7F7FFFFF, 'e', 2, "3.40e+38");
+        check32(0x7F7FFFFF, 'f', 2, "340282346638528859811704183484516925440.00");
+        check32(0x00800000, 'e', 2, "1.18e-38");
+        check32(0x00800000, 'f', 2, "0.00");
+        check32(0x007FFFFF, 'e', 2, "1.18e-38");
+        check32(0x007FFFFF, 'f', 2, "0.00");
+        check32(0x00000001, 'e', 2, "1.40e-45");
+        check32(0x00000001, 'f', 2, "0.00");
+        check32(0x00000002, 'e', 2, "2.80e-45");
+        check32(0x00000002, 'f', 2, "0.00");
+        check32(0x00000003, 'e', 2, "4.20e-45");
+        check32(0x00000003, 'f', 2, "0.00");
+        check32(0x00000004, 'e', 2, "5.61e-45");
+        check32(0x00000004, 'f', 2, "0.00");
+        check32(0x00000005, 'e', 2, "7.01e-45");
+        check32(0x00000005, 'f', 2, "0.00");
+        check32(0x0000000A, 'e', 2, "1.40e-44");
+        check32(0x0000000A, 'f', 2, "0.00");
+        check32(0x00000010, 'e', 2, "2.24e-44");
+        check32(0x00000010, 'f', 2, "0.00");
+        check32(0x00000100, 'e', 2, "3.59e-43");
+        check32(0x00000100, 'f', 2, "0.00");
+        check32(0x3FC00000, 'e', 2, "1.50e+00");
+        check32(0x3FC00000, 'f', 2, "1.50");
+        check32(0x4B000000, 'e', 2, "8.39e+06");
+        check32(0x4B000000, 'f', 2, "8388608.00");
+        check32(0x4B000001, 'e', 2, "8.39e+06");
+        check32(0x4B000001, 'f', 2, "8388609.00");
+        check32(0x7F800000, 'e', 2, "+Inf");
+        check32(0x7F800000, 'f', 2, "+Inf");
+        check32(0xFF800000, 'e', 2, "-Inf");
+        check32(0xFF800000, 'f', 2, "-Inf");
+        check32(0x7FC00000, 'e', 2, "NaN");
+        check32(0x7FC00000, 'f', 2, "NaN");
+        check32(0x33D6BF95, 'e', 2, "1.00e-07");
+        check32(0x33D6BF95, 'f', 2, "0.00");
+        check32(0x322BCC77, 'e', 2, "1.00e-08");
+        check32(0x322BCC77, 'f', 2, "0.00");
+        check32(0x3E800000, 'e', 0, "2e-01");
+        check32(0x3E800000, 'f', 0, "0");
+        check32(0x3EC00000, 'e', 0, "4e-01");
+        check32(0x3EC00000, 'f', 0, "0");
+        check32(0x3F000000, 'e', 0, "5e-01");
+        check32(0x3F000000, 'f', 0, "0");
+        check32(0x3F400000, 'e', 0, "8e-01");
+        check32(0x3F400000, 'f', 0, "1");
+        check32(0x40000000, 'e', 0, "2e+00");
+        check32(0x40000000, 'f', 0, "2");
+        check32(0x40400000, 'e', 0, "3e+00");
+        check32(0x40400000, 'f', 0, "3");
+        check32(0x40400000, 'e', 1, "3.0e+00");
+        check32(0x40400000, 'f', 1, "3.0");
+        check32(0x00000001, 'e', 6, "1.401298e-45");
+        check32(0x00000001, 'f', 6, "0.000000");
+        check32(0x00000002, 'e', 6, "2.802597e-45");
+        check32(0x00000002, 'f', 6, "0.000000");
+        check32(0x00000003, 'e', 6, "4.203895e-45");
+        check32(0x00000003, 'f', 6, "0.000000");
+        check(0x3FE0000000000000L, 'f', 0, 64, "0");
+        check(0x3FE0000000000001L, 'f', 0, 64, "1");
+        check(0x3FDFFFFFFFFFFFFFL, 'f', 0, 64, "0");
+        check(0x3FECCCCCCCCCCCCDL, 'f', 0, 64, "1");
+        check(0x3FEF5C28F5C28F5CL, 'f', 0, 64, "1");
+        check(0x3F747AE147AE147BL, 'f', 1, 64, "0.0");
+        check(0x3F747AE147AE147CL, 'f', 1, 64, "0.0");
+        check(0x3FA999999999999AL, 'f', 1, 64, "0.1");
+        check(0x3F9999999999999AL, 'f', 1, 64, "0.0");
+        check(0x3FB999999999999AL, 'f', 1, 64, "0.1");
+        check(0x3FD0000000000000L, 'f', 1, 64, "0.2");
+        check(0x3FE8000000000000L, 'f', 1, 64, "0.8");
+        check(0x3FC3333333333333L, 'f', 1, 64, "0.1");
+        check(0x3F747AE147AE147BL, 'f', 2, 64, "0.01");
+        check(0x3F70624DD2F1A9FCL, 'f', 2, 64, "0.00");
+        check(0x3F789374BC6A7EFAL, 'f', 2, 64, "0.01");
+        check(0x3F43A92A30553261L, 'f', 2, 64, "0.00");
+        check(0x3F0F75104D551D69L, 'f', 2, 64, "0.00");
+        check(0x3F70000000000000L, 'f', 2, 64, "0.00");
+        check(0x3F747AE147AE147BL, 'f', 3, 64, "0.005");
+    }
+
+    /**
+     * Hex float %x/%X: shortest and fixed precisions -1..20 (the prec-15
+     * rounding edge is the boundary of the port's prec &lt; 15 guard),
+     * subnormals (5e-324 -&gt; 0x0.0000000000001p-1022), min normal,
+     * max, &plusmn;0, NaN/Inf, and float32 hex.
+     */
+    public void testHexFloat() {
+        checkHex(0x3FF8000000000000L, 'x', -1, 64, "0x1.8p+00");
+        checkHex(0x3FF8000000000000L, 'x', 0, 64, "0x1p+01");
+        checkHex(0x3FF8000000000000L, 'x', 1, 64, "0x1.8p+00");
+        checkHex(0x3FF8000000000000L, 'x', 2, 64, "0x1.80p+00");
+        checkHex(0x3FF8000000000000L, 'x', 6, 64, "0x1.800000p+00");
+        checkHex(0x3FF8000000000000L, 'x', 13, 64, "0x1.8000000000000p+00");
+        checkHex(0x3FF8000000000000L, 'x', 14, 64, "0x1.80000000000000p+00");
+        checkHex(0x3FF8000000000000L, 'x', 15, 64, "0x1.800000000000000p+00");
+        checkHex(0x3FF8000000000000L, 'x', 16, 64, "0x1.8000000000000000p+00");
+        checkHex(0x3FF8000000000000L, 'x', 20, 64, "0x1.80000000000000000000p+00");
+        checkHex(0x3FF8000000000000L, 'X', -1, 64, "0X1.8P+00");
+        checkHex(0x3FF8000000000000L, 'X', 2, 64, "0X1.80P+00");
+        checkHex(0x3FF8000000000000L, 'X', 6, 64, "0X1.800000P+00");
+        checkHex(0xBFF8000000000000L, 'x', -1, 64, "-0x1.8p+00");
+        checkHex(0xBFF8000000000000L, 'x', 0, 64, "-0x1p+01");
+        checkHex(0xBFF8000000000000L, 'x', 1, 64, "-0x1.8p+00");
+        checkHex(0xBFF8000000000000L, 'x', 2, 64, "-0x1.80p+00");
+        checkHex(0xBFF8000000000000L, 'x', 6, 64, "-0x1.800000p+00");
+        checkHex(0xBFF8000000000000L, 'x', 13, 64, "-0x1.8000000000000p+00");
+        checkHex(0xBFF8000000000000L, 'x', 14, 64, "-0x1.80000000000000p+00");
+        checkHex(0xBFF8000000000000L, 'x', 15, 64, "-0x1.800000000000000p+00");
+        checkHex(0xBFF8000000000000L, 'x', 16, 64, "-0x1.8000000000000000p+00");
+        checkHex(0xBFF8000000000000L, 'x', 20, 64, "-0x1.80000000000000000000p+00");
+        checkHex(0xBFF8000000000000L, 'X', -1, 64, "-0X1.8P+00");
+        checkHex(0xBFF8000000000000L, 'X', 2, 64, "-0X1.80P+00");
+        checkHex(0xBFF8000000000000L, 'X', 6, 64, "-0X1.800000P+00");
+        checkHex(0x3FB999999999999AL, 'x', -1, 64, "0x1.999999999999ap-04");
+        checkHex(0x3FB999999999999AL, 'x', 0, 64, "0x1p-03");
+        checkHex(0x3FB999999999999AL, 'x', 1, 64, "0x1.ap-04");
+        checkHex(0x3FB999999999999AL, 'x', 2, 64, "0x1.9ap-04");
+        checkHex(0x3FB999999999999AL, 'x', 6, 64, "0x1.99999ap-04");
+        checkHex(0x3FB999999999999AL, 'x', 13, 64, "0x1.999999999999ap-04");
+        checkHex(0x3FB999999999999AL, 'x', 14, 64, "0x1.999999999999a0p-04");
+        checkHex(0x3FB999999999999AL, 'x', 15, 64, "0x1.999999999999a00p-04");
+        checkHex(0x3FB999999999999AL, 'x', 16, 64, "0x1.999999999999a000p-04");
+        checkHex(0x3FB999999999999AL, 'x', 20, 64, "0x1.999999999999a0000000p-04");
+        checkHex(0x3FB999999999999AL, 'X', -1, 64, "0X1.999999999999AP-04");
+        checkHex(0x3FB999999999999AL, 'X', 2, 64, "0X1.9AP-04");
+        checkHex(0x3FB999999999999AL, 'X', 6, 64, "0X1.99999AP-04");
+        checkHex(0x0000000000000000L, 'x', -1, 64, "0x0p+00");
+        checkHex(0x0000000000000000L, 'x', 0, 64, "0x0p+00");
+        checkHex(0x0000000000000000L, 'x', 1, 64, "0x0.0p+00");
+        checkHex(0x0000000000000000L, 'x', 2, 64, "0x0.00p+00");
+        checkHex(0x0000000000000000L, 'x', 6, 64, "0x0.000000p+00");
+        checkHex(0x0000000000000000L, 'x', 13, 64, "0x0.0000000000000p+00");
+        checkHex(0x0000000000000000L, 'x', 14, 64, "0x0.00000000000000p+00");
+        checkHex(0x0000000000000000L, 'x', 15, 64, "0x0.000000000000000p+00");
+        checkHex(0x0000000000000000L, 'x', 16, 64, "0x0.0000000000000000p+00");
+        checkHex(0x0000000000000000L, 'x', 20, 64, "0x0.00000000000000000000p+00");
+        checkHex(0x0000000000000000L, 'X', -1, 64, "0X0P+00");
+        checkHex(0x0000000000000000L, 'X', 2, 64, "0X0.00P+00");
+        checkHex(0x0000000000000000L, 'X', 6, 64, "0X0.000000P+00");
+        checkHex(0x8000000000000000L, 'x', -1, 64, "-0x0p+00");
+        checkHex(0x8000000000000000L, 'x', 0, 64, "-0x0p+00");
+        checkHex(0x8000000000000000L, 'x', 1, 64, "-0x0.0p+00");
+        checkHex(0x8000000000000000L, 'x', 2, 64, "-0x0.00p+00");
+        checkHex(0x8000000000000000L, 'x', 6, 64, "-0x0.000000p+00");
+        checkHex(0x8000000000000000L, 'x', 13, 64, "-0x0.0000000000000p+00");
+        checkHex(0x8000000000000000L, 'x', 14, 64, "-0x0.00000000000000p+00");
+        checkHex(0x8000000000000000L, 'x', 15, 64, "-0x0.000000000000000p+00");
+        checkHex(0x8000000000000000L, 'x', 16, 64, "-0x0.0000000000000000p+00");
+        checkHex(0x8000000000000000L, 'x', 20, 64, "-0x0.00000000000000000000p+00");
+        checkHex(0x8000000000000000L, 'X', -1, 64, "-0X0P+00");
+        checkHex(0x8000000000000000L, 'X', 2, 64, "-0X0.00P+00");
+        checkHex(0x8000000000000000L, 'X', 6, 64, "-0X0.000000P+00");
+        checkHex(0x4000000000000000L, 'x', -1, 64, "0x1p+01");
+        checkHex(0x4000000000000000L, 'x', 0, 64, "0x1p+01");
+        checkHex(0x4000000000000000L, 'x', 1, 64, "0x1.0p+01");
+        checkHex(0x4000000000000000L, 'x', 2, 64, "0x1.00p+01");
+        checkHex(0x4000000000000000L, 'x', 6, 64, "0x1.000000p+01");
+        checkHex(0x4000000000000000L, 'x', 13, 64, "0x1.0000000000000p+01");
+        checkHex(0x4000000000000000L, 'x', 14, 64, "0x1.00000000000000p+01");
+        checkHex(0x4000000000000000L, 'x', 15, 64, "0x1.000000000000000p+01");
+        checkHex(0x4000000000000000L, 'x', 16, 64, "0x1.0000000000000000p+01");
+        checkHex(0x4000000000000000L, 'x', 20, 64, "0x1.00000000000000000000p+01");
+        checkHex(0x4000000000000000L, 'X', -1, 64, "0X1P+01");
+        checkHex(0x4000000000000000L, 'X', 2, 64, "0X1.00P+01");
+        checkHex(0x4000000000000000L, 'X', 6, 64, "0X1.000000P+01");
+        checkHex(0x3FE0000000000000L, 'x', -1, 64, "0x1p-01");
+        checkHex(0x3FE0000000000000L, 'x', 0, 64, "0x1p-01");
+        checkHex(0x3FE0000000000000L, 'x', 1, 64, "0x1.0p-01");
+        checkHex(0x3FE0000000000000L, 'x', 2, 64, "0x1.00p-01");
+        checkHex(0x3FE0000000000000L, 'x', 6, 64, "0x1.000000p-01");
+        checkHex(0x3FE0000000000000L, 'x', 13, 64, "0x1.0000000000000p-01");
+        checkHex(0x3FE0000000000000L, 'x', 14, 64, "0x1.00000000000000p-01");
+        checkHex(0x3FE0000000000000L, 'x', 15, 64, "0x1.000000000000000p-01");
+        checkHex(0x3FE0000000000000L, 'x', 16, 64, "0x1.0000000000000000p-01");
+        checkHex(0x3FE0000000000000L, 'x', 20, 64, "0x1.00000000000000000000p-01");
+        checkHex(0x3FE0000000000000L, 'X', -1, 64, "0X1P-01");
+        checkHex(0x3FE0000000000000L, 'X', 2, 64, "0X1.00P-01");
+        checkHex(0x3FE0000000000000L, 'X', 6, 64, "0X1.000000P-01");
+        checkHex(0x3FD5555555555555L, 'x', -1, 64, "0x1.5555555555555p-02");
+        checkHex(0x3FD5555555555555L, 'x', 0, 64, "0x1p-02");
+        checkHex(0x3FD5555555555555L, 'x', 1, 64, "0x1.5p-02");
+        checkHex(0x3FD5555555555555L, 'x', 2, 64, "0x1.55p-02");
+        checkHex(0x3FD5555555555555L, 'x', 6, 64, "0x1.555555p-02");
+        checkHex(0x3FD5555555555555L, 'x', 13, 64, "0x1.5555555555555p-02");
+        checkHex(0x3FD5555555555555L, 'x', 14, 64, "0x1.55555555555550p-02");
+        checkHex(0x3FD5555555555555L, 'x', 15, 64, "0x1.555555555555500p-02");
+        checkHex(0x3FD5555555555555L, 'x', 16, 64, "0x1.5555555555555000p-02");
+        checkHex(0x3FD5555555555555L, 'x', 20, 64, "0x1.55555555555550000000p-02");
+        checkHex(0x3FD5555555555555L, 'X', -1, 64, "0X1.5555555555555P-02");
+        checkHex(0x3FD5555555555555L, 'X', 2, 64, "0X1.55P-02");
+        checkHex(0x3FD5555555555555L, 'X', 6, 64, "0X1.555555P-02");
+        checkHex(0x0000000000000001L, 'x', -1, 64, "0x1p-1074");
+        checkHex(0x0000000000000001L, 'x', 0, 64, "0x1p-1074");
+        checkHex(0x0000000000000001L, 'x', 1, 64, "0x1.0p-1074");
+        checkHex(0x0000000000000001L, 'x', 2, 64, "0x1.00p-1074");
+        checkHex(0x0000000000000001L, 'x', 6, 64, "0x1.000000p-1074");
+        checkHex(0x0000000000000001L, 'x', 13, 64, "0x1.0000000000000p-1074");
+        checkHex(0x0000000000000001L, 'x', 14, 64, "0x1.00000000000000p-1074");
+        checkHex(0x0000000000000001L, 'x', 15, 64, "0x1.000000000000000p-1074");
+        checkHex(0x0000000000000001L, 'x', 16, 64, "0x1.0000000000000000p-1074");
+        checkHex(0x0000000000000001L, 'x', 20, 64, "0x1.00000000000000000000p-1074");
+        checkHex(0x0000000000000001L, 'X', -1, 64, "0X1P-1074");
+        checkHex(0x0000000000000001L, 'X', 2, 64, "0X1.00P-1074");
+        checkHex(0x0000000000000001L, 'X', 6, 64, "0X1.000000P-1074");
+        checkHex(0x0010000000000000L, 'x', -1, 64, "0x1p-1022");
+        checkHex(0x0010000000000000L, 'x', 0, 64, "0x1p-1022");
+        checkHex(0x0010000000000000L, 'x', 1, 64, "0x1.0p-1022");
+        checkHex(0x0010000000000000L, 'x', 2, 64, "0x1.00p-1022");
+        checkHex(0x0010000000000000L, 'x', 6, 64, "0x1.000000p-1022");
+        checkHex(0x0010000000000000L, 'x', 13, 64, "0x1.0000000000000p-1022");
+        checkHex(0x0010000000000000L, 'x', 14, 64, "0x1.00000000000000p-1022");
+        checkHex(0x0010000000000000L, 'x', 15, 64, "0x1.000000000000000p-1022");
+        checkHex(0x0010000000000000L, 'x', 16, 64, "0x1.0000000000000000p-1022");
+        checkHex(0x0010000000000000L, 'x', 20, 64, "0x1.00000000000000000000p-1022");
+        checkHex(0x0010000000000000L, 'X', -1, 64, "0X1P-1022");
+        checkHex(0x0010000000000000L, 'X', 2, 64, "0X1.00P-1022");
+        checkHex(0x0010000000000000L, 'X', 6, 64, "0X1.000000P-1022");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', -1, 64, "0x1.ffffffffffffep-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 0, 64, "0x1p-1022");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 1, 64, "0x1.0p-1022");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 2, 64, "0x1.00p-1022");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 6, 64, "0x1.000000p-1022");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 13, 64, "0x1.ffffffffffffep-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 14, 64, "0x1.ffffffffffffe0p-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 15, 64, "0x1.ffffffffffffe00p-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 16, 64, "0x1.ffffffffffffe000p-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'x', 20, 64, "0x1.ffffffffffffe0000000p-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'X', -1, 64, "0X1.FFFFFFFFFFFFEP-1023");
+        checkHex(0x000FFFFFFFFFFFFFL, 'X', 2, 64, "0X1.00P-1022");
+        checkHex(0x000FFFFFFFFFFFFFL, 'X', 6, 64, "0X1.000000P-1022");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', -1, 64, "0x1.fffffffffffffp+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 0, 64, "0x1p+1024");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 1, 64, "0x1.0p+1024");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 2, 64, "0x1.00p+1024");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 6, 64, "0x1.000000p+1024");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 13, 64, "0x1.fffffffffffffp+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 14, 64, "0x1.fffffffffffff0p+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 15, 64, "0x1.fffffffffffff00p+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 16, 64, "0x1.fffffffffffff000p+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'x', 20, 64, "0x1.fffffffffffff0000000p+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'X', -1, 64, "0X1.FFFFFFFFFFFFFP+1023");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'X', 2, 64, "0X1.00P+1024");
+        checkHex(0x7FEFFFFFFFFFFFFFL, 'X', 6, 64, "0X1.000000P+1024");
+        checkHex(0x7FF8000000000000L, 'x', -1, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 0, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 1, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 2, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 6, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 13, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 14, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 15, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 16, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'x', 20, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'X', -1, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'X', 2, 64, "NaN");
+        checkHex(0x7FF8000000000000L, 'X', 6, 64, "NaN");
+        checkHex(0x7FF0000000000000L, 'x', -1, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 0, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 1, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 2, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 6, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 13, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 14, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 15, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 16, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'x', 20, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'X', -1, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'X', 2, 64, "+Inf");
+        checkHex(0x7FF0000000000000L, 'X', 6, 64, "+Inf");
+        checkHex(0xFFF0000000000000L, 'x', -1, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 0, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 1, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 2, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 6, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 13, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 14, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 15, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 16, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'x', 20, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'X', -1, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'X', 2, 64, "-Inf");
+        checkHex(0xFFF0000000000000L, 'X', 6, 64, "-Inf");
+        checkHex(0x4415AF1D78B58C40L, 'x', -1, 64, "0x1.5af1d78b58c4p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 0, 64, "0x1p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 1, 64, "0x1.6p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 2, 64, "0x1.5bp+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 6, 64, "0x1.5af1d8p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 13, 64, "0x1.5af1d78b58c40p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 14, 64, "0x1.5af1d78b58c400p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 15, 64, "0x1.5af1d78b58c4000p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 16, 64, "0x1.5af1d78b58c40000p+66");
+        checkHex(0x4415AF1D78B58C40L, 'x', 20, 64, "0x1.5af1d78b58c400000000p+66");
+        checkHex(0x4415AF1D78B58C40L, 'X', -1, 64, "0X1.5AF1D78B58C4P+66");
+        checkHex(0x4415AF1D78B58C40L, 'X', 2, 64, "0X1.5BP+66");
+        checkHex(0x4415AF1D78B58C40L, 'X', 6, 64, "0X1.5AF1D8P+66");
+        checkHex(0x3EE4F8B588E368F1L, 'x', -1, 64, "0x1.4f8b588e368f1p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 0, 64, "0x1p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 1, 64, "0x1.5p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 2, 64, "0x1.50p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 6, 64, "0x1.4f8b59p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 13, 64, "0x1.4f8b588e368f1p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 14, 64, "0x1.4f8b588e368f10p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 15, 64, "0x1.4f8b588e368f100p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 16, 64, "0x1.4f8b588e368f1000p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'x', 20, 64, "0x1.4f8b588e368f10000000p-17");
+        checkHex(0x3EE4F8B588E368F1L, 'X', -1, 64, "0X1.4F8B588E368F1P-17");
+        checkHex(0x3EE4F8B588E368F1L, 'X', 2, 64, "0X1.50P-17");
+        checkHex(0x3EE4F8B588E368F1L, 'X', 6, 64, "0X1.4F8B59P-17");
+        checkHex32(0x3FC00000, 'x', -1, "0x1.8p+00");
+        checkHex32(0x3FC00000, 'x', 0, "0x1p+01");
+        checkHex32(0x3FC00000, 'x', 2, "0x1.80p+00");
+        checkHex32(0x3FC00000, 'x', 6, "0x1.800000p+00");
+        checkHex32(0x3FC00000, 'x', 13, "0x1.8000000000000p+00");
+        checkHex32(0x3FC00000, 'x', 15, "0x1.800000000000000p+00");
+        checkHex32(0x3FC00000, 'X', -1, "0X1.8P+00");
+        checkHex32(0x3DCCCCCD, 'x', -1, "0x1.99999ap-04");
+        checkHex32(0x3DCCCCCD, 'x', 0, "0x1p-03");
+        checkHex32(0x3DCCCCCD, 'x', 2, "0x1.9ap-04");
+        checkHex32(0x3DCCCCCD, 'x', 6, "0x1.99999ap-04");
+        checkHex32(0x3DCCCCCD, 'x', 13, "0x1.99999a0000000p-04");
+        checkHex32(0x3DCCCCCD, 'x', 15, "0x1.99999a000000000p-04");
+        checkHex32(0x3DCCCCCD, 'X', -1, "0X1.99999AP-04");
+        checkHex32(0x00000001, 'x', -1, "0x1p-149");
+        checkHex32(0x00000001, 'x', 0, "0x1p-149");
+        checkHex32(0x00000001, 'x', 2, "0x1.00p-149");
+        checkHex32(0x00000001, 'x', 6, "0x1.000000p-149");
+        checkHex32(0x00000001, 'x', 13, "0x1.0000000000000p-149");
+        checkHex32(0x00000001, 'x', 15, "0x1.000000000000000p-149");
+        checkHex32(0x00000001, 'X', -1, "0X1P-149");
+        checkHex32(0x00800000, 'x', -1, "0x1p-126");
+        checkHex32(0x00800000, 'x', 0, "0x1p-126");
+        checkHex32(0x00800000, 'x', 2, "0x1.00p-126");
+        checkHex32(0x00800000, 'x', 6, "0x1.000000p-126");
+        checkHex32(0x00800000, 'x', 13, "0x1.0000000000000p-126");
+        checkHex32(0x00800000, 'x', 15, "0x1.000000000000000p-126");
+        checkHex32(0x00800000, 'X', -1, "0X1P-126");
+        checkHex32(0x7F7FFFFF, 'x', -1, "0x1.fffffep+127");
+        checkHex32(0x7F7FFFFF, 'x', 0, "0x1p+128");
+        checkHex32(0x7F7FFFFF, 'x', 2, "0x1.00p+128");
+        checkHex32(0x7F7FFFFF, 'x', 6, "0x1.fffffep+127");
+        checkHex32(0x7F7FFFFF, 'x', 13, "0x1.fffffe0000000p+127");
+        checkHex32(0x7F7FFFFF, 'x', 15, "0x1.fffffe000000000p+127");
+        checkHex32(0x7F7FFFFF, 'X', -1, "0X1.FFFFFEP+127");
+        checkHex32(0x00000000, 'x', -1, "0x0p+00");
+        checkHex32(0x00000000, 'x', 0, "0x0p+00");
+        checkHex32(0x00000000, 'x', 2, "0x0.00p+00");
+        checkHex32(0x00000000, 'x', 6, "0x0.000000p+00");
+        checkHex32(0x00000000, 'x', 13, "0x0.0000000000000p+00");
+        checkHex32(0x00000000, 'x', 15, "0x0.000000000000000p+00");
+        checkHex32(0x00000000, 'X', -1, "0X0P+00");
+        checkHex32(0x80000000, 'x', -1, "-0x0p+00");
+        checkHex32(0x80000000, 'x', 0, "-0x0p+00");
+        checkHex32(0x80000000, 'x', 2, "-0x0.00p+00");
+        checkHex32(0x80000000, 'x', 6, "-0x0.000000p+00");
+        checkHex32(0x80000000, 'x', 13, "-0x0.0000000000000p+00");
+        checkHex32(0x80000000, 'x', 15, "-0x0.000000000000000p+00");
+        checkHex32(0x80000000, 'X', -1, "-0X0P+00");
+        checkHex32(0x7F800000, 'x', -1, "+Inf");
+        checkHex32(0x7F800000, 'x', 0, "+Inf");
+        checkHex32(0x7F800000, 'x', 2, "+Inf");
+        checkHex32(0x7F800000, 'x', 6, "+Inf");
+        checkHex32(0x7F800000, 'x', 13, "+Inf");
+        checkHex32(0x7F800000, 'x', 15, "+Inf");
+        checkHex32(0x7F800000, 'X', -1, "+Inf");
+        checkHex32(0x7FC00000, 'x', -1, "NaN");
+        checkHex32(0x7FC00000, 'x', 0, "NaN");
+        checkHex32(0x7FC00000, 'x', 2, "NaN");
+        checkHex32(0x7FC00000, 'x', 6, "NaN");
+        checkHex32(0x7FC00000, 'x', 13, "NaN");
+        checkHex32(0x7FC00000, 'x', 15, "NaN");
+        checkHex32(0x7FC00000, 'X', -1, "NaN");
+    }
+
+    /**
+     * Binary %b: exact mantissa/exponent rendering for normals,
+     * subnormals, &plusmn;0, NaN/Inf, float64 and float32.
+     */
+    public void testBinaryFloat() {
+        checkBinary(0x3FF8000000000000L, 64, "6755399441055744p-52");
+        checkBinary(0xBFF8000000000000L, 64, "-6755399441055744p-52");
+        checkBinary(0x3FB999999999999AL, 64, "7205759403792794p-56");
+        checkBinary(0x3FF0000000000000L, 64, "4503599627370496p-52");
+        checkBinary(0x3FE0000000000000L, 64, "4503599627370496p-53");
+        checkBinary(0x4000000000000000L, 64, "4503599627370496p-51");
+        checkBinary(0x0000000000000001L, 64, "1p-1074");
+        checkBinary(0x0000000000000000L, 64, "0p-1074");
+        checkBinary(0x8000000000000000L, 64, "-0p-1074");
+        checkBinary(0x7FF8000000000000L, 64, "NaN");
+        checkBinary(0x7FF0000000000000L, 64, "+Inf");
+        checkBinary(0xFFF0000000000000L, 64, "-Inf");
+        checkBinary32(0x3FC00000, "12582912p-23");
+        checkBinary32(0x3DCCCCCD, "13421773p-27");
+        checkBinary32(0x00000001, "1p-149");
+        checkBinary32(0x00000000, "0p-149");
+        checkBinary32(0x7F800000, "+Inf");
+        checkBinary32(0x7FC00000, "NaN");
+    }
+
+    /**
+     * Complex: (re+imi) layout, sign insertion for negative imaginary
+     * parts, -0 components, subnormal components, NaN/Inf components,
+     * and complex64 (float32 parts) vs complex128.
+     */
+    public void testComplex() {
+        checkComplex(0x3FF8000000000000L, 0xC004000000000000L, 'g', -1, 128, "(1.5-2.5i)");
+        checkComplex(0x0000000000000000L, 0x0000000000000000L, 'g', -1, 128, "(0+0i)");
+        checkComplex(0x8000000000000000L, 0x0000000000000000L, 'g', -1, 128, "(-0+0i)");
+        checkComplex(0x0000000000000000L, 0x8000000000000000L, 'g', -1, 128, "(0-0i)");
+        checkComplex(0x3FF0000000000000L, 0x0000000000000000L, 'g', -1, 128, "(1+0i)");
+        checkComplex(0x0000000000000000L, 0x3FF0000000000000L, 'g', -1, 128, "(0+1i)");
+        checkComplex(0x7FF8000000000000L, 0x3FF0000000000000L, 'g', -1, 128, "(NaN+1i)");
+        checkComplex(0x7FF0000000000000L, 0xFFF0000000000000L, 'g', -1, 128, "(+Inf-Infi)");
+        checkComplex(0x3EE4F8B588E368F1L, 0x4132D68700000000L, 'g', -1, 128, "(1e-05+1.234567e+06i)");
+        checkComplex(0x3FF8000000000000L, 0xC004000000000000L, 'g', 6, 128, "(1.5-2.5i)");
+        checkComplex(0x3FF8000000000000L, 0xC004000000000000L, 'e', 2, 128, "(1.50e+00-2.50e+00i)");
+        checkComplex(0x3FF8000000000000L, 0xC004000000000000L, 'f', 2, 128, "(1.50-2.50i)");
+        checkComplex(0x0000000000000001L, 0x0000000000000001L, 'g', -1, 128, "(5e-324+5e-324i)");
+        checkComplex(0x0000000000000001L, 0x0000000000000001L, 'e', 2, 128, "(4.94e-324+4.94e-324i)");
+        checkComplex32(0x3FC00000, 0xC0200000, 'g', -1, "(1.5-2.5i)");
+        checkComplex32(0x00000000, 0x00000000, 'g', -1, "(0+0i)");
+        checkComplex32(0x00000001, 0x00000001, 'g', -1, "(1e-45+1e-45i)");
+        checkComplex32(0x3FC00000, 0xC0200000, 'e', 2, "(1.50e+00-2.50e+00i)");
+        checkComplex32(0x3FC00000, 0xC0200000, 'f', 2, "(1.50-2.50i)");
+        checkComplex32(0x7FC00000, 0x3F800000, 'g', -1, "(NaN+1i)");
+        checkComplex32(0x7F800000, 0xFF800000, 'g', -1, "(+Inf-Infi)");
+    }
+}

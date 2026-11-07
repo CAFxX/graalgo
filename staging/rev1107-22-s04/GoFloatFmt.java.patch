@@ -1,0 +1,31 @@
+--- a/internal/backend/runtime/src/main/java/graalgo/runtime/GoFloatFmt.java
++++ b/internal/backend/runtime/src/main/java/graalgo/runtime/GoFloatFmt.java
+@@ -282,10 +282,24 @@
+             }
+         }
+         if (want <= 0) {
+-            // M8 closeout (triage class E): all significant digits lie
+-            // beyond the requested precision (e.g. %f of 1e-300) — the
+-            // value rounds to zero. (MathContext requires precision > 0;
+-            // Go's decimal.Round produces an empty digit string here.)
++            // 'f' only ('e' has want = prec+1 >= 1, 'g' has want >= 1):
++            // all significant digits lie below the last kept place, so
++            // the value rounds either to zero or to one unit of
++            // 10^-prec (value < 10^-prec whenever want <= 0). It rounds
++            // up iff it exceeds half a unit; an exact tie rounds to
++            // even, i.e. to zero. The pre-fix code returned zero
++            // unconditionally (S-04 red find: 0.625 with %f prec 0 is
++            // "1", 0.006 with %f prec 2 is "0.01" — GoFloatFmtTest
++            // pins the class). (MathContext requires precision > 0,
++            // so the general rounding path below cannot run here.)
++            if (fmt == 'f') {
++                java.math.BigDecimal halfUnit =
++                        new java.math.BigDecimal("5E-" + (prec + 1));
++                if (exact.compareTo(halfUnit) > 0) {
++                    // One unit of 10^-prec: digits "1", dp = 1 - prec.
++                    return new DecParts(new byte[]{(byte) '1'}, 1 - prec);
++                }
++            }
+             return new DecParts(new byte[0], 0);
+         }
+         if (want < sig.length()) {
