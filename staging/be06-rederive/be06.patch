@@ -1,0 +1,340 @@
+--- a/internal/backend/runtime/src/main/java/graalgo/launcher/Main.java
++++ b/internal/backend/runtime/src/main/java/graalgo/launcher/Main.java
+@@ -362,8 +362,11 @@
+      * argv for one program run: the absolute, normalized entry-point path
+      * followed by the program's own arguments (P3SyncMain resolves argv[0]
+      * the same way; gc parity).
++     *
++     * <p>Shared with {@code SchedMain} (BE-06/S-22): the scheduler launcher
++     * builds its argv the same way instead of duplicating the rule.
+      */
+-    static String[] buildGoArgv(String file, String[] programArgs) {
++    public static String[] buildGoArgv(String file, String[] programArgs) {
+         String[] goArgv = new String[programArgs.length + 1];
+         goArgv[0] = Paths.get(file).toAbsolutePath().normalize().toString();
+         System.arraycopy(programArgs, 0, goArgv, 1, programArgs.length);
+@@ -377,8 +380,12 @@
+      * stays at its empty default, so warn once per JVM instead of failing
+      * silently — a missing provider is a misconfiguration, and an empty
+      * {@code os.Args} is exactly the bug this call exists to fix.
++     *
++     * <p>Shared with {@code SchedMain} (BE-06/S-22): the ServiceLoader loop
++     * lives here and nowhere else — the scheduler launcher must not copy
++     * it a third time.
+      */
+-    static void initializeOsSurface(String[] goArgv) {
++    public static void initializeOsSurface(String[] goArgv) {
+         boolean found = false;
+         for (OsSurfaceInitializer initializer
+                 : ServiceLoader.load(OsSurfaceInitializer.class)) {
+--- a/internal/backend/runtime/src/main/java/graalgo/sched/launcher/SchedMain.java
++++ b/internal/backend/runtime/src/main/java/graalgo/sched/launcher/SchedMain.java
+@@ -16,6 +16,7 @@
+ import graalgo.frontend.FrontendException;
+ import graalgo.frontend.NodeFactory;
+ import graalgo.frontend.WireKindRegistrar;
++import graalgo.launcher.Main;
+ import graalgo.sched.SchedulerCore;
+ import graalgo.sched.nodes.GoStatementNode;
+ 
+@@ -35,6 +36,13 @@
+  *
+  * <p>Exit codes match Phase 1: 0 ok, 1 usage/input, 2 build failure or
+  * uncaught Go panic (gc parity).
++ *
++ * <p>BE-06: the Go os surface is initialized via
++ * {@code Main.initializeOsSurface} (S-22: the ServiceLoader loop lives
++ * in {@code Main} and is shared, never copied a third time), and the
++ * {@code --} contract matches {@code Main}: everything after {@code --}
++ * is the program's own arguments ({@code os.Args[1:]}, with
++ * {@code os.Args[0]} the absolute entry-point path).
+  */
+ public final class SchedMain {
+     private SchedMain() {}
+@@ -63,7 +71,24 @@
+         int gmp = 0; // 0 = default (carriers)
+         boolean check = false;
+         String file = null;
++        List<String> programArgs = new ArrayList<>();
++        boolean dashDash = false;
+         for (String a : args) {
++            if (dashDash) {
++                // After --, every token is positional: the first is the
++                // input file, the rest are the program's own arguments
++                // (os.Args[1:]) — same contract as Main (B-02/BE-06).
++                if (file == null) {
++                    file = a;
++                } else {
++                    programArgs.add(a);
++                }
++                continue;
++            }
++            if (a.equals("--")) {
++                dashDash = true;
++                continue;
++            }
+             if (a.startsWith("--gmp=")) {
+                 try {
+                     gmp = Integer.parseInt(a.substring("--gmp=".length()));
+@@ -177,6 +202,16 @@
+             return EXIT_OK;
+         }
+ 
++        // BE-06: initialize the Go os surface for this run BEFORE Go
++        // initialization runs — os.Args must already be visible to
++        // package-var initializers (synth_os.go __initArgs runs at
++        // package-var init time). Shares Main.initializeOsSurface (S-22):
++        // the ServiceLoader loop lives in exactly one place; SchedMain
++        // is the third launcher and must not copy it a third time.
++        // argv[0] is the absolute, normalized entry-point path (gc
++        // parity, same as Main/P3SyncMain).
++        Main.initializeOsSurface(Main.buildGoArgv(file, programArgs.toArray(new String[0])));
++
+         // M10 (self-attack D3): preload all graalgo classes before guest
+         // execution, so a guest that exhausts the process's fds cannot
+         // break lazy class loading (notably on error-reporting paths).
+@@ -317,8 +352,9 @@
+     }
+ 
+     private static void usage() {
+-        System.err.println("usage: graalgo-run [--gmp=N] [--check] file.go");
++        System.err.println("usage: graalgo-run [--gmp=N] [--check] file.go [-- args...]");
+         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
+         System.err.println("  --check   build only, do not execute");
++        System.err.println("  --        end launcher flags; following args are the program's (os.Args[1:])");
+     }
+ }
+--- a/internal/backend/runtime/src/main/java/graalgo/launcher/README.md
++++ b/internal/backend/runtime/src/main/java/graalgo/launcher/README.md
+@@ -12,6 +12,9 @@
+                              execute with call-site polymorphism recording,
+                              then print (bare flag) or write (path) the JSON snapshot (M9, WS L)
+ graalgo-run file.go -- a b      execute with os.Args = [abs(file.go), a, b]
++graalgo-run --gmp=N file.go [-- args...]
++                             scheduler entry point (SchedMain): same -- contract
++                             as above — os.Args = [abs(file.go), args...] (BE-06)
+ graalgo-run --help
+ ```
+ 
+@@ -34,7 +37,8 @@
+ arguments (`os.Args[1:]`; `os.Args[0]` is the absolute input-file path, gc
+ parity with `go run`). Each `--batch` entry likewise gets a fresh os surface
+ (argv is the entry's own absolute path), so no env/argv/vcwd state leaks from
+-one entry into the next (B-02).
++one entry into the next (B-02). The scheduler entry point (`SchedMain`)
++shares this contract and the same initializer (BE-06/S-22).
+ 
+ ## M2 state (2026-10-04)
+ 
+--- a/internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java
++++ b/internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java
+@@ -48,6 +48,7 @@
+         TESTS.add(graalgo.sched.IoSlotsTest.class);
+         TESTS.add(graalgo.sched.TimerDifferentialTest.class);
+         TESTS.add(graalgo.sched.launcher.GoDebugTest.class);
++        TESTS.add(graalgo.sched.launcher.SchedMainOsArgsTest.class);
+         TESTS.add(graalgo.launcher.LauncherOverlayTest.class);
+         TESTS.add(graalgo.launcher.LauncherOsArgsTest.class);
+         TESTS.add(graalgo.runtime.TimerTest.class);
+--- /dev/null
++++ b/internal/backend/runtime/src/test/java/graalgo/sched/launcher/SchedMainOsArgsTest.java
+@@ -0,0 +1,199 @@
++package graalgo.sched.launcher;
++
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.io.PrintStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.FileVisitResult;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.SimpleFileVisitor;
++import java.nio.file.attribute.BasicFileAttributes;
++
++/**
++ * BE-06: the scheduler launcher initializes the Go os surface for every run.
++ *
++ * <p>Before the fix, {@code SchedMain.run} never called
++ * {@code GoOs.init} (and had no {@code --} parsing at all), so
++ * {@code os.Args} was empty for every program run through
++ * {@code graalgo-run --gmp=N} — the exact B-02 defect in the third
++ * launcher. The fix shares {@code Main.initializeOsSurface} (S-22)
++ * instead of copying the ServiceLoader loop a third time.
++ *
++ * <p>Falsifiability: each test drives {@link SchedMain} on a small program
++ * through the real frontend and scheduler execution path, and asserts on
++ * the program's own output. With the {@code initializeOsSurface} call
++ * removed, the args tests print {@code -1} / nothing (empty
++ * {@code os.Args}) and the argv[0] test panics on the empty
++ * {@code os.Args[0]} instead of printing the entry-point path. The
++ * probe programs mirror {@code test/corpus/wave2/os/10_args.go}
++ * (whose header documents the {@code --} contract). No probe calls
++ * {@code os.Exit}: it would {@code System.exit} the test JVM.
++ */
++public final class SchedMainOsArgsTest {
++
++    /** Prints len(os.Args)-1, then os.Args[1:] one per line. */
++    private static final String ARGS_PROG = "package main\n"
++            + "\n"
++            + "import (\n"
++            + "\t\"fmt\"\n"
++            + "\t\"os\"\n"
++            + ")\n"
++            + "\n"
++            + "func main() {\n"
++            + "\tfmt.Println(len(os.Args) - 1)\n"
++            + "\tfor _, a := range os.Args[1:] {\n"
++            + "\t\tfmt.Println(a)\n"
++            + "\t}\n"
++            + "}\n";
++
++    /** Prints os.Args[0]. */
++    private static final String ARGV0_PROG = "package main\n"
++            + "\n"
++            + "import (\n"
++            + "\t\"fmt\"\n"
++            + "\t\"os\"\n"
++            + ")\n"
++            + "\n"
++            + "func main() {\n"
++            + "\tfmt.Println(os.Args[0])\n"
++            + "}\n";
++
++    /** verifies: BE-06 (args after -- reach os.Args[1:] via SchedMain). */
++    public void testArgsAfterDashDash() throws Exception {
++        Path dir = null;
++        try {
++            dir = Files.createTempDirectory("graalgo-sched-osargs-");
++            Path prog = writeProg(dir, "args.go", ARGS_PROG);
++            RunResult r = runCaptured(new String[]{prog.toString(), "--", "alpha", "beta"});
++            assertEquals(SchedMain.EXIT_OK, r.exit, "run exit code");
++            assertEquals("2\nalpha\nbeta\n", r.stdout, "os.Args[1:] output");
++        } finally {
++            deleteTree(dir);
++        }
++    }
++
++    /** verifies: BE-06 (no -- args means os.Args is just argv[0]). */
++    public void testNoProgramArgs() throws Exception {
++        Path dir = null;
++        try {
++            dir = Files.createTempDirectory("graalgo-sched-osargs-");
++            Path prog = writeProg(dir, "args.go", ARGS_PROG);
++            RunResult r = runCaptured(new String[]{prog.toString()});
++            assertEquals(SchedMain.EXIT_OK, r.exit, "run exit code");
++            assertEquals("0\n", r.stdout, "os.Args[1:] output");
++        } finally {
++            deleteTree(dir);
++        }
++    }
++
++    /** verifies: BE-06 (-- ends flag parsing even before the file). */
++    public void testDashDashBeforeFile() throws Exception {
++        Path dir = null;
++        try {
++            dir = Files.createTempDirectory("graalgo-sched-osargs-");
++            Path prog = writeProg(dir, "args.go", ARGS_PROG);
++            RunResult r = runCaptured(new String[]{"--", prog.toString(), "x"});
++            assertEquals(SchedMain.EXIT_OK, r.exit, "run exit code");
++            assertEquals("1\nx\n", r.stdout, "os.Args[1:] output");
++        } finally {
++            deleteTree(dir);
++        }
++    }
++
++    /** verifies: BE-06 (-- passes flag-like program args through). */
++    public void testFlagLikeProgramArg() throws Exception {
++        Path dir = null;
++        try {
++            dir = Files.createTempDirectory("graalgo-sched-osargs-");
++            Path prog = writeProg(dir, "args.go", ARGS_PROG);
++            RunResult r = runCaptured(new String[]{prog.toString(), "--", "--not-a-flag"});
++            assertEquals(SchedMain.EXIT_OK, r.exit, "run exit code");
++            assertEquals("1\n--not-a-flag\n", r.stdout, "os.Args[1:] output");
++        } finally {
++            deleteTree(dir);
++        }
++    }
++
++    /** verifies: BE-06 (argv[0] is the absolute entry-point path). */
++    public void testArgvZeroIsAbsoluteEntryPath() throws Exception {
++        Path dir = null;
++        try {
++            dir = Files.createTempDirectory("graalgo-sched-osargs-");
++            Path prog = writeProg(dir, "argv0.go", ARGV0_PROG);
++            RunResult r = runCaptured(new String[]{prog.toString()});
++            assertEquals(SchedMain.EXIT_OK, r.exit, "run exit code");
++            assertEquals(prog.toAbsolutePath().normalize().toString() + "\n",
++                    r.stdout, "os.Args[0] output");
++        } finally {
++            deleteTree(dir);
++        }
++    }
++
++    /** Runs {@link SchedMain#run} with stdout captured; restores it after. */
++    private static RunResult runCaptured(String[] args) {
++        PrintStream realOut = System.out;
++        ByteArrayOutputStream bout = new ByteArrayOutputStream();
++        System.setOut(new PrintStream(bout, true, StandardCharsets.UTF_8));
++        int exit;
++        try {
++            exit = SchedMain.run(args);
++        } finally {
++            System.setOut(realOut);
++        }
++        return new RunResult(exit, bout.toString(StandardCharsets.UTF_8));
++    }
++
++    private static final class RunResult {
++        final int exit;
++        final String stdout;
++
++        RunResult(int exit, String stdout) {
++            this.exit = exit;
++            this.stdout = stdout;
++        }
++    }
++
++    private static Path writeProg(Path dir, String name, String src) throws IOException {
++        Path p = dir.resolve(name);
++        Files.writeString(p, src, StandardCharsets.UTF_8);
++        return p;
++    }
++
++    private static void deleteTree(Path root) throws IOException {
++        if (root == null || !Files.exists(root)) {
++            return;
++        }
++        Files.walkFileTree(root, new SimpleFileVisitor<>() {
++            @Override
++            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
++                Files.deleteIfExists(file);
++                return FileVisitResult.CONTINUE;
++            }
++
++            @Override
++            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
++                Files.deleteIfExists(dir);
++                return FileVisitResult.CONTINUE;
++            }
++        });
++    }
++
++    private static void assertTrue(boolean cond, String msg) {
++        if (!cond) {
++            throw new AssertionError(msg);
++        }
++    }
++
++    private static void assertEquals(int expected, int actual, String what) {
++        if (expected != actual) {
++            throw new AssertionError(what + ": expected " + expected + " but got " + actual);
++        }
++    }
++
++    private static void assertEquals(String expected, String actual, String what) {
++        if (!expected.equals(actual)) {
++            throw new AssertionError(what + ": expected <" + expected + "> but got <" + actual + ">");
++        }
++    }
++}
