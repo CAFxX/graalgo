@@ -8,6 +8,13 @@ For a package:
   4. Build & run driver via gc (go run)
   5. Compare outputs; report per-test verdicts.
 
+Verdicts: PASS, SKIP, DIVERGE, ERROR.
+  - PASS: both legs ran, gc executed >= 1 test, every per-test result agrees.
+  - SKIP: gc leg failed while graalgo succeeded (harness cannot validate).
+  - DIVERGE: graalgo leg failed while gc passed, or per-test results differ.
+  - ERROR: both legs failed, or both legs ran but executed zero tests.
+    A package with zero executed tests never passes (REVIEW-2026-11-07-07 R-02).
+
 Usage: run.py <package> [--goroot PATH] [--graalgo-run PATH] [--out DIR]
 """
 import json
@@ -25,6 +32,39 @@ def run_cmd(cmd, env=None, timeout=300):
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return -1, "", "TIMEOUT"
+
+def decide_verdict(rc_gc, rc_gr, gc_res, gr_res):
+    """Decide the gate verdict from the two legs' exit codes and results.
+
+    gc_res / gr_res map test name -> "PASS" | "FAIL" | "SKIP".
+    Returns (verdict, divergences); divergences is a list of
+    (name, gc_result, graalgo_result) for per-test mismatches.
+
+    Rules (REVIEW-2026-11-07-07 R-02):
+    - Both legs failing is ERROR, never PASS: nothing ran, so there is no
+      evidence for any verdict. (Previously the fall-through compare saw two
+      empty result sets, found no divergences, and reported PASS.)
+    - A PASS requires at least one gc result: both legs exiting 0 while
+      executing zero tests is ERROR, not a vacuous pass.
+    - gc failing alone stays SKIP (documented harness-limitation case);
+      graalgo failing alone stays DIVERGE.
+    """
+    if rc_gc != 0 and rc_gr != 0:
+        return "ERROR", []
+    if rc_gc != 0:
+        return "SKIP", []
+    if rc_gr != 0:
+        return "DIVERGE", []
+    divergences = []
+    for name in sorted(set(gc_res) | set(gr_res)):
+        g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
+        if g != r:
+            divergences.append((name, g, r))
+    if divergences:
+        return "DIVERGE", divergences
+    if not gc_res:
+        return "ERROR", []
+    return "PASS", []
 
 def main():
     if len(sys.argv) < 2:
@@ -114,28 +154,26 @@ def main():
     print(f"gc:     rc={rc_gc} {gc_sum}")
     print(f"graalgo: rc={rc_gr} {gr_sum}")
 
-    verdict = "PASS"
-    divergences = []
-    if rc_gc != 0 and rc_gr == 0:
+    verdict, divergences = decide_verdict(rc_gc, rc_gr, gc_res, gr_res)
+    if verdict == "SKIP":
         # gc itself failed (e.g. unsupported test helper) — harness issue, not graalgo
-        verdict = "SKIP"
         print(f"SKIP: gc driver failed (rc={rc_gc}); harness cannot validate this package")
         print(f"gc stderr tail: {err_gc[-500:]}")
-    elif rc_gr != 0 and rc_gc == 0:
-        verdict = "DIVERGE"
+    elif verdict == "ERROR" and rc_gc != 0 and rc_gr != 0:
+        print(f"ERROR: both drivers failed (gc rc={rc_gc}, graalgo rc={rc_gr}); no tests ran")
+        print(f"gc stderr tail: {err_gc[-500:]}")
+        print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif verdict == "ERROR":
+        # Both legs exited 0 but gc executed zero tests: vacuous pass refused.
+        print("ERROR: both drivers ran but executed 0 tests; nothing to validate")
+    elif verdict == "DIVERGE" and rc_gr != 0:
         print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
         print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif verdict == "DIVERGE":
+        for name, g, r in divergences:
+            print(f"  DIVERGE {name}: gc={g} graalgo={r}")
     else:
-        for name in sorted(set(gc_res) | set(gr_res)):
-            g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
-            if g != r:
-                divergences.append((name, g, r))
-        if divergences:
-            verdict = "DIVERGE"
-            for name, g, r in divergences:
-                print(f"  DIVERGE {name}: gc={g} graalgo={r}")
-        else:
-            print(f"  {len(gc_res)} tests agree")
+        print(f"  {len(gc_res)} tests agree")
 
     print(f"VERDICT {pkg}: {verdict}")
     with open(os.path.join(workdir, "verdict.txt"), "w") as f:
