@@ -1,0 +1,8 @@
+=== red compile OK ===
+FAIL SelectSweepPoisonTest.testSweepPoisonPanicsInsteadOfReturningOtherCase: java.lang.AssertionError: select with a sweep-observed closed send must panic, got: returned:1
+    at graalgo.runtime.SelectSweepPoisonTest.assertTrue(SelectSweepPoisonTest.java:41)
+    at graalgo.runtime.SelectSweepPoisonTest.testSweepPoisonPanicsInsteadOfReturningOtherCase(SelectSweepPoisonTest.java:131)
+    at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+    at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+    at SingleTestRunner.main(SingleTestRunner.java:29)
+1 tests, 1 failures

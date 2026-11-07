@@ -1,0 +1,232 @@
+--- a/internal/backend/runtime/src/main/java/graalgo/runtime/SelectOp.java
++++ b/internal/backend/runtime/src/main/java/graalgo/runtime/SelectOp.java
+@@ -29,9 +29,12 @@
+  *       convention for the future exporter), return its index.
+  *   <li>Otherwise block: enqueue one {@link SelectCaseWaiter} per
+  *       (channel, case) — re-checking under each monitor so no wakeup is
+- *       missed — and park scheduler-aware. Exactly one waker wins the
+- *       shared CAS claim; the resumed goroutine removes itself from all
+- *       other channels (one monitor at a time: no lock-ordering issue).
++ *       missed — and park scheduler-aware. A send case observed closed
++ *       in the re-check panics immediately (gc {@code selectgo} pass 1:
++ *       {@code goto sclose} on encounter); the poison is never dropped
++ *       in favour of a later completion (S-01). Exactly one waker wins
++ *       the shared CAS claim; the resumed goroutine removes itself from
++ *       all other channels (one monitor at a time: no lock-ordering issue).
+  * </ol>
+  *
+  * <p>The chosen case completes atomically under the winning channel's
+@@ -213,6 +216,7 @@
+                 order[i] = order[j];
+                 order[j] = t;
+             }
++            sweep:
+             for (int oi = 0; oi < order.length && immediate == null && !claimedByOther; oi++) {
+                 int i = order[oi];
+                 ChanOps.SelectCase c = cases[i];
+@@ -237,7 +241,16 @@
+                         // immediately. (Never enqueue on a poisoned
+                         // channel.)
+                         if (c.send() && ch.isClosed()) {
++                            // S-01: panic on first encounter, mirroring gc
++                            // pass 1 (`selectgo`: send on closed channel
++                            // → `goto sclose` the moment it is scanned).
++                            // Continuing the sweep would let a later case
++                            // complete and silently drop the poison. No
++                            // self-claim is held here (this branch
++                            // precedes tryClaimSelf); `mine` is cleaned
++                            // up below before the panic.
+                             poison = true;
++                            break sweep;
+                         } else if (tryClaimSelf()) {
+                             // P0-1: claim the SelectOp BEFORE completing.
+                             // A concurrent waker on another channel may
+@@ -274,6 +287,16 @@
+                     Thread.yield();
+                 }
+             }
++            if (poison) {
++                // S-01: a closed send case was observed mid-sweep. gc
++                // would have panicked in pass 1 (or woken the enqueued
++                // send waiter with caseSuccess=false after pass 2); no
++                // competing completion may swallow it. `mine` holds
++                // waiters enqueued by earlier sweep iterations — clean
++                // them up so no stale waiter survives the panic.
++                cleanup(mine);
++                Panic.throwPanic(GoStrings.of("send on closed channel"));
++            }
+             if (immediate != null) {
+                 cleanup(mine);
+                 return immediate;
+@@ -295,10 +318,6 @@
+                 }
+             }
+             if (mine.isEmpty()) {
+-                if (poison) {
+-                    // Every case was a send on a closed channel.
+-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+-                }
+                 // Zero cases: `select {}` blocks forever (gc deadlock).
+                 // Park indefinitely; the deadlock detector (P2-M10) owns it.
+                 // P2-M6: it genuinely blocks — record with channelId -1
+--- a/internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java
++++ b/internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java
+@@ -44,6 +44,7 @@
+         TESTS.add(graalgo.sched.SchedulerCoreTest.class);
+         TESTS.add(graalgo.sched.ChannelTest.class);
+         TESTS.add(graalgo.runtime.SelectSelfClaimTest.class);
++        TESTS.add(graalgo.runtime.SelectSweepPoisonTest.class);
+         TESTS.add(graalgo.sched.ChannelDifferentialTest.class);
+         TESTS.add(graalgo.sched.IoSlotsTest.class);
+         TESTS.add(graalgo.sched.TimerDifferentialTest.class);
+--- a/internal/backend/runtime/src/test/java/graalgo/runtime/SelectSweepPoisonTest.java
++++ b/internal/backend/runtime/src/test/java/graalgo/runtime/SelectSweepPoisonTest.java
+@@ -0,0 +1,148 @@
++package graalgo.runtime;
++
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicReference;
++
++import graalgo.sched.SchedulerCore;
++
++/**
++ * Regression test for S-01 (REVIEW-2026-11-07-07): a {@code select}
++ * that observes a send on a closed channel mid-sweep must panic with
++ * "send on closed channel" — it must not return another case normally.
++ *
++ * <p>Pre-fix, the sweep records the poison in a local flag that is only
++ * honoured when no waiter was enqueued ({@code mine.isEmpty()}): if a
++ * later case completes, or the select parks and another case wins, the
++ * poison is silently dropped and the select returns normally. gc
++ * ({@code runtime/select.go}, go1.27.1) holds all channel locks across
++ * pass 1 (poll) and pass 2 (enqueue), so no close can interleave there,
++ * and a close after enqueue wakes the send waiter with
++ * {@code caseSuccess=false} → {@code sclose} panic.
++ *
++ * <p>Determinism: the closed channel is a {@link FlipFlopChan} whose
++ * {@code isClosed()} answers false on its first call (the poll) and
++ * true from the second call (the sweep) — the only two calls
++ * {@code SelectOp} makes on it in this scenario ({@code canSend()} does
++ * not consult {@code isClosed()}; the poison branch precedes
++ * {@code completeUnderLock}). The other case is a recv on an unbuffered
++ * channel with no sender, so the poll finds nothing ready in either
++ * order and the sweep enqueues on it in either order. A helper thread
++ * delivers on that channel once the waiter is enqueued, so the pre-fix
++ * code parks and then returns normally (RED); the fixed code panics
++ * before parking (GREEN). Both outcomes are order-independent: the
++ * sweep visits the poisoned case first or second, and panics either
++ * way after the fix.
++ */
++public final class SelectSweepPoisonTest {
++
++    private static void assertTrue(boolean cond, String msg) {
++        if (!cond) {
++            throw new AssertionError(msg);
++        }
++    }
++
++    private static void assertEquals(long expected, long actual, String msg) {
++        if (expected != actual) {
++            throw new AssertionError(msg + " expected=" + expected + " actual=" + actual);
++        }
++    }
++
++    /**
++     * A channel that reports open on the first {@code isClosed()} probe
++     * and closed from the second on — a deterministic stand-in for a
++     * channel closed between the select's poll and its block-phase
++     * sweep. Never actually closed (the real {@code closed} field is
++     * untouched); only the probe flips.
++     */
++    static final class FlipFlopChan extends GoChan {
++        private int isClosedCalls;
++
++        FlipFlopChan() {
++            super(0, 0L);
++        }
++
++        @Override
++        public synchronized boolean isClosed() {
++            return ++isClosedCalls >= 2;
++        }
++    }
++
++    private static SchedulerCore installScheduler() {
++        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
++        sched.start();
++        SchedulerCore.install(sched);
++        return sched;
++    }
++
++    /**
++     * Sweep-observed poison must panic, not return the other case.
++     * Pre-fix this returns case 1 (the helper's delivery wins after
++     * the park); post-fix it panics with "send on closed channel"
++     * before parking, in either sweep order.
++     */
++    public void testSweepPoisonPanicsInsteadOfReturningOtherCase() throws Exception {
++        SchedulerCore sched = installScheduler();
++        try {
++            FlipFlopChan closedSend = new FlipFlopChan();
++            GoChan other = new GoChan(0, 0L);
++            SelectOp op = new SelectOp(new ChanOps.SelectCase[]{
++                    new ChanOps.SelectCase(closedSend, true, 1L),
++                    new ChanOps.SelectCase(other, false, null)});
++            AtomicReference<Object> outcome = new AtomicReference<>();
++            CountDownLatch done = new CountDownLatch(1);
++            sched.spawn(() -> {
++                try {
++                    int idx = op.execute();
++                    outcome.set("returned:" + idx);
++                } catch (Throwable t) {
++                    outcome.set(t);
++                } finally {
++                    done.countDown();
++                }
++            });
++            // Helper (plain thread, not a goroutine): once the select
++            // has enqueued its waiter on `other`, deliver a value so
++            // the pre-fix code parks and then returns normally. The
++            // helper gives up if the select already finished (the
++            // fixed code panics before parking) or after 5s.
++            Thread helper = new Thread(() -> {
++                long deadline = System.currentTimeMillis() + 5000;
++                while (other.recvWaitersCount() == 0 && outcome.get() == null
++                        && System.currentTimeMillis() < deadline) {
++                    try {
++                        Thread.sleep(2);
++                    } catch (InterruptedException e) {
++                        return;
++                    }
++                }
++                if (outcome.get() == null) {
++                    synchronized (other) {
++                        other.trySend(7L, sched);
++                    }
++                }
++            });
++            helper.setDaemon(true);
++            helper.start();
++            assertTrue(done.await(10, TimeUnit.SECONDS),
++                    "select must finish (panic or return)");
++            helper.join(2000);
++            Object o = outcome.get();
++            assertTrue(o instanceof PanicException,
++                    "select with a sweep-observed closed send must panic, got: " + o);
++            assertTrue(String.valueOf(((PanicException) o).goValue())
++                            .contains("send on closed channel"),
++                    "panic value must be 'send on closed channel', got: "
++                            + ((PanicException) o).goValue());
++            // The panic path must clean up the waiter enqueued on the
++            // other channel before the poison was observed (no leak,
++            // no stale waiter for a later sender to claim).
++            assertEquals(0, other.recvWaitersCount(),
++                    "panic path must remove the enqueued waiter");
++            assertEquals(0, closedSend.sendWaitersCount(),
++                    "poisoned channel must never hold a waiter");
++        } finally {
++            SchedulerCore.install(null);
++        }
++    }
++}

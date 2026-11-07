@@ -1,0 +1,107 @@
+FAIL SelectSweepPoisonTest.testSweepPoisonPanicsInsteadOfReturningOtherCase: java.lang.AssertionError: select with a sweep-observed closed send must panic, got: returned:1
+    at graalgo.runtime.SelectSweepPoisonTest.assertTrue(SelectSweepPoisonTest.java:41)
+    at graalgo.runtime.SelectSweepPoisonTest.testSweepPoisonPanicsInsteadOfReturningOtherCase(SelectSweepPoisonTest.java:131)
+    at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104)
+    at java.base/java.lang.reflect.Method.invoke(Method.java:565)
+    at SingleTestRunner.main(SingleTestRunner.java:29)
+PASS SelectSelfClaimTest.testTrySendReturnsRetryWhenBlockedBySelfClaim
+PASS SelectSelfClaimTest.testTrySendBuffersPastSelfClaimedWaiter
+PASS SelectSelfClaimTest.testTryRecvReturnsRetryWhenBlockedBySelfClaim
+PASS SelectSelfClaimTest.testTryRecvReturnsBufferedPastSelfClaimedSender
+PASS SelectSelfClaimTest.testCloseRetriesSelfClaimedWaiter
+PASS SelectSelfClaimTest.testCanRecvPreservesSelfClaimedSendWaiter
+PASS SelectSelfClaimTest.testCanRecvSeesUnclaimedSelectWaiter
+PASS ChannelTest.testUnbufferedSendRecv
+PASS ChannelTest.testBufferedFifo
+PASS ChannelTest.testBufferedBlocksWhenFull
+PASS ChannelTest.testBlockedSendDoesNotPinCarrier
+PASS ChannelTest.testCloseWakesReceiver
+PASS ChannelTest.testCloseWakesSenderToPanic
+PASS ChannelTest.testSendOnClosedPanics
+PASS ChannelTest.testCloseOfClosedPanics
+PASS ChannelTest.testRecvOnClosedDrainsThenZero
+PASS ChannelTest.testLenCap
+PASS ChannelTest.testSelectRecvChoosesReady
+PASS ChannelTest.testSelectDefault
+PASS ChannelTest.testSelectDefaultLosesToReady
+PASS ChannelTest.testSelectBlocksUntilReady
+PASS ChannelTest.testSelectFairness
+PASS ChannelTest.testSelectSendHandoff
+PASS ChannelTest.testSelectWakesOnClose
+PASS ChannelTest.testSelectCloseWhileParked
+PASS ChannelTest.testSelectPoisonBeforeDefault
+PASS ChannelTest.testSelectPoisonIgnoredWhenReady
+PASS ChannelTest.testSelectSendOnClosedPanics
+PASS ChannelTest.testSelectRacyCompleteNoStaleWakeup
+PASS ChannelTest.testSelectSameChannelTwice
+PASS ChannelTest.testCloseWakesMultipleReceivers
+PASS ChannelTest.testPingPongStress
+PASS ChannelDifferentialTest.testCh02Buffered
+PASS ChannelDifferentialTest.testCh03CloseDrain
+PASS ChannelDifferentialTest.testCh04ProducerConsumer
+PASS ChannelDifferentialTest.testCh05SelectRecv
+PASS ChannelDifferentialTest.testCh06SelectDefault
+PASS ChannelDifferentialTest.testCh07SelectSend
+PASS ChannelDifferentialTest.testCh08CloseWhileBlocked
+PASS ChannelDifferentialTest.testCh09SendOnClosedPanic
+PASS ChannelDifferentialTest.testCh10CloseOfClosedPanic
+PASS ChannelDifferentialTest.testCh11SelectPoisonDefault
+PASS ChannelDifferentialTest.testCh12SelectPoisonReady
+PASS ChannelDifferentialTest.testCh01Unbuffered
+PASS SchedulerCoreTest.testSpawnAndJoin
+PASS SchedulerCoreTest.testNumGoroutines
+PASS SchedulerCoreTest.testQuiescenceAt10k
+PASS SchedulerCoreTest.testParkUnpark
+PASS SchedulerCoreTest.testUnparkBeforePark
+PASS SchedulerCoreTest.testAckBeforeUnparkStress
+PASS SchedulerCoreTest.testCapExceededHardAsserts
+PASS SchedulerCoreTest.testCapEnforcedUnderLoad
+PASS SchedulerCoreTest.testQuantumExpiryPreempts
+PASS SchedulerCoreTest.testSafepointPollWiring
+PASS SchedulerCoreTest.testDrainerLaneOrder
+PASS SchedulerCoreTest.testWakeActionSurvivesUnparkBeforePark
+panic: (string) 0xADDR
+
+goroutine 10468 [running]:
+PASS SchedulerCoreTest.testSpawnedPanicRecorded
+graalgo-run: fatal internal error in goroutine: java.lang.IllegalStateException: synthetic internal error
+PASS SchedulerCoreTest.testSpawnedRuntimeExceptionRecorded
+PASS SchedulerCoreTest.testYieldCurrent
+PASS SchedulerCoreTest.testDrainerSurvivesInterrupt
+PASS SchedulerCoreTest.testGoschedYields
+PASS IoSlotsTest.testIoEnterReleasesSlot
+PASS IoSlotsTest.testIoExitReacquiresSlot
+PASS IoSlotsTest.testReentrantIoEnterFails
+PASS IoSlotsTest.testUnpairedIoExitFails
+PASS IoSlotsTest.testDrainerRejectsUnpairedIoExit
+PASS IoSlotsTest.testDrainerRejectsDuplicateIoEnter
+PASS IoSlotsTest.testDrainerRejectsExitWhileInIo
+PASS IoSlotsTest.testDrainerRejectsParkedWhileInIo
+PASS IoSlotsTest.testIoEnterExitFromForeignThreadFails
+PASS TimerTest.testSleepReleasesSlot
+PASS TimerTest.testSleepZeroImmediate
+PASS TimerTest.testSleepOrder
+PASS TimerTest.testAfterFires
+PASS TimerTest.testTimerStopActive
+PASS TimerTest.testTimerStopUndrained
+PASS TimerTest.testTimerStopDrained
+PASS TimerTest.testTimerResetActive
+PASS TimerTest.testTimerResetExpiredDrained
+PASS TimerTest.testTimerResetExpiredUndrained
+PASS TimerTest.testTickerFires
+PASS TimerTest.testTickerDropsSlowReceiver
+PASS TimerTest.testTickerZeroPanics
+PASS TimerTest.testTickerStopDrainsBufferedTick
+PASS TimerTest.testTickerResetDrainsStaleTick
+PASS TimerTest.testTimerStopAfterFireDrains
+PASS TimerTest.testNoTickAfterStopStress
+PASS TimerTest.testTickZeroReturnsNull
+PASS TimerTest.testTickerResetZeroPanics
+PASS TimerTest.testTimerResetZeroFiresImmediately
+PASS TimerTest.testStartStopTimerFrozen
+PASS TimerTest.testStartTimerFires
+PASS TimerTest.testStartTimerCallbackOnTimerThread
+graalgo-timer: callback threw: java.lang.RuntimeException: boom
+PASS TimerTest.testThrowingCallbackDoesNotKillTimerThread
+PASS TimerTest.testNetpollDeletion
+96 tests, 1 failures
