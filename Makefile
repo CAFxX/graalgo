@@ -17,8 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#   `make all` = generate + build + snapshot-check + check + test-v2
+#                + test-p3frontend + test-tools + test-ci + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -41,6 +41,12 @@
 #               ([test/regression/](test/regression/)): each
 #               test/regression/<pkg>/ dir runs through the graalgo driver
 #               + backend. Per-push: a re-break fails the gate.
+#     test-tools
+#               Go unit tests for the tool modules under [tools/](tools/)
+#               ([req](tools/req/), [stdlib-excl](tools/stdlib-excl/),
+#               [stdlib-linkdiff](tools/stdlib-linkdiff/),
+#               [stdlib-vendor](tools/stdlib-vendor/)). Per-push: a suite
+#               that exists but never runs provides zero signal (R-10).
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
 #   `make test` — the full differential suite (phase1 graalgo.test.Runner,
@@ -108,9 +114,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test-tools test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-p3frontend test-tools test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -216,6 +222,29 @@ test-v2:
 	mkdir -p $(V2_TMP) && \
 	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
+
+# Tool module tests: the Go test suites under [tools/](tools/) — the
+# [req](tools/req/) registry CLI (8 test files), [stdlib-excl](tools/stdlib-excl/),
+# [stdlib-linkdiff](tools/stdlib-linkdiff/) and [stdlib-vendor](tools/stdlib-vendor/)
+# suites. In `all` (hence per-push CI): before R-10 nothing ever ran them —
+# no Makefile target and no workflow referenced them — so the behavior they
+# pin (registry, linkdiff synthetic handling, vendor determinism) provided
+# zero signal. [tools/fuzz/](tools/fuzz/) and [tools/mutation/](tools/mutation/)
+# have a go.mod but no test files yet, so they are NOT in the loop: they are
+# owned by the R-05/R-06 lanes, which add their module to TOOL_TEST_MODULES
+# when tests land. Runs `go vet` + `go test` per module, failing loudly on
+# the first failure (no `|| true`: a silent-pass target is worse than no
+# target — see R-08 on gate1-pilot).
+# /tmp is a 512M shared tmpfs: keep go build/test temps on persistent disk.
+TOOLS_TMP := $(CURDIR)/tools/.tmp
+TOOL_TEST_MODULES := tools/req tools/stdlib-excl tools/stdlib-linkdiff tools/stdlib-vendor
+test-tools:
+	mkdir -p $(TOOLS_TMP) && \
+	for m in $(TOOL_TEST_MODULES); do \
+		echo "=== test-tools $$m ==="; \
+		(cd $$m && TMPDIR="$(TOOLS_TMP)" GOTMPDIR="$(TOOLS_TMP)" $(GO) vet ./... && \
+			TMPDIR="$(TOOLS_TMP)" GOTMPDIR="$(TOOLS_TMP)" $(GO) test ./...) || exit 1; \
+	done
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
