@@ -26,6 +26,7 @@ import java.util.ServiceLoader;
  *   graalgo-run file.go              frontend → AST → execute main; exit 0
  *   graalgo-run --check file.go      frontend only (harness build step; build-failure parity)
  *   graalgo-run --dump-vars file.go  execute, then print name=value per frame slot (debug aid)
+ *   graalgo-run file.go -- a b      execute with os.Args = [abs(file.go), a, b]
  * </pre>
  *
  * <p>The frontend step shells out to {@code gofrontend} (resolved by
@@ -50,6 +51,10 @@ public final class Main {
     static final int EXIT_BUILD_FAILURE = 2; // gofrontend rejected the program
     static final int EXIT_PANIC = 2; // uncaught Go panic or Goexit in main (gc: exit 2)
 
+    // B-02: set once the no-provider warning below has fired, so a
+    // --batch run warns once per JVM instead of once per entry.
+    private static boolean osSurfaceWarningPrinted;
+
     public static void main(String[] args) {
         System.exit(run(args));
     }
@@ -66,7 +71,27 @@ public final class Main {
         String dumpPoly = null;
         String batchFile = null;
         String file = null;
+        List<String> programArgs = new ArrayList<>();
+        boolean dashDash = false;
         for (String a : args) {
+            if (dashDash) {
+                // After --, every token is positional: the first is the
+                // input file, the rest are the program's own arguments
+                // (os.Args[1:]). In --batch mode there is no input file,
+                // so every token after -- is a (rejected) program argument.
+                if (batchFile != null) {
+                    programArgs.add(a);
+                } else if (file == null) {
+                    file = a;
+                } else {
+                    programArgs.add(a);
+                }
+                continue;
+            }
+            if (a.equals("--")) {
+                dashDash = true;
+                continue;
+            }
             if (a.equals("--dump-polymorphism")) {
                 dumpPoly = "-"; // stdout
                 continue;
@@ -117,19 +142,27 @@ public final class Main {
             if (batchFile.isEmpty()) {
                 return usageError("--batch requires a file argument");
             }
+            if (!programArgs.isEmpty()) {
+                return usageError("--batch takes no program arguments (no -- args)");
+            }
             return runBatch(batchFile);
         }
         if (file == null) {
             return usageError("no input file");
         }
-        return runOne(file, check, dumpVars, dumpPoly);
+        return runOne(file, check, dumpVars, dumpPoly, programArgs.toArray(new String[0]));
     }
 
     /**
      * Runs one file through frontend → AST → execute.
      * Extracted from {@link #run} so batch mode reuses the exact same path.
+     *
+     * @param programArgs the program's own arguments (the launcher
+     *     arguments after {@code --}); {@code os.Args} is
+     *     {@code [abs(file), programArgs...]}.
      */
-    static int runOne(String file, boolean check, boolean dumpVars, String dumpPoly) {
+    static int runOne(String file, boolean check, boolean dumpVars, String dumpPoly,
+            String[] programArgs) {
         Path p = Paths.get(file);
         if (!Files.isReadable(p)) {
             System.err.println("graalgo-run: cannot read input file: " + file);
@@ -204,6 +237,16 @@ public final class Main {
         if (check) {
             return EXIT_OK;
         }
+
+        // B-02: initialize the Go os surface for this run BEFORE Go
+        // initialization runs — os.Args must already be visible to
+        // package-var initializers (synth_os.go __initArgs runs at
+        // package-var init time). argv[0] is the absolute, normalized
+        // path of the entry point (gc parity: argv[0] is absolute under
+        // `go run`; P3SyncMain resolves it the same way). In --batch
+        // mode runOne runs once per entry, so each entry gets a fresh
+        // surface: no env/argv/vcwd leaks from entry N into entry N+1.
+        initializeOsSurface(buildGoArgv(file, programArgs));
 
         // M10 (self-attack D3): preload all graalgo classes before guest
         // execution, so a guest that exhausts the process's fds cannot
@@ -316,7 +359,45 @@ public final class Main {
     }
 
     /**
+     * argv for one program run: the absolute, normalized entry-point path
+     * followed by the program's own arguments (P3SyncMain resolves argv[0]
+     * the same way; gc parity).
+     */
+    static String[] buildGoArgv(String file, String[] programArgs) {
+        String[] goArgv = new String[programArgs.length + 1];
+        goArgv[0] = Paths.get(file).toAbsolutePath().normalize().toString();
+        System.arraycopy(programArgs, 0, goArgv, 1, programArgs.length);
+        return goArgv;
+    }
+
+    /**
+     * Initializes the Go os surface for one program run via the discovered
+     * {@link OsSurfaceInitializer} provider (interop's GoOs-backed
+     * implementation). If no provider is on the classpath the os surface
+     * stays at its empty default, so warn once per JVM instead of failing
+     * silently — a missing provider is a misconfiguration, and an empty
+     * {@code os.Args} is exactly the bug this call exists to fix.
+     */
+    static void initializeOsSurface(String[] goArgv) {
+        boolean found = false;
+        for (OsSurfaceInitializer initializer
+                : ServiceLoader.load(OsSurfaceInitializer.class)) {
+            found = true;
+            initializer.initialize(goArgv);
+        }
+        if (!found && !osSurfaceWarningPrinted) {
+            osSurfaceWarningPrinted = true;
+            System.err.println("graalgo-run: warning: no OsSurfaceInitializer "
+                    + "provider on the classpath; os.Args will be empty");
+        }
+    }
+
+    /**
      * Batch mode: run multiple files sequentially in one JVM.
+     *
+     * <p>Each entry runs the same code path as a single-file invocation,
+     * including a fresh os surface (argv is the entry's own absolute
+     * path) — no env/argv/vcwd state leaks from one entry into the next.
      *
      * <p>The batch file has one entry per line: {@code check:<path>} or
      * {@code run:<path>}. Each entry runs the same code path as a
@@ -365,7 +446,10 @@ public final class Main {
             System.setErr(new java.io.PrintStream(berr, true, StandardCharsets.UTF_8));
             int exit;
             try {
-                exit = runOne(file, check, false, null);
+                // Each entry gets a fresh os surface (argv is the entry's
+                // own absolute path; see runOne) — no state leaks across
+                // entries.
+                exit = runOne(file, check, false, null, new String[0]);
             } finally {
                 System.setOut(realOut);
                 System.setErr(realErr);
@@ -472,7 +556,7 @@ public final class Main {
     }
 
     private static void usage() {
-        System.out.println("usage: graalgo-run [--check] [--dump-vars] [--dump-polymorphism[=path]] file.go");
+        System.out.println("usage: graalgo-run [--check] [--dump-vars] [--dump-polymorphism[=path]] file.go [-- args...]");
         System.out.println("       graalgo-run --batch=batchfile");
         System.out.println("       graalgo-run --help");
         System.out.println("  --check      frontend only (diffharness build step)");
@@ -482,6 +566,9 @@ public final class Main {
         System.out.println("               then print the JSON snapshot (bare flag) or write it to path");
         System.out.println("  --batch=file run each 'check:path' or 'run:path' line in one JVM;");
         System.out.println("               results as JSON array on stdout (harness speedup)");
+        System.out.println("  --            end of launcher flags; following args are the");
+        System.out.println("               program's own arguments (os.Args[1:]; os.Args[0] is");
+        System.out.println("               the absolute input-file path)");
     }
 
     /**

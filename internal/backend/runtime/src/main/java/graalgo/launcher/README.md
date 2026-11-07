@@ -11,6 +11,7 @@ graalgo-run --dump-vars file.go  execute, then print name=value per frame slot (
 graalgo-run --dump-polymorphism[=path] file.go
                              execute with call-site polymorphism recording,
                              then print (bare flag) or write (path) the JSON snapshot (M9, WS L)
+graalgo-run file.go -- a b      execute with os.Args = [abs(file.go), a, b]
 graalgo-run --help
 ```
 
@@ -28,6 +29,12 @@ exit 2, per the GG-0045 stance).
 `--check` is the diffharness build step: it succeeds exactly when the
 frontend accepts the program and fails (exit 2, deterministic stderr) when
 it rejects it, so build failures compare 1:1 against gc.
+
+`--` ends launcher-flag parsing: everything after it is the program's own
+arguments (`os.Args[1:]`; `os.Args[0]` is the absolute input-file path, gc
+parity with `go run`). Each `--batch` entry likewise gets a fresh os surface
+(argv is the entry's own absolute path), so no env/argv/vcwd state leaks from
+one entry into the next (B-02).
 
 ## M2 state (2026-10-04)
 
