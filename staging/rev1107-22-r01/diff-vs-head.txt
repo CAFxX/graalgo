@@ -1,0 +1,417 @@
+# Staged fix vs HEAD 59f0a247 (9 files)
+===== tools/fuzz-soak/harness/run_batch.py =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/harness/run_batch.py	2026-10-14 05:45:14.498409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/harness/run_batch.py	2026-11-07 21:17:21.946909006 +0000
+@@ -16,9 +16,10 @@
+ import sys
+ from concurrent.futures import ThreadPoolExecutor
+ 
+-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
++# Repo root: harness/run_batch.py -> tools/fuzz-soak -> tools -> repo.
+ GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
++FUZZ = os.path.join(GR, "tools/fuzz-soak")
++GOFRONTEND = os.path.join(GR, "internal", "frontend", "gofrontend")
+ 
+ 
+ def sh(cmd, **kw):
+@@ -41,7 +42,7 @@
+ 
+     # 1. Build Java modules once.
+     print("== building graalgo java modules ==", flush=True)
+-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
++    r = sh(f"make -C {GR} build", timeout=600)
+     if r.returncode != 0:
+         print("BUILD FAILED")
+         print(r.stdout[-2000:])
+@@ -49,6 +50,32 @@
+         sys.exit(1)
+     print("build ok", flush=True)
+ 
++    # 1b. The launcher shells out to gofrontend (resolved by
++    # ToolPaths: GRAALGO_GOFRONTEND, else internal/frontend/gofrontend
++    # walked up from the backend classes). Without it every program fails
++    # at launch, so ensure the binary exists before generating anything.
++    if not (os.path.isfile(GOFRONTEND) and os.access(GOFRONTEND, os.X_OK)):
++        print("== gofrontend missing; building it (make generate) ==",
++              flush=True)
++        # build.sh resolves `go` from PATH (GO env or bare `go`);
++        # run_soak.sh puts GO_BIN_DIR on PATH, but a standalone
++        # run_batch.py invocation may not have it — prepend the pinned
++        # toolchain dir so the fallback works either way.
++        go_bin = os.environ.get("GO_BIN_DIR",
++                                os.path.expanduser("~/tools/go/bin"))
++        r = sh(f"export PATH={go_bin}:$PATH; make -C {GR} generate",
++               timeout=900)
++        if r.returncode != 0:
++            print("GOFRONTEND BUILD FAILED")
++            print(r.stdout[-2000:])
++            print(r.stderr[-2000:])
++            sys.exit(1)
++    if not (os.path.isfile(GOFRONTEND) and os.access(GOFRONTEND, os.X_OK)):
++        print(f"BUILD FAILED: gofrontend still missing at {GOFRONTEND} "
++              "(run `make generate` at the repo root)")
++        sys.exit(1)
++    print("gofrontend ok", flush=True)
++
+     # 2. Generate programs.
+     seeds = list(range(start, end))
+     print(f"== generating {len(seeds)} programs ==", flush=True)
+@@ -90,6 +117,21 @@
+                 print(f"  {i+1}/{len(seeds)}", flush=True)
+     rf.close()
+ 
++    # Fail loudly when zero programs actually ran: a batch whose
++    # results.jsonl is short, or whose every record is HARNESS_ERROR,
++    # tested nothing — it must never masquerade as a clean batch (R-01).
++    with open(results_path) as f:
++        n_lines = sum(1 for _ in f)
++    if n_lines != len(seeds):
++        print(f"BATCH FAILED: results.jsonl has {n_lines} lines for "
++              f"{len(seeds)} seeds; expected one record per seed")
++        sys.exit(1)
++    if len(results) == len(seeds) and all(
++            r["result"] == "HARNESS_ERROR" for r in results):
++        print("BATCH FAILED: every program ended HARNESS_ERROR — the "
++              "differential ran zero programs")
++        sys.exit(1)
++
+     # Dedup: group non-PASS by (result, signature).
+     from collections import Counter, defaultdict
+     counts = Counter(r["result"] for r in results)
+===== tools/fuzz-soak/harness/diff_one.sh =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/harness/diff_one.sh	2026-10-14 05:45:14.494409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/harness/diff_one.sh	2026-11-07 21:17:21.950206232 +0000
+@@ -1,5 +1,6 @@
+ #!/bin/bash
+-# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
++# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain
++# (via internal/backend/graalgo-sync-run, the product launcher wrapper).
+ # Usage: diff_one.sh <go-file> <workdir> <gmp>
+ # Emits a JSON result record to stdout.
+ set -uo pipefail
+@@ -8,19 +9,35 @@
+ WORKDIR="$2"
+ GMP="${3:-1}"
+ 
+-GR="${GR:-$HOME/workspace/graalgo-m9}"
+-P3="$GR/phases/phase3"
+-P2="$GR/phases/phase2"
+-P1="$GR/phases/phase1"
++HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++# Repo root: harness/diff_one.sh -> tools/fuzz-soak -> tools -> repo.
++GR="${GR:-$(cd "$HERE/../../.." && pwd)}"
+ export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+-
+-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
++# graalgo-sync-run resolves its JDK from GRAALVM_HOME; honor JAVA_BIN
++# (set by run_soak.sh / CI) by deriving it when GRAALVM_HOME is unset.
++if [ -n "${JAVA_BIN:-}" ] && [ -z "${GRAALVM_HOME:-}" ]; then
++  GRAALVM_HOME="$(cd -- "$(dirname -- "$JAVA_BIN")/.." && pwd)"
++  export GRAALVM_HOME
++fi
++GRAALGO_RUN="${GRAALGO_RUN:-$GR/internal/backend/graalgo-sync-run}"
++# Keep the JVM off /tmp (a full /tmp silently yields empty output with
++# exit 0); run_soak.sh exports FUZZ_TMPDIR, otherwise use a per-program
++# dir under the workdir so standalone runs are safe too.
++export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR/jvm-tmp}"
++mkdir -p "$WORKDIR" "$TMPDIR"
+ 
+ base="$(basename "$GO_FILE" .go)"
+ gcbin="$WORKDIR/$base.gcbin"
+ 
++# 0. Launcher present? (Requires `make build` at the repo root first;
++# graalgo-sync-run never builds.) A missing launcher is a harness error,
++# recorded per-program; run_batch.py fails the batch if every program
++# ends this way, so a dead backend can never report as a clean batch.
++if [ ! -x "$GRAALGO_RUN" ]; then
++    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "graalgo-sync-run missing or not executable: %s (run make build at the repo root)"}\n' "$base" "$GRAALGO_RUN"
++    exit 0
++fi
++
+ # 1. gc build
+ if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
+     printf '{"file": "%s", "result": "GC_BUILD_FAIL", "detail": "gc build failed"}\n' "$base"
+@@ -32,9 +49,7 @@
+ gc_exit=$?
+ 
+ # 3. graalgo run (120s timeout; JVM startup dominates)
+-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
+-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
+-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
++timeout 120 "$GRAALGO_RUN" --gmp="$GMP" -- "$GO_FILE" \
+     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
+ gr_exit=$?
+ 
+===== tools/fuzz-soak/harness/triage.py =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/harness/triage.py	2026-10-14 05:45:14.501409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/harness/triage.py	2026-11-07 21:17:21.954909006 +0000
+@@ -18,8 +18,9 @@
+ import subprocess
+ import sys
+ 
+-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
+-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
++# Repo root: harness/triage.py -> tools/fuzz-soak -> tools -> repo.
++GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++FUZZ = os.path.join(GR, "tools/fuzz-soak")
+ 
+ 
+ def diff_result(gofile, workdir):
+@@ -29,7 +30,10 @@
+     try:
+         return json.loads(r.stdout.strip().split("\n")[-1])
+     except Exception:
+-        return {"result": "HARNESS_ERROR", "detail": ""}
++        # Preserve the failure reason: an empty detail swallows the very
++        # evidence needed to tell a dead harness from a real divergence.
++        return {"result": "HARNESS_ERROR",
++                "detail": (r.stdout + r.stderr)[-500:]}
+ 
+ 
+ def split_statements(src):
+===== tools/fuzz-soak/run_soak.sh =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/run_soak.sh	2026-10-14 05:45:14.506409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/run_soak.sh	2026-11-07 21:17:34.229722873 +0000
+@@ -1,12 +1,12 @@
+ #!/usr/bin/env bash
+-# Layer-4 fuzz soak runner (phases/phase3/PLAN.md §5 layer 4, GG-0037):
++# Layer-4 fuzz soak runner (tools/fuzz-soak/DESIGN.md, GG-0037):
+ # generative differential fuzzing, overnight per release.
+ #
+ # Runs the seeded program generator + differential harness
+ # (harness/run_batch.py) in time-bounded batches until HOURS elapse, then
+ # minimizes any divergences (harness/triage.py) and archives the findings.
+ # Minimized divergences become permanent regressions per SPEC §5.4 (filed
+-# under phases/phase3/fuzzing/findings/ with a minimized reproducer).
++# under tools/fuzz-soak/findings/ with a minimized reproducer).
+ #
+ # This is the OVERNIGHT slot. The CONTINUOUS adversarial track reserves the
+ # same interface: `run_soak.sh --seeds A:B` runs one bounded batch (used by
+@@ -23,10 +23,15 @@
+ #   JAVA_BIN     java binary (default: $HOME/tools/graalvm-jdk-25/bin/java)
+ #   JOBS         parallel diffs per batch (default: 4)
+ #   BATCH        seeds per batch (default: 50)
++#
++# Failure contract (R-01): a soak that ran zero programs is a FAILED soak,
++# never a clean report. A batch failure is recorded, never swallowed, and
++# the final soak-report.json carries programs_run + failed_batches; the
++# script exits nonzero when no program ran in any batch.
+ set -euo pipefail
+ 
+ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+-# Repo root: fuzzing/run_soak.sh -> phase3 -> phases -> repo.
++# Repo root: tools/fuzz-soak/run_soak.sh -> tools -> repo.
+ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+ export GR="${GR:-$REPO_ROOT}"
+ export GO_BIN_DIR="${GO_BIN_DIR:-$HOME/tools/go/bin}"
+@@ -62,6 +67,17 @@
+     --seeds "$seeds" --out "$batchdir" --jobs "$JOBS" --gmp 1
+ }
+ 
++# Programs actually differentially run in a batch (0 when the batch never
++# produced results — the R-01 signal: a batch that tested nothing).
++batch_programs_run() {
++  local res="$1/results.jsonl"
++  if [ -f "$res" ]; then
++    wc -l < "$res" | tr -d ' '
++  else
++    echo 0
++  fi
++}
++
+ minimize_findings() {
+   local batchdir="$1"
+   # triage.py minimizes each diverged program; failures to minimize are
+@@ -86,8 +102,16 @@
+     if not os.path.exists(prog):
+         print(f"missing program for {r['file']}; skipping")
+         continue
++    # triage.py takes --prog <file> --out <file>: --out is a single
++    # minimized file, not a directory (R-14: the old call passed the
++    # program positionally and a directory as --out, so argparse rejected
++    # every invocation and no finding was ever minimized). Keep triage
++    # workdirs under the batch dir, not the shared /tmp tmpfs.
+     p = subprocess.run(
+-        ["python3", f"{here}/harness/triage.py", prog, "--out", out],
++        ["python3", f"{here}/harness/triage.py",
++         "--prog", prog,
++         "--out", os.path.join(out, r["file"] + ".go"),
++         "--workdir", os.path.join(batchdir, "triage-work")],
+         capture_output=True, text=True, timeout=1200)
+     print(f"{r['file']}: triage rc={p.returncode}")
+     if p.returncode != 0:
+@@ -99,6 +123,14 @@
+   # Single bounded batch: the continuous-track slot.
+   echo "== soak batch: seeds $SEEDS =="
+   run_batch "$SEEDS" "$OUT/batch-0"
++  # Fail loudly when the batch ran zero programs (R-01): run_batch's own
++  # exit code is the first line of defence; a missing/empty results
++  # file is the second — a batch that tested nothing must not report
++  # success to the continuous track's scheduler.
++  if [ "$(batch_programs_run "$OUT/batch-0")" = 0 ]; then
++    echo "SOAK FAILED: batch-0 ran zero programs (no results.jsonl records)" >&2
++    exit 1
++  fi
+   minimize_findings "$OUT/batch-0"
+   echo "batch done: $OUT/batch-0"
+   exit 0
+@@ -109,20 +141,33 @@
+ # Overnight soak: batches of BATCH seeds until the deadline.
+ seed=0
+ batch=0
++failed_batches=0
++total_programs=0
+ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
++  batch_failed=0
+   if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
+     echo "batch $batch failed; continuing with next batch"
++    batch_failed=1
++  fi
++  ran="$(batch_programs_run "$OUT/batch-$batch")"
++  total_programs=$((total_programs + ran))
++  if [ "$ran" = 0 ]; then
++    echo "batch $batch ran zero programs"
++    batch_failed=1
+   fi
++  failed_batches=$((failed_batches + batch_failed))
+   minimize_findings "$OUT/batch-$batch" || true
+   seed=$((seed + BATCH))
+   batch=$((batch + 1))
+ done
+ 
+-echo "== soak complete: $batch batches, $seed programs =="
+-python3 - "$OUT" <<'EOF'
++echo "== soak complete: $batch batches, $seed programs, $total_programs actually run, $failed_batches failed =="
++python3 - "$OUT" "$total_programs" "$failed_batches" <<'EOF'
+ import glob, json, os, sys
+ out = sys.argv[1]
++total_programs = int(sys.argv[2])
++failed_batches = int(sys.argv[3])
+ total_div = 0
+ for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
+     for line in open(res):
+@@ -130,7 +175,15 @@
+         if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
+             total_div += 1
+ rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
++       "programs_run": total_programs,
++       "failed_batches": failed_batches,
+        "diverged_total": total_div}
+ json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
+ print(f"soak report: {rep}")
++# A soak that ran zero programs tested nothing: fail loudly (R-01)
++# instead of publishing a clean-looking report with diverged_total 0.
++if total_programs == 0:
++    print("SOAK FAILED: zero programs ran in any batch — see batch logs",
++          file=sys.stderr)
++    sys.exit(1)
+ EOF
+===== tools/fuzz-soak/gha/driver/fuzz_driver.py =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/gha/driver/fuzz_driver.py	2026-10-14 05:45:14.484829857 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/gha/driver/fuzz_driver.py	2026-11-07 21:17:21.963166412 +0000
+@@ -21,7 +21,7 @@
+ from concurrent.futures import ThreadPoolExecutor
+ 
+ GRAALGO_HOME = os.environ.get("GRAALGO_HOME", "/opt/graalgo")
+-FUZZ = os.path.join(GRAALGO_HOME, "phases/phase3/fuzzing")
++FUZZ = os.path.join(GRAALGO_HOME, "tools/fuzz-soak")
+ OUT_DIR = os.environ.get("OUT_DIR", "/out")
+ SHARD_IDX = int(os.environ.get("SHARD_IDX", "0"))
+ SHARD_COUNT = int(os.environ.get("SHARD_COUNT", "1"))
+===== tools/fuzz-soak/gha/Dockerfile =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/gha/Dockerfile	2026-10-14 05:45:14.464409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/gha/Dockerfile	2026-11-07 21:17:21.964951921 +0000
+@@ -1,7 +1,8 @@
+ # graalgo-fuzz GHA image: Go 1.27.1 + GraalVM JDK 25 + graalgo sources.
+ #
+-# The graalgo sources are baked as a slim tarball (phases/phase1/{src,lib,
+-# frontend}, phases/phase2/src, phases/phase3/{src,fuzzing}; ~45MB).
++# The graalgo sources are baked as a slim tarball (internal/backend
++# {truffle,runtime,interop} sources + truffle lib jars, internal/frontend,
++# tools/fuzz-soak/{gen,harness}, root Makefile; ~45MB).
+ # Rebuild the tarball and re-push the Dockerfile when graalgo changes.
+ #
+ # Build via the fanout build-image.yml workflow (push trigger on
+@@ -31,16 +32,19 @@
+ ENV GRAALVM_HOME=/opt/graalvm
+ 
+ # graalgo slim sources (tarball committed alongside this Dockerfile).
+-# Layout inside tarball: graalgo/{phases/phase1/{src,lib,frontend,Makefile},
+-# phases/phase2/{src,Makefile}, phases/phase3/{src,fuzzing,Makefile}}
++# Layout inside tarball: graalgo/{Makefile,
++# internal/backend/{truffle/{src,lib,Makefile},runtime/{src,Makefile},
++# interop/{src,Makefile}}, internal/frontend,
++# tools/fuzz-soak/{gen,harness}}
+ COPY graalgo-slim.tar.gz /tmp/
+ RUN mkdir -p /opt && tar -xz -C /opt -f /tmp/graalgo-slim.tar.gz \
+     && rm /tmp/graalgo-slim.tar.gz
+ 
+-# Pre-build the Java modules so shards start immediately.
+-# (go build of the frontend happens on first use; cached in GOCACHE.)
++# Pre-build the backend so shards start immediately: `generate` builds the
++# gofrontend binary the launcher shells out to, `build` compiles the Java
++# modules (internal/backend/{truffle,runtime,interop}/out/classes).
+ WORKDIR /opt/graalgo
+-RUN make -C phases/phase3 main && echo "graalgo pre-build OK"
++RUN make -C /opt/graalgo generate build && echo "graalgo pre-build OK"
+ 
+ # Shard contract env (set by dispatch.yml at runtime).
+ ENV OUT_DIR=/out SHARD_IDX=0 SHARD_COUNT=1
+===== tools/fuzz-soak/gha/README.md =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/gha/README.md	2026-10-14 05:45:14.470409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/gha/README.md	2026-11-07 21:17:21.966674494 +0000
+@@ -19,12 +19,15 @@
+ Built from a graalgo worktree at the pinned commit:
+ 
+ ```bash
+-cd ~/workspace/graalgo-m9   # at the commit to fuzz
++cd ~/workspace/graalgo   # at the commit to fuzz
+ tar -czf graalgo-slim.tar.gz \
+-  phases/phase1/src phases/phase1/lib internal/frontend \
+-  phases/phase1/Makefile \
+-  phases/phase2/src phases/phase2/Makefile \
+-  phases/phase3/src phases/phase3/fuzzing phases/phase3/Makefile
++  Makefile \
++  internal/backend/truffle/src internal/backend/truffle/lib \
++  internal/backend/truffle/Makefile \
++  internal/backend/runtime/src internal/backend/runtime/Makefile \
++  internal/backend/interop/src internal/backend/interop/Makefile \
++  internal/frontend \
++  tools/fuzz-soak/gen tools/fuzz-soak/harness
+ ```
+ 
+ Rebuild and re-push the Dockerfile whenever the pinned graalgo commit
+===== tools/fuzz-soak/DESIGN.md =====
+--- /home/hatch/workspace/graalgo/tools/fuzz-soak/DESIGN.md	2026-10-14 05:45:14.439409007 +0000
++++ /tmp/rev1107-22-r01/tools/fuzz-soak/DESIGN.md	2026-11-07 21:17:34.229853729 +0000
+@@ -107,7 +107,7 @@
+ Tenant `projects/graalgo-fuzz/` in CAFxX/fanout:
+ 
+ - `Dockerfile`: Ubuntu + Go 1.27.1 + GraalVM JDK 25 + graalgo sources
+-  (slim tarball: phase1/{src,lib,frontend}, phase2/src, phase3/src;
++  (slim tarball: internal/backend {truffle,runtime,interop} sources + truffle lib jars,
+   ~45MB, baked at image build). Driver + generator baked in.
+ - `driver/fuzz_driver.py`: honors `$SHARD_IDX`/`$SHARD_COUNT`,
+   `$OUT_DIR`; each shard generates `N` programs from disjoint seed
+===== .github/workflows/fuzz-soak.yml =====
+--- /home/hatch/workspace/graalgo/.github/workflows/fuzz-soak.yml	2026-10-14 05:45:13.862409007 +0000
++++ /tmp/rev1107-22-r01/.github/workflows/fuzz-soak.yml	2026-11-07 21:17:34.229935331 +0000
+@@ -1,4 +1,4 @@
+-# Layer 4 — fuzz soak (phases/phase3/PLAN.md §5, GG-0037): generative
++# Layer 4 — fuzz soak (tools/fuzz-soak/DESIGN.md, GG-0037): generative
+ # differential fuzzing + native testing.F differential fuzzing, overnight
+ # per release.
+ #
+@@ -6,7 +6,7 @@
+ # Each run: seeded program generation + differential harness batches
+ # (run_soak.sh) and the native testing.F targets with differential replay
+ # (fuzz/run_fuzz_native.sh). Minimized divergences become permanent
+-# regressions per SPEC §5.4 (phases/phase3/fuzzing/findings/).
++# regressions per SPEC §5.4 (tools/fuzz-soak/findings/).
+ #
+ # The continuous adversarial track reserves the same interface:
+ # run_soak.sh --seeds A:B runs one bounded batch.
