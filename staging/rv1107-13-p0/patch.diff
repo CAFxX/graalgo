@@ -1,0 +1,497 @@
+--- a/internal/driver/artifact.go
++++ b/internal/driver/artifact.go
+@@ -188,7 +188,7 @@
+ 	if err != nil {
+ 		argv0 = os.Args[0]
+ 	}
+-	args := []string{"--wire-input", tmpName, "--", argv0}
++	args := []string{"--wire-input=" + tmpName, "--", argv0}
+ 	args = append(args, os.Args[1:]...)
+ 
+ 	cmd := exec.Command(runner, args...)
+--- a/internal/driver/artifact_test.go
++++ b/internal/driver/artifact_test.go
+@@ -2,11 +2,14 @@
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
++	"runtime"
+ 	"strings"
+ 	"testing"
++	"time"
+ )
+ 
+ // TestEmitProducesBinary verifies that Emit produces a real executable
+@@ -54,9 +57,12 @@
+ 	if !bytes.Contains(data, []byte("GRAALGO_HOME")) {
+ 		t.Errorf("artifact does not reference GRAALGO_HOME")
+ 	}
+-	// The launcher must use --wire-input (not re-run the frontend).
+-	if !bytes.Contains(data, []byte("--wire-input")) {
+-		t.Errorf("artifact does not use --wire-input")
++	// The launcher must use --wire-input= (equals form, not re-run the
++	// frontend). The backend accepts only the equals form
++	// (P3SyncMain: "--wire-input="); the space form is rejected as an
++	// unknown flag (NEW-P0-1).
++	if !bytes.Contains(data, []byte("--wire-input=")) {
++		t.Errorf("artifact does not use --wire-input= (equals form)")
+ 	}
+ }
+ 
+@@ -118,8 +124,8 @@
+ 
+ // TestEmitBinaryRuns is a smoke test that the produced binary actually
+ // executes. It uses a fake backend script that records its arguments,
+-// verifying the launcher passes --wire-input correctly. This does not
+-// require a real graalgo backend.
++// verifying the launcher passes --wire-input= (equals form) correctly.
++// This does not require a real graalgo backend.
+ func TestEmitBinaryRuns(t *testing.T) {
+ 	if testing.Short() {
+ 		t.Skip("skipping binary execution test in short mode")
+@@ -138,9 +144,11 @@
+ 	}
+ 	argsFile := filepath.Join(tmpDir, "args.txt")
+ 	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
++	// With the equals form, $1 is "--wire-input=<path>"; strip the
++	// prefix to recover the path (there is no separate path argument).
+ 	backendScript := "#!/usr/bin/env bash\n" +
+ 		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
+-		"cp \"$2\" " + wireCopy + "\n" + // $2 is the --wire-input path
++		"cp \"${1#--wire-input=}\" " + wireCopy + "\n" +
+ 		"exit 0\n"
+ 	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
+ 	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
+@@ -170,11 +178,11 @@
+ 		t.Fatalf("backend was not invoked (no args file): %v", err)
+ 	}
+ 	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+-	if len(args) < 4 {
+-		t.Fatalf("backend args = %v, want at least [--wire-input FILE -- argv0 ...]", args)
++	if len(args) < 5 {
++		t.Fatalf("backend args = %v, want at least [--wire-input=FILE -- argv0 ...]", args)
+ 	}
+-	if args[0] != "--wire-input" {
+-		t.Errorf("args[0] = %q, want --wire-input", args[0])
++	if !strings.HasPrefix(args[0], "--wire-input=") {
++		t.Errorf("args[0] = %q, want --wire-input=FILE (equals form)", args[0])
+ 	}
+ 	// The backend copied the wire file before the launcher cleaned up.
+ 	wireData, err := os.ReadFile(wireCopy)
+@@ -183,15 +191,15 @@
+ 	} else if string(wireData) != string(wireJSON) {
+ 		t.Errorf("wire-input content mismatch: got %q, want %q", wireData, wireJSON)
+ 	}
+-	if args[2] != "--" {
+-		t.Errorf("args[2] = %q, want --", args[2])
++	if args[1] != "--" {
++		t.Errorf("args[1] = %q, want --", args[1])
+ 	}
+ 	// argv[0] for the program should be the artifact's absolute path.
+-	if !filepath.IsAbs(args[3]) {
+-		t.Errorf("program argv[0] = %q, want absolute path", args[3])
++	if !filepath.IsAbs(args[2]) {
++		t.Errorf("program argv[0] = %q, want absolute path", args[2])
+ 	}
+ 	// User args forwarded.
+-	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
++	if len(args) < 5 || args[3] != "hello" || args[4] != "world" {
+ 		t.Errorf("user args not forwarded: %v", args)
+ 	}
+ }
+@@ -202,3 +210,156 @@
+ 	}
+ 	return b
+ }
++
++// TestEmitBinaryRunsRealBackend executes a real artifact end to end under
++// the real graalgo backend (graalgo-sync-run), asserting the program runs
++// and prints its output. Unlike TestEmitBinaryRuns (fake backend script),
++// this catches arg-form mismatches the backend rejects: the launcher used
++// to pass "--wire-input <file>" (space form) while the backend accepts
++// only "--wire-input=<file>", so every artifact failed at startup with
++// "unknown flag: --wire-input" (NEW-P0-1).
++//
++// It runs only when the real backend is present: it skips in short mode
++// and when graalgo-sync-run, the compiled backend classes, gofrontend, or
++// the GraalVM java are missing. The graalgo root defaults to the repo root
++// derived from this test file's path; override it with
++// GRAALGO_TEST_REAL_BACKEND_ROOT. Override gofrontend with
++// GRAALGO_GOFRONTEND.
++//
++// The program is deliberately minimal (builtin println, no imports): its
++// wire JSON is ~3KB, so the test stays fast and low-memory. A fmt program
++// pulls in the whole fmt tree (~113MB of wire JSON) and is covered by the
++// differential suite instead; what this test pins is the launcher/backend
++// arg contract, not fmt support.
++func TestEmitBinaryRunsRealBackend(t *testing.T) {
++	if testing.Short() {
++		t.Skip("skipping real-backend execution test in short mode")
++	}
++	root, gofrontend := realBackendPrereqs(t)
++
++	tmpDir := t.TempDir()
++	jvmTmp := filepath.Join(tmpDir, "jvmtmp")
++	if err := os.MkdirAll(jvmTmp, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	// Builtin println (no imports): the program's output goes to
++	// stderr, matching gc.
++	hello := filepath.Join(tmpDir, "hello.go")
++	if err := os.WriteFile(hello, []byte("package main\n\nfunc main() { println(\"hello real-backend\") }\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	// Capture the real frontend output via the backend's --emit-wire,
++	// exactly as `graalgo build` does (cmd/graalgo/commands.go).
++	wirePath := filepath.Join(tmpDir, "wire.json")
++	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
++	emitCtx, emitCancel := context.WithTimeout(context.Background(), 5*time.Minute)
++	defer emitCancel()
++	emitCmd := exec.CommandContext(emitCtx, runner, "--emit-wire="+wirePath, "--check", hello)
++	emitCmd.Dir = tmpDir
++	emitCmd.Env = append(os.Environ(),
++		"GRAALGO_HOME="+root,
++		"GRAALGO_GOFRONTEND="+gofrontend,
++		"TMPDIR="+jvmTmp,
++	)
++	var emitOut bytes.Buffer
++	emitCmd.Stdout = &emitOut
++	emitCmd.Stderr = &emitOut
++	if err := emitCmd.Run(); err != nil {
++		t.Fatalf("backend --emit-wire failed: %v\n%s", err, emitOut.String())
++	}
++	wireJSON, err := os.ReadFile(wirePath)
++	if err != nil {
++		t.Fatalf("cannot read emitted wire JSON: %v", err)
++	}
++	if len(wireJSON) == 0 {
++		t.Fatalf("emitted wire JSON is empty")
++	}
++
++	out := filepath.Join(tmpDir, "prog")
++	if err := Emit(Artifact{
++		OutputPath:  out,
++		GraalgoRoot: root,
++		WireJSON:    wireJSON,
++	}); err != nil {
++		t.Fatalf("Emit: %v", err)
++	}
++
++	// Run the artifact under the real backend and assert the program's
++	// own output — this is what the fake-backend test cannot check.
++	runCtx, runCancel := context.WithTimeout(context.Background(), 5*time.Minute)
++	defer runCancel()
++	runCmd := exec.CommandContext(runCtx, out)
++	runCmd.Env = append(os.Environ(),
++		"GRAALGO_HOME="+root,
++		"TMPDIR="+jvmTmp,
++	)
++	var stdout, stderr bytes.Buffer
++	runCmd.Stdout = &stdout
++	runCmd.Stderr = &stderr
++	if err := runCmd.Run(); err != nil {
++		t.Fatalf("artifact run failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
++	}
++	// println writes to stderr (gc parity); stdout must stay empty.
++	if got := stdout.String(); got != "" {
++		t.Errorf("artifact stdout = %q, want empty (println goes to stderr)", got)
++	}
++	if got := stderr.String(); !strings.Contains(got, "hello real-backend\n") {
++		t.Errorf("artifact stderr = %q, want it to contain %q", got, "hello real-backend\n")
++	}
++}
++
++// realBackendPrereqs locates a runnable real backend for
++// TestEmitBinaryRunsRealBackend, skipping the test when any prerequisite
++// is missing. It returns the graalgo root and the gofrontend binary.
++func realBackendPrereqs(t *testing.T) (root, gofrontend string) {
++	t.Helper()
++	root = os.Getenv("GRAALGO_TEST_REAL_BACKEND_ROOT")
++	if root == "" {
++		_, file, _, ok := runtime.Caller(0)
++		if !ok {
++			t.Skip("cannot locate test file for repo-root discovery")
++		}
++		// This file lives at <root>/internal/driver/.
++		root = filepath.Dir(filepath.Dir(filepath.Dir(file)))
++	}
++	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
++	if fi, err := os.Stat(runner); err != nil || fi.Mode()&0o111 == 0 {
++		t.Skipf("real backend not built: %s missing or not executable (run make build)", runner)
++	}
++	classes := filepath.Join(root, "internal", "backend", "interop", "out", "classes")
++	if fi, err := os.Stat(classes); err != nil || !fi.IsDir() {
++		t.Skipf("real backend classes not built: %s missing (run make build)", classes)
++	}
++	java := ""
++	if graalvm := os.Getenv("GRAALVM_HOME"); graalvm != "" {
++		java = filepath.Join(graalvm, "bin", "java")
++	} else if home, err := os.UserHomeDir(); err == nil {
++		java = filepath.Join(home, "tools", "graalvm-jdk-25", "bin", "java")
++	}
++	if fi, err := os.Stat(java); err != nil || fi.Mode()&0o111 == 0 {
++		t.Skipf("GraalVM java not found at %s (set GRAALVM_HOME)", java)
++	}
++	gofrontend = os.Getenv("GRAALGO_GOFRONTEND")
++	if gofrontend == "" {
++		gofrontend = os.Getenv("GRAALGO_TEST_GOFRONTEND")
++	}
++	if gofrontend == "" {
++		for _, cand := range []string{
++			filepath.Join(root, "internal", "frontend", "gofrontend"),
++			filepath.Join(root, "phases", "phase1", "frontend", "gofrontend"),
++		} {
++			if fi, err := os.Stat(cand); err == nil && fi.Mode()&0o111 != 0 {
++				gofrontend = cand
++				break
++			}
++		}
++	}
++	if gofrontend == "" {
++		t.Skip("gofrontend not found (set GRAALGO_GOFRONTEND or run make generate)")
++	}
++	if fi, err := os.Stat(gofrontend); err != nil || fi.Mode()&0o111 == 0 {
++		t.Skipf("gofrontend not executable: %s", gofrontend)
++	}
++	return root, gofrontend
++}
+--- a/internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java
++++ b/internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java
+@@ -137,6 +137,13 @@
+         // frontend runs once at build time, and the artifact embeds its
+         // output.
+         String wireInput = null;
++        // Phase 4 (build-artifact): in --wire-input mode there is no input
++        // file, so the first token after "--" is the Go program's argv[0]
++        // (the artifact's absolute path), not a file. Recorded here so the
++        // arg loop below can route it (NEW-P0-1: without this it landed in
++        // `files` and tripped the "--wire-input cannot be combined with
++        // input files" rejection).
++        String programArgv0 = null;
+         // Phase 4 (build-artifact): when set, write the frontend JSON to
+         // this file and exit (implies --check). This is how `graalgo build`
+         // captures the frontend output at build time for embedding in the
+@@ -152,7 +159,17 @@
+         java.util.List<String> goArgs = new java.util.ArrayList<>();
+         for (String a : args) {
+             if (dashdash) {
+-                if (files.isEmpty()) {
++                if (wireInput != null) {
++                    // Wire-input mode: the first token after "--" is the
++                    // program's argv[0] and the rest are its arguments;
++                    // no token here is ever an input file (a second token
++                    // must not fall through into `files` below).
++                    if (programArgv0 == null) {
++                        programArgv0 = a;
++                    } else {
++                        goArgs.add(a);
++                    }
++                } else if (files.isEmpty()) {
+                     files.add(a);
+                 } else {
+                     goArgs.add(a);
+@@ -273,17 +290,32 @@
+ 
+         // Build one Truffle Source per input file; the frontend's position
+         // "file" index selects among them (frontend/v1 wire format).
+-        Source[] sources = new Source[paths.size()];
+-        for (int i = 0; i < paths.size(); i++) {
+-            final String srcText;
+-            try {
+-                srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
+-            } catch (IOException e) {
+-                System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
+-                return EXIT_INPUT_ERROR;
++        // Phase 4 (build-artifact): in --wire-input mode there are no input
++        // files — the JSON carries the program — but NodeFactory requires at
++        // least one Source. Supply a single empty synthetic Source: positions
++        // resolve to it and clamp to a zero-length section (sectionFor's
++        // existing out-of-range path), so execution is unaffected; only
++        // reported positions lose their file text (the artifact embeds no
++        // sources by design). (NEW-P0-1: without this, the factory threw
++        // "NodeFactory requires at least one Source".)
++        final Source[] sources;
++        if (wireInput != null) {
++            sources = new Source[]{
++                Source.newBuilder("go", "", "<wire-input>").build()
++            };
++        } else {
++            sources = new Source[paths.size()];
++            for (int i = 0; i < paths.size(); i++) {
++                final String srcText;
++                try {
++                    srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
++                } catch (IOException e) {
++                    System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
++                    return EXIT_INPUT_ERROR;
++                }
++                sources[i] = Source.newBuilder("go", srcText,
++                        paths.get(i).getFileName().toString()).build();
+             }
+-            sources[i] = Source.newBuilder("go", srcText,
+-                    paths.get(i).getFileName().toString()).build();
+         }
+         final NodeFactory.Program program;
+         try {
+@@ -508,7 +540,17 @@
+         // entry paths (`graalgo run`, `graalgo test`, direct
+         // graalgo-sync-run, diffharness).
+         String[] goArgv = new String[goArgs.size() + 1];
+-        goArgv[0] = Paths.get(files.get(0)).toAbsolutePath().normalize().toString();
++        if (wireInput != null) {
++            // Wire-input mode: argv[0] is the program's own path (the first
++            // token after "--" — for artifacts, the artifact binary itself,
++            // which is the gc-parity value). With no "--" at all, fall back
++            // to the wire-input file so os.Args[0] stays absolute.
++            // (NEW-P0-1: files.get(0) below would throw on the empty list.)
++            String argv0 = programArgv0 != null ? programArgv0 : wireInput;
++            goArgv[0] = Paths.get(argv0).toAbsolutePath().normalize().toString();
++        } else {
++            goArgv[0] = Paths.get(files.get(0)).toAbsolutePath().normalize().toString();
++        }
+         for (int i = 0; i < goArgs.size(); i++) {
+             goArgv[i + 1] = goArgs.get(i);
+         }
+--- a/internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java
++++ b/internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java
+@@ -25,6 +25,9 @@
+         TESTS.add(ItabForIntrinsicTest.class);
+         TESTS.add(AtomicContentionTest.class);
+         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
++        // NEW-P0-1 (2026-11-07): the --wire-input execution path used by
++        // `graalgo build` artifacts (arg form, argv[0], synthetic Source).
++        TESTS.add(graalgo.p3sync.launcher.WireInputLauncherTest.class);
+         // M10 F-1: concurrent range loops must not lose iterations.
+         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
+         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
+--- a/internal/backend/interop/src/test/java/graalgo/p3sync/launcher/WireInputLauncherTest.java
++++ b/internal/backend/interop/src/test/java/graalgo/p3sync/launcher/WireInputLauncherTest.java
+@@ -0,0 +1,123 @@
++package graalgo.p3sync.launcher;
++
++import java.io.ByteArrayOutputStream;
++import java.io.PrintStream;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++/**
++ * End-to-end tests for the {@code --wire-input} execution path (Phase 4
++ * build artifacts): a {@code graalgo build} artifact feeds pre-generated
++ * frontend JSON to the backend, which must run it without input files.
++ *
++ * <p>verifies: NEW-P0-1 — {@code graalgo build} artifacts could not run at
++ * all. The launcher passed {@code --wire-input <file>} (space form) while
++ * the backend accepts only {@code --wire-input=<file>}; past that, the
++ * backend routed the launcher's post-{@code --} argv[0] into {@code files}
++ * (tripping the "--wire-input cannot be combined with input files"
++ * rejection), built zero Truffle Sources (NodeFactory threw "requires at
++ * least one Source"), and read argv[0] from the empty file list. All four
++ * breaks lived on this one never-exercised path (04c62c56); these tests
++ * pin the whole path through the real {@code P3SyncMain}.
++ *
++ * <p>These tests shell out to the real {@code gofrontend} binary (like the
++ * corpus runners and {@link LinknameEndToEndTest}); the wire JSON is
++ * captured with {@code --emit-wire} exactly as {@code graalgo build} does.
++ */
++public final class WireInputLauncherTest {
++
++    private static final String HELLO_PROG =
++            "package main\n\nfunc main() { println(\"hello real-backend\") }\n";
++
++    private static final String ARGS_PROG =
++            "package main\n\nimport \"os\"\n\nfunc main() {\n"
++            + "\tfor _, a := range os.Args {\n\t\tprintln(a)\n\t}\n}\n";
++
++    private static void assertTrue(boolean cond, String msg) {
++        if (!cond) {
++            throw new AssertionError(msg);
++        }
++    }
++
++    private static Path writeTempGo(String name, String src) throws Exception {
++        Path dir = Files.createTempDirectory("graalgo-wireinput-test");
++        Path f = dir.resolve(name);
++        Files.writeString(f, src, StandardCharsets.UTF_8);
++        return f;
++    }
++
++    /** Runs P3SyncMain with the given argv, capturing stdout+stderr. */
++    private static RunResult runMain(String[] argv) {
++        PrintStream oldOut = System.out;
++        PrintStream oldErr = System.err;
++        ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
++        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
++        System.setOut(new PrintStream(outBuf, true, StandardCharsets.UTF_8));
++        System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
++        int code;
++        try {
++            code = P3SyncMain.run(argv);
++        } finally {
++            System.setOut(oldOut);
++            System.setErr(oldErr);
++        }
++        return new RunResult(code, outBuf.toString(StandardCharsets.UTF_8),
++                errBuf.toString(StandardCharsets.UTF_8));
++    }
++
++    private record RunResult(int exit, String stdout, String stderr) {}
++
++    /**
++     * Captures the frontend JSON for a program with --emit-wire, exactly as
++     * `graalgo build` does. Returns the wire file (non-empty on success).
++     */
++    private static Path emitWire(Path goFile) throws Exception {
++        Path wire = goFile.getParent().resolve("wire.json");
++        RunResult r = runMain(new String[] {
++            "--emit-wire=" + wire, "--check", goFile.toString()});
++        assertTrue(r.exit() == 0,
++                "--emit-wire failed, exit=" + r.exit() + "; stderr: " + r.stderr());
++        assertTrue(Files.size(wire) > 0, "emitted wire JSON is empty");
++        return wire;
++    }
++
++    /**
++     * verifies: NEW-P0-1 — a program fed via --wire-input runs and prints
++     * its output. Failed before the fix at arg parsing ("unknown flag:
++     * --wire-input" for the space form; "--wire-input cannot be combined
++     * with input files" once the form was fixed), then in NodeFactory
++     * ("requires at least one Source").
++     */
++    public void testWireInputRunsProgram() throws Exception {
++        Path go = writeTempGo("hello.go", HELLO_PROG);
++        Path wire = emitWire(go);
++        // The artifact's argv: --wire-input=<file> -- <argv0> [user args].
++        RunResult r = runMain(new String[] {
++            "--wire-input=" + wire, "--", "/tmp/fake-artifact"});
++        assertTrue(r.exit() == 0,
++                "expected exit 0, got " + r.exit() + "; stderr: " + r.stderr());
++        assertTrue(r.stdout().isEmpty(),
++                "expected empty stdout (println goes to stderr), got <" + r.stdout() + ">");
++        assertTrue(r.stderr().contains("hello real-backend\n"),
++                "expected stderr to contain 'hello real-backend', got <" + r.stderr() + ">");
++    }
++
++    /**
++     * verifies: NEW-P0-1 — in --wire-input mode the first token after "--"
++     * is the program's argv[0] and the rest are its arguments (os.Args),
++     * not input files. Failed before the fix with the "--wire-input cannot
++     * be combined with input files" rejection.
++     */
++    public void testWireInputForwardsArgv() throws Exception {
++        Path go = writeTempGo("args.go", ARGS_PROG);
++        Path wire = emitWire(go);
++        RunResult r = runMain(new String[] {
++            "--wire-input=" + wire, "--", "/tmp/fake-artifact", "hello", "world"});
++        assertTrue(r.exit() == 0,
++                "expected exit 0, got " + r.exit() + "; stderr: " + r.stderr());
++        String expected = "/tmp/fake-artifact\nhello\nworld\n";
++        assertTrue(r.stderr().equals(expected),
++                "expected os.Args lines <" + expected + ">, got <" + r.stderr() + ">");
++    }
++}
