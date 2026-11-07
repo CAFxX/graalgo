@@ -1,0 +1,78 @@
+--- a/cmd/graalgo/commands.go
++++ b/cmd/graalgo/commands.go
+@@ -261,13 +261,23 @@
+ 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+ 		return 1
+ 	}
+-	failed := false
+-	for _, f := range files {
+-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+-			failed = true
+-		}
+-	}
+-	if failed {
++	// Frontend gate: check each package's files together in one
++	// --check invocation, like cmdRun/cmdBuild. gofrontend type-checks
++	// the files it is given as one package (internal/frontend/main.go:
++	// "All files must declare the same package. They are type-checked
++	// together"), so checking file-by-file false-fails on cross-file
++	// references (R-1107-02): a file using a sibling file's declaration
++	// fails the --check stage before the analyzers ever run.
++	// Files are grouped by directory — one Go package per directory —
++	// so `graalgo vet dirA dirB` still checks each package separately
++	// instead of failing on the package-name mismatch. _test.go files
++	// are excluded from the gate, like cmdRun/cmdBuild exclude them
++	// from the build: an external test package declares a different
++	// package name and cannot be type-checked together with the
++	// package, and the frontend cannot resolve the package-under-test
++	// import. Test files are still parsed and analyzed by vet.Run
++	// below.
++	if checkPackages(root, files) {
+ 		return 1
+ 	}
+ 	// Run the analyzers over all files as one package.
+@@ -286,6 +296,44 @@
+ 	return 0
+ }
+ 
++// checkPackages runs the frontend --check gate once per package
++// directory over that directory's non-test files. It returns true if
++// any package failed the check. All packages are attempted even after
++// a failure, so one bad package does not hide another's diagnostics.
++//
++// Grouping is by directory because Go puts one package per directory;
++// files passed explicitly (possibly from several directories) are
++// grouped the same way. Within a group, files are de-duplicated so a
++// file named twice is checked once instead of failing on duplicate
++// declarations.
++func checkPackages(root string, files []string) bool {
++	groups := make(map[string][]string)
++	seen := make(map[string]bool)
++	var order []string
++	for _, f := range files {
++		if strings.HasSuffix(f, "_test.go") {
++			continue
++		}
++		if seen[f] {
++			continue
++		}
++		seen[f] = true
++		dir := filepath.Dir(f)
++		if _, ok := groups[dir]; !ok {
++			order = append(order, dir)
++		}
++		groups[dir] = append(groups[dir], f)
++	}
++	failed := false
++	for _, dir := range order {
++		pkgFiles := groups[dir]
++		if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
++			failed = true
++		}
++	}
++	return failed
++}
++
+ // cmdFmt implements `graalgo fmt [packages]`.
+ //
+ // Formats the Go source files using gofmt from the stock toolchain.
