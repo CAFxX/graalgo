@@ -1,0 +1,162 @@
+--- a/test/e2e/run_module.sh
++++ b/test/e2e/run_module.sh
+@@ -8,35 +8,63 @@
+ #   byte-identical stdout and equal exit codes. Panic programs: the first
+ #   stderr line is compared (wave3 convention).
+ #
++# Backend (rewired 2026-11-07, REVIEW-2026-11-07-22 R-13): the graalgo leg
++# runs through internal/backend/graalgo-sync-run (the P3SyncMain product
++# launcher), which owns the JVM invocation and the classpath
++# (interop/runtime/truffle out/classes + truffle/lib jars). The
++# pre-restructure phases/phase{1,2,3} layout this script used to build by
++# hand no longer exists; the old script built a garbage classpath from it
++# (ls of a nonexistent lib/ failed) and failed all 8 uuid cases that way.
++# Prerequisites, checked fail-fast below (exit 2):
++#   `make build`    at the repo root (backend classes)
++#   `make generate` at the repo root (internal/frontend/gofrontend binary)
++#
+ # Environment (set by caller or defaults):
+-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
+-#   GO        gc toolchain (default ~/tools/go/bin/go)
+-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
+-#   TMPDIR    scratch (default <probe-dir>/.tmp, created)
++#   GR               repo root (default: derived from this script's location;
++#                    override to point at another tree)
++#   GRAALGO_SYNC_RUN product launcher (default $GR/internal/backend/graalgo-sync-run)
++#   GO             gc toolchain (default ~/tools/go/bin/go)
++#   GRAALVM_HOME   GraalVM JDK for the launcher (default ~/tools/graalvm-jdk-25)
++#   TMPDIR         scratch (default <probe-dir>/.tmp, created; gitignored)
++#
++# NOTE: the gc leg runs with GOFLAGS=-mod=mod; on first run it writes the
++# probe's go.sum next to go.mod (commit it — it pins the module for the
++# hermetic offline build). Third-party imports on the graalgo leg resolve
++# from the local module cache via the frontend's disk importer (WS G);
++# go.mod pins the version for the gc leg.
+ #
+ # Exit: 0 iff every case passes every leg. Prints a per-case table.
++# Exit 2: harness/precondition failure (launcher, backend, gofrontend, or
++# gc toolchain missing; probe dir missing) — never a silent pass.
+ set -uo pipefail
+ 
+-PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
+-shift
+-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++GR="${GR:-$(cd -- "$SCRIPT_DIR/../.." && pwd)}"
+ GO="${GO:-$HOME/tools/go/bin/go}"
+-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
+-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
++GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
++GRAALGO_SYNC_RUN="${GRAALGO_SYNC_RUN:-$GR/internal/backend/graalgo-sync-run}"
++GOFRONTEND="${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}"
++
++PROBE_DIR_ARG="${1:?usage: run_module.sh <probe-dir> [case...]}"
++shift
++[ -d "$PROBE_DIR_ARG" ] || { echo "run_module.sh: probe dir not found: $PROBE_DIR_ARG" >&2; exit 2; }
++PROBE_DIR="$(cd -- "$PROBE_DIR_ARG" && pwd)"
++
++# Fail fast on a missing backend/launcher (exit 2): a missing launcher must
++# never degrade into per-case graalgo-leg failures that look like program
++# divergences. Same fail-fast pattern as test/differential/run.sh and the
++# p3frontend differential tests (graalgoRun).
++[ -x "$GO" ] || { echo "run_module.sh: gc toolchain not executable: $GO (set GO)" >&2; exit 2; }
++[ -x "$GRAALVM_HOME/bin/java" ] || { echo "run_module.sh: GraalVM java not executable: $GRAALVM_HOME/bin/java (set GRAALVM_HOME)" >&2; exit 2; }
++[ -x "$GRAALGO_SYNC_RUN" ] || { echo "run_module.sh: $GRAALGO_SYNC_RUN missing/not executable" >&2; exit 2; }
++[ -f "$GR/internal/backend/interop/out/classes/graalgo/p3sync/launcher/P3SyncMain.class" ] || { echo "run_module.sh: backend not built; run 'make build' at the repo root first (missing P3SyncMain.class)" >&2; exit 2; }
++[ -x "$GOFRONTEND" ] || { echo "run_module.sh: gofrontend not built; run 'make generate' at the repo root first (missing $GOFRONTEND; or set GRAALGO_GOFRONTEND)" >&2; exit 2; }
++
+ TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
+ export TMPDIR
+ mkdir -p "$TMPDIR"
+ export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
+ 
+-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
+-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
+-    graalgo.p3sync.launcher.P3SyncMain )
+-# gofrontend: prefer the worktree build, else PATH.
+-if [ -x "$P1/frontend/gofrontend" ]; then
+-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
+-fi
+-
+ filter_stderr() { grep -v '^WARNING: ' || true; }
+ 
+ if [ $# -gt 0 ]; then
+@@ -58,9 +86,11 @@
+         || { rows+=("FAIL $c [gc build failed]"); fail=$((fail+1)); continue; }
+     "$TMPDIR/$c.gcbin" > "$TMPDIR/$c.gc.out" 2> "$TMPDIR/$c.gc.err"
+     gc_exit=$?
+-    # graalgo legs
++    # graalgo legs (product launcher; --gmp is forwarded to P3SyncMain).
++    # The launcher owns the classpath and resolves gofrontend via
++    # GRAALGO_GOFRONTEND / internal/frontend/gofrontend (ToolPaths).
+     for gmp in 1 4; do
+-        "${GRAALGO_RUN[@]}" --gmp="$gmp" "$casedir/main.go" \
++        "$GRAALGO_SYNC_RUN" --gmp="$gmp" "$casedir/main.go" \
+             > "$TMPDIR/$c.gr$gmp.out" 2> "$TMPDIR/$c.gr$gmp.err"
+         eval "gr${gmp}_exit=$?"
+     done
+--- a/Makefile
++++ b/Makefile
+@@ -45,7 +45,8 @@
+ # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
+ #   `make test` — the full differential suite (phase1 graalgo.test.Runner,
+ #   phase2 SchedTestRunner, phase3 IfaceTestRunner, plus the wave1-3
+-#   corpus differentials). It takes 30+ minutes and runs in local
++#   corpus differentials and the test/e2e published-module probes).
++#   It takes 30+ minutes and runs in local
+ #   verification and nightly runs, not per-push. Invoke it explicitly.
+ #
+ 
+@@ -108,7 +109,7 @@
+ 
+ GO ?= $(HOME)/tools/go/bin/go
+ 
+-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
++.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test test-e2e clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+ 
+ all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+ 
+@@ -242,6 +243,22 @@
+ 	$(MAKE) -C internal/backend/truffle test
+ 	$(MAKE) -C internal/backend/runtime test
+ 	$(MAKE) -C internal/backend/interop test
++	$(MAKE) test-e2e
++
++# End-to-end module probes ([test/e2e/](test/e2e/)): real published Go
++# modules (github.com/google/uuid) compiled as-published, gc vs graalgo.
++# Needs the backend (`build`) and gofrontend (`generate`); the runner
++# ([test/e2e/run_module.sh](test/e2e/run_module.sh)) fails fast (exit 2)
++# when either is missing. In `test` (hence the weekly full-suite CI job),
++# not in `all`/per-push CI: the JVM legs are slow.
++# /tmp is a 512M shared tmpfs: keep the JVM and driver temp files on the
++# persistent disk (same pattern as test-regression). test/e2e/.tmp is
++# gitignored.
++E2E_TMP := $(CURDIR)/test/e2e/.tmp
++test-e2e: generate build
++	mkdir -p $(E2E_TMP) && \
++	export TMPDIR="$(E2E_TMP)" GOTMPDIR="$(E2E_TMP)"; \
++	./test/e2e/run_module.sh $(CURDIR)/test/e2e/uuid
+ 
+ # Behavior snapshots (M10 WS I): graalgo's observable behavior on the
+ # differential corpus ([test/differential/corpus/](test/differential/corpus/)),
+--- a/test/e2e/README.md
++++ b/test/e2e/README.md
+@@ -18,7 +18,13 @@
+ 
+ ## Status
+ 
+-`run_module.sh` still targets the pre-restructure backend layout
+-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
+-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
+-before it runs again — see the driver-hardening lane.
++`run_module.sh` runs the graalgo leg through
++[internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run)
++(the P3SyncMain product launcher; rewired 2026-11-07, REVIEW-2026-11-07-22
++R-13). It is wired into the full suite via `make test-e2e` (also run by
++`make test`, hence the weekly full-suite CI job — not per-push CI, the JVM
++legs are slow). Prerequisites: `make build` (backend classes) + `make
++generate` (gofrontend binary); the runner fails fast (exit 2) when either
++is missing. The gc leg runs with `GOFLAGS=-mod=mod` and writes the probe's
++`go.sum` next to `go.mod` on first run; commit it — it pins the module for
++the hermetic offline build.
