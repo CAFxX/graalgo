@@ -336,6 +336,15 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: type error in %q: %w", importPath, err)
 	}
+	// R-1107-03: eta-expand `var x = time.Now` (stdlib time only) AFTER
+	// type-checking, resolved through info — never on identifier
+	// spelling. Gated on len(mrSpecs) > 0 to preserve the historical
+	// trigger scope: the expansion previously ran inside
+	// transformDiskMultiResult, which early-returns for packages without
+	// multi-result functions.
+	if len(mrSpecs) > 0 {
+		etaExpandTimeNowValues(files, info, pkg)
+	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result (e.g. path/filepath's `var lstat = os.Lstat`).
 	// For package-level vars, records aliases instead of expanding.

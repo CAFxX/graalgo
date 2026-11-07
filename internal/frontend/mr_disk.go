@@ -226,44 +226,6 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 		}
 	}
-	// Eta-expand intrinsic values: var x = time.Now -> var x = func() time.Time { return time.Now() }.
-	// This is a general fix for intrinsics used in value position (M5 limitation).
-	// Currently handles time.Now; extend as needed.
-	for _, f := range files {
-		ast.Inspect(f, func(n ast.Node) bool {
-			vs, ok := n.(*ast.ValueSpec)
-			if !ok || len(vs.Values) != 1 {
-				return true
-			}
-			sel, ok := vs.Values[0].(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Now" {
-				return true
-			}
-			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" {
-				// Rewrite to func lit.
-				vs.Values[0] = &ast.FuncLit{
-					Type: &ast.FuncType{
-						Params: &ast.FieldList{},
-						Results: &ast.FieldList{
-							List: []*ast.Field{
-								{Type: &ast.SelectorExpr{X: ast.NewIdent("time"), Sel: ast.NewIdent("Time")}},
-							},
-						},
-					},
-					Body: &ast.BlockStmt{
-						List: []ast.Stmt{
-							&ast.ReturnStmt{
-								Results: []ast.Expr{
-									&ast.CallExpr{Fun: sel},
-								},
-							},
-						},
-					},
-				}
-			}
-			return true
-		})
-	}
 	// GAP-GENERIC-MR: index the package-level specs by name for the
 	// hoists below (shared by both).
 	specByName := map[string]*diskMRSpec{}
@@ -386,6 +348,69 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		}
 	}
 	return specs
+}
+
+// etaExpandTimeNowValues rewrites `var x = time.Now` (and its function-
+// local equivalents) to `var x = func() time.Time { return time.Now() }`,
+// the general fix for intrinsics used in value position (M5 limitation).
+//
+// It MUST run after type-checking: the rewrite is keyed on the RESOLVED
+// object (R-1107-03), not the identifier spelling. The pre-check spelling
+// match (`pkg.Name == "time"`) wrongly rewrote an aliased import named
+// `time` (`import time "example.com/x"`) or a package-level variable named
+// `time` with a `Now` method, and then failed type-check on valid Go code.
+// The resolved-object rule matches the codebase rule at export.go
+// (runtimeStackMethod, R2-P2-9: "discriminate on the resolved object, not
+// the identifier spelling") and the sibling mrdesugar_m5.go switch, which
+// keys on pn.Imported().Path().
+//
+// The wrapper is built by etaExpandSelector (mrdesugar_m5.go), which
+// registers the fresh signature in info.Types[funcType] — exportFuncLit
+// reads the literal's signature from there, never from the syntax — and
+// reuses the original selector as the inner call's Fun, so its existing
+// info entries classify the call.
+func etaExpandTimeNowValues(files []*ast.File, info *types.Info, pkg *types.Package) {
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			vs, ok := n.(*ast.ValueSpec)
+			if !ok || len(vs.Values) != 1 {
+				return true
+			}
+			sel, ok := vs.Values[0].(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Now" {
+				return true
+			}
+			// Resolve sel.X through type info: only the stdlib time
+			// package qualifies. Anything else bound to the name — an
+			// aliased import from another path, a package-level or
+			// local variable, a parameter — passes through unrewritten.
+			xIdent, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			pn, ok := info.Uses[xIdent].(*types.PkgName)
+			if !ok || pn.Imported().Path() != "time" {
+				return true
+			}
+			// A method value carries a Selection; a package-level func
+			// does not. (A var named time with a Now method is already
+			// excluded by the PkgName check above; this is belt and
+			// braces against selector forms that resolve to methods.)
+			if _, isSel := info.Selections[sel]; isSel {
+				return true
+			}
+			fn, ok := info.Uses[sel.Sel].(*types.Func)
+			if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "time" || fn.Name() != "Now" {
+				return true
+			}
+			sig, ok := fn.Type().(*types.Signature)
+			if !ok {
+				return true
+			}
+			vs.Values[0] = etaExpandSelector(sel, sig, info, pkg)
+			return true
+		})
+	}
 }
 
 // mrLinknameSymbol returns the backend symbol for a body-less
