@@ -1,0 +1,88 @@
+diff --git a/docs/arch/frontend-v1.md b/docs/arch/frontend-v1.md
+index 2a22e01..0e10a7f 100644
+--- a/docs/arch/frontend-v1.md
++++ b/docs/arch/frontend-v1.md
+@@ -57,6 +57,16 @@ as `createSection(line, col, len)` (Truffle is char-based, so the wire is too;
+ byte-based values crashed it with "charIndex out of range" on non-ASCII
+ sources — M8 fuzzer find, fixed).
+ 
++Synthesized nodes have no source position (`token.NoPos`): the exporter emits
++a defined synthetic position instead of arithmetic on it (R-1107-04). A node
++with no valid start carries `{ "file": 0, "line": 1, "col": 1, "off": 0,
++"len": 0 }`; a node with a valid start but no usable end (end missing, before
++the start, or in a different file — e.g. a disk-MR `__`-helper's synthetic
++`FuncType`, whose start falls through to the shared original params while its
++end falls through to a synthetic ident) carries a zero-length section at its
++real start. Every emitted `pos` therefore satisfies `line >= 1` and
++`len >= 0`, which `tools/validate_frontend_v1.py` (`check_pos`) enforces.
++
+ ## 4. Type table
+ 
+ `types[i]` serializes one `go/types` type exactly once; expressions reference
+diff --git a/internal/frontend/build.sh b/internal/frontend/build.sh
+index 931edac..5272d52 100755
+--- a/internal/frontend/build.sh
++++ b/internal/frontend/build.sh
+@@ -60,14 +60,18 @@ case "${1:-build}" in
+     # Validate every checked-in golden document plus a fresh export of
+     # each valid testdata program — not only straight01.go (the goldens
+     # exercise defer/go/nil/method values/atomic/unsafe kinds).
+-    # pkgvar_mrarg is excluded: its golden fails validation on 104
+-    # synthetic-position errors (line 0 / negative len in the __-helper
+-    # funcs) — a pre-existing exporter position bug, not a kind error
+-    # (zero unknown-kind errors); tracked as a follow-up, not papered
+-    # over by weakening check_pos.
+     for golden in testdata/*.json; do
+       python3 tools/validate_frontend_v1.py "$golden" || exit 1
+     done
++    # Compressed goldens (.json.gz) are validated the same way, via a
++    # decompressed temp copy (R-1107-04: pkgvar_mrarg's golden used to be
++    # excluded here — its 104 synthetic-position errors are fixed in the
++    # exporter, so it is checked like every other golden).
++    for gz in testdata/*.json.gz; do
++      base=$(basename "$gz" .json.gz)
++      gzip -dc "$gz" > "${TMPDIR:-/tmp}/v1-golden-$base.json"
++      python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-golden-$base.json" || exit 1
++    done
+     for src in testdata/straight01.go testdata/straight02.go \
+                testdata/methodvalue01.go testdata/timeintr_value.go \
+                testdata/mr_return_named.go; do
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index f1759ab..906fcf8 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -3329,6 +3329,34 @@ func (e *exporter) pos(n ast.Node) *Pos {
+ 			src = b
+ 		}
+ 	}
++	// R-1107-04: synthesized nodes carry token.NoPos, and the disk-MR
++	// transform builds chimeric FuncTypes whose Pos() falls through to a
++	// shared original sub-node (e.g. the params' `(` in bounds.go) while
++	// End() falls through to a synthetic pair-type ident (a bare fset
++	// offset). Blindly emitting End()-Pos() then produced line 0 and
++	// negative lengths — 104 invalid positions in the __-helper funcs of
++	// the pkgvar_mrarg golden. The wire format requires line >= 1 and
++	// len >= 0 (check_pos), so an unusable endpoint must fall back to a
++	// defined synthetic position instead of arithmetic on NoPos:
++	//   - no valid start at all: file 0, line 1, col 1, zero length;
++	//   - valid start but unusable end (NoPos, before the start, or in a
++	//     different file, so End-Pos is meaningless): zero-length section
++	//     at the real start (col recomputed in runes, same M8 rule as
++	//     below, so a non-ASCII line cannot push the section start past
++	//     the line's char length).
++	if !s.IsValid() {
++		return &Pos{File: 0, Line: 1, Col: 1, Off: 0, Len: 0}
++	}
++	if !t.IsValid() || t.Offset < s.Offset || e.fset.File(n.Pos()) != e.fset.File(n.End()) {
++		if src != nil {
++			if f := e.fset.File(n.Pos()); f != nil {
++				if lo := f.Offset(f.LineStart(s.Line)); lo <= s.Offset && s.Offset <= len(src) {
++					col = utf8.RuneCount(src[lo:s.Offset]) + 1
++				}
++			}
++		}
++		return &Pos{File: fileIdx, Line: s.Line, Col: col, Off: s.Offset, Len: 0}
++	}
+ 	// M8: Truffle Source.createSection(line, col, len) is char-based, but
+ 	// go/token positions are byte-based. For non-ASCII sources the byte
+ 	// length can exceed the char length, and createSection throws
