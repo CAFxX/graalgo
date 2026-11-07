@@ -1,0 +1,600 @@
+diff --git a/internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java b/internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java
+index 570e2df..6ff967d 100644
+--- a/internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java
++++ b/internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java
+@@ -793,7 +793,7 @@ public final class LinknameIntrinsics {
+     }
+ 
+     /**
+-     * Registers the 11 {@code graalgo.tls.*} intrinsics implemented by
++     * Registers the 12 {@code graalgo.tls.*} intrinsics implemented by
+      * {@link TlsRuntime} (P3-M9 tier-5, SSLEngine delegation). The Go side
+      * (synth_crypto_tls.go) drives the handshake state machine; these traps
+      * only implement the cryptographic operations. Engine handles are longs
+@@ -815,6 +815,8 @@ public final class LinknameIntrinsics {
+                 args -> TlsRuntime.wrap(args[0], args[1]), 2);
+         Linknames.register("graalgo.tls.unwrap",
+                 args -> TlsRuntime.unwrap(args[0], args[1]), 2);
++        Linknames.register("graalgo.tls.unwrapError",
++                args -> TlsRuntime.unwrapError(args[0]), 1);
+         Linknames.register("graalgo.tls.hasPending",
+                 args -> TlsRuntime.hasPending(args[0]), 1);
+         Linknames.register("graalgo.tls.runTasks",
+diff --git a/internal/backend/interop/src/main/java/graalgo/p3tls/TlsRuntime.java b/internal/backend/interop/src/main/java/graalgo/p3tls/TlsRuntime.java
+index b43b9a7..ad1e3f9 100644
+--- a/internal/backend/interop/src/main/java/graalgo/p3tls/TlsRuntime.java
++++ b/internal/backend/interop/src/main/java/graalgo/p3tls/TlsRuntime.java
+@@ -78,6 +78,18 @@ public final class TlsRuntime {
+     private static final ConcurrentHashMap<Long, byte[]> PENDING =
+             new ConcurrentHashMap<>();
+ 
++    /**
++     * Last unwrap failure per engine, as {@code String.valueOf(exception)}.
++     * Set by {@link #unwrap} when the engine throws; cleared at the start
++     * of every unwrap() call (so it always describes the most recent call)
++     * and when the engine is closed. Read by {@link #unwrapError}.
++     * A null return from unwrap() with no entry here is a clean close.
++     * (B-01: without this, unwrap()'s null is ambiguous — clean close
++     * and failure are indistinguishable to the Go side.)
++     */
++    private static final ConcurrentHashMap<Long, String> UNWRAP_ERRORS =
++            new ConcurrentHashMap<>();
++
+     private static final int APP_BUF = 17 * 1024;
+     private static final int NET_BUF = 17 * 1024;
+ 
+@@ -526,7 +538,13 @@ public final class TlsRuntime {
+ 
+     /**
+      * Unwraps TLS records into application data.
+-     * Returns app bytes (may be empty); null if the peer closed or on error.
++     * Returns app bytes (may be empty); null if the peer closed cleanly
++     * (close_notify) or if the unwrap failed. The two null cases are
++     * distinguished by {@link #unwrapError}: null there means a clean
++     * close; non-null means the most recent unwrap() call on this engine
++     * threw (corrupt record, fatal alert, ...). Callers MUST consult
++     * unwrapError() on a null return — treating every null as a clean
++     * close silently turns TLS failures into io.EOF (B-01).
+      * graalgo.tls.unwrap(handle, netData) -> appdata | null
+      */
+     public static Object unwrap(Object handleArg, Object netDataArg) {
+@@ -536,6 +554,10 @@ public final class TlsRuntime {
+             return null;
+         }
+         try {
++            // This call's error, if any, replaces any earlier one: a null
++            // return below is either this call's failure (recorded) or a
++            // clean close (nothing recorded).
++            UNWRAP_ERRORS.remove(handle);
+             byte[] netData = bytes(netDataArg);
+             // Prepend any unconsumed bytes from the previous call: the
+             // engine must see the peer's bytes in order, with none lost.
+@@ -610,8 +632,30 @@ public final class TlsRuntime {
+             byte[] result = out.toByteArray();
+             return toGoBytes(result);
+         } catch (Exception e) {
++            // Distinguish failure from clean close (B-01): a null return
++            // alone cannot tell the Go side whether the peer closed or
++            // the record was corrupt / a fatal alert arrived. Record the
++            // failure so unwrapError() can report it; a clean close
++            // (Status.CLOSED, no exception) records nothing.
++            UNWRAP_ERRORS.put(handle, String.valueOf(e));
++            return null;
++        }
++    }
++
++    /**
++     * Error recorded by the most recent {@link #unwrap} call on this engine.
++     * Returns the exception (as UTF-8 bytes) if that call threw, or null if
++     * it did not fail — including a clean close_notify close, which returns
++     * null from unwrap() with no error recorded. The error belongs to the
++     * most recent unwrap() call: each unwrap() clears it on entry.
++     * graalgo.tls.unwrapError(handle) -> bytes | null
++     */
++    public static Object unwrapError(Object handleArg) {
++        String msg = UNWRAP_ERRORS.get(num(handleArg));
++        if (msg == null) {
+             return null;
+         }
++        return toGoBytes(msg.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+     }
+ 
+     /**
+@@ -780,6 +824,7 @@ public final class TlsRuntime {
+         long handle = num(handleArg);
+         SSLEngine engine = ENGINES.remove(handle);
+         PENDING.remove(handle);
++        UNWRAP_ERRORS.remove(handle);
+         if (engine != null) {
+             try {
+                 engine.closeInbound();
+diff --git a/internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java b/internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java
+index 6f76059..fe812a1 100644
+--- a/internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java
++++ b/internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java
+@@ -35,6 +35,9 @@ public final class IfaceTestRunner {
+         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
+         TESTS.add(graalgo.p3net.GoNetpollTest.class);
++        // REVIEW-2026-11-07-22 B-01: unwrap error channel — a null unwrap()
++        // must be distinguishable as clean close vs. failure.
++        TESTS.add(graalgo.p3tls.TlsUnwrapErrorTest.class);
+         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
+         // (fix-redmaster-r52: the FmtStateItabTest registration is removed
+         // — the test class itself was deleted by the real-fmt2 removal
+diff --git a/internal/backend/interop/src/test/java/graalgo/p3tls/TlsUnwrapErrorTest.java b/internal/backend/interop/src/test/java/graalgo/p3tls/TlsUnwrapErrorTest.java
+new file mode 100644
+index 0000000..2b9c297
+--- /dev/null
++++ b/internal/backend/interop/src/test/java/graalgo/p3tls/TlsUnwrapErrorTest.java
+@@ -0,0 +1,109 @@
++package graalgo.p3tls;
++
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++
++import graalgo.values.GoSlice;
++import graalgo.values.GoString;
++
++/**
++ * Unit tests for the B-01 unwrap error channel ({@link TlsRuntime#unwrap}
++ * + {@link TlsRuntime#unwrapError}): a null unwrap() return is ambiguous
++ * (clean close vs. failure), and unwrapError() is what tells them apart.
++ *
++ * <p>Priming matters: a fresh client engine is in NEED_WRAP, and in that
++ * state SSLEngine.unwrap() ignores inbound bytes entirely (OK, 0 consumed,
++ * 0 produced — verified against GraalVM JDK 25.0.4). The engine only
++ * parses records once it is in NEED_UNWRAP, i.e. after beginHandshake()
++ * + wrap() have produced the ClientHello. Feeding garbage to an unprimed
++ * engine returns an empty non-null slice and records no error — so a test
++ * that skips the priming step cannot reproduce B-01 at all.
++ *
++ * <p>The clean-close leg (close_notify -> null unwrap + null error) is NOT
++ * covered here: a close_notify received before the handshake completes
++ * throws SSLProtocolException ("Received close_notify during handshake"),
++ * so a genuine clean close is only observable post-handshake, which needs
++ * a server certificate this test does not have. That leg is covered by
++ * the Go regression test test/regression/tls-unwrap-error (real certs,
++ * real close_notify, asserts io.EOF is still returned).
++ */
++public final class TlsUnwrapErrorTest {
++    private static GoSlice slice(byte[] b) {
++        return new GoSlice(b, 0, b.length, b.length);
++    }
++
++    private static GoSlice emptySlice() {
++        return new GoSlice(new byte[0], 0, 0, 0);
++    }
++
++    private static long clientEngine() {
++        return TlsRuntime.newClientEngine(GoString.EMPTY, Long.valueOf(0),
++                Long.valueOf(0), Long.valueOf(0), emptySlice());
++    }
++
++    private static String errString(Object r) {
++        if (r == null) {
++            return null;
++        }
++        GoSlice s = (GoSlice) r;
++        byte[] arr = (byte[]) s.array();
++        return new String(arr, s.offset(), s.len(), StandardCharsets.UTF_8);
++    }
++
++    private static void check(boolean cond, String msg) {
++        if (!cond) {
++            throw new AssertionError(msg);
++        }
++    }
++
++    /** A corrupt record must yield null unwrap + a non-null recorded error. */
++    public void testCorruptRecordReportsError() {
++        long h = clientEngine();
++        try {
++            check(TlsRuntime.beginHandshake(Long.valueOf(h)) == 0,
++                    "beginHandshake failed");
++            // Prime the engine to NEED_UNWRAP: produce the ClientHello.
++            Object flight = TlsRuntime.wrap(Long.valueOf(h), emptySlice());
++            check(flight != null, "wrap produced null (no ClientHello)");
++
++            byte[] garbage = new byte[32];
++            Arrays.fill(garbage, (byte) 0xFF);
++            Object out = TlsRuntime.unwrap(Long.valueOf(h), slice(garbage));
++            check(out == null,
++                    "unwrap(corrupt record) = non-null, want null");
++            String err = errString(TlsRuntime.unwrapError(Long.valueOf(h)));
++            check(err != null,
++                    "unwrapError() = null after corrupt record (B-01: "
++                    + "failure indistinguishable from clean close)");
++            check(err.contains("Unrecognized SSL message"),
++                    "unwrapError() = " + err
++                    + ", want it to contain 'Unrecognized SSL message'");
++        } finally {
++            TlsRuntime.close(Long.valueOf(h));
++        }
++        // No cross-engine contamination: a fresh engine reports no error.
++        long h2 = clientEngine();
++        try {
++            check(errString(TlsRuntime.unwrapError(Long.valueOf(h2))) == null,
++                    "fresh engine reports a stale unwrap error");
++        } finally {
++            TlsRuntime.close(Long.valueOf(h2));
++        }
++    }
++
++    /** No error is recorded before any unwrap call, or after a clean one. */
++    public void testNoErrorBeforeAnyUnwrap() {
++        long h = clientEngine();
++        try {
++            check(errString(TlsRuntime.unwrapError(Long.valueOf(h))) == null,
++                    "fresh engine reports an error before any unwrap");
++            Object out = TlsRuntime.unwrap(Long.valueOf(h), emptySlice());
++            check(out != null,
++                    "unwrap(empty input) = null, want empty non-null slice");
++            check(errString(TlsRuntime.unwrapError(Long.valueOf(h))) == null,
++                    "error recorded after a successful (empty) unwrap");
++        } finally {
++            TlsRuntime.close(Long.valueOf(h));
++        }
++    }
++}
+diff --git a/internal/frontend/synth_crypto_tls.go b/internal/frontend/synth_crypto_tls.go
+index 2cf4359..d2bb345 100644
+--- a/internal/frontend/synth_crypto_tls.go
++++ b/internal/frontend/synth_crypto_tls.go
+@@ -698,6 +698,9 @@ func wrapTrap(engineHandle int64, plaintext []byte) []byte
+ //go:linkname unwrapTrap graalgo.tls.unwrap
+ func unwrapTrap(engineHandle int64, netData []byte) []byte
+ 
++//go:linkname unwrapErrorTrap graalgo.tls.unwrapError
++func unwrapErrorTrap(engineHandle int64) []byte
++
+ //go:linkname hasPendingTrap graalgo.tls.hasPending
+ func hasPendingTrap(engineHandle int64) int64
+ 
+@@ -795,7 +798,12 @@ func (c *Conn) Handshake() error {
+ 			// first — do NOT block on a network read when there is
+ 			// already input waiting, or the handshake deadlocks.
+ 			if hasPendingTrap(c.engineHandle) != 0 {
+-				_ = unwrapTrap(c.engineHandle, nil)
++				if unwrapTrap(c.engineHandle, nil) == nil {
++					if err := c.unwrapErr(); err != nil {
++						return err
++					}
++					return io.EOF
++				}
+ 				continue
+ 			}
+ 			n, err := c.conn.Read(tmp)
+@@ -805,7 +813,12 @@ func (c *Conn) Handshake() error {
+ 			if n == 0 {
+ 				continue
+ 			}
+-			_ = unwrapTrap(c.engineHandle, tmp[:n])
++			if unwrapTrap(c.engineHandle, tmp[:n]) == nil {
++				if err := c.unwrapErr(); err != nil {
++					return err
++				}
++				return io.EOF
++			}
+ 		case engineNeedTask:
+ 			runTasksTrap(c.engineHandle)
+ 		default:
+@@ -884,6 +897,19 @@ type __tlsConnReadPair struct {
+ 	err error
+ }
+ 
++// unwrapErr returns the error recorded by the most recent unwrapTrap call
++// on this connection's engine, or nil if that call did not fail. A nil
++// unwrapTrap result is ambiguous on its own (clean close vs. failure);
++// the Java side records the failure, and this accessor is how the Go side
++// tells them apart (B-01). Consult it only immediately after an
++// unwrapTrap call returned nil.
++func (c *Conn) unwrapErr() error {
++	if msg := unwrapErrorTrap(c.engineHandle); msg != nil {
++		return errors.New("tls: unwrap failed: " + string(msg))
++	}
++	return nil
++}
++
+ func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
+ 	if c.engineHandle == 0 {
+ 		return __tlsConnReadPair{0, errors.New("tls: nil engine")}
+@@ -899,6 +925,13 @@ func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
+ 		}
+ 		app := unwrapTrap(c.engineHandle, tmp[:n])
+ 		if app == nil {
++			// A nil unwrap is a clean close (io.EOF) ONLY when the
++			// engine recorded no failure; a corrupt record or fatal
++			// alert also yields nil and must surface as an error
++			// (B-01: pre-fix this always returned io.EOF).
++			if err := c.unwrapErr(); err != nil {
++				return __tlsConnReadPair{0, err}
++			}
+ 			return __tlsConnReadPair{0, io.EOF}
+ 		}
+ 		if len(app) == 0 {
+diff --git a/test/regression/tls-unwrap-error/mismatch_test.go b/test/regression/tls-unwrap-error/mismatch_test.go
+new file mode 100644
+index 0000000..099b500
+--- /dev/null
++++ b/test/regression/tls-unwrap-error/mismatch_test.go
+@@ -0,0 +1,279 @@
++// Regression test for REVIEW-2026-11-07-22 B-01 (P1, carried from
++// REVIEW-2026-11-07-07): TLS unwrap conflated errors with clean EOF.
++// TlsRuntime.unwrap() returns null both when the peer cleanly closes
++// (Status.CLOSED) and when the SSLEngine throws (corrupt record, fatal
++// alert), and __tlsConnRead mapped every nil unwrap to io.EOF — so a
++// mid-connection TLS failure surfaced to Go code as a clean EOF instead
++// of an error (gc returns the alert/decrypt error). The fix adds the
++// graalgo.tls.unwrapError trap: the Java side records the exception, and
++// the Go side consults it on a nil unwrap.
++//
++// TestCorruptRecordReadReturnsError corrupts one byte of the first
++// post-handshake application-data record (via a corrupting net.Conn on
++// the server side, armed only after BOTH handshakes complete, so the
++// corruption can only hit application data, never a handshake flight).
++// Pre-fix the server's Read returns io.EOF; post-fix it returns a
++// non-EOF error containing "unwrap failed".
++//
++// TestCleanCloseReadReturnsEOF is the other half of the contract: a
++// genuine close_notify must STILL read as io.EOF (the fix must not turn
++// clean closes into errors).
++//
++// Cert fixtures copied verbatim from test/regression/tls-wrap-hang
++// (themselves from test/corpus/wave3/crypto/tls/01_handshake.go).
++//
++// No in-test timeout is possible (timers do not fire under graalgo,
++// PKG-048): a reintroduced hang blocks this test until test-regression's
++// per-directory `timeout 600` kills it and fails the gate, the
++// established pattern for hang regressions.
++package tlsunwraperror
++
++import (
++	"crypto/tls"
++	"crypto/x509"
++	"encoding/pem"
++	"errors"
++	"io"
++	"net"
++	"strings"
++	"sync"
++	"testing"
++)
++
++const caPEM = `-----BEGIN CERTIFICATE-----
++MIIC8TCCAdmgAwIBAgIBATANBgkqhkiG9w0BAQsFADAaMRgwFgYDVQQDEw9ncmFh
++bGdvLXRlc3QtY2EwHhcNMjAwMTAxMDAwMDAwWhcNMzAwMTAxMDAwMDAwWjAaMRgw
++FgYDVQQDEw9ncmFhbGdvLXRlc3QtY2EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAw
++ggEKAoIBAQDs90AwLve5K+6JJm09i29+OvTr0RzhcLA3JaZD2+WkkBlRElaeWDpb
++mNHa/8eDygRjwtJEPPEDpkkNuEbmXgd8gnrGeMqOhRvyVqI4b0TdvtTn5o5DM6OR
++gjDXuXxaUgpE1pJU7/jEWFH/EFftiNmLO6+lt/drJKb5/l5nnHROK+p7g+gXDyf3
++L5x8c3RoSSFVaTAVQE1zc8puQcQu4NLBCs6+/6xtnSpNofUmTqUCQEpQx5a8f8hy
++tI18tCZVkRfT7RP95DS+Y9M9OW9RblQSiBAW5+DuQD7EexXNTnBoj4RpV/fRHP0x
++HRGcTj6wEC9G8LiwDLdMs1gwiLZO5anhAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIC
++hDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBQjW9fRc89jeQWJUkgdXjdiFTrF
++NDANBgkqhkiG9w0BAQsFAAOCAQEAO3neSSMLLgrsJp83UERZTlh4DLZl1/JxZMie
++2XHmiuqRpw5h1s0cwkFrINGsvi/SxivDGfn0BSEQtFlhsvkLenldphBPbl0YFrJz
++7JokPmLnDgAjk4CkAN/e93/TzpMFDN4Cij/QFeBVD2tT0YysP3ayZnEpzddqWtqt
++u/HaZgBkuUoHkNl06wuBtRJc12yF1oJLZOyvefjBCgccWk7AJocdMrEb5kmYcIX8
++ARGxHcItbk6jvN2cMqZPRaZxNq9P0ybNZVwZxQljw64t9hTjEXLjT3LtEjj1nR0g
++/3sutkp8bp+QXRCzuyExiTID2OEogdWT4iATG9dJJAxvbvALRQ==
++-----END CERTIFICATE-----`
++
++const srvPEM = `-----BEGIN CERTIFICATE-----
++MIIDGjCCAgKgAwIBAgIBAjANBgkqhkiG9w0BAQsFADAaMRgwFgYDVQQDEw9ncmFh
++bGdvLXRlc3QtY2EwHhcNMjAwMTAxMDAwMDAwWhcNMzAwMTAxMDAwMDAwWjAUMRIw
++EAYDVQQDEwlsb2NhbGhvc3QwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIB
++AQCt1dUUe3CCvA2lW3k9CTei512AP2p+IUEDuoaxyi+cEwEFQKtqE8/VS59lD3KB
++ZBc1Vls20uf3LmsMX/fI062SEZm+D1KQrGj4azDkUFbtGGGRV+ujmBdE6SBomWnb
++AJrF9CeAXIJT1QC/JUqydFXiZt/TUN6+h8pG8+Fb2tbDLGRV86ZlemW66Ro1W7jm
++uFQOvlbVdoas2DLWHLZU5RM7U0qtjshCEOt5kxXpayxRMm+ax3MGlogUkX4gwczM
++jB6msEQwuFs7rvog+shHysioF1Q6U/Q6fejSSm6IKTqrCf2RDUHDCXHyCMQ4DLBe
++lqmkI9v/SuW4124vRIqsAD3pAgMBAAGjcTBvMA4GA1UdDwEB/wQEAwIHgDATBgNV
++HSUEDDAKBggrBgEFBQcDATAfBgNVHSMEGDAWgBQjW9fRc89jeQWJUkgdXjdiFTrF
++NDAnBgNVHREEIDAegglsb2NhbGhvc3SCC2V4YW1wbGUuY29thwR/AAABMA0GCSqG
++SIb3DQEBCwUAA4IBAQCv149c0cHrbjaiJMnTrTKzloTMZVaqbcBIdmZDKbz0WFmn
++EXW3eQy4KCC5II3rdOf3jDAdE8LWP6yfshDrIoMy/Ze1r896u8yE/LlzDxyxjr+Q
++LYv4snQRJk72bAYeFAwpwLVulLYlZh29V+DNWL6a/+4VcStQLJ8adRA4RqtgMesp
++3mE+/POgpwCmz5kP1+rA1noaWh2PslS4k6Igvn60WsZ3vVCX37J9js6ML3Zxhadn
++nyvcveOSGnYVN3vN/ZqzUUFGRGZDkC0lEcSb6+qXZIQOVGfTT4j5PmQEfImfmpAX
++mS98pvkmVmYJJFgkLNz9bVYiKxbYq3leFurZFGUO
++-----END CERTIFICATE-----`
++
++const srvKeyPEM = `-----BEGIN RSA PRIVATE KEY-----
++MIIEogIBAAKCAQEArdXVFHtwgrwNpVt5PQk3ouddgD9qfiFBA7qGscovnBMBBUCr
++ahPP1UufZQ9ygWQXNVZbNtLn9y5rDF/3yNOtkhGZvg9SkKxo+Gsw5FBW7RhhkVfr
++o5gXROkgaJlp2wCaxfQngFyCU9UAvyVKsnRV4mbf01DevofKRvPhW9rWwyxkVfOm
++ZXpluukaNVu45rhUDr5W1XaGrNgy1hy2VOUTO1NKrY7IQhDreZMV6WssUTJvmsdz
++BpaIFJF+IMHMzIweprBEMLhbO676IPrIR8rIqBdUOlP0On3o0kpuiCk6qwn9kQ1B
++wwlx8gjEOAywXpappCPb/0rluNduL0SKrAA96QIDAQABAoIBAChrdIi3LRGQ9WFS
++FC4vgvrDblfAJxxd0hayW9hiKVDSkGWuxEy9f5FabJ0ciuTwJ39U7Y+hWaN9bRGr
++DNvq8ExrAEMToACYvi2pCuzDi3rEtQcNGPLojdyNkmYP6e+sw9AsdbTgjcM9X1eS
++rbwx1bh3cCrb/nbx7wQxd+CaUV5/BUyU36l9LShtpigsonjL0P0Ew+fm79bOZpOe
++ap1zBWkhnhnOSA4eRynqpXak3KO1HIFgh1T45e9q3yXwUV/PLKLNkEXCRAWaOiHh
++xBllZU+ewP/9eSiRvz9e+TVfbk/phbBRm37MwBDdZttSBPrVa99cHxZfj+4Rd1VK
++sbPyYeMCgYEA2b9y7gn/q5HDKItIZuNdLx1aj49JHyFWtf0PgupFUhksDPg8nGp9
++wSWFGUd5TaRLqod9ducEbOQRdJzUDOo9fkzd8lklqdMtF/0qECJR8F16FLye4ajf
++Xc+4vv+Me3Hv+l5+r1af6AcBO8vHDkM7CS1aF3rLPsVPU5IcQEumklcCgYEAzF+M
++bwm6Inen4POnEepjFfGWS8LQ3lSb9zt2pdC4liYxbznr/YTddOX2Qm4LpwJH7S0T
++ZCVpwVcTPf3voDb3uSOUspoi670OKgGuKbePoUfzT2NBwgXMV3eOtfhvqYmXT22a
++NXKqfPJnrEtuUzoem3yTYUY4XdZi3Gro0miMCb8CgYBvVZFJHrmoGtZjU5wIZ3ZM
++0cBtKMEldqFkWejlci1RheddFku/Wj/EUw/T1hSy2y+JGM/QzNwZZR97tXhCxj38
++5waQlH5Kb9xdqKcqKrIkqVbzZWIDVZon2D7JAdbtg1tFc61or20BcRtzXIUByORV
++k+e9m55yEOa3fzyMr2GS7wKBgBhce1zxB+L76GMEKDIWgmEnPwcg3cziwQSjbe0u
++CBK90r6zZNH/eHZqwwQAIhtyRiibauhRHV4ShxSopFuwsa678wmnHeqDyqBvOtd2
++LgTHktUvu7LpBgaXFcfTKVxILmUlZ3Bfjrr+GiWLiEcbcnKOUvMRb76fw4EKrV4H
++YEn5AoGAI5nb8K9GaCSoPKVojgUezQHpmJ55x1S+XGAx2BjZphZj27OvqNE7NB9R
++O2twfPCYDMvTQiE8cmquId60jxYnCWblSoW2qEWzVizIKuCbBjuGswdgqAWp8IX0
++C5baQ4MR6V6bahfKjdlUCWpAhRpl8DgJ/k/hVMPWltreAOlSN9Y=
++-----END RSA PRIVATE KEY-----`
++
++func serverConfig() *tls.Config {
++	cert, err := tls.X509KeyPair([]byte(srvPEM), []byte(srvKeyPEM))
++	if err != nil {
++		panic("X509KeyPair: " + err.Error())
++	}
++	return &tls.Config{
++		Certificates: []tls.Certificate{cert},
++		MinVersion:   tls.VersionTLS12,
++		MaxVersion:   tls.VersionTLS12,
++	}
++}
++
++func clientConfig() *tls.Config {
++	caBlock, _ := pem.Decode([]byte(caPEM))
++	ca, err := x509.ParseCertificate(caBlock.Bytes)
++	if err != nil {
++		panic("parse ca: " + err.Error())
++	}
++	roots := x509.NewCertPool()
++	roots.AddCert(ca)
++	return &tls.Config{
++		RootCAs:    roots,
++		ServerName: "localhost",
++		MinVersion: tls.VersionTLS12,
++		MaxVersion: tls.VersionTLS12,
++	}
++}
++
++// corruptConn is a net.Conn that, once armed, flips the last byte of the
++// first Read chunk longer than a TLS record header (5 bytes). The flip
++// lands inside record ciphertext, so the peer SSLEngine's AEAD check
++// fails on that record. Reads before arming pass through untouched.
++type corruptConn struct {
++	net.Conn
++	mu        sync.Mutex
++	armed     bool
++	corrupted bool
++}
++
++func (c *corruptConn) arm() {
++	c.mu.Lock()
++	c.armed = true
++	c.mu.Unlock()
++}
++
++func (c *corruptConn) Read(b []byte) (int, error) {
++	n, err := c.Conn.Read(b)
++	if n > 5 {
++		c.mu.Lock()
++		if c.armed && !c.corrupted {
++			b[n-1] ^= 0xFF
++			c.corrupted = true
++		}
++		c.mu.Unlock()
++	}
++	return n, err
++}
++
++func TestCorruptRecordReadReturnsError(t *testing.T) {
++	ln, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatalf("net.Listen: %v", err)
++	}
++	defer ln.Close()
++	ccCh := make(chan *corruptConn, 1)
++	hsDone := make(chan error, 1)
++	readRes := make(chan error, 1)
++	go func() {
++		raw, err := ln.Accept()
++		if err != nil {
++			hsDone <- err
++			readRes <- err
++			return
++		}
++		cc := &corruptConn{Conn: raw}
++		ccCh <- cc
++		srv := tls.Server(cc, serverConfig())
++		defer srv.Close()
++		if err := srv.Handshake(); err != nil {
++			hsDone <- err
++			readRes <- err
++			return
++		}
++		hsDone <- nil
++		buf := make([]byte, 64)
++		_, err = srv.Read(buf)
++		readRes <- err
++	}()
++	conn, err := net.Dial("tcp", ln.Addr().String())
++	if err != nil {
++		t.Fatalf("net.Dial: %v", err)
++	}
++	defer conn.Close()
++	tlsConn := tls.Client(conn, clientConfig())
++	if err := tlsConn.Handshake(); err != nil {
++		t.Fatalf("client Handshake() = %v, want nil", err)
++	}
++	cc := <-ccCh
++	if err := <-hsDone; err != nil {
++		t.Fatalf("server Handshake() = %v, want nil", err)
++	}
++	// Both handshakes are fully done and the server goroutine is blocked
++	// in Read, so the next bytes it reads are application data: arming
++	// now can only corrupt the "hello" record, never a handshake flight.
++	// The corruptor inspects `armed` when its Read returns, and the
++	// client writes only after this arm, so the ordering is deterministic.
++	cc.arm()
++	if _, err := tlsConn.Write([]byte("hello")); err != nil {
++		t.Fatalf("client Write() = %v, want nil", err)
++	}
++	err = <-readRes
++	if err == nil {
++		t.Fatalf("server Read() = nil, want unwrap error (corrupt record)")
++	}
++	if errors.Is(err, io.EOF) {
++		t.Fatalf("server Read() = io.EOF, want non-EOF error (B-01: corrupt record reported as clean EOF)")
++	}
++	if !strings.Contains(err.Error(), "unwrap failed") {
++		t.Fatalf("server Read() = %v, want error containing %q", err, "unwrap failed")
++	}
++}
++
++func TestCleanCloseReadReturnsEOF(t *testing.T) {
++	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverConfig())
++	if err != nil {
++		t.Fatalf("tls.Listen: %v", err)
++	}
++	defer ln.Close()
++	hsDone := make(chan error, 1)
++	readRes := make(chan error, 1)
++	go func() {
++		raw, err := ln.Accept()
++		if err != nil {
++			hsDone <- err
++			readRes <- err
++			return
++		}
++		srv := tls.Server(raw, serverConfig())
++		defer srv.Close()
++		if err := srv.Handshake(); err != nil {
++			hsDone <- err
++			readRes <- err
++			return
++		}
++		hsDone <- nil
++		buf := make([]byte, 64)
++		_, err = srv.Read(buf)
++		readRes <- err
++	}()
++	conn, err := net.Dial("tcp", ln.Addr().String())
++	if err != nil {
++		t.Fatalf("net.Dial: %v", err)
++	}
++	tlsConn := tls.Client(conn, clientConfig())
++	if err := tlsConn.Handshake(); err != nil {
++		t.Fatalf("client Handshake() = %v, want nil", err)
++	}
++	if err := <-hsDone; err != nil {
++		t.Fatalf("server Handshake() = %v, want nil", err)
++	}
++	// Close the client: it sends close_notify, then the TCP FIN. The
++	// server's next Read must see the clean close as io.EOF — the fix
++	// must not turn clean closes into errors.
++	if err := tlsConn.Close(); err != nil {
++		t.Fatalf("client Close() = %v, want nil", err)
++	}
++	if err := <-readRes; !errors.Is(err, io.EOF) {
++		t.Fatalf("server Read() = %v, want io.EOF (clean close)", err)
++	}
++}
