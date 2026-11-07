@@ -1,0 +1,4 @@
+vendored go1.27.1 (2 files, 20 bytes) -> /tmp/rev1107-22-r09/fake-target
+manifest: /tmp/rev1107-22-r09/repo/tools/stdlib-fork/vendor-manifest.json
+checked 2 files
+VERIFY OK

@@ -1,0 +1,6 @@
+=== RUN   TestDefaultPathsPointAtLiveTree
+    vendor_test.go:311: defaultManifestPath("/tmp/rev1107-22-r09/repo") = "/tmp/rev1107-22-r09/repo/phases/phase3/stdlib-fork/vendor-manifest.json", want "/tmp/rev1107-22-r09/repo/tools/stdlib-fork/vendor-manifest.json"
+--- FAIL: TestDefaultPathsPointAtLiveTree (0.00s)
+FAIL
+FAIL	graalgo/tools/stdlib-vendor	0.013s
+FAIL

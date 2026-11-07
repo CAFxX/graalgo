@@ -1,0 +1,128 @@
+diff --git a/tools/stdlib-vendor/main.go b/tools/stdlib-vendor/main.go
+index dcaf781..4893b3d 100644
+--- a/tools/stdlib-vendor/main.go
++++ b/tools/stdlib-vendor/main.go
+@@ -6,7 +6,7 @@
+ // EXTERNAL directory (default ~/workspace/graalgo-stdlib/<version>/) and
+ // writes a byte-deterministic file manifest (relative path + SHA-256 +
+ // size + mode) plus the pinned Go version into the repo at
+-// phases/phase3/stdlib-fork/.
++// tools/stdlib-fork/.
+ //
+ // Subcommands:
+ //
+@@ -36,8 +36,8 @@ Usage:
+ 
+ vendor copies $GOROOT/src into --target (default
+ $HOME/workspace/graalgo-stdlib/<goVersion>/) and writes a deterministic
+-manifest at --manifest (default <repo>/phases/phase3/stdlib-fork/vendor-manifest.json)
+-plus the pinned version at <repo>/phases/phase3/stdlib-fork/pinned-version.txt.
++manifest at --manifest (default <repo>/tools/stdlib-fork/vendor-manifest.json)
++plus the pinned version at <repo>/tools/stdlib-fork/pinned-version.txt.
+ 
+   --force                vendor into an existing non-empty target directory
+   --allow-version-drift  proceed when the GOROOT version differs from the pin
+@@ -103,7 +103,7 @@ func repoRoot(dir string) (string, error) {
+ 
+ // stdlibForkDir is the in-repo directory owned by this workstream.
+ func stdlibForkDir(repo string) string {
+-	return filepath.Join(repo, "phases", "phase3", "stdlib-fork")
++	return filepath.Join(repo, "tools", "stdlib-fork")
+ }
+ 
+ func defaultManifestPath(repo string) string {
+diff --git a/tools/stdlib-vendor/vendor.go b/tools/stdlib-vendor/vendor.go
+index 9a011d1..19b83db 100644
+--- a/tools/stdlib-vendor/vendor.go
++++ b/tools/stdlib-vendor/vendor.go
+@@ -54,8 +54,8 @@ type manifest struct {
+ type vendorOptions struct {
+ 	Goroot            string // GOROOT; "" => `go env GOROOT`
+ 	Target            string // vendored tree dir; "" => $HOME/workspace/graalgo-stdlib/<ver>/
+-	ManifestPath      string // in-repo manifest; "" => <repo>/phases/phase3/stdlib-fork/vendor-manifest.json
+-	PinPath           string // in-repo pin; "" => <repo>/.../stdlib-fork/pinned-version.txt
++	ManifestPath      string // in-repo manifest; "" => <repo>/tools/stdlib-fork/vendor-manifest.json
++	PinPath           string // in-repo pin; "" => <repo>/tools/stdlib-fork/pinned-version.txt
+ 	Repo              string // explicit repo root; "" => discover from CWD
+ 	Force             bool
+ 	AllowVersionDrift bool
+@@ -354,7 +354,7 @@ func runVendorCmd(argv []string, stdout, stderr io.Writer) error {
+ 	fs.SetOutput(stderr)
+ 	gorootFlag := fs.String("goroot", "", "GOROOT to vendor from (default: `go env GOROOT`)")
+ 	targetFlag := fs.String("target", "", "target directory (default: $HOME/workspace/graalgo-stdlib/<goVersion>/)")
+-	manifestFlag := fs.String("manifest", "", "manifest output path (default: <repo>/phases/phase3/stdlib-fork/vendor-manifest.json)")
++	manifestFlag := fs.String("manifest", "", "manifest output path (default: <repo>/tools/stdlib-fork/vendor-manifest.json)")
+ 	repoFlag := fs.String("repo", "", "repo root (default: discovered from CWD)")
+ 	forceFlag := fs.Bool("force", false, "vendor into an existing non-empty target directory")
+ 	driftFlag := fs.Bool("allow-version-drift", false, "proceed when GOROOT version differs from the pin")
+diff --git a/tools/stdlib-vendor/vendor_test.go b/tools/stdlib-vendor/vendor_test.go
+index bf136aa..7a7d1db 100644
+--- a/tools/stdlib-vendor/vendor_test.go
++++ b/tools/stdlib-vendor/vendor_test.go
+@@ -285,3 +285,44 @@ func TestManifestHashesAreReal(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// TestDefaultPathsPointAtLiveTree: the default manifest/pin paths must
++// resolve inside the live tools/stdlib-fork tree (R-09). The old defaults
++// pointed at phases/phase3/stdlib-fork, which no longer exists, so a
++// default invocation of `vendor`/`verify` wrote into (or read from) a
++// resurrected dead path instead of the live manifest/pin.
++func TestDefaultPathsPointAtLiveTree(t *testing.T) {
++	// Tests run with CWD = tools/stdlib-vendor, two levels below the root.
++	repo, err := filepath.Abs(filepath.Join("..", ".."))
++	if err != nil {
++		t.Fatal(err)
++	}
++	// Sanity: this really is the repo root, and the live files are there.
++	for _, rel := range []string{
++		filepath.Join("tools", "stdlib-fork", "vendor-manifest.json"),
++		filepath.Join("tools", "stdlib-fork", "pinned-version.txt"),
++	} {
++		if _, err := os.Stat(filepath.Join(repo, rel)); err != nil {
++			t.Fatalf("live file %q not found under repo root %q: %v", rel, repo, err)
++		}
++	}
++	wantManifest := filepath.Join(repo, "tools", "stdlib-fork", "vendor-manifest.json")
++	if got := defaultManifestPath(repo); got != wantManifest {
++		t.Fatalf("defaultManifestPath(%q) = %q, want %q", repo, got, wantManifest)
++	}
++	wantPin := filepath.Join(repo, "tools", "stdlib-fork", "pinned-version.txt")
++	if got := defaultPinPath(repo); got != wantPin {
++		t.Fatalf("defaultPinPath(%q) = %q, want %q", repo, got, wantPin)
++	}
++	// The defaults must point at files that exist in the live tree.
++	if _, err := os.Stat(defaultManifestPath(repo)); err != nil {
++		t.Fatalf("default manifest path does not exist: %v", err)
++	}
++	if _, err := os.Stat(defaultPinPath(repo)); err != nil {
++		t.Fatalf("default pin path does not exist: %v", err)
++	}
++	// The user-facing help must not state the dead default either.
++	if strings.Contains(usageText, "phases/phase3/stdlib-fork") {
++		t.Fatalf("usageText still states the dead default path phases/phase3/stdlib-fork")
++	}
++}
+diff --git a/tools/stdlib-vendor/verify.go b/tools/stdlib-vendor/verify.go
+index 063cd74..23a9386 100644
+--- a/tools/stdlib-vendor/verify.go
++++ b/tools/stdlib-vendor/verify.go
+@@ -16,7 +16,7 @@ import (
+ 
+ type verifyOptions struct {
+ 	Target       string // vendored tree dir; "" => <manifest>.TargetDir
+-	ManifestPath string // in-repo manifest; "" => <repo>/phases/phase3/stdlib-fork/vendor-manifest.json
++	ManifestPath string // in-repo manifest; "" => <repo>/tools/stdlib-fork/vendor-manifest.json
+ 	Repo         string // explicit repo root; "" => discover from CWD
+ }
+ 
+@@ -163,7 +163,7 @@ func runVerifyCmd(argv []string, stdout, stderr io.Writer) error {
+ 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+ 	fs.SetOutput(stderr)
+ 	targetFlag := fs.String("target", "", "vendored tree directory (default: the TargetDir recorded in the manifest)")
+-	manifestFlag := fs.String("manifest", "", "manifest path (default: <repo>/phases/phase3/stdlib-fork/vendor-manifest.json)")
++	manifestFlag := fs.String("manifest", "", "manifest path (default: <repo>/tools/stdlib-fork/vendor-manifest.json)")
+ 	repoFlag := fs.String("repo", "", "repo root (default: discovered from CWD)")
+ 	if err := fs.Parse(argv); err != nil {
+ 		return &usageError{err.Error()}
