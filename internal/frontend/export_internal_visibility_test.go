@@ -165,6 +165,64 @@ func TestExportFilesRejectsInternalImport(t *testing.T) {
 	}
 }
 
+// TestImportAdmittedReflectM7Denied pins R-20 (REVIEW-2026-11-07-04):
+// reflect_m7 is a frontend-only pseudo-package — the retired reflect
+// source kept in syntheticSources so the M7 desugarer can load its
+// __-helpers and pair types via getSyntheticPackage — and must never be
+// user-importable. gc rejects `import "reflect_m7"` (no such package);
+// the gate must too, from every importing directory, including a stdlib
+// directory (no stdlib package imports it; the denial is unconditional
+// because the frontend's own use bypasses the gate). Intentional
+// divergence from the pre-R-20 gate: oldImportAdmitted admitted
+// reflect_m7 via the syntheticSources rule, so it is excluded from
+// TestImportAdmittedNonInternalUnchanged's equivalence corpus.
+func TestImportAdmittedReflectM7Denied(t *testing.T) {
+	dirs := []string{t.TempDir(), "", filepath.Join("some", "pkg")}
+	for _, d := range dirs {
+		if got := importAdmitted("reflect_m7", d); got {
+			t.Errorf("importAdmitted(%q, %q) = true, want false", "reflect_m7", d)
+		}
+		if got := needsOverlayImporter("reflect_m7", d); got {
+			t.Errorf("needsOverlayImporter(%q, %q) = true, want false", "reflect_m7", d)
+		}
+	}
+	// The M7 helper path must keep working: reflect_m7 stays registered
+	// in syntheticSources for the frontend's own getSyntheticPackage use,
+	// and the desugarer's override still points at it.
+	if _, ok := syntheticSources["reflect_m7"]; !ok {
+		t.Error("syntheticSources lacks reflect_m7: M7 reflect desugaring would break")
+	}
+	if got := m7HelperPkgOverride["reflect"]; got != "reflect_m7" {
+		t.Errorf("m7HelperPkgOverride[reflect] = %q, want reflect_m7", got)
+	}
+}
+
+// TestExportFilesRejectsReflectM7Import pins R-20 end to end: an
+// ordinary compile importing the frontend-only reflect_m7 pseudo-package
+// is a scope error, exactly like an unresolvable import. The import is
+// blank: reflect_m7 exports no name a user program could reference, and
+// a blank import is the form that type-checks outright on unpatched
+// code (the overlay importer resolves the synthetic package) — so a red
+// run fails with "ExportFiles admitted reflect_m7", proving the gate let
+// it through, rather than with an unused-import artifact. The M7 reflect
+// desugaring tests (m7_override_iface_test.go) cover the legitimate
+// side: the frontend's own use of reflect_m7 via getSyntheticPackage.
+func TestExportFilesRejectsReflectM7Import(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "evil.go")
+	src := "package main\n\nimport _ \"reflect_m7\"\n\nfunc main() {}\n"
+	if err := os.WriteFile(f, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ExportFiles([]string{f}, "")
+	if err == nil {
+		t.Fatal("ExportFiles admitted reflect_m7 for an ordinary compile")
+	}
+	if !strings.Contains(err.Error(), "imports are not supported in frontend/v1 scope") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestImportingDir pins the importing-directory resolution: the
 // test-driver flag takes precedence when present, otherwise the input
 // files' directory is used.

@@ -118,6 +118,9 @@ var syntheticSources = map[string]string{
 	// reflectTagPair). They live in the retired synth_reflect.go source,
 	// registered here under a distinct name so getSyntheticPackage works.
 	// The helperPkg override in m7MultiResultFunc points reflect entries here.
+	// Frontend-only (R-20): never user-importable — importAdmitted
+	// rejects it via frontendOnlySyntheticSources (export.go); only the
+	// M7 desugarer loads it, bypassing the gate.
 	"reflect_m7": syntheticReflectSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
 	// synth_bytealg.go). internal/bytealg is synthetic-only, like
