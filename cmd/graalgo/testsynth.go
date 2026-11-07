@@ -231,22 +231,25 @@ func (t *graalgoT) Cleanup(f func()) {
 
 // runCleanups runs the registered cleanups LIFO, then cancels the
 // test's context (testing cancels t.Context just after cleanups
-// complete). Idempotent: the list is cleared before running, so a
-// second call (e.g. a cleanup registered by another cleanup) is a
-// no-op for already-run entries.
+// complete). Cleanups registered by a cleanup run too: the list is
+// drained until empty, matching testing — a cleanup registered during
+// cleanup execution is not dropped. A second call after the list is
+// empty is a no-op.
 func (t *graalgoT) runCleanups() {
-	cleanups := t.cleanups
-	t.cleanups = nil
-	for i := len(cleanups) - 1; i >= 0; i-- {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.failed = true
-					t.logLine("panic in cleanup: " + toString(r))
-				}
+	for len(t.cleanups) > 0 {
+		cleanups := t.cleanups
+		t.cleanups = nil
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.failed = true
+						t.logLine("panic in cleanup: " + toString(r))
+					}
+				}()
+				cleanups[i]()
 			}()
-			cleanups[i]()
-		}()
+		}
 	}
 	if t.ctxCancel != nil {
 		t.ctxCancel()
@@ -520,6 +523,17 @@ func sprintf(format string, args ...interface{}) string {
 	return out
 }
 
+// errorString renders an error value; a typed-nil error whose Error
+// method panics renders as "<nil>" instead of crashing the diagnostic.
+func errorString(err error) (s string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s = "<nil>"
+		}
+	}()
+	return err.Error()
+}
+
 // toString renders a value the way fmt's %v would, as far as the shim
 // can without reflect or fmt (neither is usable here: the shim is
 // inlined into a driver whose imports are pruned, and fmt may be the
@@ -534,7 +548,7 @@ func toString(v interface{}) string {
 	case nil:
 		return "<nil>"
 	case error:
-		return x.Error()
+		return errorString(x)
 	case string:
 		return x
 	case bool:
@@ -1566,7 +1580,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "errorString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -1675,7 +1689,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "errorString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)

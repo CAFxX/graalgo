@@ -395,3 +395,66 @@ func TestRender(t *testing.T) {
 	mustContain(t, out, "got 1.5, want 2.5")
 	mustNotContain(t, out, "<value>")
 }
+
+// Regression for DRV-1b finding 1: a typed-nil error — a non-nil error
+// interface holding a nil pointer, here (*os.PathError)(nil), whose
+// Error method dereferences its receiver — must render as "<nil>" in
+// diagnostics, never panic the driver. The old toString called
+// Error() unguarded, so the panic unwound to the test's deferred
+// recover and failed an otherwise passing test.
+func TestTypedNilErrorRendersNil(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"os"
+	"testing"
+)
+
+func TestTypedNil(t *testing.T) {
+	t.Logf("%v", (*os.PathError)(nil))
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 0 {
+		t.Errorf("driver exit = %d, want 0 (a Logf of a typed-nil error must not fail the test):\n%s", code, out)
+	}
+	mustContain(t, out, "<nil>")
+	mustContain(t, out, "--- PASS: TestTypedNil")
+	mustNotContain(t, out, "panic:")
+}
+
+// Regression for DRV-1b finding 2: a cleanup registered by another
+// cleanup must run too — runCleanups drains until empty, matching
+// testing — instead of being silently dropped by a single-pass drain.
+func TestCleanupRegisteredByCleanup(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+var cleanupOrder []string
+
+func TestChain(t *testing.T) {
+	t.Cleanup(func() {
+		cleanupOrder = append(cleanupOrder, "outer")
+		t.Cleanup(func() { cleanupOrder = append(cleanupOrder, "inner") })
+	})
+}
+
+func TestChainRan(t *testing.T) {
+	if len(cleanupOrder) != 2 || cleanupOrder[0] != "outer" || cleanupOrder[1] != "inner" {
+		t.Errorf("cleanup order = %v, want [outer inner]", cleanupOrder)
+	}
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
+		}
+		mustNotContain(t, out, "--- FAIL")
+		if verbose {
+			mustContain(t, out, "--- PASS: TestChain")
+			mustContain(t, out, "--- PASS: TestChainRan")
+		}
+	}
+}
