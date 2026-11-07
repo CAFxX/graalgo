@@ -1,0 +1,156 @@
+--- a/cmd/graalgo/testsynth.go
++++ b/cmd/graalgo/testsynth.go
+@@ -231,22 +231,25 @@
+ 
+ // runCleanups runs the registered cleanups LIFO, then cancels the
+ // test's context (testing cancels t.Context just after cleanups
+-// complete). Idempotent: the list is cleared before running, so a
+-// second call (e.g. a cleanup registered by another cleanup) is a
+-// no-op for already-run entries.
++// complete). Cleanups registered by a cleanup run too: the list is
++// drained until empty, matching testing — a cleanup registered during
++// cleanup execution is not dropped. A second call after the list is
++// empty is a no-op.
+ func (t *graalgoT) runCleanups() {
+-	cleanups := t.cleanups
+-	t.cleanups = nil
+-	for i := len(cleanups) - 1; i >= 0; i-- {
+-		func() {
+-			defer func() {
+-				if r := recover(); r != nil {
+-					t.failed = true
+-					t.logLine("panic in cleanup: " + toString(r))
+-				}
++	for len(t.cleanups) > 0 {
++		cleanups := t.cleanups
++		t.cleanups = nil
++		for i := len(cleanups) - 1; i >= 0; i-- {
++			func() {
++				defer func() {
++					if r := recover(); r != nil {
++						t.failed = true
++						t.logLine("panic in cleanup: " + toString(r))
++					}
++				}()
++				cleanups[i]()
+ 			}()
+-			cleanups[i]()
+-		}()
++		}
+ 	}
+ 	if t.ctxCancel != nil {
+ 		t.ctxCancel()
+@@ -520,6 +523,17 @@
+ 	return out
+ }
+ 
++// errorString renders an error value; a typed-nil error whose Error
++// method panics renders as "<nil>" instead of crashing the diagnostic.
++func errorString(err error) (s string) {
++	defer func() {
++		if r := recover(); r != nil {
++			s = "<nil>"
++		}
++	}()
++	return err.Error()
++}
++
+ // toString renders a value the way fmt's %v would, as far as the shim
+ // can without reflect or fmt (neither is usable here: the shim is
+ // inlined into a driver whose imports are pruned, and fmt may be the
+@@ -534,7 +548,7 @@
+ 	case nil:
+ 		return "<nil>"
+ 	case error:
+-		return x.Error()
++		return errorString(x)
+ 	case string:
+ 		return x
+ 	case bool:
+@@ -1566,7 +1580,7 @@
+ 			driverDeclNames[n] = true
+ 		}
+ 	}
+-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
++	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "errorString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
+ 		driverDeclNames[n] = true
+ 	}
+ 	var sb strings.Builder
+@@ -1675,7 +1689,7 @@
+ 	for n := range whiteNames {
+ 		protected[n] = true
+ 	}
+-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
++	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "graalgoShort", "graalgoIsVerbose", "joinArgs", "sprintf", "toString", "errorString", "typeName", "quoteArg", "hexArg", "hexBytes", "floatArg", "byteList", "joinStrings", "joinInts", "joinInt64s", "joinBools", "joinFloat64s", "joinAnys", "sortedKeys", "mapStringString", "mapStringInt", "mapStringInt64", "mapStringBool", "mapStringFloat64", "mapStringAny", "itoa", "utoa", "fmtDur2", "twoDigits"} {
+ 		protected[n] = true
+ 	}
+ 	takenNames := make(map[string]bool)
+--- a/cmd/graalgo/testsub_test.go
++++ b/cmd/graalgo/testsub_test.go
+@@ -395,3 +395,66 @@
+ 	mustContain(t, out, "got 1.5, want 2.5")
+ 	mustNotContain(t, out, "<value>")
+ }
++
++// Regression for DRV-1b finding 1: a typed-nil error — a non-nil error
++// interface holding a nil pointer, here (*os.PathError)(nil), whose
++// Error method dereferences its receiver — must render as "<nil>" in
++// diagnostics, never panic the driver. The old toString called
++// Error() unguarded, so the panic unwound to the test's deferred
++// recover and failed an otherwise passing test.
++func TestTypedNilErrorRendersNil(t *testing.T) {
++	dir := writeSubtestPkg(t, `package subtest
++
++import (
++	"os"
++	"testing"
++)
++
++func TestTypedNil(t *testing.T) {
++	t.Logf("%v", (*os.PathError)(nil))
++}
++`)
++	out, code := runSynthDriver(t, dir, true)
++	if code != 0 {
++		t.Errorf("driver exit = %d, want 0 (a Logf of a typed-nil error must not fail the test):\n%s", code, out)
++	}
++	mustContain(t, out, "<nil>")
++	mustContain(t, out, "--- PASS: TestTypedNil")
++	mustNotContain(t, out, "panic:")
++}
++
++// Regression for DRV-1b finding 2: a cleanup registered by another
++// cleanup must run too — runCleanups drains until empty, matching
++// testing — instead of being silently dropped by a single-pass drain.
++func TestCleanupRegisteredByCleanup(t *testing.T) {
++	dir := writeSubtestPkg(t, `package subtest
++
++import "testing"
++
++var cleanupOrder []string
++
++func TestChain(t *testing.T) {
++	t.Cleanup(func() {
++		cleanupOrder = append(cleanupOrder, "outer")
++		t.Cleanup(func() { cleanupOrder = append(cleanupOrder, "inner") })
++	})
++}
++
++func TestChainRan(t *testing.T) {
++	if len(cleanupOrder) != 2 || cleanupOrder[0] != "outer" || cleanupOrder[1] != "inner" {
++		t.Errorf("cleanup order = %v, want [outer inner]", cleanupOrder)
++	}
++}
++`)
++	for _, verbose := range []bool{true, false} {
++		out, code := runSynthDriver(t, dir, verbose)
++		if code != 0 {
++			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
++		}
++		mustNotContain(t, out, "--- FAIL")
++		if verbose {
++			mustContain(t, out, "--- PASS: TestChain")
++			mustContain(t, out, "--- PASS: TestChainRan")
++		}
++	}
++}
