@@ -1,0 +1,234 @@
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -2426,6 +2426,16 @@
+ 	hasMain := false
+ 	for _, fi := range funcs {
+ 		if fi.isTemplate {
++			// R-1107-06: a bodyless template is rejected with gc's
++			// error instead of silently skipped. gc rejects bodyless
++			// generic funcs at type-check time, but a bodyless METHOD
++			// on a generic type passes type-checking and would
++			// otherwise export successfully while gc rejects the
++			// program ("missing function body"). Bodied templates
++			// still skip: they emit via instantiations.
++			if fi.fd != nil && fi.fd.Body == nil {
++				return "", missingGenericBodyError(fi)
++			}
+ 			continue
+ 		}
+ 		f, err := e.exportFuncDecl(fi)
+@@ -6207,6 +6217,23 @@
+ 	return ""
+ }
+ 
++// missingGenericBodyError reports a bodyless generic function the way gc
++// does (R-1107-06). Verified against go1.27.1: a generic func without a
++// body fails with "generic function is missing function body" (with or
++// without //go:linkname); a bodyless method on a generic type fails with
++// "missing function body". There is no gc-valid program containing either
++// construct — zero generic linknames in the whole go1.27.1 stdlib — so
++// this is a gc-fidelity rejection, not a milestone gap, and the message
++// carries no milestone label. A func carries its own type params; a
++// method's genericity comes from its receiver, so the discriminator is
++// the signature's type params.
++func missingGenericBodyError(fi *funcDeclInfo) error {
++	if fi != nil && fi.sig != nil && fi.sig.TypeParams().Len() > 0 {
++		return scopeErrorf("generic function is missing function body")
++	}
++	return scopeErrorf("missing function body")
++}
++
+ // exportLinknameDecl emits a bodyless function (P3-M4, WS C, ADR-0004 D1)
+ // as a funcdecl with no "body". A bodyless declaration is an external
+ // symbol reference: in gc it is bound at link time, either by an
+@@ -6265,8 +6292,18 @@
+ 	// scope). The receiver is passed as the first arg; intrinsics that
+ 	// don't need it (e.g. fmtstate.PrinterState methods, which operate on
+ 	// the thread-local Printer) ignore it.
+-	if fi.isTemplate && symbol != "" {
+-		return nil, scopeErrorf("//go:linkname on generic func %s is not in M4 scope", fd.Name.Name)
++	// R-1107-06: a bodyless template must never be emitted as a linkname.
++	// Defense-in-depth only: both emission loops reject bodyless
++	// templates before exportFuncDecl (see the funcs loop above and
++	// exportSyntheticBodies), and the type checker already rejects
++	// bodyless generic funcs — so this is unreachable for any input
++	// today. It is kept so a future caller that routes a bodyless
++	// template here fails with gc's error instead of silently emitting
++	// a linkname for a declaration gc rejects. The condition is the
++	// template alone, not the symbol: the old "symbol != ''" form also
++	// mislabelled the defaulted case, where no //go:linkname is present.
++	if fi.isTemplate {
++		return nil, missingGenericBodyError(fi)
+ 	}
+ 	params, err := e.exportSignatureVars(fd.Type, fi.sig.Params())
+ 	if err != nil {
+--- a/internal/frontend/mr_disk.go
++++ b/internal/frontend/mr_disk.go
+@@ -869,8 +869,10 @@
+ 	// which LinknameRootNode dispatch can carry. The helper is therefore
+ 	// emitted body-less with a synthesized directive, and the exporter
+ 	// binds it through the existing bodyless→linkname path. Body-less
+-	// declarations WITHOUT a directive, and generic ones (whose linkname
+-	// binding is out of M4 scope), keep the panic body exactly as before.
++	// declarations WITHOUT a directive, and generic ones (gc rejects
++	// bodyless generic functions outright — "generic function is missing
++	// function body" — so there is no linkname binding to preserve;
++	// R-1107-06), keep the panic body exactly as before.
+ 	var rewrittenBody *ast.BlockStmt
+ 	var helperDoc *ast.CommentGroup
+ 	if fd.Body == nil {
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -1410,6 +1410,12 @@
+ 				// P3-M9 (tier-1d): templates emit only via monomorphized
+ 				// instantiations (exportInstantiation), never directly —
+ 				// same rule as user templates.
++				// R-1107-06: a bodyless template is rejected with gc's
++				// error instead of silently skipped (same rule as the
++				// user funcs loop in export.go).
++				if fi.fd != nil && fi.fd.Body == nil {
++					return missingGenericBodyError(fi)
++				}
+ 				continue
+ 			}
+ 			// WS G: the declaration's own file (multi-file disk packages).
+--- a/internal/frontend/linkname_generic_test.go
++++ b/internal/frontend/linkname_generic_test.go
+@@ -0,0 +1,137 @@
++package main
++
++// R-1107-06 (REVIEW-2026-11-07-07, re-verified REVIEW-2026-11-07-22):
++// gc rejects bodyless generic functions outright — verified against
++// go1.27.1 (~/tools/go/bin/go):
++//   - bodyless generic func, with or without //go:linkname:
++//     "generic function is missing function body"
++//   - bodyless method on a generic type, with or without directive:
++//     "missing function body"
++//   - bodied generic func with //go:linkname: link-time
++//     "symbol <name> redeclared"
++// There is no gc-valid program containing this construct (zero generic
++// linknames in the whole go1.27.1 stdlib; the only bodyless generic
++// funcs are builtin max/min, which never reach the exporter; zero
++// bodyless methods on generic types in stdlib and in synth_*.go), so
++// graalgo must reject it with gc's error — not with a milestone-scoped
++// "not in M4 scope" message implying a future milestone will implement
++// it, and not by silently skipping the declaration.
++//
++// RED finding (verified 2026-11-07): the type checker already rejects
++// bodyless generic FUNCS with gc's exact error, so the live gap is
++// narrower than the review stated: a bodyless METHOD on a generic type
++// is silently skipped (templates are skipped before export), and
++// export.go's "not in M4 scope" guard is unreachable dead code (both
++// exportFuncDecl callers skip templates first). The fix rejects
++// bodyless templates at the skip points with gc's error and relabels
++// the dead guard to the same gc-faithful error.
++
++import (
++	"strings"
++	"testing"
++)
++
++// TestLinknameGenericFuncRejected: a bodyless generic func carrying
++// //go:linkname is rejected with gc's "missing function body" error,
++// even when it is never called. (Pinned as a regression test: the type
++// checker already rejects this; the assertion is that the error is
++// gc's wording, not a stale "M4 scope" label.)
++func TestLinknameGenericFuncRejected(t *testing.T) {
++	src := `package main
++
++import _ "unsafe"
++
++//go:linkname genericAdd main.genericAddImpl
++func genericAdd[T int | int64](a, b T) T
++
++func main() {}
++`
++	_, err := ExportFile(writeSyncProg(t, src))
++	if err == nil {
++		t.Fatalf("ExportFile accepted bodyless generic func with //go:linkname; gc rejects it (missing function body)")
++	}
++	if !strings.Contains(err.Error(), "generic function is missing function body") {
++		t.Errorf("wrong error for bodyless generic func with //go:linkname: %v", err)
++	}
++	if strings.Contains(err.Error(), "M4 scope") {
++		t.Errorf("error still cites stale M4 scope: %v", err)
++	}
++}
++
++// TestBodylessGenericFuncWithoutLinknameRejected: the same rejection
++// applies without any directive. The old message falsely claimed a
++// //go:linkname was present (a default symbol is synthesized for plain
++// bodyless funcs), so this case pins the gc-faithful wording too.
++func TestBodylessGenericFuncWithoutLinknameRejected(t *testing.T) {
++	src := `package main
++
++func genericPlain[T int | int64](a, b T) T
++
++func main() {}
++`
++	_, err := ExportFile(writeSyncProg(t, src))
++	if err == nil {
++		t.Fatalf("ExportFile accepted bodyless generic func without //go:linkname; gc rejects it (missing function body)")
++	}
++	if !strings.Contains(err.Error(), "generic function is missing function body") {
++		t.Errorf("wrong error for bodyless generic func without //go:linkname: %v", err)
++	}
++	if strings.Contains(err.Error(), "M4 scope") {
++		t.Errorf("error still cites stale M4 scope: %v", err)
++	}
++}
++
++// TestLinknameGenericMethodRejected: a bodyless method on a generic
++// type is rejected with gc's "missing function body" error. This is
++// the live gap: the type checker does not reject it (the check applies
++// to functions with their own type params, not to methods whose
++// genericity comes from the receiver), and the exporter silently
++// skipped the template.
++func TestLinknameGenericMethodRejected(t *testing.T) {
++	src := `package main
++
++type Box[T any] struct{ v T }
++
++func (b Box[T]) Get() T
++
++func main() {}
++`
++	_, err := ExportFile(writeSyncProg(t, src))
++	if err == nil {
++		t.Fatalf("ExportFile accepted bodyless method on generic type; gc rejects it (missing function body)")
++	}
++	if !strings.Contains(err.Error(), "missing function body") {
++		t.Errorf("wrong error for bodyless method on generic type: %v", err)
++	}
++	if strings.Contains(err.Error(), "M4 scope") {
++		t.Errorf("error still cites stale M4 scope: %v", err)
++	}
++}
++
++// TestLinknameGenericFuncCalledRejected: calling a bodyless generic
++// func must report the declaration error, not the instantiation's
++// "func %s without body" error — gc rejects the declaration itself,
++// whether or not it is called.
++func TestLinknameGenericFuncCalledRejected(t *testing.T) {
++	src := `package main
++
++import (
++	"fmt"
++	_ "unsafe"
++)
++
++//go:linkname genericAdd main.genericAddImpl
++func genericAdd[T int | int64](a, b T) T
++
++func main() {
++	fmt.Println(genericAdd[int](1, 2))
++}
++`
++	_, err := ExportFile(writeSyncProg(t, src))
++	if err == nil {
++		t.Fatalf("ExportFile accepted a call to a bodyless generic func; gc rejects it (missing function body)")
++	}
++	if !strings.Contains(err.Error(), "generic function is missing function body") {
++		t.Errorf("wrong error for a call to a bodyless generic func: %v", err)
++	}
++}
