@@ -1,0 +1,201 @@
+--- a/internal/frontend/synth_os.go
++++ b/internal/frontend/synth_os.go
+@@ -2325,11 +2325,24 @@
+ }
+ 
+ func __fileReadFrom(f *File, r io.Reader) readFromPair {
+-	// P0-2: the D4 streaming implementation called io.ReadAll (multi-result,
+-	// not in the mrM8 desugar tables), which breaks export of every program
+-	// importing os. Fail fast with a named trap until the desugar covers it.
+-	// Re-test trigger: WS D lands (mrM8 desugar for io.ReadAll).
+-	panic("os: __fileReadFrom: multi-result io.ReadAll needs the mrM8 desugar (re-test: WS D)")
++	// P0-2 retired (R-1107-05): the re-test trigger is met — io.ReadAll
++	// is in the mrM8 desugar table with the real __readAll helper, so
++	// the 2-target call below desugars instead of breaking export (as
++	// it already does in synth_archive_tar.go / synth_enc_csv_gob.go).
++	// The write side uses the concrete __fileWrite helper directly (the
++	// established in-synth-body idiom, cf. __fileReadAll).
++	// Partial data is written even when the read errors, matching gc:
++	// io.ReadAll returns the data read before the error, and a write
++	// error takes precedence over the read error.
++	b, err := io.ReadAll(r)
++	if len(b) > 0 {
++		wp := __fileWrite(f, b)
++		if wp.err != nil {
++			return readFromPair{int64(wp.n), wp.err}
++		}
++		return readFromPair{int64(wp.n), err}
++	}
++	return readFromPair{0, err}
+ }
+ 
+ // WriteTo implements io.WriterTo.
+@@ -2338,11 +2351,21 @@
+ }
+ 
+ func __fileWriteTo(f *File, w io.Writer) writeToPair {
+-	// P0-2: the D4 implementation called io.WriteString (multi-result,
+-	// not in the mrM8 desugar tables), which breaks export of every program
+-	// importing os. Fail fast with a named trap until the desugar covers it.
+-	// Re-test trigger: WS D lands (mrM8 desugar for io.WriteString).
+-	panic("os: __fileWriteTo: multi-result io.WriteString needs the mrM8 desugar (re-test: WS D)")
++	// P0-2 retired (R-1107-05): the re-test trigger is met —
++	// io.ReadAll and io.WriteString are both in the mrM8 desugar table
++	// with real helpers (__readAll, __writeString), so the 2-target
++	// calls below desugar instead of breaking export (the D4 shape,
++	// restored). Partial data is written even when the read errors,
++	// matching gc; a write error takes precedence over the read error.
++	b, err := io.ReadAll(f)
++	if len(b) > 0 {
++		n, werr := io.WriteString(w, string(b))
++		if werr != nil {
++			return writeToPair{int64(n), werr}
++		}
++		return writeToPair{int64(n), err}
++	}
++	return writeToPair{0, err}
+ }
+ 
+ // __fileReadAll reads the whole file through the concrete helper.
+--- a/internal/frontend/synth_io.go
++++ b/internal/frontend/synth_io.go
+@@ -66,14 +66,16 @@
+ //	    identical; the critical section cannot panic).
+ //	D6. copyBuffer omits gc's WriterTo/ReaderFrom fast paths: every
+ //	    WriterTo/ReaderFrom implementation in the synthetic tree is a
+-//	    fail-fast or named-trap body — bytes.Buffer, discard, multiReader,
+-//	    nopCloserWriterTo and strings.Reader are fail-fast; os.File's
+-//	    __fileReadFrom/__fileWriteTo are named-trap panics (P0-2,
+-//	    synth_os.go:2334,2347) — so the fast-path arms can never execute
+-//	    successfully. Omitting them is load-bearing, not an optimization:
+-//	    with the arms, io.Copy from an *os.File source would route into
+-//	    the P0-2 trap. Re-test trigger: when WriteTo/ReadFrom interface
+-//	    dispatch lands, restore the arms.
++//	    fail-fast body — bytes.Buffer, discard, multiReader,
++//	    nopCloserWriterTo and strings.Reader are fail-fast — so the
++//	    fast-path arms can never execute successfully. Omitting them is
++//	    load-bearing, not an optimization: with the arms, io.Copy
++//	    from/into one of those would route into a fail-fast where the
++//	    generic path works. (os.File's __fileReadFrom/__fileWriteTo
++//	    are real since R-1107-05 retired the P0-2 traps; that alone
++//	    does not restore the arms.) Re-test trigger: when the
++//	    remaining WriterTo/ReaderFrom implementations become real,
++//	    restore the arms.
+ //
+ // Interface-value call sites (n, err := r.Read(p) with r io.Reader):
+ // P3-M8 (WS D) dispatches these through the itab to the concrete type's
+--- a/internal/frontend/synth_os_export_test.go
++++ b/internal/frontend/synth_os_export_test.go
+@@ -0,0 +1,112 @@
++package main
++
++import (
++	"strings"
++	"testing"
++)
++
++// TestSyntheticOsFileReadFromWriteToDesugar (R-1107-05): the P0-2 named
++// traps in __fileReadFrom/__fileWriteTo carried the re-test trigger
++// "mrM8 desugar for io.ReadAll / io.WriteString". Both callees are now
++// in the m8 desugar table (mrdesugar_m5.go) with real helpers
++// (__readAll, __writeString), so the trigger is met and the helpers must
++// be real implementations, not panics. The exported ReadFrom/WriteTo
++// methods keep their panic bodies: those are the fail-fast for
++// non-2-target call positions, unchanged by this fix.
++//
++// Red-green: pre-fix, the wire contains the P0-2 trap strings and the
++// __fileReadFrom/__fileWriteTo funcdecl bodies are a single panic (no
++// call to __readAll / __writeString); post-fix, the traps are gone and
++// the bodies call the real helpers (the desugar fires inside the helper
++// bodies, as it already does for io.ReadAll/io.WriteString in
++// synth_archive_tar.go / synth_archive_zip.go).
++func TestSyntheticOsFileReadFromWriteToDesugar(t *testing.T) {
++	src := `package main
++
++import (
++	"bytes"
++	"os"
++)
++
++func main() {
++	f, _ := os.CreateTemp("", "r1107-05-*")
++	defer os.Remove(f.Name())
++	defer f.Close()
++	n, _ := f.ReadFrom(bytes.NewReader([]byte("hi")))
++	println(n)
++	m, _ := f.WriteTo(bytes.NewBuffer(nil))
++	println(m)
++}
++`
++	out := mustExport(t, src)
++	for _, trap := range []string{
++		"multi-result io.ReadAll needs the mrM8 desugar",
++		"multi-result io.WriteString needs the mrM8 desugar",
++	} {
++		if strings.Contains(out, trap) {
++			t.Fatalf("wire still contains the P0-2 trap %q", trap)
++		}
++	}
++	doc := decodeExport(t, out)
++	readFrom := osFuncDecl(t, doc, "os", "__fileReadFrom")
++	if !wireBodyCallsHelper(t, readFrom["body"], "__readAll") {
++		t.Fatal("__fileReadFrom body has no call to __readAll (desugar did not fire inside the helper)")
++	}
++	writeTo := osFuncDecl(t, doc, "os", "__fileWriteTo")
++	if !wireBodyCallsHelper(t, writeTo["body"], "__writeString") {
++		t.Fatal("__fileWriteTo body has no call to __writeString (desugar did not fire inside the helper)")
++	}
++}
++
++// osFuncDecl returns the wire funcdecl named name in package pkgpath,
++// or fails the test.
++func osFuncDecl(t *testing.T, doc map[string]any, pkgpath, name string) map[string]any {
++	t.Helper()
++	for _, f := range findAllKind(doc, "funcdecl") {
++		fl, _ := f["fields"].(map[string]any)
++		if fl["name"] == name && fl["pkgpath"] == pkgpath {
++			return fl
++		}
++	}
++	t.Fatalf("no funcdecl %s in package %s", name, pkgpath)
++	return nil
++}
++
++// wireBodyCallsHelper reports whether the funcdecl body contains a call
++// whose function is the bare identifier helper (the desugar's
++// single-result __-helper call shape).
++func wireBodyCallsHelper(t *testing.T, body any, helper string) bool {
++	t.Helper()
++	found := false
++	var seen []string
++	var walk func(n any)
++	walk = func(n any) {
++		switch v := n.(type) {
++		case map[string]any:
++			if v["kind"] == "call" {
++				if fun, ok := v["fields"].(map[string]any)["fun"].(map[string]any); ok {
++					if fun["kind"] == "ident" {
++						if name, _ := fun["fields"].(map[string]any)["name"].(string); name != "" {
++							seen = append(seen, name)
++							if name == helper {
++								found = true
++							}
++						}
++					}
++				}
++			}
++			for _, c := range v {
++				walk(c)
++			}
++		case []any:
++			for _, c := range v {
++				walk(c)
++			}
++		}
++	}
++	walk(body)
++	if !found {
++		t.Logf("call fun idents seen in body: %v", seen)
++	}
++	return found
++}
