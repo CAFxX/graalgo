@@ -1,0 +1,693 @@
+--- a/internal/frontend/diskimport.go
++++ b/internal/frontend/diskimport.go
+@@ -3,8 +3,10 @@
+ // WS G (P3-M9, module-probe lane): general third-party package import.
+ //
+ // Any import path not claimed by the synthetic overlay resolves from local
+-// disk: the module cache ($GOMODCACHE/<path>@<highest version>) first, then
+-// GOPATH/src/<path>. The package's .go files are selected
++// disk: the module cache first — the version pinned by the importing
++// module's go.mod (require/replace; see resolveDiskPackageDir), falling
++// back to the highest cached version only when no pin names the module —
++// then GOPATH/src/<path>. The package's .go files are selected
+ // constraint-aware via go/build (GOOS/GOARCH build tags, so e.g.
+ // node_js.go is skipped on linux), parsed and type-checked with the same
+ // overlayImporter (its own imports resolve recursively through the same
+@@ -44,6 +46,203 @@
+ 	diskBuilding = map[string]bool{}   // cycle guard for recursive imports
+ )
+ 
++// R20-F03: the importing module's go.mod pins govern module-cache version
++// selection. gofrontend is a single-shot process (one ExportFiles call per
++// invocation; see main.go), so the anchor is process-global state set once
++// at ExportFiles entry from importingDir (the input files' directory, or
++// the --test-package-dir override). The disk caches are memo tables for
++// that anchor: changing the anchor clears them, so sequential in-process
++// ExportFiles calls (tests) with different main modules can never observe
++// a stale version. This package has no t.Parallel tests (verified
++// 2026-11-07), so no concurrent-anchor hazard exists.
++var (
++	diskAnchorDir  string
++	diskPins       goModPins
++	diskPinsAnchor string // anchor dir diskPins was parsed from; "" = not yet parsed
++)
++
++// goModPins is the subset of a main module's go.mod that governs disk
++// import version selection: require directives and replace directives.
++// Only the main module's file is read (full MVS over the module graph is
++// out of scope; see the resolveDiskPackageDir comment). Parsed without
++// golang.org/x/mod: this module has no dependencies, and the grammar
++// needed here (require/replace, single-line and block forms) is small.
++type goModPins struct {
++	require map[string]string // module path -> pinned version
++	replace map[string]string // module path -> "version:<v>" or "path:<local dir>"
++	root    string            // directory of the go.mod the pins came from
++}
++
++// parseGoModPins extracts require/replace directives from go.mod data.
++// Single-line and block forms, trailing // comments, and `// indirect`
++// markers are handled; module/go/exclude/retract/toolchain lines are
++// ignored. A replace with a version overrides require for that module; a
++// replace with a local path overrides both.
++func parseGoModPins(data []byte) goModPins {
++	p := goModPins{require: map[string]string{}, replace: map[string]string{}}
++	var block string // "" or "require" or "replace"
++	for _, raw := range strings.Split(string(data), "\n") {
++		// go.mod has no quoted strings, so the first "//" always starts
++		// a comment.
++		if i := strings.Index(raw, "//"); i >= 0 {
++			raw = raw[:i]
++		}
++		line := strings.TrimSpace(raw)
++		if line == "" {
++			continue
++		}
++		if block != "" {
++			if line == ")" {
++				block = ""
++				continue
++			}
++			addPinLine(&p, block, line)
++			continue
++		}
++		fields := strings.Fields(line)
++		switch fields[0] {
++		case "require", "replace":
++			if fields[len(fields)-1] == "(" {
++				block = fields[0]
++				continue
++			}
++			addPinLine(&p, fields[0], line)
++		}
++	}
++	return p
++}
++
++// addPinLine records one require/replace directive line. block is
++// "require" or "replace". Both the keyword-prefixed single-line form
++// ("require m v") and the bare block form ("m v") are accepted.
++func addPinLine(p *goModPins, block, line string) {
++	fields := strings.Fields(line)
++	if len(fields) > 0 && (fields[0] == "require" || fields[0] == "replace") {
++		fields = fields[1:]
++	}
++	if block == "require" {
++		if len(fields) >= 2 {
++			p.require[fields[0]] = fields[1]
++		}
++		return
++	}
++	// replace: "old [oldver] => new [newver]" or "old [oldver] => ../local".
++	arrow := -1
++	for i, f := range fields {
++		if f == "=>" {
++			arrow = i
++			break
++		}
++	}
++	if arrow < 1 || arrow+1 >= len(fields) {
++		return
++	}
++	old := fields[0]
++	if len(fields[arrow+1:]) >= 2 {
++		// "=> module version": the replacement version governs.
++		p.replace[old] = "version:" + fields[arrow+2]
++	} else if target := fields[arrow+1]; strings.HasPrefix(target, ".") || filepath.IsAbs(target) {
++		// "=> ../local": a filesystem path (relative to the go.mod dir).
++		// A bare single token that is not a path (e.g. "=> example.com/x"
++		// with no version) is invalid go.mod; ignore the directive and
++		// let require govern rather than misreading a module as a path.
++		p.replace[old] = "path:" + target
++	}
++}
++
++// findMainModuleGoMod walks up from anchorDir to the nearest go.mod and
++// returns its directory and contents. Same walk as p3frontend's
++// findModule (which reads only the module line); this one returns the
++// whole file so require/replace directives can be parsed. A missing
++// go.mod is not an error: GOPATH-mode programs have no pins.
++func findMainModuleGoMod(anchorDir string) (root string, data []byte, ok bool) {
++	abs, err := filepath.Abs(anchorDir)
++	if err != nil {
++		abs = anchorDir
++	}
++	for d := abs; ; d = filepath.Dir(d) {
++		if content, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
++			return d, content, true
++		}
++		parent := filepath.Dir(d)
++		if parent == d {
++			return "", nil, false
++		}
++	}
++}
++
++// setDiskAnchor records the importing package's directory for this
++// ExportFiles invocation (see importingDir) and invalidates the disk
++// caches when it changes: a resolved directory is only valid for the
++// main module whose go.mod pins selected it. Called once per ExportFiles
++// call; the anchor is constant for the whole export, including recursive
++// disk imports — the MAIN module's pins govern the build, exactly as the
++// main module's require set seeds gc's build list.
++func setDiskAnchor(dir string) {
++	diskMu.Lock()
++	defer diskMu.Unlock()
++	if dir == diskAnchorDir {
++		return
++	}
++	diskAnchorDir = dir
++	diskPinsAnchor = ""
++	diskPins = goModPins{}
++	diskCache = map[string]*syntheticPackage{}
++	diskDirCache = map[string]string{}
++	diskBuilding = map[string]bool{}
++}
++
++// pinsForAnchor returns the parsed require/replace directives of the main
++// module enclosing the anchor directory, parsed once per anchor. Empty
++// when no go.mod encloses the anchor (GOPATH mode) or it has no
++// directives: callers then fall back to the legacy highest-version
++// selection.
++func pinsForAnchor() goModPins {
++	diskMu.Lock()
++	defer diskMu.Unlock()
++	if diskAnchorDir == "" || diskPinsAnchor == diskAnchorDir {
++		return diskPins
++	}
++	diskPinsAnchor = diskAnchorDir
++	if root, data, ok := findMainModuleGoMod(diskAnchorDir); ok {
++		diskPins = parseGoModPins(data)
++		diskPins.root = root
++	} else {
++		diskPins = goModPins{}
++	}
++	return diskPins
++}
++
++// pinResolution is the outcome of consulting the main module's go.mod
++// pins for one module path.
++type pinResolution struct {
++	pinned  bool   // a require/replace directive names this module
++	version string // pinned version ("" when replaced by a local path)
++	local   string // local replacement directory, "" when version-pinned
++}
++
++// pinnedModuleVersion consults pins for modulePath. A replace with a
++// version overrides require; a replace with a local path overrides both.
++// ok=false: no directive names this module.
++func pinnedModuleVersion(modulePath string, pins goModPins) (pinResolution, bool) {
++	if rep, ok := pins.replace[modulePath]; ok {
++		if v, ok := strings.CutPrefix(rep, "version:"); ok {
++			return pinResolution{pinned: true, version: v}, true
++		}
++		if p, ok := strings.CutPrefix(rep, "path:"); ok {
++			local := p
++			if !filepath.IsAbs(local) {
++				local = filepath.Join(pins.root, local)
++			}
++			return pinResolution{pinned: true, local: local}, true
++		}
++	}
++	if v, ok := pins.require[modulePath]; ok {
++		return pinResolution{pinned: true, version: v}, true
++	}
++	return pinResolution{}, false
++}
++
+ // goModCache returns the local module cache directory.
+ func goModCache() string {
+ 	if v := os.Getenv("GOMODCACHE"); v != "" {
+@@ -122,9 +321,14 @@
+ }
+ 
+ // resolveDiskPackageDir maps an import path to a source directory on disk.
+-// Module cache wins ($GOMODCACHE/<escaped path>@<highest version>); the
+-// probe harness pins the cache to the intended version. Falls back to
+-// GOPATH/src/<path>, then to the toolchain's GOROOT/src/<path> so plain
++// Module cache wins. The version is the one pinned by the importing
++// (main) module's go.mod require/replace directives (R20-F03): a pinned
++// version absent from the cache is a loud error, never a silent
++// substitution of the newest cached version. With no pin for the module,
++// the highest cached version is selected, as before — that is the only
++// option in GOPATH mode and for unpinned modules, and it is what the
++// probe harness relies on (it pins the cache to a single version).
++// Falls back to GOPATH/src/<path>, then to the toolchain's GOROOT/src/<path> so plain
+ // stdlib packages outside the synthetic overlay (e.g.
+ // database/sql/driver) resolve through the same general mechanism.
+ // Synthetic-overlay paths never resolve from disk, wherever the call
+@@ -157,6 +361,74 @@
+ 			// as subpackage paths.
+ 			escaped := escapeModulePath(importPath)
+ 			elems := strings.Split(escaped, string(filepath.Separator))
++			// R20-F03: the main module's go.mod pins govern first.
++			// For each progressively shorter prefix (the module path,
++			// then its parents), a require/replace pin for that prefix
++			// is authoritative: the pinned version is selected
++			// exactly, and a pinned version absent from the cache is
++			// a LOUD error — never a silent fall-through to the
++			// newest cached version, and never a fall-through to
++			// GOPATH/GOROOT (in module mode gc would fail the build:
++			// the pinned version is not available). Longest pinned
++			// prefix wins. With no pin for any prefix, the legacy
++			// highest-cached-version selection below runs unchanged.
++			// Only the MAIN module's require set is consulted: full
++			// MVS over the module graph is not done here, so a
++			// separate module reachable only via a transitive require
++			// is not in the pin set — if the main module also pins an
++			// ancestor module, the ancestor pin wins over the
++			// transitive module. Known residual gap, filed as
++			// follow-up in the R20-F03 design note; the common case
++			// (direct pins, which is every pin the importing program
++			// itself declares) is exact.
++			pathElems := strings.Split(importPath, "/")
++			pins := pinsForAnchor()
++			for i := len(pathElems); i >= 1; i-- {
++				modPath := strings.Join(pathElems[:i], "/")
++				pr, ok := pinnedModuleVersion(modPath, pins)
++				if !ok {
++					continue
++				}
++				subPath := strings.Join(elems[i:], string(filepath.Separator))
++				if pr.local != "" {
++					dir := pr.local
++					if subPath != "" {
++						dir = filepath.Join(dir, subPath)
++					}
++					if st, err := os.Stat(dir); err == nil && st.IsDir() {
++						return dir, nil
++					}
++					return "", fmt.Errorf("gofrontend: module %s: go.mod replaces it with local path %s, but %s is not a directory", modPath, pr.local, dir)
++				}
++				modEscaped := strings.Join(elems[:i], string(filepath.Separator))
++				parent := filepath.Join(mc, filepath.Dir(modEscaped))
++				base := filepath.Base(modEscaped)
++				entries, err := os.ReadDir(parent)
++				if err != nil {
++					return "", fmt.Errorf("gofrontend: module %s: go.mod requires %s, but module cache %s has no %s@%s (module not in cache)", modPath, pr.version, mc, modPath, pr.version)
++				}
++				var have []string
++				for _, e := range entries {
++					name := e.Name()
++					if !e.IsDir() || !strings.HasPrefix(name, base+"@") {
++						continue
++					}
++					have = append(have, strings.TrimPrefix(name, base+"@"))
++				}
++				for _, v := range have {
++					if v == pr.version {
++						dir := filepath.Join(parent, base+"@"+pr.version)
++						if subPath != "" {
++							dir = filepath.Join(dir, subPath)
++						}
++						if st, err := os.Stat(dir); err == nil && st.IsDir() {
++							return dir, nil
++						}
++						return "", fmt.Errorf("gofrontend: module %s: go.mod requires %s, but %s is not a directory", modPath, pr.version, dir)
++					}
++				}
++				return "", fmt.Errorf("gofrontend: module %s: go.mod requires %s, but module cache %s has only %v; run 'go mod download %s@%s'", modPath, pr.version, mc, have, modPath, pr.version)
++			}
+ 			for i := len(elems); i >= 1; i-- {
+ 				modEscaped := strings.Join(elems[:i], string(filepath.Separator))
+ 				subPath := strings.Join(elems[i:], string(filepath.Separator))
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -895,6 +895,11 @@
+ 	// The test driver is the package's own test binary: resolve imports
+ 	// with the package's privileges (Go's internal-visibility rule).
+ 	idir := importingDir(paths, testPackageDir)
++	// R20-F03: the same directory anchors disk-import version selection:
++	// the main module's go.mod pins (require/replace) govern which cached
++	// module version an import resolves to. Set once per ExportFiles call;
++	// see setDiskAnchor.
++	setDiskAnchor(idir)
+ 	for _, file := range files {
+ 		for _, imp := range file.Imports {
+ 			if err := checkImportAllowed(imp, idir); err != nil {
+diff --git a/internal/frontend/diskimport_version_test.go b/internal/frontend/diskimport_version_test.go
+new file mode 100644
+--- /dev/null
++++ b/internal/frontend/diskimport_version_test.go
+@@ -0,0 +1,362 @@
++package main
++
++// R20-F03: disk import honors the importing module's go.mod pins.
++//
++// A third-party import used to resolve to $GOMODCACHE/<path>@<highest
++// version> regardless of what the importing program's go.mod pinned.
++// These tests pin the cache with two versions of a fake module and assert
++// the pinned version is selected, a missing pinned version fails loudly,
++// and the legacy highest-version fallback survives where no pin applies.
++//
++// RED note: the two end-to-end tests compile against the PRE-FIX code
++// (they only use ExportFiles) and fail there — v1.6.0 selected / no error
++// — so they are genuine behavioral RED tests. The unit tests use the new
++// setDiskAnchor API and therefore do not compile pre-fix; their RED proof
++// is the standalone harness (harness/main.go), which runs the OLD rule
++// (highest version) against the NEW rule on the same fixtures. The
++// no-pin test passes pre- and post-fix and guards the unchanged fallback.
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// writeFakeModule writes files into a fake module-cache entry
++// $GOMODCACHE/<escaped module>@<version>/, creating parent dirs.
++func writeFakeModule(t *testing.T, cache, module, version string, files map[string]string) {
++	t.Helper()
++	dir := filepath.Join(cache, escapeModulePath(module)+"@"+version)
++	for rel, src := range files {
++		p := filepath.Join(dir, filepath.FromSlash(rel))
++		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++}
++
++// writeMainModule writes go.mod + main.go into dir and returns main.go's path.
++func writeMainModule(t *testing.T, dir, goMod, mainGo string) string {
++	t.Helper()
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	p := filepath.Join(dir, "main.go")
++	if err := os.WriteFile(p, []byte(mainGo), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	return p
++}
++
++// pinnedFixture builds a fake cache with example.com/mod at v1.3.0 and
++// v1.6.0 (each a one-file package exposing its version) and returns the
++// cache dir. The caller sets GOMODCACHE to it.
++func pinnedFixture(t *testing.T) string {
++	t.Helper()
++	cache := t.TempDir()
++	writeFakeModule(t, cache, "example.com/mod", "v1.3.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.3.0\"\n",
++	})
++	writeFakeModule(t, cache, "example.com/mod", "v1.6.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.6.0\"\n",
++	})
++	return cache
++}
++
++// resolveWithAnchor is resolveDiskPackageDir with the anchor set to dir,
++// resetting global disk state afterwards.
++func resolveWithAnchor(t *testing.T, dir, importPath string) (string, error) {
++	t.Helper()
++	setDiskAnchor(dir)
++	t.Cleanup(func() { setDiskAnchor("") })
++	return resolveDiskPackageDir(importPath)
++}
++
++func TestDiskImportHonorsGoModPin(t *testing.T) {
++	cache := pinnedFixture(t)
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.3.0\n",
++		"package main\n\nimport _ \"example.com/mod\"\n\nfunc main() {}\n")
++	dir, err := resolveWithAnchor(t, mainDir, "example.com/mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir: %v", err)
++	}
++	want := filepath.Join(cache, "example.com", "mod@v1.3.0")
++	if dir != want {
++		t.Fatalf("resolved to %s, want pinned %s", dir, want)
++	}
++}
++
++func TestDiskImportPinMissingVersionFailsLoud(t *testing.T) {
++	cache := t.TempDir()
++	writeFakeModule(t, cache, "example.com/mod", "v1.6.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.6.0\"\n",
++	})
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.3.0\n",
++		"package main\n\nimport _ \"example.com/mod\"\n\nfunc main() {}\n")
++	_, err := resolveWithAnchor(t, mainDir, "example.com/mod")
++	if err == nil {
++		t.Fatal("expected a loud error for a pinned version absent from the cache, got nil")
++	}
++	for _, want := range []string{"v1.3.0", "go.mod requires", "has only"} {
++		if !strings.Contains(err.Error(), want) {
++			t.Fatalf("error %q does not mention %q", err.Error(), want)
++		}
++	}
++}
++
++func TestDiskImportNoPinTakesHighest(t *testing.T) {
++	// No go.mod encloses the importing package: legacy highest-version
++	// selection is preserved (GOPATH mode / unpinned modules).
++	cache := pinnedFixture(t)
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	p := filepath.Join(mainDir, "main.go")
++	if err := os.WriteFile(p, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	dir, err := resolveWithAnchor(t, mainDir, "example.com/mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir: %v", err)
++	}
++	want := filepath.Join(cache, "example.com", "mod@v1.6.0")
++	if dir != want {
++		t.Fatalf("resolved to %s, want legacy highest %s", dir, want)
++	}
++}
++
++func TestDiskImportPinSubpackage(t *testing.T) {
++	cache := t.TempDir()
++	writeFakeModule(t, cache, "example.com/mod", "v1.3.0", map[string]string{
++		"sub/sub.go": "package sub\n\nconst Version = \"v1.3.0\"\n",
++	})
++	writeFakeModule(t, cache, "example.com/mod", "v1.6.0", map[string]string{
++		"sub/sub.go": "package sub\n\nconst Version = \"v1.6.0\"\n",
++	})
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.3.0\n",
++		"package main\n\nimport _ \"example.com/mod/sub\"\n\nfunc main() {}\n")
++	dir, err := resolveWithAnchor(t, mainDir, "example.com/mod/sub")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir: %v", err)
++	}
++	want := filepath.Join(cache, "example.com", "mod@v1.3.0", "sub")
++	if dir != want {
++		t.Fatalf("resolved to %s, want pinned %s", dir, want)
++	}
++}
++
++func TestDiskImportReplaceVersionOverridesRequire(t *testing.T) {
++	cache := pinnedFixture(t)
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.6.0\n\nreplace example.com/mod => example.com/mod v1.3.0\n",
++		"package main\n\nimport _ \"example.com/mod\"\n\nfunc main() {}\n")
++	dir, err := resolveWithAnchor(t, mainDir, "example.com/mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir: %v", err)
++	}
++	want := filepath.Join(cache, "example.com", "mod@v1.3.0")
++	if dir != want {
++		t.Fatalf("resolved to %s, want replace-pinned %s", dir, want)
++	}
++}
++
++func TestDiskImportReplaceLocalPath(t *testing.T) {
++	cache := pinnedFixture(t)
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	local := filepath.Join(mainDir, "localmod")
++	if err := os.MkdirAll(local, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(local, "mod.go"), []byte("package mod\n\nconst Version = \"local\"\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.6.0\n\nreplace example.com/mod => ./localmod\n",
++		"package main\n\nimport _ \"example.com/mod\"\n\nfunc main() {}\n")
++	dir, err := resolveWithAnchor(t, mainDir, "example.com/mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir: %v", err)
++	}
++	if dir != local {
++		t.Fatalf("resolved to %s, want local replacement %s", dir, local)
++	}
++}
++
++func TestDiskImportReplaceLocalPathMissingFailsLoud(t *testing.T) {
++	cache := pinnedFixture(t)
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.6.0\n\nreplace example.com/mod => ./nolocalmod\n",
++		"package main\n\nimport _ \"example.com/mod\"\n\nfunc main() {}\n")
++	_, err := resolveWithAnchor(t, mainDir, "example.com/mod")
++	if err == nil {
++		t.Fatal("expected a loud error for a missing local replacement, got nil")
++	}
++	if !strings.Contains(err.Error(), "nolocalmod") {
++		t.Fatalf("error %q does not name the missing replacement", err.Error())
++	}
++}
++
++func TestDiskImportEscapedModulePin(t *testing.T) {
++	// Uppercase module path: the cache dir is escaped (example.com/!mod)
++	// while the go.mod pin names the unescaped path.
++	cache := t.TempDir()
++	writeFakeModule(t, cache, "example.com/Mod", "v1.3.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.3.0\"\n",
++	})
++	writeFakeModule(t, cache, "example.com/Mod", "v1.6.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.6.0\"\n",
++	})
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/Mod v1.3.0\n",
++		"package main\n\nimport _ \"example.com/Mod\"\n\nfunc main() {}\n")
++	dir, err := resolveWithAnchor(t, mainDir, "example.com/Mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir: %v", err)
++	}
++	want := filepath.Join(cache, "example.com", "!mod@v1.3.0")
++	if dir != want {
++		t.Fatalf("resolved to %s, want pinned %s", dir, want)
++	}
++}
++
++func TestDiskImportAnchorChangeClearsCache(t *testing.T) {
++	// Resolving under a no-pin anchor caches the highest version; moving
++	// the anchor to a pinning module must not observe the stale entry.
++	cache := pinnedFixture(t)
++	t.Setenv("GOMODCACHE", cache)
++	plainDir := t.TempDir()
++	p := filepath.Join(plainDir, "main.go")
++	if err := os.WriteFile(p, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	setDiskAnchor(plainDir)
++	t.Cleanup(func() { setDiskAnchor("") })
++	dir, err := resolveDiskPackageDir("example.com/mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir (plain): %v", err)
++	}
++	if !strings.HasSuffix(dir, "mod@v1.6.0") {
++		t.Fatalf("plain anchor resolved to %s, want mod@v1.6.0", dir)
++	}
++	pinDir := t.TempDir()
++	writeMainModule(t, pinDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.3.0\n",
++		"package main\n\nimport _ \"example.com/mod\"\n\nfunc main() {}\n")
++	setDiskAnchor(pinDir)
++	dir, err = resolveDiskPackageDir("example.com/mod")
++	if err != nil {
++		t.Fatalf("resolveDiskPackageDir (pinned): %v", err)
++	}
++	if !strings.HasSuffix(dir, "mod@v1.3.0") {
++		t.Fatalf("pinned anchor resolved to %s, want mod@v1.3.0 (stale cache?)", dir)
++	}
++}
++
++func TestParseGoModPins(t *testing.T) {
++	pins := parseGoModPins([]byte(`module example.com/main
++
++go 1.21
++
++require (
++	example.com/a v1.2.3 // indirect
++	example.com/mod v1.3.0
++)
++
++require example.com/single v0.9.0
++
++replace example.com/mod => example.com/mod v1.2.0
++
++replace (
++	example.com/old v1.0.0 => example.com/new v2.0.0
++	example.com/local => ../local
++)
++`))
++	if pins.require["example.com/mod"] != "v1.3.0" {
++		t.Fatalf("block require: got %q, want v1.3.0", pins.require["example.com/mod"])
++	}
++	if pins.require["example.com/a"] != "v1.2.3" {
++		t.Fatalf("indirect require: got %q, want v1.2.3", pins.require["example.com/a"])
++	}
++	if pins.require["example.com/single"] != "v0.9.0" {
++		t.Fatalf("single-line require: got %q, want v0.9.0", pins.require["example.com/single"])
++	}
++	if pins.replace["example.com/mod"] != "version:v1.2.0" {
++		t.Fatalf("replace version: got %q, want version:v1.2.0", pins.replace["example.com/mod"])
++	}
++	if pins.replace["example.com/old"] != "version:v2.0.0" {
++		t.Fatalf("block replace version: got %q, want version:v2.0.0", pins.replace["example.com/old"])
++	}
++	if pins.replace["example.com/local"] != "path:../local" {
++		t.Fatalf("block replace path: got %q, want path:../local", pins.replace["example.com/local"])
++	}
++	empty := parseGoModPins([]byte("module example.com/main\n\ngo 1.21\n"))
++	if len(empty.require) != 0 || len(empty.replace) != 0 {
++		t.Fatalf("no-directive go.mod produced pins: %+v", empty)
++	}
++}
++
++func TestDiskImportPinEndToEnd(t *testing.T) {
++	// Full ExportFiles path: the v1.6.0 package is INVALID Go, so selecting
++	// it (the pre-fix behavior) fails the export; selecting the pinned
++	// v1.3.0 succeeds. This is the behavioral RED/GREEN test.
++	cache := t.TempDir()
++	writeFakeModule(t, cache, "example.com/mod", "v1.3.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.3.0\"\n",
++	})
++	writeFakeModule(t, cache, "example.com/mod", "v1.6.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = undefinedIdent\n",
++	})
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	mainGo := writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.3.0\n",
++		"package main\n\nimport \"example.com/mod\"\n\nvar _ = mod.Version\n\nfunc main() {}\n")
++	if _, err := ExportFiles([]string{mainGo}, ""); err != nil {
++		t.Fatalf("ExportFiles with pinned v1.3.0 failed: %v", err)
++	}
++}
++
++func TestDiskImportPinMissingEndToEnd(t *testing.T) {
++	// Pinned version absent from the cache: the export fails LOUDLY with
++	// the pinned version named (not a generic scope error, not a silent
++	// substitution). The overlay importer propagates non-errDiskNotFound
++	// errors verbatim (export.go overlayImporter.Import).
++	cache := t.TempDir()
++	writeFakeModule(t, cache, "example.com/mod", "v1.6.0", map[string]string{
++		"mod.go": "package mod\n\nconst Version = \"v1.6.0\"\n",
++	})
++	t.Setenv("GOMODCACHE", cache)
++	mainDir := t.TempDir()
++	mainGo := writeMainModule(t, mainDir,
++		"module example.com/main\n\ngo 1.21\n\nrequire example.com/mod v1.3.0\n",
++		"package main\n\nimport \"example.com/mod\"\n\nvar _ = mod.Version\n\nfunc main() {}\n")
++	_, err := ExportFiles([]string{mainGo}, "")
++	if err == nil {
++		t.Fatal("expected ExportFiles to fail for a pinned version absent from the cache, got nil")
++	}
++	if !strings.Contains(err.Error(), "v1.3.0") || !strings.Contains(err.Error(), "go.mod requires") {
++		t.Fatalf("error %q does not name the pin", err.Error())
++	}
++}
