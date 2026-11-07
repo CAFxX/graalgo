@@ -8564,10 +8564,17 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// path as an ordinary call — never a scope error.
 		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
 			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
-				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
-					if len(c.Args) != 0 {
-						return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
-					}
+				// Negative-form guard (same shape as the isGoschedCall
+				// gate above): only the real runtime package's Goexit
+				// (path "runtime") emits the marker. Any other
+				// package's Goexit falls through to the general call
+				// path as an ordinary call — never a scope error.
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Path() != "runtime" {
+					// Not the real runtime.Goexit: fall through to the
+					// general call path as an ordinary call.
+				} else if len(c.Args) != 0 {
+					return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
+				} else {
 					return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 				}
 			}
