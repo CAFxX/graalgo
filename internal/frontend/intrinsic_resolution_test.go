@@ -670,14 +670,18 @@ func TestLinknameDirectivesResolve(t *testing.T) {
 // rand() unconditionally (internal/runtime/maps/table.go);
 // SetMapIndex reaches mapassign*/mapdelete*; MapOf calls typehash;
 // Value.Elem reaches verifyNotInHeapPtr on not-in-heap pointers.
+//
+// Shrink (fix-rv1107-10-mapaccess): the mapaccess family
+// (reflect.mapaccess, mapaccess_faststr, mapassign0,
+// mapassign_faststr0, mapdelete, mapdelete_faststr, typehash) and
+// internal/runtime/maps.rand are now bound to real backend targets
+// (ReflectLinknames + MapsView), so their entries are removed here.
+// The 5 remaining entries are the separate small items, untouched.
 var knownUnboundLinknames = map[string]string{
 	// Called by maps.Next on concurrent map iteration+write (gc
 	// panics). Fix: register a fatal-throwing target mirroring
 	// sync.fatal / internal/sync.fatal.
 	"internal/runtime/maps.fatal": "error path only (concurrent map iteration+write)",
-	// Called unconditionally by maps.Init on every reflect MapIter
-	// start. Fix: register fastrand64 (runtime.rand precedent).
-	"internal/runtime/maps.rand": "unconditional in maps.Init (every MapIter start)",
 	// Called only under race.Enabled / msan.Enabled guards.
 	// Fix: register a 0-returning stub (graalgo has no PCs; the
 	// guarded paths are never taken).
@@ -685,21 +689,6 @@ var knownUnboundLinknames = map[string]string{
 	// Called only when runtime.GOOS == "aix" (reflect/type.go).
 	// Fix: register the identity function (gc's non-AIX behavior).
 	"reflect.adjustAIXGCDataForRuntime": "AIX-only (GOOS guard)",
-	// Called unconditionally by Value.MapIndex. No Java target;
-	// needs a real backend map-lookup implementation (follow-up).
-	"reflect.mapaccess":         "unconditional in Value.MapIndex",
-	"reflect.mapaccess_faststr": "unconditional in Value.MapIndex (string keys)",
-	// Called by Value.SetMapIndex (via mapassign/mapassign_faststr).
-	// Same backend follow-up as mapaccess.
-	"reflect.mapassign0":         "Value.SetMapIndex",
-	"reflect.mapassign_faststr0": "Value.SetMapIndex (string keys)",
-	// Called by Value.SetMapIndex with a zero Value (delete).
-	// Same backend follow-up as mapaccess.
-	"reflect.mapdelete":         "Value.SetMapIndex delete path",
-	"reflect.mapdelete_faststr": "Value.SetMapIndex delete path (string keys)",
-	// Called unconditionally by reflect.MapOf. No Java target;
-	// needs a backend implementation (follow-up).
-	"reflect.typehash": "unconditional in reflect.MapOf",
 	// Called by Value.Elem / UnsafePointer on not-in-heap
 	// pointers. No Java target; needs a backend decision (graalgo
 	// has no Go heap — the faithful value is likely always true).
