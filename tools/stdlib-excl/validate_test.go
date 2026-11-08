@@ -19,11 +19,18 @@ package main
 //   (P1-2) TestResolveStdlibTreeFallsBackLoud  — no vendored tree: loud GOROOT fallback
 //   (P1-2) TestResolveStdlibTreePinSkewFailsLoud — manifest/pin skew fails loud
 //   (P1-2) TestResolveStdlibTreeRejectsNonTreeDir — same-named non-tree dir refused
+//   (R-1108-113) TestValidateBareDefaultsAccept — bare validate resolves
+//     the --list/--src/--baseline defaults (fake git repo) and accepts an
+//     unchanged list
+//   (R-1108-113) TestValidateBareDefaultsRejectsVersionStaleChange — bare
+//     validate enforces the version-stale rule against the git-HEAD
+//     baseline
 //   (CI-41211913011) TestGoBinaryDiscovery — toolchain discovery order: STDLIB_EXCL_GO, $GO, PATH go, legacy ~/tools fallback
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -462,4 +469,104 @@ func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 		t.Fatal("non-tree dir: expected refusal, got a tree")
 	}
 	mustContain(t, err.Error(), "not a stdlib src root", "refusal diagnosis")
+}
+
+// runGit runs git in dir and fails the test on error, showing combined output.
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s in %s: %v\n%s", strings.Join(args, " "), dir, err, out)
+	}
+	return string(out)
+}
+
+// fakeBareValidateRepo builds a fake git repo standing in for a graalgo
+// checkout: tools/stdlib-fork/ with a pinned version + matching vendor
+// manifest, and an exclusions.yaml (version 1, one runtime/cgo entry)
+// committed at HEAD. It also builds a fake vendored stdlib tree under a
+// fake HOME holding the entry package dirs, so bare `validate` (no --src)
+// resolves its source root there. Returns the repo root and the fake HOME.
+// The caller must t.Chdir(root): repoRoot() and parseGitHead() shell out
+// to `git` in the test process's working directory, so only a chdir makes
+// them see the fake repo instead of the enclosing checkout.
+func fakeBareValidateRepo(t *testing.T) (root, home string) {
+	t.Helper()
+	root = fakeRepoRoot(t, "go1.27.1", "go1.27.1")
+	home = t.TempDir()
+	tree := fakeVendoredTree(t, home, "go1.27.1")
+	// Entry package dirs the list references must exist in the tree, or
+	// the freshness check (step 5) rejects the list.
+	for _, p := range []string{"runtime/cgo", "plugin"} {
+		dir := filepath.Join(tree, filepath.FromSlash(p))
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package x\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fork := filepath.Join(root, "tools", "stdlib-fork")
+	testList(t, fork, "exclusions.yaml", "1",
+		"- file: runtime/cgo\n  reason: CGO\n  detail: evidence\n")
+	runGit(t, root, "init")
+	runGit(t, root, "add", "-A")
+	runGit(t, root, "-c", "user.email=test@example.invalid", "-c", "user.name=stdlib-excl test",
+		"commit", "-m", "fake repo HEAD")
+	return root, home
+}
+
+// runValidateBare runs validate with no --list, no --baseline and no --src:
+// the production bare invocation. --test-binaries/--max are explicit
+// controls (as in runValidateOK) so the cap clause cannot mask the defaults
+// under test. HOME must point at the fake home built by
+// fakeBareValidateRepo.
+func runValidateBare(t *testing.T, home string) (string, string, error) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	var stdout, stderr strings.Builder
+	err := runValidate([]string{"--test-binaries", "1000", "--max", "25"}, &stdout, &stderr)
+	return stdout.String(), stderr.String(), err
+}
+
+// (R-1108-113) bare `validate` must resolve --list to the enclosing repo's
+// tools/stdlib-fork/exclusions.yaml and --src to the vendored tree, and
+// accept the list when it matches HEAD. This pins the WIRING (the
+// `--list == ""` branch in runValidate), not just the defaultListPath
+// helper: dropping the branch makes runValidate fail on the empty list
+// path and turns this test red.
+func TestValidateBareDefaultsAccept(t *testing.T) {
+	root, home := fakeBareValidateRepo(t)
+	t.Chdir(root)
+	gitRoot := strings.TrimSpace(runGit(t, root, "rev-parse", "--show-toplevel"))
+	stdout, stderr, err := runValidateBare(t, home)
+	if err != nil {
+		t.Fatalf("bare validate of unchanged list should pass, got: %v\nstderr:\n%s", err, stderr)
+	}
+	wantList := filepath.Join(gitRoot, "tools", "stdlib-fork", "exclusions.yaml")
+	mustContain(t, stdout, "validate: OK: "+wantList, "bare-list resolution")
+	mustContain(t, stdout, "version 1", "bare accept version")
+	mustContain(t, stderr, "using vendored tree", "bare-src resolution")
+}
+
+// (R-1108-113) bare `validate` must enforce the version-stale rule against
+// the git-HEAD baseline: a working-tree change without a version bump is
+// rejected even though no --baseline was passed. This pins the default
+// baseline wiring (validate.go:119-130 + parseGitHead): dropping it makes
+// the stale change pass and turns this test red.
+func TestValidateBareDefaultsRejectsVersionStaleChange(t *testing.T) {
+	root, home := fakeBareValidateRepo(t)
+	t.Chdir(root)
+	// Change the working-tree list without bumping the version: add an
+	// entry. HEAD still holds the one-entry version-1 list.
+	fork := filepath.Join(root, "tools", "stdlib-fork")
+	testList(t, fork, "exclusions.yaml", "1",
+		"- file: runtime/cgo\n  reason: CGO\n  detail: evidence\n- file: plugin\n  reason: PLATFORM\n  detail: evidence\n")
+	_, stderr, err := runValidateBare(t, home)
+	if err == nil {
+		t.Fatal("bare validate: expected rejection of version-stale change against git HEAD, got accept")
+	}
+	mustContain(t, stderr, "without a version bump", "bare version-stale rejection")
 }
