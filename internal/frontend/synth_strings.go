@@ -69,6 +69,7 @@ import (
 	"errors"
 	"io"
 	"iter"
+	"unicode"
 )
 
 // maxInt is the maximum int value, as in the real package.
@@ -1728,11 +1729,49 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		return b.String()
 	}
 
-	// Title is deprecated upstream and needs the unicode Letter/Digit tables,
-	// which are too large to inline for a deprecated function: exact gc
-	// signature with a fail-fast body. Re-test when the unicode wave lands.
+	// L-I (REVIEW-2026-11-03-16 P1-R1): Title is deprecated upstream, but
+	// its re-test trigger has fired (the unicode wave landed: unicode is
+	// now synthetic, so the gc body below type-checks as-is). The local
+	// "unicode" bool in EqualFold shadows the import inside that function
+	// only; Title itself uses the unicode package.
+	func isSeparator(r rune) bool {
+		// ASCII alphanumerics and underscore are not separators
+		if r <= 0x7F {
+			switch {
+			case '0' <= r && r <= '9':
+				return false
+			case 'a' <= r && r <= 'z':
+				return false
+			case 'A' <= r && r <= 'Z':
+				return false
+			case r == '_':
+				return false
+			}
+			return true
+		}
+		// Letters and digits are not separators
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+		// Otherwise, all we can do for now is treat spaces as separators.
+		return unicode.IsSpace(r)
+	}
+
 	func Title(s string) string {
-		panic("strings.Title: not in M7 scope (needs unicode Letter/Digit tables; deprecated upstream; re-test when unicode lands)")
+		// Use a closure here to remember state.
+		// Hackish but effective. Depends on Map scanning in order and calling
+		// the closure once per rune.
+		prev := ' '
+		return Map(
+			func(r rune) rune {
+				if isSeparator(prev) {
+					prev = r
+					return unicode.ToTitle(r)
+				}
+				prev = r
+				return r
+			},
+			s)
 	}
 
 	// ---------------------------------------------------------------------------
@@ -2204,9 +2243,10 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		}
 	}
 
-	// Write appends p to b's buffer. Multi-result: not in M7 scope (WS D).
+	// Write appends p to b's buffer. Table-driven (WS D): the real body
+	// is __builderWrite; this declaration is type-checking only.
 	func (b *Builder) Write(p []byte) (int, error) {
-		panic("strings.Builder.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Builder.Write: use __builderWrite helper (WS D)")
 	}
 
 	// WriteByte appends the byte c to b's buffer. The returned error is always
@@ -2217,16 +2257,17 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		return nil
 	}
 
-	// WriteRune appends the UTF-8 encoding of r. Multi-result: not in M7 scope
-	// (WS D).
+	// WriteRune appends the UTF-8 encoding of r. Table-driven (WS D):
+	// the real body is __builderWriteRune; this declaration is
+	// type-checking only.
 	func (b *Builder) WriteRune(r rune) (int, error) {
-		panic("strings.Builder.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Builder.WriteRune: use __builderWriteRune helper (WS D)")
 	}
 
-	// WriteString appends s to b's buffer. Multi-result: not in M7 scope
-	// (WS D).
+	// WriteString appends s to b's buffer. Table-driven (WS D): the real
+	// body is __builderWriteString; this declaration is type-checking only.
 	func (b *Builder) WriteString(s string) (int, error) {
-		panic("strings.Builder.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Builder.WriteString: use __builderWriteString helper (WS D)")
 	}
 
 	// P3-M10: WS D discharge of the three fail-fasts above via the m7
@@ -2309,7 +2350,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// (Appendix M — P3-M8 discharge of the M7 fail-fast; only io.EOF was
 	// missing, and io landed).
 	func (r *Reader) Read(b []byte) (n int, err error) {
-		panic("strings.Reader.Read: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.Read: use __stringsReaderRead helper (WS D)")
 	}
 
 	// stringsReaderReadPair is the Appendix M carrier for Reader.Read.
@@ -2340,7 +2381,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// lives in __stringsReaderReadAt; 2-target call sites desugar to it
 	// (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) ReadAt(b []byte, off int64) (n int, err error) {
-		panic("strings.Reader.ReadAt: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.ReadAt: use __stringsReaderReadAt helper (WS D)")
 	}
 
 	// stringsReaderReadAtPair is the Appendix M carrier for Reader.ReadAt.
@@ -2375,7 +2416,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// implementation lives in __stringsReaderReadByte; 2-target call
 	// sites desugar to it (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) ReadByte() (byte, error) {
-		panic("strings.Reader.ReadByte: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.ReadByte: use __stringsReaderReadByte helper (WS D)")
 	}
 
 	// stringsReaderReadBytePair is the Appendix M carrier for Reader.ReadByte.
@@ -2410,7 +2451,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// implementation lives in __stringsReaderReadRune; 3-target call
 	// sites desugar to it (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) ReadRune() (ch rune, size int, err error) {
-		panic("strings.Reader.ReadRune: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.ReadRune: use __stringsReaderReadRune helper (WS D)")
 	}
 
 	// stringsReaderReadRuneTriple is the Appendix M carrier for Reader.ReadRune.
@@ -2450,7 +2491,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// lives in __stringsReaderSeek; 2-target call sites desugar to it
 	// (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-		panic("strings.Reader.Seek: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.Seek: use __stringsReaderSeek helper (WS D)")
 	}
 
 	// stringsReaderSeekPair is the Appendix M carrier for Reader.Seek.

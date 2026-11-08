@@ -451,6 +451,10 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// the synthetic math/cmplx package (Rect/Exp/Pow/Sin/Cos).
 	{"math", "Sincos", "", "__sincos", "__sincosPair", []string{"sin", "cos"}, false},
 	{"math", "Frexp", "", "__frexp", "__frexpPair", []string{"frac", "exp"}, false}, // P3-M9 math/big
+	// L-I (REVIEW-2026-11-03-16 P1-R1): math.Modf's __modf helper existed
+	// (bit-exact gc port, used by Pow/Gamma) but no table row routed the
+	// exported Modf to it; the stub pair-transformed to a runtime panic.
+	{"math", "Modf", "", "__modf", "__modfPair", []string{"int", "frac"}, false},
 	// P3-M9 (tier1c): math/cmplx.Polar desugars to the __cmplxPolar helper
 	// (Appendix M; pair fields match the gc result names in order).
 	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}, false},
@@ -597,6 +601,16 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "Read", "dirReader", "__zipdirReaderRead", "__zipdirReaderReadPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Stat", "checksumReader", "__zipchecksumReaderStat", "__zipchecksumReaderStatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "checksumReader", "__zipchecksumReaderRead", "__zipchecksumReaderReadPair", []string{"n", "err"}, false},
+	// NOTE (L-I, REVIEW-2026-11-03-16 P1-R1): no Close row here on purpose —
+	// checksumReader.Close is single-result with a real body, so a
+	// multi-result table entry naming a nonexistent
+	// __zipchecksumReaderClose helper could never fire; the row was dead
+	// weight that broke the table's "every entry verified" invariant.
+	// L-I (REVIEW-2026-11-03-16 P1-R1): File.findBodyOffset's __-helper
+	// existed but its table row was never pasted (the generator emits
+	// the entry; the hand-maintained table dropped it). Without the row
+	// the stub pair-transforms to a runtime panic instead of desugaring.
+	{"archive/zip", "findBodyOffset", "File", "__zipFilefindBodyOffset", "__zipFilefindBodyOffsetPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "readDirectoryEnd", "", "__zipreadDirectoryEnd", "__zipreadDirectoryEndPair", []string{"dir", "baseOffset", "err"}, false},
 	{"archive/zip", "findDirectory64End", "", "__zipfindDirectory64End", "__zipfindDirectory64EndPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "stat", "fileListEntry", "__zipfileListEntrystat", "__zipfileListEntrystatPair", []string{"f0", "f1"}, false},
@@ -605,6 +619,9 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"dir", "elem", "isDir"}, false},
 	{"archive/zip", "Stat", "openDir", "__zipopenDirStat", "__zipopenDirStatPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Read", "openDir", "__zipopenDirRead", "__zipopenDirReadPair", []string{"f0", "f1"}, false},
+	// NOTE (L-I): no Close row here on purpose — openDir.Close is
+	// single-result with a real body; see the checksumReader.Close note
+	// above. (The ReadDir row below is unaffected.)
 	{"archive/zip", "ReadDir", "openDir", "__zipopenDirReadDir", "__zipopenDirReadDirPair", []string{"f0", "f1"}, false},
 	{"archive/zip", "Create", "Writer", "__zipWriterCreate", "__zipWriterCreatePair", []string{"f0", "f1"}, false},
 	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"valid", "require"}, false},
@@ -645,11 +662,25 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"mime/multipart", "NextRawPart", "Reader", "__mpReaderNextRawPart", "__mpReaderNextRawPartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "nextPart", "Reader", "__mpReadernextPart", "__mpReadernextPartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "ReadForm", "Reader", "__mpReaderReadForm", "__mpReaderReadFormPair", []string{"f0", "f1"}, false},
+	// L-I (REVIEW-2026-11-03-16 P1-R1): Reader.readForm's __-helper
+	// existed but its table row was never pasted (the generator emits
+	// the entry; the hand-maintained table dropped it). Unexported twin
+	// of ReadForm above; without the row internal callers pair-transform
+	// the panic stub instead of desugaring to the helper.
+	{"mime/multipart", "readForm", "Reader", "__mpReaderreadForm", "__mpReaderreadFormPair", []string{"f0", "err"}, false},
 	{"mime/multipart", "Open", "FileHeader", "__mpFileHeaderOpen", "__mpFileHeaderOpenPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "CreatePart", "Writer", "__mpWriterCreatePart", "__mpWriterCreatePartPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "CreateFormFile", "Writer", "__mpWriterCreateFormFile", "__mpWriterCreateFormFilePair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "CreateFormField", "Writer", "__mpWriterCreateFormField", "__mpWriterCreateFormFieldPair", []string{"f0", "f1"}, false},
 	{"mime/multipart", "Write", "part", "__mppartWrite", "__mppartWritePair", []string{"n", "err"}, false},
+	// L-I (REVIEW-2026-11-03-16 P1-R1): encoding/csv Reader.Read/ReadAll/
+	// FieldPos __-helpers existed and their stubs' comments claim the
+	// exporter desugars 2-target calls to them — but no classifier or
+	// table row ever existed for csv, so the claim was false: calls
+	// pair-transformed the panic stub. These rows make the claim true.
+	{"encoding/csv", "Read", "Reader", "__csvRead", "csvReadPair", []string{"rec", "err"}, false},
+	{"encoding/csv", "ReadAll", "Reader", "__csvReadAll", "csvReadAllPair", []string{"recs", "err"}, false},
+	{"encoding/csv", "FieldPos", "Reader", "__csvFieldPos", "csvFieldPosPair", []string{"line", "column"}, false},
 	{"mime/quotedprintable", "fromHex", "", "__qpfromHex", "__qpfromHexPair", []string{"f0", "f1"}, false},
 	{"mime/quotedprintable", "readHexByte", "", "__qpreadHexByte", "__qpreadHexBytePair", []string{"b", "err"}, false},
 	{"mime/quotedprintable", "Read", "Reader", "__qpReaderRead", "__qpReaderReadPair", []string{"n", "err"}, false},

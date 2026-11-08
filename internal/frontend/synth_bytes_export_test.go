@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -16,8 +15,9 @@ import (
 // Reader.Read, Buffer.Write) are skipped (their __-helper carries the
 // body); the rest are pair-transformed via the general userMRFuncs
 // mechanism (Cut, CutPrefix, CutSuffix, CutLast first, then the
-// remaining members). Uncovered call sites fail fast with the WS D
-// scope error (see TestSyntheticBytesCutFailsFast).
+// remaining members). The converted Buffer/Reader members are covered
+// by TestSyntheticBytesConvertedMethods; only the M8-scope
+// ReadFrom/WriteTo members still fail fast (see their stubs).
 //
 // The absence check is scoped to pkgpath "bytes" AND to result count:
 // a bare-name walk false-positives on transitive imports (io.Read,
@@ -127,49 +127,95 @@ func main() {
 	}
 }
 
-// TestSyntheticBytesCutFailsFast verifies user calls to multi-result
-// bytes members with no desugar-table entry fail fast with the honest
-// WS D scope error (naming the callee). Reader.Seek has no m7 table
-// entry and no pair-transform call path, so the call cannot be expressed
-// in v1 — the failure, not success, is the correct behavior; only the
-// error's attribution changed when bytes moved from the synthetic M7
-// fail-fast stubs to the generic classifier.
-// Note: Cut, CutPrefix, CutSuffix, CutLast now work via the general
-// userMRFuncs mechanism and are not in this test.
-// Note: Buffer.Read was retired from this test — its M7 fail-fast stub's
-// "re-test when WS D lands" condition is met, so it is now table-driven
-// via __bytesBufferRead (see TestSyntheticBytesBufferReadDesugar).
-func TestSyntheticBytesCutFailsFast(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-		want string
-	}{
-		{"Reader.Seek", `package main
+// TestSyntheticBytesConvertedMethods verifies the L-I (REVIEW-2026-11-03-16
+// P1-R1) retirement of the M7 fail-fast stubs for the bytes Buffer/Reader
+// multi-result members with real gc 1.27.1 bodies: direct calls export
+// (previously Reader.Seek failed export with the WS D scope error — see
+// the retired TestSyntheticBytesCutFailsFast), and each converted member
+// appears in the wire doc in pair-transformed (exactly 1 result) form,
+// never as a raw multi-result funcdecl. ReadBytes/ReadString exercise the
+// unexported readSlice intra-package call, so its pair form is asserted
+// too. This test pins export shape, not execution: the backend must still
+// lower the pair calls, which the differential corpus covers.
+func TestSyntheticBytesConvertedMethods(t *testing.T) {
+	src := `package main
 
-import "bytes"
+import (
+	"bytes"
+	"io"
+)
 
 func main() {
-	r := bytes.NewReader([]byte("hi"))
-	_, _ = r.Seek(0, 0)
+	b := bytes.NewBufferString("a,b\nc")
+	p, _ := b.Peek(2)
+	println(len(p))
+	n, _ := b.WriteRune('é')
+	println(n)
+	c, _ := b.ReadByte()
+	println(c)
+	r, sz, _ := b.ReadRune()
+	println(r, sz)
+	line, _ := b.ReadBytes('\n')
+	println(len(line))
+	s, _ := b.ReadString('\n')
+	println(len(s))
+	rdr := bytes.NewReader([]byte("hello"))
+	buf := make([]byte, 3)
+	m, _ := rdr.ReadAt(buf, 1)
+	println(m)
+	cb, _ := rdr.ReadByte()
+	println(cb)
+	rr, rs, _ := rdr.ReadRune()
+	println(rr, rs)
+	pos, _ := rdr.Seek(0, io.SeekStart)
+	println(pos)
+	var sk io.Seeker = rdr
+	pos2, _ := sk.Seek(2, io.SeekStart)
+	println(pos2)
 }
-`, "bytes.Reader.Seek"},
+`
+	doc := decodeExport(t, mustExport(t, src))
+
+	// Each converted member must appear as a pair-transformed funcdecl
+	// (exactly 1 result) in pkgpath "bytes".
+	results := map[string]int{}
+	for _, f := range findAllKind(doc, "funcdecl") {
+		fl, _ := f["fields"].(map[string]any)
+		pp, _ := fl["pkgpath"].(string)
+		if pp != "bytes" {
+			continue
+		}
+		name, _ := fl["name"].(string)
+		nr := 0
+		if rs, ok := fl["results"].([]any); ok {
+			nr = len(rs)
+		}
+		if nr > results[name] {
+			results[name] = nr
+		}
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			p := filepath.Join(dir, "synfail.go")
-			if err := os.WriteFile(p, []byte(c.src), 0644); err != nil {
-				t.Fatal(err)
-			}
-			_, err := ExportFile(p)
-			if err == nil {
-				t.Fatalf("ExportFile succeeded for %s call, want WS D scope error", c.want)
-			}
-			if !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "WS D") {
-				t.Fatalf("unexpected error for %s call: %v", c.want, err)
-			}
-		})
+	for _, name := range []string{
+		"Peek", "WriteRune", "ReadByte", "ReadRune", "ReadBytes",
+		"readSlice", "ReadString", "ReadAt", "Seek",
+	} {
+		nr, ok := results[name]
+		if !ok {
+			t.Errorf("wire doc missing funcdecl %q", name)
+		} else if nr != 1 {
+			t.Errorf("wire doc funcdecl %q has %d results, want pair form (1)", name, nr)
+		}
+	}
+	// The interface Seek call must desugar to an ifacemethod dispatch
+	// node, not fail fast.
+	sawSeek := false
+	for _, im := range findAllKind(doc, "ifacemethod") {
+		fl, _ := im["fields"].(map[string]any)
+		if fl["method"] == "Seek" {
+			sawSeek = true
+		}
+	}
+	if !sawSeek {
+		t.Error("no ifacemethod dispatch node for the io.Seeker.Seek interface call")
 	}
 }
 

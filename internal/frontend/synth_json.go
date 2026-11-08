@@ -6,6 +6,7 @@ const syntheticJsonSource = `package json
 
 import (
 	"bytes"
+	"errors"
 	"reflect"
 )
 
@@ -1193,11 +1194,15 @@ func __rawMessageMarshalJSON(m RawMessage) rawMessageMarshalJSONPair {
 
 // UnmarshalJSON sets *m to a copy of data.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing through
-// m needs store-through-pointer (*m = ...), which frontend/v1 cannot
-// emit (WS D). Re-test when WS D lands.
+// L-I (REVIEW-2026-11-03-16 P1-R1): real gc 1.27.1 body. Its re-test
+// trigger has fired: v1 now emits store-through-pointer (probe:
+// *p = 42 exports), so the M7 fail-fast stub is retired.
 func (m *RawMessage) UnmarshalJSON(data []byte) error {
-	panic("json.RawMessage.UnmarshalJSON: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
+	if m == nil {
+		return errors.New("json.RawMessage: UnmarshalJSON on nil pointer")
+	}
+	*m = append((*m)[0:0], data...)
+	return nil
 }
 
 // Compact is omitted in wave 1 (needs *bytes.Buffer, inexpressible);
@@ -2659,12 +2664,40 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 // P3-driver-harden (jsonlib lane): Compact and HTMLEscape (gc 1.27.1
 // exact signatures). Third-party json implementations forward to them;
 // fail-fast bodies like Indent above.
+//
+// L-I (REVIEW-2026-11-03-16 P1-R1): HTMLEscape's re-test trigger has
+// fired — variable address-of works (probe: &buf exports) and its body
+// needs only Buffer.Grow/AvailableBuffer/Write plus the local
+// jsonHexDigits table, so the real gc 1.27.1 body + appendHTMLEscape
+// replace the stub. Compact stays stubbed: it needs the appendCompact
+// scanner port (see Indent above), not just address-of.
 func Compact(dst *bytes.Buffer, src []byte) error {
 	panic("json.Compact: not in M7 scope (re-test when WS D lands)")
 }
 
 func HTMLEscape(dst *bytes.Buffer, src []byte) {
-	panic("json.HTMLEscape: not in M7 scope (re-test when WS D lands)")
+	dst.Grow(len(src))
+	dst.Write(appendHTMLEscape(dst.AvailableBuffer(), src))
+}
+
+func appendHTMLEscape(dst, src []byte) []byte {
+	// The characters can only appear in string literals,
+	// so just scan the string one byte at a time.
+	start := 0
+	for i, c := range src {
+		if c == '<' || c == '>' || c == '&' {
+			dst = append(dst, src[start:i]...)
+			dst = append(dst, '\\', 'u', '0', '0', jsonHexDigits[c>>4], jsonHexDigits[c&0xF])
+			start = i + 1
+		}
+		// Convert U+2028 and U+2029 (E2 80 A8 and E2 80 A9).
+		if c == 0xE2 && i+2 < len(src) && src[i+1] == 0x80 && src[i+2]&^1 == 0xA8 {
+			dst = append(dst, src[start:i]...)
+			dst = append(dst, '\\', 'u', '2', '0', '2', jsonHexDigits[src[i+2]&0xF])
+			start = i + len("\u2029")
+		}
+	}
+	return append(dst, src[start:]...)
 }
 
 // HTMLEscape is omitted in wave 1 (needs *bytes.Buffer, inexpressible);

@@ -723,11 +723,12 @@ func (d *Decoder) InputOffset() int64 {
 // InputPos returns the line of the current decoder position and the 1 based
 // input position of the line.
 //
-// M7: exact gc signature for type-checking, fail-fast body — 2 results
-// need WS D (the mrXmlToken desugar only covers Token/RawToken).
-// Re-test when WS D lands.
+// L-I (REVIEW-2026-11-03-16 P1-R1): real gc 1.27.1 body; the body makes
+// no multi-result call, so the general userMRFuncs pair-transform
+// serves it now that WS D has landed (the mrXmlToken limitation the old
+// comment cited never applied to this method's body).
 func (d *Decoder) InputPos() (line, column int) {
-	panic("xml.Decoder.InputPos: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	return d.line, int(d.offset-d.linestart) + 1
 }
 
 // Must read a single byte.

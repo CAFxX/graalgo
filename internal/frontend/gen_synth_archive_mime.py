@@ -764,7 +764,30 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
                 if pend != -1 and v[pend+1:].strip() == '':
                     args = v[pstart+1:pend]
                     call_text = v[:pend+1]
+                    # L-I (2026-11-03): mirror rewrite_call_sites' guard —
+                    # a package-qualified call (os.Open, io.Copy, ...)
+                    # must NOT be rewritten to this package's same-named
+                    # helper. Without this, `return os.Open(fh.tmpfile)`
+                    # inside __mpFileHeaderOpen became the invalid
+                    # `__mpFileHeaderOpen(os, fh.tmpfile)` (package name
+                    # passed as a value), making mime/multipart
+                    # unimportable. Such calls fall through to the
+                    # generic multi-value fallback below, which is valid.
+                    use_mr = False
                     if mr_map and fname in mr_map:
+                        use_mr = True
+                        if '.' in dotted:
+                            # Only a bare package name disqualifies the
+                            # rewrite: a field path (d.e.stat) or a
+                            # receiver variable (fh.Open) still rewrites
+                            # to the same-package helper, as before.
+                            recv_expr = dotted[:dotted.rfind('.')]
+                            pkg_names = {'os', 'io', 'bytes', 'strings', 'fmt', 'errors', 'sort',
+                                         'strconv', 'unicode', 'path', 'filepath', 'math', 'time',
+                                         'sync', 'bufio', 'hash', 'crypto', 'encoding'}
+                            if recv_expr in pkg_names:
+                                use_mr = False
+                    if use_mr:
                         helper_name, callee_fields = mr_map[fname]
                         recv_prefix = ''
                         if '.' in dotted:
