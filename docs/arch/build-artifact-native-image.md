@@ -4,7 +4,7 @@
 
 `graalgo build` produces a **launcher binary**: a small Go program that
 embeds the frontend output (gzip-compressed JSON) and, at run time, feeds
-it to the graalgo backend via `graalgo-sync-run --wire-input`, which runs
+it to the graalgo backend via `graalgo-sync-run --wire-input=<file>`, which runs
 the Truffle JIT on the JVM.
 
 This is a proper executable (ELF, not a shell script), and it does not
