@@ -6896,7 +6896,11 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 // isGoschedCall reports whether x is a call to runtime.Gosched (resolved
 // against the synthetic runtime overlay package, not merely named
 // "runtime" — the exportCall interception's package check, mirrored here
-// for the statement-position interceptions below).
+// for the statement-position interceptions below). F3-11-01: no spelling
+// pre-filter — an aliased import (rt "runtime") spells the qualifier
+// "rt", not "runtime"; the obj.Pkg().Path() check below is the decisive
+// gate, so an aliased real-runtime Gosched is intercepted while a user
+// package's Gosched (different import path) is not.
 func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 	c, ok := unparen(x).(*ast.CallExpr)
 	if !ok {
@@ -6906,8 +6910,7 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 	if !ok {
 		return nil, false
 	}
-	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if _, ok := sel.X.(*ast.Ident); !ok {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
@@ -8590,7 +8593,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
+		// F3-11-01: no spelling pre-filter — an aliased import
+		// (rt "runtime") spells the qualifier "rt", not "runtime".
+		// The resolved-function package-path check below is the
+		// decisive gate: only the real runtime overlay package
+		// (import path "runtime") is intercepted; a user package
+		// merely named runtime (different import path) falls
+		// through to the general call path as an ordinary call.
+		if _, ok := sel.X.(*ast.Ident); ok {
 			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":
