@@ -137,8 +137,12 @@ public final class Boxing {
         return value;
     }
 
-    /** Go's zero value in canonical boxed form (nil → null, except strings/structs). */
-    static Object zero(GoKind kind, GoStructDescriptor structDesc) {
+    /**
+     * Go's zero value in canonical boxed form (nil → null, except strings/structs).
+     * Public for the v2 factory (graalgo.frontend.v2), the second consumer
+     * alongside the v1 NodeFactory.
+     */
+    public static Object zero(GoKind kind, GoStructDescriptor structDesc) {
         return switch (kind.slotKind()) {
             case Int -> Integer.valueOf(0);
             case Long -> Long.valueOf(0L);
