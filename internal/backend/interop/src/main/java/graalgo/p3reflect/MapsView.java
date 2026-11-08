@@ -101,24 +101,28 @@ public final class MapsView {
         int globalDepth;
         if (tables == 1 && n <= MapsLayout.GROUP_SLOTS) {
             // Small path: one group; dirPtr points at the group root.
-            GoStruct root = buildGroupRoot(keyTok, elemTok, layout, keys, map, 0, n);
+            GoStruct root = buildGroupRoot(keyTok, elemTok, layout, keys, map, 0, n, groups);
             dirPtrTarget = root;
             dirLen = 0;
             globalDepth = 0;
         } else {
             // Large path: one directory struct of T table pointers.
+            // Each table's root spans the table's FULL capacity
+            // (groupsPerTable groups) — see buildGroupRoot.
+            // globalDepth is set before the table loop: each table's
+            // localDepth is globalDepth (see buildTable).
+            dirLen = tables;
+            globalDepth = log2(tables);
             GoStruct[] tableStructs = new GoStruct[tables];
             for (int t = 0; t < tables; t++) {
                 int start = t * groupsPerTable * MapsLayout.GROUP_SLOTS;
                 int count = Math.min(n - start, groupsPerTable * MapsLayout.GROUP_SLOTS);
                 GoStruct root = buildGroupRoot(keyTok, elemTok, layout, keys, map, start,
-                        Math.max(0, count));
+                        Math.max(0, count), groupsPerTable);
                 tableStructs[t] = buildTable(keyTok, elemTok, layout, root, groupsPerTable,
-                        Math.max(0, count), t);
+                        Math.max(0, count), t, globalDepth);
             }
             dirPtrTarget = buildDirectory(keyTok, elemTok, tableStructs);
-            dirLen = tables;
-            globalDepth = log2(tables);
         }
 
         GoStructDescriptor mapDesc =
@@ -139,21 +143,20 @@ public final class MapsView {
     /**
      * A groups-root struct holding {@code count} entries starting at
      * global entry index {@code start} (entries are distributed in
-     * order across tables). Slots hold the GoMap's value objects
-     * directly (NO copy — copyVal copies from the view's slot via
-     * typedmemmove; storing directly preserves pointer-sharing
-     * semantics for pointer-containing keys/elems).
+     * order across tables). The root ALWAYS has {@code groups} groups
+     * — the table's full capacity (groupsPerTable), not just the
+     * groups the entries fill: the iterator bounds entryIdx by the
+     * table's capacity and walks every group up to it, so a root
+     * sized to the entry count alone makes group() walk past the
+     * end (a 1024-group root under a 4096-group capacity traps at
+     * group 1024). Groups past the entries stay all-ctrlEmpty.
+     * Slots hold the GoMap's value objects directly (NO copy —
+     * copyVal copies from the view's slot via typedmemmove;
+     * storing directly preserves pointer-sharing semantics for
+     * pointer-containing keys/elems).
      */
     private static GoStruct buildGroupRoot(long keyTok, long elemTok, MapsLayout.Layout layout,
-            Object[] keys, GoMap map, int start, int count) {
-        int groups = 1;
-        if (count > MapsLayout.GROUP_SLOTS) {
-            int need = (count + MapsLayout.GROUP_SLOTS - 1) / MapsLayout.GROUP_SLOTS;
-            groups = 1;
-            while (groups < need) {
-                groups *= 2;
-            }
-        }
+            Object[] keys, GoMap map, int start, int count, int groups) {
         GroupType gt = groupType(keyTok, elemTok, layout, groups);
         GoStruct root = GoStruct.zero(gt.desc());
         ReflectTypes.TypeInfo kt = ReflectTypes.table().info(keyTok);
@@ -217,7 +220,7 @@ public final class MapsView {
 
     /** A table struct for one groups-root (used/capacity/growthLeft/localDepth/index/groups). */
     private static GoStruct buildTable(long keyTok, long elemTok, MapsLayout.Layout layout,
-            GoStruct groupsRoot, int groupsPerTable, int used, int index) {
+            GoStruct groupsRoot, int groupsPerTable, int used, int index, int localDepth) {
         GoStructDescriptor tableDesc =
                 ReflectTypes.structDescriptorFor("internal/runtime/maps.table");
         GoStruct table = GoStruct.zero(tableDesc);
@@ -225,7 +228,13 @@ public final class MapsView {
         setLongField(table, "used", used);
         setLongField(table, "capacity", capacity);
         setLongField(table, "growthLeft", capacity - used);
-        setLongField(table, "localDepth", 0);
+        // localDepth MUST equal the map's globalDepth: each table
+        // covers exactly one directory entry, so nextDirIdx advances
+        // dirIdx by 1 << (globalDepth - localDepth) = 1. With
+        // localDepth 0 and globalDepth 1 it advances by 2 and the
+        // iterator stops after the first table (dirIdx jumps past
+        // dirLen). See internal/runtime/maps/table.go nextDirIdx.
+        setLongField(table, "localDepth", localDepth);
         setLongField(table, "index", index);
         GoStructDescriptor groupsDesc =
                 ReflectTypes.structDescriptorFor("internal/runtime/maps.groupsReference");
