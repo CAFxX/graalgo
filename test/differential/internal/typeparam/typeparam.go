@@ -274,6 +274,26 @@ func writeJSON(path string, v any) error {
 // `graalgo-run --batch`. Coverage is identical — the same files run through
 // the same code paths, only the JVM startup is amortized.
 func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) ([]Comparison, error) {
+	// R-1108-143: a run over zero programs must fail loudly, never
+	// report a vacuous green. Both vacuous shapes produce zero
+	// comparisons — an empty scan (no .go files found) and a total
+	// exclusion (every scanned file excluded) — and without this guard
+	// both return (empty, nil), so the caller prints "0 comparisons"
+	// and exits 0 while the conformance gate goes green on nothing
+	// tested. The guard runs before any backend lookup: zero input is
+	// a precondition failure, independent of the backend config.
+	var included []TFile
+	for _, f := range files {
+		if !strings.HasPrefix(f.Class, "exclude") {
+			included = append(included, f)
+		}
+	}
+	if len(included) == 0 {
+		if len(files) == 0 {
+			return nil, fmt.Errorf("no input files: nothing to compare (empty scan — check the input directory)")
+		}
+		return nil, fmt.Errorf("all %d input files excluded: nothing to compare (check the exclusion list)", len(files))
+	}
 	var ref, alt *harness.Backend
 	for i := range cfg.Backends {
 		b := &cfg.Backends[i]
@@ -292,13 +312,6 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 		return nil, err
 	}
 	defer os.RemoveAll(workRoot)
-
-	var included []TFile
-	for _, f := range files {
-		if !strings.HasPrefix(f.Class, "exclude") {
-			included = append(included, f)
-		}
-	}
 
 	// Partition files among jobs; each job processes its share with one
 	// graalgo JVM via batch mode.
