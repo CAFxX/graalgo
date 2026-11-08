@@ -356,7 +356,7 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 //
 // It MUST run after type-checking: the rewrite is keyed on the RESOLVED
 // object (R-1107-03), not the identifier spelling. The pre-check spelling
-// match (`pkg.Name == "time"`) wrongly rewrote an aliased import named
+// match on the qualifier identifier wrongly rewrote an aliased import named
 // `time` (`import time "example.com/x"`) or a package-level variable named
 // `time` with a `Now` method, and then failed type-check on valid Go code.
 // The resolved-object rule matches the codebase rule at export.go
