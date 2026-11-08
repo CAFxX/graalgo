@@ -1206,6 +1206,7 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "Pipe", "", "__pipe", "", "pipePair", []string{"c1", "c2"}},
 	{"net", "Dial", "", "__dial", "", "dialPair", []string{"c", "err"}},
 	{"net", "DialTimeout", "", "__dialTimeout", "", "dialPair", []string{"c", "err"}},
+	{"net", "DialUDP", "", "__dialUDP", "", "dialUDPPair", []string{"c", "err"}},
 	{"net", "Listen", "", "__listen", "", "listenPair", []string{"l", "err"}},
 	{"net", "ListenPacket", "", "__listenPacket", "", "listenPacketPair", []string{"c", "err"}},
 	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "", "resolveIPAddrPair", []string{"ip", "err"}},

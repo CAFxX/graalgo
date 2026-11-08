@@ -975,7 +975,12 @@ public final class GoNet {
             goBufBack(bufArg, bb, n);
             byte[] wire = src instanceof InetSocketAddress isa
                     ? renderAddr(isa) : new byte[]{(byte) 0};
-            if (goBufPut(addrArg, wire) < 0) {
+            // R-1108-28: a null address buffer means the caller does not
+            // want the peer address (connected UDP Read) — deliver the
+            // datagram. Only a non-null buffer that is too small fails
+            // with -EMSGSIZE (mirrors sendto, which treats null as
+            // "connected"). goBufPut(null) returns -1 by contract.
+            if (addrArg != null && goBufPut(addrArg, wire) < 0) {
                 return -EMSGSIZE; // peer buffer too small for the wire address
             }
             return (long) n + 1;

@@ -86,10 +86,12 @@ public final class GoNetpollTest {
 
     /** Wire-format AF_INET 127.0.0.1:port. */
     private static GoSlice v4(int port) {
-        int[] a = new int[7];
+        // D5: []byte is byte[]-backed — the trap layer (goBuf) casts the
+        // backing array to byte[], so int[]-backed slices throw here.
+        byte[] a = new byte[7];
         a[0] = 2;
-        a[1] = (port >>> 8) & 0xFF;
-        a[2] = port & 0xFF;
+        a[1] = (byte) ((port >>> 8) & 0xFF);
+        a[2] = (byte) (port & 0xFF);
         a[3] = 127;
         a[4] = 0;
         a[5] = 0;
@@ -99,22 +101,18 @@ public final class GoNetpollTest {
 
     private static GoSlice bytes(String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int[] a = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            a[i] = b[i] & 0xFF;
-        }
-        return new GoSlice(a, 0, a.length, a.length);
+        return new GoSlice(b, 0, b.length, b.length);
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static String str(GoSlice gs, int n) {
-        int[] a = (int[]) gs.array();
+        byte[] a = (byte[]) gs.array();
         byte[] b = new byte[n];
         for (int i = 0; i < n; i++) {
-            b[i] = (byte) a[gs.offset() + i];
+            b[i] = a[gs.offset() + i];
         }
         return new String(b, java.nio.charset.StandardCharsets.UTF_8);
     }
@@ -123,7 +121,7 @@ public final class GoNetpollTest {
         GoSlice b = buf(23);
         long r = GoNet.getsockname(cookie, b);
         assertTrue(r > 0, "getsockname ok: " + r);
-        int[] a = (int[]) b.array();
+        byte[] a = (byte[]) b.array();
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
@@ -231,8 +229,8 @@ public final class GoNetpollTest {
             // Peer addresses agree (fd-domain unification: cookies resolve).
             GoSlice pb = buf(23);
             assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
-            int[] a = (int[]) pb.array();
-            assertEq(2, a[0], "peer family");
+            byte[] a = (byte[]) pb.array();
+            assertEq(2, a[0] & 0xFF, "peer family");
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
             closeSock(srv[0], srv[1]);
@@ -756,8 +754,8 @@ public final class GoNetpollTest {
                 GoSlice rb = buf(64);
                 GoSlice ab = buf(23);
                 long r = GoNet.recvfrom(a, rb, ab);
-                int[] aa = (int[]) ab.array();
-                peer.set("fam=" + aa[0]);
+                byte[] aa = (byte[]) ab.array();
+                peer.set("fam=" + (aa[0] & 0xFF));
                 got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
                 return null;
             });
@@ -772,6 +770,76 @@ public final class GoNetpollTest {
             assertEq(-GoNet.EOPNOTSUPP, GoNet.sendto(tcp, buf(8), buf(23)),
                     "sendto on stream");
             assertEq(0, GoOs.close(tcp), "close tcp");
+            closeSock(a, actx);
+            closeSock(b, bctx);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * R-1108-28: connected-UDP read with a nil address buffer.
+     * `__udpConnRead` (the live `Read` path for a connected `UDPConn`)
+     * calls `recvfrom` with a null addr arg; the peer address is
+     * unwanted there, and the datagram must still be delivered. Before
+     * the fix this returned -EMSGSIZE (90) and the datagram was lost.
+     * A non-null but too-small address buffer must still fail with
+     * -EMSGSIZE — the caller asked for an address it cannot hold.
+     */
+    public void testUdpRecvfromNullAddr() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long a = GoNet.socket(2, 2, 0);
+            assertEq(0, GoNet.bind(a, v4(0)), "bind a");
+            int portA = boundPort(a);
+            long actx = GoNetpoll.pollOpen(a);
+            long b = GoNet.socket(2, 2, 0);
+            assertEq(0, GoNet.bind(b, v4(0)), "bind b");
+            assertEq(0, GoNet.connect(b, v4(portA)), "dgram connect");
+            long bctx = GoNetpoll.pollOpen(b);
+
+            GoSlice payload = bytes("udp-null-addr");
+            long s = GoOs.write(b, payload);
+            assertEq((long) payload.len() + 1, s, "dgram write n+1");
+
+            // Too-small non-null address buffer: still -EMSGSIZE, and the
+            // datagram is consumed by the failed call (the caller must
+            // not see it again).
+            AtomicReference<String> first = new AtomicReference<>();
+            onGoroutine(sched, () -> {
+                long w = GoNetpoll.pollWait(actx, (long) 'r');
+                if (w != 0) {
+                    return "WAIT=" + w;
+                }
+                long r = GoNet.recvfrom(a, buf(64), buf(1));
+                first.set("r=" + r);
+                return null;
+            });
+            assertTrue("r=-90".equals(first.get()), "too-small addr: " + first.get());
+
+            // Send again; a null address buffer delivers the datagram.
+            GoSlice payload2 = bytes("udp-null-addr-2");
+            assertEq((long) payload2.len() + 1, GoOs.write(b, payload2), "dgram write 2");
+            AtomicReference<String> got = new AtomicReference<>();
+            onGoroutine(sched, () -> {
+                long w = GoNetpoll.pollWait(actx, (long) 'r');
+                if (w != 0) {
+                    return "WAIT=" + w;
+                }
+                GoSlice rb = buf(64);
+                long r = GoNet.recvfrom(a, rb, null);
+                if (r < 0) {
+                    got.set("r=" + r);
+                } else {
+                    got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
+                }
+                return null;
+            });
+            assertTrue(("n=15:udp-null-addr-2").equals(got.get()), "null-addr data: " + got.get());
+
+            // Nothing queued now: recvfrom → EAGAIN (null addr or not).
+            assertEq(-GoNet.EAGAIN, GoNet.recvfrom(a, buf(64), null), "recvfrom EAGAIN null addr");
             closeSock(a, actx);
             closeSock(b, bctx);
         } finally {

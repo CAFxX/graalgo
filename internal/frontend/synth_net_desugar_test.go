@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestM9NetDesugarWiring pins the 46 P3-M9 (tier-4) m9MultiResultFuncs
+// TestM9NetDesugarWiring pins the 47 P3-M9 (tier-4) m9MultiResultFuncs
 // entries added for the synthetic net packages (Appendix M). It follows
 // the TestM7StrconvJsonDesugarWiring pattern: for each entry it verifies,
 // against the synthetic sources in
@@ -23,7 +23,7 @@ import (
 //     each field's type identical to the multi-result signature's
 //     corresponding result type.
 //
-// All 44 current entries keep their __-helpers in the same synthetic
+// All 47 current entries keep their __-helpers in the same synthetic
 // package (helperPkg == ""), which the checker pins as well.
 //
 // This test fails on the pre-net tree (no table entries for these
@@ -74,6 +74,7 @@ var m9NetTable = []m9NetExpect{
 	{"net", "Pipe", "", "__pipe", "pipePair", []string{"c1", "c2"}},
 	{"net", "Dial", "", "__dial", "dialPair", []string{"c", "err"}},
 	{"net", "DialTimeout", "", "__dialTimeout", "dialPair", []string{"c", "err"}},
+	{"net", "DialUDP", "", "__dialUDP", "dialUDPPair", []string{"c", "err"}},
 	{"net", "Listen", "", "__listen", "listenPair", []string{"l", "err"}},
 	{"net", "ListenPacket", "", "__listenPacket", "listenPacketPair", []string{"c", "err"}},
 	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "resolveIPAddrPair", []string{"ip", "err"}},
@@ -97,8 +98,8 @@ var m9NetTable = []m9NetExpect{
 }
 
 func TestM9NetDesugarWiring(t *testing.T) {
-	if len(m9NetTable) != 46 {
-		t.Fatalf("m9NetTable has %d entries, want 46", len(m9NetTable))
+	if len(m9NetTable) != 47 {
+		t.Fatalf("m9NetTable has %d entries, want 47", len(m9NetTable))
 	}
 	for _, want := range m9NetTable {
 		name := want.pkgPath + "." + want.name

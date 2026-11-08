@@ -21,6 +21,11 @@ semantics, the shared-runner model).
 - `05_parse_addr.go` — `ParseIP`/`ParseCIDR`/`ParseMAC`,
   `JoinHostPort`/`SplitHostPort`, `ResolveTCPAddr`/`ResolveUDPAddr`
   (IP literals only, no DNS). Pure Go.
+- `06_udpconn_read.go` — connected-UDP `Read` (nil-addr recvfrom,
+  R-1108-28): `Dial("udp")` + `Write`, server `ReadFrom`, server reply,
+  client `Read` must deliver the reply instead of failing with
+  `-EMSGSIZE`. The UDP case in `__dial` landed with this case — see the
+  file comment.
 
 ## Scope limits
 

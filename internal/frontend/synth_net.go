@@ -1504,6 +1504,15 @@ func __dial(network, address string) dialPair {
 			return dialPair{nil, __tmp.err}
 		}
 		return __dialTCPAddr(network, __tmp.addr)
+	case "udp", "udp4", "udp6":
+		// R-1108-28: connected UDP had no dial path at all — without
+		// this case the standard Dial("udp") + Read pattern was
+		// unrepresentable (and __udpConnRead unreachable from Go).
+		__tmp := __resolveUDPAddr(network, address)
+		if __tmp.err != nil {
+			return dialPair{nil, __tmp.err}
+		}
+		return __dialUDPAddr(network, __tmp.addr)
 	default:
 		return dialPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("unknown network " + network)}}
 	}
@@ -1526,6 +1535,13 @@ func __dialWithDeadline(network, address string, deadline time.Time) dialPair {
 			return dialPair{nil, __tmp.err}
 		}
 		return __dialTCPAddrDeadline(network, __tmp.addr, deadline)
+	case "udp", "udp4", "udp6":
+		// UDP connect() never blocks, so no deadline arming is needed.
+		__tmp := __resolveUDPAddr(network, address)
+		if __tmp.err != nil {
+			return dialPair{nil, __tmp.err}
+		}
+		return __dialUDPAddr(network, __tmp.addr)
 	default:
 		return dialPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("unknown network " + network)}}
 	}
@@ -1607,6 +1623,79 @@ func __dialTCPAddrDeadline(network string, raddr *TCPAddr, deadline time.Time) d
 	fd.laddr = fd.getSockAddr(false)
 	fd.raddr = raddr
 	return dialPair{&TCPConn{fd: fd}, nil}
+}
+
+// __dialUDPAddr dials a connected UDP socket (R-1108-28): the peer the
+// Read/Write calls go to. Unlike TCP, UDP connect() only records the
+// peer and never blocks, so there is no EINPROGRESS/deadline path —
+// any error from netConnect is final. The returned UDPConn's Read
+// desugars to __udpConnRead (nil-addr recvfrom).
+func __dialUDPAddr(network string, raddr *UDPAddr) dialPair {
+	__tmp := __dialUDP(network, nil, raddr)
+	return dialPair{__tmp.c, __tmp.err}
+}
+
+type dialUDPPair struct {
+	c   *UDPConn
+	err error
+}
+
+// DialUDP dials a UDP connection to raddr, optionally bound to laddr.
+// A non-nil laddr binds the socket first; a nil laddr lets connect()
+// pick an ephemeral port. Note gc sets no SO_REUSEADDR on dial
+// sockets, so dialing back from an already-bound address fails under
+// gc with EADDRINUSE — callers that need to reuse a bound address must
+// close it first (see the wave3 net/06 corpus case). This is the
+// standard connected-UDP entry point (R-1108-28): without it the
+// DialUDP + Read pattern cannot be written at all.
+func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
+	panic("net.DialUDP: unreachable (Appendix-M desugar did not fire)")
+}
+
+// __dialUDP is the Appendix M desugar target behind DialUDP: the real
+// body, returning the dialUDPPair. A nil raddr is an error (gc:
+// "missing address"); a nil laddr skips the bind.
+func __dialUDP(network string, laddr, raddr *UDPAddr) dialUDPPair {
+	if raddr == nil {
+		return dialUDPPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("missing address")}}
+	}
+	family := int64(2) // AF_INET
+	if raddr.IP.To4() == nil {
+		family = int64(10) // AF_INET6
+	}
+	cookie := netSocket(family, 2, 0) // SOCK_DGRAM
+	if cookie < 0 {
+		return dialUDPPair{nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(-cookie)}}
+	}
+	__tmpNFD := newNetFD(cookie, network)
+	if __tmpNFD.err != nil {
+		return dialUDPPair{nil, __tmpNFD.err}
+	}
+	fd := __tmpNFD.fd
+	if laddr != nil {
+		// No SO_REUSEADDR here (gc sets none on dial sockets): a
+		// bind of an already-bound address fails with EADDRINUSE,
+		// matching gc. Callers reuse a bound address by closing
+		// it first (wave3 net/06).
+		sa := encodeSockaddr(laddr.IP, laddr.Port)
+		if r := netBind(cookie, sa); r < 0 {
+			errnoVal := errno(-r)
+			fd.close()
+			return dialUDPPair{nil, &OpError{Op: "dial", Net: network, Addr: laddr, Err: errnoVal}}
+		}
+	}
+	sa := encodeSockaddr(raddr.IP, raddr.Port)
+	if r := netConnect(cookie, sa); r < 0 {
+		errnoVal := errno(-r)
+		fd.close()
+		return dialUDPPair{nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: errnoVal}}
+	}
+	fd.laddr = fd.getSockAddr(false)
+	if fd.laddr == nil {
+		fd.laddr = laddr
+	}
+	fd.raddr = raddr
+	return dialUDPPair{&UDPConn{fd: fd}, nil}
 }
 
 func __listen(network, address string) listenPair {
