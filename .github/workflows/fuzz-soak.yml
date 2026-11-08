@@ -78,3 +78,14 @@ jobs:
             fuzz-soak-out/
             fuzz-native-out/
           if-no-files-found: warn
+
+      # Verdict (R-1108-144): the soak is a gate, not an artifact dump.
+      # Fails when the overnight soak ran zero batches, ran zero
+      # programs, had any failed batch, or found any divergence — the
+      # same script run_soak.sh calls at the end of the overnight run,
+      # so the verdict cannot drift between the two callers. Runs even
+      # when the soak step itself failed (missing report also fails).
+      - name: Layer 4 — gate on soak verdict
+        if: always()
+        run: |
+          python3 tools/fuzz-soak/harness/check_soak_report.py fuzz-soak-out/soak-report.json

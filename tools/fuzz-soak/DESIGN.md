@@ -89,6 +89,34 @@ Delta-debugging minimizer: given a failing program, repeatedly remove
 statements/functions while the failure signature persists. Produces a
 minimal reproducer for the bug report.
 
+### 2.4 Soak verdict (R-1108-144)
+
+The soak is a gate: its verdict must be able to go red. Before this
+fix the scheduled job was green in all four states — tested nothing,
+every batch failed, divergences found, or genuinely clean — because
+`run_batch.py` exited 0 on divergences, `run_soak.sh` swallowed batch
+failures, and the workflow never read `soak-report.json`.
+
+Verdict contract (single owner: `harness/check_soak_report.py`):
+
+- `run_batch.py` exits non-zero unless every program is `PASS` or
+  `SCOPE`. Any other result — `WRONG_OUTPUT`, `HANG`, `CRASH`,
+  `EXIT_MISMATCH`, `GO_PANIC_MISMATCH`, `GC_BUILD_FAIL`, `GC_HANG`,
+  `HARNESS_ERROR` — fails the batch: a divergence was found, or a
+  program was never differentially tested.
+- `run_soak.sh --seeds` propagates the batch's exit code (after
+  minimizing, so findings are still archived).
+- `run_soak.sh --hours` records failed batches, keeps running the
+  remaining batches, writes `soak-report.json` with `batches`,
+  `programs_run`, `failed_batches`, `diverged_total`, and exits via
+  `check_soak_report.py`.
+- The `fuzz-soak` workflow gates on the same script: it fails when
+  the report shows zero batches, zero programs, any failed batch, or
+  any divergence — and when the report is missing entirely.
+
+A soak that ran zero programs is a FAILED soak, never a clean report
+(shared with R-01's zero-programs rule).
+
 ## 3. Validation (no noise)
 
 The harness must prove it finds real bugs before scaling:

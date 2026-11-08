@@ -114,7 +114,23 @@ def main():
     if scope_rate > 0.2:
         print("WARNING: scope-hit rate >20% — tune generator before scaling")
 
-    return 0 if counts.get("GC_BUILD_FAIL", 0) == 0 else 1
+    # Verdict (R-1108-144): a batch is clean only when every program is
+    # PASS or explicitly out of scope (SCOPE). Any other result —
+    # WRONG_OUTPUT, HANG, CRASH, EXIT_MISMATCH, GO_PANIC_MISMATCH,
+    # GC_BUILD_FAIL, GC_HANG, or HARNESS_ERROR — means the batch did not
+    # pass: a divergence was found, or a program was never
+    # differentially tested. The batch must exit non-zero so the soak
+    # loop and the workflow can see the failure; previously only
+    # GC_BUILD_FAIL did, and a batch full of divergences exited 0.
+    non_clean = {k: v for k, v in counts.items()
+                 if k not in ("PASS", "SCOPE")}
+    if non_clean:
+        print("\nBATCH FAILED: "
+              + ", ".join(f"{k} x{v}"
+                          for k, v in sorted(non_clean.items()))
+              + " — see failure groups above")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -98,10 +98,15 @@ EOF
 if [ -n "$SEEDS" ]; then
   # Single bounded batch: the continuous-track slot.
   echo "== soak batch: seeds $SEEDS =="
-  run_batch "$SEEDS" "$OUT/batch-0"
+  # Verdict (R-1108-144): the batch's exit code IS the verdict — a batch
+  # that found divergences (or failed outright) must not report success
+  # to the continuous track's scheduler. Minimize first (archive the
+  # findings), then propagate the batch's code.
+  batch_rc=0
+  run_batch "$SEEDS" "$OUT/batch-0" || batch_rc=$?
   minimize_findings "$OUT/batch-0"
-  echo "batch done: $OUT/batch-0"
-  exit 0
+  echo "batch done: $OUT/batch-0 (run_batch rc=$batch_rc)"
+  exit "$batch_rc"
 fi
 
 [ -n "$HOURS" ] || { echo "need --hours or --seeds" >&2; exit 2; }
@@ -109,28 +114,49 @@ fi
 # Overnight soak: batches of BATCH seeds until the deadline.
 seed=0
 batch=0
+failed_batches=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
+  # Verdict (R-1108-144): a failed batch is RECORDED (failed_batches),
+  # never swallowed — but the loop continues so later batches still run
+  # and the final report covers the whole soak. The failure surfaces at
+  # the end via check_soak_report.py, not here.
+  batch_failed=0
   if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
     echo "batch $batch failed; continuing with next batch"
+    batch_failed=1
   fi
+  failed_batches=$((failed_batches + batch_failed))
   minimize_findings "$OUT/batch-$batch" || true
   seed=$((seed + BATCH))
   batch=$((batch + 1))
 done
 
-echo "== soak complete: $batch batches, $seed programs =="
-python3 - "$OUT" <<'EOF'
+echo "== soak complete: $batch batches, $seed programs, $failed_batches failed =="
+python3 - "$OUT" "$failed_batches" <<'EOF'
 import glob, json, os, sys
 out = sys.argv[1]
+failed_batches = int(sys.argv[2])
 total_div = 0
+total_programs = 0
 for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
     for line in open(res):
         r = json.loads(line)
+        total_programs += 1
         if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
             total_div += 1
 rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
+       "programs_run": total_programs,
+       "failed_batches": failed_batches,
        "diverged_total": total_div}
 json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
 print(f"soak report: {rep}")
 EOF
+# Verdict (R-1108-144): the single verdict owner for the overnight soak.
+# check_soak_report.py exits 0 only for a clean soak; anything else —
+# zero batches, zero programs, failed batches, divergences, or a missing
+# report — fails the script, and the workflow gates on the same script.
+# (Boundary with R-01: the zero-programs fail-loudly is shared with the
+# R-01 lane's staged fix; if R-01's 7 files are applied after this,
+# re-derive this finale instead of blind-copying — see lane README.)
+python3 "$HERE/harness/check_soak_report.py" "$OUT/soak-report.json"
