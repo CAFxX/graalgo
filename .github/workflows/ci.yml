@@ -37,12 +37,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (wt.py integrate + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # The no-bridges gate diffs the whole push range
+          # (github.event.before...HEAD) on direct master pushes (wt.py
+          # integrate + push, no PR) — a shallow checkout has no history
+          # and the gate would fail loudly instead of inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
+        # The gate needs the push range to inspect every pushed commit,
+        # not just the tip (R-1108-91): github.event.before is the
+        # pre-push tip; github.event_name tells the gate this run is a
+        # push, so a missing range fails loudly instead of silently
+        # inspecting only HEAD~1. On pull_request / schedule /
+        # workflow_dispatch runs event.before is empty and the gate falls
+        # back to the branch / tip diff as before.
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python3 .github/scripts/check_no_bridges.py
 
       - name: No-bridges gate regression tests (pins the gate fix)
