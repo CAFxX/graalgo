@@ -81,17 +81,29 @@ for line in open(res):
 print(f"{len(diverged)} diverged programs to minimize")
 out = os.path.join(batchdir, "minimized")
 os.makedirs(out, exist_ok=True)
+failures = []
 for r in diverged:
     prog = os.path.join(batchdir, "programs", r["file"] + ".go")
     if not os.path.exists(prog):
         print(f"missing program for {r['file']}; skipping")
         continue
+    # triage.py takes --out as a FILE (its minimized reproducer), not the
+    # minimized/ directory: one output file per diverged program.
+    # (R-1108-145: the old call passed prog positionally, which triage.py
+    # rejects, and passed the directory as --out, which minimize() cannot
+    # open for writing — so minimization never ran.)
+    minimized = os.path.join(out, r["file"] + ".go")
     p = subprocess.run(
-        ["python3", f"{here}/harness/triage.py", prog, "--out", out],
+        ["python3", f"{here}/harness/triage.py", "--prog", prog,
+         "--out", minimized],
         capture_output=True, text=True, timeout=1200)
     print(f"{r['file']}: triage rc={p.returncode}")
     if p.returncode != 0:
         print(p.stderr[-500:])
+        failures.append(r["file"])
+if failures:
+    print(f"triage failed for {len(failures)} program(s): {', '.join(failures)}")
+    sys.exit(1)
 EOF
 }
 

@@ -54,6 +54,12 @@ jobs:
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
 
+      - name: Fuzz-soak minimize_findings smoke test (R-1108-145)
+        # Pins the triage.py call shape (SEG-C-05): the soak must pass
+        # --prog/--out as flags with a per-program output file, and a
+        # non-zero triage rc must fail the batch.
+        run: bash tools/fuzz-soak/tests/test_minimize_findings.sh
+
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
         with:
