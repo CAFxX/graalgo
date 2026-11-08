@@ -1615,7 +1615,16 @@ public final class NodeFactory {
         Json.Object detail = entry.object("detail", path);
         switch (k) {
             case "basic":
-                return "basic:" + kindOf(ctx, typeId, path).name();
+                // fix-rv1107-10-mapaccess (B8): key by the canonical
+                // BASIC NAME, not the kind name — kindOf(...).name()
+                // is INT64 for both "int" and "int64", so *int and
+                // *int64 (and []int/[]int64, map[int].../map[int64]...)
+                // shared one GoTypeDescriptor in STRUCTURAL_DESCS and
+                // recordDescriptorWireId (last-writer-wins) resolved
+                // the descriptor to whichever wire id was recorded
+                // last. canonicalBasicName preserves distinct names
+                // (only true aliases merge: rune->int32, byte->uint8).
+                return "basic:" + canonicalBasicName(detail.string("name", path));
             case "named":
                 return "named(" + detail.string("name", path) + ")";
             case "struct": {

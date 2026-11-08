@@ -98,6 +98,15 @@ public final class MapKeyHash {
     }
 
     /**
+     * The hash of a loaded D5 value mixed with a seed (fix-rv1107-10-
+     * mapaccess: reflect.typehash). Same function as {@link #hash}'s
+     * body, over an already-resolved value instead of a key pointer.
+     */
+    static long hashValue(Object value, long seed) {
+        return mix64(hash64(value, 0) ^ seed);
+    }
+
+    /**
      * Storage-stable 64-bit hashes for pointer keys
      * (fix-redmaster-r43): the same storage always yields the same
      * sequence, distinct storages distinct sequences. Entries are

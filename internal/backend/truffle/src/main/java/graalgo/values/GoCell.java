@@ -48,6 +48,19 @@ public interface GoCell {
     }
 
     /**
+     * fix-rv1107-10-mapaccess (B2): the struct this cell addresses the
+     * start of, or null. A field-0 cell ({@code &s.f0}) addresses the
+     * struct's first byte, which is the same storage as the struct
+     * itself ({@code &s}) — gc equates them. The default is null (the
+     * cell addresses no struct start); GoFieldCell overrides for
+     * field 0. Used by {@link GoPointer#sameStorageAs} for the
+     * cell-vs-plain-pointer prefix case.
+     */
+    default Object prefixStruct() {
+        return null;
+    }
+
+    /**
      * Identity-based (owner, index) storage key for field and
      * element cells. Identity, not {@code equals}: a struct owner
      * overrides {@code equals} structurally, but two equal structs

@@ -81,11 +81,30 @@ public final class GoFieldCell implements GoCell {
 
     @Override
     public int storageHash() {
+        // fix-rv1107-10-mapaccess (B2): a field-0 cell addresses the
+        // struct's first byte — the same storage as the struct itself —
+        // so it hashes as the struct, matching a plain pointer to it.
+        if (fieldIndex == 0) {
+            return System.identityHashCode(struct);
+        }
         return 31 * System.identityHashCode(struct) + fieldIndex;
     }
 
     @Override
     public Object storageKey() {
+        // fix-rv1107-10-mapaccess (B2): a field-0 cell keys as the
+        // owner struct itself, so it shares one stable hash with a
+        // plain pointer to that struct (MapKeyHash.pointerHash,
+        // GoEquality's pointer-key hash).
+        if (fieldIndex == 0) {
+            return struct;
+        }
         return new GoCell.StorageKey(struct, fieldIndex);
+    }
+
+    @Override
+    public Object prefixStruct() {
+        // fix-rv1107-10-mapaccess (B2): field 0 is the struct's start.
+        return fieldIndex == 0 ? struct : null;
     }
 }

@@ -1,12 +1,17 @@
 package graalgo.p3reflect;
 
+import graalgo.frontend.Boxing;
 import graalgo.runtime.ChanOps;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
+import graalgo.runtime.Panic;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 
@@ -149,9 +154,54 @@ public final class ReflectLinknames {
             Linknames.register("reflect.makechan", args -> makeChan(
                     tokForTypeArg(args[0], "reflect.makechan"), (int) num(args[1])), 1);
             Linknames.register("reflect.makemap", args -> {
-                tokForTypeArg(args[0], "reflect.makemap");
-                return ReflectRefs.intern(new GoMap());
-            }, 1);
+                long tok = tokForTypeArg(args[0], "reflect.makemap");
+                GoMap m = new GoMap();
+                m.setTypeTok(tok);
+                return ReflectRefs.intern(m);
+            }, 2);
+            // fix-rv1107-10-mapaccess: reflect's map runtime helpers
+            // (gc src/reflect/value.go, bodyless declarations resolved
+            // by pkgpath.name): Value.MapIndex calls mapaccess /
+            // mapaccess_faststr, Value.SetMapIndex calls mapassign0 /
+            // mapassign_faststr0 / mapdelete / mapdelete_faststr, and
+            // MapOf installs a Hasher closure calling typehash. The
+            // implementations below are the real backend support: the
+            // map is the guest GoMap, keys/values are decoded through
+            // the same pointer machinery as typedmemmove, and the hash
+            // reuses MapKeyHash (hash values are never observable, only
+            // bucket/trie navigation uses them).
+            Linknames.register("reflect.mapaccess", args -> mapAccess(
+                    tokForTypeArg(args[0], "reflect.mapaccess"), args[1], args[2]), 3);
+            Linknames.register("reflect.mapaccess_faststr", args -> mapAccessFastStr(
+                    tokForTypeArg(args[0], "reflect.mapaccess_faststr"), args[1], args[2]), 3);
+            Linknames.register("reflect.mapassign0", args -> {
+                mapAssign(tokForTypeArg(args[0], "reflect.mapassign0"),
+                        args[1], args[2], args[3]);
+                return null;
+            }, 4);
+            Linknames.register("reflect.mapassign_faststr0", args -> {
+                mapAssignFastStr(tokForTypeArg(args[0], "reflect.mapassign_faststr0"),
+                        args[1], args[2], args[3]);
+                return null;
+            }, 4);
+            Linknames.register("reflect.mapdelete", args -> {
+                mapDelete(tokForTypeArg(args[0], "reflect.mapdelete"), args[1], args[2]);
+                return null;
+            }, 3);
+            Linknames.register("reflect.mapdelete_faststr", args -> {
+                mapDeleteFastStr(tokForTypeArg(args[0], "reflect.mapdelete_faststr"),
+                        args[1], args[2]);
+                return null;
+            }, 3);
+            Linknames.register("reflect.typehash", args -> (long) typeHash(
+                    tokForTypeArg(args[0], "reflect.typehash"), args[1], num(args[2])), 3);
+            // fix-rv1107-10-mapaccess: maps.rand blocks the map family —
+            // maps.Iter.Init calls rand() twice per iteration (gc
+            // internal/runtime/maps/table.go), so MapKeys/MapRange via
+            // disk reflect cannot run without it. fastrand64 is the
+            // established precedent (runtime.rand).
+            Linknames.register("internal/runtime/maps.rand",
+                    args -> Intrinsics.fastrand64(), 0);
         }
     }
 
@@ -398,6 +448,268 @@ public final class ReflectLinknames {
                 new ChanOps.SelectCase(null, false, null),
         };
         return ChanOps.selectGo(cases) == 0;
+    }
+
+    // ------------------------------------------------------------------
+    // Map access (fix-rv1107-10-mapaccess).
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code mapaccess(t, m, key)}: pointer to the element for key, or
+     * nil (0) when the map is nil or the key is absent. The result is a
+     * handle to a fresh {@link ReflectRefs.Cell} holding the element
+     * value — the exact shape {@code unsafe_New} returns — so both of
+     * gc copyVal's reads work: the typedmemmove path (indirect element
+     * types) loads through the cell, and the direct path
+     * ({@code *(*unsafe.Pointer)(ptr)}) keeps the handle as the Value's
+     * ptr word, which reflect reads via denotedValue (unwrapping the
+     * cell). A present key holding a nil value is distinguished from an
+     * absent key via {@link GoMap#containsKey}: gc returns a valid
+     * (nil) Value for the former, the zero Value for the latter.
+     */
+    private static Object mapAccess(long mapTok, Object mapPtr, Object keyPtr) {
+        GoMap m = asMapOrNull(mapPtr, "reflect.mapaccess");
+        if (m == null) {
+            return 0L;
+        }
+        ReflectTypes.TypeInfo t = ReflectTypes.table().info(mapTok);
+        Object key = loadMapKey(t.key.tok, keyPtr, "reflect.mapaccess");
+        if (!m.containsKey(key)) {
+            return 0L;
+        }
+        m.setTypeTok(mapTok);
+        return ReflectRefs.intern(new ReflectRefs.Cell(m.get(key)));
+    }
+
+    /** {@code mapaccess_faststr(t, m, key)}: the string-key fast path. */
+    private static Object mapAccessFastStr(long mapTok, Object mapPtr, Object keyArg) {
+        GoMap m = asMapOrNull(mapPtr, "reflect.mapaccess_faststr");
+        if (m == null) {
+            return 0L;
+        }
+        GoString key = asGoString(keyArg, "reflect.mapaccess_faststr");
+        if (!m.containsKey(key)) {
+            return 0L;
+        }
+        m.setTypeTok(mapTok);
+        return ReflectRefs.intern(new ReflectRefs.Cell(m.get(key)));
+    }
+
+    /**
+     * {@code mapassign0(t, m, key, val)}: inserts or replaces. Assigning
+     * to a nil map panics exactly as gc does
+     * ("assignment to entry in nil map"); the key/value pointers are
+     * decoded exactly as in {@link #mapAccess}. Aggregate keys and
+     * values are copied (gc copies the bytes; storing the guest's live
+     * object would alias later mutations of the source into the map).
+     */
+    private static void mapAssign(long mapTok, Object mapPtr, Object keyPtr, Object valPtr) {
+        GoMap m = asMapOrNull(mapPtr, "reflect.mapassign0");
+        if (m == null) {
+            Panic.throwPanic(GoErrors.assignmentToNilMap());
+        }
+        ReflectTypes.TypeInfo t = ReflectTypes.table().info(mapTok);
+        Object key = loadMapKey(t.key.tok, keyPtr, "reflect.mapassign0");
+        Object value = loadPointerValue(valPtr, t.elem.tok, "reflect.mapassign0");
+        m.setTypeTok(mapTok);
+        m.put(key, copyIfAggregate(t.elem, value));
+    }
+
+    /** {@code mapassign_faststr0(t, m, key, val)}: string-key fast path. */
+    private static void mapAssignFastStr(long mapTok, Object mapPtr, Object keyArg, Object valPtr) {
+        GoMap m = asMapOrNull(mapPtr, "reflect.mapassign_faststr0");
+        if (m == null) {
+            Panic.throwPanic(GoErrors.assignmentToNilMap());
+        }
+        ReflectTypes.TypeInfo t = ReflectTypes.table().info(mapTok);
+        GoString key = asGoString(keyArg, "reflect.mapassign_faststr0");
+        Object value = loadPointerValue(valPtr, t.elem.tok, "reflect.mapassign_faststr0");
+        m.setTypeTok(mapTok);
+        m.put(key, copyIfAggregate(t.elem, value));
+    }
+
+    /**
+     * {@code mapdelete(t, m, key)}: removes the key; no-op when the map
+     * is nil or the key is absent (gc's mapdelete on a nil map is a
+     * no-op, unlike mapassign).
+     */
+    private static void mapDelete(long mapTok, Object mapPtr, Object keyPtr) {
+        GoMap m = asMapOrNull(mapPtr, "reflect.mapdelete");
+        if (m == null) {
+            return;
+        }
+        ReflectTypes.TypeInfo t = ReflectTypes.table().info(mapTok);
+        m.setTypeTok(mapTok);
+        m.delete(loadMapKey(t.key.tok, keyPtr, "reflect.mapdelete"));
+    }
+
+    /** {@code mapdelete_faststr(t, m, key)}: string-key fast path. */
+    private static void mapDeleteFastStr(long mapTok, Object mapPtr, Object keyArg) {
+        GoMap m = asMapOrNull(mapPtr, "reflect.mapdelete_faststr");
+        if (m == null) {
+            return;
+        }
+        m.delete(asGoString(keyArg, "reflect.mapdelete_faststr"));
+    }
+
+    /**
+     * {@code typehash(t, p, seed)}: the hash of the value of type t at p
+     * mixed with seed. Delegates to {@link MapKeyHash} — the same
+     * value-hash the sync.Map Hasher uses — so the hash is a pure
+     * function of the value (never of Java identity, except where the
+     * value itself is a reference) and deterministic per (value, seed).
+     */
+    private static long typeHash(long tok, Object ptr, long seed) {
+        Object value = loadPointerValue(ptr, tok, "reflect.typehash");
+        return MapKeyHash.hashValue(value, seed);
+    }
+
+    /**
+     * The GoMap denoted by a guest map pointer, or null for a nil map
+     * (null word, 0 handle, nil GoPointer, or a handle denoting null).
+     * Anything else that is not a GoMap fails loudly — a non-map word
+     * here is a guest-visible error, never a silent nil.
+     */
+    private static GoMap asMapOrNull(Object ptr, String symbol) {
+        if (ptr == null) {
+            return null;
+        }
+        Object ref;
+        if (ptr instanceof Number n) {
+            if (n.longValue() == 0) {
+                return null;
+            }
+            ref = ReflectRefs.denotedValue(n.longValue(), GoKind.MAP);
+        } else if (ptr instanceof GoPointer p) {
+            if (p.isNil()) {
+                return null;
+            }
+            ref = p.referent();
+        } else {
+            ref = ptr;
+        }
+        if (ref == null) {
+            return null;
+        }
+        if (ref instanceof GoMap m) {
+            return m;
+        }
+        throw new IllegalStateException(symbol + ": not a map: " + describe(ptr));
+    }
+
+    /**
+     * Loads the map key denoted by a guest key pointer for the map's
+     * key type (gc src/reflect/map.go: MapIndex/SetMapIndex pass
+     * {@code k = key.ptr} when the key Value has flagIndir, else
+     * {@code k = &key.ptr}).
+     *
+     * <ul>
+     *   <li>Long handle: the flagIndir shape — the handle denotes the
+     *       key's storage directly, so the value is loaded through it
+     *       with the key type (the same load typedmemmove performs,
+     *       including derived-reference and offset-0 descent).</li>
+     *   <li>GoPointer: the {@code &key.ptr} shape (only reachable for
+     *       direct-iface key types — pointer/map/chan/func/
+     *       unsafe.Pointer — whose Value holds the value in its ptr
+     *       word). The pointer addresses the Value struct's ptr field,
+     *       whose word is the handle to the direct value itself, so the
+     *       handle is passed to canonicalKey for resolution — not
+     *       kind-loaded. A GoPointer denoting storage directly (a cell
+     *       pointer to an addressable key) falls back to the kind load.</li>
+     * </ul>
+     */
+    private static Object loadMapKey(long keyTok, Object keyPtr, String symbol) {
+        ReflectTypes.TypeInfo kt = ReflectTypes.table().info(keyTok);
+        if (keyPtr instanceof Number) {
+            return canonicalKey(kt, loadPointerValue(keyPtr, keyTok, symbol), symbol);
+        }
+        if (keyPtr instanceof GoPointer p) {
+            if (p.isNil()) {
+                throw new IllegalStateException(symbol + ": nil key pointer");
+            }
+            Object word = p.referent();
+            if (word instanceof Number n) {
+                // The ptr word is the handle to the direct value;
+                // canonicalKey resolves it (pointerFor for POINTER
+                // keys, deref for CHAN/FUNC/MAP). A 0 handle is a nil
+                // pointer key, which canonicalKey maps to a nil
+                // GoPointer.
+                return canonicalKey(kt, Long.valueOf(n.longValue()), symbol);
+            }
+            return canonicalKey(kt, loadPointerValue(keyPtr, keyTok, symbol), symbol);
+        }
+        throw new IllegalStateException(symbol + ": cannot load a map key through "
+                + describe(keyPtr));
+    }
+
+    /**
+     * Canonicalizes a loaded key to the form map stores use
+     * (cf. frontend MapKeys.box, which IndexNode/IndexWriteNode apply):
+     * int/uint kinds box as Long (GoEquality never equates Integer with
+     * Long, so an Integer lookup key would miss a Long stored key), and
+     * struct/array keys are deep-copied (gc copies key bytes at insert;
+     * storing the guest's live object would alias later mutations of
+     * the source into the key).
+     *
+     * <p>Pointer/chan/func/map keys arrive through the Value's ptr word,
+     * which is a Long handle to the key value — but the GoMap stores the
+     * value itself, so a bare handle never matches. The handle is
+     * resolved to its referent. For a POINTER key the referent is the
+     * pointee's storage (a cell), and the GoMap form is the GoPointer
+     * over it — pointerFor is the exact inverse of the handleForPointer
+     * interning that produced the handle (a bare deref would unwrap one
+     * level too far and yield the pointee's value). unsafe.Pointer keys
+     * are the exception: their GoMap form IS the handle (a Long), so
+     * they pass through untouched. A nil handle (0) denotes a nil
+     * pointer key, stored as a nil GoPointer (GoMap keys are never
+     * Java null).
+     */
+    private static Object canonicalKey(ReflectTypes.TypeInfo kt, Object key, String symbol) {
+        if (kt.kind.isIntKind() || kt.kind.isUintKind()) {
+            return Long.valueOf(Boxing.toLong(key, kt.kind));
+        }
+        if (kt.kind == GoKind.STRUCT || kt.kind == GoKind.ARRAY) {
+            return copyOfAggregate(kt, key);
+        }
+        if (kt.kind == GoKind.POINTER) {
+            if (key instanceof Number n) {
+                long h = n.longValue();
+                if (h == 0) {
+                    return new GoPointer((Object) null);
+                }
+                Object ref = ReflectRefs.resolve(h);
+                if (ref instanceof GoPointer gp) {
+                    return gp;
+                }
+                return graalgo.p3unsafe.UnsafeTable.pointerFor(ref);
+            }
+        }
+        if (kt.kind == GoKind.CHAN || kt.kind == GoKind.FUNC || kt.kind == GoKind.MAP) {
+            if (key instanceof Number n && n.longValue() != 0) {
+                return ReflectRefs.deref(ReflectRefs.resolve(n.longValue()));
+            }
+        }
+        return key;
+    }
+
+    /** A fresh copy for aggregate values stored into a map (see above). */
+    private static Object copyIfAggregate(ReflectTypes.TypeInfo t, Object value) {
+        if (t.kind == GoKind.STRUCT || t.kind == GoKind.ARRAY) {
+            return copyOfAggregate(t, value);
+        }
+        return value;
+    }
+
+    /** The GoString for a D5 string argument (GoString, or a Java String). */
+    private static GoString asGoString(Object arg, String symbol) {
+        if (arg instanceof GoString gs) {
+            return gs;
+        }
+        if (arg instanceof String s) {
+            return new GoString(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        throw new IllegalStateException(symbol + ": expected a string key, got "
+                + describe(arg));
     }
 
     // ------------------------------------------------------------------

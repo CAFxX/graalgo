@@ -205,6 +205,17 @@ public final class GoFuncRootNode extends RootNode {
                     arg = new java.util.concurrent.atomic.AtomicInteger(ai.get());
                 }
             }
+            // fix-rv1107-10-mapaccess (B1): a nil unsafe.Pointer argument
+            // arrives as Java null — the exporter types an untyped nil
+            // literal as the empty interface, so Boxing.box reads it as
+            // Object -> null, while the callee expects a Long slot and
+            // Boxing.setSlot NPEs on it. UNSAFE_POINTER is the only
+            // Long-slot kind that admits nil in Go, so substitute the
+            // zero address here; a null for any other primitive-slot
+            // parameter still fails loudly as a producer bug.
+            if (arg == null && paramKinds[i] == graalgo.values.GoKind.UNSAFE_POINTER) {
+                arg = Long.valueOf(0L);
+            }
             Boxing.setSlot(frame, paramSlots[i], paramKinds[i], arg);
         }
         GoroutineState state = GoroutineState.current();

@@ -69,6 +69,30 @@ public final class GoPointer {
         }
     }
 
+    /**
+     * fix-rv1107-10-mapaccess (B4): pointer→handle hook, registered by
+     * the unsafe runtime (interop) alongside {@link #handleResolveHook}.
+     * DerefNode needs the Long handle for a GoPointer value read as
+     * {@code *(*unsafe.Pointer)(ptr)} (copyVal's direct-iface path);
+     * the values package cannot name UnsafeTable, so the conversion
+     * goes through this hook. Unset it throws a clear
+     * IllegalStateException (pure-frontend tests without the unsafe
+     * runtime) instead of silently returning a wrong word.
+     */
+    public static java.util.function.Function<GoPointer, Long> pointerToHandleHook;
+
+    /** The intern handle for a GoPointer value (0 for nil). */
+    public static long pointerToHandle(GoPointer gp) {
+        if (gp == null || gp.isNil()) {
+            return 0;
+        }
+        if (pointerToHandleHook == null) {
+            throw new IllegalStateException(
+                    "GoPointer.pointerToHandle: unsafe runtime hook not installed");
+        }
+        return pointerToHandleHook.apply(gp).longValue();
+    }
+
     /** Creates a pointer to the storage behind a {@link GoCell} (&x, &s.f). */
     public GoPointer(GoCell cell) {
         this.cell = cell;
@@ -212,6 +236,23 @@ public final class GoPointer {
             return isNil() && o.isNil();
         }
         if (cell != null || o.cell != null) {
+            // fix-rv1107-10-mapaccess (B2): a cell pointer to a
+            // struct's offset-0 field addresses the same storage as a
+            // plain pointer to the struct itself (&s == &s.f0 in gc).
+            // Element pointers are excluded (array prefix
+            // &arr == &arr[0] is a separate, unobserved gap).
+            if (cell != null && o.cell == null && !o.isElemPtr) {
+                Object prefix = cell.prefixStruct();
+                if (prefix != null && prefix == o.referent) {
+                    return true;
+                }
+            }
+            if (o.cell != null && cell == null && !isElemPtr) {
+                Object prefix = o.cell.prefixStruct();
+                if (prefix != null && prefix == referent) {
+                    return true;
+                }
+            }
             // PKG-011: cell identity is storage identity, not object
             // identity — e.g. two evaluations of &s.f allocate distinct
             // GoFieldCell objects over the same (struct, field). A cell

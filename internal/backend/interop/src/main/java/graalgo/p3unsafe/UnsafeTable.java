@@ -233,6 +233,15 @@ public final class UnsafeTable {
         // frontend's word-store branch. This class loads before
         // any handle exists, so the hook is always set in time.
         graalgo.values.GoPointer.handleResolveHook = UnsafeTable::resolveHandleStatic;
+        // fix-rv1107-10-mapaccess (B4): the inverse direction — a
+        // GoPointer value read as an unsafe.Pointer word (DerefNode).
+        graalgo.values.GoPointer.pointerToHandleHook = UnsafeTable::handleForPointer;
+        // fix-rv1107-10-mapaccess (type registry): let GoMap resolve
+        // a wire type id to a type token for the (*maps.Map) view.
+        // The method reference is lazy — ReflectTypes is not loaded
+        // until the hook fires, by which time the run is installed.
+        graalgo.values.GoMap.typeTokForWireIdHook =
+                graalgo.p3reflect.ReflectTypes::tokForWireId;
     }
 
     /** Hook implementation: the referent for a handle, or null. */

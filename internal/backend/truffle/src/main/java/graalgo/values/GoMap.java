@@ -23,6 +23,49 @@ public final class GoMap {
     private int size;
     private int tombstones;
 
+    /**
+     * The map's (K, V) type token (fix-rv1107-10-mapaccess: the
+     * {@code (*maps.Map)} view builder needs the map's key/elem widths,
+     * which are not recoverable from stored values — an int32 key and
+     * an int64 key both store as a Long — so the map carries its own
+     * type token). -1 = unknown (never recorded). First write wins: a
+     * map's type never changes, and the same map seen through a named
+     * type and its underlying type shares one (K, V).
+     */
+    private long typeTok = -1;
+
+    /**
+     * Resolves a wire type id to a type token (set by the unsafe layer
+     * to {@code ReflectTypes::tokForWireId}; unset in pure-frontend
+     * tests, where resolution degrades to -1 instead of crashing).
+     */
+    public static java.util.function.Function<Integer, Long> typeTokForWireIdHook;
+
+    /** The map's (K, V) type token, or -1 if never recorded. */
+    public long typeTok() {
+        return typeTok;
+    }
+
+    /** Records the map's type token (first write wins). */
+    public void setTypeTok(long tok) {
+        if (typeTok < 0) {
+            typeTok = tok;
+        }
+    }
+
+    /** Resolves a wire type id to a type token, or -1 when unknown. */
+    public static long resolveTypeTok(int wireId) {
+        if (wireId < 0 || typeTokForWireIdHook == null) {
+            return -1;
+        }
+        try {
+            Long tok = typeTokForWireIdHook.apply(wireId);
+            return tok == null ? -1 : tok.longValue();
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
     public GoMap() {
         this(8);
     }

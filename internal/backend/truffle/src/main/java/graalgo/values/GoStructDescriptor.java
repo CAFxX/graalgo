@@ -64,6 +64,39 @@ public final class GoStructDescriptor {
     }
 
     /**
+     * Process-wide memo for {@link #layout(String, List, List, List, List,
+     * List, List)} (fix-rv1107-10-mapaccess, B3): descriptors are
+     * immutable, so identical layouts share one instance — the frontend
+     * canonicalizes process-wide via NodeFactory.STRUCT_DESCS, and
+     * GoStruct.equals requires descriptor identity, so a reflect-built
+     * struct (e.g. a map key copied through ReflectOpNode.zeroFor)
+     * must share the descriptor of the frontend-built struct or
+     * struct-key map lookups always miss. The key's name component
+     * mirrors NodeFactory.STRUCT_DESCS: "S:" for anonymous structs
+     * (typeName starting "struct#" — identical anonymous structs
+     * share), "N:"+typeName for named ones. Nested descriptors
+     * contribute by identity, sound because they are canonicalized
+     * bottom-up through the same memo.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<LayoutKey, GoStructDescriptor> LAYOUT_MEMO =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record LayoutKey(String name, java.util.List<String> names, java.util.List<GoKind> kinds,
+            java.util.List<Integer> arrayLens, java.util.List<GoKind> arrayElemKinds,
+            java.util.List<GoStructDescriptor> arrayElemDescs,
+            java.util.List<GoStructDescriptor> structDescs) {}
+
+    /**
+     * Null-tolerant immutable copy of a layout list (the lists
+     * legitimately contain nulls — arrayElemKinds/structDescs for
+     * non-array / non-struct fields — and List.copyOf rejects null
+     * elements).
+     */
+    private static <T> java.util.List<T> copyList(java.util.List<T> list) {
+        return java.util.Collections.unmodifiableList(new java.util.ArrayList<>(list));
+    }
+
+    /**
      * Assigns each field of the given kinds to the longs/objects carriers:
      * int/uint/float/bool kinds → {@code longs}, everything else →
      * {@code objects}. arrayLens[i] is the array length for ARRAY-kind
@@ -82,17 +115,23 @@ public final class GoStructDescriptor {
             throw new IllegalArgumentException(
                     "names/kinds/arrayLens/arrayElemKinds/arrayElemDescs/structDescs length mismatch");
         }
-        java.util.ArrayList<Field> fields = new java.util.ArrayList<>(names.size());
-        int longs = 0;
-        int objects = 0;
-        for (int i = 0; i < names.size(); i++) {
-            GoKind k = kinds.get(i);
-            boolean inLongs = k.isIntKind() || k.isFloatKind() || k == GoKind.BOOL;
-            fields.add(new Field(names.get(i), k, inLongs, inLongs ? longs++ : objects++,
-                    arrayLens.get(i), arrayElemKinds.get(i), arrayElemDescs.get(i),
-                    structDescs.get(i)));
-        }
-        return new GoStructDescriptor(typeName, fields);
+        String nameKey = typeName.startsWith("struct#") ? "S:" : "N:" + typeName;
+        LayoutKey key = new LayoutKey(nameKey, copyList(names), copyList(kinds),
+                copyList(arrayLens), copyList(arrayElemKinds), copyList(arrayElemDescs),
+                copyList(structDescs));
+        return LAYOUT_MEMO.computeIfAbsent(key, k -> {
+            java.util.ArrayList<Field> fields = new java.util.ArrayList<>(names.size());
+            int longs = 0;
+            int objects = 0;
+            for (int i = 0; i < names.size(); i++) {
+                GoKind gk = kinds.get(i);
+                boolean inLongs = gk.isIntKind() || gk.isFloatKind() || gk == GoKind.BOOL;
+                fields.add(new Field(names.get(i), gk, inLongs, inLongs ? longs++ : objects++,
+                        arrayLens.get(i), arrayElemKinds.get(i), arrayElemDescs.get(i),
+                        structDescs.get(i)));
+            }
+            return new GoStructDescriptor(typeName, fields);
+        });
     }
 
     /**

@@ -360,9 +360,18 @@ public final class SelectorNode extends GoExprNode {
 
     @Override
     public long executeLong(VirtualFrame frame) {
+        // fix-rv1107-10-mapaccess (B6): a GoPointer struct field read as
+        // a Long (uintptr(g.data) / uintptr(m.dirPtr) in the maps
+        // iterator) — the handle is the same conversion as the explicit
+        // unsafe.Pointer(p) builtin. executeObject callers still get
+        // the GoPointer unchanged.
+        Object v = read(frame);
+        if (v instanceof graalgo.values.GoPointer gp) {
+            return graalgo.values.GoPointer.pointerToHandle(gp);
+        }
         // P3-M9: use Boxing.toLong for correct zero-extension of unsigned
         // kinds (uint32(0xFFFFFFFF) -> 4294967295L, not -1L).
-        return Boxing.toLong(read(frame), kind());
+        return Boxing.toLong(v, kind());
     }
 
     @Override

@@ -79,6 +79,16 @@ public final class DerefNode extends GoExprNode {
             // which the word is exact.
             return Long.valueOf((System.identityHashCode(td) & 0xFFFFFFFFL) | 1L);
         }
+        // fix-rv1107-10-mapaccess (B4): a pointer value read as
+        // unsafe.Pointer — copyVal's direct-iface path does
+        // Value{typ, *(*unsafe.Pointer)(ptr), fl}, so for a *T element
+        // the slot holds a GoPointer and the word read must be its
+        // handle (the same conversion as the explicit unsafe.Pointer(p)
+        // builtin). Without this, Boxing.toLong dies casting the
+        // GoPointer to Number.
+        if (kind() == GoKind.UNSAFE_POINTER && o instanceof GoPointer gp) {
+            return Long.valueOf(GoPointer.pointerToHandle(gp));
+        }
         // fix-redmaster-r43: a scalar dereference of array storage reads
         // the array's first element, recursively. In gc memory is flat:
         // a pointer to an array value and a pointer to its element 0
