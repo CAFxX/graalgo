@@ -258,6 +258,44 @@ class TestRunBatchExitCodes(unittest.TestCase):
         # generator failures must exit 2.
         self.assertNotIn("sys.exit(1)", src)
 
+    def test_zero_programs_exits_two(self):
+        # --seeds 5:5 (empty) and 8:3 (reversed) select zero programs:
+        # the batch must fail loudly (exit 2, infrastructure failure),
+        # not run zero differentials and report a clean exit 0. The
+        # guard sits before the backend build, so a stub `make` on PATH
+        # must never be invoked — that is what makes this test
+        # falsifying on unpatched code: there, `make` IS invoked and
+        # the run ends 0 after comparing nothing. GR points at an
+        # empty temp dir so the test stays cheap either way (no build,
+        # no JVM, no generator).
+        td = tempfile.mkdtemp(prefix="zero-programs-pin-")
+        try:
+            shim_dir = Path(td) / "shims"
+            shim_dir.mkdir()
+            make_log = Path(td) / "make-invoked.log"
+            (shim_dir / "make").write_text(
+                "#!/bin/bash\n"
+                f"echo \"make invoked: $*\" >> \"{make_log}\"\n"
+                "exit 0\n")
+            os.chmod(shim_dir / "make", 0o755)
+            env = {
+                "PATH": f"{shim_dir}:{os.environ['PATH']}",
+                "HOME": td,
+                "GR": td,
+            }
+            for seeds in ("5:5", "8:3"):
+                r = subprocess.run(
+                    [sys.executable, str(HARNESS_DIR / "run_batch.py"),
+                     "--seeds", seeds, "--out", str(Path(td) / "out")],
+                    capture_output=True, text=True, env=env, timeout=60)
+                self.assertEqual(r.returncode, 2, seeds)
+                self.assertIn("empty seed range", r.stdout + r.stderr)
+            self.assertFalse(make_log.exists(),
+                             "run_batch.py invoked `make` for a zero-"
+                             "program batch — the guard must fire first")
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
 
 # Behavioural pins for the run_soak.sh failure semantics (R-P1-13):
 # the single-batch slot must propagate the batch verdict after
