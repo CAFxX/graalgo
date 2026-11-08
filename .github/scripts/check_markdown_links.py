@@ -10,6 +10,27 @@ Fails on:
     transport failures (connection reset, timeout, 5xx/429) are retried
     with backoff before a URL is declared dead.
 
+External verdicts are tri-state: True (alive), False (dead), TRANSIENT
+(unverifiable — every web attempt failed transiently and the
+authoritative fallback below could not settle it). A TRANSIENT link is
+still a failure (exit 1, listed separately as "unverifiable"), so the
+tripwire stays intact; it only changes the diagnosis, never the verdict.
+
+GitHub API fallback (2026-11-08, CI run 42462394721): github.com's web
+frontend intermittently answers 504/429 for URLs that exist — the same
+SHA passed markdown-links 6h before failing, api.github.com said all 8
+reported URLs exist, and live probes showed 504/429 on 9/10 URLs
+including github.com/CAFxX/graalgo itself, with the single 200 flipping
+between rounds. A dead frontend must never red master again, so when
+(and only when) every web attempt failed transiently, a github.com URL
+is re-checked against the authoritative REST API: API 200 means the
+target exists (alive), API 404/410/422 means it does not (dead), and
+anything else leaves the URL TRANSIENT. A web 404 still fails fast and
+never consults the API; a web 200 never costs an API call. The API
+token comes from GITHUB_TOKEN when set (the workflow passes the
+built-in token); without it the fallback still works unauthenticated
+at the public rate limit.
+
 Usage:
   python3 .github/scripts/check_markdown_links.py [--skip-external] [root]
 
@@ -19,12 +40,14 @@ this script is the mechanical enforcement.
 """
 
 import http.client
+import json
 import os
 import re
 import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
@@ -95,6 +118,21 @@ _TRANSIENT_EXC = (
 )
 
 
+class _Transient:
+    """Sentinel for "unverifiable": every check failed transiently, so
+    the URL is neither proven alive nor proven dead. Falsy, so any
+    caller that only tests truthiness fails closed."""
+
+    def __repr__(self):
+        return "TRANSIENT"
+
+    def __bool__(self):
+        return False
+
+
+TRANSIENT = _Transient()
+
+
 def _is_transient(exc):
     """True if the failure is a lost request rather than a dead URL:
     a 429/5xx answer, or a transport error raised before any response
@@ -106,7 +144,117 @@ def _is_transient(exc):
     return isinstance(exc, _TRANSIENT_EXC)
 
 
-def check_external(url, sleep=time.sleep):
+def _github_api_endpoint(url):
+    """Map a github.com URL to the authoritative REST endpoint whose 200
+    proves the target exists, or None when the shape has no mapping.
+    Unmapped shapes get NO fallback (conservative): the web verdict
+    stands and the URL is reported unverifiable rather than alive.
+
+    Mapped shapes (owner/repo may contain dots, dashes, underscores):
+      repo root            -> GET /repos/{o}/{r}
+      blob/tree/raw + path -> GET /repos/{o}/{r}/contents/{path}?ref={ref}
+      tree + ref only      -> GET /repos/{o}/{r}
+      issues/{n}           -> GET /repos/{o}/{r}/issues/{n}
+      pull/{n}             -> GET /repos/{o}/{r}/pulls/{n}
+      commit/{sha}         -> GET /repos/{o}/{r}/commits/{sha}
+      commits[/{ref}]      -> GET /repos/{o}/{r}/commits[?sha={ref}]
+      releases/download/{tag}/{asset}
+                           -> ("release-asset", o, r, tag, asset): the
+                              release-by-tag endpoint is fetched and the
+                              asset list is checked for the file name.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.netloc.lower() not in ("github.com", "www.github.com"):
+        return None
+    parts = [p for p in parsed.path.split("/") if p]
+    if len(parts) < 2:
+        return None
+    owner = parts[0]
+    repo = parts[1][:-4] if parts[1].endswith(".git") else parts[1]
+    rest = parts[2:]
+    if not rest:
+        return f"https://api.github.com/repos/{owner}/{repo}"
+    kind = rest[0]
+    if kind in ("blob", "tree", "raw") and len(rest) >= 3:
+        ref, path = rest[1], "/".join(rest[2:])
+        return ("https://api.github.com/repos/%s/%s/contents/%s?ref=%s"
+                % (owner, repo, path, urllib.parse.quote(ref, safe="")))
+    if kind == "tree" and len(rest) == 2:
+        return f"https://api.github.com/repos/{owner}/{repo}"
+    if kind == "issues" and len(rest) == 2 and rest[1].isdigit():
+        return f"https://api.github.com/repos/{owner}/{repo}/issues/{rest[1]}"
+    if kind == "pull" and len(rest) == 2 and rest[1].isdigit():
+        return f"https://api.github.com/repos/{owner}/{repo}/pulls/{rest[1]}"
+    if kind == "commit" and len(rest) == 2:
+        return f"https://api.github.com/repos/{owner}/{repo}/commits/{rest[1]}"
+    if kind == "commits" and len(rest) == 1:
+        return f"https://api.github.com/repos/{owner}/{repo}/commits"
+    if kind == "commits" and len(rest) == 2:
+        return ("https://api.github.com/repos/%s/%s/commits?sha=%s"
+                % (owner, repo, urllib.parse.quote(rest[1], safe="")))
+    if (kind == "releases" and len(rest) == 4 and rest[1] == "download"):
+        return ("release-asset", owner, repo, rest[2], rest[3])
+    return None
+
+
+def _github_api_get(api_url):
+    """One authenticated GET against api.github.com. Returns
+    (status, body); status is None when no answer arrived at all."""
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": "graalgo-linkcheck/1.0"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(api_url, method="GET", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+    except Exception:
+        return None, b""
+
+
+def _github_api_alive(url):
+    """Authoritative liveness verdict for a github.com URL via the REST
+    API. True = the API says the target exists (200). False = the API
+    says it does not (404/410/422). None = inconclusive: unmapped URL
+    shape, no API answer, or an API status that proves nothing
+    (401/403/429/5xx)."""
+    endpoint = _github_api_endpoint(url)
+    if endpoint is None:
+        return None
+    if isinstance(endpoint, tuple) and endpoint[0] == "release-asset":
+        _, owner, repo, tag, asset = endpoint
+        api_url = ("https://api.github.com/repos/%s/%s/releases/tags/%s"
+                   % (owner, repo, urllib.parse.quote(tag, safe="")))
+        status, body = _github_api_get(api_url)
+        if status == 200:
+            try:
+                names = [a.get("name")
+                         for a in json.loads(body).get("assets", [])]
+            except (ValueError, AttributeError):
+                return None
+            return asset in names
+        if status in (404, 410, 422):
+            return False
+        return None
+    status, _ = _github_api_get(endpoint)
+    if status == 200:
+        return True
+    if status in (404, 410, 422):
+        return False
+    return None
+
+
+def check_external(url, sleep=None):
+    """Tri-state liveness check: True (alive), False (dead), TRANSIENT
+    (unverifiable). `sleep` resolves at call time so tests can stub it
+    via the time module. A web 200 never costs an API call; a web 404
+    fails fast and never consults the API; the API fallback runs only
+    after a round whose failures were all transient."""
+    if sleep is None:
+        sleep = time.sleep
     if url in BOT_PROTECTED_URLS:
         return True  # manually verified live; bot protection blocks automation
     # Some sites 403 HEAD or non-browser user agents (bot protection);
@@ -139,9 +287,22 @@ def check_external(url, sleep=time.sleep):
                 continue
         if not saw_transient:
             return False
+        # Every failure this round was transient: the web frontend
+        # cannot be trusted for this URL right now. Ask the
+        # authoritative API (github.com only) before spending another
+        # round on a degraded frontend; an API verdict settles the
+        # URL with no second round. If the API is inconclusive too,
+        # sleep and try the web once more; after the second round the
+        # URL stays TRANSIENT so the run still fails, with the right
+        # diagnosis.
+        api_result = _github_api_alive(url)
+        if api_result is True:
+            return True
+        if api_result is False:
+            return False
         if round_no == 0:
             sleep(10.0)
-    return False
+    return TRANSIENT
 
 
 def strip_code_blocks(lines):
@@ -170,6 +331,7 @@ def main():
     root = os.path.abspath(args[0]) if args else os.getcwd()
 
     errors = []
+    transient = []
     md_files = []
     for dirpath, dirnames, filenames in os.walk(root):
         # Never descend into build output, vendored trees, or git metadata.
@@ -202,8 +364,13 @@ def main():
                     path_part, anchor = target, None
 
                 if re.match(r"https?://", target):
-                    if not skip_external and not check_external(target):
-                        errors.append(f"{md}:{lineno}: dead URL {target}")
+                    if not skip_external:
+                        verdict = check_external(target)
+                        if verdict is False:
+                            errors.append(f"{md}:{lineno}: dead URL {target}")
+                        elif verdict is TRANSIENT:
+                            transient.append(
+                                f"{md}:{lineno}: unverifiable URL {target}")
                     continue
                 if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", path_part):
                     continue  # other schemes: not our problem
@@ -222,10 +389,17 @@ def main():
                             f"{md}:{lineno}: dangling anchor #{anchor} "
                             f"in {target}")
 
-    if errors:
-        print(f"{len(errors)} broken link(s) in {len(md_files)} markdown files:")
-        for e in errors:
-            print("  " + e)
+    if errors or transient:
+        if errors:
+            print(f"{len(errors)} broken link(s) in {len(md_files)} markdown files:")
+            for e in errors:
+                print("  " + e)
+        if transient:
+            print(f"{len(transient)} unverifiable link(s) in "
+                  f"{len(md_files)} markdown files "
+                  "(transient failures — re-run to confirm):")
+            for t in transient:
+                print("  " + t)
         return 1
     print(f"OK: {len(md_files)} markdown files, no broken links"
           + (" (external URLs skipped)" if skip_external else ""))
