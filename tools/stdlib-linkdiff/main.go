@@ -25,7 +25,8 @@
 //	                [--tags tag1,tag2] [--routes FILE] [--json PATH] [--md PATH]
 //	                [--snapshot PATH] [--provided PATH] [--quiet]
 //
-// Exit codes: 0 ok, 1 scan/classify failure, 2 usage error.
+// Exit codes: 0 ok, 1 scan/classify failure (including a synthetic
+// under-scan — a synthetic source that failed to parse), 2 usage error.
 // No external dependencies.
 package main
 
@@ -74,7 +75,7 @@ Flags:
                   extracting it from --graalgo sources
   --quiet         print only the headline counts
 
-Exit codes: 0 ok, 1 failure, 2 usage error.
+Exit codes: 0 ok, 1 failure (including a synthetic under-scan), 2 usage error.
 `
 
 type usageError struct{ msg string }
@@ -227,6 +228,14 @@ func run(args []string) int {
 		return 1
 	}
 	if o.snapshot != "" {
+		// A snapshot written from an under-scanned provided set would
+		// be a known-incomplete per-release record — fail before
+		// writing it (the report path fails after emitting the report;
+		// a snapshot has no report, so the failure is here).
+		if len(provided.Skipped) > 0 {
+			fmt.Fprintln(os.Stderr, "stdlib-linkdiff: "+syntheticUnderScanMessage(provided.Skipped))
+			return 1
+		}
 		if err := writeSnapshot(o.snapshot, provided); err != nil {
 			fmt.Fprintln(os.Stderr, "stdlib-linkdiff: snapshot: "+err.Error())
 			return 1
@@ -277,6 +286,14 @@ func run(args []string) int {
 	}
 	if err := emitReport(rep, o); err != nil {
 		fmt.Fprintln(os.Stderr, "stdlib-linkdiff: report: "+err.Error())
+		return 1
+	}
+	// A broken synthetic source means the scan under-scans (its symbols
+	// and linknames are missing from the report just emitted) — the run
+	// must not exit 0. The report is the evidence; the exit code is the
+	// verdict.
+	if len(rep.SyntheticParseErrors) > 0 {
+		fmt.Fprintln(os.Stderr, "stdlib-linkdiff: "+syntheticUnderScanMessage(rep.SyntheticParseErrors))
 		return 1
 	}
 	return 0

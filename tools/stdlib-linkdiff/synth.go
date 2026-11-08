@@ -72,6 +72,28 @@ func loadSyntheticRegistry(graalgo string) (*synthRegistry, error) {
 	return reg, nil
 }
 
+// retiredSyntheticPackages lists the import paths whose synthetic
+// sources were retired (REVIEW-2026-11-05-11; the frontend keeps the
+// retired entries as `// RETIRED` comments in the syntheticSources map
+// in synth_machinery.go, and the p3frontend mirrors were deleted):
+// their real packages now compile from GOROOT via the disk importer,
+// so they must never be shadowed again. This is the single source of
+// truth for the invariant the header comment states — the registry
+// build enforces it mechanically (see the check in
+// buildSyntheticRegistry), and TestSyntheticShadowSet exercises the
+// check rather than a copy of this list. "reflect_m7" is NOT retired
+// (a live synthetic package under a distinct import path); only
+// stdlib "reflect" is. "internal/reflectlite" is retired alongside
+// reflect (its source is a `// RETIRED` map comment too).
+var retiredSyntheticPackages = map[string]bool{
+	"fmt":                  true,
+	"internal/reflectlite": true,
+	"net/http":             true,
+	"reflect":              true,
+	"sync":                 true,
+	"sync/atomic":          true,
+}
+
 func buildSyntheticRegistry(dir string) (*synthRegistry, error) {
 	reg := &synthRegistry{
 		Sources:  map[string]string{},
@@ -117,6 +139,21 @@ func buildSyntheticRegistry(dir string) (*synthRegistry, error) {
 	}
 	if len(reg.Shadowed) == 0 {
 		return nil, fmt.Errorf("overlay shadowed set is empty (source drift?)")
+	}
+	// Enforce the retired-package invariant mechanically: a retired
+	// package must never re-enter the shadowed set (its synthetic
+	// source was removed; the real package compiles from disk). A
+	// re-add would silently re-shadow real-stdlib files and corrupt
+	// the live skip-list split — fail loudly, naming the package(s).
+	var retired []string
+	for path := range reg.Shadowed {
+		if retiredSyntheticPackages[path] {
+			retired = append(retired, path)
+		}
+	}
+	if len(retired) > 0 {
+		sort.Strings(retired)
+		return nil, fmt.Errorf("overlay shadowed set contains retired synthetic package(s) %s (retired per REVIEW-2026-11-05-11; the real package compiles from GOROOT via the disk importer — remove the re-added syntheticSources/dedicatedSyntheticStubs entry)", strings.Join(retired, ", "))
 	}
 	return reg, nil
 }
@@ -370,8 +407,9 @@ func sortedKeys(m map[string]string) []string {
 // exported symbols, qualified by import path (the qualifier linkname
 // targets use), to the provided set. A source that does not parse is
 // recorded on Skipped — loudly in the report — and does not abort the
-// extraction (one broken synthetic package must not block the diff;
-// cf. ScanResult.ParseErrors, same precedent).
+// extraction (the report must still be emitted as evidence; run()
+// fails the run with a non-zero exit after emitting it, because a
+// broken synthetic source means the diff under-scans).
 func (p *ProvidedSet) extractSyntheticProvided(reg *synthRegistry) error {
 	for _, path := range sortedKeys(reg.Sources) {
 		prov := fmt.Sprintf("synthetic %q: internal/frontend/%s %s",
@@ -390,8 +428,10 @@ func (p *ProvidedSet) extractSyntheticProvided(reg *synthRegistry) error {
 // they are real needs). File is "synthetic/<importPath>"; Package is the
 // import path, the qualifier linkname targets use. It also returns each
 // source's top-level declared names (gc's package-scope local-name rule).
-// Unparseable sources are reported via skipped, not fatal (same precedent
-// as extractSyntheticProvided).
+// Unparseable sources are reported via skipped, not fatal here (same
+// precedent as extractSyntheticProvided): the report is emitted first,
+// then run() fails the run with a non-zero exit — an unparseable
+// synthetic source means the scan under-scans.
 func scanSyntheticLinknames(reg *synthRegistry) (out []Linkname, decls map[string][]string, skipped []string) {
 	decls = map[string][]string{}
 	for _, path := range sortedKeys(reg.Sources) {
@@ -407,6 +447,37 @@ func scanSyntheticLinknames(reg *synthRegistry) (out []Linkname, decls map[strin
 		decls["synthetic/"+path] = declaredNames(f)
 	}
 	return out, decls, skipped
+}
+
+// syntheticUnderScanMessage renders the fail-loudly error for synthetic
+// sources that failed to parse. It names each offending import path —
+// extracted from the `synthetic "<path>": <err>` entries the producers
+// emit (the same quoted-path convention Classify uses to dedupe) — and
+// states the consequence: the report above is incomplete (the broken
+// sources contribute no symbols and no linknames), so the run refuses
+// to exit 0. Entries without a quoted path are reported verbatim.
+func syntheticUnderScanMessage(errs []string) string {
+	paths := []string{}
+	seen := map[string]bool{}
+	for _, e := range errs {
+		p := e
+		if i := strings.Index(e, `"`); i >= 0 {
+			if j := strings.Index(e[i+1:], `"`); j >= 0 {
+				p = e[i+1 : i+1+j]
+			}
+		}
+		if !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	noun := "sources"
+	if len(paths) == 1 {
+		noun = "source"
+	}
+	return fmt.Sprintf("synthetic under-scan: %d %s failed to parse: %s (their symbols and linknames are missing from this report — see synthetic_parse_errors)",
+		len(paths), noun, strings.Join(paths, ", "))
 }
 
 // importPathOfRel maps a tree-relative file path to its import path:

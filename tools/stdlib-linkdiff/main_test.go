@@ -14,10 +14,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -57,6 +60,82 @@ func fixtureReport(t *testing.T) *Report {
 		t.Fatalf("ScanTree: %v", err)
 	}
 	return Classify(scan, provided, routes, options{graalgo: graalgo})
+}
+
+// fakeGraalgoRoot builds a minimal fake graalgo root in t.TempDir()
+// whose synthetic registry is exactly sources (import path -> embedded
+// Go source). It also writes the minimal LinknameIntrinsics.java and
+// p3frontend synth_time_context.go that loadProvided needs, so run()
+// can execute end-to-end against it. Const names are generated
+// (syntheticFake0Source, ...) in sorted path order, so the layout is
+// deterministic. A source that is not valid Go makes the registry
+// build fine but the extraction/scan skip it — the under-scan case.
+func fakeGraalgoRoot(t *testing.T, sources map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One registered linkname (the registry must not be empty).
+	write(filepath.Join("internal", "backend", "interop", "src", "main", "java", "graalgo", "p3link", "LinknameIntrinsics.java"),
+		"package graalgo.p3link;\npublic class LinknameIntrinsics {\n"+
+			"\tstatic { Linknames.register(\"runtime.fastrand\", \"fake\"); }\n}\n")
+	// The p3frontend time mirror: an empty-body func (found, no symbols).
+	write(filepath.Join("internal", "frontend", "p3frontend", "synth_time_context.go"),
+		"package p3frontend\n\nfunc syntheticTimePackage() {}\n")
+	// The embedded time/context source (a valid Go package clause).
+	write(filepath.Join("internal", "frontend", "synth_time_context.go"),
+		"package frontend\n\nconst syntheticTimeSource = \"package time\\n\"\n")
+	// The syntheticSources map + the source consts.
+	paths := make([]string, 0, len(sources))
+	for p := range sources {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	var mapBuf, constBuf strings.Builder
+	mapBuf.WriteString("package frontend\n\nvar syntheticSources = map[string]string{\n")
+	constBuf.WriteString("package frontend\n\n")
+	for i, p := range paths {
+		name := fmt.Sprintf("syntheticFake%dSource", i)
+		mapBuf.WriteString(fmt.Sprintf("\t%q: %s,\n", p, name))
+		constBuf.WriteString(fmt.Sprintf("const %s = %q\n", name, sources[p]))
+	}
+	mapBuf.WriteString("}\n")
+	write(filepath.Join("internal", "frontend", "synth_machinery.go"), mapBuf.String())
+	write(filepath.Join("internal", "frontend", "synth_fake.go"), constBuf.String())
+	// No dedicated stubs.
+	write(filepath.Join("internal", "frontend", "export.go"),
+		"package frontend\n\nimport \"go/types\"\n\nvar dedicatedSyntheticStubs = map[string]func() *types.Package{}\n")
+	return root
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns
+// what fn wrote. Tests in this package are not parallel, so swapping
+// the global is safe.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	done := make(chan string)
+	go func() {
+		var sb strings.Builder
+		_, _ = io.Copy(&sb, r)
+		done <- sb.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stderr = old
+	return <-done
 }
 
 func entryByLocal(rep *Report, local string) *Entry {
@@ -432,5 +511,99 @@ func TestStaleRoutesFlagged(t *testing.T) {
 	// the flag is the new signal.
 	if len(rep.RoutesApplied) != 2 {
 		t.Fatalf("RoutesApplied = %d, want 2", len(rep.RoutesApplied))
+	}
+}
+
+// TestRunSyntheticUnderScanFails is the R-07 regression test: a run
+// against a fake graalgo root with a deliberately broken synthetic
+// source must fail loudly (non-zero exit naming the broken package),
+// while the same run against a healthy root exits 0 (see
+// TestRunSyntheticHealthyPasses). The report is still emitted in the
+// broken case (it is the evidence); only the exit code changes. The
+// test is hermetic: it does not depend on the real tree's
+// currently-broken regexp/syntax source.
+func TestRunSyntheticUnderScanFails(t *testing.T) {
+	broken := fakeGraalgoRoot(t, map[string]string{
+		"os":         "package os\n",
+		"broken/pkg": "package broken\nfunc Broken( {",
+	})
+	jsonOut := filepath.Join(t.TempDir(), "report.json")
+	routesPath := filepath.Join(t.TempDir(), "routes.txt")
+	if err := os.WriteFile(routesPath, []byte("runtime.writeBarrier -> const:false # fixture mirror\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	stderr := captureStderr(t, func() {
+		code = run([]string{
+			"--graalgo", broken,
+			"--goroot", fixtureRoot(t),
+			"--routes", routesPath,
+			"--json", jsonOut,
+			"--quiet",
+		})
+	})
+	if code != 1 {
+		t.Fatalf("broken synthetic source: run() exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "broken/pkg") {
+		t.Errorf("broken synthetic source: stderr %q does not name the broken package \"broken/pkg\"", stderr)
+	}
+	// The report was still emitted, and it carries the parse error.
+	data, err := os.ReadFile(jsonOut)
+	if err != nil {
+		t.Fatalf("broken synthetic source: JSON report not written: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("broken synthetic source: JSON report unparseable: %v", err)
+	}
+	errs, ok := m["synthetic_parse_errors"].([]any)
+	if !ok || len(errs) == 0 {
+		t.Fatalf("broken synthetic source: synthetic_parse_errors = %v, want a non-empty list", m["synthetic_parse_errors"])
+	}
+	found := false
+	for _, e := range errs {
+		if s, ok := e.(string); ok && strings.Contains(s, "broken/pkg") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("broken synthetic source: synthetic_parse_errors %v does not name \"broken/pkg\"", errs)
+	}
+}
+
+func TestRunSyntheticHealthyPasses(t *testing.T) {
+	healthy := fakeGraalgoRoot(t, map[string]string{"os": "package os\n"})
+	jsonOut := filepath.Join(t.TempDir(), "report.json")
+	routesPath := filepath.Join(t.TempDir(), "routes.txt")
+	if err := os.WriteFile(routesPath, []byte("runtime.writeBarrier -> const:false # fixture mirror\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	stderr := captureStderr(t, func() {
+		code = run([]string{
+			"--graalgo", healthy,
+			"--goroot", fixtureRoot(t),
+			"--routes", routesPath,
+			"--json", jsonOut,
+			"--quiet",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("healthy synthetic input: run() exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "under-scan") {
+		t.Errorf("healthy synthetic input: stderr %q wrongly reports an under-scan", stderr)
+	}
+	data, err := os.ReadFile(jsonOut)
+	if err != nil {
+		t.Fatalf("healthy synthetic input: JSON report not written: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("healthy synthetic input: JSON report unparseable: %v", err)
+	}
+	if errs, ok := m["synthetic_parse_errors"].([]any); ok && len(errs) > 0 {
+		t.Errorf("healthy synthetic input: synthetic_parse_errors = %v, want empty", errs)
 	}
 }

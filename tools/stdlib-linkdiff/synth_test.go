@@ -71,18 +71,57 @@ func TestSyntheticShadowSet(t *testing.T) {
 		}
 	}
 	// Not overlaid: their real-stdlib files are compiled (from disk).
-	// fmt, sync, sync/atomic no longer appear in the PROVIDED set
-	// either — their p3frontend mirrors were retired
-	// (REVIEW-2026-11-05-11), so no synthetic source provides them —
-	// but the frontend overlay resolves them from disk: provided ≠
-	// shadowed. reflect, net/http and internal/reflectlite synthetic
-	// sources were retired in the same way (synth_machinery.go
-	// retirement comments).
-	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo",
-		"fmt", "sync", "sync/atomic", "reflect", "net/http"} {
+	for _, path := range []string{"database/sql", "net/rpc", "plugin", "runtime/cgo"} {
 		if reg.Shadowed[path] {
 			t.Errorf("shadow set wrongly contains non-overlaid package %q", path)
 		}
+	}
+	// Retired packages must not be shadowed — and the names come from
+	// the tool's own retiredSyntheticPackages set, not a copy of it:
+	// if the invariant's content changes, this test follows it (and
+	// TestRetiredPackageRejected covers the registry build enforcing
+	// the check). Their p3frontend mirrors were retired
+	// (REVIEW-2026-11-05-11), so no synthetic source provides them —
+	// but the frontend overlay resolves them from disk: provided ≠
+	// shadowed.
+	for path := range retiredSyntheticPackages {
+		if reg.Shadowed[path] {
+			t.Errorf("shadow set wrongly contains retired package %q", path)
+		}
+	}
+	if len(retiredSyntheticPackages) == 0 {
+		t.Error("retiredSyntheticPackages is empty — the retired-package invariant has no content")
+	}
+}
+
+// TestRetiredPackageRejected proves the retired-package invariant is
+// enforced mechanically by the registry build, not just by the header
+// comment: a fake frontend dir whose syntheticSources map re-adds a
+// retired package ("fmt") must fail to build, naming the package; a
+// fake dir with no retired package must build fine. (The retired set
+// itself is the invariant's content — declarative data, not
+// special-case behaviour — so the check is general: any shadowed path
+// in the set is rejected.)
+func TestRetiredPackageRejected(t *testing.T) {
+	// Healthy fake root: one live synthetic package, no retired one.
+	healthy := fakeGraalgoRoot(t, map[string]string{"os": "package os\n"})
+	if _, err := loadSyntheticRegistry(healthy); err != nil {
+		t.Fatalf("healthy fake root: loadSyntheticRegistry: %v", err)
+	}
+	// Retired fake root: the same live package plus a re-added "fmt".
+	retired := fakeGraalgoRoot(t, map[string]string{
+		"os":  "package os\n",
+		"fmt": "package fmt\n",
+	})
+	reg, err := loadSyntheticRegistry(retired)
+	if err == nil {
+		t.Fatalf("retired fake root: loadSyntheticRegistry succeeded with Shadowed=%v, want an error naming \"fmt\"", reg.Shadowed)
+	}
+	if !strings.Contains(err.Error(), "fmt") {
+		t.Errorf("retired fake root: error %q does not name the retired package \"fmt\"", err.Error())
+	}
+	if !strings.Contains(err.Error(), "retired") {
+		t.Errorf("retired fake root: error %q does not say the package is retired", err.Error())
 	}
 }
 
