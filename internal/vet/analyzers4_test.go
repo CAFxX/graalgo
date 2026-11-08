@@ -7,11 +7,47 @@ import (
 	"testing"
 )
 
+// moduleFreeTempDir returns a fresh temp dir with no enclosing go.mod, so
+// a fixture that writes no go.mod is genuinely module-less. t.TempDir()
+// honors TMPDIR, which `make test-driver` points inside the repo module
+// (.tmp/driver); a fixture placed there would silently inherit the repo's
+// `go 1.21` directive and stdversion would report against it instead of
+// skipping — the "no go.mod" cases would test the repo module, not the
+// absence of one. (R-1108-54: this only surfaced once the tests ran under
+// make test-driver; under plain `go test` TMPDIR is /tmp and the cases
+// passed by luck of location.) The dir is placed above the outermost
+// enclosing go.mod of the system temp dir and removed when the test ends.
+func moduleFreeTempDir(t *testing.T) string {
+	t.Helper()
+	base := os.TempDir()
+	outer := ""
+	for d := base; ; {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			outer = d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	parent := base
+	if outer != "" {
+		parent = filepath.Dir(outer)
+	}
+	dir, err := os.MkdirTemp(parent, "vet-test-*")
+	if err != nil {
+		t.Fatalf("moduleFreeTempDir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 // runVetOnModule writes files into a temp dir (with a go.mod if goMod != "")
 // and runs vet on the given Go files.
 func runVetOnModule(t *testing.T, goMod string, files map[string]string, targets ...string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := moduleFreeTempDir(t)
 	if goMod != "" {
 		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
 			t.Fatal(err)

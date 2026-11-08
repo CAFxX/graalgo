@@ -44,7 +44,7 @@ func copyLock(m sync.Mutex) {
 	_ = m
 }
 `
-	dir := t.TempDir()
+	dir := moduleFreeTempDir(t)
 	path := filepath.Join(dir, "bad.go")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
