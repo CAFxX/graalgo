@@ -85,10 +85,16 @@ func loadSyntheticRegistry(graalgo string) (*synthRegistry, error) {
 // (a live synthetic package under a distinct import path); only
 // stdlib "reflect" is. "internal/reflectlite" is retired alongside
 // reflect (its source is a `// RETIRED` map comment too).
+// "net/http/httptest" retired alongside "net/http" (cc0a78f4 deleted
+// both synth_net_http.go and synth_net_http_httptest.go; the map
+// comment at synth_machinery.go:334-338 retires both) — it must be
+// listed here too, or a re-added httptest source would escape the
+// invariant (REVIEW-2026-11-08, rv1107-05 round 2).
 var retiredSyntheticPackages = map[string]bool{
 	"fmt":                  true,
 	"internal/reflectlite": true,
 	"net/http":             true,
+	"net/http/httptest":    true,
 	"reflect":              true,
 	"sync":                 true,
 	"sync/atomic":          true,
@@ -449,14 +455,12 @@ func scanSyntheticLinknames(reg *synthRegistry) (out []Linkname, decls map[strin
 	return out, decls, skipped
 }
 
-// syntheticUnderScanMessage renders the fail-loudly error for synthetic
-// sources that failed to parse. It names each offending import path —
-// extracted from the `synthetic "<path>": <err>` entries the producers
-// emit (the same quoted-path convention Classify uses to dedupe) — and
-// states the consequence: the report above is incomplete (the broken
-// sources contribute no symbols and no linknames), so the run refuses
-// to exit 0. Entries without a quoted path are reported verbatim.
-func syntheticUnderScanMessage(errs []string) string {
+// underScannedPaths extracts the distinct import paths of the
+// synthetic sources that failed to parse, from the `synthetic
+// "<path>": <err>` entries the producers emit (the same quoted-path
+// convention Classify uses to dedupe). Entries without a quoted path
+// are reported verbatim.
+func underScannedPaths(errs []string) []string {
 	paths := []string{}
 	seen := map[string]bool{}
 	for _, e := range errs {
@@ -472,11 +476,39 @@ func syntheticUnderScanMessage(errs []string) string {
 		}
 	}
 	sort.Strings(paths)
+	return paths
+}
+
+// syntheticUnderScanMessage renders the fail-loudly error for synthetic
+// sources that failed to parse. It names each offending import path —
+// extracted from the `synthetic "<path>": <err>` entries the producers
+// emit (the same quoted-path convention Classify uses to dedupe) — and
+// states the consequence: the report above is incomplete (the broken
+// sources contribute no symbols and no linknames), so the run refuses
+// to exit 0. Entries without a quoted path are reported verbatim.
+func syntheticUnderScanMessage(errs []string) string {
+	paths := underScannedPaths(errs)
 	noun := "sources"
 	if len(paths) == 1 {
 		noun = "source"
 	}
 	return fmt.Sprintf("synthetic under-scan: %d %s failed to parse: %s (their symbols and linknames are missing from this report — see synthetic_parse_errors)",
+		len(paths), noun, strings.Join(paths, ", "))
+}
+
+// syntheticUnderScanSnapshotMessage is the snapshot-mode twin of
+// syntheticUnderScanMessage: snapshot mode emits no report, so the
+// wording must not point at "this report" or synthetic_parse_errors.
+// The consequence is the same class (an under-scanned provided set)
+// but the refused artifact differs: the snapshot itself is not
+// written, so no known-incomplete per-release record is produced.
+func syntheticUnderScanSnapshotMessage(errs []string) string {
+	paths := underScannedPaths(errs)
+	noun := "sources"
+	if len(paths) == 1 {
+		noun = "source"
+	}
+	return fmt.Sprintf("synthetic under-scan: %d %s failed to parse: %s (their symbols and linknames would be missing from the snapshot — refusing to write a known-incomplete record)",
 		len(paths), noun, strings.Join(paths, ", "))
 }
 

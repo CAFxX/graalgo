@@ -607,3 +607,88 @@ func TestRunSyntheticHealthyPasses(t *testing.T) {
 		t.Errorf("healthy synthetic input: synthetic_parse_errors = %v, want empty", errs)
 	}
 }
+
+// TestRunSyntheticUnderScanSnapshotFails is the snapshot-mode analog
+// of TestRunSyntheticUnderScanFails (REVIEW-2026-11-08, rv1107-05
+// round 2): a snapshot run against a fake graalgo root with a
+// deliberately broken synthetic source must fail loudly (exit 1,
+// naming the broken package) and must NOT write the snapshot file —
+// a snapshot written from an under-scanned provided set would be a
+// known-incomplete per-release record. The wording must be
+// snapshot-mode, not report-mode: no "this report" (no report is
+// emitted in snapshot mode).
+func TestRunSyntheticUnderScanSnapshotFails(t *testing.T) {
+	broken := fakeGraalgoRoot(t, map[string]string{
+		"os":         "package os\n",
+		"broken/pkg": "package broken\nfunc Broken( {",
+	})
+	snapshotPath := filepath.Join(t.TempDir(), "provided.json")
+	routesPath := filepath.Join(t.TempDir(), "routes.txt")
+	if err := os.WriteFile(routesPath, []byte("runtime.writeBarrier -> const:false # fixture mirror\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	stderr := captureStderr(t, func() {
+		code = run([]string{
+			"--graalgo", broken,
+			"--goroot", fixtureRoot(t),
+			"--routes", routesPath,
+			"--snapshot", snapshotPath,
+			"--quiet",
+		})
+	})
+	if code != 1 {
+		t.Fatalf("broken synthetic source (snapshot mode): run() exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "broken/pkg") {
+		t.Errorf("broken synthetic source (snapshot mode): stderr %q does not name the broken package \"broken/pkg\"", stderr)
+	}
+	if !strings.Contains(stderr, "under-scan") {
+		t.Errorf("broken synthetic source (snapshot mode): stderr %q does not say the run under-scans", stderr)
+	}
+	if strings.Contains(stderr, "this report") {
+		t.Errorf("broken synthetic source (snapshot mode): stderr %q reuses report wording — snapshot mode emits no report", stderr)
+	}
+	if !strings.Contains(stderr, "snapshot") {
+		t.Errorf("broken synthetic source (snapshot mode): stderr %q does not name the refused artifact (the snapshot)", stderr)
+	}
+	if _, err := os.Stat(snapshotPath); !os.IsNotExist(err) {
+		t.Errorf("broken synthetic source (snapshot mode): snapshot file exists despite the under-scan (stat err = %v) — a known-incomplete record must never be written", err)
+	}
+}
+
+// TestRunSyntheticSnapshotHealthyPasses is the positive twin: a
+// snapshot run against a healthy fake root exits 0 and writes a
+// parseable snapshot naming its symbols.
+func TestRunSyntheticSnapshotHealthyPasses(t *testing.T) {
+	healthy := fakeGraalgoRoot(t, map[string]string{"os": "package os\n"})
+	snapshotPath := filepath.Join(t.TempDir(), "provided.json")
+	routesPath := filepath.Join(t.TempDir(), "routes.txt")
+	if err := os.WriteFile(routesPath, []byte("runtime.writeBarrier -> const:false # fixture mirror\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	stderr := captureStderr(t, func() {
+		code = run([]string{
+			"--graalgo", healthy,
+			"--goroot", fixtureRoot(t),
+			"--routes", routesPath,
+			"--snapshot", snapshotPath,
+			"--quiet",
+		})
+	})
+	if code != 0 {
+		t.Fatalf("healthy synthetic input (snapshot mode): run() exit code = %d, want 0 (stderr: %q)", code, stderr)
+	}
+	if strings.Contains(stderr, "under-scan") {
+		t.Errorf("healthy synthetic input (snapshot mode): stderr %q wrongly reports an under-scan", stderr)
+	}
+	data, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatalf("healthy synthetic input (snapshot mode): snapshot not written: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("healthy synthetic input (snapshot mode): snapshot unparseable: %v", err)
+	}
+}

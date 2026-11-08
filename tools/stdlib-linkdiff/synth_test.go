@@ -10,6 +10,7 @@ package main
 // synthetic os directive landing in the scan with Package "os".
 
 import (
+	"sort"
 	"strings"
 	"testing"
 )
@@ -97,31 +98,49 @@ func TestSyntheticShadowSet(t *testing.T) {
 // TestRetiredPackageRejected proves the retired-package invariant is
 // enforced mechanically by the registry build, not just by the header
 // comment: a fake frontend dir whose syntheticSources map re-adds a
-// retired package ("fmt") must fail to build, naming the package; a
-// fake dir with no retired package must build fine. (The retired set
-// itself is the invariant's content — declarative data, not
-// special-case behaviour — so the check is general: any shadowed path
-// in the set is rejected.)
+// retired package must fail to build, naming the package; a fake dir
+// with no retired package must build fine. The loop covers EVERY
+// entry in retiredSyntheticPackages, one re-added package at a time
+// (a fmt-only test cannot catch a missing entry — that is how the
+// missing "net/http/httptest" entry escaped, REVIEW-2026-11-08):
+// if the set gains a member, the test gains a case automatically,
+// and if it loses one, the loop shrinks with it.
 func TestRetiredPackageRejected(t *testing.T) {
 	// Healthy fake root: one live synthetic package, no retired one.
 	healthy := fakeGraalgoRoot(t, map[string]string{"os": "package os\n"})
 	if _, err := loadSyntheticRegistry(healthy); err != nil {
 		t.Fatalf("healthy fake root: loadSyntheticRegistry: %v", err)
 	}
-	// Retired fake root: the same live package plus a re-added "fmt".
-	retired := fakeGraalgoRoot(t, map[string]string{
-		"os":  "package os\n",
-		"fmt": "package fmt\n",
-	})
-	reg, err := loadSyntheticRegistry(retired)
-	if err == nil {
-		t.Fatalf("retired fake root: loadSyntheticRegistry succeeded with Shadowed=%v, want an error naming \"fmt\"", reg.Shadowed)
+	// Every retired package, re-added one at a time, must fail the
+	// build naming that package. (The retired set itself is the
+	// invariant's content — declarative data, not special-case
+	// behaviour — so the check is general: any shadowed path in the
+	// set is rejected.)
+	pkgs := make([]string, 0, len(retiredSyntheticPackages))
+	for pkg := range retiredSyntheticPackages {
+		pkgs = append(pkgs, pkg)
 	}
-	if !strings.Contains(err.Error(), "fmt") {
-		t.Errorf("retired fake root: error %q does not name the retired package \"fmt\"", err.Error())
+	sort.Strings(pkgs)
+	if len(pkgs) == 0 {
+		t.Fatal("retiredSyntheticPackages is empty — the loop has no cases and the invariant has no content")
 	}
-	if !strings.Contains(err.Error(), "retired") {
-		t.Errorf("retired fake root: error %q does not say the package is retired", err.Error())
+	for _, pkg := range pkgs {
+		t.Run(pkg, func(t *testing.T) {
+			retired := fakeGraalgoRoot(t, map[string]string{
+				"os": "package os\n",
+				pkg:  "package fake\n",
+			})
+			reg, err := loadSyntheticRegistry(retired)
+			if err == nil {
+				t.Fatalf("retired fake root: loadSyntheticRegistry succeeded with Shadowed=%v, want an error naming %q", reg.Shadowed, pkg)
+			}
+			if !strings.Contains(err.Error(), pkg) {
+				t.Errorf("retired fake root: error %q does not name the retired package %q", err.Error(), pkg)
+			}
+			if !strings.Contains(err.Error(), "retired") {
+				t.Errorf("retired fake root: error %q does not say the package is retired", err.Error())
+			}
+		})
 	}
 }
 

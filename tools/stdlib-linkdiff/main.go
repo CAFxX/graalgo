@@ -233,7 +233,7 @@ func run(args []string) int {
 		// writing it (the report path fails after emitting the report;
 		// a snapshot has no report, so the failure is here).
 		if len(provided.Skipped) > 0 {
-			fmt.Fprintln(os.Stderr, "stdlib-linkdiff: "+syntheticUnderScanMessage(provided.Skipped))
+			fmt.Fprintln(os.Stderr, "stdlib-linkdiff: "+syntheticUnderScanSnapshotMessage(provided.Skipped))
 			return 1
 		}
 		if err := writeSnapshot(o.snapshot, provided); err != nil {
