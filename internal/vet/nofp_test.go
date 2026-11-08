@@ -48,7 +48,7 @@ func TestGood(t *testing.T) {
 	t.Log("ok")
 }
 `
-	dir := t.TempDir()
+	dir := moduleFreeTempDir(t)
 	path := filepath.Join(dir, "good.go")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)

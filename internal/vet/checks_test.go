@@ -9,7 +9,7 @@ import (
 
 func runVetOnSrc(t *testing.T, src string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := moduleFreeTempDir(t)
 	path := filepath.Join(dir, "test.go")
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
