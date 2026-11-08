@@ -18,11 +18,24 @@ pattern (F1), wrapped-list handling in both directions (F2) — and
 the import-block negative that the stateless reading of F2 would
 have false-positived on.
 
+The TestGetDiffPushRange fixtures are real (tiny) git repos, not
+synthetic diffs: they pin R-1108-91 (review 2026-11-08) — get_diff()
+used to fall through to HEAD~1...HEAD on a post-push checkout, so
+only the tip commit was inspected and every other pushed commit
+escaped all five rules. A bridge in a NON-tip commit of a
+multi-commit push is the positive control: the old code passed it.
+
 Positive controls are synthetic diffs that MUST still fail: the gate
 is a tripwire, not a rubber stamp.
 """
 
+import contextlib
+import io
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -322,6 +335,264 @@ class TestNoBridgesGate(unittest.TestCase):
 
     def test_import_addition_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(IMPORT_ADDITION), [])
+
+
+
+# --- R-1108-91 (review 2026-11-08): the master-push hole -----------------
+# Real-repo fixtures for get_diff()/main(): a post-push master checkout
+# (origin/master already at the tip, clean tree) with three pushed
+# commits, the bridge (a new synth_*.go file) in the NON-tip commit.
+
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "Gate Fixture",
+    "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+    "GIT_COMMITTER_NAME": "Gate Fixture",
+    "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+    "GIT_AUTHOR_DATE": "2026-11-08T10:00:00+01:00",
+    "GIT_COMMITTER_DATE": "2026-11-08T10:00:00+01:00",
+}
+
+
+def _fixture_env():
+    # Fixture git commands run in a temp repo: drop any ambient git
+    # redirection (a lane worktree on a temp index exports
+    # GIT_INDEX_FILE; without this the fixture commits would read that
+    # foreign index and fail). CI never sets these, so this only
+    # hardens local runs.
+    env = dict(os.environ)
+    env.update(_GIT_ENV)
+    for var in ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE",
+                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+        env.pop(var, None)
+    return env
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", cwd, *args], check=True,
+                   capture_output=True, text=True, env=_fixture_env())
+
+
+def _git_out(cwd, *args):
+    return subprocess.run(["git", "-C", cwd, *args], check=True,
+                          capture_output=True, text=True,
+                          env=_fixture_env()).stdout.strip()
+
+
+# Ambient git redirection must never leak into a fixture repo: a lane
+# worktree on a temp index exports GIT_INDEX_FILE, and get_diff()
+# inherits the test process environment for its `git diff` calls.
+_GIT_REDIRECT_VARS = ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE",
+                      "GIT_OBJECT_DIRECTORY",
+                      "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
+@contextlib.contextmanager
+def _gate_env(**kwargs):
+    """Set exactly the given GITHUB_* vars for the block (None = remove).
+
+    Also drops any ambient GIT_* redirection for the block, so the
+    gate's own `git diff` calls inside the fixture repo never read a
+    foreign index (see _fixture_env)."""
+    keys = ("GITHUB_EVENT_BEFORE", "GITHUB_EVENT_NAME")
+    saved = {k: os.environ.get(k) for k in keys + _GIT_REDIRECT_VARS}
+    try:
+        for k, v in kwargs.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        for k in _GIT_REDIRECT_VARS:
+            os.environ.pop(k, None)
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+@contextlib.contextmanager
+def _in_dir(path):
+    old = os.getcwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(old)
+
+
+@contextlib.contextmanager
+def _push_repo(with_bridge=True):
+    """Temp repo shaped like a post-push master checkout.
+
+    C0 is the pre-push tip; C1 carries the bridge (a new synth file)
+    iff with_bridge; C2/C3 are benign; origin/master already points at
+    the tip, as it does after a push lands. Yields (path, base, tip).
+    """
+    d = tempfile.mkdtemp(prefix="no-bridges-push-")
+    try:
+        _git(d, "init", "-q", "-b", "master", ".")
+        Path(d, "base.txt").write_text("base\n")
+        _git(d, "add", "base.txt")
+        _git(d, "commit", "-qm", "C0 base")
+        base = _git_out(d, "rev-parse", "HEAD")
+        if with_bridge:
+            Path(d, "internal", "frontend").mkdir(parents=True)
+            Path(d, "internal", "frontend", "synth_foo.go").write_text(
+                "package frontend\n// Synthetic foo package.\n")
+            _git(d, "add", "internal/frontend/synth_foo.go")
+            _git(d, "commit", "-qm", "C1 bridge: new synth_foo.go (NON-tip)")
+        else:
+            Path(d, "b1.txt").write_text("benign1\n")
+            _git(d, "add", "b1.txt")
+            _git(d, "commit", "-qm", "C1 benign")
+        Path(d, "b2.txt").write_text("benign2\n")
+        _git(d, "add", "b2.txt")
+        _git(d, "commit", "-qm", "C2 benign")
+        Path(d, "b3.txt").write_text("benign3\n")
+        _git(d, "add", "b3.txt")
+        _git(d, "commit", "-qm", "C3 benign tip")
+        tip = _git_out(d, "rev-parse", "HEAD")
+        _git(d, "update-ref", "refs/remotes/origin/master", tip)
+        yield d, base, tip
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _run_main(argv):
+    """Run cnb.main() capturing stdout; return (returncode, output)."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cnb.main(argv)
+    return rc, buf.getvalue()
+
+
+@unittest.skipUnless(shutil.which("git"), "git binary required for push-range fixtures")
+class TestGetDiffPushRange(unittest.TestCase):
+    def test_push_range_catches_bridge_in_non_tip_commit(self):
+        # The R-1108-91 positive control: the bridge is in C1, the tip
+        # (C3) is benign. The pre-fix gate inspected HEAD~1 only and
+        # passed this push.
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=base,
+                           GITHUB_EVENT_NAME="push"), _in_dir(d):
+                diff, source = cnb.get_diff()
+                self.assertIn("push range", source)
+                self.assertIn("synth_foo.go", diff)
+                errs = cnb.check_no_bridges(diff)
+                self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs), errs)
+                rc, out = _run_main([])
+                self.assertEqual(rc, 1)
+                self.assertIn("NEW SYNTHETIC FILE", out)
+
+    def test_push_range_clean_push_passes(self):
+        with _push_repo(with_bridge=False) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=base,
+                           GITHUB_EVENT_NAME="push"), _in_dir(d):
+                diff, source = cnb.get_diff()
+                self.assertIn("push range", source)
+                self.assertEqual(cnb.check_no_bridges(diff), [])
+                rc, out = _run_main([])
+                self.assertEqual(rc, 0, out)
+
+    def test_push_without_before_fails_loudly(self):
+        # No push range available on a push run: loud failure, never a
+        # silent tip-only inspection.
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=None,
+                           GITHUB_EVENT_NAME="push"), _in_dir(d):
+                self.assertEqual(cnb.get_diff(), ("", ""))
+                rc, out = _run_main([])
+                self.assertEqual(rc, 1)
+                self.assertIn("GITHUB_EVENT_BEFORE", out)
+
+    def test_push_zero_before_fails_loudly(self):
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE="0" * 40,
+                           GITHUB_EVENT_NAME="push"), _in_dir(d):
+                self.assertEqual(cnb.get_diff(), ("", ""))
+                rc, out = _run_main([])
+                self.assertEqual(rc, 1)
+                self.assertIn("zero SHA", out)
+
+    def test_push_unknown_before_fails_loudly(self):
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE="deadbeef" * 5,
+                           GITHUB_EVENT_NAME="push"), _in_dir(d):
+                self.assertEqual(cnb.get_diff(), ("", ""))
+                rc, out = _run_main([])
+                self.assertEqual(rc, 1)
+                self.assertIn("does not resolve", out)
+
+    def test_empty_push_passes(self):
+        # before == HEAD: the range is positively determined and empty.
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=tip,
+                           GITHUB_EVENT_NAME="push"), _in_dir(d):
+                diff, source = cnb.get_diff()
+                self.assertEqual(diff, "")
+                self.assertNotEqual(source, "")
+                rc, out = _run_main([])
+                self.assertEqual(rc, 0, out)
+
+    def test_before_arg_overrides_missing_env(self):
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=None,
+                           GITHUB_EVENT_NAME=None), _in_dir(d):
+                diff, source = cnb.get_diff(before=base)
+                self.assertIn("push range", source)
+                rc, out = _run_main(["--before", base])
+                self.assertEqual(rc, 1)
+                self.assertIn("NEW SYNTHETIC FILE", out)
+
+    def test_schedule_run_keeps_tip_fallback(self):
+        # Non-push runs introduce no push, so there is no push range to
+        # determine: the tip inspection is the pre-existing backstop,
+        # not the enforcement point. Pin that the fallback survives.
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=None,
+                           GITHUB_EVENT_NAME="schedule"), _in_dir(d):
+                diff, source = cnb.get_diff()
+                self.assertIn("local tip-only fallback", source)
+                rc, out = _run_main([])
+                self.assertEqual(rc, 0, out)
+
+    def test_local_run_keeps_tip_fallback(self):
+        with _push_repo(with_bridge=True) as (d, base, tip):
+            with _gate_env(GITHUB_EVENT_BEFORE=None,
+                           GITHUB_EVENT_NAME=None), _in_dir(d):
+                diff, source = cnb.get_diff()
+                self.assertIn("local tip-only fallback", source)
+                rc, out = _run_main([])
+                self.assertEqual(rc, 0, out)
+
+    def test_branch_diff_still_preferred(self):
+        # On a feature branch the whole-branch diff is the source, and
+        # it is a superset of any single push — it must still win over
+        # the push range.
+        d = tempfile.mkdtemp(prefix="no-bridges-branch-")
+        try:
+            _git(d, "init", "-q", "-b", "master", ".")
+            Path(d, "base.txt").write_text("base\n")
+            _git(d, "add", "base.txt")
+            _git(d, "commit", "-qm", "C0 base")
+            base = _git_out(d, "rev-parse", "HEAD")
+            _git(d, "update-ref", "refs/remotes/origin/master", base)
+            _git(d, "checkout", "-qb", "feature")
+            Path(d, "internal", "frontend").mkdir(parents=True)
+            Path(d, "internal", "frontend", "synth_foo.go").write_text(
+                "package frontend\n// Synthetic foo package.\n")
+            _git(d, "add", "internal/frontend/synth_foo.go")
+            _git(d, "commit", "-qm", "branch bridge")
+            with _gate_env(GITHUB_EVENT_BEFORE=None,
+                           GITHUB_EVENT_NAME=None), _in_dir(d):
+                diff, source = cnb.get_diff()
+                self.assertEqual(source, "origin/master...HEAD")
+                errs = cnb.check_no_bridges(diff)
+                self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs), errs)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 if __name__ == "__main__":

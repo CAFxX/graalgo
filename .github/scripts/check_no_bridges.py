@@ -30,15 +30,37 @@ Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
   3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
-                           checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+  4. The push range <before>...HEAD, where <before> is the pre-push tip
+     of the branch (github.event.before, passed via GITHUB_EVENT_BEFORE
+     or --before) — the exact commits a direct master push introduced.
+     This is the master-push source: on a post-push checkout the push
+     already updated origin/master, so source 1 is empty by construction
+     and the old HEAD~1...HEAD fallback inspected only the tip commit,
+     letting every other pushed commit escape all five rules (R-1108-91).
+  5. HEAD~1...HEAD — LOCAL tip-only fallback, used only when the
+     checkout is NOT sitting exactly on origin/master (i.e. not a
+     post-push checkout) and no push range is available: a developer
+     running the gate by hand on a clean local checkout.
+
+On a push event (GITHUB_EVENT_NAME=push, also passed via env) with no
+usable push range — no GITHUB_EVENT_BEFORE, a zero SHA (branch
+creation), or a SHA that does not resolve — the gate FAILS LOUDLY
+instead of falling back to the tip: a push range that cannot be
+determined must never silently become a tip-only inspection. Non-push
+runs (schedule / workflow_dispatch / local) keep the old HEAD~1
+fallback: they introduce no push, so there is no push range to
+determine, and the tip inspection is the pre-existing backstop, not
+the enforcement point.
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
-CI must check out full history (fetch-depth: 0) for source 4 to resolve.
+CI must check out full history (fetch-depth: 0) for the push range to
+resolve — and the workflow must pass GITHUB_EVENT_BEFORE and
+GITHUB_EVENT_NAME to the gate step (see .github/workflows/ci.yml).
 """
 
+import argparse
+import os
 import re
 import subprocess
 import sys
@@ -79,29 +101,122 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
+# Detail for the last loud get_diff() failure ("" when none): the
+# specific reason the diff could not be determined. main() prints it
+# under the single NO-BRIDGES CHECK FAILED header, so a failed run
+# reports the reason once instead of printing two failure blocks.
+_FAILURE_DETAIL = ""
+
+
+def _run_git(args):
+    """Run a git command; return the CompletedProcess (never raises)."""
+    try:
+        return subprocess.run(["git"] + args, capture_output=True,
+                              text=True, timeout=30)
+    except Exception:
+        return None
+
+
+def _rev_parse(ref):
+    """SHA for a ref, or None when it does not resolve."""
+    r = _run_git(["rev-parse", "--verify", ref])
+    if r is None or r.returncode != 0:
+        return None
+    return r.stdout.strip() or None
+
+
+def _push_range_diff(before):
+    """Diff the exact commits a push introduced: <before>...HEAD.
+
+    Returns (diff, source), or ("", "") with the reason printed when the
+    range cannot be determined — a bad range must fail loudly, never
+    silently degrade to a tip-only inspection.
+    """
+    global _FAILURE_DETAIL
+    if not before or set(before) == {"0"}:
+        # A zero SHA is what GitHub sends for a branch-creation push:
+        # there is no pre-push tip, so there is no range to diff.
+        _FAILURE_DETAIL = (
+            "  GITHUB_EVENT_BEFORE is the zero SHA (branch-creation push) —\n"
+            "  there is no pre-push tip, so the push range cannot be\n"
+            "  determined.")
+        return "", ""
+    if _rev_parse(before + "^{commit}") is None:
+        _FAILURE_DETAIL = (
+            f"  GITHUB_EVENT_BEFORE={before} does not resolve to a commit\n"
+            "  in this checkout — the push range cannot be determined.")
+        return "", ""
+    result = _run_git(["diff", f"{before}...HEAD", "--", "."])
+    if result is None or result.returncode != 0:
+        _FAILURE_DETAIL = (
+            f"  could not diff the push range {before}...HEAD.")
+        return "", ""
+    return result.stdout, f"push range {before[:12]}...HEAD (github.event.before)"
+
+
+def _is_post_push_checkout():
+    """True when the checkout sits exactly on origin/master with a clean
+    tree — the shape a post-push CI checkout has: the push already
+    updated origin/master, so origin/master...HEAD is empty by
+    construction. (Callers only reach this after the working-tree and
+    staged candidates came back empty, so the tree is clean here.)"""
+    head = _rev_parse("HEAD")
+    remote = _rev_parse("origin/master")
+    return head is not None and remote is not None and head == remote
+
+
+def get_diff(before=None):
     """Get the diff of added lines, plus a label naming the diff source.
 
     Returns ("", "") when no diff could be determined — the caller must
-    treat that as a loud failure, never a vacuous pass.
+    treat that as a loud failure, never a vacuous pass. A non-empty
+    source with an empty diff is a positively determined empty range
+    (e.g. a push that introduced no new commits) — that one may pass.
     """
+    global _FAILURE_DETAIL
+    _FAILURE_DETAIL = ""
+    if before is None:
+        before = os.environ.get("GITHUB_EVENT_BEFORE") or None
+    before = (before or "").strip() or None
     # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
+    # then to the push range, then to the local tip-only fallback.
+    # A shallow checkout (no history at all) yields nothing from any
+    # source — that is a failure, not a skip.
     candidates = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
         ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
-        ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
     ]
     for name, cmd in candidates:
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        except Exception:
-            continue
-        if result.returncode == 0 and result.stdout.strip():
+        result = _run_git(cmd[1:])
+        if result is not None and result.returncode == 0 and result.stdout.strip():
             return result.stdout, name
+    # Sources 1-3 are all empty: this is either a post-push checkout
+    # (push already updated origin/master; clean tree) or a clean local
+    # checkout. The push range is authoritative here when available.
+    if before is not None:
+        return _push_range_diff(before)
+    if _is_post_push_checkout():
+        # A push introduced these commits, but the event did not tell us
+        # the range — inspecting only the tip (the old HEAD~1 fallback)
+        # would let every other pushed commit escape all five rules
+        # (R-1108-91). Fail loudly instead, unless this is not a push
+        # run at all: schedule / workflow_dispatch / local runs
+        # introduce no push, so the tip inspection below is the
+        # pre-existing backstop, not the enforcement point.
+        if os.environ.get("GITHUB_EVENT_NAME") == "push":
+            _FAILURE_DETAIL = (
+                "  post-push checkout (HEAD == origin/master, clean tree)\n"
+                "  but no push range is available: GITHUB_EVENT_BEFORE is\n"
+                "  unset, so the pushed commits cannot be enumerated.\n"
+                "  The workflow must pass GITHUB_EVENT_BEFORE\n"
+                "  (${{ github.event.before }}) to the gate step.")
+            return "", ""
+    result = _run_git(["diff", "HEAD~1...HEAD", "--", "."])
+    if result is not None and result.returncode == 0 and result.stdout.strip():
+        return result.stdout, "HEAD~1...HEAD (local tip-only fallback)"
     return "", ""
+
 
 def _is_test_file(fname):
     """Test files and test harnesses: never shipped code, so a pattern
@@ -319,19 +434,39 @@ def check_no_bridges(diff):
 
     return errors
 
-def main():
-    diff, source = get_diff()
-    if not diff.strip():
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Fail if the diff introduces new bridges.")
+    parser.add_argument(
+        "--before", default=None,
+        help="pre-push tip SHA (github.event.before); diffs "
+             "<before>...HEAD on the master-push path. Overrides "
+             "the GITHUB_EVENT_BEFORE environment variable.")
+    args = parser.parse_args(argv)
+    diff, source = get_diff(before=args.before)
+    if not source:
         # Never pass vacuously: on the standard integration path (wt.py
         # integrate + push, no PR) every diff source above is empty only when
-        # the checkout has no history to diff against. Skipping here is
-        # exactly the false-green hole this check exists to close.
+        # the checkout has no history to diff against, or when the push
+        # range cannot be determined. Skipping here is exactly the
+        # false-green hole this check exists to close.
         print("NO-BRIDGES CHECK FAILED:")
+        if _FAILURE_DETAIL:
+            print(_FAILURE_DETAIL)
         print("  could not determine any diff to inspect (no PR diff, no")
-        print("  working-tree changes, and HEAD~1 is unavailable — is this a")
-        print("  shallow checkout? CI must use fetch-depth: 0).")
+        print("  working-tree changes, no usable push range, and HEAD~1 is")
+        print("  unavailable — is this a shallow checkout? CI must use")
+        print("  fetch-depth: 0 and pass GITHUB_EVENT_BEFORE /")
+        print("  GITHUB_EVENT_NAME to the gate step).")
         print("  Refusing to pass vacuously.")
         return 1
+    if not diff.strip():
+        # A source was positively determined and the range is empty
+        # (e.g. a push that introduced no new commits): nothing to
+        # inspect, and the emptiness itself was verified, not assumed.
+        print(f"No-bridges check: {source} — no new commits, nothing to inspect.")
+        print("No-bridges check passed.")
+        return 0
 
     print(f"No-bridges check: inspecting added lines from {source}.")
     errors = check_no_bridges(diff)
