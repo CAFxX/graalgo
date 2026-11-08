@@ -4,9 +4,11 @@
 Enforces the contract documented in ../../docs/arch/frontend-v1.md:
   - top-level document shape and "frontend": "v1" version pin
   - type-table entries: known kinds, required detail fields, in-range refs
-  - object-table entries
+  - object-table entries: inst objects resolve instof/typeargs by id
+  - package-level globals: object id resolves, init is an expr node or
+    null, positions present and in range
   - AST nodes: known kinds, required fields per kind, positions present,
-    every type/obj reference resolves
+    every type/obj reference resolves, pos.file indexes package.files
 
 Usage:
   validate_frontend_v1.py [--selftest] <doc.json> [...]
@@ -38,6 +40,12 @@ class Ctx:
         self.errors = []
         self.types = doc.get("types", [])
         self.objects = doc.get("objects", [])
+        # Spec §3: pos.file indexes package.files. 0 when the package
+        # section is missing/malformed (validate() already reports
+        # package.files then, and the range check is skipped).
+        pkg = doc.get("package")
+        files = pkg.get("files") if isinstance(pkg, dict) else None
+        self.nfiles = len(files) if isinstance(files, list) else 0
 
     def err(self, path, msg):
         self.errors.append(f"{path}: {msg}")
@@ -65,6 +73,12 @@ def check_pos(ctx, path, pos):
             ctx.err(f"{path}.{k}", f"must be non-negative int, got {v!r}")
     if not isinstance(pos.get("line"), int) or pos.get("line", 0) < 1:
         ctx.err(f"{path}.line", "line is 1-based")
+    # Spec §3: `file` indexes `package.files`.
+    fv = pos.get("file")
+    if ctx.nfiles and isinstance(fv, int) and not isinstance(fv, bool):
+        if not 0 <= fv < ctx.nfiles:
+            ctx.err(f"{path}.file",
+                    f"file index out of range: {fv} (package has {ctx.nfiles} file(s))")
 
 
 def check_types(ctx):
@@ -141,14 +155,39 @@ def check_objects(ctx):
         if not isinstance(o.get("name"), str):
             ctx.err(p, "name must be a string")
         if kind == "inst":
-            if not isinstance(o.get("instof"), int):
-                ctx.err(p, "inst: instof must be an int")
+            # instof/typeargs are references by id (spec §5): they must
+            # resolve, not merely have the right JSON shape.
+            ctx.check_obj_id(f"{p}.instof", o.get("instof"))
             if not isinstance(o.get("typeargs"), list):
                 ctx.err(p, "inst: typeargs must be a list")
+            else:
+                for j, t in enumerate(o["typeargs"]):
+                    ctx.check_type_id(f"{p}.typeargs[{j}]", t)
         else:
             if not isinstance(o.get("param"), bool):
                 ctx.err(p, "param must be a bool")
             ctx.check_type_id(f"{p}.type", o.get("type"))
+
+
+def check_globals(ctx):
+    """Spec §5a: globals[i] = { "obj": <object id>,
+    "init": <expr node|null>, "pos": <pos> }."""
+    g = ctx.doc.get("globals")
+    if g is None:
+        return
+    if not isinstance(g, list):
+        ctx.err("globals", "must be an array")
+        return
+    for i, e in enumerate(g):
+        p = f"globals[{i}]"
+        if not isinstance(e, dict):
+            ctx.err(p, "must be an object")
+            continue
+        ctx.check_obj_id(f"{p}.obj", e.get("obj"))
+        init = e.get("init")
+        if init is not None:
+            check_node(ctx, f"{p}.init", init, True)
+        check_pos(ctx, f"{p}.pos", e.get("pos"))
 
 
 def check_node(ctx, path, node, expr):
@@ -773,6 +812,7 @@ def validate(doc):
             ctx.err("package.files", "must be a non-empty array")
     check_types(ctx)
     check_objects(ctx)
+    check_globals(ctx)
     funcs = doc.get("funcs")
     if not isinstance(funcs, list) or not funcs:
         ctx.err("funcs", "must be a non-empty array")
@@ -913,6 +953,37 @@ def selftest():
                               "fields": {"value": "1", "type": 0}},
                         "to": 99}}),
         "dangling type id")
+    # R-1108-142 (SEG-C-02): globals were never validated, inst
+    # references were shape-checked but never resolved, and pos.file was
+    # never range-checked against package.files.
+    bad("globals-dangling-obj",
+        lambda d: d.update(globals=[{"obj": 9999, "init": None, "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        "dangling object id")
+    bad("globals-bad-init",
+        lambda d: d.update(globals=[{"obj": 0, "init": {"kind": "frobnicate", "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}, "fields": {}}, "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        "unknown node kind")
+    bad("globals-bad-pos-file",
+        lambda d: d.update(globals=[{"obj": 0, "init": None,
+                                     "pos": {"file": 99, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        "out of range")
+    bad("inst-dangling-instof",
+        lambda d: d["objects"].append({"kind": "inst", "name": "f", "instof": 9999, "typeargs": [0]}),
+        "dangling object id")
+    bad("inst-bad-typearg",
+        lambda d: d["objects"].append({"kind": "inst", "name": "f", "instof": 0, "typeargs": ["x"]}),
+        "type id must be int")
+    bad("pos-file-out-of-range",
+        lambda d: d["funcs"][0]["pos"].update(file=99),
+        "out of range")
+    bad("ok-globals",
+        lambda d: d.update(globals=[{"obj": 0, "init": None, "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        None)
+    bad("ok-globals-init",
+        lambda d: d.update(globals=[{"obj": 0,
+                                     "init": {"kind": "basiclit", "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                                              "fields": {"value": "1", "type": 0}},
+                                     "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        None)
 
     # Positive: one minimal node per kind added for NEW-P1-1 (42 exporter
     # kinds + 6 math-intrinsic kinds). Each entry is the exact field
