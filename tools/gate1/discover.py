@@ -3,7 +3,8 @@
 
 For a given package (e.g. 'strings'), finds all *_test.go files under
 $GOROOT/src/<pkg>, extracts `func TestXxx(t *testing.T)` names, and reports
-the imports each test file needs. Output is JSON for the synthesizer.
+the imports each test file needs plus its build constraints (//go:build and
+// +build lines). Output is JSON for the synthesizer.
 
 Usage: discover.py <package> [--goroot PATH]
 """
@@ -43,12 +44,19 @@ def extract_tests(path):
         imp = m.group(1) or m.group(3)
         if imp:
             imports.add(imp)
-    # Detect build tags (//go:build lines at top)
+    # Detect build tags (//go:build and // +build lines before the package
+    # clause). Multiple lines are ANDed by go/build; synthesize.py evaluates
+    # each line against the linux/amd64 environment and skips files whose
+    # constraints are not satisfied here.
     build_tags = []
-    for line in src.split("\n")[:10]:
-        if line.startswith("//go:build"):
-            build_tags.append(line.strip())
-        elif line and not line.startswith("//") and not line.startswith("package"):
+    for line in src.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("//go:build") or stripped.startswith("// +build"):
+            build_tags.append(stripped)
+        elif stripped == "" or stripped.startswith("//"):
+            continue
+        else:
+            # Package clause or first code: constraints must precede it.
             break
     return tests, sorted(imports), build_tags
 

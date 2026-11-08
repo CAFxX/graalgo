@@ -8,12 +8,16 @@ and compare against gc 1.27.1.
 Graalgo's frontend is single-file today (no package-mode `go test`).
 The harness synthesizes single-file drivers from stdlib test sources:
 
-1. **discover.py** — extract `TestXxx` functions from `$GOROOT/src/<pkg>/*_test.go`
+1. **discover.py** — extract `TestXxx` functions from `$GOROOT/src/<pkg>/*_test.go`,
+   plus each file's imports and build constraints (`//go:build`, `// +build`)
 2. **synthesize.py** — generate a `main`-package driver:
    - Inlines the testing shim (package main)
    - Hoists imports to the driver header
    - Rewrites `*testing.T` → `*T`, strips benchmarks
    - Handles dot-import vs qualified import styles
+   - Skips test files whose build constraints are not satisfied on
+     linux/amd64 (e.g. a `js && wasm` file is never scheduled here);
+     the skip reason is printed to stderr
 3. **shim/shim.go** — minimal `testing.T` replacement (`Errorf`, `Fatalf`,
    `Run`, `Skip`, etc.). Does NOT support: `Cleanup` (no-op), `Parallel`
    (no-op), benchmarks.
@@ -29,6 +33,9 @@ python3 tools/gate1/run.py strconv --out /tmp/gate1-strconv
 # Via make (see root Makefile)
 make gate1-pilot   # 5-package pilot
 make gate1 PKG=sort # single package
+
+# Harness unit tests (build-tag filtering, driver synthesis)
+python3 -m unittest discover -s tools/gate1 -p 'test_*.py'
 ```
 
 ## Pilot Results (2026-10-13, master @ 3af2572)

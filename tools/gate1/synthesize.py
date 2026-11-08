@@ -27,6 +27,169 @@ SUPPORTED_IMPORTS = {
     "flag",
 }
 
+# Build-tag environment the gate runs in (linux/amd64, gc toolchain).
+# This ports test/differential/internal/srctest/srctest.go's envTags +
+# goVersionSatisfied (go1.N satisfied for N <= 27) to Python, so the gate1
+# driver only includes test files gc itself would run on this platform.
+# A file whose constraints are not satisfied here is skipped, never run:
+# e.g. bytes/bytes_js_wasm_test.go (//go:build js && wasm) allocates a
+# 2 GiB slice that must never be scheduled on linux/amd64 (R-1108-141).
+ENV_TAGS = {"linux", "amd64", "unix", "gc"}
+GO_VERSION = 27
+
+
+def _tokenize_build_expr(expr):
+    """Split a //go:build boolean expression into tokens."""
+    toks = []
+    cur = ""
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch in " \t":
+            if cur:
+                toks.append(cur)
+                cur = ""
+        elif ch in "()":
+            if cur:
+                toks.append(cur)
+                cur = ""
+            toks.append(ch)
+        elif ch == "!":
+            if cur:
+                toks.append(cur)
+                cur = ""
+            toks.append("!")
+        elif ch in "&|":
+            if cur:
+                toks.append(cur)
+                cur = ""
+            if i + 1 < len(expr) and expr[i + 1] == ch:
+                toks.append(ch * 2)
+                i += 1
+            else:
+                # A lone & or | is a parse error; the parser rejects it
+                # (pos != len(toks)) and the expression is unsatisfiable.
+                toks.append(ch)
+        else:
+            cur += ch
+        i += 1
+    if cur:
+        toks.append(cur)
+    return toks
+
+
+def _eval_build_term(term):
+    """Evaluate one build-tag term against ENV_TAGS (cf. srctest parseUnary)."""
+    if term == "ignore":
+        return False
+    m = re.match(r"^go1\.(\d+)", term)
+    if m:
+        return int(m.group(1)) <= GO_VERSION
+    return term in ENV_TAGS
+
+
+class _BuildExprParser:
+    """Recursive-descent parser for //go:build expressions (cf. srctest)."""
+
+    def __init__(self, toks):
+        self.toks = toks
+        self.pos = 0
+
+    def parse(self):
+        value, ok = self._parse_or()
+        return ok and value and self.pos == len(self.toks)
+
+    def _parse_or(self):
+        left, ok = self._parse_and()
+        if not ok:
+            return False, False
+        while self.pos < len(self.toks) and self.toks[self.pos] == "||":
+            self.pos += 1
+            right, ok = self._parse_and()
+            if not ok:
+                return False, False
+            left = left or right
+        return left, True
+
+    def _parse_and(self):
+        left, ok = self._parse_unary()
+        if not ok:
+            return False, False
+        while self.pos < len(self.toks) and self.toks[self.pos] == "&&":
+            self.pos += 1
+            right, ok = self._parse_unary()
+            if not ok:
+                return False, False
+            left = left and right
+        return left, True
+
+    def _parse_unary(self):
+        if self.pos < len(self.toks) and self.toks[self.pos] == "!":
+            self.pos += 1
+            value, ok = self._parse_unary()
+            return (not value), ok
+        if self.pos < len(self.toks) and self.toks[self.pos] == "(":
+            self.pos += 1
+            value, ok = self._parse_or()
+            if not ok or self.pos >= len(self.toks) or self.toks[self.pos] != ")":
+                return False, False
+            self.pos += 1
+            return value, True
+        if self.pos >= len(self.toks):
+            return False, False
+        term = self.toks[self.pos]
+        self.pos += 1
+        return _eval_build_term(term), True
+
+
+def build_expr_satisfied(expr):
+    """True iff a //go:build boolean expression holds on linux/amd64+gc."""
+    expr = expr.strip()
+    if not expr:
+        return False
+    return _BuildExprParser(_tokenize_build_expr(expr)).parse()
+
+
+def plus_build_to_expr(line):
+    """Convert a // +build line to an equivalent //go:build expression.
+
+    Per go/build: within one line, space-separated groups are ORed and
+    comma-separated tags within a group are ANDed; multiple lines are ANDed
+    (tags_satisfied evaluates each line separately).
+    """
+    rest = line[len("// +build"):].strip()
+    groups = []
+    for group in rest.split():
+        parts = [p for p in group.split(",") if p]
+        if not parts:
+            return ""
+        if len(parts) > 1:
+            groups.append("(" + " && ".join(parts) + ")")
+        else:
+            groups.append(parts[0])
+    return " || ".join(groups)
+
+
+def tags_satisfied(build_tags):
+    """True iff every build-constraint line in build_tags holds here.
+
+    build_tags is the list discover.py emits: raw '//go:build ...' and/or
+    '// +build ...' lines. An empty list (no constraints) is satisfied;
+    multiple lines are ANDed, matching go/build. A line in neither form,
+    or an unparsable expression, fails closed (the file is skipped).
+    """
+    for line in build_tags or []:
+        line = line.strip()
+        if line.startswith("//go:build"):
+            expr = line[len("//go:build"):].strip()
+        elif line.startswith("// +build"):
+            expr = plus_build_to_expr(line)
+        else:
+            return False
+        if not build_expr_satisfied(expr):
+            return False
+    return True
+
 def load_shim(path):
     with open(path) as f:
         src = f.read()
@@ -123,6 +286,13 @@ def main():
     driver_imports = set()
     file_sources = []
     for f in disc["files"]:
+        # Honor the build constraints discover.py collected: a file gc would
+        # not run on linux/amd64 (e.g. //go:build js && wasm) must never be
+        # scheduled here. Skip loudly; the reason is printed with the rest.
+        if not tags_satisfied(f.get("build_tags") or []):
+            skipped.append((os.path.basename(f["path"]),
+                            f"unsatisfiable build tags: {f.get('build_tags')}"))
+            continue
         result, data = process_test_file(f["path"], pkg)
         if result is None:
             skipped.append((os.path.basename(f["path"]), data))
