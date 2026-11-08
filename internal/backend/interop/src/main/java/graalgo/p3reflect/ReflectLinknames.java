@@ -558,6 +558,10 @@ public final class ReflectLinknames {
      * the guest constructors, whose component types pre-exist the
      * type — fails loudly via the guard set.
      *
+     * <p>Synthesis is serialized on {@code DYN_SYNTH_LOCK} (see the
+     * {@code DYN_STRUCT_TOKS} comment): concurrent synthesis of one
+     * structural type mints exactly one token.
+     *
      * <p>Synthesized struct TypeInfos are deliberately UNNAMED
      * (name ""): gc's StructOf types have no name; their String() is
      * the structural rendering, which typeString reproduces from the
@@ -565,13 +569,43 @@ public final class ReflectLinknames {
      * (structType.Field: unexported fields carry the struct type's
      * PkgPath, exported fields carry none).
      */
+    /**
+     * Dynamic-struct token memo (R-1108-90): guarded by
+     * {@link #DYN_SYNTH_LOCK}, never touched outside
+     * {@link #synthesizeDynamicToken}. The map is a plain
+     * {@code IdentityHashMap} and the table-change check-and-clear in
+     * {@link #synthesizeDynamicStruct} must be atomic with the memo
+     * access: two threads synthesizing the same structural type
+     * concurrently otherwise both miss the memo and mint two distinct
+     * tokens for it, breaking type identity ({@code ==}, map keys,
+     * type switches, interface satisfaction).
+     */
     private static final java.util.Map<GoStruct, Long> DYN_STRUCT_TOKS =
             new java.util.IdentityHashMap<>();
     private static ReflectTypes.Table dynStructTable;
+    /**
+     * Guards {@link #DYN_STRUCT_TOKS} and {@link #dynStructTable}
+     * (see above). A dedicated lock, not the class lock: synthesis
+     * calls into {@link AbiTypes} (whose methods take the AbiTypes
+     * class lock), so this lock always nests outside it — one lock
+     * order, no cycle. {@code synchronized} is reentrant, so a nested
+     * dynamic type (a struct field whose type is itself dynamic)
+     * re-entering {@link #synthesizeDynamicToken} on the same thread
+     * is safe; the {@code SYNTHESIZING} guard still fails a true
+     * synthesis cycle loudly.
+     */
+    private static final Object DYN_SYNTH_LOCK = new Object();
     private static final ThreadLocal<java.util.IdentityHashMap<GoStruct, Boolean>> SYNTHESIZING =
             ThreadLocal.withInitial(java.util.IdentityHashMap::new);
 
     private static long synthesizeDynamicToken(GoStruct header) {
+        synchronized (DYN_SYNTH_LOCK) {
+            return synthesizeDynamicTokenLocked(header);
+        }
+    }
+
+    // Called only with DYN_SYNTH_LOCK held (see synthesizeDynamicToken).
+    private static long synthesizeDynamicTokenLocked(GoStruct header) {
         GoStruct ext = null;
         String extName = null;
         GoStruct cur = header.prefixParent();

@@ -66,6 +66,11 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // R-1108-90: concurrent-reflect torture tests — the shared
+        // memo maps in AbiTypes/ReflectLinknames must be safe under
+        // concurrent reflect use (shell round-trip + dynamic-struct
+        // token identity).
+        TESTS.add(graalgo.p3reflect.ReflectMemoRaceTest.class);
     }
 
     private IfaceTestRunner() {}
