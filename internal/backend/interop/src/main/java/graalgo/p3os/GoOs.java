@@ -267,6 +267,9 @@ public final class GoOs {
      * the program entry point (gc parity: argv[0] is absolute under
      * `go run`; graalgo has no binary artifact, so the entry-point file
      * path is the honest equivalent).
+     * <p>This is a complete per-run reset: open handles are closed and
+     * the net/poller state is reset (B-04), so no state from a previous
+     * program can alias a handle in the next one.
      *
      * <p>A static initializer seeds the same state with an empty argv so
      * the intrinsics are usable even if a caller builds (but never runs
@@ -376,7 +379,31 @@ public final class GoOs {
     }
 
     private static void resetState(String[] argv) {
-        HANDLES.clear();
+        // B-04 (REVIEW-2026-11-07-07): the old code did HANDLES.clear()
+        // here, dropping open file/socket/dir handles without closing
+        // them (fd leak) and leaving GoNet/GoNetpoll state keyed by
+        // cookies that NEXT_COOKIE then reissued (aliasing). Close
+        // through the normal close() path so sockets also evict their
+        // poller state (GoNetpoll.evictForClose); stdio cookies 1-3 are
+        // never closed (closeUnderlying=false) and are re-registered
+        // below. Each close is best-effort: one bad handle must not
+        // abort the reset and strand the rest.
+        for (Long cookie : new java.util.ArrayList<>(HANDLES.keySet())) {
+            if (cookie == 1L || cookie == 2L || cookie == 3L) {
+                continue; // stdio: re-registered below, never closed
+            }
+            try {
+                close(cookie);
+            } catch (RuntimeException e) {
+                // Best effort; the reset must complete.
+            }
+        }
+        // With the cookie space restarting at 16 below, no SockState /
+        // PollDesc may survive keyed by a cookie about to be reissued.
+        // (GoNetpoll.resetForTest also tears down the selector and the
+        // poller thread.)
+        graalgo.p3net.GoNet.resetForTest();
+        graalgo.p3net.GoNetpoll.resetForTest();
         NEXT_COOKIE.set(16);
         ENV_OVERLAY.clear();
         ENV_REMOVED.clear();
