@@ -370,6 +370,12 @@ func runSlog(pass *Pass) []Diagnostic {
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
 			}
+			// A call with fewer args than the skip prefix (e.g. slog.Info()
+			// or slog.InfoContext(ctx)) is already a compile error for
+			// missing required args; vet must skip it, not panic.
+			if len(args) < start {
+				return true
+			}
 			rest := args[start:]
 			if len(rest)%2 != 0 {
 				out = append(out, Diagnostic{

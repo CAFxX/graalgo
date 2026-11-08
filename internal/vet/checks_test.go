@@ -302,6 +302,41 @@ func f() {
 	}
 }
 
+// TestSlogZeroArgs (R-1108-60): slog calls with fewer args than the
+// analyzer's skip prefix must not panic the whole vet run.
+// runSlog slices args[start:] with start 1 (plain) or 2 (*Context);
+// a zero-arg call — or a *Context call with only ctx — used to panic
+// with "slice bounds out of range". These calls are already compile
+// errors (missing required args); vet must skip them, not crash.
+func TestSlogZeroArgs(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f() {
+	slog.Info()
+	slog.Debug()
+	slog.Warn()
+	slog.Error()
+	slog.Log()
+	slog.LogAttrs()
+	slog.InfoContext()
+	slog.InfoContext(context.Background())
+	slog.DebugContext(context.Background())
+	slog.WarnContext(context.Background())
+	slog.ErrorContext(context.Background())
+	slog.LogAttrs(context.Background(), slog.LevelInfo)
+}
+`
+	joined := runVetOnSrc(t, src)
+	if strings.Contains(joined, "odd number") || strings.Contains(joined, "should be a string") {
+		t.Errorf("unexpected slog diagnostic for short-arg calls:\n%s", joined)
+	}
+}
+
 func TestStdMethods(t *testing.T) {
 	src := `package main
 
