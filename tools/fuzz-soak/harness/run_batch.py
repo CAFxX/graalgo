@@ -14,8 +14,9 @@ Exit codes (the overnight soak in run_soak.sh distinguishes them):
      EXIT_MISMATCH, GO_PANIC_MISMATCH, GC_BUILD_FAIL) — findings, not a
      harness failure; the soak records them and keeps going
   2  the batch itself could not run correctly: backend build failed,
-     the generator failed, or any program ended HARNESS_ERROR
-     (missing launcher/classes/gofrontend, unparseable diff output)
+     the generator failed, any program ended HARNESS_ERROR
+     (missing launcher/classes/gofrontend, unparseable diff output),
+     or the seed range selected zero programs (empty or reversed range)
 """
 import argparse
 import hashlib
@@ -46,6 +47,16 @@ def main():
     args = ap.parse_args()
 
     start, end = map(int, args.seeds.split(":"))
+    if end <= start:
+        # Zero programs is a batch that could not run, not a clean
+        # batch: an empty range (5:5) or a reversed range (8:3) would
+        # otherwise generate nothing, compare nothing, and exit 0 — a
+        # vacuous pass in the layer-4 gate. Fail loudly with exit 2
+        # (infrastructure failure per the 0/1/2 contract above) BEFORE
+        # the backend build, so the failure is cheap and unmistakable.
+        print(f"ERROR: empty seed range {start}:{end}: "
+              "no programs to run", flush=True)
+        sys.exit(2)
     outdir = os.path.abspath(args.out)
     os.makedirs(outdir, exist_ok=True)
     progdir = os.path.join(outdir, "programs")
