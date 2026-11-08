@@ -183,7 +183,12 @@ def check_globals(ctx):
         if not isinstance(e, dict):
             ctx.err(p, "must be an object")
             continue
-        ctx.check_obj_id(f"{p}.obj", e.get("obj"))
+        # Spec §5a: `obj: -1` is the side-effect-only sentinel (a blank
+        # `var _ = ...` via ginit, and one entry per `init()` via
+        # initCallEnt in export.go) — it names no object, so there is
+        # nothing to resolve. Every other id still resolves.
+        if e.get("obj") != -1:
+            ctx.check_obj_id(f"{p}.obj", e.get("obj"))
         init = e.get("init")
         if init is not None:
             check_node(ctx, f"{p}.init", init, True)
@@ -984,6 +989,28 @@ def selftest():
                                               "fields": {"value": "1", "type": 0}},
                                      "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
         None)
+    # R-1108-142 remediation (review NOT CLEAN §4): spec §5a `obj: -1`
+    # is the side-effect-only sentinel — a blank `var _ = ...` (basiclit
+    # init) and an `init()` entry (exact initCallEnt shape: call node,
+    # ident fun, no args, null type) must both validate clean, while any
+    # other negative id is still dangling.
+    bad("ok-globals-blank-var-obj-minus-1",
+        lambda d: d.update(globals=[{"obj": -1,
+                                     "init": {"kind": "basiclit", "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                                              "fields": {"value": "1", "type": 0}},
+                                     "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        None)
+    bad("ok-globals-init-call-obj-minus-1",
+        lambda d: d.update(globals=[{"obj": -1,
+                                     "init": {"kind": "call", "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                                              "fields": {"fun": {"kind": "ident", "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                                                                     "fields": {"name": "init", "obj": 0, "type": 0}},
+                                                         "args": [], "type": None}},
+                                     "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        None)
+    bad("globals-obj-minus-2",
+        lambda d: d.update(globals=[{"obj": -2, "init": None, "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1}}]),
+        "dangling object id")
 
     # Positive: one minimal node per kind added for NEW-P1-1 (42 exporter
     # kinds + 6 math-intrinsic kinds). Each entry is the exact field
