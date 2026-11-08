@@ -13,8 +13,11 @@ package main
 // intrinsic wire nodes (runtimeversion, runtimenumcpu, runtimegomaxprocs,
 // runtimenumgoroutine, runtimegosched, runtimereadmemstats, runtimegoroot,
 // runtimestack), the goexit marker, and the gcinterop markers appear, and
-// the ordinary-call counts drop — while the positive control passes
-// pre- and post-fix.
+// the ordinary-call counts drop — while the unaliased positive control
+// passes pre- and post-fix. The aliased positive control
+// (TestAliasedRealRuntimeStillIntercepts, F3-11-01) fails pre-fix — the
+// spelling pre-filters at export.go:6910 and :8593 reject every rt.*
+// call — and passes post-fix.
 
 import (
 	"fmt"
@@ -158,6 +161,65 @@ func main() {
 	}
 	if n := strings.Count(out, `"kind": "call"`); n != 1 {
 		t.Errorf("exported JSON has %d ordinary call nodes, want 1", n)
+	}
+}
+
+// TestAliasedRealRuntimeStillIntercepts (F3-11-01): positive control
+// for an ALIASED import of the real overlay runtime (rt "runtime") —
+// the same 14 calls must still lower to the intrinsic wire nodes, the
+// goexit marker, and the gcinterop markers, with the exact counts.
+// RED pre-fix: the isGoschedCall spelling pre-filter (export.go:6910)
+// rejects rt.Gosched() in all three statement positions, and the
+// exportCall spelling pre-filter (export.go:8593) rejects every other
+// rt.* call, so all 14 export as ordinary calls instead.
+func TestAliasedRealRuntimeStillIntercepts(t *testing.T) {
+	src := `package main
+
+import rt "runtime"
+
+func main() {
+	_ = rt.Version()
+	_ = rt.NumCPU()
+	_ = rt.GOMAXPROCS(2)
+	_ = rt.NumGoroutine()
+	rt.Gosched()
+	defer rt.Gosched()
+	go rt.Gosched()
+	rt.GC()
+	rt.KeepAlive(1)
+	x := 1
+	rt.SetFinalizer(&x, func(*int) {})
+	var m rt.MemStats
+	rt.ReadMemStats(&m)
+	_ = rt.GOROOT()
+	var buf [64]byte
+	_ = rt.Stack(buf[:], false)
+	rt.Goexit()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with aliased real runtime: %v", err)
+	}
+	for kind, want := range map[string]int{
+		`"kind": "runtimeversion"`:      1,
+		`"kind": "runtimenumcpu"`:       1,
+		`"kind": "runtimegomaxprocs"`:   1,
+		`"kind": "runtimenumgoroutine"`: 1,
+		`"kind": "runtimegosched"`:      3,
+		`"kind": "runtimereadmemstats"`: 1,
+		`"kind": "runtimegoroot"`:       1,
+		`"kind": "runtimestack"`:        1,
+	} {
+		if n := strings.Count(out, kind); n != want {
+			t.Errorf("exported JSON has %d %s nodes, want %d", n, kind, want)
+		}
+	}
+	if n := strings.Count(out, `"goexit": true`); n != 1 {
+		t.Errorf("exported JSON has %d goexit markers, want 1", n)
+	}
+	if n := strings.Count(out, `"gcinterop"`); n != 3 {
+		t.Errorf("exported JSON has %d gcinterop markers, want 3 (GC, KeepAlive, SetFinalizer)", n)
 	}
 }
 
