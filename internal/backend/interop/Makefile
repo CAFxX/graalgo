@@ -107,14 +107,21 @@ check: main $(OUT_TEST)/.built
 	# it (R-06, REVIEW-2026-11-07-04). The module tests run first so the
 	# cap-13 test (TestValidateRejects14thPackage) executes in CI, not
 	# just the live-list validation.
+	# Both skip arms fail loud (R-1108-112): a missing list file or a
+	# missing Go toolchain must never silently pass this gate.
 	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
 		GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
 		if [ -x "$$GO_BIN" ]; then \
 			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local "$$GO_BIN" test ./... && GOTOOLCHAIN=local "$$GO_BIN" run . validate; \
 		else \
-			echo "WARNING: Go toolchain not found ($$GO_BIN); exclusion-list gate skipped"; \
+			echo "exclusion-list gate FAILED: Go toolchain not found ($$GO_BIN)"; \
+			exit 1; \
 		fi; \
+	else \
+		echo "exclusion-list gate FAILED: $(STDLIB_FORK)/exclusions.yaml not found"; \
+		exit 1; \
 	fi
+	@echo "exclusion-list gate clean"
 	@echo "== asm-inventory sync gate (P3-M6) =="
 	@if [ -n "$(GO)" ]; then \
 		GOROOT=$$(dirname $$(dirname "$(GO)")); \
