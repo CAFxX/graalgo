@@ -195,7 +195,7 @@ public final class GoNetpoll {
     /** Last poller-thread failure, for tests (no stdout/stderr in library code). */
     private static volatile Throwable lastPollerError;
 
-    /** Test hook: tears down all poller state (closes the selector). */
+    /** Tears down all poller state (closes the selector). Called by GoOs.init on every program reset (and by tests). */
     public static synchronized void resetForTest() {
         INIT.set(false);
         Selector sel = selector;

@@ -171,7 +171,7 @@ public final class GoNet {
 
     private static final ConcurrentHashMap<Long, SockState> STATES = new ConcurrentHashMap<>();
 
-    /** Clears per-run socket state (tests). The GoOs handle table is reset separately. */
+    /** Clears per-run socket state. Called by GoOs.init on every program reset (and by tests). */
     public static void resetForTest() {
         STATES.clear();
     }
