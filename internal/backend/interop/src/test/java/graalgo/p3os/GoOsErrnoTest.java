@@ -74,24 +74,22 @@ public final class GoOsErrnoTest {
         return GoString.fromUtf8(s);
     }
 
+    // D5 canonical form: Go []byte is byte[]-backed (9c92153d); GoOs.goBuf
+    // casts the backing array to byte[], so an int[]-backed slice throws
+    // ClassCastException ([I cannot be cast to [B) on any byte-buffer call.
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static GoSlice bytesBuf(byte[] data) {
-        int[] arr = new int[data.length];
-        for (int i = 0; i < data.length; i++) {
-            arr[i] = data[i] & 0xFF;
-        }
+        byte[] arr = data.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 
     private static byte[] sliceBytes(GoSlice gs) {
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] out = new byte[gs.len()];
-        for (int i = 0; i < gs.len(); i++) {
-            out[i] = (byte) arr[gs.offset() + i];
-        }
+        System.arraycopy(arr, gs.offset(), out, 0, gs.len());
         return out;
     }
 
@@ -256,6 +254,33 @@ public final class GoOsErrnoTest {
                     "read content");
             checkEq(0, GoOs.read(r, buf(16)), "EOF is 0");
             checkEq(-GoOs.EBADF, GoOs.write(r, buf(1)), "write on read-only");
+            checkEq(0, GoOs.close(r), "close read handle");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    public void testReadIntoOffsetSubslice() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("off").toString();
+            long h = GoOs.open(gs(name), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            byte[] data = "hello".getBytes(StandardCharsets.UTF_8);
+            checkEq(6, GoOs.write(h, bytesBuf(data)), "write n+1");
+            checkEq(0, GoOs.close(h), "close");
+            long r = GoOs.open(gs(name), O_RDONLY, 0);
+            // Read into a subslice sharing a larger byte[] backing array:
+            // goBuf/goBufBack must honor the slice offset, leaving the
+            // prefix untouched (D5 section 2.1).
+            GoSlice backing = buf(16);
+            GoSlice sub = backing.slice(4, 12);
+            checkEq(6, GoOs.read(r, sub), "read into subslice n+1");
+            byte[] all = sliceBytes(backing);
+            checkEq(0, "hello".compareTo(new String(all, 4, 5, StandardCharsets.UTF_8)),
+                    "subslice content");
+            for (int i = 0; i < 4; i++) {
+                checkEq(0, all[i], "prefix byte " + i + " untouched");
+            }
             checkEq(0, GoOs.close(r), "close read handle");
         } finally {
             cleanScratch();
@@ -553,13 +578,6 @@ public final class GoOsErrnoTest {
     // init first (channels bound), then rebind, write, rebind, write.
     // It FAILS on the old code (both writes land on the real stdout and
     // both buffers stay empty) and passes on the dynamic delegates.
-    // NOTE: uses a byte[]-backed slice, not the shared bytesBuf helper:
-    // D5 stores []byte in byte[] backing arrays (goBuf casts to byte[]),
-    // while bytesBuf still builds int[]-backed slices.
-    private static GoSlice byteSlice(byte[] data) {
-        return new GoSlice(data.clone(), 0, data.length, data.length);
-    }
-
     public void testStdioFollowsReboundStreams() {
         GoOs.init(new String[0]);
         PrintStream realOut = System.out;
@@ -569,10 +587,10 @@ public final class GoOsErrnoTest {
             ByteArrayOutputStream second = new ByteArrayOutputStream();
             System.setOut(new PrintStream(first, true, StandardCharsets.UTF_8));
             byte[] one = "one".getBytes(StandardCharsets.UTF_8);
-            checkEq(4, GoOs.write(2L, byteSlice(one)), "write stdout n+1");
+            checkEq(4, GoOs.write(2L, bytesBuf(one)), "write stdout n+1");
             System.setOut(new PrintStream(second, true, StandardCharsets.UTF_8));
             byte[] two = "two".getBytes(StandardCharsets.UTF_8);
-            checkEq(4, GoOs.write(2L, byteSlice(two)), "write stdout after rebind n+1");
+            checkEq(4, GoOs.write(2L, bytesBuf(two)), "write stdout after rebind n+1");
             checkEq(0, "one".compareTo(first.toString(StandardCharsets.UTF_8)),
                     "first capture");
             checkEq(0, "two".compareTo(second.toString(StandardCharsets.UTF_8)),
@@ -582,10 +600,10 @@ public final class GoOsErrnoTest {
             ByteArrayOutputStream errSecond = new ByteArrayOutputStream();
             System.setErr(new PrintStream(errFirst, true, StandardCharsets.UTF_8));
             byte[] e1 = "e1".getBytes(StandardCharsets.UTF_8);
-            checkEq(3, GoOs.write(3L, byteSlice(e1)), "write stderr n+1");
+            checkEq(3, GoOs.write(3L, bytesBuf(e1)), "write stderr n+1");
             System.setErr(new PrintStream(errSecond, true, StandardCharsets.UTF_8));
             byte[] e2 = "e2".getBytes(StandardCharsets.UTF_8);
-            checkEq(3, GoOs.write(3L, byteSlice(e2)), "write stderr after rebind n+1");
+            checkEq(3, GoOs.write(3L, bytesBuf(e2)), "write stderr after rebind n+1");
             checkEq(0, "e1".compareTo(errFirst.toString(StandardCharsets.UTF_8)),
                     "first stderr capture");
             checkEq(0, "e2".compareTo(errSecond.toString(StandardCharsets.UTF_8)),
@@ -621,9 +639,26 @@ public final class GoOsErrnoTest {
         GoOs.init(new String[0]);
         GoSlice b = buf(256);
         long r = GoOs.hostname(b);
-        // -EIO when the host name is unresolvable (Go side falls back
-        // to /proc/sys/kernel/hostname); otherwise n+1.
-        if (r != -GoOs.EIO) {
+        // GoOs.hostname swallows any exception (including a
+        // ClassCastException from a mismatched slice backing array) into
+        // -EIO, so a broken byte-buffer path would pass vacuously here.
+        // On Linux the kernel hostname is readable, so -EIO is a real
+        // failure, not an unresolvable host: pin the content against
+        // /proc/sys/kernel/hostname. Only when that file is unreadable
+        // does the old -EIO-or-n+1 check apply.
+        String kernelHn = null;
+        try {
+            kernelHn = Files.readString(Path.of("/proc/sys/kernel/hostname")).trim();
+        } catch (Exception ignored) {
+            // Non-Linux host: fall back to the vacuous-tolerant check.
+        }
+        if (kernelHn != null && !kernelHn.isEmpty()) {
+            check(r > 1, "hostname n+1, got " + r);
+            String hn = new String(sliceBytes(b), 0, (int) (r - 1),
+                    StandardCharsets.UTF_8);
+            checkEq(0, kernelHn.compareTo(hn), "hostname matches kernel hostname");
+            check(!hn.isEmpty(), "hostname non-empty");
+        } else if (r != -GoOs.EIO) {
             check(r > 1, "hostname n+1, got " + r);
             String hn = new String(sliceBytes(b), 0, (int) (r - 1),
                     StandardCharsets.UTF_8);
