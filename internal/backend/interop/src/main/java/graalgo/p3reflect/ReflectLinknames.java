@@ -1240,6 +1240,22 @@ public final class ReflectLinknames {
             if (view.byteOffset() == 0) {
                 return loadOffsetZero(h, t, symbol);
             }
+            // fix-rv1107-10-mapaccess: a byte-offset view of a STRUCT
+            // root (copyVal -> typedmemmove reading an iterator slot
+            // value from a ByteRef slot pointer into the group-root
+            // struct) denotes the field at that byte offset — read it
+            // via denotedValue (which handles struct roots through
+            // readStructFieldAt), not the array-only path below.
+            Object root = view.root();
+            while (root instanceof graalgo.values.GoCell gc) {
+                root = gc.get();
+            }
+            if (root instanceof ReflectRefs.Cell rc) {
+                root = rc.value;
+            }
+            if (root instanceof GoStruct) {
+                return ReflectRefs.denotedValue(h, t.kind);
+            }
             return ReflectValues.arrayGet(arrayRoot(view, symbol), t.kind,
                     elementIndex(view, t, symbol));
         }

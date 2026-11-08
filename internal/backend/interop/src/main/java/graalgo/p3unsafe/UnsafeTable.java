@@ -358,7 +358,46 @@ public final class UnsafeTable {
             offset += br.byteOffset();
             r = br.base();
         }
+        // fix-rv1107-10-mapaccess (E1): a ByteRef rooted at a struct-field
+        // cell flattens to (ownerStruct, fieldOffset + delta) — the field
+        // cell is a storage cell, not a byte-addressable root, and the
+        // consumption sites only handle struct/array roots (e.g. the maps
+        // iterator's ctrls().get(i) = *(*ctrl)(unsafe.Add(
+        // unsafe.Pointer(&g.ctrls), i))). A lookup failure leaves the
+        // view unflattened (existing behavior preserved).
+        if (r instanceof graalgo.frontend.GoFieldCell fc) {
+            Long fieldOff = flattenFieldCell(fc);
+            if (fieldOff != null) {
+                return new ResolvedView(fc.ownerStruct(), fieldOff.longValue() + offset);
+            }
+        }
         return new ResolvedView(r, offset);
+    }
+
+    /**
+     * The byte offset of a GoFieldCell's field within its owner struct,
+     * from the struct's TypeInfo (matched by index + descriptor-name
+     * check), or null when the TypeInfo is unavailable or does not match.
+     */
+    private static Long flattenFieldCell(graalgo.frontend.GoFieldCell fc) {
+        try {
+            graalgo.values.GoStruct struct = fc.ownerStruct();
+            graalgo.values.GoStructDescriptor desc = struct.descriptor();
+            graalgo.p3reflect.ReflectTypes.TypeInfo info =
+                    graalgo.p3reflect.ReflectTypes.infoForName(desc.typeName());
+            if (info == null) {
+                info = graalgo.p3reflect.ReflectTypes.infoForStructString(desc.typeName());
+            }
+            if (info == null || info.fields == null || fc.fieldIndex() >= info.fields.size()) {
+                return null;
+            }
+            if (!desc.field(fc.fieldIndex()).name().equals(info.fields.get(fc.fieldIndex()).name)) {
+                return null;
+            }
+            return Long.valueOf(info.fields.get(fc.fieldIndex()).offset);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /**

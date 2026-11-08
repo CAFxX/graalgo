@@ -570,10 +570,22 @@ public final class AbiTypes {
                 // calls it unconditionally, and a zero Hasher died on
                 // the first Load/Store with a nil-func panic. gc
                 // generates one per key type; graalgo fills the shared
-                // type-agnostic hash (see MapKeyHash). Group/offsets/
-                // flags remain runtime map internals, unused by the
-                // reflect surface; left zero (V1).
+                // type-agnostic hash (see MapKeyHash).
                 setObjectByName(desc, shell, "Hasher", MapKeyHash.func());
+                // fix-rv1107-10-mapaccess: the group layout (V2) — the
+                // (*maps.Map) view builder reads the shell's Group /
+                // offsets / flags, so the shell is the single source of
+                // truth and shell and view agree by construction (gc
+                // cmd/compile/internal/reflectdata/map.go).
+                MapsLayout.Layout layout = MapsLayout.forMap(info.key.tok, info.elem.tok);
+                setObjectByName(desc, shell, "Group", abiPointerForTok(layout.groupTok()));
+                setLongByName(desc, shell, "GroupSize", layout.groupSize());
+                setLongByName(desc, shell, "KeysOff", layout.keysOff());
+                setLongByName(desc, shell, "KeyStride", layout.keyStride());
+                setLongByName(desc, shell, "ElemsOff", layout.elemsOff());
+                setLongByName(desc, shell, "ElemStride", layout.elemStride());
+                setLongByName(desc, shell, "ElemOff", layout.elemOff());
+                setLongByName(desc, shell, "Flags", layout.flags());
             }
             case SLICE -> {
                 requireNonNull(info.elem, info, "Elem");

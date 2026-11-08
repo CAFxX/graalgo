@@ -126,6 +126,9 @@ public final class CompositeLitNode extends GoExprNode {
 
     private Object buildMap(VirtualFrame frame) {
         GoMap m = new GoMap(Math.max(8, valueNodes.length * 2));
+        // fix-rv1107-10-mapaccess (type registry): record the map's
+        // type token (the build site sets the type id explicitly).
+        m.setTypeTok(GoMap.resolveTypeTok(typeId()));
         for (int j = 0; j < valueNodes.length; j++) {
             Object k = MapKeys.box(keyKind, keyNodes[j], frame);
             Object v = Boxing.copyForAssign(elemKind, Boxing.box(elemKind, valueNodes[j], frame));

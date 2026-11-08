@@ -3794,7 +3794,13 @@ public final class NodeFactory {
             case "map" -> {
                 // The size hint is semantically invisible (GoMap grows
                 // dynamically), so it is not threaded through.
-                return new MakeNode(-1);
+                // fix-rv1107-10-mapaccess (type registry): the map form
+                // carries the type id so MakeNode can record the map's
+                // type token (the (*maps.Map) view needs the key/elem
+                // widths).
+                GoExprNode makeMap = new MakeNode(-1);
+                makeMap.setTypeId(typeId);
+                return makeMap;
             }
             default -> throw new FrontendException(path + ": make of " + k
                     + " is not supported in frontend/v1 scope (Phase 2: channels)");

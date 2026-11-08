@@ -130,11 +130,19 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * the raw shell pointer. */
     private final PrefixTarget ptrToPtrTarget;
 
+    /**
+     * True when the conversion target is {@code *internal/runtime/maps.Map}
+     * (fix-rv1107-10-mapaccess, R1): the referent is a guest GoMap and
+     * the conversion synthesizes a maps.Map view over it (see
+     * MapsView) so the disk-reflect MapKeys/MapRange iterator can run.
+     */
+    private final boolean mapsTarget;
+
     private UnsafeToPtrNode(GoExprNode child, String targetQName,
             List<AbiTypes.ViewField> viewLayout, String headerQName,
             PrefixTarget prefixTarget, long elemSize, int targetElemWireId,
             List<AbiTypes.ViewField> ifaceLayout, boolean ptrToPtr,
-            PrefixTarget ptrToPtrTarget) {
+            PrefixTarget ptrToPtrTarget, boolean mapsTarget) {
         super(GoKind.POINTER);
         this.child = child;
         this.targetQName = targetQName;
@@ -146,6 +154,7 @@ public final class UnsafeToPtrNode extends GoExprNode {
         this.ifaceLayout = ifaceLayout;
         this.ptrToPtr = ptrToPtr;
         this.ptrToPtrTarget = ptrToPtrTarget;
+        this.mapsTarget = mapsTarget;
     }
 
     /** A prefix-view target: the struct's qname plus its field-0 embedded struct qname. */
@@ -175,6 +184,14 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 if (fieldPtr != null) {
                     return fieldPtr;
                 }
+                // fix-rv1107-10-mapaccess (E2): a byte offset landing
+                // inside a Long-carried scalar field denotes that byte
+                // (e.g. a maps ctrl byte) — try the live byte view
+                // before the array-derivation trap.
+                Object bytePtr = scalarBytePointer(resolved, view.byteOffset());
+                if (bytePtr != null) {
+                    return bytePtr;
+                }
                 return derivedPointer(resolved, view.byteOffset());
             }
             if (hit.fieldTok() != hit.targetTok()
@@ -183,6 +200,12 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 Object fieldPtr = continuedFieldPointer(resolved, view.byteOffset());
                 if (fieldPtr != null) {
                     return fieldPtr;
+                }
+                // fix-rv1107-10-mapaccess (E2): same byte view, for a
+                // field whose type is not the conversion target.
+                Object bytePtr = scalarBytePointer(resolved, view.byteOffset());
+                if (bytePtr != null) {
+                    return bytePtr;
                 }
                 return derivedPointer(resolved, view.byteOffset());
             }
@@ -202,6 +225,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 Object fieldPtr = continuedFieldPointer(resolved, 0);
                 if (fieldPtr != null) {
                     return fieldPtr;
+                }
+                // fix-rv1107-10-mapaccess (E2): for i=0, derive returns
+                // the base handle unchanged, so the conversion takes
+                // this offset-0 path — without the byte view it would
+                // fall through to a pointer to the struct itself and
+                // DerefNode would die casting the GoStruct to Number.
+                Object bytePtr = scalarBytePointer(resolved, 0);
+                if (bytePtr != null) {
+                    return bytePtr;
                 }
             }
         }
@@ -237,6 +269,24 @@ public final class UnsafeToPtrNode extends GoExprNode {
             GoInterface gi = AbiTypes.unpackInterfaceView(gs, ifaceLayout);
             if (gi != null) {
                 return UnsafeTable.pointerFor(new graalgo.values.GoBox(gi));
+            }
+        }
+        if (mapsTarget) {
+            // fix-rv1107-10-mapaccess (R1): the conversion target is
+            // *internal/runtime/maps.Map and the referent is a guest
+            // GoMap — synthesize a maps.Map view over it so the
+            // disk-reflect MapKeys/MapRange iterator (maps.Iter) can
+            // run over the map's entries. Target-type-directed, like
+            // the header/interface/prefix views above (no name-keyed
+            // dispatch on the source, no synthetic package). The map
+            // Value's pointer may denote a reflect cell holding it.
+            // Any other referent keeps the pre-view behavior exactly.
+            Object value = storedValue(resolved);
+            while (value instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                value = rc.value;
+            }
+            if (value instanceof graalgo.values.GoMap gm) {
+                return new GoPointer(graalgo.p3reflect.MapsView.buildView(gm));
             }
         }
         if (strictField) {
@@ -852,6 +902,86 @@ public final class UnsafeToPtrNode extends GoExprNode {
     }
 
     /**
+     * A live byte-view pointer into a Long-carried scalar struct field
+     * (fix-rv1107-10-mapaccess, E2): when a byte offset lands inside a
+     * Long-carried scalar field and the conversion target is a 1-byte
+     * kind, the pointer denotes that byte — gc allows any struct
+     * field's bytes to be read/written through unsafe (the maps
+     * iterator's {@code ctrls().get(i)} is the driving case). Returns
+     * a GoPointer to a live GoFieldByteCell, or null when the offset
+     * does not address such a byte (the caller keeps its existing
+     * behavior). General, not map-specific: any struct's Long field
+     * is readable/writable as bytes.
+     */
+    private Object scalarBytePointer(Object referent, long byteOffset) {
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
+        }
+        if (!(root instanceof GoStruct gs)) {
+            return null;
+        }
+        // The target's size: the wire elemSize when present, else the
+        // target TypeInfo's size.
+        long targetSize = elemSize;
+        if (targetSize < 0) {
+            try {
+                long targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+                if (targetTok >= 0) {
+                    targetSize = ReflectTypes.table().info(targetTok).size;
+                }
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+        if (targetSize != 1) {
+            return null;
+        }
+        ReflectTypes.TypeInfo rootInfo;
+        try {
+            rootInfo = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (rootInfo == null) {
+                rootInfo = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (rootInfo == null || rootInfo.fields == null || rootInfo.kind != GoKind.STRUCT) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : rootInfo.fields) {
+            if (f.type == null || f.index.length != 1) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                continue;
+            }
+            // The field must be Long-carried (a scalar in the longs array).
+            if (!gs.descriptor().field(ord).inLongs()) {
+                continue;
+            }
+            long fieldSize = f.type.size;
+            if (fieldSize <= 0) {
+                continue;
+            }
+            long rel = byteOffset - f.offset;
+            if (rel < 0 || rel >= fieldSize) {
+                continue;
+            }
+            return new GoPointer(new graalgo.frontend.GoFieldByteCell(gs, ord, (int) rel));
+        }
+        return null;
+    }
+
+    /**
      * Builds the node from the {@code "unsafetooptr"} wire node. Fields:
      * {@code x} (the handle operand), {@code type} (result type-table id —
      * the {@code *T} type), {@code elemSize} (optional; the byte size of
@@ -888,7 +1018,8 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 targetElemWireId,
                 captureIfaceTarget(ctx, typeId),
                 ptrToPtr,
-                ptrToPtrTarget);
+                ptrToPtrTarget,
+                captureMapsTarget(ctx, typeId));
         n.setTypeId(typeId);
         return n;
     }
@@ -1116,6 +1247,33 @@ public final class UnsafeToPtrNode extends GoExprNode {
             embeddedQName = null;
         }
         return new PrefixTarget(qname, embeddedQName);
+    }
+
+    /**
+     * Captures whether the {@code *T} conversion target is
+     * {@code *internal/runtime/maps.Map} (fix-rv1107-10-mapaccess,
+     * R1), or false. Target-type-directed (the outermost qname after
+     * unwrapping named types, up to 32 steps); the maps view is
+     * built only for that target, never by dispatching on the source.
+     */
+    private static boolean captureMapsTarget(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "unsafetooptr.fields.type";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            return false;
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        Json.Object e = ctx.types.entry(elemId, path);
+        String qname = null;
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            qname = e.object("detail", path).string("name", path);
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        return "internal/runtime/maps.Map".equals(qname);
     }
 
     /**

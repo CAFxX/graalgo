@@ -527,17 +527,44 @@ public final class ReflectOpNode extends GoExprNode {
         };
     }
 
-    private static graalgo.values.GoStructDescriptor structDescFor(TypeInfo t) {
-        // The struct's GoStructDescriptor: built from the wire via layout.
-        // (Captured per-type at install in a full implementation; here we
-        // build on demand from the field list.)
+    // fix-rv1107-10-mapaccess (B3): package-visible — MapsView builds
+    // slot descriptors for STRUCT/ARRAY-of-STRUCT map keys/values
+    // through this. The descriptor is built FULLY (array lengths,
+    // element kinds/descriptors, nested struct descriptors via
+    // recursion) so the GoStructDescriptor.layout memo can canonicalize
+    // it against the frontend's descriptor for the same struct type;
+    // the old 3-arg build (names + kinds only) produced a fresh,
+    // non-canonical descriptor on every call, so struct-key map
+    // lookups always missed (GoStruct.equals needs descriptor
+    // identity). descName mirrors the frontend: the qualified name for
+    // named types, "struct#<wireId>" for anonymous ones (unified
+    // structurally by the memo's "S:" branch). Recursion terminates
+    // because Go forbids by-value cycles.
+    static graalgo.values.GoStructDescriptor structDescFor(TypeInfo t) {
         List<String> names = new ArrayList<>();
         List<GoKind> kinds = new ArrayList<>();
+        List<Integer> arrayLens = new ArrayList<>();
+        List<GoKind> arrayElemKinds = new ArrayList<>();
+        List<graalgo.values.GoStructDescriptor> arrayElemDescs = new ArrayList<>();
+        List<graalgo.values.GoStructDescriptor> structDescs = new ArrayList<>();
         for (ReflectTypes.FieldInfo f : t.fields) {
             names.add(f.name);
             kinds.add(f.type.kind);
+            if (f.type.kind == GoKind.ARRAY) {
+                arrayLens.add(f.type.arrayLen);
+                arrayElemKinds.add(f.type.elem.kind);
+                arrayElemDescs.add(f.type.elem.kind == GoKind.STRUCT
+                        ? structDescFor(f.type.elem) : null);
+            } else {
+                arrayLens.add(-1);
+                arrayElemKinds.add(null);
+                arrayElemDescs.add(null);
+            }
+            structDescs.add(f.type.kind == GoKind.STRUCT ? structDescFor(f.type) : null);
         }
-        return GoStructDescriptor.layout(ReflectTypes.typeString(t.tok), names, kinds);
+        String descName = t.isNamed() ? t.name : "struct#" + t.wireId;
+        return GoStructDescriptor.layout(descName, names, kinds, arrayLens,
+                arrayElemKinds, arrayElemDescs, structDescs);
     }
 
     /**
@@ -1472,6 +1499,10 @@ public final class ReflectOpNode extends GoExprNode {
 
     private static GoStruct makeMap(long tok) {
         GoMap m = new GoMap();
+        // fix-rv1107-10-mapaccess (type registry): record the map's
+        // type token (MapOf-created types have wireId -1 but a real
+        // tok, so the tok — not the wire id — is what covers them).
+        m.setTypeTok(tok);
         long h = ReflectRefs.intern(m);
         return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, h, 0);
     }

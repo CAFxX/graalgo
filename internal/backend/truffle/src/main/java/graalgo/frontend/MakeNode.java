@@ -62,7 +62,14 @@ public final class MakeNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         if (isMap) {
-            return mapHint < 0 ? new GoMap() : new GoMap(mapHint);
+            // fix-rv1107-10-mapaccess (type registry): record the map's
+            // type token so the (*maps.Map) view builder knows the key /
+            // elem widths (not recoverable from stored values). The type
+            // id is set by buildMakeBuiltin; -1 resolves to -1 (unknown)
+            // and the view fails loudly instead of guessing.
+            GoMap m = mapHint < 0 ? new GoMap() : new GoMap(mapHint);
+            m.setTypeTok(GoMap.resolveTypeTok(typeId()));
+            return m;
         }
         long len = lenChild.executeLong(frame);
         long cap = capChild != null ? capChild.executeLong(frame) : len;
