@@ -66,6 +66,9 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // R03-B1 (REVIEW-2026-11-09-03): SHELL_TOKS readers
+        // (tokForShell, unpackInterfaceView) under concurrency.
+        TESTS.add(graalgo.p3reflect.AbiShellRaceTest.class);
     }
 
     private IfaceTestRunner() {}
