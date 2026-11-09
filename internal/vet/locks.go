@@ -1,7 +1,9 @@
 package vet
 
 import (
+	"bytes"
 	"go/ast"
+	"go/format"
 	"go/token"
 	"go/types"
 )
@@ -24,26 +26,45 @@ func init() {
 	})
 }
 
-// atomic checks:
-// - direct assignment to sync/atomic.Value or atomic.Int64 etc. (should use Store)
-// - copying a lock/atomic value (overlaps copylocks, but atomic-specific)
+// atomic checks, mirroring upstream go vet's atomic analyzer:
+//   - assigning the result of atomic.Add* back to the same variable:
+//     x = atomic.AddInt32(&x, 1)
+//   - direct assignment to an atomic-typed variable or field:
+//     v = atomic.Int64{} (use v.Store instead)
+//
+// The previous check flagged assignments to a *field of* an atomic
+// value (v.field = ...), which cannot occur on compilable code:
+// atomic.Value, atomic.Int64, atomic.Bool, etc. have no exported
+// fields. It is replaced by the two checks above, which operate on
+// the type of the assignment target instead.
 func runAtomic(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
 		ast.Inspect(f, func(n ast.Node) bool {
-			// Look for assignments to fields of atomic types.
 			assign, ok := n.(*ast.AssignStmt)
-			if !ok || assign.Tok != token.ASSIGN {
+			if !ok {
+				return true
+			}
+			if len(assign.Lhs) != len(assign.Rhs) {
+				return true
+			}
+			// A single := declares a fresh variable; assigning an
+			// Add* result to it is fine.
+			if len(assign.Lhs) == 1 && assign.Tok == token.DEFINE {
+				return true
+			}
+			for i, rhs := range assign.Rhs {
+				if call, ok := rhs.(*ast.CallExpr); ok && isAtomicAdd(pass, call) {
+					checkAtomicAddAssignment(pass, assign.Lhs[i], call, &out)
+				}
+			}
+			if assign.Tok != token.ASSIGN {
 				return true
 			}
 			for _, lhs := range assign.Lhs {
-				sel, ok := lhs.(*ast.SelectorExpr)
-				if !ok {
-					continue
-				}
-				if isAtomicType(pass, sel.X) {
+				if isAtomicValueType(pass, lhs) {
 					out = append(out, Diagnostic{
-						pass.position(assign),
+						pass.position(lhs),
 						"direct assignment to atomic value; use atomic.Store or the typed Store method",
 					})
 				}
@@ -54,18 +75,75 @@ func runAtomic(pass *Pass) []Diagnostic {
 	return out
 }
 
-// isAtomicType reports whether e denotes a sync/atomic typed value
-// (atomic.Int64, atomic.Bool, atomic.Value, etc.).
-func isAtomicType(pass *Pass, e ast.Expr) bool {
+// atomicAddFuncs is the upstream set of sync/atomic functions whose
+// return value must not be assigned back to the same variable.
+var atomicAddFuncs = []string{
+	"AddInt32", "AddInt64", "AddUint32", "AddUint64", "AddUintptr",
+}
+
+// isAtomicAdd reports whether call is a call to one of the
+// sync/atomic Add* functions.
+func isAtomicAdd(pass *Pass, call *ast.CallExpr) bool {
+	for _, name := range atomicAddFuncs {
+		if pass.isPkgFunc(call, "sync/atomic", name) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkAtomicAddAssignment flags assignments of the form
+// x = atomic.AddInt32(&x, 1) and *p = atomic.AddInt32(p, 1), where
+// the Add* result is assigned back to the same variable being
+// operated on. This mirrors upstream's checkAtomicAddAssignment.
+func checkAtomicAddAssignment(pass *Pass, lhs ast.Expr, call *ast.CallExpr, out *[]Diagnostic) {
+	if len(call.Args) != 2 {
+		return
+	}
+	left := formatExpr(pass, lhs)
+	if left == "" {
+		return
+	}
+	arg := call.Args[0]
+	broken := false
+	if uarg, ok := arg.(*ast.UnaryExpr); ok && uarg.Op == token.AND {
+		if right := formatExpr(pass, uarg.X); right != "" {
+			broken = left == right
+		}
+	} else if star, ok := unparen(lhs).(*ast.StarExpr); ok {
+		if right := formatExpr(pass, arg); right != "" {
+			broken = formatExpr(pass, star.X) == right
+		}
+	}
+	if broken {
+		*out = append(*out, Diagnostic{
+			pass.position(lhs),
+			"direct assignment to atomic value",
+		})
+	}
+}
+
+// formatExpr renders e in canonical form for comparison, or "" if it
+// cannot be rendered. Parentheses are stripped so (x) and x compare
+// equal.
+func formatExpr(pass *Pass, e ast.Expr) string {
+	var buf bytes.Buffer
+	if err := format.Node(&buf, pass.Fset, unparen(e)); err != nil {
+		return ""
+	}
+	return buf.String()
+}
+
+// isAtomicValueType reports whether e denotes an atomic value itself
+// (atomic.Int64, atomic.Bool, atomic.Value, etc.) — i.e. its type is
+// a named type from sync/atomic. Pointers to atomic values are not
+// atomic values: assigning a *atomic.Int64 is fine.
+func isAtomicValueType(pass *Pass, e ast.Expr) bool {
 	tv, ok := pass.Info.Types[e]
 	if !ok || tv.Type == nil {
 		return false
 	}
-	t := tv.Type
-	if p, ok := t.(*types.Pointer); ok {
-		t = p.Elem()
-	}
-	named, ok := t.(*types.Named)
+	named, ok := tv.Type.(*types.Named)
 	if !ok || named.Obj().Pkg() == nil {
 		return false
 	}
@@ -136,9 +214,16 @@ func typeContainsLock(t types.Type, seen map[types.Type]bool) bool {
 		return false
 	}
 	seen[t] = true
-	// Unwrap pointer: *sync.Mutex is fine, sync.Mutex is the lock.
-	if p, ok := t.(*types.Pointer); ok {
-		return typeContainsLock(p.Elem(), seen)
+	// Pointers are safe to copy: *sync.Mutex is fine, sync.Mutex is
+	// the lock. Do not unwrap — copying a pointer copies no lock.
+	if _, ok := t.(*types.Pointer); ok {
+		return false
+	}
+	// Arrays copy their elements, so recurse into the element type.
+	// (Slices are not recursed into: copying a slice header copies
+	// no element.)
+	if a, ok := t.Underlying().(*types.Array); ok {
+		return typeContainsLock(a.Elem(), seen)
 	}
 	named, ok := t.(*types.Named)
 	if !ok {
@@ -295,4 +380,16 @@ func checkLostCancelInFunc(pass *Pass, fn *ast.FuncDecl) []Diagnostic {
 		}
 	}
 	return out
+}
+
+// unparen strips parentheses from e. (ast.Unparen requires go1.22;
+// the module is go1.21.)
+func unparen(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
 }
