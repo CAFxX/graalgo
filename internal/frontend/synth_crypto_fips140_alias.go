@@ -6,8 +6,10 @@ package main
 // intercepted by the frontend (isAliasIntrinsicFunc) and lowered to the
 // "sliceoverlap" wire node (SliceOverlapNode.java), which implements correct
 // overlap detection directly on GoSlice values (array identity + range
-// intersection). The Go bodies below are never executed for intercepted
-// calls; they exist for type-checking and as a fallback.
+// intersection). The Go bodies below are never executed and never emitted:
+// calls are intercepted, values lower to wrapper closures, and the
+// declarations are skipped at import (isSyntheticIntrinsic, R10-09), so
+// no funcdecl is ever emitted; the bodies exist for type-checking only.
 const syntheticCryptoFips140AliasSource = `package alias
 
 // AnyOverlap reports whether x and y share memory at any (not necessarily

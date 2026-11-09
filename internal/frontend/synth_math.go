@@ -15,7 +15,8 @@
 //     ROUNDPD parity), each differentially verified bit-exact vs gc
 //     1.27.1 on adversarial+random inputs (see hidden_files/m7-math).
 //   - Intrinsics (exact gc signatures, panic bodies, intercepted by the
-//     exporter into wire nodes): the four bit conversions (Java bit ops,
+//     exporter into wire nodes, at call sites and — via wrapper closures
+//     — in value position, R10-09): the four bit conversions (Java bit ops,
 //     exact by construction), Sqrt (StrictMath.sqrt, verified
 //     bit-exact), FMA (Math.fma, verified bit-exact). StrictMath was
 //     differentially verified NOT bit-exact for all other

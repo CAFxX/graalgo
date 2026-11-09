@@ -904,6 +904,13 @@ func isSyntheticIntrinsic(path, name string) bool {
 	if path == "reflect" {
 		return reflectIntrinsicNames[name]
 	}
+	// R10-09: the alias intrinsics are intercepted at call sites into
+	// the "sliceoverlap" wire node and wrapped in value position, so
+	// their `return false` placeholder bodies must never be emitted as
+	// funcdecls — a value bound to one would silently answer false.
+	if path == "crypto/internal/fips140/alias" {
+		return aliasIntrinsicNames[name]
+	}
 	return false
 }
 
@@ -1504,18 +1511,22 @@ func (e *exporter) timeIntrinsicNode(pos ast.Node, name string, args []*Node, ty
 	return nil, scopeErrorf("time.%s is not a recognized intrinsic", name)
 }
 
-// exportTimeIntrinsicValue lowers a synthetic time intrinsic used in value
-// position (e.g. `timeNow = time.Now`) to a synthesized wrapper closure:
-// func() time.Time { return time.Now() }. General: any time intrinsic, any
-// arity — parameters are forwarded to the intrinsic call, and evaluation
-// is deferred to call time, matching gc's func-value semantics. (The M5
-// fail-fast this replaces assumed intrinsics could only be called.)
-func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func) (*Node, error) {
+// exportIntrinsicValue lowers a synthetic intrinsic used in value
+// position (e.g. `f := math.Sqrt`, `timeNow = time.Now`) to a
+// synthesized wrapper closure: func(params) results { return
+// <intrinsic>(params...) }. General: any intrinsic, any arity —
+// parameters are forwarded to the intrinsic call, and evaluation is
+// deferred to call time, matching gc's func-value semantics. (Generalizes
+// exportTimeIntrinsicValue, the M5 precedent: the M5 fail-fast assumed
+// intrinsics could only be called.) The build function supplies the
+// intrinsic's wire node from already-exported args (timeIntrinsicNode,
+// mathIntrinsicNode, aliasIntrinsicNode).
+func (e *exporter) exportIntrinsicValue(pos ast.Node, obj *types.Func, build func(pos ast.Node, name string, args []*Node, typ any) (*Node, error)) (*Node, error) {
 	sig, ok := obj.Type().(*types.Signature)
 	if !ok {
-		return nil, fmt.Errorf("gofrontend: time intrinsic %s has non-signature type %s", obj.Name(), obj.Type())
+		return nil, fmt.Errorf("gofrontend: intrinsic %s has non-signature type %s", obj.Name(), obj.Type())
 	}
-	params, err := e.exportSignatureVars(x, sig.Params())
+	params, err := e.exportSignatureVars(pos, sig.Params())
 	if err != nil {
 		return nil, err
 	}
@@ -1531,7 +1542,7 @@ func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, e.node("ident", x, map[string]any{
+		args = append(args, e.node("ident", pos, map[string]any{
 			"name": v.Name(), "obj": oid, "type": tid,
 		}))
 	}
@@ -1543,30 +1554,60 @@ func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func
 			return nil, err
 		}
 	} else if nr > 1 {
-		return nil, scopeErrorf("time.%s has %d results; an intrinsic value with multiple results is not supported in frontend/v1 scope", obj.Name(), nr)
+		pkgPath := ""
+		if obj.Pkg() != nil {
+			pkgPath = obj.Pkg().Path() + "."
+		}
+		return nil, scopeErrorf("%s%s has %d results; an intrinsic value with multiple results is not supported in frontend/v1 scope", pkgPath, obj.Name(), nr)
 	}
-	call, err := e.timeIntrinsicNode(x, obj.Name(), args, typ)
+	call, err := build(pos, obj.Name(), args, typ)
 	if err != nil {
 		return nil, err
 	}
-	results, err := e.exportSignatureVars(x, sig.Results())
+	results, err := e.exportSignatureVars(pos, sig.Results())
 	if err != nil {
 		return nil, err
 	}
 	var stmt *Node
 	if nr == 1 {
-		stmt = e.node("return", x, map[string]any{"results": []*Node{call}})
+		stmt = e.node("return", pos, map[string]any{"results": []*Node{call}})
 	} else {
-		stmt = e.node("exprstmt", x, map[string]any{"x": call})
+		stmt = e.node("exprstmt", pos, map[string]any{"x": call})
 	}
-	body := e.node("block", x, map[string]any{"stmts": []*Node{stmt}})
+	body := e.node("block", pos, map[string]any{"stmts": []*Node{stmt}})
 	tid, err := e.typeID(sig)
 	if err != nil {
 		return nil, err
 	}
-	return e.node("funclit", x, map[string]any{
+	return e.node("funclit", pos, map[string]any{
 		"params": params, "results": results, "body": body, "type": tid,
 	}), nil
+}
+
+// exportTimeIntrinsicValue lowers a synthetic time intrinsic used in value
+// position (e.g. `timeNow = time.Now`) to a synthesized wrapper closure;
+// the call itself stays a wire node inside the closure body.
+func (e *exporter) exportTimeIntrinsicValue(pos ast.Node, obj *types.Func) (*Node, error) {
+	return e.exportIntrinsicValue(pos, obj, e.timeIntrinsicNode)
+}
+
+// exportMathIntrinsicValue lowers a synthetic math intrinsic used in value
+// position (e.g. `f := math.Sqrt`) to a synthesized wrapper closure around
+// the "math*" wire node (R10-09); the call itself stays a wire node inside
+// the closure body. The direct call stays intercepted
+// (exportMathIntrinsic); the value form used to be a compile-time M7
+// scope error although gc accepts it.
+func (e *exporter) exportMathIntrinsicValue(pos ast.Node, obj *types.Func) (*Node, error) {
+	return e.exportIntrinsicValue(pos, obj, e.mathIntrinsicNode)
+}
+
+// exportAliasIntrinsicValue lowers a crypto/internal/fips140/alias
+// intrinsic used in value position (e.g. `f := alias.AnyOverlap`) to a
+// synthesized wrapper closure around the "sliceoverlap" wire node
+// (R10-09, same shape as math): without it the value binds the synthetic
+// `return false` placeholder body and silently answers false.
+func (e *exporter) exportAliasIntrinsicValue(pos ast.Node, obj *types.Func) (*Node, error) {
+	return e.exportIntrinsicValue(pos, obj, e.aliasIntrinsicNode)
 }
 
 // exportMathIntrinsic lowers a call to a synthetic math intrinsic
@@ -1584,6 +1625,14 @@ func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, err
 	if err != nil {
 		return nil, err
 	}
+	return e.mathIntrinsicNode(c, name, args, typ)
+}
+
+// mathIntrinsicNode builds the wire node for a synthetic math intrinsic
+// call from already-exported args. Split out of exportMathIntrinsic so
+// intrinsic values (exportMathIntrinsicValue) can synthesize the call
+// without an *ast.CallExpr. (Mirrors timeIntrinsicNode.)
+func (e *exporter) mathIntrinsicNode(pos ast.Node, name string, args []*Node, typ any) (*Node, error) {
 	kind, ok := map[string]string{
 		"Float64bits":     "mathf64bits",
 		"Float64frombits": "mathf64frombits",
@@ -1607,7 +1656,7 @@ func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, err
 		fields["y"] = args[1]
 		fields["z"] = args[2]
 	}
-	return e.node(kind, c, fields), nil
+	return e.node(kind, pos, fields), nil
 }
 
 // exportAliasIntrinsic lowers a call to crypto/internal/fips140/alias.AnyOverlap
@@ -1628,7 +1677,19 @@ func (e *exporter) exportAliasIntrinsic(c *ast.CallExpr, name string) (*Node, er
 	if err != nil {
 		return nil, err
 	}
-	return e.node("sliceoverlap", c, map[string]any{
+	return e.aliasIntrinsicNode(c, name, args, typ)
+}
+
+// aliasIntrinsicNode builds the wire node for a crypto/internal/fips140/
+// alias intrinsic call from already-exported args. Split out of
+// exportAliasIntrinsic so intrinsic values (exportAliasIntrinsicValue)
+// can synthesize the call without an *ast.CallExpr. (Mirrors
+// timeIntrinsicNode.)
+func (e *exporter) aliasIntrinsicNode(pos ast.Node, name string, args []*Node, typ any) (*Node, error) {
+	if len(args) != 2 {
+		return nil, scopeErrorf("alias.%s takes 2 arguments", name)
+	}
+	return e.node("sliceoverlap", pos, map[string]any{
 		"x": args[0], "y": args[1],
 		"inexact": name == "InexactOverlap",
 		"type":    typ,
@@ -2055,7 +2116,22 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 			return e.exportTimeIntrinsicValue(x, obj)
 		}
 		if obj.Pkg() != nil && obj.Pkg().Path() == "math" && mathIntrinsicNames[obj.Name()] {
-			return nil, scopeErrorf("math.%s is an intrinsic and cannot be used in value position (M7)", obj.Name())
+			// R10-09: a math intrinsic in value position (e.g.
+			// `f := math.Sqrt`) lowers to a synthesized wrapper
+			// closure around the "math*" wire node; the call itself
+			// stays a wire node inside the closure body. (Was a
+			// compile-time M7 scope error although gc accepts the
+			// value form.)
+			return e.exportMathIntrinsicValue(x, obj)
+		}
+		if isAliasIntrinsicFunc(obj) {
+			// R10-09 (same shape): an alias intrinsic in value
+			// position (e.g. `f := alias.AnyOverlap`) lowers to a
+			// synthesized wrapper closure around the "sliceoverlap"
+			// wire node. Without this the value binds the synthetic
+			// `return false` placeholder body and silently answers
+			// false for overlapping slices.
+			return e.exportAliasIntrinsicValue(x, obj)
 		}
 		// P3-M8b: a named synthetic function in value position (e.g.
 		// sha256.New passed to hmac.New) lowers via the M6 func-value

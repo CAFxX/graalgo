@@ -8389,6 +8389,23 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 		// the function/instantiation object id; the factory builds a
 		// func-value constant. Method values (bound receivers) are not
 		// supported (WS H follow-up).
+		//
+		// R10-09: a synthetic intrinsic in value position in bare-ident
+		// form (dot-imported `Sqrt`, or a reference inside the synthetic
+		// package itself) lowers to a wrapper closure around the
+		// intrinsic wire node, exactly like the qualified form in
+		// exportSyntheticQualified. Without this the bare form is an
+		// "unknown function" error although gc accepts it (and the
+		// alias form would bind the `return false` placeholder body).
+		if isMathIntrinsicFunc(obj) {
+			return e.exportMathIntrinsicValue(id, obj)
+		}
+		if isTimeIntrinsicFunc(obj) {
+			return e.exportTimeIntrinsicValue(id, obj)
+		}
+		if isAliasIntrinsicFunc(obj) {
+			return e.exportAliasIntrinsicValue(id, obj)
+		}
 		if err := e.exportFuncValue(id, obj, fields); err != nil {
 			return nil, err
 		}
