@@ -59,3 +59,29 @@ not graalgo).
 3. **Method values**: `selector call ms.less is not supported in v1 scope`.
 4. **Function variables**: `call of non-function variable cleanups is not
    supported` (worked around in shim by removing Cleanup support).
+
+## Build constraints (R20B-05)
+
+Test files are filtered by GOOS/GOARCH before synthesis, so a test
+gated to another platform is never run on the target. The live case
+was `bytes/bytes_js_wasm_test.go` (`//go:build js && wasm`, 2 GiB
+allocation): it used to be synthesized into a linux/amd64 driver.
+
+- [`buildtags.py`](buildtags.py) is the single source of truth: it asks
+  the toolchain (`go list -e -json -test`) which files belong to the
+  package at the target, and derives the human-readable skip reason
+  from the file's `//go:build` lines and filename suffixes. Any
+  toolchain failure raises `BuildTagError` and the caller fails loudly.
+- [`discover.py`](discover.py) takes `--goos` / `--goarch` (default via
+  `go env`), records the target in the discovery JSON, and lists
+  excluded files under `skipped_files` with their tests and
+  `skip_reason`.
+- [`synthesize.py`](synthesize.py) requires `target_goos` /
+  `target_goarch` in the discovery JSON and re-checks every file
+  before inlining it (defense in depth).
+- [`run.py`](run.py) passes `--goos` / `--goarch` through to discovery;
+  the verdict logic is unchanged.
+- [`test_buildtags.py`](test_buildtags.py) pins the behaviour: the
+  `js && wasm` bytes test is excluded on linux/amd64 (total 95) and
+  included under `--goos js --goarch wasm` (total 92, the linux-gated
+  boundary test excluded instead); synthesis drops from 18 to 17 tests.

@@ -17,6 +17,8 @@ import os
 import re
 import sys
 
+import buildtags
+
 # Imports that graalgo is known to handle (from wave corpora). Others -> skip file.
 # This list grows as the harness is validated; be conservative in the pilot.
 SUPPORTED_IMPORTS = {
@@ -114,6 +116,23 @@ def main():
 
     pkg = disc["package"]
     goroot = disc["goroot"]
+    # R20B-05: the discovery JSON must name its target; without it
+    # a stale/foreign JSON could silently re-include wrong-platform
+    # files. Fail loudly instead of guessing.
+    try:
+        target_goos = disc["target_goos"]
+        target_goarch = disc["target_goarch"]
+    except KeyError:
+        sys.exit("discovery JSON lacks target_goos/target_goarch; "
+                 "re-run discover.py (R20B-05)")
+    # Defense in depth: re-check every file against the target
+    # before inlining it, even if discover.py already filtered.
+    try:
+        _, ignored = buildtags.go_list_files(
+            buildtags.go_binary(goroot), goroot, pkg,
+            target_goos, target_goarch)
+    except buildtags.BuildTagError as e:
+        sys.exit(f"build tag evaluation failed: {e}")
 
     # (parts built after collecting imports below)
 
@@ -123,6 +142,12 @@ def main():
     driver_imports = set()
     file_sources = []
     for f in disc["files"]:
+        if os.path.basename(f["path"]) in ignored:
+            skipped.append((os.path.basename(f["path"]),
+                            buildtags.skip_reason(f["path"],
+                                                  target_goos,
+                                                  target_goarch)))
+            continue
         result, data = process_test_file(f["path"], pkg)
         if result is None:
             skipped.append((os.path.basename(f["path"]), data))

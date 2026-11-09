@@ -13,6 +13,8 @@ import os
 import re
 import sys
 
+import buildtags
+
 def find_test_files(goroot, pkg):
     pkgdir = os.path.join(goroot, "src", pkg)
     if not os.path.isdir(pkgdir):
@@ -59,16 +61,52 @@ def main():
     goroot = os.path.expanduser("~/tools/go")
     if "--goroot" in sys.argv:
         goroot = sys.argv[sys.argv.index("--goroot") + 1]
+    goos = None
+    goarch = None
+    if "--goos" in sys.argv:
+        goos = sys.argv[sys.argv.index("--goos") + 1]
+    if "--goarch" in sys.argv:
+        goarch = sys.argv[sys.argv.index("--goarch") + 1]
+    # Target defaults to the host toolchain (go env); explicit
+    # --goos/--goarch override it (e.g. the js/wasm positive control).
+    try:
+        if goos is None or goarch is None:
+            default_goos, default_goarch = buildtags.default_target(
+                buildtags.go_binary(goroot))
+            goos = goos or default_goos
+            goarch = goarch or default_goarch
+    except buildtags.BuildTagError as e:
+        sys.exit(f"build tag evaluation failed: {e}")
 
     files = find_test_files(goroot, pkg)
-    result = {"package": pkg, "goroot": goroot, "files": []}
-    for path in files:
+    # R20B-05: exclude test files whose build constraints do not
+    # match the target (//go:build, filename suffixes, ...). The
+    # decision comes from `go list` via buildtags.py; excluded
+    # files are reported under "skipped_files", never synthesized.
+    try:
+        kept, skipped = buildtags.classify_files(
+            buildtags.go_binary(goroot), goroot, pkg, files, goos, goarch)
+    except buildtags.BuildTagError as e:
+        sys.exit(f"build tag evaluation failed: {e}")
+    result = {"package": pkg, "goroot": goroot,
+              "target_goos": goos, "target_goarch": goarch,
+              "files": [], "skipped_files": []}
+    for path in kept:
         tests, imports, tags = extract_tests(path)
         result["files"].append({
             "path": path,
             "tests": tests,
             "imports": imports,
             "build_tags": tags,
+        })
+    for path in sorted(skipped):
+        tests, imports, tags = extract_tests(path)
+        result["skipped_files"].append({
+            "path": path,
+            "tests": tests,
+            "imports": imports,
+            "build_tags": tags,
+            "skip_reason": skipped[path],
         })
     result["total_tests"] = sum(len(f["tests"]) for f in result["files"])
     print(json.dumps(result, indent=2))

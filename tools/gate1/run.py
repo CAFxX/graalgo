@@ -33,6 +33,8 @@ def main():
     goroot = os.path.expanduser("~/tools/go")
     graalgo_run = None
     outdir = None
+    goos = None
+    goarch = None
     args = sys.argv[2:]
     i = 0
     while i < len(args):
@@ -42,6 +44,10 @@ def main():
             graalgo_run = args[i+1]; i += 2
         elif args[i] == "--out":
             outdir = args[i+1]; i += 2
+        elif args[i] == "--goos":
+            goos = args[i+1]; i += 2
+        elif args[i] == "--goarch":
+            goarch = args[i+1]; i += 2
         else:
             i += 1
 
@@ -55,8 +61,15 @@ def main():
 
     # 1. Discover
     disc_path = os.path.join(workdir, "discover.json")
-    rc, out, err = run_cmd([sys.executable, os.path.join(HERE, "discover.py"),
-                            pkg, "--goroot", goroot])
+    # R20B-05: pass the target through to discover.py only; the
+    # verdict block below is byte-identical to before.
+    discover_cmd = [sys.executable, os.path.join(HERE, "discover.py"),
+                    pkg, "--goroot", goroot]
+    if goos is not None:
+        discover_cmd += ["--goos", goos]
+    if goarch is not None:
+        discover_cmd += ["--goarch", goarch]
+    rc, out, err = run_cmd(discover_cmd)
     if rc != 0:
         sys.exit(f"discover failed: {err}")
     with open(disc_path, "w") as f:
