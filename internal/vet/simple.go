@@ -67,9 +67,11 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 	return out
 }
 
-// Comparing a func value to nil is always false (except for a nil
-// func variable, which is useless to compare). go vet flags
-// comparisons where one side is a func type and the other is nil.
+// Comparing a declared function or func literal to nil is always false:
+// unlike a func variable, parameter, field, or call result, a declared
+// func value can never be nil. Upstream go vet flags only those cases;
+// nil checks on func variables are idiomatic (optional callbacks, nil
+// handlers) and must stay quiet. (R05-V-03)
 func runNilFunc(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -78,8 +80,8 @@ func runNilFunc(pass *Pass) []Diagnostic {
 			if !ok || (be.Op != token.EQL && be.Op != token.NEQ) {
 				return true
 			}
-			if isNil(pass, be.X) && isFuncType(pass, be.Y) ||
-				isNil(pass, be.Y) && isFuncType(pass, be.X) {
+			if isNil(pass, be.X) && isNeverNilFunc(pass, be.Y) ||
+				isNil(pass, be.Y) && isNeverNilFunc(pass, be.X) {
 				out = append(out, Diagnostic{
 					pass.position(be),
 					"comparison of function to nil is always " + constBool(be.Op == token.NEQ),
@@ -96,13 +98,39 @@ func isNil(pass *Pass, e ast.Expr) bool {
 	return ok && tv.IsNil()
 }
 
-func isFuncType(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
-	if !ok || tv.Type == nil {
+// isNeverNilFunc reports whether e is a func value that can never be
+// nil: a declared func/method value (resolving via Info.Uses to a
+// *types.Func) or a func literal. Anything else of func type — a
+// variable, parameter, field, or call result — may be nil, so its nil
+// check is legitimate and must stay quiet.
+func isNeverNilFunc(pass *Pass, e ast.Expr) bool {
+	for {
+		paren, ok := e.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		e = paren.X
+	}
+	switch t := e.(type) {
+	case *ast.FuncLit:
+		return true
+	case *ast.Ident:
+		obj, ok := pass.Info.Uses[t]
+		if !ok {
+			return false
+		}
+		_, ok = obj.(*types.Func)
+		return ok
+	case *ast.SelectorExpr:
+		obj, ok := pass.Info.Uses[t.Sel]
+		if !ok {
+			return false
+		}
+		_, ok = obj.(*types.Func)
+		return ok
+	default:
 		return false
 	}
-	_, ok = tv.Type.Underlying().(*types.Signature)
-	return ok
 }
 
 func constBool(b bool) string {

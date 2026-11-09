@@ -22,7 +22,10 @@ func main() {
 	s := string(65)
 	_ = s
 	var f func()
-	if f == nil {
+	_ = f
+	// R05-V-03: only a declared func value can never be nil; a func
+	// variable may be nil, so its nil check must stay quiet.
+	if helper == nil {
 		fmt.Println("nil")
 	}
 	x := true
@@ -33,6 +36,8 @@ func main() {
 	return
 	fmt.Println("unreachable")
 }
+
+func helper() {}
 
 func leaky() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -62,14 +67,14 @@ func copyLock(m sync.Mutex) {
 
 	// Each analyzer should fire at least once.
 	want := []string{
-		"expects integer",       // printf %d with string
-		"missing argument",      // printf missing arg
-		"one rune",              // stringintconv
-		"always false",          // nilfunc
-		"redundant comparison",  // bools
-		"unreachable",           // unreachable
-		"context leak",          // lostcancel
-		"copies lock",           // copylocks
+		"expects integer",      // printf %d with string
+		"missing argument",     // printf missing arg
+		"one rune",             // stringintconv
+		"always false",         // nilfunc
+		"redundant comparison", // bools
+		"unreachable",          // unreachable
+		"context leak",         // lostcancel
+		"copies lock",          // copylocks
 	}
 	for _, w := range want {
 		if !strings.Contains(joined, w) {
