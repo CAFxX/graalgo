@@ -69,10 +69,14 @@ Coverage map:
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
 | 49  | sync_pool_struct     | sync.Pool in a struct/array: independent zero    |
-|     |                      | values, copy-before/after-use, literals, New     |
-|     |                      | (B23-01; companion to 46)                        |
+|     |                      | values, fresh-value independence, pointer-alias  |
+|     |                      | sharing, literals, New (B23-01; companion to 46) |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,
 `runtime.GOMAXPROCS` > 1 scheduling observables — these belong to later
-conformance layers, not the smoke net.
+conformance layers, not the smoke net. Copies of lock-containing values
+are likewise excluded: `go vet` copylocks (run by the smoke net) rejects
+every copy mechanism, and sync.Pool must not be copied after first use,
+so copy semantics are covered at the mechanism level
+(StructPoolZeroTemplateTest), never in a vetted corpus program.
