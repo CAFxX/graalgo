@@ -348,6 +348,19 @@ func runDefers(pass *Pass) []Diagnostic {
 	return out
 }
 
+// assignedIdents returns the plain identifiers on the left-hand side of an
+// assignment, skipping blanks and non-identifier targets such as selectors
+// or index expressions (which do not introduce a reused loop variable).
+func assignedIdents(lhs []ast.Expr) []*ast.Ident {
+	var out []*ast.Ident
+	for _, e := range lhs {
+		if id, ok := e.(*ast.Ident); ok && id.Name != "_" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // loopclosure checks for references to loop variables from within nested
 // functions (closures) that may outlive the iteration.
 // Note: Go 1.22+ gives each iteration its own loop variables, so the classic
@@ -361,7 +374,7 @@ func runLoopClosure(pass *Pass) []Diagnostic {
 				continue
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				var loopVar *ast.Ident
+				var loopVars []*ast.Ident
 				var body *ast.BlockStmt
 				switch l := n.(type) {
 				case *ast.RangeStmt:
@@ -369,10 +382,11 @@ func runLoopClosure(pass *Pass) []Diagnostic {
 						// Range variables are per-iteration in Go 1.22+.
 						return true
 					}
-					// For = (assignment to outer var), check closures.
-					if l.Key != nil {
-						if id, ok := l.Key.(*ast.Ident); ok {
-							loopVar = id
+					// For = (assignment to outer vars), check closures.
+					// Both key and value are reused across iterations.
+					for _, kv := range []ast.Expr{l.Key, l.Value} {
+						if id, ok := kv.(*ast.Ident); ok && id.Name != "_" {
+							loopVars = append(loopVars, id)
 						}
 					}
 					body = l.Body
@@ -382,34 +396,55 @@ func runLoopClosure(pass *Pass) []Diagnostic {
 						// Per-iteration in Go 1.22+.
 						return true
 					}
+					// Variables assigned by Init (when Tok == token.ASSIGN)
+					// and by Post are reused across iterations, so a
+					// closure capturing one sees the final value.
+					if assign, ok := l.Init.(*ast.AssignStmt); ok && assign.Tok == token.ASSIGN {
+						loopVars = append(loopVars, assignedIdents(assign.Lhs)...)
+					}
+					switch post := l.Post.(type) {
+					case *ast.IncDecStmt:
+						if id, ok := post.X.(*ast.Ident); ok && id.Name != "_" {
+							loopVars = append(loopVars, id)
+						}
+					case *ast.AssignStmt:
+						loopVars = append(loopVars, assignedIdents(post.Lhs)...)
+					}
 					body = l.Body
 				}
-				if loopVar == nil || body == nil {
+				if len(loopVars) == 0 || body == nil {
 					return true
 				}
-				// Look for func literals referencing loopVar.
+				// Look for func literals referencing any loop variable.
 				ast.Inspect(body, func(m ast.Node) bool {
 					lit, ok := m.(*ast.FuncLit)
 					if !ok {
 						return true
 					}
-					refs := false
+					refs := ""
 					ast.Inspect(lit.Body, func(p ast.Node) bool {
-						if id, ok := p.(*ast.Ident); ok && id.Name == loopVar.Name {
+						id, ok := p.(*ast.Ident)
+						if !ok {
+							return true
+						}
+						for _, loopVar := range loopVars {
+							if id.Name != loopVar.Name {
+								continue
+							}
 							if obj := pass.Info.Uses[id]; obj != nil {
 								if obj == pass.Info.Defs[loopVar] || obj == pass.Info.Uses[loopVar] {
-									refs = true
+									refs = loopVar.Name
 								}
 							} else {
-								refs = true // no type info; syntactic match
+								refs = loopVar.Name // no type info; syntactic match
 							}
 						}
 						return true
 					})
-					if refs {
+					if refs != "" {
 						out = append(out, Diagnostic{
 							pass.position(lit),
-							"loop variable " + loopVar.Name + " captured by func literal",
+							"loop variable " + refs + " captured by func literal",
 						})
 					}
 					return true

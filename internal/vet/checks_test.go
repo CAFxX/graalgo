@@ -420,6 +420,97 @@ func f() {
 	}
 }
 
+func TestLoopClosure(t *testing.T) {
+	src := `package main
+
+func useForAssign() {
+	i := 0
+	for i = 0; i < 3; i++ {
+		go func() { _ = i }() // bad: captures outer i, reused across iterations
+	}
+	_ = i
+}
+
+func useForPostAssign() {
+	i := 0
+	for i = 0; i < 3; i = i + 1 {
+		go func() { _ = i }() // bad: Post assigns i, reused across iterations
+	}
+	_ = i
+}
+
+func useRangeValue() {
+	var k, v int
+	xs := []int{1, 2, 3}
+	for k, v = range xs {
+		go func() { _ = v }() // bad: captures range value v
+	}
+	_, _ = k, v
+}
+
+func useRangeKey() {
+	var k, v int
+	xs := []int{1, 2, 3}
+	for k, v = range xs {
+		go func() { _ = k }() // bad: captures range key k
+	}
+	_, _ = k, v
+}
+
+func useRangeBlankKey() {
+	var v int
+	xs := []int{1, 2, 3}
+	for _, v = range xs {
+		go func() { _ = v }() // bad: captures range value v (blank key)
+	}
+	_ = v
+}
+
+func useForDefine() {
+	for i := 0; i < 3; i++ {
+		go func() { _ = i }() // good: per-iteration in Go 1.22+
+	}
+}
+
+func useRangeDefine() {
+	xs := []int{1, 2, 3}
+	for k, v := range xs {
+		go func() { _, _ = k, v }() // good: per-iteration in Go 1.22+
+	}
+}
+
+func useRangeBlankBoth() {
+	xs := []int{1, 2, 3}
+	for _, _ = range xs {
+		go func() {}() // good: nothing captured
+	}
+}
+
+func useOtherVar() {
+	i := 0
+	j := 0
+	for i = 0; i < 3; i++ {
+		go func() { _ = j }() // good: j is not a loop variable
+	}
+	_, _ = i, j
+}
+`
+	joined := runVetOnSrc(t, src)
+	count := strings.Count(joined, "captured by func literal")
+	if count != 5 {
+		t.Errorf("expected exactly 5 loopclosure diagnostics, got %d:\n%s", count, joined)
+	}
+	for _, want := range []string{
+		"loop variable i captured by func literal",
+		"loop variable v captured by func literal",
+		"loop variable k captured by func literal",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected diagnostic %q, got:\n%s", want, joined)
+		}
+	}
+}
+
 func TestHTTPResponse(t *testing.T) {
 	src := `package main
 
