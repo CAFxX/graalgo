@@ -405,10 +405,10 @@ func TestHostPort(t *testing.T) {
 
 import "net"
 
-func f() {
-	_, _ = net.Dial("tcp", "localhost:80")     // good
-	_, _ = net.Dial("tcp", "localhost"+":80")  // bad: concatenation
-	_, _ = net.Dial("tcp", "localhost")        // bad: missing port
+func f(host string) {
+	_, _ = net.Dial("tcp", "localhost:80") // good
+	_, _ = net.Dial("tcp", host+":80")     // bad: concatenation
+	_, _ = net.Dial("tcp", "localhost")    // bad: missing port
 }
 `
 	joined := runVetOnSrc(t, src)
