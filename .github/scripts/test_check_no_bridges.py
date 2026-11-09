@@ -324,5 +324,151 @@ class TestNoBridgesGate(unittest.TestCase):
         self.assertEqual(cnb.check_no_bridges(IMPORT_ADDITION), [])
 
 
+# get_diff() diff-source selection (R05-G-01, 2026-11-09): the gate
+# used to inspect only the tip commit on a multi-commit master push.
+# These tests build real scratch repos (the gate shells out to git)
+# and pin which diff each source shape yields. Imports are kept with
+# the tests they serve.
+import os
+import shutil
+import subprocess
+import tempfile
+
+
+def _git(repo, *args):
+    """Run git in a scratch repo with a fixed identity; fail the test on error."""
+    env = dict(os.environ)
+    env.update({
+        "GIT_AUTHOR_NAME": "gate-test",
+        "GIT_AUTHOR_EMAIL": "gate-test@example.invalid",
+        "GIT_COMMITTER_NAME": "gate-test",
+        "GIT_COMMITTER_EMAIL": "gate-test@example.invalid",
+    })
+    r = subprocess.run(["git", *args], cwd=repo, capture_output=True,
+                       text=True, env=env, timeout=60)
+    assert r.returncode == 0, (args, r.stdout, r.stderr)
+    return r.stdout.strip()
+
+
+class TestGetDiff(unittest.TestCase):
+    """get_diff() source selection on real scratch repos.
+
+    Shape under test (R05-G-01): a 3-commit push where the middle
+    commit adds a bridge (new synth_foo.go) and the tip commit is
+    innocuous, with origin/master == HEAD (the post-push CI checkout,
+    clean tree). Without a base the gate sees only the tip commit;
+    with the pre-push base it sees the whole pushed range.
+    """
+
+    def setUp(self):
+        self._old_cwd = os.getcwd()
+        self.tmp = tempfile.mkdtemp(prefix="test-get-diff-")
+        self.repo = os.path.join(self.tmp, "repo")
+        os.makedirs(self.repo)
+        _git(self.repo, "init", "-q", "-b", "master")
+        self._commit("a.txt", "a\n", "c1 base")
+        self.base = _git(self.repo, "rev-parse", "HEAD")
+        self._commit("internal/frontend/synth_foo.go",
+                     "package frontend\n\n// Synthetic foo package.\n",
+                     "c2 adds bridge")
+        self._commit("b.txt", "b\n", "c3 innocuous tip")
+        self.head = _git(self.repo, "rev-parse", "HEAD")
+        # Simulate the CI checkout after a direct master push.
+        _git(self.repo, "update-ref", "refs/remotes/origin/master", self.head)
+        os.chdir(self.repo)
+
+    def _commit(self, path, content, msg):
+        full = os.path.join(self.repo, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.write(content)
+        _git(self.repo, "add", ".")
+        _git(self.repo, "commit", "-q", "-m", msg)
+
+    def tearDown(self):
+        os.chdir(self._old_cwd)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _main_with_base(self, base):
+        old = os.environ.get("NO_BRIDGES_BASE")
+        os.environ["NO_BRIDGES_BASE"] = base
+        try:
+            return cnb.main()
+        finally:
+            if old is None:
+                os.environ.pop("NO_BRIDGES_BASE", None)
+            else:
+                os.environ["NO_BRIDGES_BASE"] = old
+
+    def test_multi_commit_push_with_base_sees_non_tip_bridge(self):
+        diff, source = cnb.get_diff(self.base)
+        self.assertIn("pushed range", source)
+        self.assertIn("synth_foo.go", diff)
+        errs = cnb.check_no_bridges(diff)
+        self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs), errs)
+
+    def test_multi_commit_push_without_base_is_tip_only(self):
+        # Documents the fallback's limit: with no base supplied the
+        # gate can only see the tip commit — the base is what CI now
+        # supplies (see test_main_with_base_env_*).
+        diff, source = cnb.get_diff()
+        self.assertIn("HEAD~1...HEAD", source)
+        self.assertNotIn("synth_foo.go", diff)
+        self.assertEqual(cnb.check_no_bridges(diff), [])
+
+    def test_zero_base_fails_loudly(self):
+        with self.assertRaises(ValueError):
+            cnb.get_diff("0" * 40)
+
+    def test_unresolvable_base_fails_loudly_not_tip_fallback(self):
+        # A supplied-but-absent base must not silently degrade to the
+        # tip-only diff.
+        with self.assertRaises(ValueError):
+            cnb.get_diff("deadbeef" * 5)
+
+    def test_empty_range_returns_no_diff(self):
+        # base == HEAD: the push introduced nothing new — no diff to
+        # inspect, and main() fails loudly on ("", "") rather than
+        # passing vacuously.
+        self.assertEqual(cnb.get_diff(self.head), ("", ""))
+
+    def test_pr_shape_without_base_sees_full_range(self):
+        # Feature-branch shape: origin/master behind HEAD by two
+        # commits — the pre-existing origin/master...HEAD candidate
+        # covers the range even with no base.
+        _git(self.repo, "update-ref", "refs/remotes/origin/master", self.base)
+        diff, source = cnb.get_diff()
+        self.assertIn("origin/master...HEAD", source)
+        self.assertIn("synth_foo.go", diff)
+
+    def test_working_tree_fallback(self):
+        # A staged new synthetic file on a clean checkout whose
+        # origin/master == HEAD: the working-tree candidate sees it.
+        bar = os.path.join(self.repo, "internal", "frontend", "synth_bar.go")
+        with open(bar, "w") as f:
+            f.write("package frontend\n")
+        _git(self.repo, "add", ".")
+        diff, source = cnb.get_diff()
+        self.assertIn("working tree", source)
+        self.assertIn("synth_bar.go", diff)
+        errs = cnb.check_no_bridges(diff)
+        self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs), errs)
+
+    def test_main_with_base_env_flags_bridge(self):
+        # Pins the CI wiring end to end: NO_BRIDGES_BASE -> get_diff
+        # -> verdict. (main() prints its report; the return code is
+        # the assertion.)
+        self.assertEqual(self._main_with_base(self.base), 1)
+
+    def test_main_with_base_env_passes_clean_range(self):
+        # Same wiring, clean range: base at the bridge commit, so the
+        # range holds only the innocuous tip commit.
+        tip_parent = _git(self.repo, "rev-parse", "HEAD~1")
+        self.assertEqual(self._main_with_base(tip_parent), 0)
+
+    def test_main_with_zero_base_env_fails_loudly(self):
+        self.assertEqual(self._main_with_base("0" * 40), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

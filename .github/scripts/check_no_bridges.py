@@ -27,18 +27,32 @@ taken from the p3fmt-stub branch diff, 16547f17, which the old script
 failed with 3 false positives).
 
 Diff sources, in order:
+  0. <base>...HEAD         (pushed range, when a pre-push base is supplied —
+                           CI passes github.event.before via NO_BRIDGES_BASE
+                           on push events, so a multi-commit push is
+                           inspected in full, not just its tip commit)
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
   3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
-                           checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+  4. HEAD~1...HEAD         (last resort when no base is available: inspects
+                           only the tip commit — a direct master push whose
+                           base was not supplied is therefore only partly
+                           covered; CI must always supply the base)
+
+A supplied base that is the zero SHA (0000000…, a newly created branch —
+no pre-push commit exists) or that does not resolve in this checkout
+fails loudly instead of falling through to source 4: silently
+inspecting only the tip would be exactly the hole this check exists
+to close. An empty pushed range (base == HEAD — the push introduced
+no new changes) likewise fails loudly rather than passing vacuously.
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
-CI must check out full history (fetch-depth: 0) for source 4 to resolve.
+CI must check out full history (fetch-depth: 0) for the base and
+source 4 to resolve.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -79,12 +93,55 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
+_ZERO_SHA_RE = re.compile(r"^0+$")
+
+
+def get_diff(base=None):
     """Get the diff of added lines, plus a label naming the diff source.
+
+    `base` is the pre-push commit (CI: github.event.before, passed via
+    the NO_BRIDGES_BASE environment variable). When supplied, the pushed
+    range <base>...HEAD is inspected first, so a multi-commit push is
+    covered in full — not just its tip commit.
 
     Returns ("", "") when no diff could be determined — the caller must
     treat that as a loud failure, never a vacuous pass.
+
+    Raises ValueError when a supplied base is unusable: the zero SHA
+    (new branch — there is no pre-push commit to diff against) or a SHA
+    that does not resolve in this checkout. Both fail loudly instead of
+    silently falling back to the tip-only HEAD~1...HEAD source, which
+    would be exactly the hole this check exists to close.
     """
+    base = (base or "").strip()
+    if base:
+        if _ZERO_SHA_RE.match(base):
+            raise ValueError(
+                f"no-bridges base {base} is the zero SHA: the pushed ref "
+                "is newly created, so there is no pre-push commit to diff "
+                "against — refusing to guess a range (and refusing to "
+                "inspect only the tip commit).")
+        try:
+            result = subprocess.run(
+                ["git", "diff", f"{base}...HEAD", "--", "."],
+                capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            raise ValueError(
+                f"no-bridges base {base}: could not run git diff ({e}) — "
+                "refusing to fall back to the tip-only diff.") from e
+        if result.returncode != 0:
+            raise ValueError(
+                f"no-bridges base {base} does not resolve in this checkout "
+                "(git diff failed) — is this a shallow checkout? CI must "
+                "use fetch-depth: 0. Refusing to fall back to the "
+                "tip-only diff.")
+        if result.stdout.strip():
+            return result.stdout, f"pushed range {base[:7]}...HEAD"
+        print(f"no-bridges: pushed range {base[:7]}...HEAD is empty "
+              "(the push introduced no new changes).",
+              file=sys.stderr)
+        return "", ""
+    # No base supplied: fall back to the pre-existing candidate chain.
     # Try vs origin/master first (for PRs), fall back to working tree,
     # then to the master-push delta. A shallow checkout (no HEAD~1)
     # yields nothing from the last source — that is a failure, not a skip.
@@ -320,12 +377,24 @@ def check_no_bridges(diff):
     return errors
 
 def main():
-    diff, source = get_diff()
+    # The pre-push base comes from the environment (CI sets
+    # NO_BRIDGES_BASE from github.event.before on push events; empty on
+    # PR/schedule/dispatch runs and local runs, where the fallback chain
+    # in get_diff() applies). A bad base fails loudly, never silently.
+    try:
+        diff, source = get_diff(os.environ.get("NO_BRIDGES_BASE", ""))
+    except ValueError as e:
+        print("NO-BRIDGES CHECK FAILED:")
+        print(f"  {e}")
+        print("  Refusing to pass vacuously.")
+        return 1
     if not diff.strip():
         # Never pass vacuously: on the standard integration path (wt.py
         # integrate + push, no PR) every diff source above is empty only when
         # the checkout has no history to diff against. Skipping here is
         # exactly the false-green hole this check exists to close.
+        # (A supplied-but-empty pushed range is reported here too — see
+        # the note get_diff() printed above.)
         print("NO-BRIDGES CHECK FAILED:")
         print("  could not determine any diff to inspect (no PR diff, no")
         print("  working-tree changes, and HEAD~1 is unavailable — is this a")
