@@ -393,12 +393,17 @@ func TestProvidedExtraction(t *testing.T) {
 		"graalgo.tls.newClientEngine",
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
-		// reflect, net/http, internal/reflectlite, fmt, sync,
-		// sync/atomic and runtime are NOT here: their synthetic
-		// sources/mirrors were retired and the real packages now
-		// compile from GOROOT via the disk importer (runtime: the
-		// live export.go stub is not extracted), so no synthetic
-		// source provides them (see TestSyntheticShadowSet).
+		// reflect, net/http, internal/reflectlite, fmt, sync and
+		// sync/atomic are NOT here: their synthetic sources/mirrors
+		// were retired and the real packages now compile from GOROOT
+		// via the disk importer, so no synthetic source provides
+		// them (see TestSyntheticShadowSet). With a goroot they come
+		// from the disk source instead (source 3, see
+		// TestDiskProvidedExtraction) — this call passes no goroot,
+		// so the disk source is skipped and they stay absent here.
+		// runtime is absent for a different reason: the live
+		// export.go stub is not extracted, and runtime is not a
+		// retired-to-disk package.
 		"encoding/json.Marshal", "crypto/sha256.New",
 		"syscall.Getenv", "maps.Clone",
 	}
@@ -426,6 +431,152 @@ func TestProvidedExtraction(t *testing.T) {
 	}
 	if len(provided.Symbols) < 200 {
 		t.Errorf("provided set suspiciously small: %d symbols", len(provided.Symbols))
+	}
+}
+
+// TestDiskProvidedExtraction (R03-T4): the retired-to-disk packages
+// provide their own exports, derived mechanically from the scanned
+// tree — never hand-maintained. The fake goroot is hermetic (no
+// dependence on the vendored tree); the live-tree effect is verified
+// by the before/after linkdiff runs, not by this test.
+//
+// Non-tautology design: every assertion has a negative twin that
+// fails if the corresponding guard is removed — the darwin-only
+// file (platform filter), the non-retired package (retired-set
+// scope), the wrong-package-clause file (package guard), the
+// unexported func (exported-only), and the broken file (loud
+// failure). The per-package loop covers EVERY entry in
+// retiredSyntheticPackages, so the test gains a case automatically
+// if the set gains a member (same pattern as
+// TestRetiredPackageRejected).
+func TestDiskProvidedExtraction(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One file per retired package, each exporting one symbol: the
+	// loop covers the whole retired set, not just sync/atomic.
+	pkgs := make([]string, 0, len(retiredSyntheticPackages))
+	for pkg := range retiredSyntheticPackages {
+		pkgs = append(pkgs, pkg)
+	}
+	sort.Strings(pkgs)
+	if len(pkgs) == 0 {
+		t.Fatal("retiredSyntheticPackages is empty — the loop has no cases")
+	}
+	for _, pkg := range pkgs {
+		base := pkg[strings.LastIndex(pkg, "/")+1:]
+		write(filepath.Join(filepath.FromSlash(pkg), "x.go"),
+			"package "+base+"\n\nfunc DiskExported() {}\n")
+	}
+	// The issue's symbols, plus their twins and the method/type
+	// surface of the same package.
+	write(filepath.Join("sync", "atomic", "atomic.go"),
+		"package atomic\n\nimport \"unsafe\"\n\n"+
+			"func CompareAndSwapUintptr(addr *uintptr, old, new uintptr) (swapped bool) { return false }\n"+
+			"func StoreUintptr(addr *uintptr, val uintptr) {}\n"+
+			"func SwapUintptr(addr *uintptr, new uintptr) (old uintptr) { return 0 }\n"+
+			"func CompareAndSwapPointer(addr *unsafe.Pointer, old, new unsafe.Pointer) (swapped bool) { return false }\n"+
+			"func StorePointer(addr *unsafe.Pointer, val unsafe.Pointer) {}\n"+
+			"func SwapPointer(addr *unsafe.Pointer, new unsafe.Pointer) (old unsafe.Pointer) { return nil }\n"+
+			"func hidden() {}\n"+
+			"type Uintptr struct{ v uintptr }\n"+
+			"func (x *Uintptr) Store(val uintptr) { StoreUintptr(&x.v, val) }\n"+
+			"func (x Uintptr) Load() uintptr { return x.v }\n")
+	// Platform filter: the darwin-only file must not provide for
+	// linux/amd64; the linux file must.
+	write(filepath.Join("sync", "atomic", "atomic_darwin.go"),
+		"//go:build darwin\n\npackage atomic\n\nfunc DarwinOnly() {}\n")
+	write(filepath.Join("sync", "atomic", "atomic_linux.go"),
+		"//go:build linux\n\npackage atomic\n\nfunc LinuxOnly() {}\n")
+	// A selected file whose package clause is not the package's own
+	// name must not contribute its declarations.
+	write(filepath.Join("sync", "atomic", "other.go"),
+		"package other\n\nfunc Other() {}\n")
+	// A package outside the retired set must not contribute, however
+	// real it is on disk. (example/foo is chosen because no synthetic
+	// source provides it — strings.Clone would be a bad twin: the
+	// synthetic strings package already provides it.)
+	write(filepath.Join("example", "foo", "foo.go"),
+		"package foo\n\nfunc Foo() {}\n")
+
+	provided, err := loadProvided(options{graalgo: graalgoRoot(t), goroot: root, goos: "linux", goarch: "amd64"})
+	if err != nil {
+		t.Fatalf("loadProvided with fake goroot: %v", err)
+	}
+	// Every retired package contributes its exported symbol.
+	for _, pkg := range pkgs {
+		if !provided.has(pkg + ".DiskExported") {
+			t.Errorf("disk source missing %q", pkg+".DiskExported")
+		}
+	}
+	// The issue's three symbols, with disk provenance.
+	for _, sym := range []string{
+		"sync/atomic.CompareAndSwapUintptr",
+		"sync/atomic.StoreUintptr",
+		"sync/atomic.SwapUintptr",
+		// Their Pointer twins (same file, same mechanism — never
+		// mirror-provided, already MISSING before the retirement).
+		"sync/atomic.CompareAndSwapPointer",
+		"sync/atomic.StorePointer",
+		"sync/atomic.SwapPointer",
+		// Type + methods (pointer and value receivers).
+		"sync/atomic.Uintptr",
+		"sync/atomic.(*Uintptr).Store",
+		"sync/atomic.Uintptr.Load",
+		"sync/atomic.LinuxOnly",
+	} {
+		if !provided.has(sym) {
+			t.Errorf("disk source missing %q", sym)
+		}
+	}
+	if prov, ok := provided.Symbols["sync/atomic.StoreUintptr"]; !ok {
+		t.Error("disk source missing sync/atomic.StoreUintptr (provenance check)")
+	} else if !strings.HasPrefix(prov, "real sync/atomic from disk:") {
+		t.Errorf("sync/atomic.StoreUintptr provenance = %q, want prefix %q", prov, "real sync/atomic from disk:")
+	}
+	// Negative twins: none of these may be provided.
+	for _, sym := range []string{
+		"sync/atomic.hidden",     // unexported
+		"sync/atomic.DarwinOnly", // wrong platform
+		"sync/atomic.Other",      // wrong package clause
+		"example/foo.Foo",        // not a retired package
+	} {
+		if provided.has(sym) {
+			t.Errorf("disk source wrongly provides %q", sym)
+		}
+	}
+
+	// A tree without the retired packages (the fixture tree) is
+	// tolerated: no error, no disk symbols.
+	provided2, err := loadProvided(options{graalgo: graalgoRoot(t), goroot: fixtureRoot(t), goos: "linux", goarch: "amd64"})
+	if err != nil {
+		t.Fatalf("loadProvided with fixture goroot: %v", err)
+	}
+	if provided2.has("sync/atomic.StoreUintptr") {
+		t.Error("fixture goroot wrongly provides sync/atomic.StoreUintptr")
+	}
+
+	// A present-but-unparseable retired file fails loudly — an
+	// incomplete provided set must never pass silently.
+	badRoot := t.TempDir()
+	badPath := filepath.Join(badRoot, "sync", "atomic", "bad.go")
+	if err := os.MkdirAll(filepath.Dir(badPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badPath, []byte("package atomic\nfunc Broken( {"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadProvided(options{graalgo: graalgoRoot(t), goroot: badRoot, goos: "linux", goarch: "amd64"}); err == nil {
+		t.Fatal("loadProvided with unparseable sync/atomic file: got nil error, want a loud failure")
+	} else if !strings.Contains(err.Error(), "sync/atomic") {
+		t.Errorf("loadProvided with unparseable sync/atomic file: error %q does not name the package", err.Error())
 	}
 }
 
