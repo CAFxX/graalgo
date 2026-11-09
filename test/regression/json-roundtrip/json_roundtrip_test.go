@@ -411,3 +411,34 @@ func TestJsonTimeTextMethods(t *testing.T) {
 		t.Fatalf("ParseError.Error (message) = %q, want %q", got, want)
 	}
 }
+
+// TestJsonTimeFormatFractionalSeconds pins the f037fdbc fix to the
+// synthetic time.Format fractional-second handling (found by the
+// reboot-#120 resume verification matrix: 120 cases, 24 mismatches):
+// gc's appendNano caps the fraction at 9 digits and trims a lone dot
+// when the truncated fraction is all zeros. The synthetic Format
+// emitted '.' alone for nsec below the run's precision (e.g. nsec=1,
+// layout ".9") and a spurious leading zero on runs longer than 9
+// digits (e.g. ".9999999999" with nsec=123456789 gave ".0123456789").
+// Each case below failed on the pre-fix source and passes on the
+// fixed source; the expected strings are gc's (verified 2026-11-09).
+// No skipUnlessGC: Format is exercised through the synthetic time
+// package under graalgo, so this test pins the synthetic behavior.
+func TestJsonTimeFormatFractionalSeconds(t *testing.T) {
+	cases := []struct {
+		nsec   int
+		layout string
+		want   string
+	}{
+		{1, "15:04:05.9", "03:04:05"},
+		{123456789, "15:04:05.9999999999", "03:04:05.123456789"},
+		{123456789, "15:04:05.0000000000", "03:04:05.123456789"},
+		{0, "15:04:05.0000000000", "03:04:05.000000000"},
+	}
+	for _, c := range cases {
+		got := time.Date(2026, 1, 2, 3, 4, 5, c.nsec, time.UTC).Format(c.layout)
+		if got != c.want {
+			t.Fatalf("Format(%q) with nsec=%d = %q, want %q", c.layout, c.nsec, got, c.want)
+		}
+	}
+}
