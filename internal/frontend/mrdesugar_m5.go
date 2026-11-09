@@ -1214,6 +1214,9 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "ParseCIDR", "", "__parseCIDR", "", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
 	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
 	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port", "err"}},
+	{"net", "LookupHost", "", "__lookupHost", "", "lookupHostPair", []string{"addrs", "err"}},
+	{"net", "LookupIP", "", "__lookupIP", "", "lookupIPPair", []string{"ips", "err"}},
+	{"net", "LookupPort", "", "__lookupPort", "", "lookupPortPair", []string{"port", "err"}},
 	{"net", "Size", "IPMask", "__ipMaskSize", "", "maskSizePair", []string{"ones", "bits"}},
 	// net: interface enumeration (P3-M9 module-probe lane).
 	{"net", "Interfaces", "", "__interfaces", "", "interfacesPair", []string{"ifs", "err"}},

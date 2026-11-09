@@ -21,13 +21,20 @@ semantics, the shared-runner model).
 - `05_parse_addr.go` — `ParseIP`/`ParseCIDR`/`ParseMAC`,
   `JoinHostPort`/`SplitHostPort`, `ResolveTCPAddr`/`ResolveUDPAddr`
   (IP literals only, no DNS). Pure Go.
+- `06_lookup_host.go` — DNS: `LookupHost`/`LookupIP` (localhost only),
+  `LookupPort` (named service from `/etc/services`), `ResolveTCPAddr`
+  by hostname with family filtering, `Dial` by hostname with echo.
+  Resolves via the `graalgo.net.lookuphost` trap (R08-S-05).
 
 ## Scope limits
 
 - Loopback-only: 127.0.0.1 / ::1, port 0. Never hardcode ports, never
   dial external hosts, never depend on external DNS (egress grep gate).
-- DNS (`LookupHost`, `LookupIP`, `LookupPort`) is fail-fast: no resolver
-  in M9. `retest:` DNS intrinsics land.
+- DNS (`LookupHost`, `LookupIP`) resolves via the
+  `graalgo.net.lookuphost` trap (JDK `InetAddress` delegation, R08-S-05);
+  `LookupPort` resolves named services from `/etc/services` in pure Go.
+  Corpus stays loopback-only: `06_lookup_host.go` resolves localhost
+  only; never dial external hosts, never depend on external DNS.
 - `InterfaceAddrs` is fail-fast. `retest:` interface listing lands.
 - AF_UNIX → `-EAFNOSUPPORT` (M9: TCP/UDP loopback only).
 - Known D4 divergence: `fmt.Errorf` `%w` flattens (no wrap chain); the

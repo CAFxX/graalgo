@@ -26,7 +26,9 @@ deliverable until the design lands.
   B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
-  `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
+  `io`/`fs` export fix for `net`; a DNS resolver — landed R08-S-05,
+  2026-11-09: `graalgo.net.lookuphost` JDK delegation + pure-Go
+  `/etc/services` port lookup; …). Every retirement
   shrinks the B-3 predicate chains, the `mrdesugar` pair tables, and
   `syntheticSources`.
 - **Phase 3 — machinery deletion.** When the last synthetic package retires,

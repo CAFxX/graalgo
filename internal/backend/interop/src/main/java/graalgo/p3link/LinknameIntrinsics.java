@@ -722,6 +722,11 @@ public final class LinknameIntrinsics {
         // net.Interface/Interfaces (github.com/google/uuid v1 node IDs).
         Linknames.register("graalgo.net.interfaces",
                 args -> GoNet.interfaces(args[0]), 1);
+        // R08-S-05 (REVIEW-2026-11-09-08): DNS resolution for
+        // net.LookupHost/LookupIP via java.net.InetAddress (JDK
+        // delegation, mirroring the socket traps' NIO delegation).
+        Linknames.register("graalgo.net.lookuphost",
+                args -> GoNet.lookuphost(args[0], args[1]), 2);
     }
 
     /**

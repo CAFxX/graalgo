@@ -14,7 +14,9 @@ package main
 //   - net.Pipe: verbatim port of gc pipe.go (pure Go, channels).
 //   - Socket path: netFD on the trap linknames + internal/poll FD for
 //     deadlines; Dial/Listen/Accept over loopback TCP; UDP via
-//     sendto/recvfrom; DNS funcs are fail-fast (no resolver in M9).
+//     sendto/recvfrom; DNS via the graalgo.net.lookuphost trap (JDK
+//     InetAddress delegation, R08-S-05) and service names from
+//     /etc/services in pure Go (gc's pure-Go resolver).
 //
 // Adaptations for the v1 frontend (no multi-result functions, WS D):
 // same-package multi-result funcs use the __-form explicitly (pair structs);
@@ -27,6 +29,10 @@ package main
 //     a local timeoutError{Timeout:true} so net.Conn deadline errors match gc.
 //   - fmt.Errorf %w flattens (D4 stub); net avoids %w.
 //   - AF_UNIX → -EAFNOSUPPORT; unconnected UDP sendto → EPERM (sandbox).
+//   - DNSError/AddrError Error() rendering differs from gc (pre-existing:
+//     gc prints "lookup tcp/http: unknown port" / "address 99999: invalid
+//     port"; this file prints "DNS error (tcp/http): unknown port" /
+//     "invalid port (99999)"). The Err/Name/Addr fields match gc.
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no unsafe).
 const syntheticNetSource = `// Copyright 2009 The Go Authors. All rights reserved.
@@ -40,6 +46,7 @@ import "context"
 import "errors"
 import "internal/poll"
 import "io"
+import "os"
 import "strconv"
 import "strings"
 import "time"
@@ -476,7 +483,11 @@ func __isV4InV6Prefix(b []byte) bool {
 // If ip is not an IPv4 address, To4 returns nil.
 func (ip IP) To4() IP {
 	if len(ip) == 16 {
-		// Check for IPv4-mapped or 4-in-6.
+		// gc parity (net/ip.go To4): only an IPv4-mapped address
+		// (::ffff:0:0/96) maps to IPv4. The previous code also mapped
+		// any all-zero-prefix address (::/96, e.g. ::1, ::) to a bogus
+		// IPv4, which broke tcp6 resolution and encoded ::1 as AF_INET
+		// 0.0.0.1 in encodeSockaddr (R08-S-05).
 		is4in6 := true
 		for i := 0; i < 10; i++ {
 			if ip[i] != 0 {
@@ -485,12 +496,6 @@ func (ip IP) To4() IP {
 			}
 		}
 		if is4in6 && ip[10] == 0xff && ip[11] == 0xff {
-			is4in6 = true
-		} else if is4in6 {
-			// 4-in-6 (::ffff:0:0/96 prefix not required here; check all-zero prefix)
-			is4in6 = ip[10] == 0 && ip[11] == 0
-		}
-		if is4in6 {
 			return IP{ip[12], ip[13], ip[14], ip[15]}
 		}
 	}
@@ -642,20 +647,372 @@ type parseCIDRPair struct {
 	err   error
 }
 
-// ---------------------------------------------------------------- DNS fail-fast
+// ---------------------------------------------------------------- DNS
+// Name resolution (R08-S-05, REVIEW-2026-11-09-08): the resolver is the
+// JDK (java.net.InetAddress) via the graalgo.net.lookuphost trap —
+// delegation, not a reimplementation (user directive 2026-10-10: prefer
+// delegating to JDK libraries when semantically compatible; same shape as
+// the socket traps' NIO delegation). The JDK reads /etc/hosts first, then
+// the system DNS resolver, so loopback names resolve without network I/O.
+// Service names come from /etc/services in pure Go (gc's pure-Go
+// resolver: readServices + lookupPortMap, ported below).
+//
+// Semantics (gc's net/lookup.go, net/port.go, net/dnsclient.go):
+//   - LookupHost("") is a DNSError; an IP literal passes through
+//     verbatim; a name that is not a domain name (gc isDomainName) is a
+//     DNSError without a trap call — the JDK would otherwise spend the
+//     full resolver timeout on it (measured: ~20s for "!!!").
+//   - The trap returns raw address bytes; each is normalized through
+//     ParseIP/String (the JDK renders IPv6 expanded, "0:0:...:1", while
+//     gc renders "::1"). A literal input is returned verbatim, per gc.
+//   - LookupIP returns 4-byte IPv4 addresses (this file's convention;
+//     gc returns 16-byte v4InV6Prefix forms — String() is identical).
+//   - LookupPort parses numeric services itself (gc parsePort, including
+//     the "" -> 0 rule and the 2^30 saturation) and reads /etc/services
+//     on every call (no sync.Once caching: the synthetic net package has
+//     no sync import in scope; a cold path, one file read per lookup).
+//   - Unknown network in LookupPort is an AddrError ("unknown network");
+//     unknown service is a DNSError ("unknown port"); out-of-range port
+//     is an AddrError ("invalid port") — all per gc.
+
+//go:linkname netLookupHost graalgo.net.lookuphost
+func netLookupHost(host string, buf []byte) int64
+
 // LookupHost looks up the given host using the local resolver.
 func LookupHost(host string) ([]string, error) {
-	panic("net.LookupHost: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupHost: unreachable (Appendix-M desugar did not fire)")
+}
+
+type lookupHostPair struct {
+	addrs []string
+	err   error
+}
+
+func __lookupHost(host string) lookupHostPair {
+	if host == "" {
+		return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host}}
+	}
+	if ParseIP(host) != nil {
+		return lookupHostPair{[]string{host}, nil}
+	}
+	if !__isDomainName(host) {
+		return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host}}
+	}
+	buf := make([]byte, 4096)
+	for {
+		r := netLookupHost(host, buf)
+		if r == -errnoENOMEM {
+			if len(buf) >= 1<<20 {
+				return lookupHostPair{nil, &OpError{Op: "lookup", Net: "dns", Err: errno(errnoENOMEM)}}
+			}
+			buf = make([]byte, len(buf)*2)
+			continue
+		}
+		if r <= 0 {
+			return lookupHostPair{nil, &OpError{Op: "lookup", Net: "dns", Err: errno(-r)}}
+		}
+		dec := __decodeLookupHost(buf[:r-1])
+		if dec.notFound {
+			return lookupHostPair{nil, &DNSError{Err: "no such host", Name: host}}
+		}
+		if !dec.ok {
+			return lookupHostPair{nil, &OpError{Op: "lookup", Net: "dns", Err: errno(errnoEINVAL)}}
+		}
+		return lookupHostPair{dec.addrs, nil}
+	}
+}
+
+type lookupHostDecode struct {
+	addrs    []string
+	ok       bool
+	notFound bool
+}
+
+// __decodeLookupHost decodes the lookuphost blob (int32 LE count, -1 =
+// no such host; then per address int32 LE length + raw bytes) using the
+// interfaces blob reader. Each address is normalized through
+// ParseIP/String so the JDK's expanded IPv6 rendering ("0:0:...:1")
+// becomes gc's compressed form ("::1").
+func __decodeLookupHost(b []byte) lookupHostDecode {
+	rd := &ifaceReader{b: b}
+	n := rd.int32()
+	if n < 0 {
+		return lookupHostDecode{nil, true, true}
+	}
+	if int64(n) > int64(len(b))/8 {
+		return lookupHostDecode{nil, false, false}
+	}
+	addrs := make([]string, 0, n)
+	for i := int32(0); i < n; i++ {
+		raw := rd.bytes()
+		if !rd.ok() {
+			return lookupHostDecode{nil, false, false}
+		}
+		if len(raw) != 4 && len(raw) != 16 {
+			return lookupHostDecode{nil, false, false}
+		}
+		ip := make(IP, len(raw))
+		copy(ip, raw)
+		addrs = append(addrs, ip.String())
+	}
+	if !rd.ok() {
+		return lookupHostDecode{nil, false, false}
+	}
+	return lookupHostDecode{addrs, true, false}
+}
+
+// __isDomainName is gc's net/dnsclient.go isDomainName, ported verbatim
+// except the tagless switch is written as if/else (frontend/v1 scope).
+func __isDomainName(s string) bool {
+	// The root domain name is valid. See golang.org/issue/45715.
+	if s == "." {
+		return true
+	}
+	l := len(s)
+	if l == 0 || l > 254 || l == 254 && s[l-1] != '.' {
+		return false
+	}
+	last := byte('.')
+	nonNumeric := false // true once we've seen a letter or hyphen
+	partlen := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' {
+			nonNumeric = true
+			partlen++
+		} else if c >= '0' && c <= '9' {
+			partlen++
+		} else if c == '-' {
+			// Byte before dash cannot be dot.
+			if last == '.' {
+				return false
+			}
+			partlen++
+			nonNumeric = true
+		} else if c == '.' {
+			// Byte before dot cannot be dot, dash.
+			if last == '.' || last == '-' {
+				return false
+			}
+			if partlen > 63 || partlen == 0 {
+				return false
+			}
+			partlen = 0
+		} else {
+			return false
+		}
+		last = c
+	}
+	if last == '-' || partlen > 63 {
+		return false
+	}
+	return nonNumeric
 }
 
 // LookupIP looks up host using the local resolver.
 func LookupIP(host string) ([]IP, error) {
-	panic("net.LookupIP: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupIP: unreachable (Appendix-M desugar did not fire)")
+}
+
+type lookupIPPair struct {
+	ips []IP
+	err error
+}
+
+func __lookupIP(host string) lookupIPPair {
+	__tmp := __lookupHost(host)
+	if __tmp.err != nil {
+		return lookupIPPair{nil, __tmp.err}
+	}
+	ips := make([]IP, 0, len(__tmp.addrs))
+	for _, s := range __tmp.addrs {
+		ip := ParseIP(s)
+		if ip == nil {
+			return lookupIPPair{nil, &DNSError{Err: "no such host", Name: host}}
+		}
+		ips = append(ips, ip)
+	}
+	return lookupIPPair{ips, nil}
 }
 
 // LookupPort looks up the port for the given network and service.
 func LookupPort(network, service string) (int, error) {
-	panic("net.LookupPort: not in M9 scope (no resolver; re-test when DNS lands)")
+	panic("net.LookupPort: unreachable (Appendix-M desugar did not fire)")
+}
+
+type lookupPortPair struct {
+	port int
+	err  error
+}
+
+func __lookupPort(network, service string) lookupPortPair {
+	port, needsLookup := __parsePort(service)
+	if needsLookup {
+		switch network {
+		case "tcp", "tcp4", "tcp6", "udp", "udp4", "udp6", "ip":
+		case "":
+			network = "ip"
+		default:
+			return lookupPortPair{0, &AddrError{Err: "unknown network", Addr: network}}
+		}
+		__tmp := __lookupPortFromServices(network, service)
+		if __tmp.err != nil {
+			return lookupPortPair{0, __tmp.err}
+		}
+		port = __tmp.port
+	}
+	if port < 0 || port > 65535 {
+		return lookupPortPair{0, &AddrError{Err: "invalid port", Addr: service}}
+	}
+	return lookupPortPair{port, nil}
+}
+
+// __parsePort is gc's net/port.go parsePort, ported verbatim (index-based
+// byte loop; the rune range form is equivalent for ASCII digits, and any
+// non-ASCII byte fails the digit check exactly like a non-digit rune).
+func __parsePort(service string) (int, bool) {
+	if service == "" {
+		// Lock in the legacy behavior that an empty string
+		// means port 0. See golang.org/issue/13610.
+		return 0, false
+	}
+	const (
+		max    = uint32(1<<32 - 1)
+		cutoff = uint32(1 << 30)
+	)
+	neg := false
+	if service[0] == '+' {
+		service = service[1:]
+	} else if service[0] == '-' {
+		neg = true
+		service = service[1:]
+	}
+	var n uint32
+	for i := 0; i < len(service); i++ {
+		d := service[i]
+		if d < '0' || d > '9' {
+			return 0, true
+		}
+		d -= '0'
+		if n >= cutoff {
+			n = max
+			break
+		}
+		n *= 10
+		nn := n + uint32(d)
+		if nn < n || nn > max {
+			n = max
+			break
+		}
+		n = nn
+	}
+	var port int
+	if !neg && n >= cutoff {
+		port = int(cutoff - 1)
+	} else if neg && n > cutoff {
+		port = int(cutoff)
+	} else {
+		port = int(n)
+	}
+	if neg {
+		port = -port
+	}
+	return port, false
+}
+
+type lookupPortServicesPair struct {
+	port int
+	err  error
+}
+
+// __lookupPortFromServices mirrors gc's readServices + lookupPortMap for
+// the named-service case: scan /etc/services for the protocol's map
+// (network "ip" tries tcp, then udp, exactly as gc does). The file is
+// read on every call (no sync.Once caching — see the section comment).
+// The error mirrors gc's lookupPortMapWithNetwork: "unknown port" when
+// the protocol has entries but not this service, "unknown network"
+// when the protocol has no entries at all (including an unreadable
+// file, where gc's map stays empty).
+func __lookupPortFromServices(network, service string) lookupPortServicesPair {
+	data, err := os.ReadFile("/etc/services")
+	if err != nil {
+		return lookupPortServicesPair{0, &DNSError{Err: "unknown network", Name: network + "/" + service}}
+	}
+	content := string(data)
+	if network == "ip" {
+		__tmp := __lookupPortScan(content, "tcp", service)
+		if __tmp.found {
+			return lookupPortServicesPair{__tmp.port, nil}
+		}
+		__tmp = __lookupPortScan(content, "udp", service)
+		if __tmp.found {
+			return lookupPortServicesPair{__tmp.port, nil}
+		}
+		if __tmp.protoSeen {
+			return lookupPortServicesPair{0, &DNSError{Err: "unknown port", Name: "ip/" + service}}
+		}
+		return lookupPortServicesPair{0, &DNSError{Err: "unknown network", Name: "ip/" + service}}
+	}
+	proto := "tcp"
+	if network == "udp" || network == "udp4" || network == "udp6" {
+		proto = "udp"
+	}
+	__tmp := __lookupPortScan(content, proto, service)
+	if __tmp.found {
+		return lookupPortServicesPair{__tmp.port, nil}
+	}
+	if __tmp.protoSeen {
+		return lookupPortServicesPair{0, &DNSError{Err: "unknown port", Name: network + "/" + service}}
+	}
+	return lookupPortServicesPair{0, &DNSError{Err: "unknown network", Name: network + "/" + service}}
+}
+
+type lookupPortScanPair struct {
+	port      int
+	found     bool
+	protoSeen bool
+}
+
+// __lookupPortScan scans /etc/services content for service under proto,
+// mirroring gc's readServices: strip comments, split fields, parse the
+// "port/proto" second field, map every other field (name + aliases) to
+// the port. The query is lower-cased (gc lowercases the service); file
+// fields compare verbatim (gc stores them verbatim). Lines with a port
+// above 65535 are skipped (no valid services line has one; gc's dtoi
+// rejects them on overflow).
+func __lookupPortScan(data, proto, service string) lookupPortScanPair {
+	lower := strings.ToLower(service)
+	lines := strings.Split(data, "\n")
+	protoSeen := false
+	for _, line := range lines {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		f := strings.Fields(line)
+		if len(f) < 2 {
+			continue
+		}
+		portnet := f[1]
+		j := 0
+		p := 0
+		for j < len(portnet) && portnet[j] >= '0' && portnet[j] <= '9' {
+			p = p*10 + int(portnet[j]-'0')
+			j++
+		}
+		if j == 0 || p <= 0 || p > 65535 || j >= len(portnet) || portnet[j] != '/' {
+			continue
+		}
+		if portnet[j+1:] != proto {
+			continue
+		}
+		protoSeen = true
+		for i := 0; i < len(f); i++ {
+			if i != 1 && f[i] == lower {
+				return lookupPortScanPair{p, true, true}
+			}
+		}
+	}
+	return lookupPortScanPair{0, false, protoSeen}
 }
 
 // InterfaceAddrs returns a list of the system's unicast interface addresses.
@@ -1820,7 +2177,10 @@ func __listenUDP(network string, laddr *UDPAddr) listenPacketPair {
 }
 
 // ---------------------------------------------------------------------------
-// Address resolution (IP literals only; DNS is fail-fast in M9).
+// Address resolution: IP literals resolve locally; hostnames resolve via
+// the DNS resolver above (__lookupHost) with family filtering per gc's
+// internetAddrList (tcp4/udp4/ip4 take the first IPv4 address, tcp6/udp6/
+// ip6 the first IPv6 address, anything else the first address).
 // ---------------------------------------------------------------------------
 
 // ResolveIPAddr returns an IP address for the given network and address.
@@ -1853,12 +2213,51 @@ type resolveUDPAddrPair struct {
 	err  error
 }
 
-func __resolveIPAddr(network, address string) resolveIPAddrPair {
-	ip := ParseIP(address)
-	if ip == nil {
-		return resolveIPAddrPair{nil, &DNSError{Err: "no such host", Name: address}}
+type resolveHostIPPair struct {
+	ip  IP
+	err error
+}
+
+// __resolveHostIP resolves host to one IP for network's family, mirroring
+// gc's internetAddrList family filtering: tcp4/udp4/ip4 take the first
+// IPv4 address, tcp6/udp6/ip6 the first IPv6 address, anything else
+// (tcp, udp, ip, "") the first address in resolver order. No address
+// for the family is a DNSError ("no such host").
+func __resolveHostIP(network, host string) resolveHostIPPair {
+	if ip := ParseIP(host); ip != nil {
+		return resolveHostIPPair{ip, nil}
 	}
-	return resolveIPAddrPair{&IPAddr{IP: ip}, nil}
+	__tmp := __lookupHost(host)
+	if __tmp.err != nil {
+		return resolveHostIPPair{nil, __tmp.err}
+	}
+	for _, s := range __tmp.addrs {
+		ip := ParseIP(s)
+		if ip == nil {
+			continue
+		}
+		switch network {
+		case "tcp4", "udp4", "ip4":
+			if ip.To4() != nil {
+				return resolveHostIPPair{ip, nil}
+			}
+		case "tcp6", "udp6", "ip6":
+			if ip.To4() == nil {
+				return resolveHostIPPair{ip, nil}
+			}
+		default:
+			return resolveHostIPPair{ip, nil}
+		}
+	}
+	return resolveHostIPPair{nil, &DNSError{Err: "no such host", Name: host}}
+}
+
+func __resolveIPAddr(network, address string) resolveIPAddrPair {
+	__tmp := __resolveHostIP(network, address)
+	if __tmp.err != nil {
+		return resolveIPAddrPair{nil, __tmp.err}
+	}
+	return resolveIPAddrPair{&IPAddr{IP: __tmp.ip}, nil}
 }
 
 func __resolveTCPAddr(network, address string) resolveTCPAddrPair {
@@ -1867,18 +2266,19 @@ func __resolveTCPAddr(network, address string) resolveTCPAddrPair {
 		return resolveTCPAddrPair{nil, __tmp.err}
 	}
 	host, port := __tmp.host, __tmp.port
-	p, err := strconv.Atoi(port)
-	if err != nil {
-		return resolveTCPAddrPair{nil, &AddrError{Err: "unknown port", Addr: "tcp/" + port}}
+	__tmpP := __lookupPort(network, port)
+	if __tmpP.err != nil {
+		return resolveTCPAddrPair{nil, __tmpP.err}
 	}
 	var ip IP
 	if host != "" {
-		ip = ParseIP(host)
-		if ip == nil {
-			return resolveTCPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+		__tmpIP := __resolveHostIP(network, host)
+		if __tmpIP.err != nil {
+			return resolveTCPAddrPair{nil, __tmpIP.err}
 		}
+		ip = __tmpIP.ip
 	}
-	return resolveTCPAddrPair{&TCPAddr{IP: ip, Port: p}, nil}
+	return resolveTCPAddrPair{&TCPAddr{IP: ip, Port: __tmpP.port}, nil}
 }
 
 func __resolveUDPAddr(network, address string) resolveUDPAddrPair {
@@ -1887,18 +2287,19 @@ func __resolveUDPAddr(network, address string) resolveUDPAddrPair {
 		return resolveUDPAddrPair{nil, __tmp.err}
 	}
 	host, port := __tmp.host, __tmp.port
-	p, err := strconv.Atoi(port)
-	if err != nil {
-		return resolveUDPAddrPair{nil, &AddrError{Err: "unknown port", Addr: "udp/" + port}}
+	__tmpP := __lookupPort(network, port)
+	if __tmpP.err != nil {
+		return resolveUDPAddrPair{nil, __tmpP.err}
 	}
 	var ip IP
 	if host != "" {
-		ip = ParseIP(host)
-		if ip == nil {
-			return resolveUDPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+		__tmpIP := __resolveHostIP(network, host)
+		if __tmpIP.err != nil {
+			return resolveUDPAddrPair{nil, __tmpIP.err}
 		}
+		ip = __tmpIP.ip
 	}
-	return resolveUDPAddrPair{&UDPAddr{IP: ip, Port: p}, nil}
+	return resolveUDPAddrPair{&UDPAddr{IP: ip, Port: __tmpP.port}, nil}
 }
 
 // ---------------------------------------------------------------------------

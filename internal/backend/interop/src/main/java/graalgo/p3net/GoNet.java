@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import graalgo.p3os.GoOs;
 import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 
 /**
  * Host-side implementation of the {@code graalgo.net.*} linkname
@@ -868,6 +869,74 @@ public final class GoNet {
             }
             int n = goBufPut(bufArg, data);
             return n < 0 ? -GoOs.EINVAL : (long) n + 1;
+    }
+
+    /**
+     * graalgo.net.lookuphost — resolves a host name to its addresses via
+     * {@code java.net.InetAddress} (R08-S-05, REVIEW-2026-11-09-08).
+     * JDK delegation, not a reimplementation: the user's 2026-10-10
+     * directive prefers delegating to JDK libraries when semantically
+     * compatible, and this mirrors how the socket traps delegate to NIO.
+     * The JDK reads /etc/hosts first, then the system DNS resolver, so
+     * loopback names resolve without touching the network and external
+     * names follow the host's resolver configuration (the same source
+     * gc's cgo resolver consults on Linux).
+     *
+     * <p>Result: writes the blob into the supplied buffer and returns
+     * {@code n+1} bytes written (the {@code interfaces} convention):
+     * int32 little-endian address count, then per address int32
+     * little-endian length + raw address bytes (4 for IPv4, 16 for
+     * IPv6). A count of -1 means "no such host" (the Go side maps it
+     * to a {@code DNSError}); the buffer is still written (4 bytes),
+     * so the Go side distinguishes not-found from a trap error by the
+     * blob, not by the return value. Returns {@code -ENOMEM} when the
+     * buffer is too small (the Go side grows it and retries) and
+     * {@code -errno} on other failures.
+     *
+     * <p>Blocking: {@code getAllByName} may block on the system
+     * resolver for names not in /etc/hosts — same cold-path blocking
+     * shape as {@code GoHttp}'s {@code HttpClient.send}. The Go side
+     * never calls this for names gc rejects locally (empty string, IP
+     * literal, non-domain name), so the slow path is unreachable for
+     * those inputs.
+     */
+    public static long lookuphost(Object hostArg, Object bufArg) {
+        final String host;
+        if (hostArg instanceof GoString gs) {
+            host = new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } else if (hostArg instanceof String s) {
+            host = s;
+        } else {
+            return -GoOs.EINVAL;
+        }
+        final InetAddress[] addrs;
+        try {
+            addrs = InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            return writeLookupBlob(bufArg, null);
+        }
+        return writeLookupBlob(bufArg, addrs);
+    }
+
+    /** Serializes lookuphost results (null = no such host, count -1) into the buffer; n+1 or -errno. */
+    private static long writeLookupBlob(Object bufArg, InetAddress[] addrs) {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        if (addrs == null) {
+            putI32(baos, -1);
+        } else {
+            putI32(baos, addrs.length);
+            for (InetAddress ia : addrs) {
+                byte[] raw = ia.getAddress();
+                putI32(baos, raw.length);
+                baos.write(raw, 0, raw.length);
+            }
+        }
+        byte[] data = baos.toByteArray();
+        if (!(bufArg instanceof GoSlice gs) || gs.len() < data.length) {
+            return -ENOMEM;
+        }
+        int n = goBufPut(bufArg, data);
+        return n < 0 ? -GoOs.EINVAL : (long) n + 1;
     }
 
     private static void putI32(java.io.ByteArrayOutputStream out, int v) {
