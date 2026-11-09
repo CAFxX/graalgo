@@ -145,7 +145,9 @@ import "errors"
 
 // P3-M9: Local __bits* helpers (the math/bits synthetic's helpers are
 // private to that package; v2 needs them for the rewritten call sites).
-// Bit-exact implementations (copied from the math/bits synthetic).
+// Bit-exact implementations (Add64/Add32/Mul32 copied from the math/bits
+// synthetic; Mul64 is an equivalent schoolbook decomposition, verified
+// bit-exact vs gc's Mul64 — R10-10).
 type __bitsAdd64Pair struct {
 	sum      uint64
 	carryOut uint64
@@ -163,7 +165,8 @@ type __bitsMul64Pair struct {
 }
 
 func __bitsMul64(x, y uint64) __bitsMul64Pair {
-	// 64x64 -> 128 bit multiplication (gc algorithm).
+	// 64x64 -> 128 bit multiplication (schoolbook decomposition;
+	// bit-exact vs gc's Mul64, not gc's w0/t/w1/w2 algorithm).
 	xlo := uint64(uint32(x))
 	xhi := x >> 32
 	ylo := uint64(uint32(y))

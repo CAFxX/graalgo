@@ -18,4 +18,10 @@ Deviations (see `synth_mathrandv2.go` header):
 
 ## Results
 
-TBD (2026-10-09).
+- 2026-11-09 (R10-10, base `d4936e9b`): `00_pcg.go` and `02_adversarial.go`
+  byte-identical to gc (`math/rand/v2`, go1.27.1) under graalgo. The October
+  PCG Uint64 mismatch was stale: the synthetic source was already correct
+  under gc, and the transformation defect (missing UINT32 masking in
+  `ConvertNode.extendLong`) was cured by `5d212af7` (2026-10-10); the
+  scope-limits were never re-tested. `01_chacha8.go` remains scope-limited
+  (`&` on SelectorExpr, WS D).
