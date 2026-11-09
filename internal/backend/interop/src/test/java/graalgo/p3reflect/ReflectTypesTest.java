@@ -323,6 +323,101 @@ public void testInvalidTypeWireEntryFailsLoud() {
     }
 
     /**
+     * B15-P1-4: the promoted-method-set cache must be per-run, not
+     * per-JVM. Tokens restart at 0 for every build and named-type keys
+     * do not include method names, so two programs installed in the
+     * same JVM mint the SAME token for their (differently-methoded)
+     * {@code main.S}. A process-wide cache keyed by token alone served
+     * the first program's set to the second: {@code NumMethod} /
+     * {@code Method} on the second program's embedded-field struct
+     * returned the first program's methods.
+     *
+     * <p>Program A embeds {@code main.E} (method {@code Alpha}) in
+     * {@code main.S}; program B is structurally identical but its
+     * {@code main.E} has method {@code Beta}. After installing B, the
+     * method set of B's {@code main.S} must be {@code [Beta]} — never
+     * the cached {@code [Alpha]} — and re-installing A must restore
+     * {@code [Alpha]}. The token-equality assertion pins the collision
+     * premise: if the two installs ever minted different tokens for S,
+     * the test fails loud instead of passing vacuously.
+     */
+    public void testMethodSetCacheIsPerRunNotPerJvm() {
+        ReflectTypes.install(parseDoc(docFor("Alpha")), Map.of(100, goFunc()));
+        ReflectTypes.Table tableA = ReflectTypes.table();
+        long tokA = tokOf(tableA, "main.S");
+        java.util.List<ReflectTypes.MethodInfo> setA = ReflectTypes.methodSetFor(tokA);
+        assertTrue(setA.size() == 1 && "Alpha".equals(setA.get(0).name),
+                "program A method set should be [Alpha], got " + methodNames(setA));
+
+        ReflectTypes.install(parseDoc(docFor("Beta")), Map.of(100, goFunc()));
+        ReflectTypes.Table tableB = ReflectTypes.table();
+        long tokB = tokOf(tableB, "main.S");
+        assertTrue(tokA == tokB,
+                "test setup: S tokens must collide across installs, got " + tokA + " vs " + tokB);
+        java.util.List<ReflectTypes.MethodInfo> setB = ReflectTypes.methodSetFor(tokB);
+        assertTrue(setB.size() == 1 && "Beta".equals(setB.get(0).name),
+                "program B method set leaked program A's: " + methodNames(setB));
+
+        // The cache follows the installed table in both directions.
+        ReflectTypes.install(parseDoc(docFor("Alpha")), Map.of(100, goFunc()));
+        java.util.List<ReflectTypes.MethodInfo> setA2 =
+                ReflectTypes.methodSetFor(tokOf(ReflectTypes.table(), "main.S"));
+        assertTrue(setA2.size() == 1 && "Alpha".equals(setA2.get(0).name),
+                "re-installed program A method set should be [Alpha], got " + methodNames(setA2));
+    }
+
+    private static String docFor(String methodName) {
+        return """
+                {"types": [
+                  {"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": false}},
+                  {"kind": "named", "detail": {"name": "main.E", "pkgpath": "main", "underlying": 2,
+                     "methods": [{"name": "%s", "obj": 100, "recv": "value"}]}},
+                  {"kind": "struct", "detail": {"fields": [
+                     {"name": "X", "type": 0, "tag": "", "offset": 0}]}},
+                  {"kind": "named", "detail": {"name": "main.S", "pkgpath": "main", "underlying": 4,
+                     "methods": []}},
+                  {"kind": "struct", "detail": {"fields": [
+                     {"name": "E", "type": 1, "tag": "", "offset": 0, "embedded": true}]}},
+                  {"kind": "signature", "detail": {"params": [{"name": "e", "type": 1}],
+                     "results": [], "variadic": false}}
+                ],
+                 "funcs": [{"kind": "funcdecl", "fields": {"obj": 100, "sig": 5}}]}
+                """.formatted(methodName);
+    }
+
+    private static long tokOf(ReflectTypes.Table table, String name) {
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && name.equals(ti.name)) {
+                return ti.tok;
+            }
+        }
+        throw new AssertionError("no TypeInfo named " + name);
+    }
+
+    private static String methodNames(java.util.List<ReflectTypes.MethodInfo> ms) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < ms.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(ms.get(i).name);
+        }
+        return sb.append(']').toString();
+    }
+
+    private static graalgo.values.GoFunc goFunc() {
+        com.oracle.truffle.api.nodes.RootNode root =
+                new com.oracle.truffle.api.nodes.RootNode(null) {
+                    @Override
+                    public Object execute(com.oracle.truffle.api.frame.VirtualFrame frame) {
+                        return null;
+                    }
+                };
+        com.oracle.truffle.api.RootCallTarget target = root.getCallTarget();
+        return new graalgo.values.GoFunc(target, null, null);
+    }
+
+    /**
      * PKG-010: an F-bounded constraint cycle in the wire graph (typeparam
      * T constrained by an unnamed interface whose method signature
      * mentions T — legal Go, e.g. {@code W[T interface{ Get() T }]}) must

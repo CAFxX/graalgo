@@ -173,6 +173,15 @@ public final class ReflectTypes {
     public static final class Table {
         final List<TypeInfo> byTok = new ArrayList<>();
         final Map<String, Long> keyToTok = new HashMap<>();
+        /**
+         * Method sets computed by {@link ReflectTypes#methodSetFor}, keyed
+         * by token. Owned by this run's table: tokens restart at 0 for
+         * every build, so a process-wide cache keyed by token alone would
+         * hand one program's promoted sets to another program sharing the
+         * JVM. A new install builds a new table, which discards the old
+         * run's sets by construction.
+         */
+        final Map<Long, List<MethodInfo>> methodSetCache = new HashMap<>();
         private final Map<GoKind, Long> basicKindToTok = new HashMap<>();
         /** Wire type id → canonical token (for descriptor lookup). */
         private final Map<Integer, Long> wireIdToTok = new HashMap<>();
@@ -2143,29 +2152,31 @@ public final class ReflectTypes {
      *       a known gap) yields empty, preserving today's behavior.</li>
      * </ul>
      *
-     * <p>Computed sets are cached per token: TypeInfos are immutable
-     * after construction, and promotion builds wrapper func types as a
-     * side effect that must not repeat per lookup.
+     * <p>Computed sets are cached per (table, token): TypeInfos are
+     * immutable after construction, and promotion builds wrapper func
+     * types as a side effect that must not repeat per lookup. The cache
+     * lives on the per-run table, never in a process-wide map, because
+     * tokens restart at 0 for every build — a token-keyed static would
+     * serve one program's method set to another program in the same JVM.
      */
-    private static final Map<Long, List<MethodInfo>> METHOD_SET_CACHE = new HashMap<>();
-
     static List<MethodInfo> methodSetFor(long tok) {
-        TypeInfo t = table().info(tok);
+        Table tbl = table();
+        TypeInfo t = tbl.info(tok);
         if (!t.methods.isEmpty()) {
             return t.methods;
         }
         if (t.kind != GoKind.STRUCT) {
             return List.of();
         }
-        synchronized (METHOD_SET_CACHE) {
-            List<MethodInfo> cached = METHOD_SET_CACHE.get(tok);
+        synchronized (tbl.methodSetCache) {
+            List<MethodInfo> cached = tbl.methodSetCache.get(tok);
             if (cached != null) {
                 return cached;
             }
-            List<MethodInfo> promoted = new ArrayList<>(promoteMethods(table(), t, t.fields));
+            List<MethodInfo> promoted = new ArrayList<>(promoteMethods(tbl, t, t.fields));
             promoted.sort((a, b) -> a.name.compareTo(b.name));
             List<MethodInfo> result = List.copyOf(promoted);
-            METHOD_SET_CACHE.put(tok, result);
+            tbl.methodSetCache.put(tok, result);
             return result;
         }
     }
