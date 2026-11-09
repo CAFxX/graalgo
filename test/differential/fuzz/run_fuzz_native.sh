@@ -16,7 +16,8 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE1_DIR   phase-1 tree with the graalgo-run launcher
+#   PHASE1_DIR   backend tree with the graalgo-run launcher
+#                (default: $REPO_ROOT/internal/backend)
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +37,15 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/phases/phase1}"
+export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/internal/backend}"
+if [ ! -x "$PHASE1_DIR/graalgo-run" ]; then
+  echo "run_fuzz_native: $PHASE1_DIR/graalgo-run missing/not executable" >&2
+  exit 2
+fi
+if [ ! -d "$PHASE1_DIR/runtime/out/classes" ]; then
+  echo "run_fuzz_native: backend classes not built; run 'make build' at the repo root first" >&2
+  exit 2
+fi
 
 FUZZTIME="30"
 OUTDIR=""
