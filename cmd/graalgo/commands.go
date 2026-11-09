@@ -261,14 +261,25 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	failed := false
+	// Frontend gate: type-check the package once, as one unit, over
+	// all its non-test files — exactly like cmdBuild and the cmdRun
+	// package path. Checking one file at a time made any cross-file
+	// reference look undefined, so `graalgo vet` false-failed every
+	// multi-file package (R05-C-01).
+	// _test.go files are excluded: a package's test files may declare
+	// a second package clause (foo_test), which a single-package
+	// --check cannot accept (internal/frontend/export.go:889-891);
+	// they are still analyzed by vet.Run below.
+	var pkgFiles []string
 	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			failed = true
+		if !strings.HasSuffix(f, "_test.go") {
+			pkgFiles = append(pkgFiles, f)
 		}
 	}
-	if failed {
-		return 1
+	if len(pkgFiles) > 0 {
+		if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+			return 1
+		}
 	}
 	// Run the analyzers over all files as one package.
 	ds, err := vet.Run(files)
