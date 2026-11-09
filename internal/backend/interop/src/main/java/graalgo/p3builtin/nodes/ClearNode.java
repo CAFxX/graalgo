@@ -9,6 +9,8 @@ import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.values.GoComplex32;
+import graalgo.values.GoComplex64;
 import graalgo.values.GoMap;
 import graalgo.values.GoSlice;
 
@@ -87,6 +89,20 @@ public final class ClearNode extends GoExprNode {
         int from = s.offset();
         int len = s.len();
         if (len == 0) {
+            return;
+        }
+        // Complex carriers are Object[] but their zero is the ZERO value,
+        // not null: Boxing.newArray pre-initialises complex arrays to 0+0i,
+        // and a null slot would surface as nil instead of 0+0i. These
+        // branches must precede the Object[] branch below (R10-02 bug
+        // family: the same fill chain this lane fixes in the frontend
+        // ClearNode).
+        if (array instanceof GoComplex32[] ca) {
+            Arrays.fill(ca, from, from + len, GoComplex32.ZERO);
+            return;
+        }
+        if (array instanceof GoComplex64[] ca) {
+            Arrays.fill(ca, from, from + len, GoComplex64.ZERO);
             return;
         }
         Class<?> ct = array.getClass().getComponentType();
