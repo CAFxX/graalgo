@@ -146,6 +146,12 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	// R08-H-01: a one-backend config makes the comparison loop below a
+	// no-op (outs[0] vs nothing) and run exits 0 having checked nothing.
+	// Same requirement as cmdValidate; fail fast instead of passing vacuously.
+	if len(cfg.Backends) < 2 {
+		return fmt.Errorf("run needs at least 2 backends (reference + alternate)")
+	}
 	progs, skipped, err := loadCorpus(rf, cfg)
 	if err != nil {
 		return err
@@ -193,6 +199,12 @@ func cmdRun(args []string) error {
 		return err
 	}
 	fmt.Printf("run: %d comparisons, %d diverged, report %s\n", len(rep.Comparisons), diverged, rf.out)
+	// R08-H-01: with zero comparisons (fully-excluded corpus, or any other
+	// path that yields no comparison) a 0-divergence exit is vacuous, not
+	// green. The report is already written, so CI keeps the evidence.
+	if len(rep.Comparisons) == 0 {
+		return fmt.Errorf("run: 0 comparisons (%d skipped); refusing to pass vacuously", len(skipped))
+	}
 	if diverged > 0 {
 		return fmt.Errorf("%d divergences", diverged)
 	}
@@ -511,6 +523,10 @@ func cmdTypeparamRun(args []string) error {
 	}
 	fmt.Printf("typeparam run: %d comparisons, %d diverged, %d excluded, report %s\n",
 		len(comps), div, skipped, *out)
+	// R08-H-01: zero comparisons (every file excluded) is vacuous, not green.
+	if len(comps) == 0 {
+		return fmt.Errorf("typeparam run: 0 comparisons (%d excluded); refusing to pass vacuously", skipped)
+	}
 	if div > 0 {
 		return fmt.Errorf("%d divergences", div)
 	}
@@ -630,6 +646,10 @@ func cmdSrctestRun(args []string) error {
 	}
 	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",
 		len(comps), div, skipped, *out)
+	// R08-H-01: zero comparisons (every file excluded) is vacuous, not green.
+	if len(comps) == 0 {
+		return fmt.Errorf("srctest run: 0 comparisons (%d excluded); refusing to pass vacuously", skipped)
+	}
 	if div > 0 {
 		return fmt.Errorf("%d divergences", div)
 	}

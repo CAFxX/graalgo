@@ -307,6 +307,11 @@ func cmdSnapshotRecord(args []string) error {
 	if err != nil {
 		return err
 	}
+	// R08-H-03: recording a fully-excluded corpus writes an empty snapshot,
+	// against which check then reports "0 programs, 0 drifted" and exits 0.
+	if len(progs) == 0 {
+		return fmt.Errorf("snapshot record: all %d corpus programs excluded; refusing to record an empty snapshot", len(skipped))
+	}
 	corpusRoot, err := filepath.Abs(sf.corpus)
 	if err != nil {
 		return fmt.Errorf("resolve corpus dir: %w", err)
@@ -382,6 +387,14 @@ func cmdSnapshotCheck(args []string) error {
 	cfg, b, progs, skipped, err := loadSnapshotDeps(sf)
 	if err != nil {
 		return err
+	}
+	// R08-H-03: checking against an empty snapshot, or with a fully-excluded
+	// corpus, reports "0 programs, 0 drifted" and exits 0 — vacuous, not green.
+	if len(snap.Programs) == 0 {
+		return fmt.Errorf("snapshot check: snapshot %s records 0 programs; refusing to check vacuously", sf.snapshotPath)
+	}
+	if len(progs) == 0 {
+		return fmt.Errorf("snapshot check: all %d corpus programs excluded; refusing to check vacuously", len(skipped))
 	}
 	// Coverage gate: the exclusion list is part of the baseline. A program
 	// silently leaving (or joining) the snapshot is drift.
