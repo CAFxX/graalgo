@@ -947,7 +947,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// removing them would silently drop the variable; user package-level
 	// vars instead export as globals via the PKG-035 link. Only the
 	// in-place local eta-expansions (:=, literal fields) apply.
-	_, _ = etaExpandMRFuncValues(files, info, pkg, false)
+	etaExpandMRFuncValues(files, info, pkg, false)
 
 	e := &exporter{
 		fset:    fset,
@@ -3068,11 +3068,6 @@ type exporter struct {
 	// statement. Maps a transformed *ast.FuncLit -> its pair info, so
 	// exportDefine/exportVarSpec can link the LHS variable(s).
 	funcLitMRInfo map[*ast.FuncLit]*userMRInfo
-	// General (real-x509 lane): maps Vars to their eta-expanded FuncLit
-	// initializers (from buildDiskPackage). Used by userMRInfoForVar to
-	// find the pair info for disk-package vars (e.g. path/filepath's
-	// lstat) where the link wasn't established during export.
-	etaVarLits map[*types.Var]*ast.FuncLit
 	// General (real-x509 lane): maps Vars to the multi-result Func they
 	// alias (e.g. path/filepath's lstat -> os.Lstat). Call sites through
 	// the Var desugar as the aliased Func via the table.
@@ -9037,6 +9032,23 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		return e.exportTypeConversion(c, tn)
 	}
 	if v, ok := e.info.Uses[funIdent].(*types.Var); ok {
+		// R10-03: a call through an MR func-var ALIAS (e.g. lstat ->
+		// os.Lstat) that reaches here escaped every desugar position
+		// (return/assignment/bare-statement/argument hoisting all
+		// consult classifyMultiResultCall first). The var holds no
+		// value — its declaration was removed — so exporting the Fun
+		// ident below would fail with the misleading "used before
+		// declaration". Fail fast with the same WS D scope error a
+		// direct call to the aliased Func reports in an unsupported
+		// position (callType's "multi-valued call result ... is not
+		// supported"), naming the aliased Func.
+		if aliasedFn, ok := e.varFuncAliases[v]; ok {
+			name := aliasedFn.Name()
+			if aliasedFn.Pkg() != nil {
+				name = aliasedFn.Pkg().Path() + "." + name
+			}
+			return nil, scopeErrorf("multi-valued call result for %s is not supported in frontend/v1 scope (WS D)", name)
+		}
 		// M5 (WS F): call through a func-valued variable (recursion,
 		// `defer f()`). The variable's signature type is already in the
 		// type table; the factory builds a func-value call node.

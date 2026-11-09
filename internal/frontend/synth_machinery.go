@@ -26,10 +26,6 @@ type syntheticPackage struct {
 	// raws parallels files for multi-file disk packages (WS G); nil for
 	// embedded single-file synthetic sources (raw covers the one file).
 	raws [][]byte
-	// etaVarLits maps package-level Vars (e.g. path/filepath's lstat)
-	// to their eta-expanded FuncLit initializers, for MR-closure-var
-	// linking. Populated by etaExpandMRFuncValues (real-x509 lane).
-	etaVarLits map[*types.Var]*ast.FuncLit
 	// varFuncAliases maps package-level Vars (e.g. path/filepath's
 	// lstat) to the multi-result *types.Func they alias (e.g.
 	// os.Lstat), for direct call-site desugar without eta-expansion.
@@ -875,12 +871,16 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
-	// where F is multi-result.
-	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg, true)
+	// where F is multi-result. R10-03: the alias map MUST be wired into
+	// the returned package (like buildDiskPackage does) — the call
+	// discards nothing: removePkgSpecs=true removes the matching
+	// package-level declarations, so the aliases are the only record
+	// that call sites through x desugar as the aliased Func.
+	varAliases := etaExpandMRFuncValues([]*ast.File{file}, info, pkg, true)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
-		raw: []byte(src),
+		raw: []byte(src), varFuncAliases: varAliases,
 	}
 }
 
@@ -997,17 +997,8 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 		e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
 		e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 	}()
-	// General (real-x509 lane): copy eta-expanded Var->FuncLit mappings
-	// and Var->Func aliases for MR-closure-var linking (e.g.
-	// path/filepath's lstat).
-	if len(sp.etaVarLits) > 0 {
-		if e.etaVarLits == nil {
-			e.etaVarLits = make(map[*types.Var]*ast.FuncLit)
-		}
-		for v, lit := range sp.etaVarLits {
-			e.etaVarLits[v] = lit
-		}
-	}
+	// General (real-x509 lane): copy Var->Func aliases for
+	// MR-closure-var linking (e.g. path/filepath's lstat).
 	if len(sp.varFuncAliases) > 0 {
 		if e.varFuncAliases == nil {
 			e.varFuncAliases = make(map[*types.Var]*types.Func)

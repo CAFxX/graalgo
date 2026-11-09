@@ -1489,24 +1489,19 @@ func targsFromRecv(recv types.Type) []types.Type {
 // userMRInfoForVar returns the MR pair info for a variable holding a
 // multi-result closure. The link is established at the variable's
 // definition (exportPackageVars, exportVarSpec, importSyntheticPackage).
-// For disk-package vars with eta-expanded initializers (e.g.
-// path/filepath's lstat), the FuncLit is found via e.etaVarLits and its
-// pair info via e.funcLitMRInfo. For vars aliasing a Func (e.g. lstat ->
-// os.Lstat), the table info is used. General (real-x509 lane).
+// For vars aliasing a Func (e.g. lstat -> os.Lstat), the table info is
+// used. General (real-x509 lane).
 func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
 	if mrInfo, ok := e.userMRVars[v]; ok {
 		return mrInfo
 	}
-	// Fallback: eta-expanded var (disk package). Find the FuncLit and
-	// its pair info.
-	if lit, ok := e.etaVarLits[v]; ok {
-		if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
-			e.userMRVars[v] = mrInfo
-			return mrInfo
-		}
-	}
 	// Fallback: var aliases a Func (e.g. lstat -> os.Lstat). Get the
-	// table MR info for the aliased Func.
+	// table MR info for the aliased Func. This is pair TYPE info only
+	// (callType's use); it must never be turned into an mrUser call
+	// plan — an alias var holds no value (its declaration was removed),
+	// so a call through it can only desugar as the aliased Func via
+	// the table plan (classifyMultiResultCall checks varFuncAliases
+	// before consulting this function). See R10-03.
 	if aliasedFn, ok := e.varFuncAliases[v]; ok {
 		pkgPath := ""
 		if aliasedFn.Pkg() != nil {
@@ -1557,18 +1552,22 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// func lit's pair info at its definition; desugar via the pair
 		// exactly like a named user MR function.
 		if v, ok := e.info.Uses[id].(*types.Var); ok {
-			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
-				}
-			}
-			// General (real-x509 lane): Var aliases a multi-result Func
-			// (e.g. path/filepath's lstat -> os.Lstat). Desugar as the
-			// aliased Func via the table.
+			// R10-03: Var aliases a multi-result Func (e.g.
+			// path/filepath's lstat -> os.Lstat, or a synthetic
+			// package's var MyLstat = os.Lstat). Check the alias
+			// FIRST, before userMRInfoForVar: an alias var holds no
+			// value — etaExpandMRFuncValues REMOVED its declaration
+			// — so the mrUser plan userMRInfoForVar would return is
+			// unexportable (hoistMRCallArg/desugarMultiResult export
+			// the call via exportCall, which exports the Fun ident
+			// and fails "used before declaration" because the var
+			// never got an object id). The only faithful desugar is
+			// AS the aliased Func via the table: the table plan
+			// builds the __-helper call without ever exporting the
+			// Fun ident. userMRInfoForVar's alias fallback stays for
+			// callType (pair type info only) — it must never be used
+			// to build a call plan for an alias var.
 			if aliasedFn, ok := e.varFuncAliases[v]; ok {
-				// Build a synthetic SelectorExpr call for classification.
 				// The table classifiers take (pkgPath, fn, targs).
 				pkgPath := ""
 				if aliasedFn.Pkg() != nil {
@@ -1585,6 +1584,19 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				if plan := classifyM8MultiResultCall(pkgPath, aliasedFn, nil); plan != nil {
 					return plan
+				}
+			}
+			// MR-closure-var: call through a variable holding a
+			// multi-result closure (e.g. readModuleLine(elem) where
+			// readModuleLine := func(...) (T, error) {...}). The
+			// variable was linked to the func lit's pair info at its
+			// definition; desugar via the pair exactly like a named
+			// user MR function.
+			if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
 				}
 			}
 			return nil
@@ -4341,16 +4353,24 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 }
 
 // etaExpandMRFuncValues rewrites variable initializers that capture a
-// multi-result function as a value:
+// multi-result function as a value. Two cases:
 //
-//	var lstat = os.Lstat  →  var lstat = func(name string) (os.FileInfo, error) { return os.Lstat(name) }
+//   - Local captures (`x := pkg.F`, struct/map literal fields holding
+//     pkg.F): eta-expanded IN PLACE to a wrapper closure —
+//     `x := func(name string) (os.FileInfo, error) { return os.Lstat(name) }`.
+//   - Package-level `var x = pkg.F`: the alias (x -> F) is recorded and
+//     returned; the declaration is REMOVED iff removePkgSpecs is true.
+//     Call sites through x are NOT rewritten in the AST — they desugar
+//     at export time via the caller's varFuncAliases map (see
+//     userMRInfoForVar and the varFuncAliases case in
+//     classifyMultiResultCall).
 //
 // Rationale (general, real-x509 lane): frontend/v1 cannot represent a
 // multi-result function as a value (M5 scope error "X in value position
 // ... multi-result function values require v2"). Eta-expansion is the
-// semantics-preserving general fix: the wrapper is an ordinary
-// multi-result closure, which the existing machinery already handles —
-// exportFuncLit pair-transforms it, the MR-closure-var link
+// semantics-preserving general fix for the local case: the wrapper is an
+// ordinary multi-result closure, which the existing machinery already
+// handles — exportFuncLit pair-transforms it, the MR-closure-var link
 // (linkFuncLitMRVars and the exportPackageVars ValueSpec case) connects
 // call sites through the variable to the pair info, and the inner call
 // desugars through the standard multi-result call path
@@ -4365,21 +4385,29 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 //
 // removePkgSpecs controls the package-level `var x = pkg.F` removal:
 // pass true ONLY where the caller consumes the returned alias map
-// (buildDiskPackage wires it into the exporter's varFuncAliases, so call
-// sites through x desugar as the aliased Func). ExportFiles discards the
-// maps, so removing there would silently drop the variable with nothing
-// rewriting its uses — user package-level vars instead keep the PKG-035
-// path (emitted as globals whose initializer links to the pair info via
+// (buildDiskPackage and buildSyntheticPackage wire it into the
+// exporter's varFuncAliases, so call sites through x desugar as the
+// aliased Func). ExportFiles discards the alias map, so removing there
+// would silently drop the variable with nothing rewriting its uses —
+// user package-level vars instead keep the PKG-035 path (emitted as
+// globals whose initializer links to the pair info via
 // mrInfoForFuncValueInit). With removePkgSpecs=false the local
 // eta-expansions (:= and struct/map literal fields) still apply: those
 // rewrite the AST in place and need no map.
-func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package, removePkgSpecs bool) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
-	// Returns (var->FuncLit map, var->Func alias map).
+//
+// R10-P2-02: the function used to return a second (var -> FuncLit) map
+// alongside the alias map, and had a "rewrite idents" pass that built a
+// pkgIdent and discarded it. Neither ever did anything: no FuncLit is
+// ever created for a package-level var (the alias path is the only
+// mechanism), so the first map was always empty and its consumer
+// (userMRInfoForVar's etaVarLits fallback) could never hit. Both are
+// deleted; the alias map is the single return value.
+func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package, removePkgSpecs bool) map[*types.Var]*types.Func {
+	// Returns the var->Func alias map.
 	// For package-level `var x = pkg.F` where F is multi-result, we record
 	// the alias (x -> F) and, when removePkgSpecs is true, REMOVE the
 	// declaration (to avoid the v1 value-position limitation). Call sites
-	// through x are rewritten to pkg.F directly (real-x509 lane).
-	varLits := make(map[*types.Var]*ast.FuncLit)
+	// through x desugar via the alias map at export time (real-x509 lane).
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
 		// Collect ValueSpecs to remove (can't modify during Inspect).
@@ -4434,10 +4462,9 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 			}
 			return true
 		})
-		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
-		// (Simplified: just remove; call-site rewriting via alias map.)
-		// Skipped entirely when removePkgSpecs is false: the specs stay
-		// and the caller exports them through its own mechanism.
+		// Remove the marked ValueSpecs. Call sites through the removed
+		// vars desugar via the returned alias map at export time; no
+		// ident rewriting happens here (R10-P2-02).
 		if !removePkgSpecs {
 			toRemove = nil
 		}
@@ -4454,28 +4481,8 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 				}
 			}
 		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
-		}
 	}
-	return varLits, aliases
+	return aliases
 }
 
 // etaExpandFuncValue returns the eta-expanded wrapper closure for v when v
