@@ -771,11 +771,13 @@ func TestSame(t *testing.T) { extRan = true }
 		t.Errorf("driver did not rename the external test function:\n%s", src)
 	}
 	// The external file's main entry calls the renamed function; the
-	// white-box entry calls the pristine one.
-	if strings.Count(src, "TestSame2(tt)") != 1 {
+	// white-box entry calls the pristine one. Both go through
+	// tt.runBody (R20B-03: the main runner classifies panics and
+	// drains cleanups there), so the call shape is runBody(name).
+	if strings.Count(src, "runBody(TestSame2)") != 1 {
 		t.Errorf("driver does not call the renamed test exactly once:\n%s", src)
 	}
-	if strings.Count(src, "TestSame(tt)") != 1 {
+	if strings.Count(src, "runBody(TestSame)") != 1 {
 		t.Errorf("driver does not call the white-box test exactly once:\n%s", src)
 	}
 }
@@ -1065,4 +1067,402 @@ func TestWhiteBox(t *testing.T) {
 	if !strings.Contains(err.Error(), "sib_test.go") {
 		t.Errorf("error does not name the broken file: %v", err)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// R20B-03 regression tests: the graalgoT shim's FailNow, Parallel,
+// Cleanup, TempDir, Setenv, Chdir, Deadline, and Context methods.
+//
+// Each test synthesizes a driver for a small fixture package with the
+// testsub_test.go harness (writeSubtestPkg + runSynthDriver) and RUNS
+// it with the gc toolchain (`go run`), asserting exit code and output
+// — not just the generated source. On unpatched code these fixtures
+// fail frontend type-checking ("undefined: (*graalgoT).FailNow", ...),
+// so a green run here is the GREEN proof and a red run on the base is
+// the RED proof (see the lane's evidence, not a committed failing
+// test).
+// ---------------------------------------------------------------------------
+
+// mustBeOrdered fails unless the needles appear in out in the given order.
+func mustBeOrdered(t *testing.T, out string, needles ...string) {
+	t.Helper()
+	pos := -1
+	for _, n := range needles {
+		i := strings.Index(out[pos+1:], n)
+		if i < 0 {
+			t.Errorf("driver output missing %q (in order):\n%s", n, out)
+			return
+		}
+		pos += 1 + i
+	}
+}
+
+// TestShimMethodsPresentInDriver is the source-level guard: every new
+// shim method, the runBody/runCleanups pair, the context import, and
+// the runBody call in generated main must appear in a synthesized
+// driver. If the template or the import wiring regresses, the
+// behavioral tests below fail at compile time with a confusing driver
+// error; this test names the missing piece.
+func TestShimMethodsPresentInDriver(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/shimtest\n\ngo 1.21\n")
+	writeFile(t, root, "p_test.go", `package shimtest
+
+import "testing"
+
+func TestTrivial(t *testing.T) {}
+`)
+	src := synthDriver(t, root,
+		[]fileTests{{file: filepath.Join(root, "p_test.go"), tests: []string{"TestTrivial"}}},
+		nil)
+	for _, want := range []string{
+		"func (t *graalgoT) FailNow()",
+		"func (t *graalgoT) Parallel()",
+		"func (t *graalgoT) Cleanup(",
+		"func (t *graalgoT) TempDir()",
+		"func (t *graalgoT) Setenv(",
+		"func (t *graalgoT) Chdir(",
+		"func (t *graalgoT) Deadline()",
+		"func (t *graalgoT) Context()",
+		"func (t *graalgoT) runBody(",
+		"func (t *graalgoT) runCleanups()",
+		"type graalgoCtx struct",
+		`"context"`,
+		"tt.runBody(TestTrivial)",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("driver missing %q", want)
+		}
+	}
+}
+
+// TestShimFailNowStopsTestAndSiblingsRun: FailNow fails the test,
+// code after it never runs, the registered cleanup still runs, and
+// the next test still executes.
+func TestShimFailNowStopsTestAndSiblingsRun(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestFailNow(t *testing.T) {
+	t.Cleanup(func() { t.Log("cleanup-after-failnow") })
+	t.FailNow()
+	t.Error("unreachable: code after FailNow ran")
+}
+
+func TestAfterFailNow(t *testing.T) {
+	t.Log("after-runs")
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1:\n%s", code, out)
+	}
+	mustContain(t, out, "--- FAIL: TestFailNow")
+	mustContain(t, out, "--- PASS: TestAfterFailNow")
+	mustContain(t, out, "cleanup-after-failnow")
+	mustContain(t, out, "after-runs")
+	mustNotContain(t, out, "unreachable")
+}
+
+// TestShimCleanupLIFOAndDrain: cleanups run last-added first-called,
+// a cleanup registered from within a cleanup drains in the same pass,
+// and a panicking cleanup fails the test without stopping the rest.
+func TestShimCleanupLIFOAndDrain(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestCleanupOrder(t *testing.T) {
+	t.Cleanup(func() { t.Log("cleanup-1") })
+	t.Cleanup(func() { t.Log("cleanup-2") })
+	t.Cleanup(func() {
+		t.Log("cleanup-3-registers-4")
+		t.Cleanup(func() { t.Log("cleanup-4") })
+	})
+	t.Log("body")
+}
+
+func TestCleanupPanicStillRunsRest(t *testing.T) {
+	t.Cleanup(func() { t.Log("cleanup-a") })
+	t.Cleanup(func() { panic("boom-cleanup") })
+	t.Cleanup(func() { t.Log("cleanup-c") })
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1 (cleanup panic fails the test):\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestCleanupOrder")
+	mustContain(t, out, "--- FAIL: TestCleanupPanicStillRunsRest")
+	mustContain(t, out, "cleanup-a")
+	mustContain(t, out, "cleanup-c")
+	mustContain(t, out, "panic: boom-cleanup")
+	mustBeOrdered(t, out, "body", "cleanup-3-registers-4", "cleanup-4", "cleanup-2", "cleanup-1")
+}
+
+// TestShimParallel: Parallel alone is a marker (the test passes); a
+// second Parallel, Setenv-then-Parallel, and Parallel-then-Setenv all
+// fail with go test's exact messages.
+func TestShimParallel(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestParallelOK(t *testing.T) {
+	t.Parallel()
+}
+
+func TestParallelTwice(t *testing.T) {
+	t.Parallel()
+	t.Parallel()
+	t.Error("unreachable: second Parallel did not panic")
+}
+
+func TestSetenvThenParallel(t *testing.T) {
+	t.Setenv("GRAALGO_SHIM_TEST_PARALLEL_X", "1")
+	t.Parallel()
+}
+
+func TestParallelThenSetenv(t *testing.T) {
+	t.Parallel()
+	t.Setenv("GRAALGO_SHIM_TEST_PARALLEL_X", "1")
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestParallelOK")
+	mustContain(t, out, "--- FAIL: TestParallelTwice")
+	mustContain(t, out, "testing: t.Parallel called multiple times")
+	mustContain(t, out, "--- FAIL: TestSetenvThenParallel")
+	mustContain(t, out, "--- FAIL: TestParallelThenSetenv")
+	mustContain(t, out, "testing: test using t.Setenv, t.Chdir, or cryptotest.SetGlobalRandom can not use t.Parallel")
+	mustNotContain(t, out, "unreachable")
+}
+
+// TestShimTempDir: numbered subdirectories 001, 002, ... under one
+// parent, and the parent is removed when the (sub)test completes.
+func TestShimTempDir(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var subParent string
+
+func TestTempDirNumbered(t *testing.T) {
+	d1 := t.TempDir()
+	d2 := t.TempDir()
+	if d1 == d2 {
+		t.Fatal("TempDir returned the same dir twice")
+	}
+	if !strings.HasSuffix(d1, "001") {
+		t.Errorf("d1 %q lacks 001 suffix", d1)
+	}
+	if !strings.HasSuffix(d2, "002") {
+		t.Errorf("d2 %q lacks 002 suffix", d2)
+	}
+	if _, err := os.Stat(d1); err != nil {
+		t.Errorf("d1 missing: %v", err)
+	}
+	if _, err := os.Stat(d2); err != nil {
+		t.Errorf("d2 missing: %v", err)
+	}
+	if !strings.HasPrefix(d1, os.TempDir()) {
+		t.Errorf("d1 %q is not under os.TempDir() %q", d1, os.TempDir())
+	}
+}
+
+func TestTempDirRemovedAfterSubtest(t *testing.T) {
+	ok := t.Run("sub", func(t *testing.T) {
+		d := t.TempDir()
+		subParent = filepath.Dir(d)
+	})
+	if !ok {
+		t.Fatal("subtest failed")
+	}
+	if _, err := os.Stat(subParent); !os.IsNotExist(err) {
+		t.Errorf("TempDir parent %q still exists after subtest", subParent)
+	}
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestTempDirNumbered")
+	mustContain(t, out, "--- PASS: TestTempDirRemovedAfterSubtest")
+}
+
+// TestShimSetenv: Setenv takes effect inside the test, restores the
+// previous value afterwards, and unsets a previously-unset variable.
+func TestShimSetenv(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"os"
+	"testing"
+)
+
+func TestSetenvRestores(t *testing.T) {
+	t.Setenv("GRAALGO_SHIM_TEST_SETENV", "orig")
+	ok := t.Run("sub", func(t *testing.T) {
+		t.Setenv("GRAALGO_SHIM_TEST_SETENV", "changed")
+		if got := os.Getenv("GRAALGO_SHIM_TEST_SETENV"); got != "changed" {
+			t.Errorf("inside subtest: got %q, want changed", got)
+		}
+		t.Setenv("GRAALGO_SHIM_TEST_NEWVAR", "new")
+		if got := os.Getenv("GRAALGO_SHIM_TEST_NEWVAR"); got != "new" {
+			t.Errorf("new var: got %q, want new", got)
+		}
+	})
+	if !ok {
+		t.Fatal("subtest failed")
+	}
+	if got := os.Getenv("GRAALGO_SHIM_TEST_SETENV"); got != "orig" {
+		t.Errorf("after subtest: got %q, want orig", got)
+	}
+	if _, ok := os.LookupEnv("GRAALGO_SHIM_TEST_NEWVAR"); ok {
+		t.Error("new var still set after subtest")
+	}
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestSetenvRestores")
+}
+
+// TestShimChdir: Chdir changes the directory and PWD inside the test
+// and restores both afterwards; Chdir to a missing directory fails
+// the test and stops it.
+func TestShimChdir(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestChdirRestores(t *testing.T) {
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	ok := t.Run("sub", func(t *testing.T) {
+		t.Chdir(target)
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, _ := filepath.EvalSymlinks(target)
+		if wd != target && wd != want {
+			t.Errorf("inside subtest: wd %q, want %q", wd, target)
+		}
+		if got := os.Getenv("PWD"); got != wd {
+			t.Errorf("PWD %q, want %q", got, wd)
+		}
+	})
+	if !ok {
+		t.Fatal("subtest failed")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wd != orig {
+		t.Errorf("after subtest: wd %q, want %q", wd, orig)
+	}
+}
+
+func TestChdirMissingFails(t *testing.T) {
+	t.Chdir("/nonexistent-dir-graalgo-shim-test")
+	t.Error("unreachable: Chdir to missing dir did not stop the test")
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestChdirRestores")
+	mustContain(t, out, "--- FAIL: TestChdirMissingFails")
+	mustContain(t, out, "chdir /nonexistent-dir-graalgo-shim-test")
+	mustNotContain(t, out, "unreachable")
+}
+
+// TestShimDeadlineAndContext: no deadline is reported, Context is
+// stable across calls, and it is canceled before cleanups run.
+func TestShimDeadlineAndContext(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestDeadlineAndContext(t *testing.T) {
+	d, ok := t.Deadline()
+	if ok {
+		t.Error("Deadline returned ok=true, want false")
+	}
+	if !d.IsZero() {
+		t.Errorf("Deadline returned %v, want zero Time", d)
+	}
+	ctx := t.Context()
+	if ctx == nil {
+		t.Fatal("Context returned nil")
+	}
+	if err := ctx.Err(); err != nil {
+		t.Errorf("Context.Err() = %v, want nil during test", err)
+	}
+	if ctx != t.Context() {
+		t.Error("Context returned a different context on second call")
+	}
+	t.Cleanup(func() {
+		if err := ctx.Err(); err == nil {
+			t.Error("context not canceled before cleanup")
+		}
+		select {
+		case <-ctx.Done():
+		default:
+			t.Error("context Done channel not closed before cleanup")
+		}
+	})
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 0 {
+		t.Errorf("driver exit code = %d, want 0:\n%s", code, out)
+	}
+	mustContain(t, out, "--- PASS: TestDeadlineAndContext")
+}
+
+// TestShimErrorFormatsAsMessage: errors passed to Error/Logf format as
+// their message, not "<value>" (the shim toString error case).
+func TestShimErrorFormatsAsMessage(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import (
+	"errors"
+	"testing"
+)
+
+func TestErrorFormatsAsMessage(t *testing.T) {
+	t.Error(errors.New("boom-message"))
+	t.Logf("wrapped %v", errors.New("wrap-message"))
+}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 1 {
+		t.Errorf("driver exit code = %d, want 1:\n%s", code, out)
+	}
+	mustContain(t, out, "boom-message")
+	mustContain(t, out, "wrap-message")
+	mustNotContain(t, out, "<value>")
 }

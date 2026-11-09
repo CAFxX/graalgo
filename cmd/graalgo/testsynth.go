@@ -62,6 +62,12 @@ type graalgoT struct {
 	skipped    bool
 	output     []string // buffered detail lines (flushed on failure when !verbose)
 	subresults []string // buffered subtest result lines (flushed after own result)
+	cleanups   []func() // registered via Cleanup; drained LIFO by runCleanups
+	parallel   bool     // Parallel was called (sequential driver: marker only)
+	denyParallel bool   // Setenv/Chdir was called; Parallel now panics
+	tempDir    string   // per-test TempDir parent ("" until first TempDir)
+	tempDirSeq int      // numbered TempDir subdirs: 001, 002, ...
+	ctx        *graalgoCtx // per-test context (nil until first Context call)
 }
 
 // graalgoTestSignal is the panic value for Skip/Fatal control flow.
@@ -70,6 +76,52 @@ type graalgoT struct {
 // fatal however its message reads.
 type graalgoTestSignal struct {
 	fatal bool
+}
+
+// graalgoParallelConflict is go test's parallelConflict message: a test
+// that used Setenv or Chdir cannot use Parallel, and vice versa.
+const graalgoParallelConflict = "testing: test using t.Setenv, t.Chdir, or cryptotest.SetGlobalRandom can not use t.Parallel"
+
+// graalgoCtx is the shim's context.Context implementation, defined in
+// the driver rather than taken from the synthetic context package.
+// The synthetic context's values cannot be boxed into a
+// context.Context interface on the backend: P4 restored Deadline to
+// the synthetic Context interface, but the frontend's method tables
+// never learned to map Deadline to __deadlineOf, so any itab build
+// for a synthetic context implementation fails with 'method
+// "Deadline" missing' (observed e2e: the Context test crashed the
+// whole driver, and the standalone tc08 WithCancel program crashes
+// the same way). A driver-defined type has all four methods exported
+// normally, so its dispatch table is complete. If the frontend ever
+// maps Deadline for itabs, the shim can switch back to
+// context.WithCancel — the observable behavior is identical either
+// way (lazy creation; canceled just before cleanups run).
+type graalgoCtx struct {
+	done     chan struct{}
+	canceled bool
+}
+
+func (c *graalgoCtx) Deadline() (time.Time, bool) { return time.Time{}, false }
+
+func (c *graalgoCtx) Done() <-chan struct{} { return c.done }
+
+func (c *graalgoCtx) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func (c *graalgoCtx) Value(key any) any { return nil }
+
+// cancel closes Done; idempotent, so runCleanups can call it safely.
+func (c *graalgoCtx) cancel() {
+	if !c.canceled {
+		c.canceled = true
+		close(c.done)
+	}
 }
 
 // logLine emits a detail line: immediately in verbose mode, buffered
@@ -155,6 +207,243 @@ func (t *graalgoT) Skipped() bool {
 	return t.skipped
 }
 
+// fatalMsg marks the test failed, logs s, and stops the test
+// immediately (FailNow semantics) — for failures raised by the shim
+// itself (Setenv/Chdir/TempDir errors), where there is no test-code
+// call site to attach a file:line to. It never logs a spurious
+// "panic:" line: the signal is classified by type, not message.
+func (t *graalgoT) fatalMsg(s string) {
+	t.failed = true
+	t.logLine("    " + s)
+	panic(graalgoTestSignal{fatal: true})
+}
+
+// FailNow marks the test failed and stops it immediately, like
+// testing.T.FailNow: code after the call never runs, but cleanups
+// registered with Cleanup still run — the panic unwinds through
+// runBody, which drains them before recording the outcome.
+func (t *graalgoT) FailNow() {
+	t.failed = true
+	panic(graalgoTestSignal{fatal: true})
+}
+
+// Parallel marks the test parallel. The driver runs tests serially, so
+// this is a marker only: there is no barrier to wait on and the test
+// continues immediately — a documented divergence from go test, where
+// Parallel pauses until all non-parallel tests finish. Calling
+// Parallel twice panics, and it panics after Setenv/Chdir on the same
+// test — and Setenv/Chdir panic on a parallel test — with the same
+// messages as go test. Enforcement is per-receiver only: go test
+// walks ancestors (a parallel ancestor also denies Setenv/Chdir);
+// the shim has no parent link to walk.
+func (t *graalgoT) Parallel() {
+	if t.parallel {
+		panic("testing: t.Parallel called multiple times")
+	}
+	if t.denyParallel {
+		panic(graalgoParallelConflict)
+	}
+	t.parallel = true
+}
+
+// Cleanup registers f to run when the test (or subtest) completes,
+// last-added first-called, including after FailNow/Skip. A cleanup
+// that fails the test (or panics) lets the remaining cleanups run,
+// and cleanups registered from within a cleanup also drain. A
+// cleanup registered after the test finished never runs (go test
+// parity: it is appended to a list runCleanup already drained).
+func (t *graalgoT) Cleanup(f func()) {
+	t.cleanups = append(t.cleanups, f)
+}
+
+// runBody runs f, then runs cleanups. Any panic from f is classified
+// on the receiver (fatal signal -> failed, skip signal -> skipped,
+// anything else -> failed with a "panic:" line) and never propagates:
+// after runBody returns the receiver carries the outcome and every
+// cleanup has run — matching go test, where FailNow/Skip/panic still
+// run the test's cleanups before the result is recorded.
+func (t *graalgoT) runBody(f func(*graalgoT)) {
+	defer func() {
+		if r := recover(); r != nil {
+			if sig, ok := r.(graalgoTestSignal); ok {
+				if sig.fatal {
+					t.failed = true
+				} else {
+					t.skipped = true
+				}
+			} else {
+				t.failed = true
+				t.logLine("panic: " + toString(r))
+			}
+		}
+		t.runCleanups()
+	}()
+	f(t)
+}
+
+// runCleanups cancels the test's context first (closing its Done
+// channel), then drains cleanups LIFO. Each cleanup runs under its
+// own recover: a cleanup that panics fails the test (or skips it,
+// for a Skip signal) but lets the remaining cleanups run, and
+// cleanups registered by a cleanup drain in the same pass.
+// Canceling is idempotent, so calling runCleanups twice is safe.
+func (t *graalgoT) runCleanups() {
+	if t.ctx != nil {
+		t.ctx.cancel()
+	}
+	for len(t.cleanups) > 0 {
+		f := t.cleanups[len(t.cleanups)-1]
+		t.cleanups = t.cleanups[:len(t.cleanups)-1]
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if sig, ok := r.(graalgoTestSignal); ok {
+						if sig.fatal {
+							t.failed = true
+						} else {
+							t.skipped = true
+						}
+					} else {
+						t.failed = true
+						t.logLine("panic: " + toString(r))
+					}
+				}
+			}()
+			f()
+		}()
+	}
+}
+
+// TempDir returns a fresh temporary directory for the test; each call
+// returns a unique directory, and the parent is removed when the test
+// completes. It mirrors go test: one lazily-created parent per test
+// (os.MkdirTemp under $GOTMPDIR, named after the test, truncated to 64
+// characters with unusual characters dropped), numbered
+// subdirectories 001, 002, ... Creation failure terminates the test
+// (Fatal). The name sanitize keeps [A-Za-z0-9] plus
+// "!#$%&()+,-.=@^_{}~ " (go test additionally keeps Unicode letters
+// and numbers; test names are Go identifiers, so the ASCII-only form
+// is equivalent in practice). The zero-padding is spelled out because
+// the shim's sprintf has no %03d.
+func (t *graalgoT) TempDir() string {
+	if t.tempDir == "" {
+		pattern := t.name
+		if len(pattern) > 64 {
+			pattern = pattern[:64]
+		}
+		sanitized := ""
+		for i := 0; i < len(pattern); i++ {
+			c := pattern[i]
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+				c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '(' ||
+				c == ')' || c == '+' || c == ',' || c == '-' || c == '.' || c == '=' ||
+				c == '@' || c == '^' || c == '_' || c == '{' || c == '}' || c == '~' || c == ' ' {
+				sanitized += string(c)
+			}
+		}
+		parent, err := os.MkdirTemp(os.Getenv("GOTMPDIR"), sanitized)
+		if err != nil {
+			t.fatalMsg("TempDir: " + err.Error())
+		}
+		t.tempDir = parent
+		t.Cleanup(func() {
+			if err := os.RemoveAll(t.tempDir); err != nil {
+				t.failed = true
+				t.logLine("    TempDir RemoveAll cleanup: " + err.Error())
+			}
+		})
+	}
+	t.tempDirSeq++
+	seq := itoa(int64(t.tempDirSeq))
+	if t.tempDirSeq < 10 {
+		seq = "00" + seq
+	} else if t.tempDirSeq < 100 {
+		seq = "0" + seq
+	}
+	dir := t.tempDir + string(os.PathSeparator) + seq
+	if err := os.Mkdir(dir, 0777); err != nil {
+		t.fatalMsg("TempDir: " + err.Error())
+	}
+	return dir
+}
+
+// Setenv sets an environment variable for the duration of the test,
+// restoring the previous value (or unsetting it) via Cleanup. It
+// panics on a parallel test, and marks the test so a later Parallel
+// panics — with the same messages as go test. A Setenv error
+// terminates the test (Fatal).
+func (t *graalgoT) Setenv(key, value string) {
+	if t.parallel {
+		panic(graalgoParallelConflict)
+	}
+	t.denyParallel = true
+	prev, ok := os.LookupEnv(key)
+	if err := os.Setenv(key, value); err != nil {
+		t.fatalMsg("cannot set environment variable: " + err.Error())
+	}
+	if ok {
+		t.Cleanup(func() { os.Setenv(key, prev) })
+	} else {
+		t.Cleanup(func() { os.Unsetenv(key) })
+	}
+}
+
+// Chdir changes the working directory for the duration of the test
+// and sets PWD to the new directory, restoring both via Cleanup. It
+// panics on a parallel test, and marks the test so a later Parallel
+// panics — with the same messages as go test. A Chdir error
+// terminates the test (Fatal). Divergence from go test: the restore
+// re-enters the saved path with os.Chdir instead of the saved
+// directory file descriptor (go test restores via the dirfd, so it
+// survives the original path being renamed mid-test; the shim
+// restores by path). PWD is the absolute path from os.Getwd after
+// the chdir (go test keeps an already-absolute argument as-is and
+// resolves a relative one via Getwd; Getwd yields the same path
+// modulo symlink resolution).
+func (t *graalgoT) Chdir(dir string) {
+	if t.parallel {
+		panic(graalgoParallelConflict)
+	}
+	t.denyParallel = true
+	oldwd, err := os.Getwd()
+	if err != nil {
+		t.fatalMsg(err.Error())
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.fatalMsg(err.Error())
+	}
+	newwd, err := os.Getwd()
+	if err != nil {
+		t.fatalMsg(err.Error())
+	}
+	t.Setenv("PWD", newwd)
+	t.Cleanup(func() {
+		if err := os.Chdir(oldwd); err != nil {
+			panic("testing.Chdir: " + err.Error())
+		}
+	})
+}
+
+// Deadline reports the time at which the test binary will have
+// exceeded its timeout, if any. The driver has no timeout, so it
+// always reports no deadline — like go test for a test without one.
+func (t *graalgoT) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+// Context returns a context canceled just before the test's cleanups
+// run. The context is created lazily on first use (go test creates it
+// eagerly at test start; the two are indistinguishable — no test can
+// observe the context before calling Context). The value is a
+// graalgoCtx (see above): never a synthetic-context value, whose
+// boxing into this interface crashes the backend.
+func (t *graalgoT) Context() context.Context {
+	if t.ctx == nil {
+		t.ctx = &graalgoCtx{done: make(chan struct{})}
+	}
+	return t.ctx
+}
+
 func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
 	// === RUN lines are never indented, matching go test.
@@ -162,29 +451,15 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 		println("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
-	// Recover here so a Fatal/Skip/panic in the subtest ends only
-	// that subtest: its result line is still recorded, its outcome
-	// propagates to the parent below, and Run returns so siblings
-	// still run — matching go test. Without this, the panic unwinds
-	// the whole top-level test function and later siblings never
-	// execute, so a sibling that would have failed is never run.
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if sig, ok := r.(graalgoTestSignal); ok {
-					if sig.fatal {
-						sub.failed = true
-					} else {
-						sub.skipped = true
-					}
-				} else {
-					sub.failed = true
-					sub.logLine("panic: " + toString(r))
-				}
-			}
-		}()
-		f(sub)
-	}()
+	// runBody recovers here so a Fatal/Skip/panic in the subtest ends
+	// only that subtest: its result line is still recorded, its
+	// outcome propagates to the parent below, and Run returns so
+	// siblings still run — matching go test. Without this, the panic
+	// unwinds the whole top-level test function and later siblings
+	// never execute, so a sibling that would have failed is never
+	// run. runBody also drains the subtest's cleanups before
+	// returning.
+	sub.runBody(f)
 	dur := "(" + fmtDur2(time.Since(t0)) + ")"
 	if sub.failed {
 		t.failed = true
@@ -268,6 +543,8 @@ func toString(v interface{}) string {
 			return "true"
 		}
 		return "false"
+	case error:
+		return x.Error()
 	default:
 		return "<value>"
 	}
@@ -644,11 +921,17 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main uses time and os directly; the shim uses
+	// context directly (graalgoT.Context). A white-box package
+	// declaring a top-level context/time/os would break the shim
+	// via import aliasing — the same pre-existing hazard class as
+	// time/os today, documented, not fixed here.
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "context")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "context"}] = true
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -847,7 +1130,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoParallelConflict", "graalgoCtx", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -956,7 +1239,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoParallelConflict", "graalgoCtx", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1424,23 +1707,10 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				body.WriteString(fmt.Sprintf("\t\tprintln(\"=== RUN   %s\")\n", t))
 			}
 			body.WriteString("\t\tt0 := time.Now()\n")
-			body.WriteString("\t\tfunc() {\n")
-			body.WriteString("\t\t\tdefer func() {\n")
-			body.WriteString("\t\t\t\tif r := recover(); r != nil {\n")
-			body.WriteString("\t\t\t\t\tif sig, ok := r.(graalgoTestSignal); ok {\n")
-			body.WriteString("\t\t\t\t\t\tif sig.fatal {\n")
-			body.WriteString("\t\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t\t} else {\n")
-			body.WriteString("\t\t\t\t\t\t\ttt.skipped = true\n")
-			body.WriteString("\t\t\t\t\t\t}\n")
-			body.WriteString("\t\t\t\t\t} else {\n")
-			body.WriteString("\t\t\t\t\t\ttt.failed = true\n")
-			body.WriteString("\t\t\t\t\t\ttt.logLine(\"panic: \" + toString(r))\n")
-			body.WriteString("\t\t\t\t\t}\n")
-			body.WriteString("\t\t\t\t}\n")
-			body.WriteString("\t\t\t}()\n")
-			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
-			body.WriteString("\t\t}()\n")
+			// runBody classifies any Fatal/Skip/panic on tt and drains
+			// tt's cleanups before returning, so the outcome below is
+			// final — including failures raised by cleanups.
+			body.WriteString(fmt.Sprintf("\t\ttt.runBody(%s)\n", callName))
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			// One outcome computation shared by both modes: failure
 			// wins over skip, so a test that failed a subtest (or an
