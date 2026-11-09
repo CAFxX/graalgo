@@ -74,9 +74,11 @@ type graalgoTestSignal struct {
 
 // logLine emits a detail line: immediately in verbose mode, buffered
 // otherwise (flushed after the --- FAIL line, matching go test).
+// It writes to stdout via outLine: go test output is stdout, while
+// builtin println writes to stderr.
 func (t *graalgoT) logLine(s string) {
 	if graalgoVerbose {
-		println(s)
+		outLine(s)
 	} else {
 		t.output = append(t.output, s)
 	}
@@ -159,7 +161,7 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	sub := &graalgoT{name: t.name + "/" + name, depth: t.depth + 1}
 	// === RUN lines are never indented, matching go test.
 	if graalgoVerbose {
-		println("=== RUN   " + sub.name)
+		outLine("=== RUN   " + sub.name)
 	}
 	t0 := time.Now()
 	// Recover here so a Fatal/Skip/panic in the subtest ends only
@@ -644,11 +646,15 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// The generated main uses time and os directly.
+	// The generated main uses time, os and fmt directly: result lines
+	// go to stdout via fmt.Println (`go test` output is stdout, while
+	// builtin println writes to stderr).
 	addImport("", "time")
 	addImport("", "os")
+	addImport("", "fmt")
 	usedImports[importSpec{"", "time"}] = true
 	usedImports[importSpec{"", "os"}] = true
+	usedImports[importSpec{"", "fmt"}] = true
 
 	// declNames returns the identifiers a top-level declaration binds
 	// in the package block: plain function names (methods live in their
@@ -847,7 +853,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits", "outLine"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -1403,7 +1409,20 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// Shim + main runner. Per-test output mirrors `go test -v`:
 	// === RUN / --- PASS/FAIL/SKIP with (0.00s) timings, a single
 	// PASS/FAIL summary, and exit code 1 (no panic trace) on failure.
+	// fmtName is the emitted local name of the fmt import (usually
+	// "fmt"; aliased to fmt2, fmt3, ... when the package under test
+	// declares a top-level `fmt`, PKG-075 — fmt's own `type fmt
+	// struct`). Result lines use fmtName.Println so they keep working
+	// when the import is aliased.
+	fmtName := emitName[importSpec{"", "fmt"}]
 	body.WriteString(testShimSource(verbose))
+	// outLine writes one result line to stdout (`go test` output is
+	// stdout; builtin println writes to stderr). It lives outside the
+	// shim template so it can use the emitted fmt name above.
+	body.WriteString("\n// outLine writes a result line to stdout.\n")
+	body.WriteString("func outLine(s string) {\n")
+	body.WriteString("\t" + fmtName + ".Println(s)\n")
+	body.WriteString("}\n")
 	body.WriteString("\nfunc main() {\n")
 	body.WriteString("\tfailed := 0\n")
 	for _, tu := range testUnits {
@@ -1421,7 +1440,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t{\n")
 			body.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", t))
 			if verbose {
-				body.WriteString(fmt.Sprintf("\t\tprintln(\"=== RUN   %s\")\n", t))
+				body.WriteString(fmt.Sprintf("\t\t%s.Println(\"=== RUN   %s\")\n", fmtName, t))
 			}
 			body.WriteString("\t\tt0 := time.Now()\n")
 			body.WriteString("\t\tfunc() {\n")
@@ -1457,24 +1476,24 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t}\n")
 			if verbose {
 				body.WriteString("\t\tif outcome == \"fail\" {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\t%s.Println(\"--- FAIL: %s \" + dur)\n", fmtName, t))
 				body.WriteString("\t\t\tfailed++\n")
 				body.WriteString("\t\t} else if outcome == \"skip\" {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- SKIP: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\t%s.Println(\"--- SKIP: %s \" + dur)\n", fmtName, t))
 				body.WriteString("\t\t} else {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- PASS: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\t%s.Println(\"--- PASS: %s \" + dur)\n", fmtName, t))
 				body.WriteString("\t\t}\n")
 				body.WriteString("\t\tfor _, l := range tt.subresults {\n")
-				body.WriteString("\t\t\tprintln(l)\n")
+				body.WriteString("\t\t\t" + fmtName + ".Println(l)\n")
 				body.WriteString("\t\t}\n")
 			} else {
 				body.WriteString("\t\tif outcome == \"fail\" {\n")
-				body.WriteString(fmt.Sprintf("\t\t\tprintln(\"--- FAIL: %s \" + dur)\n", t))
+				body.WriteString(fmt.Sprintf("\t\t\t%s.Println(\"--- FAIL: %s \" + dur)\n", fmtName, t))
 				body.WriteString("\t\t\tfor _, l := range tt.output {\n")
-				body.WriteString("\t\t\t\tprintln(l)\n")
+				body.WriteString("\t\t\t\t" + fmtName + ".Println(l)\n")
 				body.WriteString("\t\t\t}\n")
 				body.WriteString("\t\t\tfor _, l := range tt.subresults {\n")
-				body.WriteString("\t\t\t\tprintln(l)\n")
+				body.WriteString("\t\t\t\t" + fmtName + ".Println(l)\n")
 				body.WriteString("\t\t\t}\n")
 				body.WriteString("\t\t\tfailed++\n")
 				body.WriteString("\t\t}\n")
@@ -1483,11 +1502,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 	body.WriteString("\tif failed > 0 {\n")
-	body.WriteString("\t\tprintln(\"FAIL\")\n")
+	body.WriteString("\t\t" + fmtName + ".Println(\"FAIL\")\n")
 	body.WriteString("\t\tos.Exit(1)\n")
 	body.WriteString("\t}\n")
 	if verbose {
-		body.WriteString("\tprintln(\"PASS\")\n")
+		body.WriteString("\t" + fmtName + ".Println(\"PASS\")\n")
 	}
 	body.WriteString("}\n")
 
