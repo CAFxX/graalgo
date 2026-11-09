@@ -136,9 +136,10 @@ func typeContainsLock(t types.Type, seen map[types.Type]bool) bool {
 		return false
 	}
 	seen[t] = true
-	// Unwrap pointer: *sync.Mutex is fine, sync.Mutex is the lock.
-	if p, ok := t.(*types.Pointer); ok {
-		return typeContainsLock(p.Elem(), seen)
+	// A pointer is not a lock value: passing *sync.Mutex copies only the
+	// pointer, never the lock. Do not unwrap pointers.
+	if _, ok := t.(*types.Pointer); ok {
+		return false
 	}
 	named, ok := t.(*types.Named)
 	if !ok {
