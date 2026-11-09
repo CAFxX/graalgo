@@ -596,7 +596,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		sibSet := token.NewFileSet()
 		sibAST, err := parser.ParseFile(sibSet, sib, nil, 0)
 		if err != nil {
-			continue
+			return "", fmt.Errorf("parse %s: %w", sib, err)
 		}
 		testPkgNames = append(testPkgNames, sibAST.Name.Name)
 		sibUnits = append(sibUnits, srcUnit{sib, sibAST, sibSet})
@@ -637,7 +637,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			sfset := token.NewFileSet()
 			sfAST, err := parser.ParseFile(sfset, sf, nil, 0)
 			if err != nil {
-				continue
+				return "", fmt.Errorf("parse %s: %w", sf, err)
 			}
 			collectImports(sfAST)
 			units = append(units, srcUnit{sf, sfAST, sfset})
