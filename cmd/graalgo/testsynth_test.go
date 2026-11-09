@@ -966,3 +966,103 @@ func TestB(t *testing.T) {
 		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
 	}
 }
+
+// synthDriverErr is synthDriver without the fatal: it returns the
+// synthesized driver ("" on error) and the error, so tests can assert
+// that synthesis FAILS instead of succeeding.
+func synthDriverErr(t *testing.T, dir string, ftList []fileTests, srcFiles []string) (string, error) {
+	t.Helper()
+	// Reset the package-name cache so temp-dir paths from other tests
+	// cannot leak in.
+	importPkgNameCache = map[string]string{}
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(driver)
+	src, err := os.ReadFile(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(src), nil
+}
+
+// TestBrokenSourceFileFails is the regression test for R03-T3: a
+// syntax-broken non-test source file must fail synthesis loudly, not
+// be silently dropped so the remaining files are tested as a partial
+// package that can PASS. The selected-test-file path already returns
+// the parse error; the source path must do the same.
+func TestBrokenSourceFileFails(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/brokensrc\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package brokensrc\n\nfunc Hello() string { return \"hi\" }\n")
+	// Syntax error in the function body (after the package clause, so
+	// go/build still lists the file as a package source — the same
+	// shape a real broken file has when it reaches synthesis).
+	writeFile(t, root, "broken.go", "package brokensrc\n\nfunc Broken( {\n")
+	writeFile(t, root, "p_test.go", `package brokensrc
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = synthDriverErr(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go"), filepath.Join(root, "broken.go")})
+	if err == nil {
+		t.Fatal("synthesizeTestDriver succeeded with a syntax-broken source file; want a parse error (partial package must not be tested)")
+	}
+	if !strings.Contains(err.Error(), "broken.go") {
+		t.Errorf("error does not name the broken file: %v", err)
+	}
+}
+
+// TestBrokenSiblingTestFileFails is the regression test for R03-T3's
+// sibling half: a syntax-broken sibling test file (not selected for
+// -run, inlined only for its helpers) must fail synthesis loudly,
+// not be silently dropped. A dropped sibling can hide helpers the
+// selected tests depend on — or, when the sibling is the only file
+// carrying a failure, let the package PASS.
+func TestBrokenSiblingTestFileFails(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/brokensib\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package brokensib\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "p_test.go", `package brokensib
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	// Sibling helper file with a syntax error in a function body (after
+	// the package clause, so go/build still lists it as buildable —
+	// the same shape a real broken sibling has when it reaches
+	// synthesis). It is NOT selected: only p_test.go is in ftList.
+	writeFile(t, root, "sib_test.go", "package brokensib\n\nfunc helper() int { return 1 }\n\nfunc Broken( {\n")
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = synthDriverErr(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	if err == nil {
+		t.Fatal("synthesizeTestDriver succeeded with a syntax-broken sibling test file; want a parse error (partial package must not be tested)")
+	}
+	if !strings.Contains(err.Error(), "sib_test.go") {
+		t.Errorf("error does not name the broken file: %v", err)
+	}
+}
