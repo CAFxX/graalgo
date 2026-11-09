@@ -90,7 +90,12 @@ func loadSyntheticRegistry(graalgo string) (*synthRegistry, error) {
 // comment at synth_machinery.go:334-338 retires both) — it must be
 // listed here too, or a re-added httptest source would escape the
 // invariant (REVIEW-2026-11-08, rv1107-05 round 2).
+// "encoding/json" retired 2026-11-09 (review-08-synth-json, R08-S-01):
+// the synthetic source (synth_json.go) is deleted; real encoding/json
+// compiles from GOROOT via the disk importer (reflect is real, pointer
+// stores work in the disk path).
 var retiredSyntheticPackages = map[string]bool{
+	"encoding/json":        true,
 	"fmt":                  true,
 	"internal/reflectlite": true,
 	"net/http":             true,

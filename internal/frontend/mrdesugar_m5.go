@@ -346,15 +346,16 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// UnquoteChar is the 4-result entry (value, multibyte, tail, err) —
 	// the desugar supports N-ary via pairFields.
 	{"strconv", "UnquoteChar", "", "__unquoteChar", "unquoteCharPair", []string{"value", "multibyte", "tail", "err"}, false},
-	// encoding/json: package-level funcs plus methods on *Decoder,
-	// Number, and RawMessage (prependRecv passes the receiver as the
-	// helper's first argument).
-	{"encoding/json", "Marshal", "", "__marshal", "marshalPair", []string{"data", "err"}, false},
-	{"encoding/json", "MarshalIndent", "", "__marshalIndent", "marshalIndentPair", []string{"data", "err"}, false},
-	{"encoding/json", "Token", "Decoder", "__decoderToken", "decoderTokenPair", []string{"tok", "err"}, false},
-	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}, false},
-	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}, false},
-	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}, false},
+	// encoding/json has NO rows here (review-08-synth-json,
+	// R08-S-01): the 6 rows that named its __-helpers (__marshal,
+	// __marshalIndent, __decoderToken, __numberFloat64,
+	// __numberInt64, __rawMessageMarshalJSON) were deleted with the
+	// retirement of the synthetic source — real encoding/json compiles
+	// from GOROOT via the disk importer. The disk transform + disk
+	// table own encoding/json MR now. Keeping the rows would make
+	// classifyM7MultiResultCall call getSyntheticPackage("encoding/json")
+	// — which panics — before the disk table is ever consulted.
+	// Do NOT re-add synthetic helpers here.
 	// P3-M8 (wave 2): synthetic io (synth_io.go). Only the members with
 	// real single-result __-helpers are desugared — see the SCOPE NOTE in
 	// the patch header; everything else fails at export via

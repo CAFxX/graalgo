@@ -1114,7 +1114,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// survived the gate; imported after the synthetic direct imports.
 	var needDisk []string
 	needErrors, needSort, needBytes, needMath, needStrings, needXml, needCsv, needGob := false, false, false, false, false, false, false, false
-	needStrconv, needJson := false, false
+	needStrconv := false
 	needBase32, needBase64, needHex, needBinary := false, false, false, false
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	needIo := false
@@ -1245,8 +1245,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 				// strconv's ErrRange/ErrSyntax initializers call errors.New.
 				needStrconv = true
 				needErrors = true
-			case "encoding/json":
-				needJson = true
+			// P4 bridge-removal (review-08-synth-json, R08-S-01):
+			// encoding/json is REAL now; it resolves from GOROOT via
+			// the general disk overlay (default case below). No
+			// synthetic flag needed.
 			case "encoding/csv":
 				needCsv = true
 				needErrors = true
@@ -1798,15 +1800,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M7 (wave 1): strconv + encoding/json (see synth_strconv.go,
-	// synth_json.go).
+	// P3-M7 (wave 1): strconv (see synth_strconv.go). encoding/json
+	// is REAL now (review-08-synth-json, R08-S-01): it resolves via
+	// the general disk overlay; no synthetic import needed.
 	if needStrconv {
 		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
-			return "", err
-		}
-	}
-	if needJson {
-		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/json")); err != nil {
 			return "", err
 		}
 	}

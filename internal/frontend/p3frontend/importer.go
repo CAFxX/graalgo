@@ -149,11 +149,11 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticStrconvPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
-	case "encoding/json":
-		// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
-		pkg := syntheticJsonPackage()
-		imp.pkgs[path] = pkg
-		return pkg, nil
+	// "encoding/json" has NO case here (review-08-synth-json,
+	// R08-S-01): the synthetic mirror (synth_json.go) was deleted
+	// with the retirement of the synthetic source — real
+	// encoding/json type-checks from GOROOT via the loader's stdlib
+	// path below, like fmt/sync (REVIEW-2026-11-05-11).
 	case "encoding/base32":
 		// P3-M7 (wave 1): synthetic encoding/base32 (m7-wenc-core).
 		// Self-contained: no synthetic dependencies.

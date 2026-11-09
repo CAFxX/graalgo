@@ -114,10 +114,10 @@ func TestImportAdmittedNonInternalUnchanged(t *testing.T) {
 		"runtime", "fmt", "unsafe",
 		// Synthetic sources (waves 1-3).
 		"strings", "bytes", "errors", "sort", "math", "math/bits",
-		"strconv", "encoding/json", "os", "io/fs", "reflect", "iter",
+		"strconv", "os", "io/fs", "reflect", "iter",
 		"time", "context", "sync", "sync/atomic",
 		// Disk-resolved stdlib (not synthetic).
-		"net/http",
+		"net/http", "encoding/json",
 		// Unresolvable.
 		"example.com/nonexistent/pkg-xyz-123",
 	}

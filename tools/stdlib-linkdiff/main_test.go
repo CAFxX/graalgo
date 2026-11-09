@@ -394,12 +394,12 @@ func TestProvidedExtraction(t *testing.T) {
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
 		// reflect, net/http, internal/reflectlite, fmt, sync,
-		// sync/atomic and runtime are NOT here: their synthetic
-		// sources/mirrors were retired and the real packages now
-		// compile from GOROOT via the disk importer (runtime: the
+		// sync/atomic, encoding/json and runtime are NOT here: their
+		// synthetic sources/mirrors were retired and the real packages
+		// now compile from GOROOT via the disk importer (runtime: the
 		// live export.go stub is not extracted), so no synthetic
 		// source provides them (see TestSyntheticShadowSet).
-		"encoding/json.Marshal", "crypto/sha256.New",
+		"crypto/sha256.New",
 		"syscall.Getenv", "maps.Clone",
 	}
 	for _, w := range want {

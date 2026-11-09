@@ -70,7 +70,7 @@ deliverable until the design lands.
 ### B-3. Frontend package-name-keyed special-case machinery
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
-  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
+  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 129
     entries), `isMultiResultSynthetic` (~line 2113) /
     `multiResultSyntheticError` (~line 2207) ~60-path chains,
     `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
@@ -113,10 +113,10 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 139 generated `synth_*.go` + 11 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 139 generated files in [internal/frontend/](../../internal/frontend/)
+  (`synth_*.go`: ~23 authored, ~110 verbatim vendored from go1.27.1) plus 11
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
@@ -136,7 +136,10 @@ deliverable until the design lands.
   `real-fmt2`/`real-fmt-rebase` (`fmt`),
   `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
   general disk mechanism"), `real-nethttp` (`net`/`net/http`),
-  `real-reflect2` (`reflect`).
+  `real-reflect2` (`reflect`). Retired 2026-11-09 (review-08-synth-json,
+  R08-S-01): `encoding/json` (`synth_json.go` + the `p3frontend` mirror
+  deleted; the real package compiles from GOROOT via the disk importer —
+  reflect is real, pointer stores work in the disk path).
 - **Phase:** 1 (the four in-flight packages) → 2 (remainder).
 
 ### B-5. `GoX509` hand-rolled elliptic-curve arithmetic + DER parsing

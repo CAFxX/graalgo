@@ -94,8 +94,14 @@ var syntheticSources = map[string]string{
 	"encoding/gob": syntheticGobSource,
 	// P3-M7 (wave 1): strconv (synth_strconv.go) and encoding/json
 	// (synth_json.go). Pure-Go, self-contained.
-	"strconv":       syntheticStrconvSource,
-	"encoding/json": syntheticJsonSource,
+	"strconv": syntheticStrconvSource,
+	// P3-M7 (wave 1): encoding/json. RETIRED (review-08-synth-json,
+	// R08-S-01): real encoding/json now compiles from GOROOT via the
+	// disk importer — reflect is real and pointer stores work in the
+	// disk path, so the M7 fail-fast stubs (Unmarshal/Decode/Marshal
+	// on named structs) are gone. The synthetic source file is
+	// deleted; the m7 rows are deleted with it (mrdesugar_m5.go).
+	// "encoding/json": syntheticJsonSource, // RETIRED - uses disk importer
 	// P3-M8 (wave 2): synthetic os package (synth_os.go) and the minimal
 	// synthetic io/fs core (synth_iofs.go) it aliases its error/file types
 	// from. os imports io/fs, io, syscall, time, errors (all synthetic).
@@ -2279,7 +2285,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 	p := fn.Pkg().Path()
 	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" &&
 		p != "encoding/base32" && p != "encoding/base64" && p != "encoding/hex" && p != "encoding/binary" &&
-		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "encoding/json" && p != "io" &&
+		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "io" &&
 		// P3-M8 (wave 2): os + io/fs + syscall.
 		p != "os" && p != "io/fs" && p != "syscall" &&
 		p != "reflect" && p != "internal/reflectlite" && p != "iter" &&
@@ -2373,7 +2379,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 	milestone := "M5"
 	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
 		p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" ||
-		p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
+		p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" {
 		milestone = "M7"
 	}
 	if fn.Pkg().Path() == "io" || fn.Pkg().Path() == "os" || fn.Pkg().Path() == "io/fs" ||

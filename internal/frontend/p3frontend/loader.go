@@ -440,7 +440,7 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// of the anchored cache.
 	switch path {
 	case "time", "context", "errors", "sort", "bytes", "math", "strings",
-		"encoding/xml", "encoding/csv", "encoding/gob", "strconv", "encoding/json",
+		"encoding/xml", "encoding/csv", "encoding/gob", "strconv",
 		"encoding/base32", "encoding/base64", "encoding/hex", "encoding/binary",
 		"encoding/ascii85", "encoding/pem", "encoding/asn1", "encoding":
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
