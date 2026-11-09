@@ -194,11 +194,14 @@ func isGraalgoRoot(dir string) bool {
 // graalgoRun invokes internal/backend/graalgo-sync-run with the given args,
 // wiring stdio through. Returns the process exit code.
 //
+// It is a variable (not a plain function) so tests can stub the
+// driver-to-backend boundary without running the real JVM backend.
+//
 // NOTE: privilege-conferring signals (e.g. PKG-001's test-package-dir)
 // travel as explicit argv flags, never environment variables: env is
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
-func graalgoRun(root string, args []string) int {
+var graalgoRun = func(root string, args []string) int {
 	code, _ := graalgoRunCtx(context.Background(), root, args)
 	return code
 }

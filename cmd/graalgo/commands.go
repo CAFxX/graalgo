@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/CAFxX/graalgo/internal/driver"
@@ -261,9 +262,28 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	// One frontend --check per package, with all of the package's files
+	// together: the frontend type-checks the files it is given
+	// together, so a per-file --check fails on every multi-file
+	// package (identifiers from sibling files are undefined) and the
+	// analyzers never run. _test.go files are excluded from the gate:
+	// an external test package declares a different package name,
+	// which the frontend rejects as "not the same package"; vet.Run
+	// below still analyzes them.
 	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
+	dirs, groups := groupFilesByDir(files)
+	for _, dir := range dirs {
+		var pkgFiles []string
+		for _, f := range groups[dir] {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			pkgFiles = append(pkgFiles, f)
+		}
+		if len(pkgFiles) == 0 {
+			continue
+		}
+		if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
 			failed = true
 		}
 	}
@@ -284,6 +304,26 @@ func cmdVet(root string, args []string) int {
 	}
 	fmt.Println("vet: no issues found")
 	return 0
+}
+
+// groupFilesByDir groups files by their absolute directory and returns
+// the groups keyed by directory, with the directories sorted, so
+// per-package work runs deterministically across packages.
+func groupFilesByDir(files []string) (dirs []string, groups map[string][]string) {
+	groups = make(map[string][]string)
+	for _, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Dir(abs)
+		if _, ok := groups[dir]; !ok {
+			dirs = append(dirs, dir)
+		}
+		groups[dir] = append(groups[dir], f)
+	}
+	sort.Strings(dirs)
+	return dirs, groups
 }
 
 // cmdFmt implements `graalgo fmt [packages]`.
