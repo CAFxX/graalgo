@@ -207,7 +207,14 @@ public final class StraightLineCorpusTest {
         String json = Main.runGofrontend(src);
         String text = Files.readString(src, StandardCharsets.UTF_8);
         Source source = Source.newBuilder("go", text, src.getFileName().toString()).build();
-        NodeFactory.Program program = new NodeFactory(source).buildProgram(json);
+        // Discover the Phase-3 wire-kind providers, as the launcher does:
+        // a bare factory rejects real-stdlib programs (fmt → ifacemethod).
+        NodeFactory factory = new NodeFactory(source);
+        List<WireKindRegistrar> registrars = WireKindRegistrar.discoverAndRegister(factory);
+        NodeFactory.Program program = factory.buildProgram(json);
+        for (WireKindRegistrar registrar : registrars) {
+            registrar.afterBuild(factory, program);
+        }
         VirtualFrame frame = Truffle.getRuntime()
                 .createVirtualFrame(new Object[0], program.descriptor());
         program.root().execute(frame);

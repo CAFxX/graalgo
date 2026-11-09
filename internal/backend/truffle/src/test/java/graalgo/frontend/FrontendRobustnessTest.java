@@ -4,6 +4,7 @@ import com.oracle.truffle.api.source.Source;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * M10 (P1-3): frontend robustness against malformed type graphs.
@@ -22,7 +23,15 @@ public final class FrontendRobustnessTest {
                 StandardCharsets.UTF_8);
         Source source = Source.newBuilder("go", "package main", "cyclic.go").build();
         try {
-            new NodeFactory(source).buildProgram(json);
+            // Discover the Phase-3 wire-kind providers, as the launcher does:
+            // a bare factory rejects real-stdlib programs (fmt → ifacemethod).
+            NodeFactory factory = new NodeFactory(source);
+            List<WireKindRegistrar> registrars =
+                    WireKindRegistrar.discoverAndRegister(factory);
+            NodeFactory.Program program = factory.buildProgram(json);
+            for (WireKindRegistrar registrar : registrars) {
+                registrar.afterBuild(factory, program);
+            }
         } catch (FrontendException e) {
             if (!e.getMessage().contains("cyclic")) {
                 throw new AssertionError("expected 'cyclic' in FrontendException, got <"
@@ -52,7 +61,15 @@ public final class FrontendRobustnessTest {
         }
         Source source = Source.newBuilder("go", "package main", "deep.go").build();
         try {
-            new NodeFactory(source).buildProgram(sb.toString());
+            // Discover the Phase-3 wire-kind providers, as the launcher does:
+            // a bare factory rejects real-stdlib programs (fmt → ifacemethod).
+            NodeFactory factory = new NodeFactory(source);
+            List<WireKindRegistrar> registrars =
+                    WireKindRegistrar.discoverAndRegister(factory);
+            NodeFactory.Program program = factory.buildProgram(sb.toString());
+            for (WireKindRegistrar registrar : registrars) {
+                registrar.afterBuild(factory, program);
+            }
         } catch (FrontendException e) {
             if (!e.getMessage().contains("nesting too deep")) {
                 throw new AssertionError("expected 'nesting too deep' in FrontendException, got <"
@@ -105,7 +122,15 @@ public final class FrontendRobustnessTest {
     private static void expectFrontendException(String name, String doc) {
         Source source = Source.newBuilder("go", "package main", "t.go").build();
         try {
-            new NodeFactory(source).buildProgram(doc);
+            // Discover the Phase-3 wire-kind providers, as the launcher does:
+            // a bare factory rejects real-stdlib programs (fmt → ifacemethod).
+            NodeFactory factory = new NodeFactory(source);
+            List<WireKindRegistrar> registrars =
+                    WireKindRegistrar.discoverAndRegister(factory);
+            NodeFactory.Program program = factory.buildProgram(doc);
+            for (WireKindRegistrar registrar : registrars) {
+                registrar.afterBuild(factory, program);
+            }
         } catch (FrontendException e) {
             return; // expected: clean fail-fast with a named error
         } catch (StackOverflowError | OutOfMemoryError e) {

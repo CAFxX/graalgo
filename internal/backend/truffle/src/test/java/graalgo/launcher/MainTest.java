@@ -78,13 +78,26 @@ public final class MainTest {
 
     public void testCheckRejectsScopeError() throws Exception {
         // P3-M5 (WS E, ADR-0005 App C): `select {}` is now IN scope (it
-        // lowers to the "select" wire node). Use a multi-result function
-        // literal, which remains out of scope (WS D), as the scope-error
-        // example. NB: writeTempGo prepends "package main\n\nfunc main() {\n",
-        // so the body must be valid INSIDE main: a func literal (not a
-        // nested func declaration, which is a Go syntax error that fires
-        // before the scope check).
-        Path bad = writeTempGo("f := func() (int, int) { return 1, 2 }\n_ = f\n");
+        // lowers to the "select" wire node). The previous example, a
+        // multi-result function literal, graduated INTO scope with the
+        // P1-1 general multi-result work (scheduled full-suite run
+        // 41441646157: --check now accepts it, exit 0), so it no longer
+        // pins a rejection. The replacement example is a select comma-ok
+        // recv assignment with a non-identifier target (a[0], ok = <-ch),
+        // which is type-valid Go but still a deliberate WS D scope
+        // limitation (chanops: recv targets must be identifiers). NB:
+        // writeTempGo prepends "package main\n\nfunc main() {\n", so the
+        // body must be valid INSIDE main.
+        Path bad = writeTempGo(
+                "ch := make(chan int, 1)\n"
+                + "a := []int{0}\n"
+                + "ok := false\n"
+                + "select {\n"
+                + "case a[0], ok = <-ch:\n"
+                + "_ = ok\n"
+                + "default:\n"
+                + "}\n"
+                + "_ = a\n");
         final int[] code = new int[1];
         String err = captureStderr(() -> {
             code[0] = Main.run(new String[] {"--check", bad.toString()});
@@ -298,26 +311,34 @@ public final class MainTest {
         }
     }
 
-    public void testCheckRejectsClearBuiltin() throws Exception {
-        // M8 fuzzer find (P2): clear/min/max are outside the v1 builtin
-        // surface but the exporter emitted them, and NodeFactory died with
-        // "internal error building AST". The exporter must fail fast with a
-        // clean WS G scope error instead. Pre-fix, stderr said
-        // "not implemented in NodeFactory v1", not "not supported in
-        // frontend/v1 scope".
+    public void testCheckAcceptsClearMinMax() throws Exception {
+        // M8 fuzzer find (P2), superseded by P4 driver-harden: clear/min/
+        // max were once outside the v1 builtin surface, and the exporter
+        // emitted wire kinds ("clear", "minmax") that no registered builder
+        // knew, so NodeFactory died with "internal error building AST"
+        // (scheduled full-suite run 41441646157 still showed that failure
+        // on the test classpath, which lacks the interop registrars). P4
+        // deliberately implemented these builtins instead of rejecting
+        // them — real modules (e.g. uuid) use min — with builders in the
+        // interop module (P3KindRegistrations). The old rejection
+        // expectation (exit 2 + WS G scope error) therefore contradicts
+        // the implemented behavior; what this test now pins is the M8
+        // regression itself: these programs must BUILD (exit 0), never die
+        // with an internal error. NOTE: in the test JVM this goes green
+        // only with the interop registrars on the classpath (the
+        // fix-redmaster-ifacemethod lane's Makefile change); on a bare
+        // core classpath the failure mode is the M8 internal error.
         for (String prog : new String[] {
                 "m := map[string]int{\"a\": 1}\n\tclear(m)\n",
                 "println(min(1, 2), max(3, 4))\n"}) {
-            Path bad = writeTempGo(prog);
+            Path good = writeTempGo(prog);
             final int[] code = new int[1];
             String err = captureStderr(() -> {
-                code[0] = Main.run(new String[] {"--check", bad.toString()});
+                code[0] = Main.run(new String[] {"--check", good.toString()});
                 return code[0];
             });
-            assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on " + prog.trim());
-            assertContains(err, "not supported in frontend/v1 scope",
-                    "--check stderr is a clean scope error for " + prog.trim());
-            assertContains(err, "WS G", "--check stderr names WS G for " + prog.trim());
+            assertEq(Main.EXIT_OK, code[0], "--check exit on " + prog.trim()
+                    + " (stderr: " + err + ")");
         }
     }
 

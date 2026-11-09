@@ -1,5 +1,9 @@
 package graalgo.frontend;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ServiceLoader;
+
 /**
  * Contract for registering frontend wire-kind builders with a {@link NodeFactory}.
  *
@@ -12,6 +16,29 @@ package graalgo.frontend;
  * runtime classes; the launcher needs the provider's registrations).
  */
 public interface WireKindRegistrar {
+    /**
+     * Discovers every provider on the classpath via {@link ServiceLoader}
+     * and registers each one's builders with the given factory. This is
+     * the one correct way to prepare a factory for a real program: a bare
+     * {@code new NodeFactory(...)} knows only the core wire kinds, so any
+     * program whose frontend JSON contains a provider kind (e.g. real fmt
+     * emitting {@code ifacemethod}) dies with "unsupported expression
+     * kind" on a bare factory even though the builder exists. Callers
+     * keep the returned list and run {@link #afterBuild} on each provider
+     * after {@link NodeFactory#buildProgram} returns.
+     *
+     * @param factory the node factory to register with
+     * @return the discovered providers, in discovery order
+     */
+    static List<WireKindRegistrar> discoverAndRegister(NodeFactory factory) {
+        List<WireKindRegistrar> registrars = new ArrayList<>();
+        for (WireKindRegistrar registrar : ServiceLoader.load(WireKindRegistrar.class)) {
+            registrars.add(registrar);
+            registrar.registerAll(factory);
+        }
+        return registrars;
+    }
+
     /**
      * Registers this provider's wire-kind builders with the given factory.
      *

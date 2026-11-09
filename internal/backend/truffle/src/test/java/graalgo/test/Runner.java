@@ -17,6 +17,7 @@ public final class Runner {
 
     static {
         TESTS.add(graalgo.launcher.MainTest.class);
+        TESTS.add(graalgo.frontend.WireKindRegistrarDiscoveryTest.class);
         TESTS.add(graalgo.frontend.StraightLineCorpusTest.class);
         TESTS.add(graalgo.frontend.ArithmeticCorpusTest.class);
         TESTS.add(graalgo.frontend.ComplexBinaryOpTest.class);

@@ -1,5 +1,6 @@
 package graalgo.launcher;
 
+import java.io.IOException;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -67,6 +68,71 @@ public final class ToolPaths {
             }
         }
         return Paths.get("go");
+    }
+
+    /**
+     * Resolves the stock-Go toolchain root (the directory whose
+     * {@code bin/go} is the stock binary), for consumers that build paths
+     * off the toolchain layout — e.g. the diffharness {@code DH_GO}
+     * variable, used as {@code {GO}/bin/go}.
+     *
+     * <p>{@link #stockGo()} alone cannot serve this: when no pinned
+     * toolchain exists it returns the bare name {@code go}, whose
+     * {@code getParent()} is null, so the naive
+     * {@code stockGo().getParent().getParent()} computation throws a
+     * NullPointerException (scheduled full-suite run 41441646157, where
+     * CI's setup-go toolchain is only on PATH). This method instead
+     * resolves a bare name through PATH and resolves symlinks (a PATH
+     * {@code go} is commonly a link into the toolchain's real
+     * {@code bin/}), then takes the grandparent. When no toolchain can be
+     * found it fails fast with an IllegalStateException naming what was
+     * tried, never a bare NPE.
+     */
+    public static Path stockGoRoot() {
+        Path go = stockGo();
+        Path resolved = resolveGoBinary(go);
+        Path bin = resolved.getParent();
+        if (bin == null) {
+            throw new IllegalStateException(
+                    "cannot determine Go toolchain root: resolved go binary " + resolved
+                            + " has no parent directory");
+        }
+        Path root = bin.getParent();
+        if (root == null) {
+            throw new IllegalStateException(
+                    "cannot determine Go toolchain root: go binary " + resolved
+                            + " is not under a <root>/bin layout");
+        }
+        return root;
+    }
+
+    /** Resolves {@code go} to a real absolute binary path (PATH + symlinks). */
+    private static Path resolveGoBinary(Path go) {
+        Path abs = go.isAbsolute() ? go : null;
+        if (abs == null && go.getParent() == null) {
+            // Bare name: search PATH exactly as process launching would.
+            String pathEnv = System.getenv("PATH");
+            if (pathEnv != null && !pathEnv.isEmpty()) {
+                String sep = System.getProperty("path.separator", ":");
+                for (String dir : pathEnv.split(java.util.regex.Pattern.quote(sep))) {
+                    Path cand = dir.isEmpty()
+                            ? Paths.get(go.toString())
+                            : Paths.get(dir).resolve(go.toString());
+                    if (Files.isExecutable(cand)) {
+                        abs = cand.toAbsolutePath();
+                        break;
+                    }
+                }
+            }
+        }
+        if (abs == null) {
+            abs = go.toAbsolutePath();
+        }
+        try {
+            return abs.toRealPath();
+        } catch (IOException e) {
+            return abs.normalize();
+        }
     }
 
     /** Directory holding this class's bytecode (out/classes or a jar's dir). */

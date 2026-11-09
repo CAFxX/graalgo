@@ -194,7 +194,16 @@ public final class GenericsCorpusTest {
         String json = Main.runGofrontend(src);
         String text = Files.readString(src, StandardCharsets.UTF_8);
         Source source = Source.newBuilder("go", text, src.getFileName().toString()).build();
-        NodeFactory.Program program = new NodeFactory(source).buildProgram(json);
+        // Same discovery as the product launcher: a bare factory knows only
+        // the core wire kinds, so a program using real stdlib packages
+        // (gn09 uses fmt → ifacemethod) dies with "unsupported expression
+        // kind" without the interop providers registered.
+        NodeFactory factory = new NodeFactory(source);
+        List<WireKindRegistrar> registrars = WireKindRegistrar.discoverAndRegister(factory);
+        NodeFactory.Program program = factory.buildProgram(json);
+        for (WireKindRegistrar registrar : registrars) {
+            registrar.afterBuild(factory, program);
+        }
         VirtualFrame frame = Truffle.getRuntime()
                 .createVirtualFrame(new Object[0], program.descriptor());
         program.root().execute(frame);

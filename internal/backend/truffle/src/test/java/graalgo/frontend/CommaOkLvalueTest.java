@@ -4,6 +4,7 @@ import com.oracle.truffle.api.source.Source;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Comma-ok assignment with non-identifier LHS targets.
@@ -37,8 +38,15 @@ public final class CommaOkLvalueTest {
         String json = loadResource("comma-ok-nonident-lhs.json");
         Source source = Source.newBuilder("go", "package main", "commaok.go").build();
         // Must not throw: selector, index, and deref are all valid
-        // comma-ok assignment targets in Go.
-        new NodeFactory(source).buildProgram(json);
+        // comma-ok assignment targets in Go. Discover the Phase-3 wire-kind
+        // providers, as the launcher does: a bare factory rejects real-stdlib
+        // programs (fmt → ifacemethod).
+        NodeFactory factory = new NodeFactory(source);
+        List<WireKindRegistrar> registrars = WireKindRegistrar.discoverAndRegister(factory);
+        NodeFactory.Program program = factory.buildProgram(json);
+        for (WireKindRegistrar registrar : registrars) {
+            registrar.afterBuild(factory, program);
+        }
     }
 
     /**
@@ -56,7 +64,15 @@ public final class CommaOkLvalueTest {
         }
         Source source = Source.newBuilder("go", "package main", "commaok-bad.go").build();
         try {
-            new NodeFactory(source).buildProgram(bad);
+            // Discover the Phase-3 wire-kind providers, as the launcher does:
+            // a bare factory rejects real-stdlib programs (fmt → ifacemethod).
+            NodeFactory factory = new NodeFactory(source);
+            List<WireKindRegistrar> registrars =
+                    WireKindRegistrar.discoverAndRegister(factory);
+            NodeFactory.Program program = factory.buildProgram(bad);
+            for (WireKindRegistrar registrar : registrars) {
+                registrar.afterBuild(factory, program);
+            }
         } catch (FrontendException e) {
             if (!e.getMessage().contains("bad assignment lhs kind")) {
                 throw new AssertionError(
