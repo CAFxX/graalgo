@@ -7,11 +7,11 @@ package vet
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
+	"path/filepath"
 )
 
 // Analyzer is a single static check.
@@ -43,48 +43,50 @@ func Analyzers() []*Analyzer {
 }
 
 // Run analyzes the named Go source files and returns sorted diagnostics.
-// It parses with comments (for directive checks) and type-checks on a
-// best-effort basis: if type checking fails, analyzers still run on the
-// AST with whatever type info was gathered.
+//
+// Files are loaded as packages (see loader.go): module files get full
+// module resolution with test variants, files outside any module get a
+// best-effort single-package check. Load and type-check errors are
+// reported as diagnostics instead of being discarded, so a run never
+// silently reports "no issues found" on input it could not understand.
+// A nonexistent input file, or a missing `go` binary to drive package
+// loading, is a hard error.
 func Run(paths []string) ([]Diagnostic, error) {
-	fset := token.NewFileSet()
-	var files []*ast.File
-	for _, path := range paths {
-		src, err := os.ReadFile(path)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("vet: no files")
+	}
+	abs := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		ap, err := filepath.Abs(p)
 		if err != nil {
 			return nil, fmt.Errorf("vet: %v", err)
 		}
-		f, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
-		if err != nil {
-			return nil, fmt.Errorf("vet: parse %s: %v", path, err)
+		if _, err := os.Stat(ap); err != nil {
+			return nil, fmt.Errorf("vet: %v", err)
 		}
-		files = append(files, f)
+		if !seen[ap] {
+			seen[ap] = true
+			abs = append(abs, ap)
+		}
 	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("vet: no files")
+	// Package loading shells out to `go list`; without a `go` binary
+	// the run must fail loudly instead of silently degrading.
+	if _, err := exec.LookPath("go"); err != nil {
+		return nil, fmt.Errorf("vet: cannot load packages: no `go` binary on PATH")
 	}
-
-	info := &types.Info{
-		Types:      make(map[ast.Expr]types.TypeAndValue),
-		Defs:       make(map[*ast.Ident]types.Object),
-		Uses:       make(map[*ast.Ident]types.Object),
-		Selections: make(map[*ast.SelectorExpr]*types.Selection),
-		Scopes:     make(map[ast.Node]*types.Scope),
+	passes, loadDiags, err := loadPasses(abs)
+	if err != nil {
+		return nil, err
 	}
-	conf := types.Config{
-		Importer:                 importer.Default(),
-		IgnoreFuncBodies:         false,
-		DisableUnusedImportCheck: true,
-	}
-	pkg, _ := conf.Check("vetpkg", fset, files, info)
-	// Type errors are tolerated: analyzers use best-effort info.
-
-	pass := &Pass{Fset: fset, Files: files, Info: info, Pkg: pkg}
 	var out []Diagnostic
-	for _, a := range analyzers {
-		out = append(out, a.Run(pass)...)
+	out = append(out, loadDiags...)
+	for _, pass := range passes {
+		for _, a := range analyzers {
+			out = append(out, a.Run(pass)...)
+		}
 	}
-	return SortDiagnostics(out), nil
+	return SortDiagnostics(dedupeDiagnostics(out)), nil
 }
 
 // position returns the source position of n.
