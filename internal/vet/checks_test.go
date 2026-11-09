@@ -376,6 +376,69 @@ func f() {}
 	if !strings.Contains(joined, "unknown go: directive") {
 		t.Errorf("expected directive diagnostic, got:\n%s", joined)
 	}
+	if n := strings.Count(joined, "unknown go: directive"); n != 1 {
+		t.Errorf("expected exactly 1 unknown-directive diagnostic, got %d:\n%s", n, joined)
+	}
+}
+
+// TestDirectiveKnownDirectives is the regression test for R05-V-15: every
+// //go: directive the go1.27.1 toolchain recognises must be quiet. The list
+// below is the audited set (see the provenance comment on the known map in
+// checks5.go); if a name is dropped from the map, this test fails. A
+// genuinely unknown directive must still fire (see TestDirective).
+func TestDirectiveKnownDirectives(t *testing.T) {
+	// One //go: line per recognised directive, in plausible positions.
+	// runDirective only inspects the directive name, so bare forms are
+	// enough; arguments are included where the directive takes them.
+	src := `//go:build linux
+
+package main
+
+//go:notinheap
+type T struct{ X int }
+
+//go:noescape
+//go:noinline
+//go:norace
+//go:nosplit
+//go:nocheckptr
+//go:nointerface
+//go:registerparams
+//go:uintptrkeepalive
+//go:uintptrescapes
+//go:systemstack
+//go:nowritebarrier
+//go:nowritebarrierrec
+//go:yeswritebarrierrec
+func f() {}
+
+//go:wasmimport mod name
+func wi()
+
+//go:wasmexport exp
+func we() {}
+
+//go:linkname f
+//go:linknamestd g
+func h() {}
+
+//go:generate echo hi
+//go:fix
+//go:debug foo=bar
+//go:embed x.txt
+//go:cgo_ldflag "-lm"
+//go:cgo_dynamic_linker "/lib/ld.so"
+//go:cgo_import_dynamic i
+//go:cgo_import_static j
+//go:cgo_export_dynamic k
+//go:cgo_export_static l
+//go:cgo_unsafe_args
+var _ = 0
+`
+	joined := runVetOnSrc(t, src)
+	if strings.Contains(joined, "unknown go: directive") {
+		t.Errorf("false positive on recognised //go: directives:\n%s", joined)
+	}
 }
 
 func TestTestingGoroutine(t *testing.T) {

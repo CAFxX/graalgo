@@ -20,16 +20,45 @@ func init() {
 
 // directive checks that //go: directives are known and well-formed.
 func runDirective(pass *Pass) []Diagnostic {
-	// Known //go: directives.
+	// Known //go: directives, audited against the go1.27.1 toolchain
+	// (R05-V-15). Sources, in order below:
+	//   - func pragmas: cmd/compile/internal/noder/lex.go pragmaFlag and
+	//     cmd/compile/internal/ir/node.go PragmaFlag, plus
+	//     cmd/compile/doc.go and src/runtime/HACKING.md;
+	//   - cgo / embed / linkname / wasm: cmd/compile/internal/noder/noder.go
+	//     pragma() and allowedStdPragmas;
+	//   - //go:debug: cmd/go/internal/load/godebug.go;
+	//   - //go:notinheap: emitted by cmd/cgo itself (cmd/cgo/out.go).
+	// The list is hand-maintained: there is no machine-readable directive
+	// table in the toolchain to generate it from. TestDirectiveKnownDirectives
+	// enumerates the full set, so dropping a name fails loudly.
+	// Deliberately NOT included (verified absent from the whole go1.27.1
+	// source tree, including runtime and the vendored copy):
+	//   - "nounwind": no occurrence anywhere in the toolchain source; not a
+	//     go1.27.1 directive despite being named in the review;
+	//   - "aligncheck" and "dyld": previously listed here, but with no
+	//     occurrence anywhere in the toolchain source either, so they were
+	//     bogus entries that would have suppressed true positives. Removed
+	//     by this audit.
 	known := map[string]bool{
-		"generate": true, "build": true,
-		"noescape": true, "noinline": true, "norace": true, "nosplit": true,
-		"linkname": true, "embed": true,
-		"debug": true, "aligncheck": true,
-		"uintptrescapes": true,
-		"dyld":           true, "cgo_import_dynamic": true, "cgo_import_static": true,
+		// Func pragmas (pragmaFlag).
+		"build": true, "noescape": true, "noinline": true, "norace": true,
+		"nosplit": true, "nocheckptr": true, "nointerface": true,
+		"registerparams": true, "uintptrkeepalive": true, "uintptrescapes": true,
+		// Runtime-only func pragmas (HACKING.md; rejected outside runtime
+		// by the compiler, but still recognised directive names).
+		"systemstack": true, "nowritebarrier": true, "nowritebarrierrec": true,
+		"yeswritebarrierrec": true,
+		// Linker / cgo / embed / tool directives (noder.go, pragcgo).
+		"linkname": true, "linknamestd": true, "embed": true,
+		"generate": true, "fix": true, "debug": true,
+		"cgo_import_dynamic": true, "cgo_import_static": true,
 		"cgo_export_dynamic": true, "cgo_export_static": true,
-		"cgo_unsafe_args": true, "cgo_dynamic_linker": true,
+		"cgo_unsafe_args": true, "cgo_dynamic_linker": true, "cgo_ldflag": true,
+		// WASM directives (doc.go, noder.go).
+		"wasmimport": true, "wasmexport": true,
+		// Type directive emitted by cgo itself (cmd/cgo/out.go).
+		"notinheap": true,
 	}
 	var out []Diagnostic
 	for _, f := range pass.Files {
