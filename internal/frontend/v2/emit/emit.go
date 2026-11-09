@@ -36,6 +36,12 @@ type Emitter struct {
 	info *checker.Result
 	// files maps absolute path → index in package.files.
 	files []string
+	// sizes is the target ABI used for struct field offsets. The v2
+	// target is gc/amd64: the same sizes go/types assumes when the
+	// checker runs with no explicit Sizes (host arch) and the same
+	// pair p3frontend uses (types.SizesFor("gc", "amd64")). Offsets
+	// are computed from it, never hardcoded.
+	sizes types.Sizes
 	// Type table: go/types.Type → id.
 	typeIDs map[types.Type]int
 	types   []any
@@ -48,10 +54,15 @@ type Emitter struct {
 // document is consumed directly by the backend via the Go→Java API;
 // it is never serialized to JSON.
 func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, error) {
+	sizes := types.SizesFor("gc", "amd64")
+	if sizes == nil {
+		return nil, fmt.Errorf("emit: no gc/amd64 sizes available for struct offsets")
+	}
 	e := &Emitter{
 		fset:    cr.Fset,
 		info:    cr,
 		files:   files,
+		sizes:   sizes,
 		typeIDs: make(map[types.Type]int),
 		objIDs:  make(map[types.Object]int),
 	}
@@ -402,12 +413,25 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"type": e.typeID(r.Type()),
 			})
 		}
+		// A generic signature's type parameters and a method
+		// signature's receiver are part of the signature: dropping
+		// them silently made generic funcs and methods indistinguishable
+		// from plain funcs in the type table.
+		var recv any
+		if tt.Recv() != nil {
+			recv = map[string]any{
+				"name": tt.Recv().Name(),
+				"type": e.typeID(tt.Recv().Type()),
+			}
+		}
 		return map[string]any{
 			"kind": "signature",
 			"detail": map[string]any{
-				"params":   params,
-				"results":  results,
-				"variadic": tt.Variadic(),
+				"params":     params,
+				"results":    results,
+				"variadic":   tt.Variadic(),
+				"typeparams": e.typeParamEntries(tt.TypeParams()),
+				"recv":       recv,
 			},
 		}
 	case *types.Named:
@@ -416,10 +440,24 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{
 				"name":       namedName(tt),
 				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				"methods":    e.methodEntries(tt.NumMethods(), tt.Method),
+				// A generic named type's parameters (the origin) and
+				// an instantiation's arguments are part of the type:
+				// without them a generic method's receiver type is a
+				// name with its type arguments silently dropped.
+				"typeparams": e.typeParamEntries(tt.TypeParams()),
+				"typeargs":   e.typeArgIDs(tt.TypeArgs()),
 			},
 		}
 	case *types.Struct:
+		// Field offsets come from the target ABI (e.sizes), never
+		// from a literal: a hardcoded 0 was wrong for every field
+		// past the first and for every padded layout.
+		vars := make([]*types.Var, tt.NumFields())
+		for i := range vars {
+			vars[i] = tt.Field(i)
+		}
+		offsets := e.sizes.Offsetsof(vars)
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
@@ -428,7 +466,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"type":     e.typeID(f.Type()),
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
-				"offset":   0,
+				"offset":   offsets[i],
 			})
 		}
 		return map[string]any{
@@ -436,12 +474,24 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{"fields": fields},
 		}
 	case *types.Interface:
+		// Methods and embedded types are the interface: emitting
+		// empty lists while reporting empty:false was self-
+		// contradictory data the backend could not resolve calls from.
+		// NumMethods is the complete method set, including methods
+		// from embedded interfaces (NumExplicitMethods would be the
+		// declared-only set); the full set is what a backend needs
+		// for dispatch, and the embedded interfaces themselves arrive
+		// via "embedded".
+		embedded := []any{}
+		for i := 0; i < tt.NumEmbeddeds(); i++ {
+			embedded = append(embedded, e.typeID(tt.EmbeddedType(i)))
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"methods":  e.methodEntries(tt.NumMethods(), tt.Method),
+				"embedded": embedded,
 			},
 		}
 	default:
@@ -450,6 +500,57 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
 		}
 	}
+}
+
+// methodEntries describes each method as its name plus the type-table
+// id of its signature. Shared by Named and Interface: both record the
+// real method set, never an empty list.
+func (e *Emitter) methodEntries(n int, at func(i int) *types.Func) []any {
+	methods := []any{}
+	for i := 0; i < n; i++ {
+		m := at(i)
+		methods = append(methods, map[string]any{
+			"name": m.Name(),
+			"type": e.typeID(m.Type()),
+		})
+	}
+	return methods
+}
+
+// typeParamEntries describes each type parameter as its name plus the
+// type-table id of its constraint. A nil list (a non-generic type or
+// signature) yields an empty list, never a missing key.
+func (e *Emitter) typeParamEntries(tps *types.TypeParamList) []any {
+	out := []any{}
+	if tps == nil {
+		return out
+	}
+	for i := 0; i < tps.Len(); i++ {
+		tp := tps.At(i)
+		name := ""
+		if tp.Obj() != nil {
+			name = tp.Obj().Name()
+		}
+		out = append(out, map[string]any{
+			"name":       name,
+			"constraint": e.typeID(tp.Constraint()),
+		})
+	}
+	return out
+}
+
+// typeArgIDs returns the type-table ids of an instantiation's type
+// arguments. A nil list (the origin type, not an instantiation) yields
+// an empty list.
+func (e *Emitter) typeArgIDs(args *types.TypeList) []any {
+	out := []any{}
+	if args == nil {
+		return out
+	}
+	for i := 0; i < args.Len(); i++ {
+		out = append(out, e.typeID(args.At(i)))
+	}
+	return out
 }
 
 func basicClass(b *types.Basic) string {
