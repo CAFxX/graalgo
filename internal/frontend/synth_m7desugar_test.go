@@ -5,14 +5,10 @@ import (
 	"testing"
 )
 
-// TestM7StrconvDesugarWiring pins the 9 GAP-1 m7MultiResultFuncs
-// entries added for strconv (P3-M7 wave 1, Appendix M). The 6
-// encoding/json entries were deleted with the retirement of the
-// synthetic json source (review-08-synth-json, R08-S-01): real
-// encoding/json compiles from GOROOT via the disk importer, so its
-// multi-result members desugar via the disk table, not this table.
-// For each entry it verifies, against the synthetic source in
-// synth_strconv.go:
+// TestM7StrconvJsonDesugarWiring pins the 15 GAP-1 m7MultiResultFuncs
+// entries added for strconv and encoding/json (P3-M7 wave 1, Appendix M).
+// For each entry it verifies, against the synthetic sources in
+// synth_strconv.go / synth_json.go:
 //
 //  1. exactly one table entry exists for (pkgPath, name, recvType), with
 //     the expected helper name, pair type, and pair fields in order;
@@ -39,7 +35,7 @@ type m7StrconvJsonExpect struct {
 	pairFields []string
 }
 
-var m7StrconvTable = []m7StrconvJsonExpect{
+var m7StrconvJsonTable = []m7StrconvJsonExpect{
 	// strconv: package-level funcs.
 	{"strconv", "ParseBool", "", "__parseBoolPub", "parseBoolPair", []string{"v", "err"}},
 	{"strconv", "ParseInt", "", "__parseIntPub", "parseIntPair", []string{"v", "err"}},
@@ -51,6 +47,14 @@ var m7StrconvTable = []m7StrconvJsonExpect{
 	{"strconv", "QuotedPrefix", "", "__quotedPrefix", "quotedPrefixPair", []string{"v", "err"}},
 	// UnquoteChar is the 4-result entry: (value, multibyte, tail, err).
 	{"strconv", "UnquoteChar", "", "__unquoteChar", "unquoteCharPair", []string{"value", "multibyte", "tail", "err"}},
+	// encoding/json: package-level funcs.
+	{"encoding/json", "Marshal", "", "__marshal", "marshalPair", []string{"data", "err"}},
+	{"encoding/json", "MarshalIndent", "", "__marshalIndent", "marshalIndentPair", []string{"data", "err"}},
+	// encoding/json: methods (recvType names the receiver's named type).
+	{"encoding/json", "Token", "Decoder", "__decoderToken", "decoderTokenPair", []string{"tok", "err"}},
+	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}},
+	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}},
+	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}},
 }
 
 var m7StringsBuilderTable = []m7StrconvJsonExpect{
@@ -181,11 +185,11 @@ func TestM7ArchiveMimeDesugarWiring(t *testing.T) {
 	}
 }
 
-func TestM7StrconvDesugarWiring(t *testing.T) {
-	if len(m7StrconvTable) != 9 {
-		t.Fatalf("m7StrconvTable has %d entries, want 9", len(m7StrconvTable))
+func TestM7StrconvJsonDesugarWiring(t *testing.T) {
+	if len(m7StrconvJsonTable) != 15 {
+		t.Fatalf("m7StrconvJsonTable has %d entries, want 15", len(m7StrconvJsonTable))
 	}
-	for _, want := range m7StrconvTable {
+	for _, want := range m7StrconvJsonTable {
 		name := want.pkgPath + "." + want.name
 		if want.recvType != "" {
 			name = want.pkgPath + "." + want.recvType + "." + want.name

@@ -86,6 +86,7 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 	for _, name := range []string{"Unix", "UnixNano", "Add", "Sub", "Before",
 		"After", "Equal", "Compare", "IsZero", "String", "Format",
 		"Date", "Clock", "Zone", "Round", "Truncate", "AppendFormat",
+		"MarshalText", "UnmarshalText",
 		"GoString", "AddDate", "Year", "Month", "Day", "Weekday",
 		"Hour", "Minute", "Second", "Nanosecond", "YearDay",
 		"UTC", "Local", "In", "Location", "UnixMilli", "UnixMicro"} {
@@ -149,6 +150,35 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 		if _, ok := v.Type().(*types.Pointer); !ok {
 			t.Fatalf("time.%s is %T, want *Location", name, v.Type())
 		}
+	}
+
+	// ParseError is a named struct with gc's five fields (Layout,
+	// Value, LayoutElem, ValueElem, Message) and Error on *ParseError.
+	peObj := pkg.Scope().Lookup("ParseError")
+	if peObj == nil {
+		t.Fatal("time.ParseError missing")
+	}
+	peNamed, ok := peObj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("time.ParseError is %T, want *types.Named", peObj.Type())
+	}
+	peStruct, ok := peNamed.Underlying().(*types.Struct)
+	if !ok {
+		t.Fatalf("time.ParseError underlying is %T, want *types.Struct", peNamed.Underlying())
+	}
+	if peStruct.NumFields() != 5 {
+		t.Fatalf("time.ParseError has %d fields, want 5", peStruct.NumFields())
+	}
+	for i, want := range []string{"Layout", "Value", "LayoutElem", "ValueElem", "Message"} {
+		if peStruct.Field(i).Name() != want {
+			t.Fatalf("time.ParseError field %d = %q, want %q", i, peStruct.Field(i).Name(), want)
+		}
+		if peStruct.Field(i).Type() != types.Typ[types.String] {
+			t.Fatalf("time.ParseError.%s is %v, want string", want, peStruct.Field(i).Type())
+		}
+	}
+	if !hasMethod(peNamed, "Error") {
+		t.Fatal("time.ParseError lacks method Error")
 	}
 
 	// Package-level functions.
@@ -390,7 +420,7 @@ func TestTimeMirrorMatchesPhase1(t *testing.T) {
 		"../synth_time_context.go", "syntheticTimeSource", "time", rejectImports{})
 	assertScopeMatchesPhase1(t, "time", mirror, phase1)
 	for _, name := range []string{"Duration", "Time", "Timer", "Ticker",
-		"Location", "Month", "Weekday"} {
+		"Location", "Month", "Weekday", "ParseError"} {
 		compareNamedMethodSets(t, "time."+name, mirror, phase1, name,
 			map[string]bool{"Time.String": true})
 	}

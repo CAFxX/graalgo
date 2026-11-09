@@ -102,7 +102,7 @@ func TestBuildTagFiltering(t *testing.T) {
 	})
 
 	loader := NewLoader()
-	dirs := []string{dir, filepath.Join(loader.GOROOT(), "src", "os"), filepath.Join(loader.GOROOT(), "src", "strings")}
+	dirs := []string{dir, filepath.Join(loader.GOROOT(), "src", "os"), filepath.Join(loader.GOROOT(), "src", "strings"), filepath.Join(loader.GOROOT(), "src", "encoding", "json")}
 	for _, d := range dirs {
 		got, err := loader.SelectFiles(d)
 		if err != nil {

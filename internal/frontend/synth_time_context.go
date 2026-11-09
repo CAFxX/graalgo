@@ -254,6 +254,32 @@ func (e *timeParseError) Error() string {
 	return "time: " + e.message + " " + timeQuote(e.value)
 }
 
+// ParseError describes a problem parsing a time string (gc 1.27.1,
+// time/format.go:841). The v2 json engine constructs it directly
+// (encoding/json/v2/arshal_time.go) for malformed RFC 3339 input, so
+// it must exist with gc's exact fields even though synthetic Parse is
+// still unimplemented (M5 scope).
+type ParseError struct {
+	Layout     string
+	Value      string
+	LayoutElem string
+	ValueElem  string
+	Message    string
+}
+
+// Error implements the error interface (gc 1.27.1, time/format.go:902).
+func (e *ParseError) Error() string {
+	if e.Message == "" {
+		return "parsing time " +
+			timeQuote(e.Value) + " as " +
+			timeQuote(e.Layout) + ": cannot parse " +
+			timeQuote(e.ValueElem) + " as " +
+			timeQuote(e.LayoutElem)
+	}
+	return "parsing time " +
+		timeQuote(e.Value) + e.Message
+}
+
 func timeQuote(s string) string {
 	b := make([]byte, 0, len(s)+2)
 	b = append(b, '"')
@@ -263,6 +289,10 @@ func timeQuote(s string) string {
 			b = append(b, '\\', 'x')
 			b = append(b, "0123456789abcdef"[c>>4], "0123456789abcdef"[c&0xf])
 		} else {
+			// gc's quote (time/format.go) also escapes '"' and '\\'.
+			if c == '"' || c == '\\' {
+				b = append(b, '\\')
+			}
 			b = append(b, c)
 		}
 	}
@@ -790,6 +820,201 @@ func (t Time) AppendFormat(b []byte, layout string) []byte {
 	return append(b, t.Format(layout)...)
 }
 
+// MarshalText implements encoding.TextMarshaler (gc 1.27.1,
+// time/time.go:1638): the RFC 3339 Nano rendering. Real: Format /
+// AppendFormat already implement the layout, so this never errors in
+// the synthetic — gc errors only for years outside [0,9999], which
+// Format has no error channel for.
+func (t Time) MarshalText() ([]byte, error) {
+	return t.AppendFormat(nil, RFC3339Nano), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler (gc 1.27.1,
+// time/time.go:1644): the time must be in RFC 3339 format. Real
+// implementation (vendored from gc's format_rfc3339.go, below). On
+// error the receiver is cleared, as in gc (the assignment is
+// unconditional there). Needed by the v2 json engine, which decodes
+// time.Time values via UnmarshalText (encoding/json/v2/arshal_time.go).
+func (t *Time) UnmarshalText(data []byte) error {
+	parsed, err := timeParseStrictRFC3339(data)
+	*t = parsed
+	return err
+}
+
+// timeParseStrictRFC3339 parses RFC 3339 (gc 1.27.1,
+// time/format_rfc3339.go:155), adapted for the synthetic Time: gc
+// falls back to Parse(RFC3339) for inputs the fast path rejects, but
+// synthetic Parse is unimplemented (M5 scope), so a fast-path
+// rejection IS the error. The returned ParseError matches gc's
+// default (unknown-error) shape; element-exact LayoutElem/ValueElem
+// for rejected inputs is a known divergence until Parse lands. The
+// strictness checks gc disables in 1.27.1 (case true) are absent for
+// the same reason. Fractional seconds accept '.' or ',' — gc's Parse
+// fallback accepts both, so this matches gc's net behavior (the json
+// v2 engine rejects ',' independently for JSON input).
+func timeParseStrictRFC3339(b []byte) (Time, error) {
+	t, ok := timeParseRFC3339(b)
+	if !ok {
+		return Time{}, &ParseError{RFC3339, string(b), RFC3339, string(b), ""}
+	}
+	return t, nil
+}
+
+// timeParseRFC3339 is gc's parseRFC3339 (time/format_rfc3339.go:82),
+// de-genericized to []byte and adapted to the UTC-only synthetic
+// Time: gc resolves the offset against a local zone and preserves it
+// as a FixedZone location, but the synthetic Time carries no
+// location — the offset is applied to the instant and the result is
+// UTC (same instant, Z rendering; the offset representation is a
+// documented divergence, not an instant error).
+func timeParseRFC3339(s []byte) (Time, bool) {
+	// parseUint parses s as an unsigned decimal integer and
+	// verifies that it is within some range.
+	// If it is invalid or out-of-range,
+	// it sets ok to false and returns the min value.
+	ok := true
+	parseUint := func(s []byte, min, max int) (x int) {
+		for _, c := range s {
+			if c < '0' || '9' < c {
+				ok = false
+				return min
+			}
+			x = x*10 + int(c) - '0'
+		}
+		if x < min || max < x {
+			ok = false
+			return min
+		}
+		return x
+	}
+
+	// Parse the date and time.
+	if len(s) < len("2006-01-02T15:04:05") {
+		return Time{}, false
+	}
+	year := parseUint(s[0:4], 0, 9999)                       // e.g., 2006
+	month := parseUint(s[5:7], 1, 12)                        // e.g., 01
+	day := parseUint(s[8:10], 1, daysIn(Month(month), year)) // e.g., 02
+	hour := parseUint(s[11:13], 0, 23)                       // e.g., 15
+	min := parseUint(s[14:16], 0, 59)                        // e.g., 04
+	sec := parseUint(s[17:19], 0, 59)                        // e.g., 05
+	if !ok || !(s[4] == '-' && s[7] == '-' && s[10] == 'T' && s[13] == ':' && s[16] == ':') {
+		return Time{}, false
+	}
+	s = s[19:]
+
+	// Parse the fractional second.
+	var nsec int
+	if len(s) >= 2 && (s[0] == '.' || s[0] == ',') && timeIsDigitByte(s, 1) {
+		n := 2
+		for ; n < len(s) && timeIsDigitByte(s, n); n++ {
+		}
+		nsec, _, _ = timeParseNanoseconds(s, n)
+		s = s[n:]
+	}
+
+	// Parse the time zone.
+	t := Date(year, Month(month), day, hour, min, sec, nsec, UTC)
+	if len(s) != 1 || s[0] != 'Z' {
+		if len(s) != len("-07:00") {
+			return Time{}, false
+		}
+		hr := parseUint(s[1:3], 0, 23) // e.g., 07
+		mm := parseUint(s[4:6], 0, 59) // e.g., 00
+		if !ok || !((s[0] == '-' || s[0] == '+') && s[3] == ':') {
+			return Time{}, false
+		}
+		zoneOffset := (hr*60 + mm) * 60
+		if s[0] == '-' {
+			zoneOffset *= -1
+		}
+		t.addSec(-int64(zoneOffset))
+	}
+	return t, true
+}
+
+// timeIsDigitByte reports whether s[i] is an ASCII digit
+// (gc 1.27.1, time/format.go:915, de-genericized).
+func timeIsDigitByte(s []byte, i int) bool {
+	if len(s) <= i {
+		return false
+	}
+	c := s[i]
+	return '0' <= c && c <= '9'
+}
+
+// timeParseNanoseconds parses the fractional second (gc 1.27.1,
+// time/format.go:1529), de-genericized to []byte. value starts at
+// the separator ('.' or ','); nbytes is the end of the digit run.
+func timeParseNanoseconds(value []byte, nbytes int) (ns int, rangeErrString string, err error) {
+	if value[0] != '.' && value[0] != ',' {
+		err = &timeParseError{message: "bad [0-9]*", value: ""}
+		return
+	}
+	if nbytes > 10 {
+		value = value[:10]
+		nbytes = 10
+	}
+	if ns, err = timeAtoiBytes(value[1:nbytes]); err != nil {
+		return
+	}
+	if ns < 0 {
+		rangeErrString = "fractional second"
+		return
+	}
+	// We need nanoseconds, which means scaling by the number
+	// of missing digits in the format, maximum length 10.
+	scaleDigits := 10 - nbytes
+	for i := 0; i < scaleDigits; i++ {
+		ns *= 10
+	}
+	return
+}
+
+// timeAtoiBytes parses a run of decimal digits (gc's atoi,
+// time/format.go, []byte-only).
+func timeAtoiBytes(s []byte) (int, error) {
+	if len(s) == 0 {
+		return 0, &timeParseError{message: "bad [0-9]*", value: ""}
+	}
+	x := 0
+	for _, c := range s {
+		if c < '0' || '9' < c {
+			return 0, &timeParseError{message: "bad [0-9]*", value: ""}
+		}
+		x = x*10 + int(c) - '0'
+	}
+	return x, nil
+}
+
+// isLeap reports whether year is a leap year (gc 1.27.1, time/time.go).
+func isLeap(year int) bool {
+	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
+}
+
+// daysIn returns the number of days in month m of year (gc 1.27.1,
+// time/time.go:1289).
+func daysIn(m Month, year int) int {
+	if m == February {
+		if isLeap(year) {
+			return 29
+		}
+		return 28
+	}
+	// With the special case of February eliminated, the pattern is
+	//	31 30 31 30 31 30 31 31 30 31 30 31
+	// Adding m&1 produces the basic alternation;
+	// adding (m>>3)&1 inverts the alternation starting in August.
+	return 30 + int((m+m>>3)&1)
+}
+
+// addSec adds sec seconds to the instant (gc 1.27.1, time/time.go;
+// the synthetic Time is a bare unixnano, so this is the whole method).
+func (t *Time) addSec(sec int64) {
+	t.unixnano += sec * 1e9
+	t.isSet = true
+}
+
 // monthName returns the full English month name (1-based).
 func monthName(m int64) string {
 	switch m {
@@ -891,7 +1116,13 @@ func (t Time) Clock() (int, int, int) {
 func (t Time) Hour() int        { panic("time.Time.Hour: not in M5 scope") }
 func (t Time) Minute() int      { panic("time.Time.Minute: not in M5 scope") }
 func (t Time) Second() int      { panic("time.Time.Second: not in M5 scope") }
-func (t Time) Nanosecond() int  { panic("time.Time.Nanosecond: not in M5 scope") }
+func (t Time) Nanosecond() int {
+	// Real (was a panic stub): the nanosecond offset within the
+	// second, [0, 1e9) — floored mod so pre-epoch times stay
+	// non-negative, as in gc. Needed by the v2 json engine
+	// (encoding/json/v2/arshal_time.go appendTimeUnix).
+	return int(timeFloorMod(t.unixnano, 1e9))
+}
 func (t Time) YearDay() int     { panic("time.Time.YearDay: not in M5 scope") }
 func (t Time) UTC() Time        { return t }
 func (t Time) Local() Time      { return t }

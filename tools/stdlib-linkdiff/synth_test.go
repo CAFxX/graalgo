@@ -29,11 +29,11 @@ func TestSyntheticRegistryResolves(t *testing.T) {
 	if len(reg.Sources) < 100 {
 		t.Fatalf("registry resolved %d sources, want >= 100", len(reg.Sources))
 	}
-	// net/http, reflect and encoding/json were retired from
-	// syntheticSources (real packages now compile from GOROOT via the
-	// disk importer — synth_machinery.go); net and crypto/tls are
-	// synthetic packages that still resolve through the registry.
-	for _, path := range []string{"os", "net", "crypto/tls", "crypto/sha256", "internal/poll", "syscall"} {
+	// net/http and reflect were retired from syntheticSources (real
+	// packages now compile from GOROOT via the disk importer —
+	// synth_machinery.go); net and crypto/tls are synthetic packages
+	// that still resolve through the registry.
+	for _, path := range []string{"os", "net", "crypto/tls", "encoding/json", "crypto/sha256", "internal/poll", "syscall"} {
 		src, ok := reg.Sources[path]
 		if !ok {
 			t.Errorf("registry missing source for %q", path)
@@ -66,7 +66,7 @@ func TestSyntheticShadowSet(t *testing.T) {
 	// Shadowed = syntheticSources keys + dedicatedSyntheticStubs keys
 	// (runtime, unsafe) per export.go's general overlay lookup.
 	for _, path := range []string{"os", "runtime", "unsafe", "time", "context",
-		"internal/poll", "syscall", "crypto/sha256"} {
+		"internal/poll", "syscall", "encoding/json", "crypto/sha256"} {
 		if !reg.Shadowed[path] {
 			t.Errorf("shadow set missing overlaid package %q", path)
 		}

@@ -105,6 +105,10 @@
     {
       "program": "40_method_values",
       "reason": "backend-specific: method values not in scope"
+    },
+    {
+      "program": "42_json",
+      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
     }
   ],
   "timeoutSec": 30

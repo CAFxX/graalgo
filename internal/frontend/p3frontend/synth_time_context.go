@@ -156,6 +156,7 @@ func syntheticTimePackage() *types.Package {
 		{"Round", []*types.Var{newParam("d", duration)}, []*types.Var{newParam("", timeType)}},
 		{"Truncate", []*types.Var{newParam("d", duration)}, []*types.Var{newParam("", timeType)}},
 		{"AppendFormat", []*types.Var{newParam("b", types.NewSlice(byteT)), newParam("layout", stringT)}, []*types.Var{newParam("", types.NewSlice(byteT))}},
+		{"MarshalText", nil, []*types.Var{newParam("", types.NewSlice(byteT)), newParam("", errorT)}},
 		{"GoString", nil, []*types.Var{newParam("", stringT)}},
 		{"Hour", nil, []*types.Var{newParam("", intT)}},
 		{"Minute", nil, []*types.Var{newParam("", intT)}},
@@ -174,6 +175,26 @@ func syntheticTimePackage() *types.Package {
 			types.NewTuple(m.params...), types.NewTuple(m.results...), false)
 		timeType.AddMethod(types.NewFunc(token.NoPos, pkg, m.name, sig))
 	}
+	// UnmarshalText has a pointer receiver, so it cannot live in the
+	// value-receiver table above (same shape as the multi-result
+	// methods below).
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "UnmarshalText",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", types.NewPointer(timeType)),
+			nil, nil,
+			types.NewTuple(newParam("data", types.NewSlice(byteT))),
+			types.NewTuple(newParam("", errorT)), false)))
+
+	// addSec is the synthetic Time's only unexported method (used by
+	// the RFC 3339 parser); the drift test requires it in the mirror
+	// like every other Time method.
+	timeType.AddMethod(types.NewFunc(token.NoPos, pkg, "addSec",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", types.NewPointer(timeType)),
+			nil, nil,
+			types.NewTuple(newParam("sec", int64T)),
+			nil, false)))
+
 	// (Multi-result Date/Clock/Zone methods are added after Month is
 	// defined below.)
 
@@ -237,6 +258,27 @@ func syntheticTimePackage() *types.Package {
 			types.NewTuple(newParam("", stringT)), false)))
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "Local", locationPtr))
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "UTC", locationPtr))
+
+	// ParseError = struct{Layout, Value, LayoutElem, ValueElem,
+	// Message string} with Error on *ParseError (gc time/format.go:841;
+	// added for the v2 json engine, which constructs it directly).
+	parseErrorName := types.NewTypeName(token.NoPos, pkg, "ParseError", nil)
+	pkg.Scope().Insert(parseErrorName)
+	parseErrorStruct := types.NewStruct(
+		[]*types.Var{
+			newField("Layout", stringT),
+			newField("Value", stringT),
+			newField("LayoutElem", stringT),
+			newField("ValueElem", stringT),
+			newField("Message", stringT),
+		},
+		nil)
+	parseErrorType := types.NewNamed(parseErrorName, parseErrorStruct, nil)
+	parseErrorType.AddMethod(types.NewFunc(token.NoPos, pkg, "Error",
+		types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "", types.NewPointer(parseErrorType)),
+			nil, nil, nil,
+			types.NewTuple(newParam("", stringT)), false)))
 
 	// Multi-result Time methods (defined with exact gc signatures, fail
 	// fast at emission — see phase-1 isMultiResultSynthetic).

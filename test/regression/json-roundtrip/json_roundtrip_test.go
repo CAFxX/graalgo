@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Regression test for R08-S-01 (review-08-synth-json): encoding/json
@@ -227,5 +228,136 @@ func TestJsonUnmarshalErrors(t *testing.T) {
 		t.Fatal("Unmarshal of invalid JSON: expected an error, got nil")
 	} else if _, ok := err.(*json.SyntaxError); !ok {
 		t.Fatalf("Unmarshal of invalid JSON error is %T, want *json.SyntaxError", err)
+	}
+}
+
+// Time values through the real v2 engine. The v2 engine decodes
+// time.Time via Time.UnmarshalText and encodes via AppendFormat, and
+// constructs time.ParseError for malformed input — all three were
+// missing from the synthetic time package and were added as part of
+// this retirement (real implementations, vendored from gc).
+type Event struct {
+	When time.Time `json:"when"`
+	Name string    `json:"name"`
+}
+
+func TestJsonTimeRoundTrip(t *testing.T) {
+	e := Event{When: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC), Name: "x"}
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("Marshal(time field): %v", err)
+	}
+	if want := `{"when":"2026-11-09T12:00:00Z","name":"x"}`; string(data) != want {
+		t.Fatalf("Marshal(time field) = %s, want %s", data, want)
+	}
+	var back Event
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("Unmarshal(time field): %v", err)
+	}
+	if !back.When.Equal(e.When) || back.Name != "x" {
+		t.Fatalf("Unmarshal(time field) = %+v, want %+v", back, e)
+	}
+	// Nanosecond fraction renders (and trims trailing zeros).
+	e2 := Event{When: time.Date(2026, 11, 9, 12, 0, 0, 123456789, time.UTC), Name: "n"}
+	data, err = json.Marshal(e2)
+	if err != nil {
+		t.Fatalf("Marshal(time with nanos): %v", err)
+	}
+	if want := `{"when":"2026-11-09T12:00:00.123456789Z","name":"n"}`; string(data) != want {
+		t.Fatalf("Marshal(time with nanos) = %s, want %s", data, want)
+	}
+	var back2 Event
+	if err := json.Unmarshal(data, &back2); err != nil {
+		t.Fatalf("Unmarshal(time with nanos): %v", err)
+	}
+	if !back2.When.Equal(e2.When) {
+		t.Fatalf("Unmarshal(time with nanos) = %v, want %v", back2.When, e2.When)
+	}
+}
+
+func TestJsonTimeOffsetInstant(t *testing.T) {
+	// An offset timestamp decodes to the same instant. gc preserves
+	// the original offset as a FixedZone location (re-marshal prints
+	// +02:00); the synthetic Time is UTC-only, so graalgo normalizes
+	// to UTC and re-marshals with Z. Same instant, different
+	// representation — documented divergence, so this test pins only
+	// the instant.
+	var off Event
+	if err := json.Unmarshal([]byte(`{"when":"2026-11-09T14:00:00+02:00","name":"o"}`), &off); err != nil {
+		t.Fatalf("Unmarshal(offset time): %v", err)
+	}
+	want := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	if !off.When.Equal(want) {
+		t.Fatalf("Unmarshal(offset time) = %v, want instant %v", off.When, want)
+	}
+}
+
+func TestJsonTimeUnmarshalInvalid(t *testing.T) {
+	// The v2 engine returns the time.ParseError directly. Its
+	// LayoutElem/ValueElem are element-exact under gc (Parse reports
+	// the failing element); the synthetic fast-path rejection returns
+	// the full-layout shape, so only the prefix and the type are
+	// pinned here.
+	var bad Event
+	err := json.Unmarshal([]byte(`{"when":"not-a-time","name":"b"}`), &bad)
+	if err == nil {
+		t.Fatal("Unmarshal(bad time): expected an error, got nil")
+	}
+	if _, ok := err.(*time.ParseError); !ok {
+		t.Fatalf("Unmarshal(bad time) error is %T, want *time.ParseError", err)
+	}
+	if !strings.Contains(err.Error(), `parsing time "not-a-time"`) {
+		t.Fatalf("Unmarshal(bad time) error = %q, want it to contain parsing time \"not-a-time\"", err.Error())
+	}
+}
+
+func TestJsonTimeTextMethods(t *testing.T) {
+	// Direct MarshalText/UnmarshalText + ParseError.Error, exercised
+	// through the synthetic time package under graalgo and real time
+	// under gc. The expected strings are gc's (verified against
+	// go1.27.1); a failed UnmarshalText clears the receiver.
+	want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	mt, err := want.MarshalText()
+	if err != nil {
+		t.Fatalf("MarshalText: %v", err)
+	}
+	if string(mt) != "2026-01-02T03:04:05Z" {
+		t.Fatalf("MarshalText = %s, want 2026-01-02T03:04:05Z", mt)
+	}
+	var got time.Time
+	if err := got.UnmarshalText([]byte("2026-01-02T03:04:05Z")); err != nil {
+		t.Fatalf("UnmarshalText(valid): %v", err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("UnmarshalText(valid) = %v, want %v", got, want)
+	}
+	// Offset input parses to the same instant.
+	var off time.Time
+	if err := off.UnmarshalText([]byte("2026-01-02T05:04:05+02:00")); err != nil {
+		t.Fatalf("UnmarshalText(offset): %v", err)
+	}
+	if !off.Equal(want) {
+		t.Fatalf("UnmarshalText(offset) = %v, want instant %v", off, want)
+	}
+	// Failed parse clears the receiver and returns *ParseError.
+	got = want
+	err = got.UnmarshalText([]byte("garbage"))
+	if err == nil {
+		t.Fatal("UnmarshalText(invalid): expected an error, got nil")
+	}
+	if !got.IsZero() {
+		t.Fatalf("UnmarshalText(invalid) left receiver %v, want zero Time", got)
+	}
+	if _, ok := err.(*time.ParseError); !ok {
+		t.Fatalf("UnmarshalText(invalid) error is %T, want *time.ParseError", err)
+	}
+	// ParseError.Error strings are gc-exact.
+	pe := &time.ParseError{Layout: time.RFC3339, Value: "garbage", LayoutElem: "2006", ValueElem: "garb", Message: ""}
+	if got, want := pe.Error(), `parsing time "garbage" as "2006-01-02T15:04:05Z07:00": cannot parse "garb" as "2006"`; got != want {
+		t.Fatalf("ParseError.Error = %q, want %q", got, want)
+	}
+	pe2 := &time.ParseError{Layout: time.RFC3339, Value: "x", Message: ": timezone hour out of range"}
+	if got, want := pe2.Error(), `parsing time "x": timezone hour out of range`; got != want {
+		t.Fatalf("ParseError.Error (message) = %q, want %q", got, want)
 	}
 }

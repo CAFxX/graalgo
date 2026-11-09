@@ -171,6 +171,16 @@ func (l *Loader) tagSatisfied(tag string) bool {
 			return n >= 1 && n <= 27
 		}
 	}
+	// goexperiment.jsonv2 is on by default in the go1.27.1 toolchain:
+	// `go list -f '{{.GoFiles}}' encoding/json` builds only the v2
+	// files, and the phase-1 disk importer (go/build) agrees. The
+	// p3frontend must serve the same files or the two frontends
+	// diverge (R08-S-01: the encoding/json retirement serves v2 from
+	// phase-1). Other goexperiment.* tags stay unsatisfied until the
+	// toolchain enables them by default.
+	if tag == "goexperiment.jsonv2" {
+		return true
+	}
 	return false
 }
 
@@ -440,7 +450,7 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// of the anchored cache.
 	switch path {
 	case "time", "context", "errors", "sort", "bytes", "math", "strings",
-		"encoding/xml", "encoding/csv", "encoding/gob", "strconv",
+		"encoding/xml", "encoding/csv", "encoding/gob", "strconv", "encoding/json",
 		"encoding/base32", "encoding/base64", "encoding/hex", "encoding/binary",
 		"encoding/ascii85", "encoding/pem", "encoding/asn1", "encoding":
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
