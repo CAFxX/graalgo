@@ -74,23 +74,27 @@ public final class GoOsErrnoTest {
         return GoString.fromUtf8(s);
     }
 
+    // Byte-buffer helpers: GoOs.goBuf/goBufBack cast the slice backing
+    // to byte[] (D5: []byte is byte[]-backed since 9c92153d), so these
+    // must build byte[]-backed slices. The old int[]-backed helpers
+    // predated that change and made testOpenWriteReadClose,
+    // testSeekReadAtWriteAt, testSymlinkReadlink and testPipe fail with
+    // ClassCastException on the base commit (verified red on base
+    // 20a0399b, 2026-11-09) — pre-existing, unrelated to R08-S-07.
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static GoSlice bytesBuf(byte[] data) {
-        int[] arr = new int[data.length];
-        for (int i = 0; i < data.length; i++) {
-            arr[i] = data[i] & 0xFF;
-        }
-        return new GoSlice(arr, 0, arr.length, arr.length);
+        // Clone: the caller keeps its own array (as the old int[] copy did).
+        return new GoSlice(data.clone(), 0, data.length, data.length);
     }
 
     private static byte[] sliceBytes(GoSlice gs) {
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] out = new byte[gs.len()];
         for (int i = 0; i < gs.len(); i++) {
-            out[i] = (byte) arr[gs.offset() + i];
+            out[i] = arr[gs.offset() + i];
         }
         return out;
     }
@@ -455,6 +459,81 @@ public final class GoOsErrnoTest {
             checkEq(-GoOs.ENOENT,
                     GoOs.chmod(gs(scratch.resolve("nope").toString()), 0600),
                     "chmod missing");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R08-S-07: setuid/setgid/sticky bits are real chmod(2) bits, not
+    // an error. RED on the old code (chmod masked to 0777): every
+    // statMode readback below fails.
+    public void testChmodSetuidBits() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("s").toString();
+            Files.writeString(Path.of(name), "x");
+            checkEq(0, GoOs.chmod(gs(name), 04755), "chmod setuid");
+            long mode = GoOs.statMode(gs(name), 1L) & 07777;
+            checkEq(04755, mode, "chmod setuid bits, got " + Long.toOctalString(mode));
+            checkEq(0, GoOs.chmod(gs(name), 02755), "chmod setgid");
+            mode = GoOs.statMode(gs(name), 1L) & 07777;
+            checkEq(02755, mode, "chmod setgid bits, got " + Long.toOctalString(mode));
+            checkEq(0, GoOs.chmod(gs(name), 01777), "chmod sticky");
+            mode = GoOs.statMode(gs(name), 1L) & 07777;
+            checkEq(01777, mode, "chmod sticky bits, got " + Long.toOctalString(mode));
+            // Plain 0777 chmod still works through the same path.
+            checkEq(0, GoOs.chmod(gs(name), 0644), "chmod plain");
+            mode = GoOs.statMode(gs(name), 1L) & 07777;
+            checkEq(0644, mode, "chmod plain bits, got " + Long.toOctalString(mode));
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R08-S-07: open-create honors setuid/setgid/sticky (open(2)
+    // applies them at creation; umask masks only the 0777 bits).
+    // RED on the old code (open rejected perm & ~0777 with -EINVAL).
+    // Re-opening an existing file with special bits must NOT change
+    // its mode (gc ignores perm unless creating).
+    public void testOpenCreateSetuidBits() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("o").toString();
+            long h = GoOs.open(gs(name), O_WRONLY | O_CREAT, 04755);
+            check(h >= 16, "open-create setuid: got " + h);
+            checkEq(0, GoOs.close(h), "close after open-create setuid");
+            long mode = GoOs.statMode(gs(name), 1L) & 07777;
+            checkEq(04755, mode, "open-create setuid bits, got " + Long.toOctalString(mode));
+            long h2 = GoOs.open(gs(name), O_RDWR, 07777);
+            check(h2 >= 16, "open-existing: got " + h2);
+            checkEq(0, GoOs.close(h2), "close after open-existing");
+            mode = GoOs.statMode(gs(name), 1L) & 07777;
+            checkEq(04755, mode, "open-existing changed mode, got " + Long.toOctalString(mode));
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R08-S-07 (mkdir arm): the kernel strips setuid/setgid at mkdir
+    // time but keeps the sticky bit (verified vs go1.27.1 on tmpfs and
+    // overlay, 2026-11-09) — graalgo must match gc, not "fix" it by
+    // applying the stripped bits post-create. RED on the old code for
+    // the sticky case (mkdir dropped all special bits).
+    public void testMkdirSpecialBits() throws IOException {
+        initScratch();
+        try {
+            String sg = scratch.resolve("sg").toString();
+            checkEq(0, GoOs.mkdir(gs(sg), 02755), "mkdir setgid");
+            long mode = GoOs.statMode(gs(sg), 1L) & 07777;
+            checkEq(0755, mode, "mkdir setgid stripped, got " + Long.toOctalString(mode));
+            String su = scratch.resolve("su").toString();
+            checkEq(0, GoOs.mkdir(gs(su), 04755), "mkdir setuid");
+            mode = GoOs.statMode(gs(su), 1L) & 07777;
+            checkEq(0755, mode, "mkdir setuid stripped, got " + Long.toOctalString(mode));
+            String st = scratch.resolve("st").toString();
+            checkEq(0, GoOs.mkdir(gs(st), 01755), "mkdir sticky");
+            mode = GoOs.statMode(gs(st), 1L) & 07777;
+            checkEq(01755, mode, "mkdir sticky bits, got " + Long.toOctalString(mode));
         } finally {
             cleanScratch();
         }

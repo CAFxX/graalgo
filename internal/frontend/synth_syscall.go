@@ -2290,7 +2290,8 @@ type SockaddrUnix struct {
 }
 
 // RawConn/Conn mirror gc's syscall.Conn API (used by os.NewFile's
-// SyscallConn, which fail-fasts in M8).
+// SyscallConn, which is not implemented: no OS fd exists to hand out
+// — see synth_os.go SyscallConn, R08-S-06).
 type RawConn interface {
 	Control(f func(fd uintptr)) error
 	Read(f func(fd uintptr) bool) error

@@ -63,8 +63,12 @@
 //
 // Divergences from gc, all documented:
 //   - D1: umask is unreadable from the JVM: Mkdir/OpenFile-create apply
-//     the requested 0777 bits exactly, ignoring umask (re-test: native
-//     umask read, Phase 4/Panama).
+//     the requested bits exactly, ignoring umask (re-test: native
+//     umask read, Phase 4/Panama). Setuid/setgid/sticky bits DO work:
+//     Chmod/OpenFile-create apply all three via the JDK "unix:mode"
+//     attribute (a real chmod(2)); Mkdir applies only the sticky bit,
+//     because the kernel strips setuid/setgid at mkdir time (verified
+//     against go1.27.1, 2026-11-09) — see mkdirModeBits.
 //   - D2: File.Stat on an open handle stats the stored open path (the
 //     JVM has no fstat-on-channel); pipe/stdio modes are synthesized
 //     from the handle kind (S_IFIFO/S_IFCHR, size 0).
@@ -488,10 +492,47 @@ func newLinkError(op, oldname, newname string, negErrno int64) error {
 
 var errNegativeOffset = errors.New("negative offset")
 
-// errSetuidBits is the descriptive error for chmod/open modes carrying
-// setuid/setgid/sticky bits (os.md §6.3): the JVM has no numeric chmod(2);
-// masking silently is forbidden. Re-test: Panama FFI numeric-chmod.
-var errSetuidBits = errors.New("setuid/setgid/sticky bits not supported (need real chmod(2); re-test: Panama FFI)")
+// fullModeBits converts a FileMode to a numeric unix mode (07777):
+// the 0777 permission bits plus setuid (04000), setgid (02000) and
+// sticky (01000). FileMode.Perm() alone drops the special bits, which
+// is why Chmod/OpenFile used to reject them (R08-S-07: the old
+// errSetuidBits rejection, removed by this fix).
+// The bits reach the host through the osChmod/osOpen/osMkdir
+// intrinsics, which apply them with the JDK's "unix:mode" attribute
+// (a real chmod(2) under the hood — verified 2026-11-09 on GraalVM
+// 25: setAttribute("unix:mode", 04755) lands as disk mode 4755).
+// No Panama FFI is needed: the trigger that named it predates the
+// discovery that NIO already exposes numeric chmod.
+func fullModeBits(mode FileMode) int64 {
+	m := int64(mode.Perm())
+	if mode&ModeSetuid != 0 {
+		m |= 04000
+	}
+	if mode&ModeSetgid != 0 {
+		m |= 02000
+	}
+	if mode&ModeSticky != 0 {
+		m |= 01000
+	}
+	return m
+}
+
+// mkdirModeBits converts a FileMode to the numeric mode mkdir(2)
+// actually applies: the kernel strips setuid/setgid at mkdir time
+// and keeps only the sticky bit among the special bits (verified
+// against go1.27.1 on tmpfs, overlay and btrfs, 2026-11-09:
+// Mkdir(0755|ModeSetgid) and Mkdir(0755|ModeSetuid) both land as
+// 0755, Mkdir(0755|ModeSticky) lands as 1755).
+// chmod(2) and open-create honor all three bits, so only mkdir
+// needs this split — passing the full mode to osMkdir would DIVERGE
+// from gc in the other direction (2755 where gc makes 0755).
+func mkdirModeBits(mode FileMode) int64 {
+	m := int64(mode.Perm())
+	if mode&ModeSticky != 0 {
+		m |= 01000
+	}
+	return m
+}
 
 // ---------------------------------------------------------------------------
 // File.
@@ -720,11 +761,7 @@ func __openFile(name string, flag int, perm FileMode) openPair {
 	if name == "" {
 		return openPair{nil, &PathError{Op: "open", Path: name, Err: syscall.ENOENT}}
 	}
-	if perm&(ModeSetuid|ModeSetgid|ModeSticky) != 0 {
-		// §6.3 analog for open: loud descriptive error, never mask.
-		return openPair{nil, &PathError{Op: "open", Path: name, Err: errSetuidBits}}
-	}
-	h := osOpen(name, int64(flag), int64(perm.Perm()))
+	h := osOpen(name, int64(flag), fullModeBits(perm))
 	if h < 0 {
 		return openPair{nil, newPathError("open", name, h)}
 	}
@@ -1587,14 +1624,13 @@ func __sortDirEntries(de []DirEntry) {
 
 // Chmod changes the mode of the named file to mode.
 func Chmod(name string, mode FileMode) error {
-	if mode&(ModeSetuid|ModeSetgid|ModeSticky) != 0 {
-		// §6.3: descriptive error, never mask.
-		return &PathError{Op: "chmod", Path: name, Err: errSetuidBits}
-	}
 	if name == "" {
 		return &PathError{Op: "chmod", Path: name, Err: syscall.ENOENT}
 	}
-	e := osChmod(name, int64(mode.Perm()))
+	// Special bits included: fullModeBits maps ModeSetuid/ModeSetgid/
+	// ModeSticky to 04000/02000/01000 and the osChmod intrinsic applies
+	// them with a real chmod(2) (JDK "unix:mode" attribute).
+	e := osChmod(name, fullModeBits(mode))
 	if e < 0 {
 		return newPathError("chmod", name, e)
 	}
@@ -1691,7 +1727,7 @@ func Mkdir(name string, perm FileMode) error {
 	if name == "" {
 		return &PathError{Op: "mkdir", Path: name, Err: syscall.ENOENT}
 	}
-	e := osMkdir(name, int64(perm.Perm()))
+	e := osMkdir(name, mkdirModeBits(perm))
 	if e < 0 {
 		return newPathError("mkdir", name, e)
 	}
@@ -2369,10 +2405,23 @@ func __fileReadAll(f *File) readFilePair {
 // re-test trigger fired and DirFS is real now, above.)
 // ---------------------------------------------------------------------------
 
-// SyscallConn returns a raw file. This function is not implemented in M8
-// (§6.4 — needs syscall.RawConn + a real fd).
+// SyscallConn returns a raw file. Not implemented: there is no OS fd
+// to hand to the caller. File.Fd() returns a GoOs cookie (a handle-table
+// index, §2.2), not an fd, and no sanctioned API exposes the fd behind
+// the FileChannel/SocketChannel a cookie wraps — the only route would
+// be private-field reflection into sun.nio.ch internals. And even with
+// an fd, a RawConn is unusable: the closures it receives call
+// syscall.Syscall/RawSyscall, which fail fast (synth_syscall.go: no
+// generic trap dispatcher exists), and Read/Write would need the
+// netpoller to drive readiness on a raw fd it does not own. So the
+// missing primitives are, precisely: (1) fd exposure for GoOs cookies,
+// (2) a raw-syscall trap for RawConn closures, (3) poller integration
+// for raw fds. Re-test when fd-domain unification lands (cookies
+// backed by real fds) AND the raw-syscall trap exists — either alone
+// is not enough. Passing the cookie as the fd would be silently
+// wrong (syscalls on a table index), so this stays fail-fast.
 func (f *File) SyscallConn() (syscall.RawConn, error) {
-	panic("os.File.SyscallConn: not in M8 scope (needs syscall.RawConn + a real fd; re-test: fd-domain unification, Phase 4/Panama)")
+	panic("os.File.SyscallConn: not implemented (no OS fd: File.Fd() is a GoOs cookie, not a fd; no sanctioned API exposes the fd behind a FileChannel/SocketChannel; syscall.Syscall traps fail fast so a RawConn closure could not execute; re-test: fd-domain unification + raw-syscall trap)")
 }
 
 // __fileSyscallConn is the single-result Appendix-M helper for the
@@ -2387,7 +2436,7 @@ type syscallConnPair struct {
 }
 
 func __fileSyscallConn(f *File) syscallConnPair {
-	panic("os.File.SyscallConn: not in M8 scope (needs syscall.RawConn + a real fd; re-test: fd-domain unification, Phase 4/Panama)")
+	panic("os.File.SyscallConn: not implemented (no OS fd: File.Fd() is a GoOs cookie, not a fd; no sanctioned API exposes the fd behind a FileChannel/SocketChannel; syscall.Syscall traps fail fast so a RawConn closure could not execute; re-test: fd-domain unification + raw-syscall trap)")
 }
 
 // Root represents a directory that acts as the root of a file tree.

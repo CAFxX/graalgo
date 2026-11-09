@@ -684,8 +684,8 @@ public final class GoOs {
         }
         int flags = num32(flagsArg);
         long perm = num(permArg);
-        if ((perm & ~0777L) != 0) {
-            return -EINVAL; // setuid/setgid/sticky: fail-fast, never mask (Go side also guards)
+        if ((perm & ~07777L) != 0) {
+            return -EINVAL; // mode outside 07777: never mask
         }
         boolean create = (flags & O_CREAT) != 0;
         boolean excl = (flags & O_EXCL) != 0;
@@ -738,6 +738,24 @@ public final class GoOs {
                     Files.setPosixFilePermissions(p, toPerms((int) (perm & 0777)));
                 } catch (UnsupportedOperationException uoe) {
                     // Non-POSIX filesystem: keep the created defaults.
+                }
+                if ((perm & 07000L) != 0) {
+                    // Special bits: open(2) honors setuid/setgid/sticky
+                    // at creation (umask masks only the 0777 bits), so
+                    // apply the full mode with a real chmod(2). A
+                    // non-POSIX filesystem keeps the created defaults
+                    // (same tolerance as the 0777 path above); any other
+                    // failure fails the open loudly — the file was
+                    // created but its mode is wrong, never mask that.
+                    long r = chmodNumeric(p, (int) (perm & 07777L));
+                    if (r != 0 && r != -EOPNOTSUPP) {
+                        try {
+                            ch.close();
+                        } catch (IOException ignored) {
+                            // Best-effort close; the errno is what matters.
+                        }
+                        return r;
+                    }
                 }
             }
             long h = NEXT_COOKIE.getAndIncrement();
@@ -1259,12 +1277,26 @@ public final class GoOs {
         } catch (InvalidPathException e) {
             return -EINVAL;
         }
+        int perm = num32(permArg);
         try {
             Files.createDirectory(p);
             try {
-                Files.setPosixFilePermissions(p, toPerms(num32(permArg) & 0777));
+                Files.setPosixFilePermissions(p, toPerms(perm & 0777));
             } catch (UnsupportedOperationException uoe) {
                 // Non-POSIX filesystem: keep the created defaults.
+            }
+            if ((perm & 01000) != 0) {
+                // Sticky bit only: the kernel strips setuid/setgid at
+                // mkdir time (verified vs go1.27.1, 2026-11-09) and the
+                // Go side already drops them (mkdirModeBits), so only
+                // 01000 can arrive here. Apply it with a real chmod(2);
+                // a non-POSIX filesystem keeps the created defaults,
+                // any other failure fails loudly (the directory was
+                // created but its mode is wrong — never mask that).
+                long r = chmodNumeric(p, (perm & 0777) | 01000);
+                if (r != 0 && r != -EOPNOTSUPP) {
+                    return r;
+                }
             }
             return 0;
         } catch (IOException e) {
@@ -1387,16 +1419,21 @@ public final class GoOs {
         }
     }
 
-    /** graalgo.os.chmod — 0777 subset only (Go side pre-checks). */
-    public static long chmod(Object pathArg, Object permArg) {
-        final Path p;
+    /**
+     * Numeric chmod(2) via the JDK's {@code "unix:mode"} attribute: the
+     * only public JDK API that sets the full 07777 mode (setuid 04000,
+     * setgid 02000, sticky 01000) — {@code PosixFilePermission} covers
+     * only the 0777 bits. Follows symlinks like chmod(2); file-type
+     * bits in the stored mode are preserved by the JDK (only the 07777
+     * bits are taken from {@code mode}). Returns 0 or -errno; a
+     * non-POSIX filesystem surfaces as -EOPNOTSUPP, like the old
+     * setPosixFilePermissions path. Verified 2026-11-09 on GraalVM 25:
+     * {@code setAttribute("unix:mode", 04755)} lands as disk mode 4755.
+     * No Panama FFI is needed for numeric chmod.
+     */
+    private static long chmodNumeric(Path p, int mode07777) {
         try {
-            p = resolve(goStr(pathArg));
-        } catch (InvalidPathException e) {
-            return -EINVAL;
-        }
-        try {
-            Files.setPosixFilePermissions(p, toPerms(num32(permArg) & 0777));
+            Files.setAttribute(p, "unix:mode", mode07777 & 07777);
             return 0;
         } catch (IOException e) {
             return -errno(e);
@@ -1405,6 +1442,17 @@ public final class GoOs {
         } catch (UnsupportedOperationException e) {
             return -EOPNOTSUPP;
         }
+    }
+
+    /** graalgo.os.chmod — full 07777 mode via {@link #chmodNumeric}. */
+    public static long chmod(Object pathArg, Object permArg) {
+        final Path p;
+        try {
+            p = resolve(goStr(pathArg));
+        } catch (InvalidPathException e) {
+            return -EINVAL;
+        }
+        return chmodNumeric(p, num32(permArg));
     }
 
     /** graalgo.os.chtimes — nanosecond atime/mtime, follows symlinks like gc. */
