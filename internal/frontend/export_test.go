@@ -142,6 +142,28 @@ func TestDeterministic(t *testing.T) {
 	if a != b {
 		t.Fatal("ExportFile is not deterministic")
 	}
+	// timeintr_value.go synthesizes WS D pair types for the multi-result
+	// time methods (Time.MarshalText and the RFC 3339 helpers). The pair
+	// types live in the shared synthetic time package scope, so a second
+	// export must reuse them instead of minting suffixed duplicates
+	// (__wsd_pair_Time_MarshalText_2) — that leak made TestGolden
+	// order-dependent (review-08-synth-json). Exporting twice in one
+	// process (with an unrelated export in between, as the full suite
+	// does) must produce byte-identical output.
+	c, err := ExportFile("testdata/timeintr_value.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportFile("testdata/straight02.go"); err != nil {
+		t.Fatal(err)
+	}
+	d, err := ExportFile("testdata/timeintr_value.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c != d {
+		t.Fatal("ExportFile is not deterministic for pair-type programs (timeintr_value.go)")
+	}
 }
 
 // TestScopeErrors: out-of-scope programs fail fast with an explicit error

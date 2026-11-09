@@ -23,6 +23,8 @@ import (
 // StructField.Name for UnmarshalFieldError.Error). Only the "reflect.X"
 // rendering matters for the drift comparison. Shared by the mirror and
 // the drift test's importer so both sides type-check identically.
+// It is a TYPE-CHECK stub only (no bodies are generated for it); TypeOf
+// is declared so the synthetic json source type-checks (R08-S-09).
 func syntheticReflectStub() *types.Package {
 	pkg := types.NewPackage("reflect", "reflect")
 	stringT := types.Typ[types.String]
@@ -47,6 +49,14 @@ func syntheticReflectStub() *types.Package {
 		types.NewField(token.NoPos, pkg, "Name", stringT, false),
 	}, nil), nil)
 	pkg.Scope().Insert(sfName)
+	// TypeOf (R08-S-09): the synthetic json calls reflect.TypeOf(v) to
+	// populate UnsupportedTypeError.Type; declare the function signature
+	// so the source type-checks against the stub reflect package.
+	typeOfSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "v", types.Universe.Lookup("any").Type())),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", typeName.Type())),
+		false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "TypeOf", typeOfSig))
 	pkg.MarkComplete()
 	return pkg
 }

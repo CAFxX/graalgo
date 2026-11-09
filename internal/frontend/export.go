@@ -5878,6 +5878,30 @@ func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []str
 	return e.synthesizePairTypeForSig(sig, name)
 }
 
+// pairTypeIfIdentical returns the named pair type already present in the
+// package scope under name when its underlying struct is identical to st,
+// or nil. The synthetic package object is shared across ExportFile calls
+// in a process, so a re-export of the same multi-result method must reuse
+// its pair type instead of minting a suffixed duplicate (which made the
+// exported output depend on how many prior exports ran in the process,
+// i.e. TestGolden order-dependent: the second export emitted
+// __wsd_pair_Time_MarshalText_2). A colliding name with a DIFFERENT
+// struct still gets a numeric suffix (genuine collision).
+func (e *exporter) pairTypeIfIdentical(obj types.Object, st *types.Struct) *types.Named {
+	tn, ok := obj.(*types.TypeName)
+	if !ok {
+		return nil
+	}
+	named, ok := tn.Type().(*types.Named)
+	if !ok {
+		return nil
+	}
+	if !types.Identical(st, named.Underlying()) {
+		return nil
+	}
+	return named
+}
+
 // synthesizePairTypeForSig synthesizes the pair struct type for a
 // multi-result signature (general mechanism, not tied to *types.Func).
 // Used for function literals assigned to variables (MR-closure-var) as
@@ -5901,11 +5925,18 @@ func (e *exporter) synthesizePairTypeForSig(sig *types.Signature, nameHint strin
 	}
 	st := types.NewStruct(fields, nil)
 	// Ensure uniqueness in case of collisions (e.g., generic instantiations).
+	// Reuse an identical existing pair type (see pairTypeIfIdentical):
+	// the package scope is shared across ExportFile calls, so a re-export
+	// must not mint a suffixed duplicate.
 	base := nameHint
 	name := base
 	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
+		obj := e.pkg.Scope().Lookup(name)
+		if obj == nil {
 			break
+		}
+		if named := e.pairTypeIfIdentical(obj, st); named != nil {
+			return named, fieldNames, nil
 		}
 		name = fmt.Sprintf("%s_%d", base, i)
 	}
@@ -5947,11 +5978,22 @@ func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, err
 	if safeKey != "" {
 		name = fmt.Sprintf("%s_%s", name, safeKey)
 	}
-	// Ensure uniqueness in case of collisions.
+	// Ensure uniqueness in case of collisions. Reuse an identical
+	// existing pair type (see pairTypeIfIdentical): the package scope is
+	// shared across ExportFile calls, so a re-export must not mint a
+	// suffixed duplicate.
 	base := name
 	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
+		obj := e.pkg.Scope().Lookup(name)
+		if obj == nil {
 			break
+		}
+		if named := e.pairTypeIfIdentical(obj, st); named != nil {
+			return &userMRInfo{
+				pairType:   named,
+				pairFields: fieldNames,
+				origSig:    sig,
+			}, nil
 		}
 		name = fmt.Sprintf("%s_%d", base, i)
 	}

@@ -13,20 +13,24 @@ import (
 // Unmarshal, Decoder.Decode and RawMessage.UnmarshalJSON were
 // unconditional fail-fast panics ("needs store-through-pointer;
 // re-test when WS D lands") and Marshal panicked on any named struct
-// type ("not in M7 scope (needs reflect, P3-M8)"). The stated
-// blockers have landed (reflect is real, pointer stores work in the
-// disk path), so the synthetic package was retired and real
-// encoding/json now compiles from GOROOT via the disk importer.
+// type ("not in M7 scope (needs reflect, P3-M8)").
 //
-// The test proves the round-trip on a named struct (tags, omitempty,
-// nested struct, slice, map) plus the decode entry points, and pins
-// the R08-S-09 unsupported-type error strings (they printed
-// "json: unsupported type: <nil>" under the synthetic package because
-// the error carried a nil Type).
+// The synthetic package is RETAINED (not retired): retirement to the
+// disk path is blocked by a WS D exporter gap (multi-result calls
+// through func-typed parameters, e.g. jsontext's AppendRaw), and a
+// reflect-based decoder in the synthetic package is blocked by
+// backend reflect gaps (Value.Set of slice/map/pointer values,
+// reflect.MakeMap linkname arity, MapKeys). See the lane report.
+// The round-trip/decode tests below therefore stay RED under graalgo
+// (they panic at guest runtime) and are green under stock gc; they
+// document the blocked state and must not be weakened to pass.
 //
-// Pre-fix, every test here fails: Marshal/Unmarshal/Decode panic at
-// guest runtime. The test runs under `graalgo test` (test-regression
-// gate); it also passes under stock gc.
+// What IS fixed and green under graalgo: the R08-S-09
+// unsupported-type error strings (they printed
+// "json: unsupported type: <nil>" because the error carried a nil
+// Type; Type is now populated via reflect.TypeOf) and the time
+// cases (Time.MarshalText/UnmarshalText). The test runs under
+// `graalgo test` (test-regression gate); it also passes under stock gc.
 
 type Item struct {
 	Name  string         `json:"name"`
@@ -188,6 +192,7 @@ func TestJsonUnsupportedTypeErrorStrings(t *testing.T) {
 	}{
 		{func() {}, "json: unsupported type: func()"},
 		{complex64(1 + 2i), "json: unsupported type: complex64"},
+		{complex128(1 + 2i), "json: unsupported type: complex128"},
 		{make(chan int), "json: unsupported type: chan int"},
 	}
 	for _, c := range cases {

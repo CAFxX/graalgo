@@ -21,11 +21,23 @@ func releaseTags() []string {
 	return tags
 }
 
-// oracleGoFiles is the go/build oracle: (*build.Context{GOOS:linux,
-// GOARCH:amd64}).ImportDir, i.e. the file set the stock toolchain builds.
+// oracleGoFiles is the go/build oracle: a copy of build.Default, i.e.
+// the file set the stock toolchain builds for the directory. It must
+// agree with the p3frontend loader's SelectFiles file-for-file.
+// NOTE: a copy of build.Default (not a fresh build.Context) — a fresh
+// Context evaluates the goexperiment.jsonv2 tag as unsatisfied and
+// selects the v1 encoding/json files, while the toolchain default (and
+// `go list`) selects the v2 files; the loader's tagSatisfied agrees
+// with the toolchain default, so the oracle must too. CgoEnabled is
+// forced false: the loader never satisfies the cgo tag (M1 scope),
+// and build.Default enables it whenever the host has a C compiler.
 func oracleGoFiles(t *testing.T, dir string) []string {
 	t.Helper()
-	ctxt := &build.Context{GOOS: "linux", GOARCH: "amd64", Compiler: "gc", ReleaseTags: releaseTags()}
+	ctxt := build.Default
+	ctxt.GOOS = "linux"
+	ctxt.GOARCH = "amd64"
+	ctxt.Compiler = "gc"
+	ctxt.CgoEnabled = false
 	p, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		t.Fatalf("oracle ImportDir(%s): %v", dir, err)

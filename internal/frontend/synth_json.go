@@ -2131,14 +2131,10 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		// which v1 cannot emit (WS D). RawMessage is handled in its
 		// own case above.
 		panic("json.Marshaler: not in M7 scope (needs 2-result methods; re-test when WS D lands)")
-	case complex64:
-		return &UnsupportedTypeError{Type: nil} // reflect.TypeOf not callable cross-package; see above
-	case complex128:
-		return &UnsupportedTypeError{Type: nil} // reflect.TypeOf not callable cross-package; see above
-	case func():
-		return &UnsupportedTypeError{Type: nil} // reflect.TypeOf not callable cross-package; see above
-	case chan int:
-		return &UnsupportedTypeError{Type: nil} // reflect.TypeOf not callable cross-package; see above
+	case complex64, complex128, func(), chan int:
+		// R08-S-09: reflect is real now, so populate Type via
+		// reflect.TypeOf (it used to be nil, printing "<nil>").
+		return &UnsupportedTypeError{Type: reflect.TypeOf(v)}
 	default:
 		panic("not in M7 scope (needs reflect, P3-M8)")
 	}
@@ -2164,8 +2160,8 @@ type UnsupportedValueError struct {
 func (e *UnsupportedValueError) Error() string { return "json: unsupported value: " + e.Str }
 
 // UnsupportedTypeError is gc's error for values of types that cannot be
-// encoded (complex, func, chan, ...). gc carries a reflect.Type; without
-// reflect (P3-M8) we carry the Go type name string directly.
+// encoded (complex, func, chan, ...). It carries the reflect.Type of the
+// value, populated via reflect.TypeOf at the call site (R08-S-09).
 type UnsupportedTypeError struct {
 	Type reflect.Type
 }
