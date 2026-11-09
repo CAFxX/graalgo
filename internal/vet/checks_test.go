@@ -302,6 +302,90 @@ func f() {
 	}
 }
 
+// R05-V-05: runSlog must not panic on slog calls with too few arguments
+// (e.g. slog.Info() or slog.InfoContext(ctx)); Run has no recover, so a
+// panic here would kill the entire vet run.
+func TestSlogTooFewArgsNoPanic(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f(ctx context.Context) {
+	slog.Info()
+	slog.InfoContext(ctx)
+	slog.Log(ctx)
+}
+`
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("runSlog panicked on too-few-arg slog call: %v", r)
+		}
+	}()
+	_ = runVetOnSrc(t, src)
+}
+
+// R05-V-08: slog.Log takes three leading arguments (ctx, level, msg);
+// a well-formed Log call must not be reported, and malformed ones must
+// still be diagnosed against the arguments after msg.
+func TestSlogLog(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f(ctx context.Context, logger *slog.Logger) {
+	slog.Log(ctx, slog.LevelInfo, "msg", "k", "v")
+	logger.Log(ctx, slog.LevelInfo, "msg", "k", "v")
+	slog.Log(ctx, slog.LevelInfo, "msg", "k")
+	slog.Log(ctx, slog.LevelInfo, "msg", 123, "v")
+}
+`
+	joined := runVetOnSrc(t, src)
+	// Exactly one key diagnostic: from the bad Log call with key 123.
+	// The two well-formed Log calls must not produce one.
+	if n := strings.Count(joined, "slog Log key should be a string"); n != 1 {
+		t.Errorf("expected exactly 1 slog Log key diagnostic (from the 123-key call), got %d in:\n%s", n, joined)
+	}
+	if !strings.Contains(joined, "slog Log call has odd number of key-value arguments") {
+		t.Errorf("expected slog Log odd-args diagnostic, got:\n%s", joined)
+	}
+}
+
+// R05-V-09: slog.Attr values (e.g. slog.String("k", "v")) are standalone
+// arguments, not key-value pairs; they must be skipped when pairing.
+func TestSlogAttrArgs(t *testing.T) {
+	src := `package main
+
+import "log/slog"
+
+func f() {
+	slog.Info("msg", slog.String("k", "v"))
+	slog.Info("msg", "k", "v", slog.String("k2", "v2"))
+	slog.Info("msg", slog.Group("g", slog.String("k", "v")))
+	attr := slog.String("k", "v")
+	slog.Info("msg", attr)
+	slog.Info("msg", slog.String("k", "v"), "k2")
+}
+`
+	joined := runVetOnSrc(t, src)
+	// Exactly one odd-args diagnostic: from the trailing lone key after
+	// the Attr in the last call. The Attr-only calls must not produce one.
+	if n := strings.Count(joined, "odd number"); n != 1 {
+		t.Errorf("expected exactly 1 slog odd-args diagnostic (from the trailing lone key), got %d in:\n%s", n, joined)
+	}
+	if strings.Contains(joined, "should be a string") {
+		t.Errorf("slog.Attr argument falsely reported as non-string key, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "slog Info call has odd number of key-value arguments") {
+		t.Errorf("expected slog odd-args diagnostic for trailing lone key after Attr, got:\n%s", joined)
+	}
+}
+
 func TestStdMethods(t *testing.T) {
 	src := `package main
 

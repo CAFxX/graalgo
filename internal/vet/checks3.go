@@ -367,26 +367,41 @@ func runSlog(pass *Pass) []Diagnostic {
 			if strings.HasSuffix(sel.Sel.Name, "Context") {
 				start = 2 // skip ctx, msg
 			}
+			if sel.Sel.Name == "Log" {
+				start = 3 // skip ctx, level, msg
+			}
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
 			}
+			if len(args) <= start {
+				return true // too few arguments to pair; nothing to check
+			}
 			rest := args[start:]
-			if len(rest)%2 != 0 {
+			// slog.Attr values are standalone arguments, not key-value
+			// pairs; skip them before pairing.
+			pairs := make([]ast.Expr, 0, len(rest))
+			for _, arg := range rest {
+				if isSlogAttr(pass, arg) {
+					continue
+				}
+				pairs = append(pairs, arg)
+			}
+			if len(pairs)%2 != 0 {
 				out = append(out, Diagnostic{
 					pass.position(call),
 					"slog " + sel.Sel.Name + " call has odd number of key-value arguments",
 				})
 				return true
 			}
-			for i := 0; i < len(rest); i += 2 {
+			for i := 0; i < len(pairs); i += 2 {
 				// Key should be a string.
-				tv, ok := pass.Info.Types[rest[i]]
+				tv, ok := pass.Info.Types[pairs[i]]
 				if !ok || tv.Type == nil {
 					continue
 				}
 				if b, ok := tv.Type.Underlying().(*types.Basic); !ok || b.Kind() != types.String {
 					out = append(out, Diagnostic{
-						pass.position(rest[i]),
+						pass.position(pairs[i]),
 						"slog " + sel.Sel.Name + " key should be a string",
 					})
 				}
@@ -395,4 +410,21 @@ func runSlog(pass *Pass) []Diagnostic {
 		})
 	}
 	return out
+}
+
+// isSlogAttr reports whether expr has type log/slog.Attr, resolved via
+// type info (so slog.String/slog.Group/slog.Any results and Attr-typed
+// variables are all recognised, whatever produced them).
+func isSlogAttr(pass *Pass, expr ast.Expr) bool {
+	tv, ok := pass.Info.Types[expr]
+	if !ok || tv.Type == nil {
+		return false
+	}
+	named, ok := tv.Type.(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj != nil && obj.Name() == "Attr" &&
+		obj.Pkg() != nil && obj.Pkg().Path() == "log/slog"
 }
