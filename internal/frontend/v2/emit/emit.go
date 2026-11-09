@@ -416,10 +416,28 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{
 				"name":       namedName(tt),
 				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				// The method set of the named type itself, in method-set
+				// (name-sorted) order: value-receiver methods only —
+				// pointer-receiver methods belong to *T's method set, not
+				// T's (types.NewMethodSet encodes exactly that). For a
+				// named interface type this is the interface's full
+				// flattened method set.
+				"methods": e.describeMethods(namedMethods(tt)),
+				// For a named interface type, the interfaces it embeds
+				// (as type-table ids); empty for every other named type.
+				// A named interface's embedded types are part of its
+				// identity, exactly as for a bare interface.
+				"embedded": e.describeNamedEmbedded(tt),
 			},
 		}
 	case *types.Struct:
+		// Real gc/amd64 field offsets, as v1 computes them
+		// (internal/frontend/export.go): types.SizesFor("gc", "amd64").
+		vars := make([]*types.Var, tt.NumFields())
+		for i := range vars {
+			vars[i] = tt.Field(i)
+		}
+		offsets := types.SizesFor("gc", "amd64").Offsetsof(vars)
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
@@ -428,7 +446,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"type":     e.typeID(f.Type()),
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
-				"offset":   0,
+				"offset":   int(offsets[i]),
 			})
 		}
 		return map[string]any{
@@ -439,9 +457,14 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
-				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"empty": tt.Empty(),
+				// The FULL flattened method set (explicit methods plus
+				// methods promoted from embedded interfaces), in
+				// method-set order. Interface methods appear nowhere else
+				// in the document, so this list is the only copy.
+				"methods": e.describeMethods(interfaceMethods(tt)),
+				// The embedded types, as type-table ids, in source order.
+				"embedded": e.describeEmbedded(tt),
 			},
 		}
 	default:
@@ -450,6 +473,67 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
 		}
 	}
+}
+
+// describeMethods emits the wire form of a method list: one entry per
+// method with its name and the type-table id of its signature, in the
+// order go/types returns them (method-set order: name-sorted).
+func (e *Emitter) describeMethods(fns []*types.Func) []any {
+	methods := []any{}
+	for _, fn := range fns {
+		methods = append(methods, map[string]any{
+			"name": fn.Name(),
+			"type": e.typeID(fn.Type()),
+		})
+	}
+	return methods
+}
+
+// namedMethods returns the method set of a named type as *types.Func
+// values: for T, the value-receiver methods only (pointer-receiver
+// methods belong to *T's method set); for a named interface type, the
+// interface's methods. types.NewMethodSet encodes exactly that contract.
+func namedMethods(n *types.Named) []*types.Func {
+	ms := types.NewMethodSet(n)
+	fns := make([]*types.Func, ms.Len())
+	for i := range fns {
+		// Selection.Obj for a method is always *types.Func by the
+		// go/types contract; a method set contains only methods.
+		fns[i] = ms.At(i).Obj().(*types.Func)
+	}
+	return fns
+}
+
+// interfaceMethods returns the FULL flattened method set of an interface
+// (explicit methods plus methods promoted from embedded interfaces), in
+// method-set order.
+func interfaceMethods(iface *types.Interface) []*types.Func {
+	fns := make([]*types.Func, iface.NumMethods())
+	for i := range fns {
+		fns[i] = iface.Method(i)
+	}
+	return fns
+}
+
+// describeNamedEmbedded emits the embedded types of a named interface
+// type as type-table ids, in source order; every other named type embeds
+// nothing.
+func (e *Emitter) describeNamedEmbedded(n *types.Named) []any {
+	iface, ok := n.Underlying().(*types.Interface)
+	if !ok {
+		return []any{}
+	}
+	return e.describeEmbedded(iface)
+}
+
+// describeEmbedded emits an interface's embedded types as type-table ids,
+// in source order.
+func (e *Emitter) describeEmbedded(iface *types.Interface) []any {
+	embedded := []any{}
+	for i := 0; i < iface.NumEmbeddeds(); i++ {
+		embedded = append(embedded, e.typeID(iface.EmbeddedType(i)))
+	}
+	return embedded
 }
 
 func basicClass(b *types.Basic) string {
