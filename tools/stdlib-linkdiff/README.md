@@ -18,11 +18,21 @@ The provided symbol set is extracted mechanically from the graalgo tree
 run — never hand-maintained — so per-release drift shows up as a snapshot
 diff rather than silent staleness.
 
-1. **P3-M4 intrinsic registry** — `Linknames.register("symbol", …)` calls in
+1. **P3-M4 intrinsic registry** — `Linknames.register(…)` calls in
    `internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java`
-   (Go→intrinsic direction). Today: `runtime.fastrand`,
+   (Go→intrinsic direction), evaluated as constant-string expressions:
+   plain literals, `SomeClass.SYMBOL` constants resolved from their
+   defining class file (e.g. `MapKeyHash.SYMBOL` →
+   `graalgo.mapkeyhash`), and `X.registerAll()` delegations followed
+   transitively (`ReflectLinknames.registerAll()` — the
+   reflect/reflectlite helper surface, with `pkg + ".name"` expanded
+   over the loop's package domain). A register call whose first
+   argument cannot be resolved fails loud instead of silently
+   under-reporting the provided set (R-1108-111). Today: `runtime.fastrand`,
    `runtime.fastrandn`, `runtime.nanotime`,
-   `graalgo.runtime.Linknames.callGo`.
+   `graalgo.runtime.Linknames.callGo`, `graalgo.mapkeyhash`,
+   `reflect.unsafe_New`, `reflect.mapclear`, … (29 symbols via
+   `registerAll()`, 1 via `SYMBOL`).
 2. **Synthetic `time`, `context`** — `syntheticTimePackage` /
    `syntheticContextPackage` in
    `internal/frontend/p3frontend/synth_time_context.go`.

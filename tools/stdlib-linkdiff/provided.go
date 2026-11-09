@@ -8,7 +8,13 @@ package main
 //
 // Sources (see README.md § "Provided set"):
 //  1. internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java —
-//     Linknames.register("symbol", ...) calls (Go→intrinsic direction).
+//     Linknames.register(...) calls (Go→intrinsic direction), evaluated
+//     as constant-string expressions: plain literals, SomeClass.SYMBOL
+//     constants resolved from their defining class file, and
+//     X.registerAll() delegations followed transitively (with
+//     `var + ".name"` expansions over enhanced-for String-array
+//     domains) — see extractRegistry. An unresolvable register call
+//     fails loud rather than silently under-reporting (R-1108-111).
 //  2. internal/frontend/p3frontend/synth_time_context.go —
 //     syntheticTimePackage, syntheticContextPackage.
 //  3. internal/frontend/synth_time_context.go — syntheticTimeSource /
@@ -109,28 +115,428 @@ func loadProvided(o options) (*ProvidedSet, error) {
 	return p, nil
 }
 
-var registerRe = regexp.MustCompile(`Linknames\.register\("((?:[^"\\]|\\.)+)"`)
+var registerCallRe = regexp.MustCompile(`Linknames\.register\(`)
+var registerAllRe = regexp.MustCompile(`([A-Za-z_][\w.]*)\.registerAll\s*\(\s*\)`)
+var javaLoopRe = regexp.MustCompile(`for\s*\(\s*(?:String|var)\s+([A-Za-z_]\w*)\s*:\s*new\s+String\s*\[\s*\]\s*\{([^{}]*)\}\s*\)`)
+var javaStringLitRe = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+var javaConstRe = regexp.MustCompile(`static\s+final\s+String\s+([A-Za-z_]\w*)\s*=\s*"((?:[^"\\]|\\.)*)"`)
+var javaIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
+var javaQualNameRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*(\.[A-Za-z_$][A-Za-z0-9_$]*)+$`)
 
 // extractRegistry pulls Go→intrinsic symbol names from the
-// Linknames.register("symbol", ...) calls in LinknameIntrinsics.java.
+// Linknames.register(...) calls in LinknameIntrinsics.java — and,
+// since R-1108-111, from the two indirect registration shapes the
+// old literal-only regex missed:
+//
+//   - Linknames.register(SomeClass.SYMBOL, ...) — the first argument
+//     is a string constant defined in another class
+//     (MapKeyHash.SYMBOL = "graalgo.mapkeyhash"); the constant is
+//     resolved from its defining class file, never hardcoded.
+//   - X.registerAll() delegation — ReflectLinknames.registerAll()
+//     registers the reflect/reflectlite helper surface, including
+//     pkg + ".name" calls inside a `for (String pkg : new
+//     String[]{...})` loop; the loop variable's domain is evaluated
+//     and every expansion is extracted.
+//
+// The first argument of every register call is evaluated as a small
+// constant-string expression (literals, `+` concatenation, loop
+// variables over String-array literals, class string constants). A
+// register call whose first argument cannot be resolved fails loud:
+// a silently skipped registration is an under-reported provided set,
+// which is exactly the R-1108-111 defect class.
 func (p *ProvidedSet) extractRegistry(path string) error {
+	root := javaSrcRoot(path)
+	seen := map[string]bool{}
+	return p.extractRegistryFile(path, root, seen, "p3link LinknameIntrinsics.java Linknames.register")
+}
+
+// javaSrcRoot returns the Java source root
+// (<graalgo>/internal/backend/interop/src/main/java) for a registry
+// file at <root>/graalgo/<pkg>/<Class>.java.
+func javaSrcRoot(path string) string {
+	return filepath.Dir(filepath.Dir(filepath.Dir(path)))
+}
+
+// extractRegistryFile extracts every Linknames.register call from one
+// Java file (following X.registerAll() delegations transitively) and
+// adds each registered symbol with prov provenance. Files already
+// visited are skipped, so a delegation cycle cannot loop.
+func (p *ProvidedSet) extractRegistryFile(path, root string, seen map[string]bool, prov string) error {
+	if seen[path] {
+		return nil
+	}
+	seen[path] = true
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	n := 0
-	for _, m := range registerRe.FindAllSubmatch(src, -1) {
-		sym, err := strconv.Unquote(`"` + string(m[1]) + `"`)
-		if err != nil {
-			return fmt.Errorf("unquote symbol in %s: %w", path, err)
-		}
-		p.add(sym, "p3link LinknameIntrinsics.java Linknames.register")
-		n++
+	code := stripJavaComments(src)
+	loops, err := collectJavaLoopVars(code, path)
+	if err != nil {
+		return err
 	}
-	if n == 0 {
+	n := 0
+	delegations := registerAllRe.FindAllSubmatch(code, -1)
+	for _, idx := range registerCallRe.FindAllIndex(code, -1) {
+		arg, err := firstCallArg(code, idx[1], path)
+		if err != nil {
+			return err
+		}
+		syms, err := evalJavaStringExpr(arg, loops, root, path)
+		if err != nil {
+			return err
+		}
+		// A non-literal argument is worth naming in the provenance:
+		// it says which indirection produced the symbol.
+		argProv := prov
+		if trimmed := strings.TrimSpace(arg); !strings.HasPrefix(trimmed, `"`) {
+			argProv = prov + " (" + trimmed + ")"
+		}
+		for _, sym := range syms {
+			p.add(sym, argProv)
+			n++
+		}
+	}
+	// Follow X.registerAll() delegations (e.g. ReflectLinknames from
+	// LinknameIntrinsics.registerReflectIntrinsics): the delegated
+	// file's registrations are registrations of this registry, with
+	// provenance naming the delegation chain.
+	for _, m := range delegations {
+		qual := string(m[1])
+		target, err := resolveJavaClassFile(qual, root)
+		if err != nil {
+			return fmt.Errorf("%s: resolve %s.registerAll: %w", path, qual, err)
+		}
+		if err := p.extractRegistryFile(target, root, seen,
+			prov+" -> "+registerAllProv(target, root)); err != nil {
+			return err
+		}
+	}
+	if n == 0 && len(delegations) == 0 {
 		return fmt.Errorf("%s: no Linknames.register calls found (source drift?)", path)
 	}
 	return nil
+}
+
+// registerAllProv renders the provenance of a followed registry file:
+// "<pkg> <Class>.java Linknames.register", e.g. "p3reflect
+// ReflectLinknames.java Linknames.register" for
+// <root>/graalgo/p3reflect/ReflectLinknames.java.
+func registerAllProv(path, root string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return filepath.Base(path) + " Linknames.register"
+	}
+	pkg := strings.TrimPrefix(filepath.Dir(rel), "graalgo"+string(filepath.Separator))
+	return pkg + " " + filepath.Base(path) + " Linknames.register"
+}
+
+// stripJavaComments removes // line comments and /* */ block comments,
+// keeping string and char literals intact so a // inside a literal is
+// never mistaken for a comment. Newlines inside block comments are
+// kept, so line structure survives for error messages.
+func stripJavaComments(src []byte) []byte {
+	out := make([]byte, 0, len(src))
+	i := 0
+	for i < len(src) {
+		c := src[i]
+		if c == '"' || c == '\'' {
+			// String or char literal: copy through, honouring
+			// backslash escapes.
+			j := i + 1
+			for j < len(src) {
+				if src[j] == '\\' {
+					j += 2
+					continue
+				}
+				if src[j] == c {
+					j++
+					break
+				}
+				j++
+			}
+			out = append(out, src[i:j]...)
+			i = j
+			continue
+		}
+		if c == '/' && i+1 < len(src) && src[i+1] == '/' {
+			// Line comment: skip to (not past) the newline.
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if c == '/' && i+1 < len(src) && src[i+1] == '*' {
+			// Block comment: skip to */, keeping newlines.
+			i += 2
+			for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
+				if src[i] == '\n' {
+					out = append(out, '\n')
+				}
+				i++
+			}
+			i += 2 // skip */
+			continue
+		}
+		out = append(out, c)
+		i++
+	}
+	return out
+}
+
+// firstCallArg returns the source text of the first argument of a call
+// whose opening paren ends at openIdx (the index just past `(`):
+// the text up to the first top-level comma, or up to the closing
+// paren for a single-argument call. String and char literals are
+// honoured (a comma inside one does not end the argument); nested
+// parens/brackets (lambdas, method calls, array literals) raise the
+// depth.
+func firstCallArg(code []byte, openIdx int, path string) (string, error) {
+	depth := 0
+	i := openIdx
+	for i < len(code) {
+		c := code[i]
+		switch {
+		case c == '"' || c == '\'':
+			i++
+			for i < len(code) {
+				if code[i] == '\\' {
+					i += 2
+					continue
+				}
+				if code[i] == c {
+					i++
+					break
+				}
+				i++
+			}
+		case c == '(' || c == '[' || c == '{':
+			depth++
+			i++
+		case c == ')' || c == ']' || c == '}':
+			if depth == 0 {
+				if c != ')' {
+					return "", fmt.Errorf("%s: unbalanced %q in Linknames.register call", path, c)
+				}
+				return strings.TrimSpace(string(code[openIdx:i])), nil
+			}
+			depth--
+			i++
+		case c == ',' && depth == 0:
+			return strings.TrimSpace(string(code[openIdx:i])), nil
+		default:
+			i++
+		}
+	}
+	return "", fmt.Errorf("%s: unterminated Linknames.register call", path)
+}
+
+// collectJavaLoopVars collects enhanced-for domains over string-array
+// literals: `for (String v : new String[]{"a", "b"})` binds v to
+// {"a", "b"}. A variable bound twice to different domains is
+// ambiguous and fails loud.
+func collectJavaLoopVars(code []byte, path string) (map[string][]string, error) {
+	loops := map[string][]string{}
+	for _, m := range javaLoopRe.FindAllSubmatch(code, -1) {
+		v := string(m[1])
+		var vals []string
+		for _, lm := range javaStringLitRe.FindAllSubmatch(m[2], -1) {
+			s, err := strconv.Unquote(`"` + string(lm[1]) + `"`)
+			if err != nil {
+				return nil, fmt.Errorf("%s: unquote loop value %q: %w", path, lm[1], err)
+			}
+			vals = append(vals, s)
+		}
+		if len(vals) == 0 {
+			return nil, fmt.Errorf("%s: loop variable %q ranges over an empty string array", path, v)
+		}
+		if prev, ok := loops[v]; ok && !equalStrings(prev, vals) {
+			return nil, fmt.Errorf("%s: loop variable %q bound to two different domains %q and %q", path, v, prev, vals)
+		}
+		loops[v] = vals
+	}
+	return loops, nil
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// evalJavaStringExpr evaluates a first-argument expression to the list
+// of symbol strings it denotes: a string literal denotes itself; `+`
+// concatenates (cross product when a term has several values, e.g. a
+// loop variable); a bare identifier denotes its enhanced-for domain;
+// a dotted name denotes a string constant resolved from its defining
+// class file. Anything else fails loud.
+func evalJavaStringExpr(arg string, loops map[string][]string, root, path string) ([]string, error) {
+	terms, err := splitJavaConcat(arg, path)
+	if err != nil {
+		return nil, err
+	}
+	vals := []string{""}
+	for _, t := range terms {
+		tv, err := evalJavaStringTerm(t, loops, root, path)
+		if err != nil {
+			return nil, err
+		}
+		var next []string
+		for _, prefix := range vals {
+			for _, v := range tv {
+				next = append(next, prefix+v)
+			}
+		}
+		vals = next
+	}
+	return vals, nil
+}
+
+// splitJavaConcat splits an expression on top-level `+` operators,
+// respecting string literals and nesting.
+func splitJavaConcat(arg, path string) ([]string, error) {
+	var parts []string
+	depth := 0
+	start := 0
+	i := 0
+	for i < len(arg) {
+		c := arg[i]
+		switch {
+		case c == '"':
+			i++
+			for i < len(arg) {
+				if arg[i] == '\\' {
+					i += 2
+					continue
+				}
+				if arg[i] == '"' {
+					i++
+					break
+				}
+				i++
+			}
+		case c == '(' || c == '[' || c == '{':
+			depth++
+			i++
+		case c == ')' || c == ']' || c == '}':
+			depth--
+			i++
+		case c == '+' && depth == 0:
+			parts = append(parts, strings.TrimSpace(arg[start:i]))
+			i++
+			start = i
+		default:
+			i++
+		}
+	}
+	if tail := strings.TrimSpace(arg[start:]); tail != "" {
+		parts = append(parts, tail)
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("%s: empty Linknames.register argument", path)
+	}
+	return parts, nil
+}
+
+// evalJavaStringTerm evaluates one `+`-separated term of a register
+// call's first argument.
+func evalJavaStringTerm(term string, loops map[string][]string, root, path string) ([]string, error) {
+	term = strings.TrimSpace(term)
+	if strings.HasPrefix(term, `"`) {
+		if len(term) < 2 || !strings.HasSuffix(term, `"`) {
+			return nil, fmt.Errorf("%s: unterminated string literal in Linknames.register argument %q", path, term)
+		}
+		s, err := strconv.Unquote(term)
+		if err != nil {
+			return nil, fmt.Errorf("%s: unquote symbol %q: %w", path, term, err)
+		}
+		return []string{s}, nil
+	}
+	if javaIdentRe.MatchString(term) {
+		vals, ok := loops[term]
+		if !ok {
+			return nil, fmt.Errorf("%s: Linknames.register argument %q: identifier %q is not a loop variable over a string-array literal (source drift?)", path, term, term)
+		}
+		return vals, nil
+	}
+	if javaQualNameRe.MatchString(term) {
+		s, err := resolveJavaStringConst(term, root)
+		if err != nil {
+			return nil, fmt.Errorf("%s: Linknames.register argument %q: %w", path, term, err)
+		}
+		return []string{s}, nil
+	}
+	return nil, fmt.Errorf("%s: Linknames.register argument %q is not a constant string expression (source drift?)", path, term)
+}
+
+// resolveJavaStringConst resolves a dotted string-constant reference
+// (SomeClass.SYMBOL or pkg.SomeClass.SYMBOL) to its literal value by
+// reading the defining class's `static final String <FIELD> = "..."`
+// declaration.
+func resolveJavaStringConst(qual, root string) (string, error) {
+	parts := strings.Split(qual, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("constant reference %q has no field", qual)
+	}
+	field := parts[len(parts)-1]
+	classFile, err := resolveJavaClassFile(strings.Join(parts[:len(parts)-1], "."), root)
+	if err != nil {
+		return "", err
+	}
+	src, err := os.ReadFile(classFile)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", classFile, err)
+	}
+	for _, m := range javaConstRe.FindAllSubmatch(src, -1) {
+		if string(m[1]) == field {
+			s, err := strconv.Unquote(`"` + string(m[2]) + `"`)
+			if err != nil {
+				return "", fmt.Errorf("unquote %s in %s: %w", qual, classFile, err)
+			}
+			return s, nil
+		}
+	}
+	return "", fmt.Errorf("%s: no static final String %s found", classFile, field)
+}
+
+// resolveJavaClassFile maps a class name to its .java file under the
+// Java source root: a qualified name (graalgo.p3reflect.MapKeyHash)
+// maps directly to root/graalgo/p3reflect/MapKeyHash.java; a simple
+// name is searched for under root (exactly one match required).
+func resolveJavaClassFile(class, root string) (string, error) {
+	if strings.Contains(class, ".") {
+		p := filepath.Join(root, filepath.FromSlash(strings.ReplaceAll(class, ".", "/"))+".java")
+		if _, err := os.Stat(p); err != nil {
+			return "", fmt.Errorf("class file %s for %q not found: %w", p, class, err)
+		}
+		return p, nil
+	}
+	var found []string
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && d.Name() == class+".java" {
+			found = append(found, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(found) == 0 {
+		return "", fmt.Errorf("class %q: no %s.java under %s", class, class, root)
+	}
+	if len(found) > 1 {
+		return "", fmt.Errorf("class %q: ambiguous, %d files: %v", class, len(found), found)
+	}
+	return found[0], nil
 }
 
 // synthFuncToPkg maps synthetic-package builder function names to the

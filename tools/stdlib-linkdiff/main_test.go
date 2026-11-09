@@ -391,6 +391,23 @@ func TestProvidedExtraction(t *testing.T) {
 		// M10: embedded synthetic packages (syntheticSources registry).
 		"graalgo.os.open", "graalgo.net.socket", "graalgo.x509.parse",
 		"graalgo.tls.newClientEngine",
+		// R-1108-111: the registerAll() surface (ReflectLinknames) and
+		// the MapKeyHash.SYMBOL constant — all registered at runtime
+		// but invisible to the old literal-only extraction.
+		"reflect.compiledTypelinks",
+		"reflect.unsafe_New", "reflect.typedmemmove", "reflect.resolveNameOff",
+		"reflect.resolveTypeOff", "reflect.chanlen", "reflect.maplen",
+		"reflect.ifaceE2I",
+		"reflect.unsafe_NewArray", "reflect.resolveTextOff", "reflect.addReflectOff",
+		"reflect.chancap", "reflect.chanclose", "reflect.chansend0",
+		"reflect.memmove", "reflect.typedmemclr", "reflect.typedarrayclear",
+		"reflect.mapclear", "reflect.typedslicecopy", "reflect.growslice",
+		"reflect.makechan", "reflect.makemap",
+		"internal/reflectlite.unsafe_New", "internal/reflectlite.typedmemmove",
+		"internal/reflectlite.resolveNameOff", "internal/reflectlite.resolveTypeOff",
+		"internal/reflectlite.chanlen", "internal/reflectlite.maplen",
+		"internal/reflectlite.ifaceE2I",
+		"graalgo.mapkeyhash",
 		"os.Open", "os.ReadFile",
 		"internal/poll.runtime_pollOpen",
 		// reflect, net/http, internal/reflectlite, fmt, sync,
@@ -469,6 +486,99 @@ func TestMirrorExtractionReceivers(t *testing.T) {
 		if provided.has(sym) {
 			t.Errorf("mirror extraction emitted value form %s for a pointer-receiver method", sym)
 		}
+	}
+}
+
+// TestRegistryExtractionIndirect is the R-1108-111 regression test
+// for the registry evaluator itself, hermetic (a fake Java tree in
+// t.TempDir, no dependence on the real graalgo tree): a SYMBOL
+// constant reference resolves to the constant's value, an
+// X.registerAll() delegation is followed, and `pkg + ".name"` calls
+// inside a String-array loop expand over the whole domain. The
+// negative cases prove the fail-loud half: an unresolvable identifier
+// and an unresolvable delegation class are errors, not silent skips —
+// the old literal-only regex skipped both shapes without a sound.
+func TestRegistryExtractionIndirect(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join("graalgo", "p3reflect", "MapKeyHash.java"),
+		"package graalgo.p3reflect;\npublic final class MapKeyHash {\n"+
+			"\tpublic static final String SYMBOL = \"graalgo.mapkeyhash\";\n}\n")
+	write(filepath.Join("graalgo", "p3reflect", "ReflectLinknames.java"),
+		"package graalgo.p3reflect;\npublic final class ReflectLinknames {\n"+
+			"\tpublic static void registerAll() {\n"+
+			"\t\tLinknames.register(\"reflect.compiledTypelinks\", null, 0);\n"+
+			"\t\tfor (String pkg : new String[]{\"reflect\", \"internal/reflectlite\"}) {\n"+
+			"\t\t\tLinknames.register(pkg + \".unsafe_New\", null, 1);\n"+
+			"\t\t\tLinknames.register(pkg + \".maplen\", null, 1);\n"+
+			"\t\t}\n"+
+			"\t\tLinknames.register(\"reflect.onlyHelper\", null, 1);\n"+
+			"\t}\n}\n")
+	write(filepath.Join("graalgo", "p3link", "LinknameIntrinsics.java"),
+		"package graalgo.p3link;\npublic class LinknameIntrinsics {\n"+
+			"\tstatic { Linknames.register(\"runtime.fastrand\", null, 0); }\n"+
+			"\tstatic { Linknames.register(graalgo.p3reflect.MapKeyHash.SYMBOL, null, 2); }\n"+
+			"\tstatic { graalgo.p3reflect.ReflectLinknames.registerAll(); }\n}\n")
+	provided := &ProvidedSet{}
+	if err := provided.extractRegistry(filepath.Join(root, "graalgo", "p3link", "LinknameIntrinsics.java")); err != nil {
+		t.Fatalf("extractRegistry: %v", err)
+	}
+	for _, w := range []string{
+		"runtime.fastrand",
+		"graalgo.mapkeyhash",
+		"reflect.compiledTypelinks", "reflect.onlyHelper",
+		"reflect.unsafe_New", "reflect.maplen",
+		"internal/reflectlite.unsafe_New", "internal/reflectlite.maplen",
+	} {
+		if !provided.has(w) {
+			t.Errorf("registry extraction missing %q", w)
+		}
+	}
+	// The loop must expand over BOTH domain values, never just the first.
+	if provided.has("reflectlite.unsafe_New") {
+		t.Errorf("registry extraction emitted unqualified %q (loop domain misread)", "reflectlite.unsafe_New")
+	}
+	// Provenance must name the indirection, not pretend the symbol
+	// came from a literal in LinknameIntrinsics.java.
+	if prov := provided.Symbols["graalgo.mapkeyhash"]; !strings.Contains(prov, "MapKeyHash.SYMBOL") {
+		t.Errorf("graalgo.mapkeyhash provenance %q does not name the SYMBOL indirection", prov)
+	}
+	if prov := provided.Symbols["reflect.unsafe_New"]; !strings.Contains(prov, "ReflectLinknames") {
+		t.Errorf("reflect.unsafe_New provenance %q does not name the registerAll delegation", prov)
+	}
+	// Negative: an identifier that is no loop variable fails loud.
+	badRoot := t.TempDir()
+	badPath := filepath.Join(badRoot, "graalgo", "p3link", "LinknameIntrinsics.java")
+	if err := os.MkdirAll(filepath.Dir(badPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(badPath, []byte(
+		"package graalgo.p3link;\npublic class LinknameIntrinsics {\n"+
+			"\tstatic { Linknames.register(unknownVar + \".x\", null, 0); }\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ProvidedSet{}).extractRegistry(badPath); err == nil {
+		t.Errorf("unresolvable register argument: expected an error, got nil (silent skip)")
+	} else if !strings.Contains(err.Error(), "unknownVar") {
+		t.Errorf("unresolvable register argument: error %q does not name the argument", err)
+	}
+	// Negative: a delegation to a missing class fails loud.
+	badPath2 := filepath.Join(badRoot, "graalgo", "p3link", "Other.java")
+	if err := os.WriteFile(badPath2, []byte(
+		"package graalgo.p3link;\npublic class Other {\n"+
+			"\tstatic { graalgo.p3reflect.NoSuch.registerAll(); }\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ProvidedSet{}).extractRegistry(badPath2); err == nil {
+		t.Errorf("unresolvable registerAll delegation: expected an error, got nil (silent skip)")
 	}
 }
 
