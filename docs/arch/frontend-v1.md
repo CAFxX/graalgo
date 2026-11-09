@@ -177,7 +177,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `abifuncpc` | `kind` ∈ {`FuncPCABI0`,`FuncPCABIInternal`}, `arg`: expr node (the func value), `type`: type id (uintptr) — internal/abi FuncPC* compile intrinsics |
 | `sliceoverlap` | `x`, `y`: expr nodes (the two []byte slices), `inexact`: bool, `type`: type id (bool) — crypto/internal/fips140/alias AnyOverlap/InexactOverlap |
 | `atomicaddr` | `addr`: expr node, `cell` ∈ {`int32`,`int64`,`bool`} — sync/atomic word-op address cell (the backend wraps the address in a delegating AtomicLong/AtomicInteger cell) |
-| `atomicptrop` | `op` ∈ {`swap`,`cas`}, `addr`: expr node, `args`: [expr nodes], `type`: type id — atomic.SwapPointer/CompareAndSwapPointer |
+| `atomicptrop` | `op` ∈ {`load`,`store`,`swap`,`cas`}, `addr`: expr node, `args`: [expr nodes], `type`: type id — atomic.LoadPointer/StorePointer/SwapPointer/CompareAndSwapPointer |
 | `syncop` | `op` ∈ {`Load`,`Store`,`Add`,`Swap`,`CompareAndSwap`,`And`,`Or`,`LoadOrStore`,`LoadAndDelete`}, `synctyp`: str (`atomic.*` or `Map`), `recv`: expr node (an atomicaddr cell for word ops, the map expr for sync.Map), `args`: [expr nodes], `type`: type id — sync/atomic word ops and sync.Map multi-result methods |
 | `reflectop` | `op`: str, `args`: [expr nodes], `type`: type id — a table-backed reflect operation (the `op` vocabulary is owned by the exporter: the reflect*MethodOp tables plus the `__reflect_*` intrinsic names) |
 | `runtimecaller` | `skip`: expr node, `type`: type id (the pair type of the desugared temp) — `runtime.Caller(skip)` multi-result desugar |
@@ -403,14 +403,19 @@ which (2) direct `unsafe.Pointer -> *T` conversions now carry as an
 `elemSize` field on `unsafetooptr`, from the same go/types `Sizes`
 oracle that folds the program's own `unsafe.Sizeof` constants.
 `unsafe.Add` derives through the same backend path. (3) The
-`sync/atomic` Pointer primitives (`LoadPointer` in expression
-position, `StorePointer` as a statement, `SwapPointer` /
-`CompareAndSwapPointer` as the new `atomicptrop` node) are
+`sync/atomic` Pointer primitives (all four as the `atomicptrop` node:
+`LoadPointer` in expression position, `StorePointer` as a statement
+wrapped in `exprstmt`, `SwapPointer` / `CompareAndSwapPointer`) are
 intercepted for BOTH the package-qualified selector form and the
 unqualified form used inside `sync/atomic`'s own `Pointer[T]` method
 bodies — the bodies previously called the bodyless assembly
 declarations and panicked at runtime (the PKG-012 word-op
-interception had left the Pointer ops out). Goldens for programs
+interception had left the Pointer ops out). Since P1-1
+(REVIEW-2026-11-03-09) all four share one ordering point — volatile
+cell ops on wrapper cells, a single shared lock on plain fields — so
+`StorePointer` is a release to `LoadPointer`'s acquire; the earlier
+plain-deref load/store lowering, which gave no ordering guarantee, is
+gone. Goldens for programs
 transitively importing `unsafe` or `sync/atomic` carry the new nodes
 and renumbering.
 

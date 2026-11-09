@@ -610,9 +610,12 @@ def check_node(ctx, path, node, expr):
         expr_node("addr")
         str_field("cell", {"int32", "int64", "bool"})
     elif kind == "atomicptrop":
-        # atomic.SwapPointer/CompareAndSwapPointer: `op` is "swap"/"cas",
+        # atomic.LoadPointer/StorePointer/SwapPointer/
+        # CompareAndSwapPointer: `op` is "load"/"store"/"swap"/"cas"
+        # (P1-1, REVIEW-2026-11-03-09: load/store route via the same
+        # ordered atomicptrop path as swap/cas, never a plain deref),
         # `addr` the addressed word, `args` the remaining operands.
-        str_field("op", {"swap", "cas"})
+        str_field("op", {"load", "store", "swap", "cas"})
         expr_node("addr")
         node_list("args")
         type_ref("type")
@@ -1006,6 +1009,11 @@ def selftest():
     bad("atomicaddr-bad-cell",
         lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
             nd("atomicaddr", {"addr": lit(), "cell": "float64"})),
+        "must be one of")
+    bad("atomicptrop-bad-op",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("atomicptrop", {"op": "frobnicate", "addr": lit(),
+                               "args": [], "type": 0})),
         "must be one of")
     bad("linkname-with-body",
         lambda d: d["funcs"][0]["fields"].update(linkname="pkg.F"),

@@ -96,8 +96,10 @@ func TestSyncPoolRtatomicLowersToSyncop(t *testing.T) {
 
 // TestAtomicStorePointerStmtRenamedImport (R2-P1-1): a renamed sync/atomic
 // import in statement position must be intercepted exactly like the
-// canonical spelling — the bare call lowers to *addr = val (assign/deref)
-// instead of a plain call to the bodyless StorePointer func.
+// canonical spelling — the bare call lowers to the "atomicptrop" store
+// op (P1-1, REVIEW-2026-11-03-09: formerly *addr = val via
+// assign/deref, a plain unordered write) instead of a plain call to the
+// bodyless StorePointer func.
 func TestAtomicStorePointerStmtRenamedImport(t *testing.T) {
 	canonical := `package main
 
@@ -143,10 +145,12 @@ func main() {
 				t.Fatal("main funcdecl not found in export")
 			}
 			plainCalls := 0
-			derefs := 0
+			storeOps := 0
 			walkJSONNodes(mainBody, func(m map[string]any) {
-				if m["kind"] == "deref" {
-					derefs++
+				if m["kind"] == "atomicptrop" {
+					if fields, _ := m["fields"].(map[string]any); fields["op"] == "store" {
+						storeOps++
+					}
 				}
 				if m["kind"] == "call" {
 					walkJSONNodes(m, func(inner map[string]any) {
@@ -161,8 +165,8 @@ func main() {
 			if plainCalls != 0 {
 				t.Errorf("StorePointer call was not intercepted in statement position (%d plain calls)", plainCalls)
 			}
-			if derefs == 0 {
-				t.Error("expected lowered *addr = val (deref node) in main")
+			if storeOps != 1 {
+				t.Errorf("expected exactly 1 atomicptrop store node in main, got %d", storeOps)
 			}
 		})
 	}
