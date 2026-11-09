@@ -751,6 +751,9 @@ func (t Time) Format(layout string) string {
 			}
 			if j > i+1 {
 				prec := j - (i + 1)
+				if prec > 9 {
+					prec = 9 // gc appendNano caps the fraction at 9 digits
+				}
 				frac := nsec
 				// scale to prec digits
 				div := int64(1)
@@ -784,6 +787,9 @@ func (t Time) Format(layout string) string {
 					k++
 				}
 				prec := k - (i + 1)
+				if prec > 9 {
+					prec = 9 // gc appendNano caps the fraction at 9 digits
+				}
 				if nsec != 0 {
 					div := int64(1)
 					for n := 0; n < 9-prec; n++ {
@@ -799,8 +805,14 @@ func (t Time) Format(layout string) string {
 					for len(digits) > 0 && digits[len(digits)-1] == '0' {
 						digits = digits[:len(digits)-1]
 					}
-					b = append(b, '.')
-					b = append(b, digits...)
+					// gc appendNano trims the dot itself when the
+					// truncated fraction is all zeros (nsec != 0 but
+					// below the run's precision): emitting '.' alone
+					// would be a lone-dot divergence.
+					if len(digits) > 0 {
+						b = append(b, '.')
+						b = append(b, digits...)
+					}
 				}
 				i = k
 			} else {
