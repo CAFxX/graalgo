@@ -33,17 +33,25 @@ diff rather than silent staleness.
    so no synthetic source provides them, exactly like the earlier
    reflect/net/http retirements. The live `runtime` stub in
    `internal/frontend/export.go` is likewise not extracted.
-   Measured consequence: three scanned linknames flip SATISFIED to
-   MISSING — `sync/atomic.{CompareAndSwap,Store,Swap}Uintptr`
-   from the shadowed `runtime/atomic_pointer.go` (shadowed-only
-   bucket; the live MISSING count is unchanged). They ARE provided
-   by real `sync/atomic` from disk; the tool has no source that
-   says so.)
+   Their coverage moved to source 3 below.)
+3. **Real stdlib packages retired to disk** — the packages in the
+   retired set (`retiredSyntheticPackages` in
+   [synth.go](synth.go), the same list the shadow invariant
+   enforces): their exported symbols are parsed from the scanned
+   GOROOT tree for the target platform (`extractDiskProvided` in
+   [provided.go](provided.go)), so a linkname into `sync/atomic`,
+   `fmt`, `reflect`, `net/http` or any other retired package is
+   SATISFIED by the real package itself. This replaced the deleted
+   synthetic mirrors as the coverage source for those packages
+   (R03-T4): before it, `sync/atomic.{CompareAndSwap,Store,Swap}Uintptr`
+   (and their `Pointer` twins, plus
+   `net/http.(*Transport).RoundTrip`) landed on the skip-list as
+   phantom MISSING.
 4. **Normative `time`/`context` sources** — the `syntheticTimeSource` /
    `syntheticContextSource` embedded Go sources in
    [internal/frontend/synth_time_context.go](../../internal/frontend/synth_time_context.go)
    (parsed with go/parser;
-   only exported declarations are taken). The p3frontend mirrors of (3)
+   only exported declarations are taken). The p3frontend mirrors of (2)
    pin these via signature-equality tests.
 5. **Embedded synthetic stdlib packages (M10)** — every package in the
    `syntheticSources` registry

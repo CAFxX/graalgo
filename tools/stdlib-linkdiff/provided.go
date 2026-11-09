@@ -11,10 +11,15 @@ package main
 //     Linknames.register("symbol", ...) calls (Go→intrinsic direction).
 //  2. internal/frontend/p3frontend/synth_time_context.go —
 //     syntheticTimePackage, syntheticContextPackage.
-//  3. internal/frontend/synth_time_context.go — syntheticTimeSource /
+//  3. The real stdlib packages retired to disk
+//     (retiredSyntheticPackages, see synth.go): their exported
+//     symbols, parsed from the scanned GOROOT tree for the target
+//     platform (see extractDiskProvided). The source iterates the
+//     retired set itself, so no second list can drift from it.
+//  4. internal/frontend/synth_time_context.go — syntheticTimeSource /
 //     syntheticContextSource embedded Go sources (normative; the
 //     p3frontend mirrors of (2) pin them via signature-equality tests).
-//  4. M10: every embedded synthetic package in the syntheticSources
+//  5. M10: every embedded synthetic package in the syntheticSources
 //     registry (internal/frontend/synth_machinery.go) — exported
 //     symbols qualified by import path (see synth.go).
 //
@@ -24,12 +29,18 @@ package main
 // provides them (same precedent as reflect/net/http, see
 // TestProvidedExtraction). The live runtime stub
 // (internal/frontend/export.go syntheticRuntimePackage) is likewise not
-// extracted. Consequence, measured 2026-11-05 against the vendored
-// go1.27.1 tree: exactly three scanned linknames flip SATISFIED to
-// MISSING — sync/atomic.{CompareAndSwap,Store,Swap}Uintptr from the
-// shadowed runtime/atomic_pointer.go (shadowed-only bucket; the live
-// MISSING count is unchanged). They ARE provided by real sync/atomic
-// from disk; the tool just has no source that says so.
+// extracted. The retired packages are instead covered by source 3:
+// their real exports are read off disk, so a linkname into a retired
+// package is SATISFIED by the real package itself. Before source 3,
+// measured 2026-11-05 against the vendored go1.27.1 tree, three
+// scanned linknames flipped SATISFIED to MISSING at the retirement —
+// sync/atomic.{CompareAndSwap,Store,Swap}Uintptr from the shadowed
+// runtime/atomic_pointer.go (shadowed-only bucket; the live MISSING
+// count is unchanged) — and their Pointer twins were already MISSING
+// (the retired mirror never provided the unsafe.Pointer variants;
+// R03-T4). Source 3 cures all of them, plus
+// net/http.(*Transport).RoundTrip (same family, another retired
+// package).
 //
 // Symbol forms: path.Name (func/var/const/type), path.Type.Method
 // (value-receiver or interface method), path.(*Type).Method
@@ -39,11 +50,13 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -75,7 +88,9 @@ func (p *ProvidedSet) has(sym string) bool {
 
 // loadProvided loads the provided set: from a snapshot file when
 // --provided is given, otherwise by mechanical extraction from the
-// graalgo tree at o.graalgo.
+// graalgo tree at o.graalgo (plus the scanned GOROOT tree at
+// o.goroot for the retired-to-disk packages — source 3, skipped
+// when o.goroot is empty; run() always resolves it via parseFlags).
 func loadProvided(o options) (*ProvidedSet, error) {
 	if o.provided != "" {
 		return readSnapshot(o.provided)
@@ -106,7 +121,97 @@ func loadProvided(o options) (*ProvidedSet, error) {
 	if err := p.extractSyntheticProvided(reg); err != nil {
 		return nil, err
 	}
+	// Source 3 (R03-T4): the real packages retired to disk provide
+	// their own exports — see extractDiskProvided.
+	if err := p.extractDiskProvided(o); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// extractDiskProvided adds the exported symbols of the real stdlib
+// packages graalgo compiles from disk (retiredSyntheticPackages) to
+// the provided set, derived mechanically from the scanned GOROOT
+// tree — never hand-maintained. A linkname target into one of these
+// packages is satisfied by the real package itself: the fmt/sync
+// retirement (REVIEW-2026-11-05-11) deleted the synthetic mirrors,
+// so without this source every exported linkname target in a retired
+// package lands on the skip-list as a phantom MISSING (R03-T4:
+// sync/atomic.{CompareAndSwap,Store,Swap}Uintptr, their Pointer
+// twins, net/http.(*Transport).RoundTrip).
+//
+// The source iterates retiredSyntheticPackages itself, so no second
+// list can drift from it: a package added to the retired set gains
+// disk provision automatically, and a package un-retired loses it.
+// o.goroot is the tree to derive from (run() always resolves it via
+// parseFlags); when it is empty the source is skipped — there is no
+// tree to derive from. A retired package absent from the tree is
+// skipped (fixture trees legitimately lack them); a present-but-
+// unparseable file fails loudly — an incomplete provided set must
+// never pass silently. Files are selected with the same go/build
+// platform filter the scan uses (o.goos/o.goarch/o.tags), so a
+// symbol from a file excluded for the target platform is never
+// provided; _test.go files are excluded like the scan excludes
+// them. A selected file whose package clause is not the package's
+// own name (e.g. a //go:build ignore helper) is skipped — its
+// declarations belong to another package.
+func (p *ProvidedSet) extractDiskProvided(o options) error {
+	if o.goroot == "" {
+		return nil
+	}
+	ctxt := build.Default
+	if o.goos != "" {
+		ctxt.GOOS = o.goos
+	}
+	if o.goarch != "" {
+		ctxt.GOARCH = o.goarch
+	}
+	ctxt.BuildTags = append([]string(nil), o.tags...)
+	pkgs := make([]string, 0, len(retiredSyntheticPackages))
+	for pkg := range retiredSyntheticPackages {
+		pkgs = append(pkgs, pkg)
+	}
+	sort.Strings(pkgs)
+	for _, pkg := range pkgs {
+		dir := filepath.Join(o.goroot, filepath.FromSlash(pkg))
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("read real %s from disk: %w", pkg, err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") ||
+				strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			match, err := ctxt.MatchFile(dir, e.Name())
+			if err != nil {
+				return fmt.Errorf("constraint check %s: %w",
+					filepath.ToSlash(filepath.Join(pkg, e.Name())), err)
+			}
+			if !match {
+				continue
+			}
+			path := filepath.Join(dir, e.Name())
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return fmt.Errorf("parse real %s from disk (%s): %w",
+					pkg, filepath.ToSlash(filepath.Join(pkg, e.Name())), err)
+			}
+			if f.Name.Name != pkg[strings.LastIndex(pkg, "/")+1:] {
+				continue
+			}
+			rel := filepath.ToSlash(filepath.Join(pkg, e.Name()))
+			if err := p.extractGoSourceFile(f, pkg,
+				fmt.Sprintf("real %s from disk: GOROOT/%s", pkg, rel)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 var registerRe = regexp.MustCompile(`Linknames\.register\("((?:[^"\\]|\\.)+)"`)

@@ -81,7 +81,11 @@ func loadSyntheticRegistry(graalgo string) (*synthRegistry, error) {
 // truth for the invariant the header comment states — the registry
 // build enforces it mechanically (see the check in
 // buildSyntheticRegistry), and TestSyntheticShadowSet exercises the
-// check rather than a copy of this list. "reflect_m7" is NOT retired
+// check rather than a copy of this list. extractDiskProvided
+// (provided.go) iterates this same set: the retired packages' real
+// exports are the provided source that replaces the deleted mirrors
+// (source 3 in provided.go / README.md), so the set and the disk
+// provision cannot drift apart. "reflect_m7" is NOT retired
 // (a live synthetic package under a distinct import path); only
 // stdlib "reflect" is. "internal/reflectlite" is retired alongside
 // reflect (its source is a `// RETIRED` map comment too).
