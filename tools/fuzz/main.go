@@ -57,6 +57,16 @@ func saveState(workdir string, st state) {
 	os.WriteFile(filepath.Join(workdir, "state.json"), data, 0644)
 }
 
+// noteCompleted advances NextSeed past seed. Lanes finish out of seed
+// order, so this must be monotonic: a late-finishing low seed must not drag
+// NextSeed backwards, or resume would re-run already-covered seeds and
+// double-count them in the journal and counts. (R03-T5.)
+func (st *state) noteCompleted(seed int64) {
+	if seed+1 > st.NextSeed {
+		st.NextSeed = seed + 1
+	}
+}
+
 func cmdGen() {
 	fs := flag.NewFlagSet("gen", flag.ExitOnError)
 	seed := fs.Int64("seed", 0, "seed")
@@ -153,7 +163,7 @@ func cmdRun() {
 				v := oneSeed(*workdir, s, *doMin, journal, &jmu)
 				mu.Lock()
 				st.Counts[v.String()]++
-				st.NextSeed = s + 1
+				st.noteCompleted(s)
 				done++
 				if done%25 == 0 {
 					journal.Flush()
