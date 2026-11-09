@@ -8,6 +8,10 @@ package main
 //	fuzz run -start S -count C -lanes L # differential soak over seeds [S, S+C)
 //	fuzz regress                        # re-run saved regressions, expect SAME
 //
+// The graalgo backend is the live launcher (internal/backend/graalgo-run),
+// resolved at startup: --graalgo-run PATH, else $GRAALGO_RUN, else a
+// walk-up search from the fuzz binary / working directory, else the
+// $HOME/workspace/graalgo checkout. `gen` needs no backend.
 // State: <workdir>/state.json (resume), <workdir>/journal.jsonl (verdicts),
 // <workdir>/regressions/fuzz_<seed>.go (minimized divergences).
 // Per-seed scratch lives under <workdir>/scratch/ and is removed after each
@@ -106,7 +110,9 @@ func cmdRun() {
 	workdir := fs.String("workdir", "work", "working directory")
 	resume := fs.Bool("resume", false, "resume from state.json")
 	doMin := fs.Bool("min", true, "minimize divergences")
+	backend := fs.String("graalgo-run", "", "path to the graalgo-run launcher (default: auto-detected internal/backend/graalgo-run; or $GRAALGO_RUN)")
 	fs.Parse(os.Args[2:])
+	initGraalgoRun(*backend)
 
 	os.MkdirAll(*workdir, 0755)
 	os.MkdirAll(filepath.Join(*workdir, "scratch"), 0755)
@@ -184,7 +190,9 @@ feed:
 func cmdRegress() {
 	fs := flag.NewFlagSet("regress", flag.ExitOnError)
 	workdir := fs.String("workdir", "work", "working directory")
+	backend := fs.String("graalgo-run", "", "path to the graalgo-run launcher (default: auto-detected internal/backend/graalgo-run; or $GRAALGO_RUN)")
 	fs.Parse(os.Args[2:])
+	initGraalgoRun(*backend)
 	dir := filepath.Join(*workdir, "regressions")
 	ents, err := os.ReadDir(dir)
 	if err != nil {
