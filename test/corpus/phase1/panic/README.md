@@ -73,6 +73,8 @@ both by stock gc (the oracle) and by `gofrontend` → `NodeFactory`.
   integer divide by zero) render gc's exact `runtime error:` strings.
 - `pn20_panic_slice_value`: a composite panic value round-trips through
   recover (renders as `([]int) 0xADDR`, never a real address).
+- `pn21_conv_float_index`: an index-out-of-range panic whose message embeds
+  a float→narrow-int conversion (`int32(NaN)` indexes as `-2147483648`).
 
 ## Comparison scope (fatal programs)
 

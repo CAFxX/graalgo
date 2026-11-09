@@ -89,6 +89,10 @@ public final class ArithmeticCorpusTest {
     // PKG-026: complex arithmetic (add/sub/mul/div on complex64/complex128,
     // negation, untyped-constant operands, complex64->complex128 widening).
     public void testAr18Complex() throws Exception { checkProgram("ar18_complex"); }
+    // B-P1-1: float->narrow-int conversions through executeLong (index /
+    // comparison / slicing consumers), incl. the saturate-not-truncate
+    // discriminators. NaN via runtime 0.0/0.0 division.
+    public void testAr19ConvFloatNarrow() throws Exception { checkProgram("ar19_conv_float_narrow"); }
 
     /**
      * Runs one corpus program through both backends and asserts every

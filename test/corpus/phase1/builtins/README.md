@@ -24,6 +24,7 @@ gofrontend builtin emission, WS B/G), through graalgo for comparison.
 | bi13_append_sizes.go | growth by elem size | len 10, valid caps, elems correct (exact caps compiler-dependent) |
 | bi14_map_lifecycle.go | map ops | make/assign/len/delete/lookup |
 | bi15_copy_counts.go | copy counts | n=3 (truncated); n2=5 |
+| bi23_conv_float_index.go | float→narrow-int via index/slice | `uint8(300.0)` indexes 44, slices to len 44; `int32(NaN)` compares equal to `-2147483648` |
 
 **Note on exact capacities (bi01, bi10, bi13):** gc's observable `cap`
 after `append` depends on a compiler optimization (the `growsliceBuf`

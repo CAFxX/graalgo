@@ -24,15 +24,20 @@ and by `gofrontend` → `NodeFactory`.
   truncation), int/uint↔float32/64 (correct rounding, `uint64→float64`
   precision loss, truncation toward zero, gc's out-of-range mirrors),
   int→string (rune conversion incl. `U+FFFD` cases), float32↔float64.
+  `ar19` pins float→narrow-int through the `executeLong` consumers
+  (comparison, arithmetic, widening): gc saturates at 32 bits, then
+  truncates — `int32(3e9)` is `-2147483648`, `int8(2^32+44)` is 0.
+  NaN is produced by a runtime `0.0/0.0` division of a variable
+  (`ar19`, `bi23`, `pn21`); NaN itself is never observed (its payload
+  bits are unspecified), only values converted/computed from it.
 - Comparisons at every kind (signed, unsigned high-bit, float, `Inf`,
   string lexicographic, bool) and logical `&&`/`||`/`!`.
 - Shift counts ≥ width at every width (Go: `<<`→0, unsigned `>>`→0,
   signed `>>`→sign extension — Java's count masking must never leak).
 
 `string↔[]byte` conversions are NOT covered (no slices in v1 scope — WS D).
-NaN cannot be produced without imports, so NaN comparison semantics are
-not covered (documented gap; the nodes implement IEEE semantics, matching
-gc by construction).
+NaN comparison semantics are covered only via values converted/computed
+from a runtime-produced NaN (`ar19`); NaN itself is never observed.
 
 ## Conventions
 

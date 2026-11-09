@@ -140,7 +140,22 @@ public final class ConvertNode extends GoExprNode {
         }
         if (from.isFloatKind()) {
             double d = from == GoKind.FLOAT32 ? (double) child.executeFloat(frame) : child.executeDouble(frame);
-            return to == GoKind.UINT64 ? GoConvert.floatToUint64(d) : GoConvert.floatToInt64(d);
+            // B-P1-1 (REVIEW-2026-11-09-13): narrow targets must narrow — the
+            // raw 64-bit conversion is wrong for them. gc/amd64 converts
+            // float->int8/int16/int32/uint8/uint16 via the saturating 32-bit
+            // conversion, then truncates (CVTTSD2SI r32), and float->uint32
+            // via int64 then low 32 bits (GoConvert's class javadoc pins
+            // both mechanisms; ValuesTest.testGoConvertFloatToIntNarrow pins
+            // the helpers; ConvertNodeFloatTest pins this path, incl. the
+            // saturate-not-truncate discriminators int8(2^32+44)==0 and
+            // uint32(1.9e19)==0). Merely appending extendLong(floatToInt64(d))
+            // is WRONG: it truncates instead of saturating.
+            return switch (to) {
+                case UINT64 -> GoConvert.floatToUint64(d);
+                case UINT32 -> extendLong(GoConvert.floatToUint32(d), to);
+                case INT8, INT16, INT32, UINT8, UINT16 -> extendLong(GoConvert.floatToInt32(d), to);
+                default -> GoConvert.floatToInt64(d);
+            };
         }
         // int/uint -> int64/uint64: the child's extended long is already exact.
         return extendLong(child.executeLong(frame), to);
