@@ -71,8 +71,8 @@ import java.util.Map;
  *
  * <p>Node kinds from the v2 emitter (see {@code emit/nodes.go}):
  * funcdecl, block, exprstmt, return, assign, vardecl, if, for, range,
- * incdec, branch, ident, basiclit, binary, unary, paren, call, selector,
- * pkgref, param.
+ * incdec, branch, ident, fieldname, basiclit, binary, unary, paren, call,
+ * selector, pkgref, param.
  *
  * <p>All emitter kinds are implemented. The factory reuses the existing
  * Truffle node classes from {@code graalgo.frontend} (the same nodes v1
@@ -731,6 +731,49 @@ public final class NodeFactoryV2 {
     }
 
     /**
+     * Follows pointer ({@code elem}) and named ({@code underlying}) edges in
+     * the type table until the chain ends on a type that is neither, and
+     * returns that terminal type's id. A named struct type (e.g. {@code
+     * Point} declared as {@code type Point struct{...}}) therefore resolves
+     * to its underlying struct, and a pointer to a named struct resolves
+     * through both edges. Mirrors {@code goKindForTypeId}'s named-unwrap
+     * (same detail shapes). Bounded by the table size, so a cyclic
+     * hand-built document terminates instead of looping; a missing edge
+     * target stops the walk at the current type, which the caller then
+     * rejects loudly as a non-struct.
+     */
+    @SuppressWarnings("unchecked")
+    private static int resolveTypeId(List<Object> types, int typeId, String where) {
+        for (int steps = 0; steps <= types.size(); steps++) {
+            if (typeId < 0 || typeId >= types.size()) {
+                throw new FrontendException(where + ": bad type id " + typeId);
+            }
+            Object t = types.get(typeId);
+            if (!(t instanceof Map)) {
+                throw new FrontendException(where + ": type not a map");
+            }
+            Map<String, Object> typeMap = (Map<String, Object>) t;
+            String kind = (String) typeMap.get("kind");
+            if (!"pointer".equals(kind) && !"named".equals(kind)) {
+                return typeId;
+            }
+            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+            Object next = null;
+            if ("pointer".equals(kind)) {
+                next = detail != null ? detail.get("elem") : null;
+            } else {
+                next = detail != null ? detail.get("underlying") : null;
+            }
+            if (!(next instanceof Long)) {
+                return typeId;
+            }
+            typeId = ((Long) next).intValue();
+        }
+        // Cycle: the walk never reached a non-edge type.
+        throw new FrontendException(where + ": cyclic type chain at id " + typeId);
+    }
+
+    /**
      * Finds the field index of a named field in the struct type of x.
      */
     @SuppressWarnings("unchecked")
@@ -741,27 +784,9 @@ public final class NodeFactoryV2 {
         if (!(typeIdObj instanceof Long)) {
             throw new FrontendException(where + ": selector.x has no type");
         }
-        int typeId = ((Long) typeIdObj).intValue();
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
-        // Handle pointer to struct: dereference.
+        int typeId = resolveTypeId(types, ((Long) typeIdObj).intValue(), where);
+        Map<String, Object> typeMap = (Map<String, Object>) types.get(typeId);
         String kind = (String) typeMap.get("kind");
-        if ("pointer".equals(kind)) {
-            Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
-            Object elemObj = detail.get("elem");
-            if (elemObj instanceof Long) {
-                typeId = ((Long) elemObj).intValue();
-                t = types.get(typeId);
-                typeMap = (Map<String, Object>) t;
-                kind = (String) typeMap.get("kind");
-            }
-        }
         if (!"struct".equals(kind)) {
             throw new FrontendException(where + ": selector on non-struct type " + kind);
         }
@@ -1251,11 +1276,14 @@ public final class NodeFactoryV2 {
                 if (!(keyObj instanceof Map) || !(valObj instanceof Map)) {
                     throw new FrontendException(where + ": keyvalue key/value must be maps");
                 }
-                // For struct literals, the key is a field name (ident).
-                // For maps, the key is a value.
+                // For struct literals, the key is a field name. The v2
+                // emitter spells it "fieldname" (emit/nodes.go: the ident
+                // denotes a field, not a variable, so no object is
+                // declared for it); "ident" is accepted too for tolerance
+                // of hand-built documents. For maps, the key is a value.
                 Map<String, Object> keyMap = (Map<String, Object>) keyObj;
                 String keyKind = getString(keyMap, "kind", where + ".key");
-                if ("ident".equals(keyKind)) {
+                if ("ident".equals(keyKind) || "fieldname".equals(keyKind)) {
                     // Struct field: resolve field index by name.
                     Map<String, Object> keyFields = getMap(keyMap, "fields", where + ".key.fields");
                     String fieldName = getString(keyFields, "name", where);
@@ -1303,19 +1331,16 @@ public final class NodeFactoryV2 {
     }
 
     /**
-     * Finds a field index by type ID (for composite literals).
+     * Finds a field index by type ID (for composite literals). The literal's
+     * type is usually a named struct type ({@code Point}), so the id is
+     * resolved through named (and pointer) edges to the underlying struct
+     * first — the same unwrap {@code goKindForTypeId} already performs.
      */
     @SuppressWarnings("unchecked")
     private static int findFieldIndexByTypeId(List<Object> types, int typeId,
             String fieldName, String where) {
-        if (typeId < 0 || typeId >= types.size()) {
-            throw new FrontendException(where + ": bad type id " + typeId);
-        }
-        Object t = types.get(typeId);
-        if (!(t instanceof Map)) {
-            throw new FrontendException(where + ": type not a map");
-        }
-        Map<String, Object> typeMap = (Map<String, Object>) t;
+        int structId = resolveTypeId(types, typeId, where);
+        Map<String, Object> typeMap = (Map<String, Object>) types.get(structId);
         String kind = (String) typeMap.get("kind");
         if (!"struct".equals(kind)) {
             throw new FrontendException(where + ": keyed literal on non-struct type " + kind);
