@@ -18,10 +18,19 @@ pattern (F1), wrapped-list handling in both directions (F2) — and
 the import-block negative that the stateless reading of F2 would
 have false-positived on.
 
+The R10-07 fixtures (review 2026-11-09) pin the Rule 4 allowlist
+rewrite: a new wire-node kind must flag wherever it is emitted and
+however it is spelled (literal in any *.go file, variable-kind
+e.node(kind, ...) call, kind assignment, intrinsic-map entry), while
+the 47 known kinds and the known-generic kinds must not flag.
+The drift tests pin the allowlist against the exporter's own kind
+enumeration, so the two cannot drift apart silently.
+
 Positive controls are synthetic diffs that MUST still fail: the gate
 is a tripwire, not a rubber stamp.
 """
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -277,6 +286,195 @@ index 00000000..11111111 100644
 """
 
 
+
+# --- R10-07 (review 2026-11-09): Rule 4 allowlist fixtures -------------
+# The old Rule 4 only saw literal e.node("KIND", ...) lines in files
+# whose name contains "export.go" with a runtime*/fmt*/sync*/os*/net*
+# prefix. These fixtures pin the rewrite: a new kind must flag wherever
+# it is emitted and however it is spelled; a known kind must not flag.
+# Novel kind spellings (timenewx, atomicptropx, ...) stand in for the
+# next bridge — the real R10-07 kinds are pinned as known by the
+# KNOWN_* negative controls and by the drift tests below.
+
+# A new stdlib-specific kind emitted literally from a non-export.go file
+# (synth_machinery.go): file-blind under the old rule. Must flag.
+NEW_KIND_SYNTH_FILE = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -1460,6 +1460,7 @@ func (e *exporter) exportTimeNow(c *ast.CallExpr) (*Node, error) {
+ \tif !ok {
+ \t\treturn nil, fmt.Errorf("bad time op")
+ \t}
++\twire := e.node("timenewx", c, fields)
+ \treturn wire, nil
+"""
+
+# A new stdlib-specific kind emitted literally from export.go with a
+# prefix the old regex never matched (atomic*): prefix-blind. Must flag.
+NEW_KIND_EXPORT_PREFIX = """\
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index 11111111..22222222 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -9360,6 +9360,7 @@ func (e *exporter) exportAtomicOp(c *ast.CallExpr) (*Node, error) {
+ \tif !ok {
+ \t\treturn nil, fmt.Errorf("bad atomic op")
+ \t}
++\twire := e.node("atomicptropx", c, fields)
+ \treturn wire, nil
+"""
+
+# A new kind via a variable-kind site (mrdesugar_m5.go shape): the hunk
+# adds the assignment AND the e.node(kind, ...) call. Must flag.
+NEW_KIND_VARIABLE = """\
+diff --git a/internal/frontend/mrdesugar_m5.go b/internal/frontend/mrdesugar_m5.go
+index 11111111..22222222 100644
+--- a/internal/frontend/mrdesugar_m5.go
++++ b/internal/frontend/mrdesugar_m5.go
+@@ -3320,6 +3320,7 @@ func (e *exporter) exportRTStackOp(c *ast.CallExpr, plan rtStackPlan) (*Node, e
+ \tif len(c.Args) != 1 {
+ \t\treturn nil, fmt.Errorf("takes 1 argument")
+ \t}
++\tkind = "timefoox"
+ \ta, err := e.exportExpr(c.Args[0])
+ \tif err != nil {
+ \t\treturn nil, err
+ \t}
++\tcall := e.node(kind, c, fields)
+ \treturn call, nil
+"""
+
+# A new kind via a standalone intrinsic-map entry (exportMathIntrinsic
+# shape): the hunk adds only the map line, no e.node line. Must flag.
+NEW_KIND_INTRINSIC_MAP = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -1590,6 +1590,7 @@ func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, er
+ \tkind, ok := map[string]string{
+ \t\t"Float64bits":     "mathf64bits",
++\t\t"NewFunc":         "mathfoox",
+ \t}[name]
+ \tif !ok {
+ \t\treturn nil, scopeErrorf("not a recognized intrinsic", name)
+"""
+
+# A variable-kind e.node(kind, ...) call with NO kind assignment in the
+# hunk: unresolvable here, so it must flag for human review, not pass.
+UNRESOLVED_VARIABLE_KIND = """\
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index 11111111..22222222 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -8810,6 +8810,7 @@ func (e *exporter) exportSelectorCall(c *ast.CallExpr) (*Node, error) {
+ \tif err != nil {
+ \t\treturn nil, err
+ \t}
++\treturn e.node(kind, c, fields), nil
+ \treturn nil, fmt.Errorf("unreachable")
+"""
+
+# Negative: a KNOWN kind emitted literally from a non-export.go file
+# (synth_reflect.go, R10-07 Category C shape) must NOT flag.
+KNOWN_KIND_SYNTH_FILE = """\
+diff --git a/internal/frontend/synth_reflect.go b/internal/frontend/synth_reflect.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_reflect.go
++++ b/internal/frontend/synth_reflect.go
+@@ -2920,6 +2920,7 @@ func (e *exporter) exportReflectOp(c *ast.CallExpr) (*Node, error) {
+ \tif !ok {
+ \t\treturn nil, fmt.Errorf("bad reflect op")
+ \t}
++\twire := e.node("reflectop", c, fields)
+ \treturn wire, nil
+"""
+
+# Negative: a KNOWN kind via a variable-kind site (export.go:8816 shape:
+# kind := "runtimefuncname", reassigned to "runtimefuncentry", then
+# e.node(kind, ...)) must NOT flag.
+KNOWN_VARIABLE_KIND = """\
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index 11111111..22222222 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -8810,6 +8810,7 @@ func (e *exporter) exportFuncForPC(c *ast.CallExpr) (*Node, error) {
+ \tif err != nil {
+ \t\treturn nil, err
+ \t}
++\tkind := "runtimefuncname"
++\tif mname == "Entry" {
++\t\tkind = "runtimefuncentry"
++\t}
++\treturn e.node(kind, c, map[string]any{"f": recv, "type": typ}), nil
+ \treturn nil, fmt.Errorf("unreachable")
+"""
+
+# Negative: a KNOWN intrinsic-map entry (exportMathIntrinsic shape)
+# must NOT flag.
+KNOWN_KIND_INTRINSIC_MAP = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -1590,6 +1590,7 @@ func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, er
+ \tkind, ok := map[string]string{
+ \t\t"Float64bits":     "mathf64bits",
++\t\t"Sqrt":            "mathsqrt",
+ \t}[name]
+ \tif !ok {
+ \t\treturn nil, scopeErrorf("not a recognized intrinsic", name)
+"""
+
+# Negative: a v2-only generic kind (v2/emit/nodes.go) must NOT flag.
+KNOWN_KIND_V2_GENERIC = """\
+diff --git a/internal/frontend/v2/emit/nodes.go b/internal/frontend/v2/emit/nodes.go
+index 11111111..22222222 100644
+--- a/internal/frontend/v2/emit/nodes.go
++++ b/internal/frontend/v2/emit/nodes.go
+@@ -535,6 +535,7 @@ func (e *emitter) emitCompositeLit(c *ast.CompositeLit) (*Node, error) {
+ \tif err != nil {
+ \t\treturn nil, err
+ \t}
++\treturn e.node("compositelit", c, map[string]any{"x": x}), nil
+ \treturn nil, fmt.Errorf("unreachable")
+"""
+
+# Negative: an adjudicated kind (runtimenumgoroutine, PKG-023) must NOT flag.
+KNOWN_KIND_ADJUDICATED = """\
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index 11111111..22222222 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -8400,6 +8400,7 @@ func (e *exporter) exportNumGoroutine(c *ast.CallExpr) (*Node, error) {
+ \tif err != nil {
+ \t\treturn nil, err
+ \t}
++\twire := e.node("runtimenumgoroutine", c, fields)
+ \treturn wire, nil
+"""
+
+# --- R10-07 drift tests: the allowlist must track the exporter ---------
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _load_validator_kinds():
+    """_exporter_kinds() from the repo's v1 validator, or None when the
+    validator is not present next to this test (standalone use)."""
+    import importlib.util
+
+    validator = (REPO_ROOT / "internal" / "frontend" / "tools"
+                 / "validate_frontend_v1.py")
+    if not validator.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(
+        "validate_frontend_v1", validator)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._exporter_kinds()
+
 class TestNoBridgesGate(unittest.TestCase):
     def test_narrowing_loader_case_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(LOADER_NARROWING), [])
@@ -322,6 +520,67 @@ class TestNoBridgesGate(unittest.TestCase):
 
     def test_import_addition_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(IMPORT_ADDITION), [])
+
+    def test_new_kind_synth_file_flagged(self):
+        errs = cnb.check_no_bridges(NEW_KIND_SYNTH_FILE)
+        self.assertTrue(any("SUSPICIOUS WIRE NODE" in e for e in errs), errs)
+
+    def test_new_kind_export_prefix_flagged(self):
+        errs = cnb.check_no_bridges(NEW_KIND_EXPORT_PREFIX)
+        self.assertTrue(any("SUSPICIOUS WIRE NODE" in e for e in errs), errs)
+
+    def test_new_kind_variable_flagged(self):
+        errs = cnb.check_no_bridges(NEW_KIND_VARIABLE)
+        self.assertTrue(any("SUSPICIOUS WIRE NODE" in e for e in errs), errs)
+
+    def test_new_kind_intrinsic_map_flagged(self):
+        errs = cnb.check_no_bridges(NEW_KIND_INTRINSIC_MAP)
+        self.assertTrue(any("SUSPICIOUS WIRE NODE" in e for e in errs), errs)
+
+    def test_unresolved_variable_kind_flagged(self):
+        errs = cnb.check_no_bridges(UNRESOLVED_VARIABLE_KIND)
+        self.assertTrue(any("UNRESOLVED WIRE NODE" in e for e in errs), errs)
+
+    def test_known_kind_synth_file_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(KNOWN_KIND_SYNTH_FILE), [])
+
+    def test_known_variable_kind_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(KNOWN_VARIABLE_KIND), [])
+
+    def test_known_kind_intrinsic_map_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(KNOWN_KIND_INTRINSIC_MAP), [])
+
+    def test_known_kind_v2_generic_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(KNOWN_KIND_V2_GENERIC), [])
+
+    def test_known_kind_adjudicated_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(KNOWN_KIND_ADJUDICATED), [])
+
+    def test_allowlist_covers_exporter_kinds(self):
+        self.assertEqual(len(cnb.KNOWN_WIRE_NODE_KINDS), 47)
+        self.assertEqual(len(cnb.KNOWN_GENERIC_NODE_KINDS_V1), 47)
+        exporter = _load_validator_kinds()
+        if exporter is None:
+            self.skipTest("validator not present next to test file")
+        self.assertEqual(
+            exporter,
+            cnb.KNOWN_WIRE_NODE_KINDS | cnb.KNOWN_GENERIC_NODE_KINDS_V1)
+
+    def test_v2_generic_kinds_known(self):
+        nodes = (REPO_ROOT / "internal" / "frontend" / "v2" / "emit"
+                 / "nodes.go")
+        if not nodes.is_file():
+            self.skipTest("v2 emitter not present next to test file")
+        src = nodes.read_text()
+        emitted = set(re.findall(r'\.node\s*\(\s*"([^"]+)"', src))
+        for kind in emitted:
+            self.assertIn(
+                kind,
+                cnb.KNOWN_WIRE_NODE_KINDS | cnb.KNOWN_GENERIC_NODE_KINDS,
+                f"v2 emits unknown kind {kind!r}")
+        for kind in cnb.KNOWN_GENERIC_NODE_KINDS_V2:
+            self.assertIn(kind, emitted)
+
 
 
 if __name__ == "__main__":

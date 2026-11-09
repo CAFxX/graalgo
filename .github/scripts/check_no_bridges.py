@@ -79,6 +79,84 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
+# Stdlib-specific wire node kinds (R10-07 allowlist) + known-generic kinds.
+#
+# Derivation (mechanical, do not hand-count): internal/frontend/tools/
+# validate_frontend_v1.py _exporter_kinds() returns 94 kinds at the
+# R10-07 base (d4936e9b): 47 stdlib-specific (KNOWN_WIRE_NODE_KINDS
+# below) and 47 generic AST kinds (KNOWN_GENERIC_NODE_KINDS_V1). The 4
+# v2-only generic kinds (internal/frontend/v2/emit/nodes.go:
+# compositelit, fieldname, pkgref, slice) are NOT in the 94 — the v1
+# validator never sees them (REVIEW-2026-11-09-10 R10-P2-23) — so they
+# are listed separately. test_check_no_bridges.py pins the counts
+# (test_allowlist_covers_exporter_kinds, test_v2_generic_kinds_known):
+# a kind the exporter constructs but neither set contains is a gate hole.
+# Adding a kind to either set needs an independent reviewer's
+# adjudication — the lane proposes, it does not self-adjudicate
+# (REVIEW-2026-11-09-10 R10-07). A kind in NEITHER set is a new wire
+# node until a reviewer says otherwise.
+#
+# Count correction to the finding's hand count (verified mechanically at
+# the base): the finding says "36 blind" kinds; distinct blind
+# kind-strings are 35 (47 allowlist − 12 the old gate could see: the 11
+# literal runtime* kinds in export.go plus syncop). The 36th entry is
+# syncop's second emission site (mrdesugar_m5.go:3369) — a blind SITE of
+# a gate-visible KIND. The 47 total stands.
+KNOWN_WIRE_NODE_KINDS = {
+    # abi
+    "abifuncpc",
+    # atomic (export.go literals; the old Rule 4 prefix never matched them)
+    "atomicaddr", "atomicptrop",
+    # chan (variable kind: export.go kind := "chanlen" / = "chancap")
+    "chancap", "chanlen",
+    # math (map-literal values: exportMathIntrinsic, synth_machinery.go)
+    "mathf32bits", "mathf32frombits", "mathf64bits", "mathf64frombits",
+    "mathfma", "mathsqrt",
+    # reflect (export.go literal + synth_reflect.go second site)
+    "reflectop",
+    # runtime: 11 literals in export.go — the only kinds the old gate
+    # could see — plus 5 variable kinds (runtimefuncname/funcentry in
+    # export.go; runtimecaller/framesnext/funcfileline in mrdesugar_m5.go)
+    "runtimecaller", "runtimecallers", "runtimecallersframes",
+    "runtimeframesnext", "runtimefuncentry", "runtimefuncfileline",
+    "runtimefuncforpc", "runtimefuncname", "runtimegomaxprocs",
+    "runtimegoroot", "runtimegosched", "runtimenumcpu",
+    "runtimenumgoroutine", "runtimereadmemstats", "runtimestack",
+    "runtimeversion",
+    # slice (exportAliasIntrinsic, synth_machinery.go)
+    "sliceoverlap",
+    # sync (export.go literal + mrdesugar_m5.go second site)
+    "syncop",
+    # time (synth_machinery.go literals; the old rule never scanned the file)
+    "timeafter", "timeafterfunc", "timec", "timenew", "timenow",
+    "timeop", "timesleep", "timetick",
+    # unsafe (synth_unsafe.go + unsafe_derive.go literals)
+    "unsafeadd", "unsafederive", "unsafefromptr", "unsafefromuint",
+    "unsafeslice", "unsafeslicedata", "unsafestring", "unsafestringdata",
+    "unsafetooptr",
+}
+# Adjudicated members (independent review CLEAN, not bridges):
+#   "runtimenumgoroutine" — PKG-023 (commit 1d4e7964, 2026-10-16).
+#   "runtimegosched" — PKG-040 (lane commit 19786941, 2026-10-16).
+# Their adjudication records live in ADJUDICATED_WIRE_NODES above and in
+# docs/arch/bridge-inventory.md ("Adjudicated non-bridges"); allowlist
+# membership is the exemption Rule 4 consults.
+KNOWN_GENERIC_NODE_KINDS_V1 = {
+    "addrof", "assign", "basiclit", "binary", "blank", "block", "branch",
+    "call", "caseclause", "chanclose", "clear", "complit", "convert",
+    "defer", "deref", "exprstmt", "for", "funcdecl", "funclit", "gostmt",
+    "ident", "if", "ifacemethod", "incdec", "index", "labeled",
+    "makechan", "methodref", "methodvalue", "minmax", "nil", "param",
+    "paren", "range", "recv", "return", "select", "selectcase",
+    "selector", "send", "sliceexpr", "switch", "typeassert", "typecase",
+    "typeswitch", "unary", "vardecl",
+}
+KNOWN_GENERIC_NODE_KINDS_V2 = {
+    # v2-only generic kinds (internal/frontend/v2/emit/nodes.go).
+    "compositelit", "fieldname", "pkgref", "slice",
+}
+KNOWN_GENERIC_NODE_KINDS = KNOWN_GENERIC_NODE_KINDS_V1 | KNOWN_GENERIC_NODE_KINDS_V2
+
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
 
@@ -282,20 +360,109 @@ def check_no_bridges(diff):
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
 
-    # 4. New wire node kinds for stdlib
-    for fname, line in added_lines:
-        if not fname or "export.go" not in fname:
+    # 4. New wire node kinds (allowlist check; R10-07).
+    #
+    # The old rule only inspected added lines in files whose name
+    # contains "export.go", only matched a literal e.node("KIND", ...)
+    # call, and only flagged kinds matching ^(runtime|fmt|sync|os|net)[a-z].
+    # That left 35 of the 47 stdlib-specific kinds gate-blind: literals in
+    # non-export.go files (synth_*.go, unsafe_derive.go), variable-kind
+    # e.node(kind, ...) sites (export.go, mrdesugar_m5.go,
+    # synth_machinery.go), and map-literal kinds (exportMathIntrinsic).
+    # The rewrite:
+    #   (a) scan added lines in ALL *.go files, not just *export.go*;
+    #   (b) resolve variable kinds from `kind :=` / `kind =` assignments
+    #       and intrinsic-map values in the same hunk; a non-literal
+    #       e.node( call that resolves to no known kind — or to an
+    #       unknown one — flags for human review;
+    #   (c) flag any kind string not on the allowlist or the
+    #       known-generic set, including a new arm that only adds the
+    #       assignment (no e.node line in the hunk);
+    #   (d) regression fixtures live in test_check_no_bridges.py.
+    # Residual hole, by design (finding §R10-07): the gate is Go-diff-only
+    # — a new backend Java registration (registerExprKind /
+    # registerStmtKind in P3KindRegistrations.java) with no Go change is
+    # still invisible. That needs a Java-side check, not a Rule 4 tweak.
+    _kind_literal_re = re.compile(r'e\.node\s*\(\s*"([^"]+)"')
+    _kind_call_re = re.compile(r'e\.node\s*\(')
+    _kind_assign_re = re.compile(r'\bkind\s*:?=\s*"([a-z][a-z0-9]*)"')
+    # A new stdlib wire-node kind carries a stdlib-ish prefix by the
+    # project's convention (every one of the 47 does). The standalone
+    # assignment rule below uses it to stay silent on unrelated `kind`
+    # variables (vendored go/doc, go/printer, tests use `kind` for other
+    # things: "file", "comm", "ul>\n", ...).
+    _stdlib_kind_prefix_re = re.compile(
+        r'^(abi|atomic|chan|math|reflect|runtime|slice|sync|time|unsafe)')
+    _intrinsic_map_re = re.compile(
+        r'^\s*"[A-Z][A-Za-z0-9_]*":\s*"([a-z][a-z0-9]*)"\s*,?\s*$')
+
+    def _known_kind(kind, fname):
+        return (kind in KNOWN_WIRE_NODE_KINDS
+                or kind in KNOWN_GENERIC_NODE_KINDS
+                or any(f_sub in fname and nk == kind
+                       for f_sub, nk in ADJUDICATED_WIRE_NODES))
+
+    for fname, ordered in hunks:
+        if not fname or not fname.endswith(".go"):
             continue
-        m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
-        if m:
-            node_kind = m.group(1)
-            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
-            if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
-                # Adjudicated real implementations are not bridges.
-                if any(f_sub in fname and nk == node_kind
-                       for f_sub, nk in ADJUDICATED_WIRE_NODES):
-                    continue
-                errors.append(f"SUSPICIOUS WIRE NODE in {fname}: {node_kind}")
+        if _is_test_file(fname):
+            continue
+        # Comment-only lines never emit a wire node.
+        added = [line for status, line in ordered if status == "+"
+                 and not line.lstrip().startswith("//")]
+        # (a)+(c) literal kinds on added lines, in any *.go file.
+        for line in added:
+            m = _kind_literal_re.search(line)
+            if m and not _known_kind(m.group(1), fname):
+                errors.append(
+                    f"SUSPICIOUS WIRE NODE in {fname}: {m.group(1)}")
+        # (b) non-literal e.node( calls: resolve the kind from assignments
+        #     and intrinsic-map values added in the same hunk. The hunk is
+        #     one logical change, so a new call site carries its kind
+        #     assignments (or its map entries) with it; a call whose kind
+        #     cannot be resolved here is a human-review item, not a pass.
+        for line in added:
+            if _kind_call_re.search(line) and not _kind_literal_re.search(line):
+                candidates = set()
+                for aline in added:
+                    candidates |= set(_kind_assign_re.findall(aline))
+                    mm = _intrinsic_map_re.match(aline)
+                    if mm:
+                        candidates.add(mm.group(1))
+                unknown = sorted(k for k in candidates
+                                 if not _known_kind(k, fname))
+                if not candidates:
+                    errors.append(
+                        f"UNRESOLVED WIRE NODE in {fname}: variable-kind "
+                        f"e.node call with no kind assignment in the hunk "
+                        f"— human review required: {line.strip()[:80]}")
+                elif unknown:
+                    errors.append(
+                        f"SUSPICIOUS WIRE NODE in {fname}: "
+                        f"{', '.join(unknown)} (variable-kind e.node call)")
+        # (c, standalone) a new arm that only adds the kind assignment —
+        # or a new intrinsic-map entry — with no e.node line in the hunk.
+        # Scoped to the exporter tree: every wire node is emitted from
+        # internal/frontend/ except the vendored go/ subtree (upstream Go
+        # sources, no e.node calls) and p3frontend (verified: no e.node
+        # calls at the R10-07 base). The prefix filter keeps unrelated
+        # `kind` variables silent (see above).
+        if (fname.startswith("internal/frontend/")
+                and "/go/" not in fname
+                and "/p3frontend/" not in fname):
+            for line in added:
+                for kind in _kind_assign_re.findall(line):
+                    if (_stdlib_kind_prefix_re.match(kind)
+                            and not _known_kind(kind, fname)):
+                        errors.append(
+                            f"SUSPICIOUS WIRE NODE in {fname}: {kind} "
+                            f"(kind assignment)")
+                mm = _intrinsic_map_re.match(line)
+                if (mm and _stdlib_kind_prefix_re.match(mm.group(1))
+                        and not _known_kind(mm.group(1), fname)):
+                    errors.append(
+                        f"SUSPICIOUS WIRE NODE in {fname}: {mm.group(1)} "
+                        f"(intrinsic-map entry)")
 
     # 5. New synthetic function registrations
     for fname, line in added_lines:

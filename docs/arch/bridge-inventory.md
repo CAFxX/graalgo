@@ -85,6 +85,38 @@ deliverable until the design lands.
     `"runtimecaller"` custom wire nodes for stdlib functions, and the
     `time.Now` eta-expansion hardcoded by package+symbol name
     ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+  - **Wire-node kinds (R10-07, 2026-11-09; gate allowlist):** the exporter
+    constructs 94 node kinds
+    (`internal/frontend/tools/validate_frontend_v1.py` `_exporter_kinds()`),
+    of which **47 are stdlib-specific** and form the no-bridges gate Rule 4
+    allowlist
+    ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py)
+    `KNOWN_WIRE_NODE_KINDS`; the other 47 are generic AST kinds, plus 4
+    v2-only generic kinds in
+    [v2/emit/nodes.go](../../internal/frontend/v2/emit/nodes.go)):
+    `abifuncpc`, `atomicaddr`, `atomicptrop`, `chancap`, `chanlen`,
+    `mathf32bits`, `mathf32frombits`, `mathf64bits`, `mathf64frombits`,
+    `mathfma`, `mathsqrt`, `reflectop`, `runtimecaller`, `runtimecallers`,
+    `runtimecallersframes`, `runtimeframesnext`, `runtimefuncentry`,
+    `runtimefuncfileline`, `runtimefuncforpc`, `runtimefuncname`,
+    `runtimegomaxprocs`, `runtimegoroot`, `runtimegosched`, `runtimenumcpu`,
+    `runtimenumgoroutine`, `runtimereadmemstats`, `runtimestack`,
+    `runtimeversion`, `sliceoverlap`, `syncop`, `timeafter`,
+    `timeafterfunc`, `timec`, `timenew`, `timenow`, `timeop`, `timesleep`,
+    `timetick`, `unsafeadd`, `unsafederive`, `unsafefromptr`,
+    `unsafefromuint`, `unsafeslice`, `unsafeslicedata`, `unsafestring`,
+    `unsafestringdata`, `unsafetooptr`.
+    The pre-R10-07 gate could see only 12 of the 47 (the 11 literal
+    `runtime*` kinds in `export.go` plus `syncop`); the other 35
+    kind-strings were gate-blind (literals in non-`export.go` files,
+    variable-kind `e.node(kind, ...)` sites, map-literal kinds). Count
+    correction: the finding says "36 blind"; distinct blind kind-strings
+    are 35 — the 36th entry is `syncop`'s second emission site
+    (`mrdesugar_m5.go:3369`), a blind *site* of a gate-visible *kind*.
+    Adding a kind to the allowlist needs an independent reviewer's
+    adjudication. Residual hole: the gate is Go-diff-only — a new backend
+    Java kind registration with no Go change is still invisible (needs a
+    Java-side check, not a Rule 4 tweak).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
