@@ -259,6 +259,12 @@ func toString(v interface{}) string {
 	switch x := v.(type) {
 	case string:
 		return x
+	case []byte:
+		// Guest-compiled (emitted into the test main), so this stays
+		// minimal — no fmt. Without this case a []byte diagnostic
+		// printed "<value>" and hid the actual bytes (CI 42615066315:
+		// MarshalText's real output was unreadable in the failure line).
+		return string(x)
 	case int:
 		return itoa(int64(x))
 	case int64:

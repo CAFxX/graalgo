@@ -744,7 +744,7 @@ func (t Time) Format(layout string) string {
 				b = append(b, "pm"...)
 			}
 			i += 2
-		case '.': // fractional seconds .0, .00, ...
+		case '.': // fractional seconds .0/.9, .00/.99, ... (gc time/format.go appendNano)
 			j := i + 1
 			for j < len(layout) && layout[j] == '0' {
 				j++
@@ -773,6 +773,36 @@ func (t Time) Format(layout string) string {
 				b = append(b, '.')
 				b = append(b, digits...)
 				i = j
+			} else if k := i + 1; k < len(layout) && layout[k] == '9' {
+				// gc stdFracSecond9: a run of '9's prints the fraction
+				// with trailing zeros omitted; a zero fraction prints
+				// nothing at all (not even the dot). RFC3339Nano
+				// depends on this: MarshalText of a whole-second time
+				// is "...05Z", not "...05.999999999Z" (the literal run
+				// the old code emitted — Format had no '9' handling).
+				for k < len(layout) && layout[k] == '9' {
+					k++
+				}
+				prec := k - (i + 1)
+				if nsec != 0 {
+					div := int64(1)
+					for n := 0; n < 9-prec; n++ {
+						div *= 10
+					}
+					v := nsec / div
+					tmp := v
+					digits := make([]byte, prec)
+					for n := prec - 1; n >= 0; n-- {
+						digits[n] = byte('0' + tmp%10)
+						tmp /= 10
+					}
+					for len(digits) > 0 && digits[len(digits)-1] == '0' {
+						digits = digits[:len(digits)-1]
+					}
+					b = append(b, '.')
+					b = append(b, digits...)
+				}
+				i = k
 			} else {
 				b = append(b, c)
 				i++
