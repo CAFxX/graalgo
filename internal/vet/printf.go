@@ -3,6 +3,7 @@ package vet
 import (
 	"go/ast"
 	"go/constant"
+	"go/token"
 	"go/types"
 	"strconv"
 	"strings"
@@ -98,6 +99,7 @@ type printfVerb struct {
 	indexed   bool
 	argIndex  int
 	starWidth bool
+	starPrec  bool
 }
 
 // checkPrintfFormat validates args against the format string verbs.
@@ -117,6 +119,30 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 			}
 			continue
 		}
+		// Each '*' in the width or precision consumes one argument,
+		// before the value argument. (R05-V-06: the precision '*'
+		// used to consume nothing, so every later verb was checked
+		// against the wrong argument.)
+		stars := 0
+		if v.starWidth {
+			stars++
+		}
+		if v.starPrec {
+			stars++
+		}
+		missing := false
+		for i := 0; i < stars; i++ {
+			if argIdx >= len(args) {
+				out = append(out, Diagnostic{pos,
+					"missing argument for " + v.text})
+				missing = true
+				break
+			}
+			argIdx++
+		}
+		if missing {
+			continue
+		}
 		if argIdx >= len(args) {
 			out = append(out, Diagnostic{pos,
 				"missing argument for " + v.text})
@@ -127,9 +153,6 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 				v.text + ": " + msg})
 		}
 		argIdx++
-		if v.starWidth {
-			argIdx++
-		}
 	}
 	return out
 }
@@ -174,6 +197,7 @@ func parsePrintfVerbs(format string) []printfVerb {
 		if i < len(format) && format[i] == '.' {
 			i++
 			if i < len(format) && format[i] == '*' {
+				v.starPrec = true
 				i++
 			} else {
 				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
@@ -216,10 +240,26 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 			return "expects floating point"
 		}
 	case 's', 'q':
+		// Accept string (including named string types), byte slices
+		// and byte arrays (including named variants such as net.IP
+		// and [N]byte), a single pointer to a byte slice/array,
+		// error values and fmt.Stringer values. (R05-V-02: the old
+		// code compared t.String() against "[]byte"/"[]uint8" and so
+		// flagged all of these valid uses.) The pointer rule is
+		// one level only, matching upstream vet: *string and
+		// **[]byte are still flagged, as are []rune and [N]rune.
 		if isBasic && basic.Kind() == types.String {
 			break
 		}
-		if t.String() == "[]byte" || t.String() == "[]uint8" {
+		if isByteSliceOrArray(t) {
+			break
+		}
+		if implementsErrorOrStringer(t) {
+			break
+		}
+		if _, isIface := t.Underlying().(*types.Interface); isIface {
+			// The dynamic type is unknown; it may be a string,
+			// []byte, error or Stringer. Don't flag.
 			break
 		}
 		return "expects string or []byte"
@@ -237,6 +277,61 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		// Anything goes.
 	}
 	return ""
+}
+
+// errorInterface is the predeclared error interface.
+var errorInterface = types.Universe.Lookup("error").Type().Underlying().(*types.Interface)
+
+// stringerInterface is the fmt.Stringer interface, built structurally so
+// no resolution of the fmt package is needed.
+var stringerInterface = func() *types.Interface {
+	stringMethod := types.NewFunc(token.NoPos, nil, "String",
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(),
+			types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.String])),
+			false))
+	return types.NewInterfaceType([]*types.Func{stringMethod}, nil).Complete()
+}()
+
+// isByteSliceOrArray reports whether t's underlying type is a slice or
+// array whose element type is uint8 (byte), covering []byte, []uint8,
+// [N]byte and named variants such as net.IP — or a single pointer to
+// one of those. One pointer level only: **[]byte is not accepted, and
+// neither is a pointer to a string (*string is flagged by upstream vet).
+func isByteSliceOrArray(t types.Type) bool {
+	u := t.Underlying()
+	if p, ok := u.(*types.Pointer); ok {
+		u = p.Elem().Underlying()
+	}
+	var elem types.Type
+	switch s := u.(type) {
+	case *types.Slice:
+		elem = s.Elem()
+	case *types.Array:
+		elem = s.Elem()
+	default:
+		return false
+	}
+	b, ok := elem.Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Uint8
+}
+
+// implementsErrorOrStringer reports whether t implements error or
+// fmt.Stringer. The pointer form is checked as well: a value whose
+// pointer implements Stringer is routinely passed to %s/%q, and
+// flagging it would be a false positive on ordinary code.
+func implementsErrorOrStringer(t types.Type) bool {
+	if types.Implements(t, errorInterface) || types.Implements(t, stringerInterface) {
+		return true
+	}
+	if _, isPtr := t.Underlying().(*types.Pointer); isPtr {
+		return false
+	}
+	if _, isIface := t.Underlying().(*types.Interface); isIface {
+		return false
+	}
+	pt := types.NewPointer(t)
+	return types.Implements(pt, errorInterface) || types.Implements(pt, stringerInterface)
 }
 
 func isIntKind(k types.BasicKind) bool {
