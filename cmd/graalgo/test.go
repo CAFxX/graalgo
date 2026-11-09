@@ -267,12 +267,32 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
+	// Discover the TestMain entry point: it drives the run regardless
+	// of -run (like gc), so a driver must be synthesized for it even
+	// when no test is selected. Loud on malformed or duplicate
+	// TestMain, exactly like gc.
+	var testMainFound bool
+	for _, tf := range runnableTests {
+		found, err := testMainInFile(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		if found {
+			if testMainFound {
+				fmt.Fprintf(os.Stderr, "graalgo test: multiple definitions of TestMain\n")
+				return false
+			}
+			testMainFound = true
+		}
+	}
+
 	// The synthesized driver prints go-test-format output itself
 	// (=== RUN / --- PASS/FAIL lines, PASS/FAIL summary); a non-zero
 	// exit means the package failed.
 	t0 := time.Now()
 	ok := true
-	if len(ftList) > 0 {
+	if len(ftList) > 0 || testMainFound {
 		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)

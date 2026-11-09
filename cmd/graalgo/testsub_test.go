@@ -190,3 +190,171 @@ func TestSentinelTop(t *testing.T) {
 		mustNotContain(t, out, "--- SKIP: TestSentinelTop")
 	}
 }
+
+// --- R20B-02: TestMain support (REVIEW-2026-11-08-20-2) ---
+// The drivers below actually run under gc; a package with a TestMain must
+// compile and behave like `go test`: TestMain drives the run via m.Run().
+
+// TestSubtestTestMainRunsTests: a TestMain that calls m.Run() runs the
+// tests and the package passes.
+func TestSubtestTestMainRunsTests(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	m.Run()
+}
+
+func TestOK(t *testing.T) {}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
+		}
+		if verbose {
+			mustContain(t, out, "--- PASS: TestOK ")
+		}
+	}
+}
+
+// TestSubtestTestMainWithoutRunSkipsTests: a TestMain that never calls
+// m.Run() runs no test and the package still passes (exit 0), like gc.
+func TestSubtestTestMainWithoutRunSkipsTests(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	// Deliberately does not call m.Run(): no test may run.
+}
+
+func TestOK(t *testing.T) {
+	t.Fatal("must not run")
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
+		}
+		mustNotContain(t, out, "TestOK")
+	}
+}
+
+// TestSubtestTestMainFailingTest: a failing test run through TestMain
+// fails the package with the usual FAIL line.
+func TestSubtestTestMainFailingTest(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	m.Run()
+}
+
+func TestBad(t *testing.T) {
+	t.Error("bad")
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 1 {
+			t.Errorf("verbose=%v: driver exit = %d, want 1:\n%s", verbose, code, out)
+		}
+		mustContain(t, out, "--- FAIL: TestBad ")
+	}
+}
+
+// TestSubtestTestMainSetupRunsFirst: TestMain setup runs before the
+// tests it drives.
+func TestSubtestTestMainSetupRunsFirst(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module example.com/subtest\n\ngo 1.21\n")
+	writeFile(t, dir, "a.go", "package subtest\n\nvar SetupDone bool\n")
+	writeFile(t, dir, "a_test.go", `package subtest
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	SetupDone = true
+	m.Run()
+}
+
+func TestSetup(t *testing.T) {
+	if !SetupDone {
+		t.Fatal("TestMain setup did not run before the test")
+	}
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
+		}
+		if verbose {
+			mustContain(t, out, "--- PASS: TestSetup ")
+		}
+	}
+}
+
+// TestSubtestTestMainRunsTwice: a TestMain that calls m.Run() twice runs
+// the tests twice (gc allows repeated m.Run()).
+func TestSubtestTestMainRunsTwice(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestMain(m *testing.M) {
+	m.Run()
+	m.Run()
+}
+
+func TestOK(t *testing.T) {}
+`)
+	out, code := runSynthDriver(t, dir, true)
+	if code != 0 {
+		t.Errorf("driver exit = %d, want 0:\n%s", code, out)
+	}
+	if n := strings.Count(out, "--- PASS: TestOK "); n != 2 {
+		t.Errorf("driver ran TestOK %d time(s), want 2 (m.Run() twice):\n%s", n, out)
+	}
+	out, code = runSynthDriver(t, dir, false)
+	if code != 0 {
+		t.Errorf("non-verbose: driver exit = %d, want 0:\n%s", code, out)
+	}
+}
+
+// TestSubtestTestMainInSiblingFile: a TestMain in a sibling test file
+// (a file with no selected test of its own) still drives the run.
+func TestSubtestTestMainInSiblingFile(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestOK(t *testing.T) {}
+`)
+	writeFile(t, dir, "b_test.go", `package subtest
+
+import (
+	"fmt"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	fmt.Println("SIBLING-TESTMAIN-RAN")
+	m.Run()
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		out, code := runSynthDriver(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0:\n%s", verbose, code, out)
+		}
+		mustContain(t, out, "SIBLING-TESTMAIN-RAN")
+		if verbose {
+			mustContain(t, out, "--- PASS: TestOK ")
+		}
+	}
+}
