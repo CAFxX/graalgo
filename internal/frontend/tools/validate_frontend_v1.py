@@ -151,6 +151,34 @@ def check_objects(ctx):
             ctx.check_type_id(f"{p}.type", o.get("type"))
 
 
+def check_globals(ctx):
+    """R-1108-170: `globals` was never validated — dangling obj ids,
+    invalid positions, unknown init kinds and even a non-array
+    `globals` passed clean. The exporter always emits an array
+    (exportPackageVars builds it with make, never nil), so a missing
+    or non-array value is a wire-format error."""
+    g = ctx.doc.get("globals")
+    if not isinstance(g, list):
+        ctx.err("globals", "must be an array")
+        return
+    for i, e in enumerate(g):
+        p = f"globals[{i}]"
+        if not isinstance(e, dict):
+            ctx.err(p, "must be an object")
+            continue
+        # obj: -1 is the sentinel for side-effect-only synthetic
+        # entries (export.go: "They are emitted as side-effect-only
+        # globals entries (Obj == -1)"); accept it explicitly, never
+        # via the range check. Anything else must be a valid object id.
+        obj = e.get("obj")
+        if not (isinstance(obj, int) and not isinstance(obj, bool) and obj == -1):
+            ctx.check_obj_id(p + ".obj", obj)
+        if "pos" in e and e["pos"] is not None:
+            check_pos(ctx, p + ".pos", e["pos"])
+        if e.get("init") is not None:
+            check_node(ctx, p + ".init", e["init"], True)
+
+
 def check_node(ctx, path, node, expr):
     """expr=True when the node must carry a type reference (expression)."""
     if not isinstance(node, dict):
@@ -773,6 +801,7 @@ def validate(doc):
             ctx.err("package.files", "must be a non-empty array")
     check_types(ctx)
     check_objects(ctx)
+    check_globals(ctx)
     funcs = doc.get("funcs")
     if not isinstance(funcs, list) or not funcs:
         ctx.err("funcs", "must be a non-empty array")
@@ -845,6 +874,7 @@ def selftest():
         "package": {"name": "main", "files": ["x.go"], "lang": "go1.27"},
         "types": [{"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": False}}],
         "objects": [{"kind": "var", "name": "x", "type": 0, "param": False}],
+        "globals": [],
         "funcs": [{
             "kind": "funcdecl",
             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
@@ -882,6 +912,42 @@ def selftest():
              "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
              "fields": {"name": "x", "obj": 42, "type": 0}}),
         "dangling object id")
+    bad("globals-not-a-list",
+        lambda d: d.update(globals="not-a-list"),
+        "must be an array")
+    bad("globals-dangling-obj",
+        lambda d: d.update(globals=[{"obj": 99999, "init": None,
+                                     "pos": {"file": 0, "line": 0, "col": -3,
+                                             "off": -1, "len": -9}}]),
+        "dangling object id")
+    bad("globals-bad-pos",
+        lambda d: d.update(globals=[{"obj": 0, "init": None,
+                                     "pos": {"file": 0, "line": 0, "col": -3,
+                                             "off": -1, "len": -9}}]),
+        "must be non-negative int")
+    bad("globals-unknown-init-kind",
+        lambda d: d.update(globals=[{"obj": 0,
+                                     "init": {"kind": "frobnicate",
+                                              "pos": {"file": 0, "line": 1, "col": 1,
+                                                      "off": 0, "len": 1},
+                                              "fields": {}},
+                                     "pos": {"file": 0, "line": 1, "col": 1,
+                                             "off": 0, "len": 1}}]),
+        "unknown node kind")
+    bad("ok-globals-sentinel",
+        lambda d: d.update(globals=[{"obj": -1, "init": None,
+                                     "pos": {"file": 0, "line": 1, "col": 1,
+                                             "off": 0, "len": 1}}]),
+        None)
+    bad("ok-globals-init",
+        lambda d: d.update(globals=[{"obj": 0,
+                                     "init": {"kind": "basiclit",
+                                              "pos": {"file": 0, "line": 1, "col": 1,
+                                                      "off": 0, "len": 1},
+                                              "fields": {"value": "1", "type": 0}},
+                                     "pos": {"file": 0, "line": 1, "col": 1,
+                                             "off": 0, "len": 1}}]),
+        None)
     bad("missing-pos",
         lambda d: d["funcs"][0]["fields"]["body"].pop("pos"),
         "pos")
