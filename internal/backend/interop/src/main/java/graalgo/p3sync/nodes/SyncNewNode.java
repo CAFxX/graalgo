@@ -26,9 +26,7 @@ import graalgo.values.GoKind;
  * C, ADR-0004 D2): the {@code "syncnew"} wire node.
  *
  * <p>A {@code sync.Mutex} Go value <em>is</em> the {@link GoMutex} Java
- * object (opaque, like {@code GoChan} — ADR-0002 D1); a
- * {@code sync.Pool} Go value <em>is</em> the {@link GoPool} Java object
- * (same value model); an
+ * object (opaque, like {@code GoChan} — ADR-0002 D1); an
  * {@code atomic.Int64} Go value <em>is</em> the {@link AtomicLong} cell,
  * an {@code atomic.Int32}/{@code Uint32}/{@code Bool} value <em>is</em>
  * the {@link AtomicInteger} cell. Copying copies the reference:
@@ -36,6 +34,16 @@ import graalgo.values.GoKind;
  * and these objects are not {@code GoStruct}s, so assignment, argument
  * passing, and interface boxing all carry the reference with no extra
  * machinery.
+ *
+ * <p>B23-01: the P3-M11 "a {@code sync.Pool} Go value <em>is</em> the
+ * {@link GoPool} Java object" model is retired — the exporter emits no
+ * {@code syncnew} node for Pool (or for Mutex/RWMutex/WaitGroup/Once,
+ * which are plain GoStructs with disk bodies since PKG-053), so this
+ * node has no live emitter for any of those types. Pool values are
+ * plain GoStructs with disk bodies. This node is retained pending a
+ * removal decision; the "Go value IS the object" model above now holds
+ * only for the atomic cells (and the Mutex-family arms, which are
+ * equally unreachable).
  *
  * <p>The node kind is {@link GoKind#STRUCT} for the value form
  * ({@code sync.Mutex{}}, {@code atomic.Int64{}}) and {@link GoKind#POINTER}
@@ -76,8 +84,8 @@ public final class SyncNewNode extends GoExprNode {
             case "RWMutex" -> new GoRWMutex();
             case "WaitGroup" -> new GoWaitGroup();
             case "Once" -> new GoOnce();
-            // P3-M11 (sync.Pool): the Go value IS the GoPool object
-            // (ADR-0002 D1).
+            // P3-M11 (sync.Pool): dead arm (B23-01, no live emitter —
+            // the Go value is a GoStruct with a disk body, not a GoPool).
             case "Pool" -> {
                 GoPool pool = new GoPool();
                 pool.setNewFunc(newFunc);

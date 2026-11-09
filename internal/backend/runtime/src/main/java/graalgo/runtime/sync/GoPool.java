@@ -55,9 +55,17 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>The {@code New} field ({@code func() any}) is a volatile slot;
  *       gc forbids changing it concurrently with {@code Get}, publication
  *       is still safe.</li>
- *   <li>A Pool value copied after first use shares the pools (the Go value
- *       IS this object — ADR-0002 D1); gc's noCopy is vet-level only.</li>
+ *   <li>A Pool value copied after first use shares the pools (within
+ *       this class's own value model, the Go value IS this object —
+ *       ADR-0002 D1); gc's noCopy is vet-level only.</li>
  * </ul>
+ *
+ * <p>B23-01: this class is no longer the runtime representation of any
+ * Pool value — Pool values are plain {@code GoStruct}s with disk bodies
+ * (PKG-053 precedent), and the {@code SyncOpNode}/{@code SyncNewNode}
+ * arms that drove this class have no live emitter. Retained (with its
+ * unit tests) pending a removal decision; the semantics above describe
+ * this class in isolation, not the live Pool implementation.
  *
  * <p>No scheduler interaction: pool operations never block.
  */

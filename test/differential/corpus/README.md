@@ -1,6 +1,6 @@
 # Corpus
 
-49 single-file Go programs (`package main`, stdlib only) covering the
+50 single-file Go programs (`package main`, stdlib only) covering the
 language surface the smoke net guards. Each program is deterministic by
 construction under `GOMAXPROCS=1`:
 
@@ -68,6 +68,9 @@ Coverage map:
 | 48  | range_over_func_edge | range-over-func exits: return/goto/labels,       |
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
+| 49  | sync_pool_struct     | sync.Pool in a struct/array: independent zero    |
+|     |                      | values, copy-before/after-use, literals, New     |
+|     |                      | (B23-01; companion to 46)                        |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,

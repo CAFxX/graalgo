@@ -63,6 +63,19 @@ import java.util.Map;
  * {@code GetNew} the func value; the rest are void and return null,
  * mirroring {@code GoexitCallNode}.
  *
+ * <p>B23-01: the P3-M11 Pool model above is retired — the exporter emits
+ * no {@code syncop}/{@code syncnew} node for Pool (verified: the only
+ * {@code syncop} emitters are the atomic word ops and the sync.Map
+ * desugar), so the Pool arms below are unreachable dead code. Pool
+ * values are plain {@code GoStruct}s with disk bodies (PKG-053
+ * precedent), which already worked for direct Pool vars and now also
+ * for struct-field and array-element Pools. Do not revive these arms
+ * without also reviving a live emitter and per-evaluation freshening
+ * (a shared template GoPool would alias every zero value). The arms
+ * and {@link GoPool} are retained pending a removal decision, not
+ * deleted, so this note records the state rather than pretending the
+ * model is live.
+ *
  * <p>fix-linkname (Caddy/godebug lane): {@code sync.Map}. The four
  * multi-result methods (Load, LoadOrStore, LoadAndDelete, Swap) return
  * the {@code mapAnyBoolPair{v, ok}} struct for the mrSyncMap desugar
@@ -135,11 +148,12 @@ public final class SyncOpNode extends GoExprNode {
             case "WaitGroup.Done" -> panicOnMisuse(() -> ((GoWaitGroup) r).done());
             case "WaitGroup.Wait" -> ((GoWaitGroup) r).await();
             case "Once.Do" -> doOnce((GoOnce) r, frame);
-            // P3-M11 (sync.Pool): the Go value IS the GoPool object
-            // (ADR-0002 D1). Put's arg is boxed to an interface value by
-            // the builder (boxToInterface, the atomic.Value precedent);
-            // Get returns the pooled interface value, or null for the nil
-            // interface (gc: Get may return nil even with items stored).
+            // P3-M11 (sync.Pool): dead arm (B23-01, no live emitter —
+            // the Go value is a GoStruct with a disk body, not a GoPool).
+            // Put's arg is boxed to an interface value by the builder
+            // (boxToInterface, the atomic.Value precedent); Get returns
+            // the pooled interface value, or null for the nil interface
+            // (gc: Get may return nil even with items stored).
             case "Pool.Put" -> poolOf(r).put(args[0].executeObject(frame));
             case "Pool.Get" -> {
                 GoPool pool = poolOf(r);
