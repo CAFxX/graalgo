@@ -36,6 +36,33 @@ func main() {
 	}
 	fmt.Println("runes err:", s3.Err())
 
+	// ScanRunes, UTF-8 surrogates (R10-08): ED A0 80 (U+D800) and
+	// ED BF BF (U+DFFF) are invalid encodings; gc yields one U+FFFD
+	// per byte, never the 3-byte surrogate as a token. Neighbouring
+	// valid runes U+D7FF / U+E000 must still decode as single tokens.
+	s7 := bufio.NewScanner(bytes.NewReader([]byte("\xed\xa0\x80\xed\xbf\xbf")))
+	s7.Split(bufio.ScanRunes)
+	for s7.Scan() {
+		fmt.Printf("runes-surrogate %q\n", s7.Text())
+	}
+	fmt.Println("runes-surrogate err:", s7.Err())
+	s8 := bufio.NewScanner(bytes.NewReader([]byte("\xed\x9f\xbf\xee\x80\x80")))
+	s8.Split(bufio.ScanRunes)
+	for s8.Scan() {
+		fmt.Printf("runes-neighbour %q\n", s8.Text())
+	}
+	fmt.Println("runes-neighbour err:", s8.Err())
+
+	// ScanWords over a surrogate (R10-08): the surrogate bytes are
+	// word characters in both legs (U+FFFD is not a space), so the
+	// token is the raw bytes either way; this pins no change.
+	s9 := bufio.NewScanner(bytes.NewReader([]byte("a\xed\xa0\x80b c")))
+	s9.Split(bufio.ScanWords)
+	for s9.Scan() {
+		fmt.Printf("words-surrogate %q\n", s9.Text())
+	}
+	fmt.Println("words-surrogate err:", s9.Err())
+
 	// ScanBytes: every byte as a token, incl. empty input.
 	s4 := bufio.NewScanner(bytes.NewReader([]byte("ab")))
 	s4.Split(bufio.ScanBytes)

@@ -105,6 +105,9 @@ func __bufioDecodeRune(p []byte) (r rune, size int) {
 		if len(p) < 3 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 {
 			return __bufioRuneError, 1
 		}
+		if c == 0xED && p[1] >= 0xA0 {
+			return __bufioRuneError, 1 // surrogate
+		}
 		r := rune(c&0x0F)<<12 | rune(p[1]&0x3F)<<6 | rune(p[2]&0x3F)
 		if r < 0x800 {
 			return __bufioRuneError, 1
