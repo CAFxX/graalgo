@@ -2,6 +2,7 @@ package vet
 
 import (
 	"go/ast"
+	"go/token"
 )
 
 func init() {
@@ -116,6 +117,10 @@ func terminates(s ast.Stmt) bool {
 	case *ast.ReturnStmt, *ast.BranchStmt:
 		// return, break, continue, goto, fallthrough
 		return true
+	case *ast.LabeledStmt:
+		// A labeled statement terminates iff the statement it labels
+		// does, e.g. `Outer: for {}` with no break.
+		return terminates(s.Stmt)
 	case *ast.ExprStmt:
 		// panic(...) terminates.
 		if call, ok := s.X.(*ast.CallExpr); ok {
@@ -134,15 +139,51 @@ func terminates(s ast.Stmt) bool {
 	return false
 }
 
-// hasBreak reports whether the loop body contains a break that
-// targets this loop (conservatively: any break not inside a nested
-// for/switch/select).
+// hasBreak reports whether the loop body contains a break that exits
+// this loop: an unlabeled break directly in the loop body, or a labeled
+// break whose label is not defined on any statement inside the body
+// (so it must name the loop itself or an enclosing construct, and
+// breaking to it leaves the loop).
+//
+// A labeled break to a label defined inside the body exits only the
+// nested construct carrying that label, not this loop, so it does not
+// count. Unlabeled breaks inside nested loops, switches, and selects
+// target those constructs, so they do not count either — but a labeled
+// break inside them can still exit this loop, so nested bodies are
+// walked for labeled breaks.
 func hasBreak(body *ast.BlockStmt) bool {
 	if body == nil {
 		return false
 	}
+	// Labels defined inside the body. A break to one of these stays
+	// inside the loop. Labels are function-scoped, so closures get
+	// their own scope: do not collect labels from inside a func
+	// literal, where the same name may denote a different label.
+	inner := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.LabeledStmt:
+			inner[n.Label.Name] = true
+		}
+		return true
+	})
 	found := false
 	var walk func(list []ast.Stmt, depth int)
+	walkCases := func(body *ast.BlockStmt, depth int, comm bool) {
+		if body == nil {
+			return
+		}
+		for _, c := range body.List {
+			if cc, ok := c.(*ast.CaseClause); ok && !comm {
+				walk(cc.Body, depth)
+			}
+			if cc, ok := c.(*ast.CommClause); ok && comm {
+				walk(cc.Body, depth)
+			}
+		}
+	}
 	walk = func(list []ast.Stmt, depth int) {
 		for _, s := range list {
 			if found {
@@ -150,18 +191,47 @@ func hasBreak(body *ast.BlockStmt) bool {
 			}
 			switch s := s.(type) {
 			case *ast.BranchStmt:
-				if s.Tok.String() == "break" && s.Label == nil && depth == 0 {
-					found = true
+				if s.Tok == token.BREAK {
+					if s.Label == nil {
+						if depth == 0 {
+							found = true
+						}
+					} else if !inner[s.Label.Name] {
+						// Breaks to a label outside the body:
+						// exits the loop (and anything enclosing
+						// it up to the labeled construct).
+						found = true
+					}
 				}
-			case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt,
-				*ast.TypeSwitchStmt, *ast.SelectStmt:
-				// Nested loop/switch: breaks inside target it.
-				continue
+			case *ast.LabeledStmt:
+				walk([]ast.Stmt{s.Stmt}, depth)
+			case *ast.ForStmt:
+				if s.Body != nil {
+					walk(s.Body.List, depth+1)
+				}
+			case *ast.RangeStmt:
+				if s.Body != nil {
+					walk(s.Body.List, depth+1)
+				}
+			case *ast.SwitchStmt:
+				walkCases(s.Body, depth+1, false)
+			case *ast.TypeSwitchStmt:
+				walkCases(s.Body, depth+1, false)
+			case *ast.SelectStmt:
+				walkCases(s.Body, depth+1, true)
 			case *ast.BlockStmt:
 				walk(s.List, depth)
 			case *ast.IfStmt:
 				if s.Body != nil {
 					walk(s.Body.List, depth)
+				}
+				if s.Else != nil {
+					switch e := s.Else.(type) {
+					case *ast.BlockStmt:
+						walk(e.List, depth)
+					case *ast.IfStmt:
+						walk([]ast.Stmt{e}, depth)
+					}
 				}
 			}
 		}
