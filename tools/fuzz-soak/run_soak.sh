@@ -178,13 +178,21 @@ failed = sys.argv[2].split()
 divergent = sys.argv[3].split()
 triage_failed = sys.argv[4].split()
 total_div = 0
+programs_run = 0
 for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
     for line in open(res):
         r = json.loads(line)
+        programs_run += 1
         if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
             total_div += 1
+# programs_run / batches_failed make "0 divergences" distinguishable
+# from "0 programs ran": a clean soak reports diverged_total 0 with
+# programs_run > 0; a soak that ran nothing reports programs_run 0
+# (and its batches land in failed_batches with exit 2, never 0).
 rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
+       "programs_run": programs_run,
        "diverged_total": total_div,
+       "batches_failed": len(failed),
        "failed_batches": [int(b) for b in failed],
        "divergent_batches": [int(b) for b in divergent],
        "triage_failed_batches": [int(b) for b in triage_failed]}

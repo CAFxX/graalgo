@@ -19,6 +19,16 @@ Env:
 
 Golden canary: seed 999999 is a known-pass program; if it doesn't PASS,
 the shard writes CANARY_FAIL and exits nonzero (batch quarantined).
+
+Exit codes (same 0/1/2 contract as harness/run_batch.py):
+  0  every program PASSed or was SCOPE-rejected (clean shard)
+  1  the shard ran, but programs diverged (WRONG_OUTPUT, CRASH, HANG,
+     EXIT_MISMATCH, GO_PANIC_MISMATCH, GC_BUILD_FAIL)
+  2  the shard itself could not run correctly: canary failure,
+     generator failure, any program HARNESS_ERROR, or zero programs
+     ran (SEEDS_PER_SHARD <= 0). A shard that ran nothing must never
+     report success — "0 divergences" is only meaningful with
+     programs_run > 0 (see shard-summary.json).
 """
 import json
 import os
@@ -52,6 +62,30 @@ def diff_one(gofile, workdir, gmp=1):
                 "detail": (r.stdout + r.stderr)[-500:]}
 
 
+def summarize_results(results_path):
+    """Count results.jsonl records by result.
+
+    Returns (counts, programs_run). A missing file counts as zero
+    programs ran (the caller fails loudly on that); a malformed line
+    counts as HARNESS_ERROR — an unusable record is a harness failure,
+    not a clean program.
+    """
+    from collections import Counter
+    counts = Counter()
+    if not os.path.isfile(results_path):
+        return counts, 0
+    with open(results_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                counts[json.loads(line).get("result", "HARNESS_ERROR")] += 1
+            except Exception:
+                counts["HARNESS_ERROR"] += 1
+    return counts, sum(counts.values())
+
+
 def main():
     # Fail fast on an image built from the old layout: without the
     # generator and diff_one.sh every seed would fail identically, and
@@ -67,6 +101,15 @@ def main():
     # with local runs (local uses 0..; GHA uses 1_000_000..).
     base = 1_000_000 + SHARD_IDX * SEEDS_PER_SHARD
     seeds = list(range(base, base + SEEDS_PER_SHARD))
+    if not seeds:
+        # Zero programs is a shard that could not run, not a clean
+        # shard: SEEDS_PER_SHARD <= 0 would otherwise run the canary
+        # only, compare nothing, and exit 0 — a vacuous pass in the
+        # layer-4 gate (same family as the run_batch.py empty-range
+        # guard). Fail loudly with exit 2 before generating anything.
+        print(f"ERROR: SEEDS_PER_SHARD={SEEDS_PER_SHARD}: no programs "
+              "to run", flush=True)
+        sys.exit(2)
     progdir = os.path.join(OUT_DIR, "programs")
     os.makedirs(progdir, exist_ok=True)
 
@@ -93,7 +136,10 @@ def main():
         r = sh(f"python3 {FUZZ}/gen/generator.py --seed {s} --out {out}")
         if r.returncode != 0:
             print(f"generator failed for seed {s}")
-            sys.exit(1)
+            # Exit 2: infrastructure failure, not a divergence finding
+            # (same contract as run_batch.py; the canary generator
+            # failure above already exits 2).
+            sys.exit(2)
 
     results_path = os.path.join(OUT_DIR, "results.jsonl")
     with open(results_path, "w") as rf:
@@ -112,6 +158,35 @@ def main():
                 rf.flush()
                 if (i + 1) % 10 == 0:
                     print(f"  {i+1}/{len(seeds)}", flush=True)
+
+    # Verdict: a shard that found divergences must fail, not print
+    # "shard done" and exit 0. HARNESS_ERROR is infrastructure failure
+    # (exit 2), not a finding (exit 1); zero programs ran is likewise
+    # exit 2. shard-summary.json records programs_run so "0
+    # divergences" is distinguishable from "0 programs ran".
+    counts, programs_run = summarize_results(results_path)
+    diverged = sum(v for k, v in counts.items()
+                   if k not in ("PASS", "SCOPE"))
+    summary = {"shard": SHARD_IDX,
+               "programs_run": programs_run,
+               "counts": dict(sorted(counts.items())),
+               "diverged": diverged,
+               "harness_errors": counts.get("HARNESS_ERROR", 0)}
+    with open(os.path.join(OUT_DIR, "shard-summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"shard summary: {summary}", flush=True)
+    if programs_run == 0:
+        print("SHARD FAILED: zero programs ran — see shard-summary.json",
+              flush=True)
+        sys.exit(2)
+    if counts.get("HARNESS_ERROR", 0):
+        print("SHARD FAILED: HARNESS_ERROR present — shard "
+              "infrastructure failed", flush=True)
+        sys.exit(2)
+    if diverged:
+        print(f"SHARD DIVERGENT: {diverged} diverged program(s) — "
+              "see shard-summary.json", flush=True)
+        sys.exit(1)
 
     print("shard done", flush=True)
 

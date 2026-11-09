@@ -34,6 +34,13 @@ def main():
     for k, v in sorted(counts.items()):
         print(f"  {k}: {v}")
 
+    if not results:
+        # Nothing to aggregate is not a clean run: every shard was
+        # quarantined, or the fetch found no results at all. Fail
+        # loudly (exit 2) instead of reporting "total: 0" with exit 0.
+        print("no shard results to aggregate")
+        sys.exit(2)
+
     groups = defaultdict(list)
     for r in results:
         if r["result"] in ("PASS", "SCOPE"):
@@ -50,6 +57,13 @@ def main():
 
     scope_rate = counts.get("SCOPE", 0) / max(1, len(results))
     print(f"\nscope-hit rate: {scope_rate:.1%}")
+
+    # Findings are a nonzero verdict, not a clean aggregation: callers
+    # (and humans scripting on this step) must not mistake a run with
+    # divergences for a clean one.
+    if groups:
+        print("AGGREGATE DIVERGENT: findings present (see failure groups)")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

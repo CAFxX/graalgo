@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Regression pins for NEW-P1-7: fuzz soak dead on deleted phases/ paths,
 and for REVIEW-2026-11-06-10 R-P1-13 residuals: the GHA driver + image
-still on phases/, and the overnight loop swallowing batch failures.
+still on phases/, and the overnight loop swallowing batch failures,
+and for REVIEW-2026-11-09-03 R03-T1: the shard/soak exit contract
+ignoring divergences (driver exiting 0 on findings, soak report
+without programs_run/batches_failed).
 
 The harness scripts (run_batch.py, diff_one.sh, triage.py,
 run_fuzz_native.sh, run_soak.sh) used to resolve the repo root through
@@ -242,6 +245,121 @@ class TestGhaDriver(unittest.TestCase):
         self.assertIn("make build GO=/usr/local/go/bin/go", src)
         self.assertNotIn("phases/phase3", src)
 
+    def _fake_driver_home(self, td):
+        """Fake GRAALGO_HOME with a stub generator + stub diff_one.sh.
+
+        The generator writes a trivial .go (and fails main-batch seeds
+        when GEN_FAIL_MAIN=1); diff_one.sh PASSes the canary and
+        returns $DIFF_RESULT for every other program. No build, no JVM.
+        """
+        fuzz = Path(td) / "fake-home" / "tools" / "fuzz-soak"
+        (fuzz / "gen").mkdir(parents=True, exist_ok=True)
+        (fuzz / "harness").mkdir(parents=True, exist_ok=True)
+        (fuzz / "gen" / "generator.py").write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "args = sys.argv[1:]\n"
+            "seed = args[args.index('--seed') + 1]\n"
+            "out = args[args.index('--out') + 1]\n"
+            "if seed != '999999' and os.environ.get('GEN_FAIL_MAIN') "
+            "== '1':\n"
+            "    print('stub generator: failing main-batch seed',\n"
+            "          file=sys.stderr)\n"
+            "    sys.exit(1)\n"
+            "open(out, 'w').write('package main\\n\\n"
+            "func main() {}\\n')\n")
+        (fuzz / "harness" / "diff_one.sh").write_text(
+            "#!/bin/bash\n"
+            "# $1=gofile; canary always PASSes, other seeds use "
+            "$DIFF_RESULT.\n"
+            "base=\"$(basename \"$1\" .go)\"\n"
+            "if [ \"$base\" = \"canary\" ]; then res=\"PASS\"; "
+            "else res=\"${DIFF_RESULT:-PASS}\"; fi\n"
+            "printf '{\"file\": \"%s\", \"result\": \"%s\", "
+            "\"detail\": \"stub\"}\\n' \"$base\" \"$res\"\n")
+        return Path(td) / "fake-home"
+
+    def _run_driver(self, td, fake_home, diff_result="PASS",
+                    seeds_per_shard="2", gen_fail_main=False, tag="case"):
+        outdir = Path(td) / f"out-{tag}"
+        env = dict(os.environ)
+        env.update({
+            "GRAALGO_HOME": str(fake_home),
+            "OUT_DIR": str(outdir),
+            "SHARD_IDX": "0",
+            "SHARD_COUNT": "1",
+            "SEEDS_PER_SHARD": seeds_per_shard,
+            "DIFF_RESULT": diff_result,
+        })
+        if gen_fail_main:
+            env["GEN_FAIL_MAIN"] = "1"
+        r = subprocess.run(
+            [sys.executable,
+             str(FUZZ_DIR / "gha" / "driver" / "fuzz_driver.py")],
+            capture_output=True, text=True, env=env, timeout=60)
+        return r, outdir
+
+    def test_driver_exit_contract(self):
+        # Behavioural pin for R03-T1: the shard driver must fail the
+        # step when divergences are found (exit 1), fail loudly when
+        # the shard could not run (exit 2: generator failure,
+        # HARNESS_ERROR, zero programs), and exit 0 only on a clean
+        # shard that actually ran programs — with shard-summary.json
+        # recording programs_run so "0 divergences" is distinguishable
+        # from "0 programs ran". Falsifying: on the pre-fix driver
+        # every case below exits 0 after "shard done" (the zero-seed
+        # case never even ran a differential).
+        td = tempfile.mkdtemp(prefix="driver-exit-pin-")
+        try:
+            fake_home = self._fake_driver_home(td)
+            cases = [
+                # (diff_result, seeds, gen_fail, rc, programs_run, tag)
+                ("PASS", "2", False, 0, 2, "clean"),
+                ("WRONG_OUTPUT", "2", False, 1, 2, "wrong-output"),
+                ("CRASH", "2", False, 1, 2, "crash"),
+                ("HARNESS_ERROR", "2", False, 2, 2, "harness-error"),
+                ("PASS", "2", True, 2, 0, "gen-fail"),
+            ]
+            for diff_result, seeds, gen_fail, rc, n, tag in cases:
+                r, outdir = self._run_driver(
+                    td, fake_home, diff_result, seeds, gen_fail, tag)
+                self.assertEqual(r.returncode, rc, tag)
+                if tag == "gen-fail":
+                    # Generator died before results.jsonl existed.
+                    self.assertFalse(
+                        (outdir / "results.jsonl").exists(), tag)
+                    continue
+                summary = json.loads(
+                    (outdir / "shard-summary.json").read_text())
+                self.assertEqual(summary["programs_run"], n, tag)
+                self.assertEqual(summary["counts"].get(diff_result), n,
+                                 tag)
+                if rc == 0:
+                    self.assertIn("shard done", r.stdout, tag)
+                elif rc == 1:
+                    self.assertIn("SHARD DIVERGENT", r.stdout, tag)
+                    self.assertEqual(summary["diverged"], n, tag)
+                else:
+                    self.assertIn("SHARD FAILED", r.stdout, tag)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_driver_zero_seeds_exits_two(self):
+        # SEEDS_PER_SHARD=0 selects zero programs: the shard must fail
+        # loudly (exit 2) instead of running the canary only and
+        # reporting a clean exit 0 — the shard-level form of the
+        # run_batch.py empty-range guard.
+        td = tempfile.mkdtemp(prefix="driver-zero-seeds-pin-")
+        try:
+            fake_home = self._fake_driver_home(td)
+            r, outdir = self._run_driver(td, fake_home, "PASS", "0",
+                                         False, "zero-seeds")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("no programs to run", r.stdout + r.stderr)
+            self.assertFalse((outdir / "results.jsonl").exists())
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
 
 class TestRunBatchExitCodes(unittest.TestCase):
     def test_exit_code_contract(self):
@@ -296,6 +414,59 @@ class TestRunBatchExitCodes(unittest.TestCase):
         finally:
             shutil.rmtree(td, ignore_errors=True)
 
+    def test_diverged_batch_exits_one(self):
+        # Behavioural pin for the R03-T1 exit contract: a batch that
+        # ran and found divergences must exit 1, a clean batch 0, and
+        # a HARNESS_ERROR batch 2. test_exit_code_contract above pins
+        # the source text; this pins the behaviour with a stubbed
+        # backend (stub `make`, stub generator, stub diff_one.sh) —
+        # no build, no JVM, no generator. Falsifying: on the pre-fix
+        # run_batch.py (return 0 unless GC_BUILD_FAIL), the
+        # WRONG_OUTPUT case exits 0.
+        td = tempfile.mkdtemp(prefix="diverged-batch-pin-")
+        try:
+            fake_gr = Path(td) / "fake-gr"
+            fuzz = fake_gr / "tools" / "fuzz-soak"
+            (fuzz / "gen").mkdir(parents=True)
+            (fuzz / "harness").mkdir(parents=True)
+            (fuzz / "gen" / "generator.py").write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "out = sys.argv[sys.argv.index('--out') + 1]\n"
+                "open(out, 'w').write('package main\\n\\n"
+                "func main() {}\\n')\n")
+            (fuzz / "harness" / "diff_one.sh").write_text(
+                "#!/bin/bash\n"
+                "# $1=gofile $2=workdir $3=gmp; result from $DIFF_RESULT.\n"
+                "printf '{\"file\": \"%s\", \"result\": \"%s\", "
+                "\"detail\": \"stub\"}\\n' "
+                "\"$(basename \"$1\" .go)\" \"${DIFF_RESULT:-PASS}\"\n")
+            shim_dir = Path(td) / "shims"
+            shim_dir.mkdir()
+            (shim_dir / "make").write_text("#!/bin/bash\nexit 0\n")
+            os.chmod(shim_dir / "make", 0o755)
+            for result, expected_rc in (
+                    ("PASS", 0), ("WRONG_OUTPUT", 1), ("CRASH", 1),
+                    ("HANG", 1), ("EXIT_MISMATCH", 1),
+                    ("GC_BUILD_FAIL", 1), ("HARNESS_ERROR", 2)):
+                env = {
+                    "PATH": f"{shim_dir}:{os.environ['PATH']}",
+                    "HOME": td,
+                    "GR": str(fake_gr),
+                    "DIFF_RESULT": result,
+                }
+                outdir = Path(td) / f"out-{result}"
+                r = subprocess.run(
+                    [sys.executable, str(HARNESS_DIR / "run_batch.py"),
+                     "--seeds", "0:2", "--out", str(outdir), "--jobs", "1"],
+                    capture_output=True, text=True, env=env, timeout=60)
+                self.assertEqual(r.returncode, expected_rc, result)
+                recs = [json.loads(l) for l in
+                        (outdir / "results.jsonl").read_text().splitlines()]
+                self.assertEqual(len(recs), 2, result)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
 
 # Behavioural pins for the run_soak.sh failure semantics (R-P1-13):
 # the single-batch slot must propagate the batch verdict after
@@ -304,7 +475,15 @@ class TestRunBatchExitCodes(unittest.TestCase):
 # The tests run a COPIED harness tree with run_batch.py replaced by
 # a stub (no build, no JVM, no generator), so they are cheap.
 STUB_RUN_BATCH = """#!/usr/bin/env python3
-import os, sys
+import json, os, sys
+out = sys.argv[sys.argv.index("--out") + 1]
+n = int(os.environ.get("STUB_RESULTS", "0"))
+if n:
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, "results.jsonl"), "w") as f:
+        for i in range(n):
+            f.write(json.dumps({"file": f"fuzz_{i:05d}",
+                                "result": "PASS", "detail": ""}) + "\\n")
 print(f"stub run_batch: exiting {os.environ.get('STUB_RC', '0')}",
       flush=True)
 sys.exit(int(os.environ.get("STUB_RC", "0")))
@@ -324,10 +503,12 @@ if [ "$c" -le 2 ]; then printf '1700000000\\n'; else printf '1700003601\\n'; fi
 
 
 class TestRunSoakFailureSemantics(unittest.TestCase):
-    def _run_soak_copy(self, stub_rc, args):
+    def _run_soak_copy(self, stub_rc, args, stub_results=None):
         """Run run_soak.sh from a copied tree with a stubbed
         run_batch.py. Returns (returncode, stdout, outdir, tempdir);
-        the caller must rmtree the temp dir (see the tests below)."""
+        the caller must rmtree the temp dir (see the tests below).
+        stub_results: when set, the stub writes that many PASS records
+        to each batch's results.jsonl (R03-T1: programs_run pin)."""
         td = tempfile.mkdtemp(prefix="soak-pin-")
         fuzz_copy = Path(td) / "tools" / "fuzz-soak"
         shutil.copytree(FUZZ_DIR, fuzz_copy,
@@ -345,16 +526,24 @@ class TestRunSoakFailureSemantics(unittest.TestCase):
             "STUB_RC": str(stub_rc),
             "FAKE_DATE_COUNT": str(Path(td) / "date-count"),
         }
+        if stub_results is not None:
+            env["STUB_RESULTS"] = str(stub_results)
         r = subprocess.run(
             ["bash", str(fuzz_copy / "run_soak.sh")] + args
             + ["--out", str(outdir)],
             capture_output=True, text=True, env=env, timeout=60)
         return r, outdir, td
 
-    def _assert_soak_report(self, outdir, failed, divergent):
+    def _assert_soak_report(self, outdir, failed, divergent,
+                            programs_run, batches_failed):
         rep = json.loads((outdir / "soak-report.json").read_text())
         self.assertEqual(rep["failed_batches"], failed)
         self.assertEqual(rep["divergent_batches"], divergent)
+        # R03-T1: the report must record how many programs actually
+        # ran and how many batches failed to run, so "0 divergences"
+        # is distinguishable from "0 programs ran".
+        self.assertEqual(rep["programs_run"], programs_run)
+        self.assertEqual(rep["batches_failed"], batches_failed)
 
     def test_single_batch_propagates_infra_failure(self):
         r, outdir, td = self._run_soak_copy(2, ["--seeds", "0:1"])
@@ -386,31 +575,110 @@ class TestRunSoakFailureSemantics(unittest.TestCase):
             self.assertEqual(r.returncode, 2)
             self.assertIn("LOUD: batch 0 FAILED to run", r.stdout)
             self.assertIn("SOAK FAILED", r.stdout)
-            self._assert_soak_report(outdir, [0], [])
+            # No results.jsonl: the stub ran nothing, so programs_run
+            # is 0 and the batch counts as failed, not divergent.
+            self._assert_soak_report(outdir, [0], [], 0, 1)
             marker = (outdir / "SOAK_FAILED").read_text()
             self.assertIn("infrastructure failure", marker)
         finally:
             shutil.rmtree(td, ignore_errors=True)
 
     def test_overnight_loop_fails_loudly_on_divergence(self):
-        r, outdir, td = self._run_soak_copy(1, ["--hours", "1"])
+        r, outdir, td = self._run_soak_copy(1, ["--hours", "1"],
+                                            stub_results=2)
         try:
             self.assertEqual(r.returncode, 1)
             self.assertIn("LOUD: batch 0 found divergences", r.stdout)
             self.assertIn("SOAK FAILED", r.stdout)
-            self._assert_soak_report(outdir, [], [0])
+            self._assert_soak_report(outdir, [], [0], 2, 0)
             marker = (outdir / "SOAK_FAILED").read_text()
             self.assertIn("divergences found", marker)
         finally:
             shutil.rmtree(td, ignore_errors=True)
 
     def test_overnight_loop_clean_exits_zero(self):
-        r, outdir, td = self._run_soak_copy(0, ["--hours", "1"])
+        r, outdir, td = self._run_soak_copy(0, ["--hours", "1"],
+                                            stub_results=2)
         try:
             self.assertEqual(r.returncode, 0)
             self.assertIn("SOAK CLEAN", r.stdout)
-            self._assert_soak_report(outdir, [], [])
+            # Clean means 2 programs ran and 0 diverged — not 0 ran.
+            self._assert_soak_report(outdir, [], [], 2, 0)
             self.assertFalse((outdir / "SOAK_FAILED").exists())
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+
+class TestAggregateExitCode(unittest.TestCase):
+    def _write_shard(self, root, shard, records, canary_fail=False):
+        d = Path(root) / shard
+        d.mkdir(parents=True)
+        with open(d / "results.jsonl", "w") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+        if canary_fail:
+            (d / "CANARY_FAIL").write_text("{}")
+
+    def _run_aggregate(self, root):
+        return subprocess.run(
+            [sys.executable, str(FUZZ_DIR / "gha" / "aggregate.py"),
+             str(root)],
+            capture_output=True, text=True, timeout=60)
+
+    def test_clean_exits_zero(self):
+        # All PASS: the aggregation is a clean verdict.
+        td = tempfile.mkdtemp(prefix="aggregate-pin-")
+        try:
+            self._write_shard(td, "shard-0", [
+                {"file": "fuzz_1", "result": "PASS", "detail": "",
+                 "seed": 1, "shard": 0},
+                {"file": "fuzz_2", "result": "SCOPE", "detail": "",
+                 "seed": 2, "shard": 0},
+            ])
+            r = self._run_aggregate(td)
+            self.assertEqual(r.returncode, 0)
+            self.assertIn("total: 2", r.stdout)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_diverged_exits_one(self):
+        # Failure groups present: exit 1, not a clean 0. Falsifying:
+        # the pre-fix aggregate.py printed the groups and exited 0.
+        td = tempfile.mkdtemp(prefix="aggregate-pin-")
+        try:
+            self._write_shard(td, "shard-0", [
+                {"file": "fuzz_1", "result": "WRONG_OUTPUT",
+                 "detail": "stdout differs", "seed": 1, "shard": 0},
+            ])
+            r = self._run_aggregate(td)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("AGGREGATE DIVERGENT", r.stdout)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_empty_root_exits_two(self):
+        # No shard results at all: exit 2, not a vacuous "total: 0".
+        td = tempfile.mkdtemp(prefix="aggregate-pin-")
+        try:
+            r = self._run_aggregate(td)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("no shard results", r.stdout)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_quarantined_only_exits_two(self):
+        # Every shard quarantined (canary fail): its results are
+        # skipped, so nothing aggregates — exit 2, not clean.
+        td = tempfile.mkdtemp(prefix="aggregate-pin-")
+        try:
+            self._write_shard(td, "shard-0", [
+                {"file": "fuzz_1", "result": "PASS", "detail": "",
+                 "seed": 1, "shard": 0},
+            ], canary_fail=True)
+            r = self._run_aggregate(td)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("QUARANTINED shard-0", r.stdout)
+            self.assertIn("no shard results", r.stdout)
         finally:
             shutil.rmtree(td, ignore_errors=True)
 

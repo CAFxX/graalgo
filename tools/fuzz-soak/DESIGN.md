@@ -111,9 +111,12 @@ Tenant `projects/graalgo-fuzz/` in CAFxX/fanout:
   ~45MB, baked at image build). Driver + generator baked in.
 - `driver/fuzz_driver.py`: honors `$SHARD_IDX`/`$SHARD_COUNT`,
   `$OUT_DIR`; each shard generates `N` programs from disjoint seed
-  ranges, runs the differential, writes `results.jsonl`.
+  ranges, runs the differential, writes `results.jsonl` plus
+  `shard-summary.json`, and exits 0 clean / 1 divergences found /
+  2 shard could not run (same 0/1/2 contract as `run_batch.py`).
 - `aggregate.py`: fetches shard results, dedups globally, emits
-  bug-report candidates.
+  bug-report candidates; exits 1 when failure groups exist, 2 when
+  no shard results were found.
 - Golden canary per skill rules: one known-pass program + one
   injected-bug program per shard batch; quarantine on mismatch.
 - Job spec: `--seeds 0..9999 --shards 20` pilot (1000 programs).
