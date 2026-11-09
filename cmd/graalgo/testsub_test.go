@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,9 +32,13 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-// runSynthDriver synthesizes a test driver for the package in dir and
-// runs it with gc `go run`, returning its combined output and exit code.
-func runSynthDriver(t *testing.T, dir string, verbose bool) (string, int) {
+// runSynthDriverSplit synthesizes a test driver for the package in dir
+// and runs it with gc `go run`, returning its stdout, stderr and exit
+// code separately. The split matters: `go test` output is stdout, so
+// every result line (=== RUN, --- PASS/FAIL/SKIP, PASS/FAIL) must land
+// on stdout and stderr must stay empty of them. A CombinedOutput-only
+// helper masks exactly that split (R03-T2).
+func runSynthDriverSplit(t *testing.T, dir string, verbose bool) (string, string, int) {
 	t.Helper()
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in (same reset as synthDriver in testsynth_test.go).
@@ -68,16 +73,26 @@ func runSynthDriver(t *testing.T, dir string, verbose bool) (string, int) {
 	}
 	defer os.Remove(driver)
 	cmd := exec.Command(goBinary(t), "run", driver)
-	out, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
 	code := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			code = ee.ExitCode()
 		} else {
-			t.Fatalf("go run driver: %v\noutput:\n%s", err, out)
+			t.Fatalf("go run driver: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
 		}
 	}
-	return string(out), code
+	return stdout.String(), stderr.String(), code
+}
+
+// runSynthDriver synthesizes a test driver for the package in dir and
+// runs it with gc `go run`, returning its combined output and exit code.
+func runSynthDriver(t *testing.T, dir string, verbose bool) (string, int) {
+	stdout, stderr, code := runSynthDriverSplit(t, dir, verbose)
+	return stdout + stderr, code
 }
 
 func writeSubtestPkg(t *testing.T, testSrc string) string {
@@ -157,6 +172,122 @@ func TestParent(t *testing.T) {
 		mustNotContain(t, out, "sibling did not run")
 		if verbose {
 			mustContain(t, out, "--- PASS: TestParent/sibling")
+		}
+	}
+}
+
+// Regression for R03-T2: every result line the driver prints must land
+// on stdout — `go test` output is stdout, while builtin println writes
+// to stderr. The old driver printed all of them with println, so `go
+// test pkg > out.txt` captured no per-test lines; the old
+// CombinedOutput-only helper masked it.
+func TestDriverResultLinesOnStdout(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestPass(t *testing.T) {
+	t.Log("pass detail")
+}
+
+func TestFail(t *testing.T) {
+	t.Log("fail detail")
+	t.Errorf("boom")
+}
+
+func TestSkip(t *testing.T) {
+	t.Skip("skipping")
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		stdout, stderr, code := runSynthDriverSplit(t, dir, verbose)
+		if code != 1 {
+			t.Errorf("verbose=%v: driver exit = %d, want 1:\nstdout:\n%s\nstderr:\n%s", verbose, code, stdout, stderr)
+		}
+		// No result line may leak to stderr. (`go run` itself reports
+		// the driver's non-zero exit as "exit status 1" on stderr;
+		// that is the harness's line, not the driver's — the driver
+		// runs under the graalgo backend in production, not `go run` —
+		// so assert on the absence of result lines, not on empty
+		// stderr, for the failing package.)
+		for _, marker := range []string{"=== RUN", "--- PASS", "--- FAIL", "--- SKIP", "pass detail", "fail detail", "boom", "skipping", "\nPASS\n", "\nFAIL\n"} {
+			mustNotContain(t, stderr, marker)
+		}
+		mustContain(t, stdout, "--- FAIL: TestFail ")
+		mustContain(t, stdout, "fail detail")
+		mustContain(t, stdout, "\nFAIL\n")
+		if verbose {
+			mustContain(t, stdout, "=== RUN   TestPass")
+			mustContain(t, stdout, "=== RUN   TestFail")
+			mustContain(t, stdout, "=== RUN   TestSkip")
+			mustContain(t, stdout, "--- PASS: TestPass ")
+			mustContain(t, stdout, "--- SKIP: TestSkip ")
+			mustContain(t, stdout, "pass detail")
+		} else {
+			mustNotContain(t, stdout, "=== RUN")
+			mustNotContain(t, stdout, "--- PASS: TestPass ")
+			mustNotContain(t, stdout, "--- SKIP: TestSkip ")
+			mustNotContain(t, stdout, "pass detail")
+		}
+	}
+}
+
+// Regression for R03-T2 (PASS summary): an all-pass package in verbose
+// mode prints the PASS summary on stdout, with empty stderr.
+func TestDriverPassSummaryOnStdout(t *testing.T) {
+	dir := writeSubtestPkg(t, `package subtest
+
+import "testing"
+
+func TestPass(t *testing.T) {
+	t.Log("pass detail")
+}
+`)
+	stdout, stderr, code := runSynthDriverSplit(t, dir, true)
+	if code != 0 {
+		t.Errorf("driver exit = %d, want 0:\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if stderr != "" {
+		t.Errorf("driver wrote to stderr:\n%s\nstdout:\n%s", stderr, stdout)
+	}
+	mustContain(t, stdout, "=== RUN   TestPass")
+	mustContain(t, stdout, "--- PASS: TestPass ")
+	mustContain(t, stdout, "pass detail")
+	mustContain(t, stdout, "\nPASS\n")
+}
+
+// Regression for R03-T2 (PKG-075): when the package under test declares
+// a top-level `fmt` (like fmt's own `type fmt struct`), the forced fmt
+// import is aliased (fmt2) and the driver must still compile and print
+// its result lines to stdout. A naive bare `fmt.Println` in the shim
+// would fail to compile this driver (`fmt` names the type).
+func TestDriverFmtNameCollision(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "go.mod", "module example.com/fmtcoll\n\ngo 1.21\n")
+	writeFile(t, dir, "p.go", "package fmtcoll\n\ntype fmt struct{ x int }\n\nfunc (v *fmt) Get() int { return v.x }\n")
+	writeFile(t, dir, "p_test.go", `package fmtcoll
+
+import "testing"
+
+func TestGet(t *testing.T) {
+	f := &fmt{x: 7}
+	if f.Get() != 7 {
+		t.Fatal("bad")
+	}
+}
+`)
+	for _, verbose := range []bool{true, false} {
+		stdout, stderr, code := runSynthDriverSplit(t, dir, verbose)
+		if code != 0 {
+			t.Errorf("verbose=%v: driver exit = %d, want 0 (driver must compile and pass):\nstdout:\n%s\nstderr:\n%s", verbose, code, stdout, stderr)
+		}
+		if stderr != "" {
+			t.Errorf("verbose=%v: driver wrote to stderr:\n%s\nstdout:\n%s", verbose, stderr, stdout)
+		}
+		if verbose {
+			mustContain(t, stdout, "=== RUN   TestGet")
+			mustContain(t, stdout, "--- PASS: TestGet ")
+			mustContain(t, stdout, "\nPASS\n")
 		}
 	}
 }
