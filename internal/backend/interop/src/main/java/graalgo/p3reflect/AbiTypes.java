@@ -217,8 +217,17 @@ public final class AbiTypes {
         return ptr;
     }
 
-    /** The type token of a canonical abi shell; 0 when not minted here. */
-    public static long tokForShell(GoStruct shell) {
+    /**
+     * The type token of a canonical abi shell; 0 when not minted here.
+     *
+     * <p>Synchronized on the class lock, like the writer
+     * {@link #abiPointerForTok}: {@code SHELL_TOKS} is a plain
+     * {@code IdentityHashMap} cleared and filled under that lock, so
+     * an unsynchronized {@code get} racing a {@code put}/resize (or
+     * the table-change {@code clear}) is a data race — a stale null
+     * reads as "unknown type" for a type that exists (R03-B1).
+     */
+    public static synchronized long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
     }
@@ -968,8 +977,11 @@ public final class AbiTypes {
                 || !(tp.referent() instanceof GoStruct shell)) {
             return null;
         }
-        Long tok = SHELL_TOKS.get(shell);
-        if (tok == null) {
+        // Resolve through tokForShell (class-locked): a direct
+        // SHELL_TOKS.get here would race abiPointerForTok's puts and
+        // the table-change clear (R03-B1).
+        long tok = tokForShell(shell);
+        if (tok == 0) {
             return null;
         }
         ReflectTypes.TypeInfo info;
