@@ -518,6 +518,16 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}, false},
 	// P3-M9 (tier1c): math/rand.Read (Appendix M).
 	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}, false},
+	// R08-S-03: math/rand/v2 ChaCha8.Read/AppendBinary/MarshalBinary
+	// (Appendix M; the __-helpers and pair types live in
+	// synth_mathrandv2.go). The Read row also wires the itab via
+	// multiResultHelperFor, so the io.Reader interface dispatch in
+	// crypto/ecdsa's legacy signing path (__mrrandFieldElement ->
+	// io.ReadFull -> r.Read) reaches __chacha8Read. UnmarshalBinary
+	// is single-result and needs no row.
+	{"math/rand/v2", "Read", "ChaCha8", "__chacha8Read", "__chacha8ReadPair", []string{"n", "err"}, false},
+	{"math/rand/v2", "AppendBinary", "ChaCha8", "__chacha8AppendBinary", "__chacha8AppendBinaryPair", []string{"b", "err"}, false},
+	{"math/rand/v2", "MarshalBinary", "ChaCha8", "__chacha8MarshalBinary", "__chacha8MarshalBinaryPair", []string{"b", "err"}, false},
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).
