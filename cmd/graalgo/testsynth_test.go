@@ -659,6 +659,107 @@ func TestExternal(t *testing.T) {
 	}
 }
 
+// TestWhiteBoxShimNameCollisionRenamed pins the white-box half of the
+// shim-name rename: a package-under-test declaration colliding with one
+// of the driver's own shim names (itoa, sprintf, toString, ...) must be
+// renamed exactly like an external-test-package declaration, with every
+// reference in the white-box declarations following the rename. Under
+// gc the package's itoa and the test shim never coexist, so the
+// collision is not genuine — leaving it unrenamed makes the driver
+// fail to compile with a redeclaration error (log's func itoa,
+// go/types' func sprintf, cmd/internal/goobj's func toString; test
+// files collide too, e.g. math/big's natconv_test.go func itoa).
+func TestWhiteBoxShimNameCollisionRenamed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/wbshim\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", `package wbshim
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	return "n"
+}
+
+func sprintf(format string, args ...any) string {
+	return format
+}
+
+func Label(n int) string {
+	return itoa(n) + sprintf("!")
+}
+`)
+	writeFile(t, root, "w_test.go", `package wbshim
+
+import "testing"
+
+func toString(v int) string {
+	if v == 0 {
+		return "zero"
+	}
+	return "v"
+}
+
+func checkItoa(n int) string { return itoa(n) }
+
+func checkToString(v int) string { return toString(v) }
+
+func TestWhiteBox(t *testing.T) {
+	if Label(7) != "n!" {
+		t.Fatal("bad")
+	}
+	if checkItoa(7) != "n" {
+		t.Fatal("bad")
+	}
+	if checkToString(0) != "zero" {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: testsW},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	// The shim keeps the pristine names (exactly one definition each).
+	if strings.Count(src, "func itoa(") != 1 || !strings.Contains(src, "func itoa(n int64) string {") {
+		t.Errorf("driver lost the shim's itoa:\n%s", src)
+	}
+	if strings.Count(src, "func sprintf(") != 1 || !strings.Contains(src, "func sprintf(format string, args ...interface{}) string {") {
+		t.Errorf("driver lost the shim's sprintf:\n%s", src)
+	}
+	if strings.Count(src, "func toString(") != 1 || !strings.Contains(src, "func toString(v interface{}) string {") {
+		t.Errorf("driver lost the shim's toString:\n%s", src)
+	}
+	// ...the package's own colliding declarations are renamed...
+	if !strings.Contains(src, "func itoa2(n int) string {") {
+		t.Errorf("driver did not rename the white-box itoa:\n%s", src)
+	}
+	if !strings.Contains(src, "func sprintf2(format string, args ...any) string {") {
+		t.Errorf("driver did not rename the white-box sprintf:\n%s", src)
+	}
+	if !strings.Contains(src, "func toString2(v int) string {") {
+		t.Errorf("driver did not rename the white-box toString:\n%s", src)
+	}
+	// ...and the white-box references follow the rename, in both the
+	// package sources and the white-box test file. checkItoa and
+	// checkToString are single-line functions, and the printer emits a
+	// tab (not a space) between such a function's signature and its
+	// brace, so compare against a whitespace-normalized driver here
+	// instead of matching the literal spacing.
+	flat := strings.Join(strings.Fields(src), " ")
+	if !strings.Contains(flat, "func checkItoa(n int) string { return itoa2(n) }") {
+		t.Errorf("driver did not rewrite the white-box reference in the test file:\n%s", src)
+	}
+	if !strings.Contains(flat, "func checkToString(v int) string { return toString2(v) }") {
+		t.Errorf("driver did not rewrite the white-box toString reference:\n%s", src)
+	}
+}
+
 // TestExtDeclShadowedLocalUntouched pins the scope-awareness of the
 // external-declaration rewrite: a local variable shadowing the renamed
 // name keeps working — neither its declaration nor its uses are

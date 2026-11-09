@@ -838,6 +838,22 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// driver will declare (the inlined white-box declarations and the
 	// harness bindings) makes the aliasing cover this case too, and the
 	// existing qualifier-rewriting pass retargets the references.
+	// shimNames are the top-level identifiers the generated driver
+	// declares itself: the generated main plus the graalgoT shim (its
+	// type, its verbosity flag, its control-flow signal type, and its
+	// plain helper functions). They are the one name set every inlined
+	// declaration must yield to — kept imports are aliased away from
+	// them (driverDeclNames below), external-test-package declarations
+	// are renamed (eRenames), and white-box declarations are renamed
+	// (wRenames). One list, so the three directions cannot drift apart
+	// again: graalgoTestSignal was missing from both of the old
+	// duplicated literals, so an external declaration of that name
+	// would have redeclared the shim type.
+	shimNames := []string{"main", "graalgoVerbose", "graalgoT", "graalgoTestSignal", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"}
+	shimSet := make(map[string]bool, len(shimNames))
+	for _, n := range shimNames {
+		shimSet[n] = true
+	}
 	driverDeclNames := make(map[string]bool)
 	for _, it := range items {
 		if it.g == nil || it.g.ext {
@@ -847,7 +863,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range shimNames {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -916,7 +932,8 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 
 	// Phase B (declarations): rename external-test-package declarations
-	// that collide with the package under test's.
+	// that collide with the package under test's, and white-box
+	// declarations that collide with the driver's own harness bindings.
 	//
 	// Under gc the package under test and its external test package are
 	// separate packages; the driver's single-file flattening merges
@@ -929,7 +946,16 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// resolving to them — within the external package's own contributed
 	// declarations — is rewritten (phase C). Collisions within one side
 	// are genuine and left to fail loudly, exactly as `go test` would
-	// reject them. No per-file exception is needed for dot-imports: an
+	// reject them. The white-box side yields the same way, but only to
+	// the harness bindings (wRenames below): under gc the package's itoa
+	// and the test shim never coexist, so a white-box-vs-shim collision
+	// is not genuine — log's func itoa, go/types' func sprintf, and
+	// cmd/internal/goobj's func toString would otherwise redeclare the
+	// shim in the driver. A white-box declaration never yields to another
+	// white-box one, and an external declaration's bare references can
+	// never denote a white-box declaration (separate packages; the shim
+	// names are unexported), so each side's rewrite stays within its own
+	// contributed declarations. No per-file exception is needed for dot-imports: an
 	// external file cannot both dot-import the package under test and
 	// declare the same exported name (gc rejects that), and a
 	// dot-import only brings exported names, so a colliding name's bare
@@ -956,7 +982,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range shimNames {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -968,6 +994,31 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	for _, n := range emitName {
 		takenNames[n] = true
+	}
+	// White-box declarations colliding with the driver's own harness
+	// bindings (wRenames). Computed before eRenames so the suffix order
+	// follows the existing yield direction: the white-box declaration
+	// takes the lower suffix (itoa2) and an external declaration of the
+	// same name the higher one (itoa3).
+	wRenames := make(map[string]string)
+	wRenamed := make(map[string]bool)
+	for _, it := range items {
+		g := it.g
+		if g == nil || g.ext {
+			continue
+		}
+		for _, n := range g.names {
+			if !shimSet[n] || wRenamed[n] {
+				continue
+			}
+			wRenamed[n] = true
+			newName := n
+			for i := 2; takenNames[newName]; i++ {
+				newName = n + strconv.Itoa(i)
+			}
+			takenNames[newName] = true
+			wRenames[n] = newName
+		}
 	}
 	eRenames := make(map[string]string)
 	renamed := make(map[string]bool)
@@ -1019,8 +1070,8 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		})
 	}
 
-	// rewriteExtRefs renames an external-test-package declaration's own
-	// bound names per eRenames and rewrites every bare-identifier
+	// rewriteRefs renames one gathered declaration's own bound names
+	// per renames and rewrites every bare-identifier
 	// reference resolving to them. The walk is scope-aware: parameters,
 	// results, and local declarations shadow the package-level name
 	// within their scope and are left alone, exactly as Go resolution
@@ -1028,12 +1079,12 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// declaration are skipped: selector operands (field/method
 	// namespace), struct field and method declarations, and labels. A
 	// selector on the file's own import name is a package qualifier
-	// owned by the import-alias pass, never the external declaration.
+	// owned by the import-alias pass, never the renamed declaration.
 	// Composite-literal keys are rewritten: a key that is really a
 	// field name then fails loudly ("unknown field") instead of
-	// silently rebinding to the package under test's declaration.
-	rewriteExtRefs := func(g *gatheredDecl) {
-		if len(eRenames) == 0 {
+	// silently rebinding to another declaration.
+	rewriteRefs := func(g *gatheredDecl, renames map[string]string) {
+		if len(renames) == 0 {
 			return
 		}
 		qualNames := make(map[string]bool)
@@ -1047,7 +1098,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			if id == nil {
 				return
 			}
-			newName, ok := eRenames[id.Name]
+			newName, ok := renames[id.Name]
 			if !ok || shadowed[id.Name] {
 				return
 			}
@@ -1384,8 +1435,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 
 	// Phase C: print the gathered declarations. Qualifier references
 	// whose import was aliased are rewritten to the alias; renamed
-	// external-test-package declarations (and the references resolving
-	// to them) to their new names.
+	// declarations — external-test-package ones yielding to the package
+	// under test, white-box ones yielding to the driver's shim names —
+	// (and the references resolving to them) to their new names.
 	var body strings.Builder
 	for _, it := range items {
 		if it.g == nil {
@@ -1394,7 +1446,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 		renameQualifiers(it.g)
 		if it.g.ext {
-			rewriteExtRefs(it.g)
+			rewriteRefs(it.g, eRenames)
+		} else {
+			rewriteRefs(it.g, wRenames)
 		}
 		printDecl(&body, it.g.fset, it.g.decl)
 		body.WriteString("\n")
