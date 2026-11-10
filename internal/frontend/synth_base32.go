@@ -12,11 +12,12 @@
 // frontend/v1-supported constructs (no generics, no multi-result
 // declarations with real bodies — WS D): Encode, EncodeToString,
 // EncodedLen, DecodedLen, AppendEncode, NewEncoding, WithPadding,
-// CorruptInputError.Error, NewEncoder, NewDecoder are real Go, adapted
-// from the gc 1.27.1 implementation. The streaming encoder/decoder
-// Read/Write/Close stay fail-fast (they need r.Read/w.Write — 2-result
-// interface calls, WS D); readEncodedData and newlineFilteringReader are
-// unexported helpers of those paths and stay omitted with them.
+// CorruptInputError.Error, NewEncoder, NewDecoder, encoder.Close are
+// real Go, adapted from the gc 1.27.1 implementation. The streaming
+// encoder/decoder Read/Write stay fail-fast (they need r.Read/w.Write —
+// 2-result interface calls, WS D); readEncodedData and
+// newlineFilteringReader are unexported helpers of those paths and stay
+// omitted with them.
 //
 // Multi-result members (Decode, DecodeString, AppendDecode) keep exact
 // gc signatures with fail-fast bodies for type-checking; their real
@@ -28,17 +29,18 @@
 //
 // P3-M8: NewEncoder/NewDecoder and the encoder/decoder types are declared
 // with exact gc signatures (io landed, so the signatures are nameable).
-// The constructors are real; the streaming Read/Write/Close methods fail
-// fast with the named M8/WS-D error (re-test when WS D lands multi-result
+// The constructors are real, and encoder.Close is real (single-result;
+// ported from gc 1.27.1); the streaming Read/Write methods fail fast
+// with the named M8/WS-D error (re-test when WS D lands multi-result
 // calls). The p3frontend drift test pins the declared surface.
 package main
 
 // syntheticBase32Source is the P3-M7 synthetic `encoding/base32`
 // package: exact gc 1.27.1 signatures for the in-scope API; real-Go
 // encode/decode core; fail-fast bodies for the multi-result members
-// (desugared) and for the streaming encoder/decoder Read/Write/Close
+// (desugared) and for the streaming encoder/decoder Read/Write
 // (P3-M8: declared with exact gc signatures; need 2-result interface
-// dispatch — WS D).
+// dispatch — WS D); encoder.Close is real (ported from gc 1.27.1).
 const syntheticBase32Source = `package base32
 
 import "io"
@@ -225,8 +227,9 @@ func (enc *Encoding) EncodedLen(n int) int {
 
 // ---------------------------------------------------------------------------
 // Streaming encoder/decoder (P3-M8 — exact gc 1.27.1 shapes, now nameable
-// since io landed). The constructors are real; Read/Write/Close stay
-// fail-fast — they need r.Read/w.Write (2-result interface calls, WS D).
+// since io landed). The constructors are real, and encoder.Close is real
+// (single-result flush, ported from gc 1.27.1); Read/Write stay fail-fast
+// — they need r.Read/w.Write (2-result interface calls, WS D).
 // Re-test when WS D lands.
 // ---------------------------------------------------------------------------
 
@@ -244,9 +247,17 @@ func (e *encoder) Write(p []byte) (n int, err error) {
 	panic("base32.encoder.Write: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
 }
 
-// Close implements io.Closer. M8 scope: fail-fast (see above).
+// Close flushes any pending output from the encoder.
+// It is an error to call Write after calling Close.
 func (e *encoder) Close() error {
-	panic("base32.encoder.Close: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	// If there's anything left in the buffer, flush it out
+	if e.err == nil && e.nbuf > 0 {
+		e.enc.Encode(e.out[0:], e.buf[0:e.nbuf])
+		encodedLen := e.enc.EncodedLen(e.nbuf)
+		e.nbuf = 0
+		_, e.err = e.w.Write(e.out[0:encodedLen])
+	}
+	return e.err
 }
 
 // NewEncoder returns a new base32 stream encoder. Data written to

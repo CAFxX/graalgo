@@ -190,7 +190,7 @@ func syntheticBase32Package() *types.Package {
 		runeT, constantValue(-1)))
 
 	// P3-M8: streaming API (exact gc 1.27.1 signatures; the encoder/decoder
-	// types are unexported, their Read/Write/Close fail fast — WS D).
+	// types are unexported; Read/Write fail fast — WS D, Close real).
 	ioWriter, ioReader, ioWriteCloser := ioStreamingIfaces()
 	h.insertFunc("NewEncoder",
 		[]*types.Var{h.param("enc", encPtr), h.param("w", ioWriter)},
@@ -285,7 +285,7 @@ func syntheticBase64Package() *types.Package {
 		runeT, constantValue(-1)))
 
 	// P3-M8: streaming API (exact gc 1.27.1 signatures; the encoder/decoder
-	// types are unexported, their Read/Write/Close fail fast — WS D).
+	// types are unexported; Read/Write fail fast — WS D, Close real).
 	ioWriter, ioReader, ioWriteCloser := ioStreamingIfaces()
 	h.insertFunc("NewEncoder",
 		[]*types.Var{h.param("enc", encPtr), h.param("w", ioWriter)},

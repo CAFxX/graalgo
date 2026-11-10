@@ -10,11 +10,15 @@ Differential tests for the synthetic `encoding/base32` package
 | 00_basic.go | Encode/Decode round-trip, HexEncoding, consts, Append variants, NewEncoding |
 | 01_padding.go | WithPadding (custom/NoPadding), EncodedLen/DecodedLen |
 | 02_adversarial.go | Empty, corrupt input, CorruptInputError, short writes |
+| 03_close.go | `NewEncoder` + `Close` with nothing written (nil error, empty output), double `Close` idempotence |
 
 ## Limitations
 
-`NewEncoder`/`NewDecoder` (io streaming) are omitted from the synthetic
-package (P3-M8). Multi-result methods (`Decode`, `DecodeString`,
+`NewEncoder`/`NewDecoder` are declared (P3-M8) and `encoder.Close` is
+real (ported from gc 1.27.1); the streaming `Write`/`Read` methods are
+still fail-fast stubs, so no corpus program yet exercises the `Close`
+flush path (it needs `Write` to fill the buffer — owed when `Write` is
+ported). Multi-result methods (`Decode`, `DecodeString`,
 `AppendDecode`) exercise the Appendix M desugar (mrM7).
 
 ## Running

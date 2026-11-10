@@ -9929,10 +9929,10 @@ func (b *Buffer) String() string {
 
 // Peek returns the next n bytes without advancing the buffer.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (b *Buffer) Peek(n int) ([]byte, error) {
-	panic("bytes.Buffer.Peek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.Peek: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // empty reports whether the unread portion of the buffer is empty.
@@ -10163,10 +10163,10 @@ func (b *Buffer) WriteByte(c byte) error {
 // error is included to match bufio.Writer's WriteRune. The buffer is grown
 // as needed; if it becomes too large, WriteRune will panic with ErrTooLarge.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (b *Buffer) WriteRune(r rune) (n int, err error) {
-	panic("bytes.Buffer.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.WriteRune: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // Read reads the next len(p) bytes from the buffer or until the buffer
@@ -10233,10 +10233,10 @@ func (b *Buffer) ReadByte() (byte, error) {
 // If the bytes are an erroneous UTF-8 encoding, it
 // consumes one byte and returns U+FFFD, 1.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (b *Buffer) ReadRune() (r rune, size int, err error) {
-	panic("bytes.Buffer.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadRune: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // UnreadRune unreads the last rune returned by ReadRune.
@@ -10279,10 +10279,10 @@ func (b *Buffer) UnreadByte() error {
 // ReadBytes returns err != nil if and only if the returned data does not end in
 // delim.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
-	panic("bytes.Buffer.ReadBytes: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadBytes: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // readSlice is like ReadBytes but returns a reference to internal buffer data.
@@ -10290,7 +10290,7 @@ func (b *Buffer) ReadBytes(delim byte) (line []byte, err error) {
 // M7 scope: unexported helper kept for source fidelity; unreachable (its
 // callers are multi-result stubs).
 func (b *Buffer) readSlice(delim byte) ([]byte, error) {
-	panic("bytes.Buffer.readSlice: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.readSlice: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // ReadString reads until the first occurrence of delim in the input,
@@ -10300,10 +10300,10 @@ func (b *Buffer) readSlice(delim byte) ([]byte, error) {
 // ReadString returns err != nil if and only if the returned data does not end
 // in delim.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (b *Buffer) ReadString(delim byte) (line string, err error) {
-	panic("bytes.Buffer.ReadString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.ReadString: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // NewBuffer creates and initializes a new Buffer using buf as its
@@ -10374,10 +10374,10 @@ func (r *Reader) Read(b []byte) (n int, err error) {
 
 // ReadAt implements the io.ReaderAt interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (r *Reader) ReadAt(b []byte, off int64) (n int, err error) {
-	panic("bytes.Reader.ReadAt: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadAt: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // ReadByte implements the io.ByteReader interface.
@@ -10400,10 +10400,10 @@ func (r *Reader) UnreadByte() error {
 
 // ReadRune implements the io.RuneReader interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 func (r *Reader) ReadRune() (ch rune, size int, err error) {
-	panic("bytes.Reader.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.ReadRune: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // UnreadRune complements Reader.ReadRune in implementing the io.RuneScanner interface.
@@ -10421,13 +10421,13 @@ func (r *Reader) UnreadRune() error {
 
 // Seek implements the io.Seeker interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, fail-fast body (no helper
+// exists; add one + desugar row and re-test).
 //
 // Note: the whence argument takes the same values as io.SeekStart (0),
 // io.SeekCurrent (1) and io.SeekEnd (2); io itself is P3-M8.
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-	panic("bytes.Reader.Seek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.Seek: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // WriteTo implements the io.WriterTo interface.

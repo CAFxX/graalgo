@@ -3725,9 +3725,9 @@ func Modf(f float64) (int float64, frac float64) {
 // Lgamma returns the natural logarithm of the absolute value of the
 // Gamma function.
 //
-// NOT IN M7 SCOPE (fail-fast): multi-result calls need WS D (F4 precedent).
+// NOT IN M7 SCOPE (fail-fast): no __-helper exists; add rows, re-test (F4).
 func Lgamma(x float64) (lgamma float64, sign int) {
-	panic("math.Lgamma not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("math.Lgamma not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // Sincos returns Sin(x), Cos(x).

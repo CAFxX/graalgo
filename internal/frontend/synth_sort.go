@@ -246,12 +246,12 @@ func Search(n int, f func(int) bool) int {
 // Find calls cmp(i) only for i in the range [0, n).
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. The algorithm is
-// 15 lines of binary search, but v1 cannot emit or call multi-result
-// functions (WS D) — the declaration is skipped at export (the P3-M5
-// ParseDuration precedent) and every call site fails fast. Re-test when
-// WS D lands.
+// 15 lines of binary search, but no __-helper exists for it yet — the
+// declaration is skipped at export (the P3-M5 ParseDuration precedent)
+// and every call site fails fast. Re-test when the __-helper + desugar
+// row land.
 func Find(n int, cmp func(int) int) (i int, found bool) {
-	panic("sort.Find: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("sort.Find: not in M7 scope (no __-helper exists; add one + desugar row, re-test)")
 }
 
 // SearchInts searches for x in a sorted slice of ints and returns the index

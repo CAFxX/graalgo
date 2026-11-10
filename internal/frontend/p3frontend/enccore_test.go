@@ -293,8 +293,8 @@ func TestEncCoreOmissionsPinned(t *testing.T) {
 		detail string
 	}{
 		// P3-M8: base32's AND base64's NewEncoder/NewDecoder are DECLARED now
-		// (exact gc signatures; streaming Read/Write/Close fail fast —
-		// WS D). The remaining rows still wait on io-adjacent work in
+		// (exact gc signatures; streaming Read/Write fail fast — WS D;
+		// Close is real). The remaining rows still wait on io-adjacent work in
 		// their waves.
 		{"encoding/hex", "NewEncoder", "DEFERRED_WAVE", "streaming encoder needs io (P3-M8)"},
 		{"encoding/hex", "NewDecoder", "DEFERRED_WAVE", "streaming decoder needs io (P3-M8)"},
