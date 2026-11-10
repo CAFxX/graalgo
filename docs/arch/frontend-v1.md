@@ -57,6 +57,17 @@ as `createSection(line, col, len)` (Truffle is char-based, so the wire is too;
 byte-based values crashed it with "charIndex out of range" on non-ASCII
 sources — M8 fuzzer find, fixed).
 
+Synthesized nodes have no real source position: MR `__`-helper declarations,
+desugar temporaries, and other AST nodes built with `ast.NewIdent` / fresh
+constructors carry `token.NoPos` on one or both ends. The exporter never emits
+the resulting line 0 / negative length (R10-04): a node with one real end
+anchors a zero-length span on that end; a node with no real end at all gets
+the file-start sentinel (`line` 1, `col` 1, `off` 0, `len` 0). `__`-helper
+declarations additionally inherit the original function's `func`-keyword
+position, so they carry a real span. Every emitted `pos` therefore satisfies
+`line >= 1` and `len >= 0`, which `tools/validate_frontend_v1.py` (`check_pos`)
+enforces on every checked-in golden — no golden is exempt from the gate.
+
 ## 4. Type table
 
 `types[i]` serializes one `go/types` type exactly once; expressions reference

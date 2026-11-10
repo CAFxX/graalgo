@@ -65,6 +65,83 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestSynthesizedPositionsValid (R10-04): every pos in the export of
+// pkgvar_mrarg.go — the program whose multi-result __-helpers previously
+// emitted line 0 / negative len — must satisfy the wire contract
+// (docs/arch/frontend-v1.md §3): line >= 1, len >= 0, every field a
+// non-negative int. Pre-fix this fails with 91 line-0 and 13 negative-len
+// positions across the eleven __-helper funcs. The test also requires at
+// least one __-helper func to be present, so it cannot pass vacuously if
+// the export stops emitting helpers.
+func TestSynthesizedPositionsValid(t *testing.T) {
+	out, err := ExportFile("testdata/pkgvar_mrarg.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	var checked, violations int
+	var sawHelper bool
+	var walk func(v any, path string)
+	checkPos := func(p map[string]any, path string) {
+		checked++
+		for _, k := range []string{"file", "line", "col", "off", "len"} {
+			n, ok := p[k].(json.Number)
+			if !ok {
+				t.Errorf("%s.pos.%s: not a number (%T %v)", path, k, p[k], p[k])
+				violations++
+				continue
+			}
+			iv, err := n.Int64()
+			if err != nil {
+				t.Errorf("%s.pos.%s: not an integer (%v)", path, k, n)
+				violations++
+				continue
+			}
+			if iv < 0 {
+				t.Errorf("%s.pos.%s: negative (%d)", path, k, iv)
+				violations++
+			}
+			if k == "line" && iv < 1 {
+				t.Errorf("%s.pos.line: line is 1-based, got %d", path, iv)
+				violations++
+			}
+		}
+	}
+	walk = func(v any, path string) {
+		switch v := v.(type) {
+		case map[string]any:
+			if p, ok := v["pos"].(map[string]any); ok {
+				checkPos(p, path)
+			}
+			if name, ok := v["name"].(string); ok && strings.HasPrefix(name, "__") {
+				sawHelper = true
+			}
+			for k, c := range v {
+				walk(c, path+"/"+k)
+			}
+		case []any:
+			for i, c := range v {
+				walk(c, path+"/"+strconv.Itoa(i))
+			}
+		}
+	}
+	walk(doc, "")
+	if checked == 0 {
+		t.Fatal("no positions found in export; test is vacuous")
+	}
+	if !sawHelper {
+		t.Fatal("no __-helper func in export; test is vacuous")
+	}
+	if violations == 0 {
+		t.Logf("checked %d positions, all valid", checked)
+	}
+}
+
 // goldenFile resolves the golden for base: testdata/<base>.json, falling
 // back to testdata/<base>.json.gz when a compressed golden is registered.
 // The second return is true iff the .gz form exists; UPDATE_GOLDEN=1

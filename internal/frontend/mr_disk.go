@@ -943,10 +943,18 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 		}
 	} // end else (fd.Body != nil); body-less case used panic body above,
 	// or a body-less linkname-bound helper when helperDoc is set
+	// The helper is the desugared form of fd, so it inherits fd's `func`
+	// keyword position: a fresh FuncType has Func == token.NoPos, which
+	// made the helper's wire position line 0 with a bogus length (the
+	// decl's Pos() is Type.Func). Inheriting fd.Type.Func gives the helper
+	// a real span (original `func` keyword to the rewritten body end)
+	// instead of a sentinel; the exporter's pos() still guards every
+	// other synthesized node that cannot inherit a position.
 	helperDecl := &ast.FuncDecl{
 		Doc:  helperDoc,
 		Name: ast.NewIdent(helper),
 		Type: &ast.FuncType{
+			Func:       fd.Type.Func,
 			TypeParams: tparams,
 			Params:     helperParams,
 			Results: &ast.FieldList{

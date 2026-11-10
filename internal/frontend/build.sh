@@ -59,18 +59,25 @@ case "${1:-build}" in
     python3 tools/validate_frontend_v1.py --selftest
     # Validate every checked-in golden document plus a fresh export of
     # each valid testdata program — not only straight01.go (the goldens
-    # exercise defer/go/nil/method values/atomic/unsafe kinds).
-    # pkgvar_mrarg is excluded: its golden fails validation on 104
-    # synthetic-position errors (line 0 / negative len in the __-helper
-    # funcs) — a pre-existing exporter position bug, not a kind error
-    # (zero unknown-kind errors); tracked as a follow-up, not papered
-    # over by weakening check_pos.
+    # exercise defer/go/nil/method values/atomic/unsafe kinds). Compressed
+    # goldens (*.json.gz, stored that way past the GitHub blob limit) are
+    # validated on their decompressed content, exactly like the plain ones:
+    # no golden is exempt from the gate (R10-04: pkgvar_mrarg used to be
+    # excluded for 104 synthetic-position errors in the __-helper funcs;
+    # the exporter now emits valid positions for synthesized nodes, so the
+    # exclusion is gone — a golden that fails validation fails the check,
+    # never earns an exemption).
     for golden in testdata/*.json; do
       python3 tools/validate_frontend_v1.py "$golden" || exit 1
     done
+    for golden in testdata/*.json.gz; do
+      base=$(basename "$golden" .json.gz)
+      gzip -dc "$golden" > "${TMPDIR:-/tmp}/v1-$base.json"
+      python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-$base.json" || exit 1
+    done
     for src in testdata/straight01.go testdata/straight02.go \
                testdata/methodvalue01.go testdata/timeintr_value.go \
-               testdata/mr_return_named.go; do
+               testdata/mr_return_named.go testdata/pkgvar_mrarg.go; do
       base=$(basename "$src" .go)
       ./gofrontend "$src" > "${TMPDIR:-/tmp}/v1-$base.json"
       python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-$base.json" || exit 1

@@ -3315,13 +3315,46 @@ func joinSubstKeys(targs []types.Type, s *typeSubst) string {
 func (e *exporter) pos(n ast.Node) *Pos {
 	s := e.fset.Position(n.Pos())
 	t := e.fset.Position(n.End())
+	// Synthesized AST nodes (MR __-helpers, desugar temporaries, ...) are
+	// built with ast.NewIdent and fresh node constructors, so they carry
+	// token.NoPos on one or both ends; fset.Position(NoPos) is the zero
+	// Position (line 0, offset 0). The naive length End()-Pos() is then a
+	// bogus large positive (NoPos start, real end) or negative (real start,
+	// NoPos end). The wire contract (docs/arch/frontend-v1.md §3, enforced
+	// by tools/validate_frontend_v1.py check_pos) requires line >= 1 and
+	// len >= 0 on every node, so a node with a half-real span anchors a
+	// zero-length span on its real end; a node with no real end at all gets
+	// the file-start sentinel (line 1, col 1, off 0, len 0). Either way
+	// pos() is total: it never emits line 0 or a negative length.
+	if !s.IsValid() && !t.IsValid() {
+		return &Pos{File: 0, Line: 1, Col: 1, Off: 0, Len: 0}
+	}
+	// The file lookup below must use the real end's file when the start
+	// is NoPos; capture that before normalizing the endpoints.
+	anchorPos := n.Pos()
+	if !s.IsValid() {
+		anchorPos = n.End()
+	}
+	if !s.IsValid() {
+		s = t
+	}
+	if !t.IsValid() {
+		t = s
+	}
+	// s and t are now both valid; when one end was NoPos they coincide,
+	// so the span is zero-length and anchored on the real end.
 	col, length := s.Column, t.Offset-s.Offset
+	if length < 0 {
+		// Both ends valid but inverted (a node mixing positions from
+		// different files); a negative length is never emittable.
+		length = 0
+	}
 	// Multi-file: the position's file index and that file's source bytes.
 	// Falls back to e.src (single-file or synthetic-package swap) when the
 	// maps are nil or the file isn't an input file.
 	fileIdx := 0
 	src := e.src
-	if tf := e.fset.File(n.Pos()); tf != nil {
+	if tf := e.fset.File(anchorPos); tf != nil {
 		if idx, ok := e.fileIndex[tf]; ok {
 			fileIdx = idx
 		}
@@ -3336,7 +3369,7 @@ func (e *exporter) pos(n ast.Node) *Pos {
 	// valid programs (found by the M8 fuzzer: fmt.Println("日本語")).
 	// Emit rune-based col/len; off stays a byte offset (NodeFactory ignores it).
 	if src != nil && s.IsValid() && t.IsValid() {
-		if f := e.fset.File(n.Pos()); f != nil && s.Offset <= t.Offset && t.Offset <= len(src) {
+		if f := e.fset.File(anchorPos); f != nil && s.Offset <= t.Offset && t.Offset <= len(src) {
 			if lo := f.Offset(f.LineStart(s.Line)); lo <= s.Offset {
 				col = utf8.RuneCount(src[lo:s.Offset]) + 1
 			}
