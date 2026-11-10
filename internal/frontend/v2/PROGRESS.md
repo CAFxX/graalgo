@@ -48,6 +48,15 @@ for the design.
       different types are distinguishable (review-1105-v2-objs, 2026-11-05)
 - [x] Package-level vars: emitted into `Document.Globals`, one vardecl
       node per ValueSpec with initializers (review-1105-v2-objs, 2026-11-05)
+- [x] Type/object identity (review-1110-p1-v2-emit, 2026-11-10):
+      `describeType` fails loudly on unhandled types (C-P1-1) with
+      `Alias` (rhs/underlying), `TypeParam` (constraint), `Union`
+      (terms) and `Tuple` cases; `Signature` carries `typeparams` and
+      `Named` carries `typeparams`/`typeargs`; `Named`/`Interface`
+      method sets are populated from `NumMethods`/`ExplicitMethod`
+      plus `EmbeddedType` (C-P1-2); `Document.Package` carries an
+      `imports` list (local name → path) and `Func` objects and
+      `pkgref` nodes carry `pkgpath` (C-P1-4)
 - [ ] Package-level init order (dependency-ordered initialization of
       globals; currently emitted in source order)
 - [ ] Generic instantiations

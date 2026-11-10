@@ -14,6 +14,7 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strconv"
 
 	"graalgo-frontend-v2/checker"
 )
@@ -42,6 +43,10 @@ type Emitter struct {
 	// Object table: types.Object → id.
 	objIDs  map[types.Object]int
 	objects []any
+	// typeErr records the first unhandled type met during emission
+	// (see typeID). Emit fails loudly on it instead of returning a
+	// document that misdescribes the type.
+	typeErr error
 }
 
 // Emit runs stage 3 and returns the in-memory program document. The
@@ -126,6 +131,12 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Fail loud on any unhandled type met while emitting funcs, globals,
+	// or the tables themselves: the document is never returned with a
+	// misdescribed type in it.
+	if e.typeErr != nil {
+		return nil, e.typeErr
+	}
 
 	baseNames := make([]string, len(e.files))
 	for i, f := range e.files {
@@ -139,9 +150,10 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 			"goroot":  "go1.27.1",
 		},
 		Package: map[string]any{
-			"name":  pkg.Name,
-			"files": baseNames,
-			"lang":  "go1.27",
+			"name":    pkg.Name,
+			"files":   baseNames,
+			"lang":    "go1.27",
+			"imports": e.emitImports(pkg),
 		},
 		Types:   e.types,
 		Objects: e.objects,
@@ -218,6 +230,76 @@ func fileBase(p string) string {
 	return p
 }
 
+// emitImports renders the package's import list: one entry per distinct
+// (local name, import path) pair, in (path, name) order. The local name
+// is the explicit alias when the file renames the import, else the
+// imported package's declared name, taken from the type-checked package
+// — so "gopkg.in/yaml.v2" maps to "yaml", not to the path base "v2".
+// Without this list a pkgref node's local name ("f") cannot be resolved
+// to the package it denotes, and two packages exporting same-named,
+// same-signature funcs are indistinguishable in the document.
+func (e *Emitter) emitImports(pkg *ast.Package) []any {
+	type imp struct{ name, path string }
+	seen := map[imp]bool{}
+	var list []imp
+	names := make([]string, 0, len(pkg.Files))
+	for name := range pkg.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	// Declared names of the directly imported packages, by path.
+	imported := map[string]string{}
+	if e.info != nil && e.info.Pkg != nil {
+		for _, p := range e.info.Pkg.Imports() {
+			imported[p.Path()] = p.Name()
+		}
+	}
+	for _, name := range names {
+		for _, decl := range pkg.Files[name].Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.IMPORT {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				is, ok := spec.(*ast.ImportSpec)
+				if !ok {
+					continue
+				}
+				path, err := strconv.Unquote(is.Path.Value)
+				if err != nil {
+					path = is.Path.Value
+				}
+				local := ""
+				switch {
+				case is.Name != nil:
+					local = is.Name.Name
+				case imported[path] != "":
+					local = imported[path]
+				default:
+					local = fileBase(path)
+				}
+				im := imp{name: local, path: path}
+				if seen[im] {
+					continue
+				}
+				seen[im] = true
+				list = append(list, im)
+			}
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].path != list[j].path {
+			return list[i].path < list[j].path
+		}
+		return list[i].name < list[j].name
+	})
+	out := []any{}
+	for _, im := range list {
+		out = append(out, map[string]any{"name": im.name, "path": im.path})
+	}
+	return out
+}
+
 // pos renders a source position per §3 of the spec.
 func (e *Emitter) pos(n ast.Node) map[string]any {
 	p := e.fset.Position(n.Pos())
@@ -290,9 +372,10 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any
 		}, nil
 	case *types.Func:
 		return map[string]any{
-			"kind": "func",
-			"name": o.Name(),
-			"type": e.typeID(o.Type()),
+			"kind":    "func",
+			"name":    o.Name(),
+			"type":    e.typeID(o.Type()),
+			"pkgpath": pkgPath(o.Pkg()),
 		}, nil
 	case *types.Const:
 		return map[string]any{
@@ -325,6 +408,10 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
+// An unhandled type records the first error in e.typeErr and yields a
+// placeholder id; Emit fails loudly on it, so no document containing a
+// misdescribed type can ever be returned. The placeholder keeps ids
+// stable so the recursion guard above still works.
 func (e *Emitter) typeID(t types.Type) int {
 	if id, ok := e.typeIDs[t]; ok {
 		return id
@@ -332,11 +419,26 @@ func (e *Emitter) typeID(t types.Type) int {
 	id := len(e.types)
 	e.typeIDs[t] = id
 	e.types = append(e.types, nil) // placeholder for recursion
-	e.types[id] = e.describeType(t)
+	desc, err := e.describeType(t)
+	if err != nil {
+		if e.typeErr == nil {
+			e.typeErr = err
+		}
+		e.types[id] = map[string]any{
+			"kind":   "unhandled",
+			"detail": map[string]any{"type": fmt.Sprintf("%v", t)},
+		}
+		return id
+	}
+	e.types[id] = desc
 	return id
 }
 
-func (e *Emitter) describeType(t types.Type) map[string]any {
+// describeType renders one type for the type table. Every types.Type the
+// checker can produce gets its own kind here: a type with no case fails
+// loudly (via typeID/Emit) instead of silently misdescribing itself as
+// "basic", which a backend trusting kind:basic would miscompile.
+func (e *Emitter) describeType(t types.Type) (map[string]any, error) {
 	switch tt := t.(type) {
 	case *types.Basic:
 		class := basicClass(tt)
@@ -347,22 +449,22 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"class":   class,
 				"untyped": tt.Info()&types.IsUntyped != 0,
 			},
-		}
+		}, nil
 	case *types.Pointer:
 		return map[string]any{
 			"kind":   "pointer",
 			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+		}, nil
 	case *types.Slice:
 		return map[string]any{
 			"kind":   "slice",
 			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+		}, nil
 	case *types.Array:
 		return map[string]any{
 			"kind":   "array",
 			"detail": map[string]any{"len": tt.Len(), "elem": e.typeID(tt.Elem())},
-		}
+		}, nil
 	case *types.Map:
 		return map[string]any{
 			"kind": "map",
@@ -370,7 +472,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"key":  e.typeID(tt.Key()),
 				"elem": e.typeID(tt.Elem()),
 			},
-		}
+		}, nil
 	case *types.Chan:
 		var dir string
 		switch tt.Dir() {
@@ -384,7 +486,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		return map[string]any{
 			"kind":   "chan",
 			"detail": map[string]any{"dir": dir, "elem": e.typeID(tt.Elem())},
-		}
+		}, nil
 	case *types.Signature:
 		params := []any{}
 		for i := 0; i < tt.Params().Len(); i++ {
@@ -402,23 +504,59 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"type": e.typeID(r.Type()),
 			})
 		}
+		typeparams := []any{}
+		if tps := tt.TypeParams(); tps != nil {
+			for i := 0; i < tps.Len(); i++ {
+				typeparams = append(typeparams, e.describeTypeParam(tps.At(i)))
+			}
+		}
 		return map[string]any{
 			"kind": "signature",
 			"detail": map[string]any{
-				"params":   params,
-				"results":  results,
-				"variadic": tt.Variadic(),
+				"params":     params,
+				"results":    results,
+				"variadic":   tt.Variadic(),
+				"typeparams": typeparams,
 			},
-		}
+		}, nil
 	case *types.Named:
+		// Methods are part of the named type's identity: a backend
+		// resolving a method call from the type table needs them here.
+		// The "type" of each entry is the method's full signature id —
+		// the same id the funcdecl for a same-package method carries
+		// as "sig" — so methods join to their declarations without
+		// an object id (cross-package methods have no declaration
+		// in this document at all).
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			methods = append(methods, map[string]any{
+				"name": m.Name(),
+				"type": e.typeID(m.Type()),
+			})
+		}
+		typeparams := []any{}
+		if tps := tt.TypeParams(); tps != nil {
+			for i := 0; i < tps.Len(); i++ {
+				typeparams = append(typeparams, e.describeTypeParam(tps.At(i)))
+			}
+		}
+		typeargs := []any{}
+		if tas := tt.TypeArgs(); tas != nil {
+			for i := 0; i < tas.Len(); i++ {
+				typeargs = append(typeargs, e.typeID(tas.At(i)))
+			}
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
 				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				"methods":    methods,
+				"typeparams": typeparams,
+				"typeargs":   typeargs,
 			},
-		}
+		}, nil
 	case *types.Struct:
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
@@ -434,22 +572,113 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		return map[string]any{
 			"kind":   "struct",
 			"detail": map[string]any{"fields": fields},
-		}
+		}, nil
 	case *types.Interface:
+		// Explicit methods only: NumMethods counts the whole method
+		// set (including methods promoted from embedded interfaces),
+		// while ExplicitMethod(i) is valid only for the explicit
+		// ones — ranging NumMethods with ExplicitMethod panics on an
+		// interface with embedded interfaces. Promoted methods stay
+		// reachable through the embedded type's own method list.
+		methods := []any{}
+		for i := 0; i < tt.NumExplicitMethods(); i++ {
+			m := tt.ExplicitMethod(i)
+			methods = append(methods, map[string]any{
+				"name": m.Name(),
+				"type": e.typeID(m.Type()),
+			})
+		}
+		// Embedded types carry the rest of the method set: an
+		// embedded interface's methods are reachable through its own
+		// type id, and a union constraint (~int | ~string) is an
+		// embedded *types.Union.
+		embedded := []any{}
+		for i := 0; i < tt.NumEmbeddeds(); i++ {
+			embedded = append(embedded, map[string]any{
+				"type": e.typeID(tt.EmbeddedType(i)),
+			})
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"methods":  methods,
+				"embedded": embedded,
 			},
+		}, nil
+	case *types.Alias:
+		// Aliases are always materialized in go1.27 (gotypesalias
+		// is Removed: 27), so `type A = B` reaches the emitter as
+		// *types.Alias in ordinary code — never as "basic".
+		name := ""
+		if obj := tt.Obj(); obj != nil {
+			name = obj.Name()
 		}
-	default:
 		return map[string]any{
-			"kind":   "basic",
-			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
+			"kind": "alias",
+			"detail": map[string]any{
+				"name":       name,
+				"rhs":        e.typeID(tt.Rhs()),
+				"underlying": e.typeID(tt.Underlying()),
+			},
+		}, nil
+	case *types.TypeParam:
+		return map[string]any{
+			"kind":   "typeparam",
+			"detail": e.describeTypeParam(tt),
+		}, nil
+	case *types.Union:
+		terms := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			term := tt.Term(i)
+			terms = append(terms, map[string]any{
+				"type":  e.typeID(term.Type()),
+				"tilde": term.Tilde(),
+			})
 		}
+		return map[string]any{
+			"kind":   "union",
+			"detail": map[string]any{"terms": terms},
+		}, nil
+	case *types.Tuple:
+		vars := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			v := tt.At(i)
+			vars = append(vars, map[string]any{
+				"name": v.Name(),
+				"type": e.typeID(v.Type()),
+			})
+		}
+		return map[string]any{
+			"kind":   "tuple",
+			"detail": map[string]any{"vars": vars},
+		}, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported type %T (%v)", t, t)
 	}
+}
+
+// describeTypeParam renders one type parameter: its name, its
+// constraint type, and its index in the declaring list.
+func (e *Emitter) describeTypeParam(tp *types.TypeParam) map[string]any {
+	name := ""
+	if obj := tp.Obj(); obj != nil {
+		name = obj.Name()
+	}
+	return map[string]any{
+		"name":       name,
+		"constraint": e.typeID(tp.Constraint()),
+		"index":      tp.Index(),
+	}
+}
+
+// pkgPath returns the import path of a package, or "" for universe-scope
+// objects (builtins, nil) whose Pkg is nil.
+func pkgPath(pkg *types.Package) string {
+	if pkg == nil {
+		return ""
+	}
+	return pkg.Path()
 }
 
 func basicClass(b *types.Basic) string {

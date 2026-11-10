@@ -827,7 +827,7 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	// Package-qualified identifier (e.g. fmt.Println).
 	if id, ok := s.X.(*ast.Ident); ok {
 		if obj := e.info.Info.Uses[id]; obj != nil {
-			if _, ok := obj.(*types.PkgName); ok {
+			if pname, ok := obj.(*types.PkgName); ok {
 				target := e.info.Info.Uses[s.Sel]
 				if target == nil {
 					target = e.info.Info.Defs[s.Sel]
@@ -840,11 +840,19 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 					}
 					oid = tid
 				}
+				// The package path is the identity: the local name
+				// alone ("f") cannot distinguish two packages, and
+				// the Document's import list maps it back.
+				pkgpath := ""
+				if imported := pname.Imported(); imported != nil {
+					pkgpath = imported.Path()
+				}
 				return e.node("pkgref", s, map[string]any{
-					"pkg":  id.Name,
-					"name": s.Sel.Name,
-					"obj":  oid,
-					"type": e.exprType(s),
+					"pkg":     id.Name,
+					"pkgpath": pkgpath,
+					"name":    s.Sel.Name,
+					"obj":     oid,
+					"type":    e.exprType(s),
 				}), nil
 			}
 		}
