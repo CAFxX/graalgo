@@ -9084,6 +9084,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	default:
 		return nil, scopeErrorf("call to builtin %q is not supported in frontend/v1 scope (WS G intrinsic surface)", b.Name())
 	}
+	// R22-F-6: constant-fold builtin calls, mirroring BinaryExpr/
+	// UnaryExpr/ParenExpr. go/types folds e.g. real(3+4i) to the constant
+	// 3; emitting a live builtin node over the folded argument would
+	// misdispatch in the backend (the ComplexNode's kind is the call's
+	// contextually-typed result -- float32 for a float32 consumer --
+	// while the folded UNTYPED_COMPLEX argument is built as a GoComplex64,
+	// so a float32 consumer's executeFloat cast fails). Only genuinely
+	// constant calls fold (tv.Value is set only for constant expressions:
+	// len/cap of constants, complex/real/imag of constants); non-constant
+	// builtins (append, copy, make, new, panic, ...) never carry a value.
+	if tv, ok := e.info.Types[c]; ok && tv.Value != nil {
+		return e.foldedConst(c, tv.Value)
+	}
 	fun, err := e.exportIdent(funIdent)
 	if err != nil {
 		return nil, err

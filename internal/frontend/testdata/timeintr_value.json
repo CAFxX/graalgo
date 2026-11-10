@@ -32239,7 +32239,7 @@
                                                           ],
                                                           "rhs": [
                                                             {
-                                                              "kind": "call",
+                                                              "kind": "basiclit",
                                                               "pos": {
                                                                 "file": 0,
                                                                 "line": 564,
@@ -32248,40 +32248,11 @@
                                                                 "len": 10
                                                               },
                                                               "fields": {
-                                                                "args": [
-                                                                  {
-                                                                    "kind": "basiclit",
-                                                                    "pos": {
-                                                                      "file": 0,
-                                                                      "line": 564,
-                                                                      "col": 14,
-                                                                      "off": 13674,
-                                                                      "len": 5
-                                                                    },
-                                                                    "fields": {
-                                                                      "const": "\"Jan\"",
-                                                                      "sbytes": "4a616e",
-                                                                      "type": 119,
-                                                                      "value": "\"Jan\""
-                                                                    }
-                                                                  }
-                                                                ],
-                                                                "builtin": "len",
-                                                                "fun": {
-                                                                  "kind": "ident",
-                                                                  "pos": {
-                                                                    "file": 0,
-                                                                    "line": 564,
-                                                                    "col": 10,
-                                                                    "off": 13670,
-                                                                    "len": 3
-                                                                  },
-                                                                  "fields": {
-                                                                    "builtin": "len",
-                                                                    "name": "len"
-                                                                  }
-                                                                },
-                                                                "type": 12
+                                                                "const": "3",
+                                                                "f32bits": 1077936128,
+                                                                "f64bits": 4613937818241073152,
+                                                                "type": 12,
+                                                                "value": ""
                                                               }
                                                             }
                                                           ],
@@ -32457,7 +32428,7 @@
                                                       ],
                                                       "rhs": [
                                                         {
-                                                          "kind": "call",
+                                                          "kind": "basiclit",
                                                           "pos": {
                                                             "file": 0,
                                                             "line": 561,
@@ -32466,40 +32437,11 @@
                                                             "len": 14
                                                           },
                                                           "fields": {
-                                                            "args": [
-                                                              {
-                                                                "kind": "basiclit",
-                                                                "pos": {
-                                                                  "file": 0,
-                                                                  "line": 561,
-                                                                  "col": 14,
-                                                                  "off": 13567,
-                                                                  "len": 9
-                                                                },
-                                                                "fields": {
-                                                                  "const": "\"January\"",
-                                                                  "sbytes": "4a616e75617279",
-                                                                  "type": 119,
-                                                                  "value": "\"January\""
-                                                                }
-                                                              }
-                                                            ],
-                                                            "builtin": "len",
-                                                            "fun": {
-                                                              "kind": "ident",
-                                                              "pos": {
-                                                                "file": 0,
-                                                                "line": 561,
-                                                                "col": 10,
-                                                                "off": 13563,
-                                                                "len": 3
-                                                              },
-                                                              "fields": {
-                                                                "builtin": "len",
-                                                                "name": "len"
-                                                              }
-                                                            },
-                                                            "type": 12
+                                                            "const": "7",
+                                                            "f32bits": 1088421888,
+                                                            "f64bits": 4619567317775286272,
+                                                            "type": 12,
+                                                            "value": ""
                                                           }
                                                         }
                                                       ],
@@ -33089,7 +33031,7 @@
                                                           ],
                                                           "rhs": [
                                                             {
-                                                              "kind": "call",
+                                                              "kind": "basiclit",
                                                               "pos": {
                                                                 "file": 0,
                                                                 "line": 575,
@@ -33098,40 +33040,11 @@
                                                                 "len": 10
                                                               },
                                                               "fields": {
-                                                                "args": [
-                                                                  {
-                                                                    "kind": "basiclit",
-                                                                    "pos": {
-                                                                      "file": 0,
-                                                                      "line": 575,
-                                                                      "col": 14,
-                                                                      "off": 13958,
-                                                                      "len": 5
-                                                                    },
-                                                                    "fields": {
-                                                                      "const": "\"Mon\"",
-                                                                      "sbytes": "4d6f6e",
-                                                                      "type": 119,
-                                                                      "value": "\"Mon\""
-                                                                    }
-                                                                  }
-                                                                ],
-                                                                "builtin": "len",
-                                                                "fun": {
-                                                                  "kind": "ident",
-                                                                  "pos": {
-                                                                    "file": 0,
-                                                                    "line": 575,
-                                                                    "col": 10,
-                                                                    "off": 13954,
-                                                                    "len": 3
-                                                                  },
-                                                                  "fields": {
-                                                                    "builtin": "len",
-                                                                    "name": "len"
-                                                                  }
-                                                                },
-                                                                "type": 12
+                                                                "const": "3",
+                                                                "f32bits": 1077936128,
+                                                                "f64bits": 4613937818241073152,
+                                                                "type": 12,
+                                                                "value": ""
                                                               }
                                                             }
                                                           ],
@@ -33307,7 +33220,7 @@
                                                       ],
                                                       "rhs": [
                                                         {
-                                                          "kind": "call",
+                                                          "kind": "basiclit",
                                                           "pos": {
                                                             "file": 0,
                                                             "line": 572,
@@ -33316,40 +33229,11 @@
                                                             "len": 13
                                                           },
                                                           "fields": {
-                                                            "args": [
-                                                              {
-                                                                "kind": "basiclit",
-                                                                "pos": {
-                                                                  "file": 0,
-                                                                  "line": 572,
-                                                                  "col": 14,
-                                                                  "off": 13847,
-                                                                  "len": 8
-                                                                },
-                                                                "fields": {
-                                                                  "const": "\"Monday\"",
-                                                                  "sbytes": "4d6f6e646179",
-                                                                  "type": 119,
-                                                                  "value": "\"Monday\""
-                                                                }
-                                                              }
-                                                            ],
-                                                            "builtin": "len",
-                                                            "fun": {
-                                                              "kind": "ident",
-                                                              "pos": {
-                                                                "file": 0,
-                                                                "line": 572,
-                                                                "col": 10,
-                                                                "off": 13843,
-                                                                "len": 3
-                                                              },
-                                                              "fields": {
-                                                                "builtin": "len",
-                                                                "name": "len"
-                                                              }
-                                                            },
-                                                            "type": 12
+                                                            "const": "6",
+                                                            "f32bits": 1086324736,
+                                                            "f64bits": 4618441417868443648,
+                                                            "type": 12,
+                                                            "value": ""
                                                           }
                                                         }
                                                       ],
@@ -58831,7 +58715,7 @@
                   "type": null,
                   "values": [
                     {
-                      "kind": "call",
+                      "kind": "basiclit",
                       "pos": {
                         "file": 0,
                         "line": 1045,
@@ -58840,39 +58724,11 @@
                         "len": 8
                       },
                       "fields": {
-                        "args": [
-                          {
-                            "kind": "ident",
-                            "pos": {
-                              "file": 0,
-                              "line": 1045,
-                              "col": 11,
-                              "off": 24588,
-                              "len": 3
-                            },
-                            "fields": {
-                              "name": "arr",
-                              "obj": 365,
-                              "type": 218
-                            }
-                          }
-                        ],
-                        "builtin": "len",
-                        "fun": {
-                          "kind": "ident",
-                          "pos": {
-                            "file": 0,
-                            "line": 1045,
-                            "col": 7,
-                            "off": 24584,
-                            "len": 3
-                          },
-                          "fields": {
-                            "builtin": "len",
-                            "name": "len"
-                          }
-                        },
-                        "type": 12
+                        "const": "24",
+                        "f32bits": 1103101952,
+                        "f64bits": 4627448617123184640,
+                        "type": 12,
+                        "value": ""
                       }
                     }
                   ]
