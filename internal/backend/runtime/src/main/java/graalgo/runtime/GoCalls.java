@@ -35,6 +35,18 @@ public final class GoCalls {
         callArgs[0] = fn;
         if (bound != null) {
             System.arraycopy(bound, 0, callArgs, 1, bound.length);
+            // R22-F-4: a bound value receiver is copied per invocation, so
+            // mutations from one call never leak into the next (or back to
+            // the bound value). Only method values bind a receiver (the
+            // sole boundArgs producer is MethodValueNode); plain function
+            // values have null boundArgs and skip this entirely.
+            if (bound.length > 0
+                    && fn.target().getRootNode() instanceof graalgo.frontend.GoFuncRootNode root) {
+                graalgo.values.GoKind rk = root.receiverKind();
+                if (rk == graalgo.values.GoKind.STRUCT || rk == graalgo.values.GoKind.ARRAY) {
+                    callArgs[1] = graalgo.frontend.Boxing.copyReceiver(rk, bound[0]);
+                }
+            }
         }
         System.arraycopy(args, 0, callArgs, 1 + prefix, args.length);
         return callArgs;

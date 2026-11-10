@@ -70,7 +70,22 @@ public final class ReflectCalls {
         }
         if (callable instanceof BoundMethodVal bmv) {
             Object[] withRecv = new Object[d5Args.length + 1];
-            withRecv[0] = bmv.receiver;
+            // R22-F-4: a value receiver is copied per call - the stored
+            // receiver must not alias any single invocation's receiver.
+            // The receiver kind comes from the method's func type
+            // (ins[0]); a missing/empty ins means no copy.
+            Object recv = bmv.receiver;
+            if (!bmv.method.pointerReceiver) {
+                graalgo.values.GoKind rk = null;
+                if (bmv.method.funcType != null && bmv.method.funcType.ins != null
+                        && !bmv.method.funcType.ins.isEmpty()) {
+                    rk = bmv.method.funcType.ins.get(0).kind;
+                }
+                if (rk == graalgo.values.GoKind.STRUCT || rk == graalgo.values.GoKind.ARRAY) {
+                    recv = graalgo.frontend.Boxing.copyReceiver(rk, recv);
+                }
+            }
+            withRecv[0] = recv;
             System.arraycopy(d5Args, 0, withRecv, 1, d5Args.length);
             return GoCalls.invoke(bmv.method.func, withRecv);
         }

@@ -191,6 +191,14 @@ public final class IfaceDispatchNode extends GoExprNode {
         if (target.addrOf() && !(callArgs[0] instanceof GoPointer)) {
             callArgs[0] = new GoPointer(callArgs[0]);
         }
+        // R22-F-4: a value receiver arrives as a copy - the callee mutating
+        // it must not change the interface's data (or, for a pointer-held
+        // receiver, the pointed-to struct, which copyReceiver dereferences
+        // before copying). Pointer receivers, address-taken receivers, and
+        // interface-typed receiver parameters keep the shared value, like gc.
+        if (!target.pointerReceiver() && !target.addrOf() && !receiverParamIsInterface(target)) {
+            callArgs[0] = Boxing.copyReceiver(null, callArgs[0]);
+        }
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
         // non-nil when called directly by a deferred function — clear the
@@ -342,25 +350,25 @@ public final class IfaceDispatchNode extends GoExprNode {
      */
     private static Object boxArg(GoExprNode arg, VirtualFrame frame) {
         FrameSlotKind slot = arg.kind().slotKind();
+        Object boxed;
         if (slot == FrameSlotKind.Int) {
-            return Integer.valueOf(arg.executeInt(frame));
+            boxed = Integer.valueOf(arg.executeInt(frame));
+        } else if (slot == FrameSlotKind.Long) {
+            boxed = Long.valueOf(arg.executeLong(frame));
+        } else if (slot == FrameSlotKind.Float) {
+            boxed = Float.valueOf(arg.executeFloat(frame));
+        } else if (slot == FrameSlotKind.Double) {
+            boxed = Double.valueOf(arg.executeDouble(frame));
+        } else if (slot == FrameSlotKind.Boolean) {
+            boxed = Boolean.valueOf(arg.executeBoolean(frame));
+        } else if (slot == FrameSlotKind.Object) {
+            boxed = arg.executeObject(frame);
+        } else {
+            throw new FrontendException("cannot box kind " + arg.kind() + " (WS E)");
         }
-        if (slot == FrameSlotKind.Long) {
-            return Long.valueOf(arg.executeLong(frame));
-        }
-        if (slot == FrameSlotKind.Float) {
-            return Float.valueOf(arg.executeFloat(frame));
-        }
-        if (slot == FrameSlotKind.Double) {
-            return Double.valueOf(arg.executeDouble(frame));
-        }
-        if (slot == FrameSlotKind.Boolean) {
-            return Boolean.valueOf(arg.executeBoolean(frame));
-        }
-        if (slot == FrameSlotKind.Object) {
-            return arg.executeObject(frame);
-        }
-        throw new FrontendException("cannot box kind " + arg.kind() + " (WS E)");
+        // R22-F-4: struct/array arguments are copied at the call site,
+        // exactly like the direct-call path (FuncValueCallNode).
+        return Boxing.copyForAssign(arg.kind(), boxed);
     }
 
     @Override

@@ -124,6 +124,17 @@ public final class GoFuncRootNode extends RootNode {
         return paramKinds.clone();
     }
 
+    /**
+     * The receiver parameter kind (R22-F-4): {@code paramKinds[0]} for a
+     * method target, or null for a plain function value with no parameters.
+     * Method-value formation ({@link MethodValueNode}) and the per-invocation
+     * copy ({@link graalgo.runtime.GoCalls#callArgs}) consult this to decide
+     * whether the bound receiver is copied. No clone: callers only read [0].
+     */
+    public GoKind receiverKind() {
+        return paramKinds.length > 0 ? paramKinds[0] : null;
+    }
+
     @Override
     public Object execute(VirtualFrame frame) {
         Safepoint.poll();
@@ -188,9 +199,11 @@ public final class GoFuncRootNode extends RootNode {
             // caller's cell — like gc. Pointer-kind params (`*atomic.T`)
             // carry the same cell object and must NOT be cloned, or
             // pointer aliasing breaks (`setIt(p)` mutating through p).
-            // (Struct by-value params are not deep-copied today, a
-            // pre-existing gap out of M4 scope; atomic cells clone
-            // because their entire state is the integer.)
+            // (Struct/array by-value params arrive already copied by the
+            // call site — FuncValueCallNode, IfaceDispatchNode, method-value
+            // formation + GoCalls per-invocation copy (R22-F-4) — so the
+            // root does not deep-copy them again; atomic cells still clone
+            // here because their entire state is the integer.)
             if (paramKinds[i] == graalgo.values.GoKind.STRUCT) {
                 // fix-linkname: match the GoAtomic wrappers before the
                 // raw AtomicLong/Integer (they extend them) so the clone

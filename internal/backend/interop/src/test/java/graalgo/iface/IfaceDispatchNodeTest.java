@@ -16,6 +16,7 @@ import graalgo.runtime.GoErrorValue;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.PanicException;
 import graalgo.values.GoInterface;
+import graalgo.values.GoPointer;
 import graalgo.values.GoKind;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
@@ -101,6 +102,11 @@ public final class IfaceDispatchNodeTest {
     /** Direct (non-promoted) method target. */
     private static IfaceMethodTarget target(CaptureRoot root) {
         return new IfaceMethodTarget(goFunc(root), new int[0], true, false, -1, null);
+    }
+
+    /** Direct value-receiver method target. */
+    private static IfaceMethodTarget valueTarget(CaptureRoot root) {
+        return new IfaceMethodTarget(goFunc(root), new int[0], false, false, -1, null);
     }
 
     /** Promoted method target: receiver adapted via the field path. */
@@ -512,6 +518,172 @@ public final class IfaceDispatchNodeTest {
             assertEquals(1, inner.seen.size(), "inner method invoked once");
             assertEquals("INNER-DATA", inner.seen.get(0)[1],
                     "receiver is the interface field value's data");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R22-F-4: a struct argument to an interface-dispatched method must
+     * arrive as a copy — the callee mutating it must not change the
+     * caller's value. RED (pre-fix): boxArg boxes the argument raw.
+     */
+    public void testStructArgIsCopied() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", target(root))));
+        try {
+            graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.S",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("F",
+                            GoKind.INT64, true, 0, -1, null, null, null)));
+            GoStruct arg = new GoStruct(desc, new long[]{1}, new Object[0]);
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
+            GoExprNode[] args = {new ConstNode(GoKind.STRUCT, arg, 0)};
+            IfaceDispatchNode n = node(recv, args, List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()), "dispatch result");
+            assertEquals(1, root.seen.size(), "method invoked once");
+            Object received = root.seen.get(0)[2];
+            assertTrue(received != arg,
+                    "interface dispatch passed the struct argument by reference (R22-F-4)");
+            assertTrue(received instanceof GoStruct gs && gs.getLong(0) == 1,
+                    "received struct argument has wrong value");
+            ((GoStruct) received).setLong(0, 99);
+            assertTrue(arg.getLong(0) == 1,
+                    "callee mutation of the struct argument leaked to the caller (R22-F-4): F="
+                            + arg.getLong(0));
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R22-F-4: an array argument to an interface-dispatched method must
+     * arrive as a deep copy as well.
+     */
+    public void testArrayArgIsCopied() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", target(root))));
+        try {
+            int[] arg = new int[]{1, 2};
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
+            GoExprNode[] args = {new ConstNode(GoKind.ARRAY, arg, 0)};
+            IfaceDispatchNode n = node(recv, args, List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()), "dispatch result");
+            Object received = root.seen.get(0)[2];
+            assertTrue(received != arg,
+                    "interface dispatch passed the array argument by reference (R22-F-4)");
+            ((int[]) received)[0] = 99;
+            assertTrue(arg[0] == 1,
+                    "callee mutation of the array argument leaked to the caller (R22-F-4)");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R22-F-4: a value receiver through interface dispatch must arrive as
+     * a copy — the callee mutating it must not change the interface's data.
+     */
+    public void testValueReceiverIsCopied() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", valueTarget(root))));
+        try {
+            graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.S",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("F",
+                            GoKind.INT64, true, 0, -1, null, null, null)));
+            GoStruct data = new GoStruct(desc, new long[]{1}, new Object[0]);
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", data), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()), "dispatch result");
+            Object received = root.seen.get(0)[1];
+            assertTrue(received != data,
+                    "interface dispatch passed the value receiver by reference (R22-F-4)");
+            ((GoStruct) received).setLong(0, 99);
+            assertTrue(data.getLong(0) == 1,
+                    "callee mutation of the value receiver leaked to the caller (R22-F-4): F="
+                            + data.getLong(0));
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * Negative control: a pointer receiver stays shared — the method sees
+     * the very object the interface holds, so mutations are visible.
+     */
+    public void testPointerReceiverIsShared() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", target(root))));
+        try {
+            graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.S",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("F",
+                            GoKind.INT64, true, 0, -1, null, null, null)));
+            GoStruct data = new GoStruct(desc, new long[]{1}, new Object[0]);
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", data), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()), "dispatch result");
+            assertTrue(root.seen.get(0)[1] == data,
+                    "pointer receiver was copied — mutations would stop being visible");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R22-F-4: a value-receiver method dispatched through an interface
+     * holding a POINTER to the struct ({@code var w I = &s; w.M()}) must
+     * receive a copy of the pointed-to struct, not the pointer and not
+     * the shared referent.
+     */
+    public void testValueReceiverPointerHeldIsCopied() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", valueTarget(root))));
+        try {
+            graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.S",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("F",
+                            GoKind.INT64, true, 0, -1, null, null, null)));
+            GoStruct data = new GoStruct(desc, new long[]{1}, new Object[0]);
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", new GoPointer(data)), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()), "dispatch result");
+            Object received = root.seen.get(0)[1];
+            assertTrue(received instanceof GoStruct,
+                    "value receiver through a pointer must be dereferenced, got "
+                            + (received == null ? "null" : received.getClass().getName()));
+            assertTrue(received != data,
+                    "value receiver through a pointer shared the referent (R22-F-4)");
+            ((GoStruct) received).setLong(0, 99);
+            assertTrue(data.getLong(0) == 1,
+                    "callee mutation leaked through the pointer-held receiver (R22-F-4)");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R22-F-4: a value-receiver method promoted via a value-embedded field
+     * must receive a copy of the field struct, not the live field object.
+     */
+    public void testPromotedValueReceiverCopied() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.MW", Map.of("M", promotedValueTarget(root, 0))));
+        try {
+            graalgo.values.GoStructDescriptor innerDesc = new graalgo.values.GoStructDescriptor("main.S",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("F",
+                            GoKind.INT64, true, 0, -1, null, null, null)));
+            graalgo.values.GoStructDescriptor outerDesc = new graalgo.values.GoStructDescriptor("main.MW",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("Inner",
+                            GoKind.STRUCT, false, 0, -1, null, null, innerDesc)));
+            GoStruct inner = new GoStruct(innerDesc, new long[]{1}, new Object[0]);
+            GoStruct outer = new GoStruct(outerDesc, new long[0], new Object[]{inner});
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.MW", outer), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()), "promoted dispatch result");
+            Object received = root.seen.get(0)[1];
+            assertTrue(received != inner,
+                    "promoted value receiver shared the embedded field struct (R22-F-4)");
+            ((GoStruct) received).setLong(0, 99);
+            assertTrue(inner.getLong(0) == 1,
+                    "callee mutation leaked into the embedded field (R22-F-4)");
         } finally {
             tearDown();
         }

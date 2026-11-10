@@ -93,7 +93,7 @@ public final class Boxing {
      * array clone would let {@code b := a; b[i].f = x} observably mutate
      * {@code a}), everything else is already a reference or immutable.
      */
-    static Object copyForAssign(GoKind kind, Object value) {
+    public static Object copyForAssign(GoKind kind, Object value) {
         if (value instanceof GoStruct gs && kind == GoKind.STRUCT) {
             return gs.deepCopy();
         }
@@ -135,6 +135,36 @@ public final class Boxing {
             return GoStruct.deepCopyArray(value);
         }
         return value;
+    }
+
+    /**
+     * Copies a by-value receiver at a call boundary (R22-F-4): struct and
+     * array receivers arrive as fresh values, so callee mutations never
+     * alias the caller's value and repeated calls stay independent.
+     * {@code kind} is the receiver parameter kind (STRUCT/ARRAY); null
+     * infers from the runtime value (e.g. interface dispatch, where the
+     * receiver is raw dynamic data). A {@link graalgo.values.GoPointer}
+     * referent is dereferenced first (gc's implicit {@code *p} for a value
+     * receiver through a pointer); a {@link GoInterface} is re-boxed with
+     * copied data via {@link #copyForAssign}. All other kinds pass through.
+     */
+    public static Object copyReceiver(GoKind kind, Object value) {
+        if (value instanceof graalgo.values.GoPointer gp) {
+            return copyReceiver(kind, gp.referent());
+        }
+        if (value instanceof GoInterface) {
+            return copyForAssign(GoKind.INTERFACE, value);
+        }
+        if (kind == null) {
+            if (value instanceof GoStruct) {
+                return copyForAssign(GoKind.STRUCT, value);
+            }
+            if (value != null && value.getClass().isArray()) {
+                return copyForAssign(GoKind.ARRAY, value);
+            }
+            return value;
+        }
+        return copyForAssign(kind, value);
     }
 
     /** Go's zero value in canonical boxed form (nil → null, except strings/structs). */

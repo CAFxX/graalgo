@@ -40,6 +40,14 @@ public final class MethodValueNode extends GoExprNode {
             throw new FrontendException(
                     "unresolved method object " + objId + " (WS H)");
         }
+        // R22-F-4: a value receiver is snapshotted at formation time —
+        // the bound receiver must not alias the receiver expression's value.
+        if (f.target().getRootNode() instanceof GoFuncRootNode root) {
+            GoKind rk = root.receiverKind();
+            if (rk == GoKind.STRUCT || rk == GoKind.ARRAY) {
+                recvVal = Boxing.copyReceiver(rk, recvVal);
+            }
+        }
         return new GoFunc(f.target(), null, null, new Object[] {recvVal});
     }
 }

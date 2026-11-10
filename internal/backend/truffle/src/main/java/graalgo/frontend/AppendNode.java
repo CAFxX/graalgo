@@ -130,7 +130,9 @@ public final class AppendNode extends GoExprNode {
                 // elements; gc has memmove semantics here.
                 if (spreadArr.getClass().getComponentType()
                         .equals(arr.getClass().getComponentType())) {
-                    Intrinsics.memmove(arr, base, spreadArr, spreadBase, n);
+                    // R22-F-3: element-copying move — struct/array spread
+                    // elements are deep-copied, not aliased.
+                    Intrinsics.memmoveCopy(arr, base, spreadArr, spreadBase, n, elemKind);
                 } else {
                     // Defensive: different component types cannot alias the
                     // same array; snapshot through a temp buffer anyway.
@@ -139,7 +141,9 @@ public final class AppendNode extends GoExprNode {
                         tmp[i] = Boxing.arrayGet(spreadArr, elemKind, spreadBase + i);
                     }
                     for (int i = 0; i < n; i++) {
-                        Boxing.arraySet(arr, elemKind, base + i, tmp[i]);
+                        // R22-F-3: copy struct/array elements on store.
+                        Boxing.arraySet(arr, elemKind, base + i,
+                                Boxing.copyForAssign(elemKind, tmp[i]));
                     }
                 }
                 return out;
@@ -213,7 +217,9 @@ public final class AppendNode extends GoExprNode {
             case FLOAT32 -> ((float[]) arr)[idx] = (Float) v;
             case FLOAT64 -> ((double[]) arr)[idx] = (Double) v;
             case BOOL -> ((boolean[]) arr)[idx] = (Boolean) v;
-            default -> ((Object[]) arr)[idx] = v;
+            // R22-F-3: struct/array elements are deep-copied on store,
+            // like every other store site (IndexWriteNode, AssignNode, ...).
+            default -> ((Object[]) arr)[idx] = Boxing.copyForAssign(elemKind, v);
         }
     }
 }

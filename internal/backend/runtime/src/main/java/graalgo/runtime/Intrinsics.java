@@ -69,6 +69,43 @@ public final class Intrinsics {
     }
 
     /**
+     * Element-copying move for slice growth / bulk copy (R22-F-3): like
+     * {@link #memmove(Object, int, Object, int, int)} but struct and array
+     * elements are deep-copied element-wise (gc's value semantics — a
+     * grown slice must not share element objects with the old one), while
+     * every other kind is a raw reference copy. INTERFACE elements copy
+     * headers only: the interface data stays shared, exactly like gc's
+     * {@code copy} of {@code []any}. Overlap-safe: source references are
+     * snapshotted before any destination write.
+     */
+    public static void memmoveCopy(Object dst, int dstOff, Object src, int srcOff, int n,
+            GoKind elemKind) {
+        if (n < 0) {
+            throw new IndexOutOfBoundsException("memmoveCopy: negative count " + n);
+        }
+        if (n == 0) {
+            return;
+        }
+        if (elemKind == GoKind.STRUCT || elemKind == GoKind.ARRAY) {
+            Object[] d = (Object[]) dst;
+            Object[] srcArr = (Object[]) src;
+            if (dstOff < 0 || srcOff < 0 || dstOff + n > d.length || srcOff + n > srcArr.length) {
+                throw new IndexOutOfBoundsException(
+                        "memmoveCopy: range [" + srcOff + ", " + (srcOff + n) + ") -> ["
+                        + dstOff + ", " + (dstOff + n) + ") on arrays of length "
+                        + srcArr.length + "/" + d.length);
+            }
+            Object[] tmp = new Object[n];
+            System.arraycopy(srcArr, srcOff, tmp, 0, n);
+            for (int i = 0; i < n; i++) {
+                d[dstOff + i] = graalgo.frontend.Boxing.copyForAssign(elemKind, tmp[i]);
+            }
+            return;
+        }
+        memmove(dst, dstOff, src, srcOff, n);
+    }
+
+    /**
      * Reports whether {@code n} elements at the given offsets are equal.
      * Element equality is Java {@link Object#equals} on the canonical boxed
      * form (records and {@link graalgo.values.GoString} implement value
@@ -254,7 +291,7 @@ public final class Intrinsics {
         int newCap = nextSliceCap(newLen, oldCap, elemSizeBytes, elemHasPointers);
         Object array = newTypedArray(elemKind, elemDesc, newCap);
         if (old != null && oldLen > 0) {
-            memmove(array, 0, old.array(), old.offset(), oldLen);
+            memmoveCopy(array, 0, old.array(), old.offset(), oldLen, elemKind);
         }
         return new GoSlice(array, 0, newLen, newCap);
     }
@@ -600,11 +637,10 @@ public final class Intrinsics {
                 graalgo.values.GoComplex64[] s = (graalgo.values.GoComplex64[]) srcArr;
                 System.arraycopy(s, srcOff, d, dstOff, n);
             }
-            default -> {
-                Object[] d = (Object[]) dstArr;
-                Object[] s = (Object[]) srcArr;
-                System.arraycopy(s, srcOff, d, dstOff, n);
-            }
+            // R22-F-3: struct/array elements deep-copy element-wise
+            // (overlap-safe); INTERFACE and other Object-backed kinds
+            // copy headers only, like gc.
+            default -> memmoveCopy(dstArr, dstOff, srcArr, srcOff, n, elemKind);
         }
     }
 
