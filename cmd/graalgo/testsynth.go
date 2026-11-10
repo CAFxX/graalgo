@@ -14,15 +14,139 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
-// discoverTests returns the names of TestXxx functions in a _test.go file.
+// testingImportRefs resolves, for one file, how its code refers to the
+// testing package: the qualifiers bound to the "testing" import
+// ("testing" by default, any explicit alias) and whether the file
+// dot-imports it. Detection is per file, as Go name resolution is.
+type testingImportRefs struct {
+	quals map[string]bool
+	dot   bool
+}
+
+func testingRefsFor(f *ast.File) testingImportRefs {
+	r := testingImportRefs{quals: make(map[string]bool)}
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, `"`) != "testing" {
+			continue
+		}
+		if imp.Name == nil {
+			r.quals["testing"] = true
+			continue
+		}
+		switch imp.Name.Name {
+		case ".":
+			r.dot = true
+		case "_":
+			// A blank import binds no qualifier.
+		default:
+			r.quals[imp.Name.Name] = true
+		}
+	}
+	return r
+}
+
+// isTestingType reports whether expr denotes testing.T (name "T") or
+// testing.M (name "M") as a bare type, in any spelling the file uses:
+// qualified (testing.T, tt.T) or dot-imported (T).
+func (r testingImportRefs) isTestingType(expr ast.Expr, name string) bool {
+	switch t := expr.(type) {
+	case *ast.SelectorExpr:
+		id, ok := t.X.(*ast.Ident)
+		return ok && r.quals[id.Name] && t.Sel.Name == name
+	case *ast.Ident:
+		return r.dot && t.Name == name
+	}
+	return false
+}
+
+// isPointerToTestingType reports whether expr is *testing.T / *testing.M
+// in any spelling the file uses.
+func (r testingImportRefs) isPointerToTestingType(expr ast.Expr, name string) bool {
+	star, ok := expr.(*ast.StarExpr)
+	return ok && r.isTestingType(star.X, name)
+}
+
+// paramCount returns the number of parameters a field list declares:
+// the sum of the names per field (one for an unnamed field). A field
+// like `t, u *testing.T` declares two parameters, not one (A-3).
+func paramCount(fl *ast.FieldList) int {
+	if fl == nil {
+		return 0
+	}
+	n := 0
+	for _, f := range fl.List {
+		if len(f.Names) == 0 {
+			n++
+		} else {
+			n += len(f.Names)
+		}
+	}
+	return n
+}
+
+// isTestSig reports whether fn has exactly gc's test signature:
+// func(*testing.T) with no results, in any spelling of *testing.T.
+// (Verified against go1.27.1: results, variadic params, a second
+// parameter, and a non-pointer param are all "wrong signature".)
+func isTestSig(refs testingImportRefs, fn *ast.FuncDecl) bool {
+	if fn.Type == nil || fn.Type.Params == nil || paramCount(fn.Type.Params) != 1 {
+		return false
+	}
+	if fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
+		return false
+	}
+	return refs.isPointerToTestingType(fn.Type.Params.List[0].Type, "T")
+}
+
+// isTestMainSig reports whether fn has exactly gc's TestMain signature:
+// func(*testing.M) with no results, in any spelling of *testing.M.
+func isTestMainSig(refs testingImportRefs, fn *ast.FuncDecl) bool {
+	if fn.Type == nil || fn.Type.Params == nil || paramCount(fn.Type.Params) != 1 {
+		return false
+	}
+	if fn.Type.Results != nil && len(fn.Type.Results.List) != 0 {
+		return false
+	}
+	return refs.isPointerToTestingType(fn.Type.Params.List[0].Type, "M")
+}
+
+// malformedTestName reports whether name is a malformed test name: "Test"
+// followed by a lowercase letter (gc: "has malformed name"). "Test"
+// itself, "Test123", and "Test_foo" are well-formed.
+func malformedTestName(name string) bool {
+	if !strings.HasPrefix(name, "Test") || len(name) == 4 {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(name[4:])
+	return unicode.IsLower(r)
+}
+
+// discoverTests returns the names of TestXxx functions in a _test.go file,
+// applying gc's classification (verified against go1.27.1):
+//
+//   - func TestXxx(t *testing.T), in any spelling of *testing.T, is a test.
+//   - func TestMain(m *testing.M) is the entry point, not a test — see
+//     discoverTestMain. func TestMain(m *testing.T) IS an ordinary test
+//     named TestMain (gc runs it as one).
+//   - A well-formed Test name with any other signature is a hard error,
+//     mirroring gc's "wrong signature for X, must be: func X(t *testing.T)"
+//     ([setup failed]).
+//   - A malformed name (lowercase right after Test) with a *testing.T
+//     param is a hard error ("... has malformed name ..."); with any
+//     other signature it is ignored, exactly as gc ignores it.
+//
+// Methods (Recv != nil) are never tests.
 func discoverTests(path string) ([]string, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
 	}
+	refs := testingRefsFor(f)
 	var tests []string
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -33,13 +157,60 @@ func discoverTests(path string) ([]string, error) {
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
-		// Must take *testing.T (or be a simple TestXxx with one param).
-		if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		// TestMain with the entry-point signature is not a test.
+		if name == "TestMain" && isTestMainSig(refs, fn) {
 			continue
 		}
-		tests = append(tests, name)
+		if isTestSig(refs, fn) {
+			if malformedTestName(name) {
+				pos := fset.Position(fn.Pos())
+				return nil, fmt.Errorf("%s: %s has malformed name: first letter after 'Test' must not be lowercase", pos, name)
+			}
+			tests = append(tests, name)
+			continue
+		}
+		// Not a test signature: a malformed name is ignored (gc never
+		// classifies it), a well-formed one is a hard error.
+		if malformedTestName(name) {
+			continue
+		}
+		pos := fset.Position(fn.Pos())
+		if name == "TestMain" {
+			return nil, fmt.Errorf("%s: wrong signature for TestMain, must be: func TestMain(m *testing.M)", pos)
+		}
+		return nil, fmt.Errorf("%s: wrong signature for %s, must be: func %s(t *testing.T)", pos, name, name)
 	}
 	return tests, nil
+}
+
+// discoverTestMain reports whether path defines a valid TestMain entry
+// point: func TestMain(m *testing.M), in any spelling of *testing.M.
+// A TestMain with the test signature func(*testing.T) is an ordinary
+// test, not an entry point; any other TestMain signature is a hard
+// error mirroring gc's "wrong signature for TestMain, must be:
+// func TestMain(m *testing.M)". Methods named TestMain are ignored.
+func discoverTestMain(path string) (bool, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return false, fmt.Errorf("parse: %w", err)
+	}
+	refs := testingRefsFor(f)
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" {
+			continue
+		}
+		if isTestMainSig(refs, fn) {
+			return true, nil
+		}
+		if isTestSig(refs, fn) {
+			return false, nil
+		}
+		pos := fset.Position(fn.Pos())
+		return false, fmt.Errorf("%s: wrong signature for TestMain, must be: func TestMain(m *testing.M)", pos)
+	}
+	return false, nil
 }
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
@@ -216,6 +387,18 @@ func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
 	return !sub.failed
 }
 
+// graalgoM is the testing.M replacement for TestMain support (A-2):
+// Run executes the per-test loop (runGraalgoTests) and returns the
+// exit code, exactly like testing.M.Run. TestMain receives *graalgoM
+// in place of *testing.M; repeated Run calls re-run the loop, as gc
+// allows. A TestMain that returns without calling Run runs no tests
+// and the driver exits 0, matching gc.
+type graalgoM struct{}
+
+func (m *graalgoM) Run() int {
+	return runGraalgoTests()
+}
+
 func joinArgs(args ...interface{}) string {
 	out := ""
 	for i, a := range args {
@@ -326,6 +509,11 @@ func testShimSource(verbose bool) string {
 type fileTests struct {
 	file  string
 	tests []string
+	// testMain reports that the file defines a valid TestMain entry
+	// point (func TestMain(m *testing.M)); the file is then included
+	// even when no test is selected, so TestMain still runs (gc runs
+	// TestMain with -run matching nothing).
+	testMain bool
 }
 
 // testCallRewrites maps testing.T diagnostic methods to the shim's
@@ -554,8 +742,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// whether the sources are inlined at all (see inlineSrc below).
 	type testUnit struct {
 		srcUnit
-		tests   map[string]bool
-		ordered []string
+		tests    map[string]bool
+		ordered  []string
+		testMain bool
 	}
 	var testUnits []testUnit
 	var testPkgNames []string
@@ -572,7 +761,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		for _, t := range ft.tests {
 			testSet[t] = true
 		}
-		testUnits = append(testUnits, testUnit{srcUnit{ft.file, tf, fset}, testSet, ft.tests})
+		testUnits = append(testUnits, testUnit{srcUnit{ft.file, tf, fset}, testSet, ft.tests, ft.testMain})
 	}
 
 	// Sibling test files (not selected): every non-entry-point
@@ -757,9 +946,18 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
 					strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")
 				if !isTest && isEntry {
+					// A valid TestMain is the driver's entry point,
+					// not a test: inline it (its param is rewritten
+					// to *graalgoM by rewriteParam) so main() can
+					// call it. Any other entry point stays skipped.
+					if tu.testMain && n == "TestMain" && d.Recv == nil {
+						rewriteParam(tu.f, d)
+						rewriteTestCalls(d, tu.fset)
+						gatherDecl(tu.f, tu.fset, d)
+					}
 					continue
 				}
-				rewriteParam(d)
+				rewriteParam(tu.f, d)
 				rewriteTestCalls(d, tu.fset)
 				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
@@ -784,7 +982,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 						continue
 					}
 				}
-				rewriteParam(d)
+				rewriteParam(u.f, d)
 				rewriteTestCalls(d, u.fset)
 				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
@@ -847,7 +1045,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "runGraalgoTests", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -956,7 +1154,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "runGraalgoTests", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1403,8 +1601,37 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// Shim + main runner. Per-test output mirrors `go test -v`:
 	// === RUN / --- PASS/FAIL/SKIP with (0.00s) timings, a single
 	// PASS/FAIL summary, and exit code 1 (no panic trace) on failure.
+	//
+	// The per-test loop lives in runGraalgoTests so TestMain can drive
+	// it through graalgoM.Run (A-2), exactly like testing.M.Run:
+	// main() calls TestMain(&graalgoM{}) when one was discovered and
+	// otherwise exits with the loop's code. A TestMain that returns
+	// without calling Run runs no tests and the driver exits 0, as gc
+	// does. At most one TestMain may be the entry point (test.go
+	// enforces this across files; the check here covers direct
+	// callers of synthesizeTestDriver).
+	testMainCount := 0
+	hasTestMain := false
+	testMainCallName := "TestMain"
+	totalTests := 0
+	for _, tu := range testUnits {
+		totalTests += len(tu.ordered)
+		if !tu.testMain {
+			continue
+		}
+		testMainCount++
+		hasTestMain = true
+		if pkgNameErr == nil && tu.f.Name.Name != pkgName {
+			if nn, ok := eRenames["TestMain"]; ok {
+				testMainCallName = nn
+			}
+		}
+	}
+	if testMainCount > 1 {
+		return "", fmt.Errorf("multiple definitions of TestMain")
+	}
 	body.WriteString(testShimSource(verbose))
-	body.WriteString("\nfunc main() {\n")
+	body.WriteString("\nfunc runGraalgoTests() int {\n")
 	body.WriteString("\tfailed := 0\n")
 	for _, tu := range testUnits {
 		for _, t := range tu.ordered {
@@ -1484,10 +1711,25 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	body.WriteString("\tif failed > 0 {\n")
 	body.WriteString("\t\tprintln(\"FAIL\")\n")
-	body.WriteString("\t\tos.Exit(1)\n")
+	body.WriteString("\t\treturn 1\n")
 	body.WriteString("\t}\n")
 	if verbose {
+		if totalTests == 0 {
+			body.WriteString("\tprintln(\"testing: warning: no tests to run\")\n")
+		}
 		body.WriteString("\tprintln(\"PASS\")\n")
+	}
+	body.WriteString("\treturn 0\n")
+	body.WriteString("}\n")
+	body.WriteString("\nfunc main() {\n")
+	if hasTestMain {
+		body.WriteString(fmt.Sprintf("\t%s(&graalgoM{})\n", testMainCallName))
+		// TestMain returned without exiting: the run is over and the
+		// package passes, exactly as under gc (see graalgoM above).
+		// The explicit exit also keeps the driver's os import used.
+		body.WriteString("\tos.Exit(0)\n")
+	} else {
+		body.WriteString("\tos.Exit(runGraalgoTests())\n")
 	}
 	body.WriteString("}\n")
 
@@ -1784,57 +2026,176 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 	sb.WriteString(buf.String())
 }
 
-// rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
-// the parameter list AND any nested function literals (e.g. the closure
-// passed to t.Run). Uses an AST walk so no testing.T reference survives.
-func rewriteParam(fn *ast.FuncDecl) {
-	ast.Inspect(fn, func(n ast.Node) bool {
-		switch t := n.(type) {
-		case *ast.StarExpr:
-			if sel, ok := t.X.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-					t.X = &ast.Ident{Name: "graalgoT"}
-				}
-			}
-		case *ast.SelectorExpr:
-			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
-				// testing.T as a bare type (not pointer): replace the
-				// selector with the graalgoT identifier.
-				// (Handled by replacing the parent; see below.)
-			}
+// typeParamNames returns the type parameter names declared by ft
+// (e.g. T in func h[T any]).
+func typeParamNames(ft *ast.FuncType) map[string]bool {
+	names := make(map[string]bool)
+	if ft == nil || ft.TypeParams == nil {
+		return names
+	}
+	for _, f := range ft.TypeParams.List {
+		for _, n := range f.Names {
+			names[n.Name] = true
 		}
-		return true
-	})
-	// Second pass: replace bare testing.T selector expressions (non-pointer
-	// type references) which ast.Inspect can't swap in place.
-	rewriteBareTestingT(fn.Type)
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		if fl, ok := n.(*ast.FuncLit); ok {
-			rewriteBareTestingT(fl.Type)
-		}
-		return true
-	})
+	}
+	return names
 }
 
-// rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
-// function type's params and results.
-func rewriteBareTestingT(ft *ast.FuncType) {
+// funcTypeParamNames returns the type parameter names in scope for fn's
+// signature: the function's own type parameters plus a generic
+// receiver's type arguments (e.g. T in func (s S[T]) Foo(v T) — v's T
+// is the receiver's parameter, not testing.T, and must never be
+// rewritten to graalgoT).
+func funcTypeParamNames(fn *ast.FuncDecl) map[string]bool {
+	names := typeParamNames(fn.Type)
+	if fn.Recv == nil {
+		return names
+	}
+	for _, field := range fn.Recv.List {
+		t := field.Type
+		if star, ok := t.(*ast.StarExpr); ok {
+			t = star.X
+		}
+		switch x := t.(type) {
+		case *ast.IndexExpr:
+			if id, ok := x.Index.(*ast.Ident); ok {
+				names[id.Name] = true
+			}
+		case *ast.IndexListExpr:
+			for _, ix := range x.Indices {
+				if id, ok := ix.(*ast.Ident); ok {
+					names[id.Name] = true
+				}
+			}
+		}
+	}
+	return names
+}
+
+// rewriteTestingType rewrites one type expression in place when it
+// denotes *testing.T / *testing.M (or the bare type) in any spelling
+// the file uses; otherwise it leaves the expression untouched. expr is
+// the address of the type slot so bare selectors/idents can be
+// replaced, not just mutated. A bare T/M is rewritten only when no type
+// parameter of that name is in scope (tparams): a type parameter
+// shadows the dot-imported testing type.
+func rewriteTestingType(expr *ast.Expr, refs testingImportRefs, tparams map[string]bool) {
+	switch t := (*expr).(type) {
+	case *ast.StarExpr:
+		// *testing.T / *tt.T / *T (dot-imported).
+		if sel, ok := t.X.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && refs.quals[id.Name] {
+				switch sel.Sel.Name {
+				case "T":
+					t.X = &ast.Ident{Name: "graalgoT"}
+				case "M":
+					t.X = &ast.Ident{Name: "graalgoM"}
+				}
+			}
+			return
+		}
+		if id, ok := t.X.(*ast.Ident); ok && refs.dot && !tparams[id.Name] {
+			switch id.Name {
+			case "T":
+				t.X = &ast.Ident{Name: "graalgoT"}
+			case "M":
+				t.X = &ast.Ident{Name: "graalgoM"}
+			}
+		}
+	case *ast.SelectorExpr:
+		// Bare testing.T / testing.M (non-pointer type reference).
+		if id, ok := t.X.(*ast.Ident); ok && refs.quals[id.Name] {
+			switch t.Sel.Name {
+			case "T":
+				*expr = &ast.Ident{Name: "graalgoT"}
+			case "M":
+				*expr = &ast.Ident{Name: "graalgoM"}
+			}
+		}
+	case *ast.Ident:
+		// Bare dot-imported T / M (non-pointer type reference).
+		if refs.dot && !tparams[t.Name] {
+			switch t.Name {
+			case "T":
+				*expr = &ast.Ident{Name: "graalgoT"}
+			case "M":
+				*expr = &ast.Ident{Name: "graalgoM"}
+			}
+		}
+	}
+}
+
+// rewriteFuncType rewrites *testing.T to *graalgoT and *testing.M to
+// *graalgoM in a function type's params and results, in every spelling
+// the file uses (qualified, aliased, dot-imported). Function types
+// resolve in file scope, so dot-imported bare T/M always denote the
+// testing types here, except when a type parameter of the same name
+// is in scope (tparams).
+func rewriteFuncType(ft *ast.FuncType, refs testingImportRefs, tparams map[string]bool) {
 	if ft == nil {
 		return
+	}
+	rewriteFieldList := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			rewriteTestingType(&f.Type, refs, tparams)
+		}
 	}
 	rewriteFieldList(ft.Params)
 	rewriteFieldList(ft.Results)
 }
 
-func rewriteFieldList(fl *ast.FieldList) {
-	if fl == nil {
-		return
-	}
-	for _, f := range fl.List {
-		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-				f.Type = &ast.Ident{Name: "graalgoT"}
+// rewriteParam rewrites *testing.T to *graalgoT and *testing.M to
+// *graalgoM everywhere in a FuncDecl: the parameter list, results, and
+// any nested function literals (e.g. the closure passed to t.Run), plus
+// *testing.T/*testing.M type references in the body. Spellings are
+// resolved through f's own imports, so aliased (tt.T) and dot-imported
+// (T) forms rewrite too (A-3).
+//
+// Dot-imported bare T/M are rewritten ONLY in function-type positions
+// (params/results): in the body a bare *T can dereference a local
+// variable T or name a local type T, which must never be rewritten.
+// Qualified (testing.T) and aliased (tt.T) forms are unambiguous and
+// rewrite everywhere, as before.
+func rewriteParam(f *ast.File, fn *ast.FuncDecl) {
+	refs := testingRefsFor(f)
+	tparams := funcTypeParamNames(fn)
+	// Signatures first (file scope: dot-imported T/M always denote
+	// the testing types here, modulo type parameters).
+	rewriteFuncType(fn.Type, refs, tparams)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if fl, ok := n.(*ast.FuncLit); ok {
+			inner := make(map[string]bool, len(tparams))
+			for k := range tparams {
+				inner[k] = true
+			}
+			for k := range typeParamNames(fl.Type) {
+				inner[k] = true
+			}
+			rewriteFuncType(fl.Type, refs, inner)
+		}
+		return true
+	})
+	// Body type references: qualified/aliased forms only. A bare *T
+	// in the body may dereference a local variable or name a local
+	// type, so dot-imported spellings are never rewritten here.
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		star, ok := n.(*ast.StarExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := star.X.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok && refs.quals[id.Name] {
+				switch sel.Sel.Name {
+				case "T":
+					star.X = &ast.Ident{Name: "graalgoT"}
+				case "M":
+					star.X = &ast.Ident{Name: "graalgoM"}
+				}
 			}
 		}
-	}
+		return true
+	})
 }

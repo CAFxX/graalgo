@@ -48,8 +48,12 @@ func runSynthDriver(t *testing.T, dir string, verbose bool) (string, int) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(tests) > 0 {
-			ftList = append(ftList, fileTests{file: tf, tests: tests})
+		hasMain, err := discoverTestMain(tf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tests) > 0 || hasMain {
+			ftList = append(ftList, fileTests{file: tf, tests: tests, testMain: hasMain})
 		}
 	}
 	srcFiles, err := filepath.Glob(filepath.Join(dir, "*.go"))

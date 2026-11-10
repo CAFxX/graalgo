@@ -248,23 +248,67 @@ func (r *testRunner) runPackage(dir string) bool {
 	}
 
 	// Discover the selected tests of every file, applying the -run
-	// filter (regex, like `go test`).
+	// filter (regex, like `go test`), and the TestMain entry point
+	// (A-2). A file defining TestMain joins ftList even when no test
+	// is selected: gc runs TestMain with -run matching nothing, and
+	// its m.Run() then reports zero tests.
 	var ftList []fileTests
+	totalSelected := 0
+	var testMainFile string
+	testMainAsTest := false
+	testMainAsTestFiles := 0
 	for _, tf := range runnableTests {
 		tests, err := discoverTests(tf)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
 			return false
 		}
+		hasMain, err := discoverTestMain(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		if hasMain {
+			if testMainFile != "" {
+				fmt.Fprintf(os.Stderr, "graalgo test: multiple definitions of TestMain\n")
+				return false
+			}
+			testMainFile = tf
+		}
 		var selected []string
+		asTestInFile := false
 		for _, t := range tests {
+			if t == "TestMain" && tf != testMainFile {
+				// A TestMain-as-test in another file than the entry
+				// point is a redeclaration (gc: "TestMain redeclared
+				// in this block" [build failed]).
+				testMainAsTest = true
+				asTestInFile = true
+			}
 			if r.runRe == nil || r.runRe.MatchString(t) {
 				selected = append(selected, t)
 			}
 		}
-		if len(selected) > 0 {
-			ftList = append(ftList, fileTests{file: tf, tests: selected})
+		if asTestInFile {
+			testMainAsTestFiles++
 		}
+		totalSelected += len(selected)
+		if len(selected) > 0 || hasMain {
+			ftList = append(ftList, fileTests{file: tf, tests: selected, testMain: hasMain})
+		}
+	}
+	if testMainFile != "" && testMainAsTest {
+		fmt.Fprintf(os.Stderr, "graalgo test: TestMain redeclared in this block\n")
+		return false
+	}
+	if testMainAsTestFiles > 1 {
+		// Two files each defining TestMain as an ordinary test
+		// (func TestMain(m *testing.T)) with no entry point: gc
+		// rejects the package ("TestMain redeclared in this block").
+		// Without this check the duplicate slips through to the
+		// driver, which fails to compile with a confusing error.
+		fmt.Fprintf(os.Stderr, "graalgo test: TestMain redeclared in this block\n")
+		return false
 	}
 
 	// The synthesized driver prints go-test-format output itself
@@ -316,7 +360,7 @@ func (r *testRunner) runPackage(dir string) bool {
 	}
 	elapsed := time.Since(t0).Seconds()
 	okSuffix := ""
-	if len(ftList) == 0 {
+	if totalSelected == 0 {
 		okSuffix = " [no tests to run]"
 	}
 	if ok {

@@ -1066,3 +1066,559 @@ func TestWhiteBox(t *testing.T) {
 		t.Errorf("error does not name the broken file: %v", err)
 	}
 }
+
+// TestDiscoverTestsSignatureClassification is the regression test for
+// A-3: discoverTests must apply gc's classification, verified against
+// go1.27.1 (see the gc probes in the lane report). Every case is
+// demonstrably capable of failing: the wantTests/wantErr pair pins the
+// exact classification, and the error cases assert gc's own message.
+func TestDiscoverTestsSignatureClassification(t *testing.T) {
+	cases := []struct {
+		name      string
+		src       string
+		wantTests []string
+		wantErr   string // "" means no error
+	}{
+		{
+			name: "qualified",
+			src: `package p
+
+import "testing"
+
+func TestOK(t *testing.T) {}
+`,
+			wantTests: []string{"TestOK"},
+		},
+		{
+			name: "bare Test",
+			src: `package p
+
+import "testing"
+
+func Test(t *testing.T) {}
+`,
+			wantTests: []string{"Test"},
+		},
+		{
+			name: "digits and underscore after Test",
+			src: `package p
+
+import "testing"
+
+func Test123(t *testing.T) {}
+func Test_foo(t *testing.T) {}
+`,
+			wantTests: []string{"Test123", "Test_foo"},
+		},
+		{
+			name: "aliased qualifier",
+			src: `package p
+
+import tt "testing"
+
+func TestFoo(t *tt.T) {}
+`,
+			wantTests: []string{"TestFoo"},
+		},
+		{
+			name: "dot-imported",
+			src: `package p
+
+import . "testing"
+
+func TestFoo(t *T) {}
+`,
+			wantTests: []string{"TestFoo"},
+		},
+		{
+			name: "TestMain entry point excluded",
+			src: `package p
+
+import "testing"
+
+func TestMain(m *testing.M) {}
+func TestOK(t *testing.T) {}
+`,
+			wantTests: []string{"TestOK"},
+		},
+		{
+			name: "TestMain as ordinary test",
+			src: `package p
+
+import "testing"
+
+func TestMain(m *testing.T) {}
+`,
+			wantTests: []string{"TestMain"},
+		},
+		{
+			name: "wrong type",
+			src: `package p
+
+import "testing"
+
+func TestFoo(x int) {}
+`,
+			wantErr: "wrong signature for TestFoo, must be: func TestFoo(t *testing.T)",
+		},
+		{
+			name: "two names one field",
+			src: `package p
+
+import "testing"
+
+func TestFoo(t, u *testing.T) {}
+`,
+			wantErr: "wrong signature for TestFoo, must be: func TestFoo(t *testing.T)",
+		},
+		{
+			name: "zero params",
+			src: `package p
+
+import "testing"
+
+func TestFoo() {}
+`,
+			wantErr: "wrong signature for TestFoo, must be: func TestFoo(t *testing.T)",
+		},
+		{
+			name: "non-pointer param",
+			src: `package p
+
+import "testing"
+
+func TestFoo(t testing.T) {}
+`,
+			wantErr: "wrong signature for TestFoo, must be: func TestFoo(t *testing.T)",
+		},
+		{
+			name: "result value",
+			src: `package p
+
+import "testing"
+
+func TestFoo(t *testing.T) int { return 0 }
+`,
+			wantErr: "wrong signature for TestFoo, must be: func TestFoo(t *testing.T)",
+		},
+		{
+			name: "variadic param",
+			src: `package p
+
+import "testing"
+
+func TestFoo(t ...*testing.T) {}
+`,
+			wantErr: "wrong signature for TestFoo, must be: func TestFoo(t *testing.T)",
+		},
+		{
+			name: "malformed name with test signature",
+			src: `package p
+
+import "testing"
+
+func Testfoo(t *testing.T) {}
+`,
+			wantErr: "Testfoo has malformed name: first letter after 'Test' must not be lowercase",
+		},
+		{
+			name: "malformed name with wrong signature ignored",
+			src: `package p
+
+import "testing"
+
+func Testfoo(x int) {}
+func TestOK(t *testing.T) {}
+`,
+			wantTests: []string{"TestOK"},
+		},
+		{
+			name: "TestMain zero params",
+			src: `package p
+
+import "testing"
+
+func TestMain() {}
+`,
+			wantErr: "wrong signature for TestMain, must be: func TestMain(m *testing.M)",
+		},
+		{
+			name: "TestMain wrong param type",
+			src: `package p
+
+import "testing"
+
+func TestMain(m int) {}
+`,
+			wantErr: "wrong signature for TestMain, must be: func TestMain(m *testing.M)",
+		},
+		{
+			name: "TestMain two params",
+			src: `package p
+
+import "testing"
+
+func TestMain(m *testing.M, n int) {}
+`,
+			wantErr: "wrong signature for TestMain, must be: func TestMain(m *testing.M)",
+		},
+		{
+			name: "methods ignored",
+			src: `package p
+
+import "testing"
+
+type S struct{}
+
+func (s S) TestFoo(t *testing.T) {}
+func (s S) TestMain(m *testing.M) {}
+func TestOK(t *testing.T) {}
+`,
+			wantTests: []string{"TestOK"},
+		},
+		{
+			name: "non-Test funcs ignored",
+			src: `package p
+
+import "testing"
+
+func helper(t *testing.T) {}
+func BenchmarkXxx(b *testing.B) {}
+func TestOK(t *testing.T) {}
+`,
+			wantTests: []string{"TestOK"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testFile := filepath.Join(root, "p_test.go")
+			writeFile(t, root, "p_test.go", tc.src)
+			tests, err := discoverTests(testFile)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("discoverTests = %v, want error %q", tests, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("discoverTests error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("discoverTests error = %v, want %v", err, tc.wantTests)
+			}
+			if len(tests) != len(tc.wantTests) {
+				t.Fatalf("discoverTests = %v, want %v", tests, tc.wantTests)
+			}
+			for i := range tests {
+				if tests[i] != tc.wantTests[i] {
+					t.Fatalf("discoverTests = %v, want %v", tests, tc.wantTests)
+				}
+			}
+		})
+	}
+}
+
+// TestDiscoverTestMain is the regression test for A-2's discovery half:
+// only func TestMain(m *testing.M) — in any spelling of *testing.M —
+// is an entry point.
+func TestDiscoverTestMain(t *testing.T) {
+	cases := []struct {
+		name     string
+		src      string
+		wantMain bool
+		wantErr  string
+	}{
+		{
+			name: "qualified",
+			src: `package p
+
+import "testing"
+
+func TestMain(m *testing.M) {}
+`,
+			wantMain: true,
+		},
+		{
+			name: "aliased qualifier",
+			src: `package p
+
+import tt "testing"
+
+func TestMain(m *tt.M) {}
+`,
+			wantMain: true,
+		},
+		{
+			name: "dot-imported",
+			src: `package p
+
+import . "testing"
+
+func TestMain(m *M) {}
+`,
+			wantMain: true,
+		},
+		{
+			name: "TestMain as ordinary test is not an entry point",
+			src: `package p
+
+import "testing"
+
+func TestMain(m *testing.T) {}
+`,
+			wantMain: false,
+		},
+		{
+			name: "wrong signature",
+			src: `package p
+
+import "testing"
+
+func TestMain(m int) {}
+`,
+			wantErr: "wrong signature for TestMain, must be: func TestMain(m *testing.M)",
+		},
+		{
+			name: "absent",
+			src: `package p
+
+import "testing"
+
+func TestOK(t *testing.T) {}
+`,
+			wantMain: false,
+		},
+		{
+			name: "method ignored",
+			src: `package p
+
+import "testing"
+
+type S struct{}
+
+func (s S) TestMain(m *testing.M) {}
+`,
+			wantMain: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testFile := filepath.Join(root, "p_test.go")
+			writeFile(t, root, "p_test.go", tc.src)
+			got, err := discoverTestMain(testFile)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("discoverTestMain = %v, want error %q", got, tc.wantErr)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("discoverTestMain error = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("discoverTestMain error = %v, want %v", err, tc.wantMain)
+			}
+			if got != tc.wantMain {
+				t.Fatalf("discoverTestMain = %v, want %v", got, tc.wantMain)
+			}
+		})
+	}
+}
+
+// TestTestMainDriverShape pins the synthesized driver for a TestMain
+// package: TestMain is rewritten to take *graalgoM and main() calls it
+// as the entry point; no *testing.M reference and no TestMain(tt) call
+// may survive (the A-2 failure was exactly that).
+func TestTestMainDriverShape(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/mainshape\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package mainshape\n")
+	writeFile(t, root, "a_test.go", `package mainshape
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestOK(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasMain, err := discoverTestMain(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMain {
+		t.Fatal("discoverTestMain = false, want true")
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests, testMain: hasMain}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, "func TestMain(m *graalgoM") {
+		t.Errorf("driver did not rewrite TestMain's param to *graalgoM:\n%s", src)
+	}
+	if !strings.Contains(src, "TestMain(&graalgoM{})") {
+		t.Errorf("driver main() does not call TestMain as the entry point:\n%s", src)
+	}
+	if !strings.Contains(src, "func runGraalgoTests() int") {
+		t.Errorf("driver has no runGraalgoTests loop:\n%s", src)
+	}
+	if strings.Contains(src, "TestMain(tt)") {
+		t.Errorf("driver still calls TestMain as an ordinary test:\n%s", src)
+	}
+	// The shim's own comments mention testing.M; assert on the
+	// parameter form, which only a surviving reference would have.
+	if strings.Contains(src, "(m *testing.M)") {
+		t.Errorf("driver still references testing.M in TestMain's param:\n%s", src)
+	}
+}
+
+// TestTestMainExtCollisionRenamed pins the entry-point call when the
+// external test package's TestMain collides with the package under
+// test's own TestMain: the external one is renamed and main() calls
+// the renamed function. (The white-box TestMain keeps its *testing.M
+// — source files are never rewritten, as before; a real package with
+// a non-test TestMain is out of scope here, the rename path is what
+// this test pins.)
+func TestTestMainExtCollisionRenamed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/extcol\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", `package extcol
+
+import "testing"
+
+func TestMain(m *testing.M) {}
+`)
+	// A white-box test file, so the package's own sources are inlined
+	// (inlineSrc) and the white-box TestMain actually collides with
+	// the external one. Without it the sources are not inlined and
+	// there is nothing to collide with.
+	writeFile(t, root, "b_test.go", `package extcol
+
+import "testing"
+
+func TestWhite(t *testing.T) {}
+`)
+	writeFile(t, root, "a_test.go", `package extcol_test
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestOK(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasMain, err := discoverTestMain(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests, testMain: hasMain}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, "func TestMain2(m *graalgoM") {
+		t.Errorf("driver did not rename the external TestMain to TestMain2:\n%s", src)
+	}
+	if !strings.Contains(src, "TestMain2(&graalgoM{})") {
+		t.Errorf("driver main() does not call the renamed TestMain2:\n%s", src)
+	}
+}
+
+// TestDotImportTestParamRewritten pins the A-3 rewrite half: a
+// dot-imported *T param (and a dot-imported *M TestMain param) must be
+// rewritten to *graalgoT / *graalgoM, or the driver fails to compile
+// with the testing import dropped.
+func TestDotImportTestParamRewritten(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/dotrw\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package dotrw\n")
+	writeFile(t, root, "a_test.go", `package dotrw
+
+import (
+	. "testing"
+	"os"
+)
+
+func TestMain(m *M) {
+	os.Exit(m.Run())
+}
+
+func TestFoo(t *T) {}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestFoo" {
+		t.Fatalf("discoverTests = %v, want [TestFoo]", tests)
+	}
+	hasMain, err := discoverTestMain(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests, testMain: hasMain}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, "func TestFoo(t *graalgoT") {
+		t.Errorf("driver did not rewrite dot-imported *T to *graalgoT:\n%s", src)
+	}
+	if !strings.Contains(src, "func TestMain(m *graalgoM") {
+		t.Errorf("driver did not rewrite dot-imported *M to *graalgoM:\n%s", src)
+	}
+}
+
+// TestGenericTypeParamNotRewritten guards the dot-import rewrite
+// against a generic helper whose type parameter is named T: the
+// parameter type is the type parameter, not testing.T, and must be
+// left alone.
+func TestGenericTypeParamNotRewritten(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/genparam\n\ngo 1.21\n")
+	writeFile(t, root, "a.go", "package genparam\n")
+	writeFile(t, root, "a_test.go", `package genparam
+
+import . "testing"
+
+func check[T any](v T) T { return v }
+
+func TestFoo(t *T) {
+	_ = check(t)
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasMain, err := discoverTestMain(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests, testMain: hasMain}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, "func check[T any](v T) T") {
+		t.Errorf("driver rewrote the generic helper's type parameter T:\n%s", src)
+	}
+	if !strings.Contains(src, "func TestFoo(t *graalgoT") {
+		t.Errorf("driver did not rewrite the test's *T param:\n%s", src)
+	}
+}
