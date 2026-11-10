@@ -5177,8 +5177,24 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 				if err != nil {
 					return err
 				}
-				if mc.needsInst {
-					enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
+				// WS G (P1-1): a disk multi-result stub template
+				// resolves here; enqueue the __-helper's
+				// instantiation instead (see
+				// diskMRMethodInstantiation).
+				minst, err := e.diskMRMethodInstantiation(mc, selection, newFuncInst)
+				if err != nil {
+					// Same fixpoint skip as the package-func arm
+					// below: unbound type args mean a nested call
+					// inside a generic template that inTemplate
+					// missed; the fixpoint finds it when the outer
+					// generic is instantiated.
+					if strings.Contains(err.Error(), "unbound type parameter") {
+						continue
+					}
+					return err
+				}
+				if minst != nil {
+					enqueue(minst)
 				}
 				handled = true
 			}
@@ -5286,8 +5302,14 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		if err != nil {
 			return err
 		}
-		if mc.needsInst {
-			enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
+		// WS G (P1-1): enqueue the __-helper's instantiation when the
+		// method resolves to a disk multi-result stub template.
+		minst, err := e.diskMRMethodInstantiation(mc, selection, newFuncInst)
+		if err != nil {
+			return err
+		}
+		if minst != nil {
+			enqueue(minst)
 		}
 	}
 	return nil
@@ -5297,6 +5319,18 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 // function template with the given type arguments (factored out of
 // enumerateInstantiations so the method-table drain can reuse it).
 func (e *exporter) newFuncInstantiation(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) (*instantiation, error) {
+	// WS G (P1-1): a disk multi-result stub template must never be
+	// instantiated — its body is panic("unreachable"). Redirect to the
+	// __-helper before computing the key, so every instantiation of the
+	// stub (scanRoots, findNested, ensureFuncInstantiation, method-table
+	// drain) becomes an instantiation of the helper with the same type
+	// arguments. Idempotent: the helper is never a disk MR stub, so
+	// diskMRHelperFi returns false for it.
+	if fi.isTemplate && fi.obj != nil {
+		if hfi, hok := e.diskMRHelperFi(fi.obj); hok {
+			fi = hfi
+		}
+	}
 	key := instKeyForFunc(fi, targs, subst)
 	if !isConcreteKey(key) {
 		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of %s", fi.obj.Name())
@@ -5393,6 +5427,12 @@ func (e *exporter) buildMethodTableInst(t types.Type, sel *types.Selection, mobj
 		} else {
 			return nil, nil
 		}
+	} else if hfi, hok := e.diskMRHelperFi(mobj); hok {
+		// WS G (P1-1): the funcByObj hit is a disk multi-result stub
+		// (kept in the AST for method resolution). Instantiate the
+		// __-helper instead, so interface dispatch targets the helper
+		// rather than the panic stub.
+		fi, helperMapped = hfi, true
 	}
 	if !fi.isTemplate {
 		return nil, nil
@@ -5795,8 +5835,15 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 				err = merr
 				return false
 			}
-			if mc.needsInst {
-				enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
+			// WS G (P1-1): enqueue the __-helper's instantiation when
+			// the method resolves to a disk multi-result stub template.
+			minst, merr := e.diskMRMethodInstantiation(mc, selection, newFuncInst)
+			if merr != nil {
+				err = merr
+				return false
+			}
+			if minst != nil {
+				enqueue(minst)
 			}
 		case *ast.Ident:
 			// Generic function in value position (e.g. min[T] passed as an
@@ -6447,6 +6494,15 @@ func (e *exporter) prepareInstantiation(inst *instantiation) error {
 
 func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	fd := inst.decl.fd
+	// WS G (P1-1): a disk multi-result stub template must never be
+	// instantiated — its body is panic("unreachable"). Every
+	// instantiation site redirects to the __-helper; reaching here
+	// means a site was missed. Fail loud instead of emitting the stub.
+	if inst.decl.obj != nil {
+		if _, hok := e.diskMRHelperFi(inst.decl.obj); hok {
+			return nil, scopeErrorf("disk multi-result stub %s must not be instantiated (internal error: call sites desugar to the __-helper)", inst.name)
+		}
+	}
 	if fd.Body == nil {
 		return nil, scopeErrorf("func %s without body", fd.Name.Name)
 	}
@@ -10053,11 +10109,28 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	}
 	var objID int
 	if mc.needsInst {
-		inst, ok := e.instByKey[mc.key]
-		if !ok {
-			return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
+		// WS G (P1-1): a disk multi-result stub template resolves
+		// here; bind the __-helper's instantiation instead of the
+		// stub's (the stub body is panic("unreachable")). The
+		// non-template path below keeps failing loud (the stub has
+		// no funcdecl to reference).
+		bound := false
+		if fn, ok := selection.Obj().(*types.Func); ok {
+			if hfi, hok := e.diskMRHelperFi(fn); hok {
+				hinstID, herr := e.ensureFuncInstantiation(hfi, mc.rawTargsForEmit)
+				if herr != nil {
+					return nil, herr
+				}
+				objID, bound = hinstID, true
+			}
 		}
-		objID = inst.instID
+		if !bound {
+			inst, ok := e.instByKey[mc.key]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
+			}
+			objID = inst.instID
+		}
 	} else {
 		objID = mc.decl.funcID
 	}
@@ -10768,6 +10841,19 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		}
 		if fi == nil {
 			fi, ok = e.funcByObj[mobj]
+		}
+		// WS G (P1-1): the funcByObj hit above may be a disk
+		// multi-result stub (kept in the AST for method resolution).
+		// Wiring its funcID into the table would dispatch interface
+		// calls to panic("unreachable"). Leave the method out
+		// instead ("missing method" at dispatch — loud, never a
+		// panic). The helper-mapped path above already handles the
+		// cases with a helper; this is the residual where that
+		// mapping failed.
+		if fi != nil && !helperMapped {
+			if _, hok := e.diskMRHelperFi(mobj); hok {
+				continue
+			}
 		}
 		if !ok {
 			// P3-M8 (WS D): multi-result synthetic methods are skipped

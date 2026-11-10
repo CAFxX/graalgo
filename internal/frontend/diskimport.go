@@ -341,8 +341,13 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// For package-level vars, records aliases instead of expanding.
 	etaVarLits, varAliases := etaExpandMRFuncValues(files, info, pkg, true)
 	// Stubs served type-checking; keep them for method resolution
-	// (the desugar rewrites all calls, so stubs are never exported).
-	// Mark them via the spec so the exporter can skip them.
+	// (deleting them would break resolveMethodCall/scanRoots, which
+	// look the stub up in methodIndex/funcByObj). They are never
+	// exported: exportFuncDecl skips them by lookupDiskMR, generic
+	// stub templates are redirected to the __-helper at every
+	// instantiation site, and exportInstantiation fails loud if one
+	// ever reaches it (P1-1; removeDiskMRStubs is gone — it had zero
+	// callers and deleting the decls is the wrong mechanism).
 	registerDiskMRSpecs(mrSpecs)
 	return &syntheticPackage{
 		path: importPath, pkg: pkg,

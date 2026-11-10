@@ -14,8 +14,16 @@ package main
 //     func F(args...) (T1, T2) { panic("unreachable") }  // stub for type-check
 //   - Register {pkg, F} -> __F in the dynamic desugar table; call sites
 //     are rewritten during export by the Appendix-M machinery.
-//   - After type-checking, the stubs are removed from the AST so the
-//     exporter never sees them (it cannot emit multi-result bodies).
+//   - The stubs are NEVER removed from the AST: they are kept for method
+//     resolution (resolveMethodCall/scanRoots look the stub up in
+//     methodIndex/funcByObj; deleting the decls would break that). The
+//     exporter never emits them instead: exportFuncDecl skips them by
+//     lookupDiskMR, generic stub templates are redirected to the
+//     __-helper at every instantiation site, and exportInstantiation
+//     fails loud if a stub template ever reaches it. A missed rewrite
+//     therefore fails loud, never by executing the stub. (P1-1:
+//     removeDiskMRStubs, which claimed to remove the stubs after
+//     type-checking, had zero callers and is gone.)
 //
 // This is general: any disk package with multi-result functions works,
 // not just the module that exposed the gap.
@@ -37,7 +45,7 @@ type diskMRSpec struct {
 	helper     string // "__parse"
 	pairType   string // "__parsePair"
 	pairFields []string
-	stub       *ast.FuncDecl // removed after type-check
+	stub       *ast.FuncDecl // kept in the AST for method resolution; never emitted (see the package doc)
 }
 
 var (
@@ -2054,24 +2062,6 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 	}
 }
 
-// removeDiskMRStubs removes stub FuncDecls from files after type-checking.
-func removeDiskMRStubs(files []*ast.File, specs []diskMRSpec) {
-	stubSet := map[*ast.FuncDecl]bool{}
-	for _, s := range specs {
-		stubSet[s.stub] = true
-	}
-	for _, f := range files {
-		var out []ast.Decl
-		for _, decl := range f.Decls {
-			if fd, ok := decl.(*ast.FuncDecl); ok && stubSet[fd] {
-				continue
-			}
-			out = append(out, decl)
-		}
-		f.Decls = out
-	}
-}
-
 // registerDiskMRSpecs adds specs to the dynamic desugar table.
 func registerDiskMRSpecs(specs []diskMRSpec) {
 	diskMRMu.Lock()
@@ -2136,6 +2126,31 @@ func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 		}
 	}
 	return nil, false
+}
+
+// diskMRMethodInstantiation returns the instantiation a method call site
+// should enqueue when mc resolves to a disk multi-result stub template:
+// the __-helper's instantiation (via newFuncInst, with the receiver's
+// type arguments — the helper is a plain generic function parameterized
+// like the receiver), so the emitted call targets the helper, never the
+// panic stub. When mc does not resolve to a disk MR stub template it
+// returns the method's own instantiation; (nil, nil) when no
+// instantiation is needed (mc.needsInst is false). Callers use it in
+// place of building the instantiation from mc.decl directly. (P1-1)
+func (e *exporter) diskMRMethodInstantiation(mc *methodCall, selection *types.Selection, newFuncInst func(*funcDeclInfo, []types.Type, *typeSubst) (*instantiation, error)) (*instantiation, error) {
+	if !mc.needsInst {
+		return nil, nil
+	}
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok && mc.decl.obj != nil {
+		fn, ok = mc.decl.obj, true
+	}
+	if ok {
+		if hfi, hok := e.diskMRHelperFi(fn); hok {
+			return newFuncInst(hfi, mc.rawTargsForEmit, mc.subst)
+		}
+	}
+	return &instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name}, nil
 }
 
 // diskMRPairType returns the *types.Named pair type from the disk package.

@@ -14,8 +14,12 @@
 //	Sizeof/Alignof/Offsetof                   (builtins: go/types folds them
 //	                                           to constants — no pre-pass,
 //	                                           no size tables; a non-constant
-//	                                           operand, e.g. over a type
-//	                                           parameter, is a scope error)
+//	                                           operand over a type parameter
+//	                                           is folded under the ambient
+//	                                           substitution when it resolves
+//	                                           to a concrete type (P1-1:
+//	sizeofUnderSubst), and is a scope
+//	                                           error otherwise)
 //	Slice/SliceData/String/StringData         (builtins: result types flow
 //	                                           from go/types; lowered to the
 //	                                           unsafe* wire nodes over the
@@ -52,6 +56,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
 )
@@ -94,14 +99,26 @@ func isUnsafeIntrinsic(obj types.Object) bool {
 // exportUnsafeIntrinsic lowers a call to one of the eight unsafe builtins.
 // Sizeof/Alignof/Offsetof are constant-folded by go/types itself: the call's
 // recorded value is the constant. A non-constant operand (go/types reports
-// value mode for types with variable size, e.g. over a type parameter) is a
-// named scope error rather than a miscompile.
+// value mode for types with variable size, e.g. over a type parameter) is
+// folded under the ambient substitution when it resolves to a concrete
+// type (sizeofUnderSubst, P1-1); otherwise it is a named scope error
+// rather than a miscompile.
 func (e *exporter) exportUnsafeIntrinsic(c *ast.CallExpr, b *types.Builtin) (*Node, error) {
 	name := b.Name()
 	switch name {
 	case "Sizeof", "Alignof", "Offsetof":
 		tv, ok := e.info.Types[c]
 		if !ok || tv.Value == nil {
+			// P1-1: inside a generic instantiation body the
+			// template's type info carries no constant value for a
+			// size over a type parameter (the size is only known
+			// after substitution — e.g.
+			// internal/strconv.shortFloat's `8 *
+			// unsafe.Sizeof(F(0))` in the __shortFloat helper
+			// body). Fold under the ambient substitution instead.
+			if v, ok := e.sizeofUnderSubst(c, name); ok {
+				return e.foldedConst(c, v)
+			}
 			return nil, scopeErrorf("unsafe.%s: operand is not a constant expression in frontend/v1 scope (M8)", name)
 		}
 		return e.foldedConst(c, tv.Value)
@@ -124,6 +141,67 @@ func (e *exporter) exportUnsafeIntrinsic(c *ast.CallExpr, b *types.Builtin) (*No
 	default:
 		return nil, scopeErrorf("unsafe.%s: unsupported intrinsic (M8)", name)
 	}
+}
+
+// sizeofUnderSubst folds unsafe.Sizeof/Alignof/Offsetof under the ambient
+// type substitution (P1-1). go/types folds these builtins to constants in
+// the template's type info only when the operand is already constant;
+// inside a generic instantiation body the operand's type is still the
+// type parameter (e.g. internal/strconv.shortFloat's `8 *
+// unsafe.Sizeof(F(0))` in the __shortFloat helper body), so the template
+// info carries no value. When the substitution resolves the operand's
+// type to a concrete type, compute the size with the exporter's gc
+// sizes — the same oracle the rest of the exporter uses. Returns false
+// when the operand does not resolve to a concrete type (the caller keeps
+// the scope error). The sizes oracle panics on bare type parameters, so
+// the concrete check (mentionsTypeParam, alias-aware) gates every call.
+func (e *exporter) sizeofUnderSubst(c *ast.CallExpr, name string) (constant.Value, bool) {
+	if e.subst == nil || len(c.Args) != 1 {
+		return nil, false
+	}
+	switch name {
+	case "Sizeof", "Alignof":
+		tv, ok := e.info.Types[c.Args[0]]
+		if !ok || tv.Type == nil {
+			return nil, false
+		}
+		t := types.Unalias(e.substType(tv.Type))
+		if mentionsTypeParam(t) {
+			return nil, false
+		}
+		if name == "Sizeof" {
+			return constant.MakeInt64(e.sizes.Sizeof(t)), true
+		}
+		return constant.MakeInt64(e.sizes.Alignof(t)), true
+	case "Offsetof":
+		sel, ok := c.Args[0].(*ast.SelectorExpr)
+		if !ok {
+			return nil, false
+		}
+		selInfo, ok := e.info.Selections[sel]
+		if !ok || len(selInfo.Index()) != 1 {
+			return nil, false
+		}
+		xtv, ok := e.info.Types[sel.X]
+		if !ok || xtv.Type == nil {
+			return nil, false
+		}
+		st := types.Unalias(e.substType(xtv.Type))
+		if mentionsTypeParam(st) {
+			return nil, false
+		}
+		s, ok := st.Underlying().(*types.Struct)
+		if !ok {
+			return nil, false
+		}
+		vars := make([]*types.Var, s.NumFields())
+		for i := range vars {
+			vars[i] = s.Field(i)
+		}
+		offsets := e.sizes.Offsetsof(vars)
+		return constant.MakeInt64(offsets[selInfo.Index()[0]]), true
+	}
+	return nil, false
 }
 
 // exportUnsafeRuntimeCall exports the argument expressions and builds the

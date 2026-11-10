@@ -1534,6 +1534,33 @@ func (e *exporter) userMRInfoForVar(v *types.Var) *userMRInfo {
 	return nil
 }
 
+// classifyTableMultiResultCall runs the synthetic + disk multi-result
+// table classifiers in their established order (M7, Os, M8, Io, M9,
+// disk). Shared by the Ident, SelectorExpr, and IndexExpr arms of
+// classifyMultiResultCall so the three call shapes can never drift
+// apart (P1-1: the IndexExpr arm was missing, which let generic disk
+// multi-result calls fall through to exportFuncCall, where the pair
+// cannot be desugared).
+func classifyTableMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+	if plan := classifyM7MultiResultCall(pkgPath, fn, targs); plan != nil {
+		return plan
+	}
+	if plan := classifyOsMultiResultCall(pkgPath, fn, targs); plan != nil {
+		return plan
+	}
+	if plan := classifyM8MultiResultCall(pkgPath, fn, targs); plan != nil {
+		return plan
+	}
+	if plan := classifyIoMultiResultCall(pkgPath, fn, targs); plan != nil {
+		return plan
+	}
+	if plan := classifyM9MultiResultCall(pkgPath, fn, targs); plan != nil {
+		return plan
+	}
+	// WS G (P3-M9): disk-package multi-result (dynamic table).
+	return classifyDiskMultiResultCall(pkgPath, fn, targs)
+}
+
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// P4 (generic MR): generic instantiation call, e.g. hashStr[string](...).
 	// The Fun is an IndexExpr/IndexListExpr. Check for instantiation MR
@@ -1543,6 +1570,38 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			kind:       mrUser,
 			tmpType:    mrInfo.pairType,
 			pairFields: mrInfo.pairFields,
+		}
+	}
+	// WS G (P1-1): same-package generic call in IndexExpr/IndexListExpr
+	// form, e.g. shortFloat[F](...) in internal/strconv. The Ident arm
+	// below only matches a bare *ast.Ident fun, and unwrapSelector finds
+	// no SelectorExpr here, so without this arm the call falls through
+	// to exportFuncCall, which cannot desugar the pair (it would emit a
+	// call to the pair-returning helper where two results are expected).
+	// Pre-fix this was masked by the instMRInfoForCall pre-check above:
+	// the stub instantiation existed in instByKey with pair info, so
+	// the call took the mrUser plan. Post-fix there is no stub
+	// instantiation, so the call must desugar via the tables here.
+	// (Package-qualified generic calls, pkg.F[T](...), already reach
+	// the SelectorExpr arm below via unwrapSelector; callTargetIdent
+	// returns nil for them.)
+	switch c.Fun.(type) {
+	case *ast.IndexExpr, *ast.IndexListExpr:
+		if xid := callTargetIdent(c.Fun); xid != nil {
+			if obj, ok := e.info.Uses[xid].(*types.Func); ok {
+				if mrInfo, ok := e.userMRFuncs[obj]; ok {
+					return &mrPlan{
+						kind:       mrUser,
+						tmpType:    mrInfo.pairType,
+						pairFields: mrInfo.pairFields,
+					}
+				}
+				if obj.Pkg() != nil {
+					if plan := classifyTableMultiResultCall(obj.Pkg().Path(), obj, targsFromInstances(e, xid)); plan != nil {
+						return plan
+					}
+				}
+			}
 		}
 	}
 	// P4 (driver-harden): dot-imported fmt F-family (Fprint/Fprintf/
@@ -1606,25 +1665,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// generally: the tables and desugarExtract are already
 			// arity-generic (want := len(plan.pairFields)).
 			if obj.Pkg() != nil {
-				pkgPath := obj.Pkg().Path()
-				targs := targsFromInstances(e, id)
-				if plan := classifyM7MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyOsMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyM8MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyIoMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyM9MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				// WS G (P3-M9): disk-package multi-result (dynamic table).
-				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
+				if plan := classifyTableMultiResultCall(obj.Pkg().Path(), obj, targsFromInstances(e, id)); plan != nil {
 					return plan
 				}
 			}
@@ -1664,35 +1705,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					pairFields: mrInfo.pairFields,
 				}
 			}
-			// P3-M7 (wave 1): encoding/* package-level multi-result
-			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
-			// pem.Decode, asn1.Marshal/Unmarshal).
-			targs := targsFromInstances(e, sel.Sel)
-			if plan := classifyM7MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
-			}
-			// P3-M8 (wave 2): the synthetic os package's multi-result
-			// API (osMultiResultFuncs table above).
-			if plan := classifyOsMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
-			}
-			// P3-M8 (wave 2): the crypto/* multi-result API
-			// (m8MultiResultFuncs table above).
-			if plan := classifyM8MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
-			}
-			// P3-M8 (WS D): the synthetic io package's multi-result API
-			// (ioMultiResultFuncs table above).
-			if plan := classifyIoMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
-			}
-			// P3-M9 (tier-4: net): the synthetic net packages' multi-result
-			// API (m9MultiResultFuncs table above).
-			if plan := classifyM9MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
-				return plan
-			}
-			// WS G (P3-M9): disk-package multi-result (dynamic table).
-			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
+			// P3-M7 (wave 1) through P3-M9 (tier-4: net) plus the WS G
+			// disk-package table: one shared classifier order (see
+			// classifyTableMultiResultCall).
+			if plan := classifyTableMultiResultCall(pn.Imported().Path(), fn, targsFromInstances(e, sel.Sel)); plan != nil {
 				return plan
 			}
 			switch pn.Imported().Path() {
