@@ -24,7 +24,7 @@ Requires stock Go on PATH (`export PATH=~/tools/go/bin:$PATH`).
 
 ```sh
 ./build.sh build   # overlay build -> ./gofrontend
-./build.sh check   # gofmt + go vet + go test + vendoring diff gate + frontend/v1 wire-format validation (all must pass)
+./build.sh check   # gofmt + go vet + go test + toolchain version pin + vendoring diff/mode gates + frontend/v1 wire-format validation (all must pass)
 ./build.sh test    # go test only
 python3 tools/validate_frontend_v1.py testdata/straight01.json   # schema check (one doc; build.sh check validates all goldens + fresh exports)
 python3 tools/validate_frontend_v1.py --selftest                 # validator self-test (incl. exporter kind-coverage)

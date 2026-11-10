@@ -50,7 +50,13 @@ Related: [Makefile](../Makefile) (root build entry point),
       suite.
     - [go/](../internal/frontend/go/) — vendored pristine go1.27.1
       `src/go/*`; load-bearing via the `build.sh` overlay, intentional per
-      [VENDORING.md](../internal/frontend/VENDORING.md).
+      [VENDORING.md](../internal/frontend/VENDORING.md). Drift-gated:
+      byte-identical contents + executable-bit set plus a toolchain
+      version pin, enforced by the `check` action of
+      [build.sh](../internal/frontend/build.sh), wired into
+      [make check](../Makefile) and CI ([ci.yml](../.github/workflows/ci.yml)).
+      The pin lives in
+      [pinned-version.txt](../tools/stdlib-fork/pinned-version.txt).
     - [javatest/](../internal/frontend/javatest/) — `NodeFactoryTest.java`
       plus `golden_*`/`bad*` fixtures (Java wire-format tests living under
       the Go module dir).
@@ -274,10 +280,11 @@ new locations.
 - **Experiment logs (`hidden_files/`)** — per-run evidence belongs in commit
   messages (which are permanent and searchable), not in untracked scratch
   directories. Must never reappear (see [AGENTS.md](../AGENTS.md)).
-- **Vendored copies of upstream Go** —
-  [stdlib/patches/](../stdlib/patches/) holds *diffs* against upstream Go
-  sources, never forks of the sources themselves. Upstream Go is never
-  modified; fixes go into graalgo.
+- **Vendored copies of upstream Go** — except the frontend's
+  byte-identical `go/*` fork at [internal/frontend/go/](../internal/frontend/go/)
+  (drift-gated, see above). [stdlib/patches/](../stdlib/patches/) holds
+  *diffs* against upstream Go sources, never forks of the sources
+  themselves. Upstream Go is never modified; fixes go into graalgo.
 - **Research-era working notes** — wave run logs, per-commit scratch,
   speculative drafts. Consolidated into [docs/arch/](../docs/arch/) and
   [docs/dev/](../docs/dev/), or deleted.

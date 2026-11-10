@@ -145,7 +145,7 @@ check:
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
-	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="
+	@echo "== gofrontend check (gofmt/vet/tests/vendoring gates/toolchain pin) =="
 	cd $(GO_FRONTEND_DIR) && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh check
 
 # (Retired 2026-10-15: was a "# BRIDGE (test lane)" comment; the corpus

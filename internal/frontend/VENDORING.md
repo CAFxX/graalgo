@@ -6,6 +6,12 @@
 **Vendored:** 2026-10-04 (WS B). **Tree:** [`go/`](go/) = byte-identical
 copy of `$GOROOT/src/go` (329 `.go` files, whole tree including
 `go/internal/*`, test files included verbatim).
+Machine-readable pin: [`pinned-version.txt`](../../tools/stdlib-fork/pinned-version.txt)
+— the single source of truth (ADR-0006). [`build.sh`](build.sh) enforces
+it for every action (toolchain version pin gate) and
+[`run_gen_synth.py`](run_gen_synth.py) enforces the same pin for the synth
+generators. The `Pinned revision` line above is the human-readable record
+of the same pin — keep them in sync when re-vendoring.
 
 ## Why this shape (GG-0012, GG-0044)
 
@@ -14,8 +20,10 @@ tracked release, re-vendored atomically every release, zero local patches**.
 Two mechanisms enforce this, because neither alone suffices:
 
 1. **Byte-identical copy** at [`go/`](go/). Verified by
-   `diff -r "$GOROOT/src/go" go` (the `check` action of
-   [`build.sh`](build.sh)). Any local patch fails this gate — patches cannot hide.
+   `diff -r "$GOROOT/src/go" go` (contents) plus the mode gate
+   (executable-bit set) in the `check` action of [`build.sh`](build.sh),
+   together with the toolchain version pin gate that runs for every
+   `build.sh` action. Any local patch fails this gate — patches cannot hide.
 2. **`-overlay` build** ([`build.sh`](build.sh)): the go command resolves
    `go/ast` etc. to GOROOT, so the build maps every `$GOROOT/src/go/*.go`
    read onto the vendored copy. The compiled `gofrontend` binary therefore
@@ -32,9 +40,12 @@ that keeps the tree byte-identical *and* compiled.
 
 ```sh
 cd internal/frontend
+# 1. update the pin FIRST: ../../tools/stdlib-fork/pinned-version.txt
+#    (and the pinned-revision line at the top of this file) — build.sh
+#    refuses to run against a toolchain that does not match the pin.
+# 2. re-copy the tree, then check:
 rm -rf go && cp -r "$(go env GOROOT)/src/go" go
-# update the pinned revision at the top of this file
-./build.sh check   # gofmt + vet + tests + diff gate
+./build.sh check   # gofmt + vet + tests + version pin + diff/mode gates
 ```
 
 One copy command = one atomic unit (SPEC: "frontend + stdlib as one unit").

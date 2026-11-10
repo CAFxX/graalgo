@@ -113,8 +113,9 @@ GO ?= $(HOME)/tools/go/bin/go
 all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
-# gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
-# fails fast otherwise; CI's `git diff --exit-code` after `make all` fails on
+# the pinned gc release (P1-R1-2/P1-R7-7 wiring). The driver version-pins the
+# release in [tools/stdlib-fork/pinned-version.txt](tools/stdlib-fork/pinned-version.txt)
+# and fails fast otherwise; CI's `git diff --exit-code` after `make all` fails on
 # any drift between the generators (+ adaptation patches) and the committed
 # files.
 gen-synth:
@@ -141,8 +142,9 @@ check:
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
-	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
-	# wire-format validation (internal/frontend/build.sh check).
+	# gofrontend gate: gofmt/vet/tests + vendoring diff + modes +
+	# toolchain version pin + frontend/v1 wire-format validation
+	# (internal/frontend/build.sh check).
 	# /tmp is a 512M shared tmpfs: keep the fresh-export JSONs on the
 	# persistent disk (same pattern as test-v2/test-p3frontend).
 	mkdir -p $(CURDIR)/internal/frontend/.tmp && \

@@ -18,8 +18,9 @@ Pipeline, per generator:
 
 Environment:
   GO              go binary to use (default: "go" on PATH). Must report
-                  go1.27.1 — the generators read that exact toolchain's
-                  sources; anything else fails fast.
+                  the pinned release (tools/stdlib-fork/pinned-version.txt)
+                  — the generators read that exact toolchain's sources;
+                  anything else fails fast.
   GRAALGO_GOROOT  passed through to the generators (default: `$GO env GOROOT`).
 """
 
@@ -50,7 +51,20 @@ GENERATORS = [
     ("gen_synth_textscanner.py", ["synth_textscanner.go"]),
 ]
 
-GO_VERSION_PIN = "go1.27.1"
+# Single source of truth for the pinned Go release (ADR-0006):
+# tools/stdlib-fork/pinned-version.txt. build.sh enforces the same pin
+# for the vendored go/* tree, so the two can never skew.
+PIN_FILE = os.path.join(HERE, "..", "..", "tools", "stdlib-fork",
+                        "pinned-version.txt")
+
+
+def pinned_go_version():
+    try:
+        with open(PIN_FILE) as f:
+            return f.read().strip()
+    except OSError as e:
+        raise SystemExit("gen-synth: cannot read pinned Go version %s: %s"
+                         % (PIN_FILE, e))
 
 
 def run(cmd, **kw):
@@ -63,11 +77,13 @@ def run(cmd, **kw):
 
 def main():
     go = os.environ.get("GO", "go")
+    go_version_pin = pinned_go_version()
     ver = run([go, "version"]).stdout.strip()
-    if GO_VERSION_PIN not in ver:
+    if go_version_pin not in ver:
         raise SystemExit(
-            "gen-synth: requires go %s (generators read that toolchain's "
-            "sources); got: %s" % (GO_VERSION_PIN, ver))
+            "gen-synth: requires go %s (pin: %s; generators read that "
+            "toolchain's sources); got: %s"
+            % (go_version_pin, PIN_FILE, ver))
     goroot = os.environ.get("GRAALGO_GOROOT") or \
         run([go, "env", "GOROOT"]).stdout.strip()
     if shutil.which("patch") is None:
