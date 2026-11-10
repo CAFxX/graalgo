@@ -14,6 +14,9 @@ spikes/05-cmdgo/probes/
 # built harness binary (rebuilt by tests from source)
 test/differential/diffharness
 
+# req CLI binary (rebuilt from source: `go run .` in tools/req/)
+tools/req/req
+
 # graalgo driver binary (built by `make graalgo`)
 /graalgo
 
