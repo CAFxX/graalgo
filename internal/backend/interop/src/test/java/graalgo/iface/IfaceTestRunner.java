@@ -24,6 +24,10 @@ public final class IfaceTestRunner {
         TESTS.add(SyncMapTest.class);
         TESTS.add(ItabForIntrinsicTest.class);
         TESTS.add(AtomicContentionTest.class);
+        // RV-P0-07 (2026-10-17, ported 2026-11-10 from
+        // wt/graalgo-independent-codebase-review/fix-p0-atomic-value @ 15dc35c5):
+        // atomic.Value type-consistency panics.
+        TESTS.add(AtomicValueConsistencyTest.class);
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);

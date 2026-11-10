@@ -5,6 +5,7 @@ import graalgo.runtime.sync.LongCell;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.values.GoEquality;
+import graalgo.values.GoInterface;
 import graalgo.values.GoPointer;
 
 /**
@@ -241,20 +242,136 @@ public final class Atomics {
         return an == bn;
     }
 
+    // -- atomic.Value with gc's type-consistency protocol (RV-P0-07) ----
+    // The cell is a single word holding the boxed GoInterface payload;
+    // its descriptor field IS the type word (D5 structural property — no
+    // side table). Java null = empty cell (gc's typ == nil): a nil
+    // interface can never be stored because Store/Swap/CAS all panic on
+    // nil *before* writing. Descriptors are canonical process-wide
+    // identity tokens, so descriptor == is the sound type comparison
+    // (same precedent as TypeAssertNode/GoEquality/SwitchNode).
+    //
+    // gc's firstStoreInProgress sentinel + procPin spin exist only because
+    // gc's cell is two words (typ, data) written non-atomically. Our cell
+    // is one word, so a single CAS linearizes the first store — no
+    // sentinel, no spinning, identical outcomes for race-free programs.
+    // Known benign divergence: gc's Load during an in-progress first
+    // store returns nil (a two-word-write artifact); our single-word CAS
+    // never exposes that state — strictly stronger atomicity.
+    //
+    // Panic texts and check order are byte-verbatim from
+    // sync/atomic/value.go (gc 1.27.1), surfaced via the 1-arg
+    // Panic.throwPanic(GoStrings.of(...)) form (the GoChan precedent);
+    // never a raw Java String.
+
     /**
-     * Atomic {@code Value} compare-and-swap with Go interface equality
-     * (P3-M10): two {@code any} values are equal per Go {@code ==} — same
-     * dynamic type and equal dynamic value ({@link GoEquality#equal}) —
-     * so separately boxed equal values compare equal, not just identical
-     * wrapper objects.
+     * Atomic {@code Value} store with gc's type-consistency panics.
+     * {@code Store(nil)} panics before touching the cell, even on the
+     * first store; a store whose dynamic type differs from the stored
+     * type panics. Concurrent first stores linearize on one CAS; the
+     * loser re-reads and panics on the winner's type word — the same
+     * outcome as gc's spin-then-check. After the first store, a plain
+     * set (last writer wins), exactly gc's StorePointer tail.
      */
-    public static boolean compareAndSwapGoValue(AtomicReference<Object> addr, Object old, Object new_) {
+    public static void storeGoValue(AtomicReference<Object> addr, Object value) {
+        GoInterface vi = GoInterface.narrow(value);
+        if (vi.isNil()) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: store of nil value into Value"));
+        }
         for (;;) {
             Object cur = addr.get();
-            if (!GoEquality.equal(cur, old)) {
+            if (cur == null) {
+                // Attempt the first store; the CAS is the linearization
+                // point. A lost race re-reads below (the winner's type
+                // word then applies).
+                if (addr.compareAndSet(null, vi)) {
+                    return;
+                }
+                continue;
+            }
+            GoInterface curI = (GoInterface) cur;
+            if (curI.descriptor() != vi.descriptor()) {
+                Panic.throwPanic(GoStrings.of("sync/atomic: store of inconsistently typed value into Value"));
+            }
+            addr.set(vi);
+            return;
+        }
+    }
+
+    /**
+     * Atomic {@code Value} swap with gc's type-consistency panics.
+     * Returns the previous value as a {@code GoInterface}; returns Java
+     * null when the cell was empty (gc: a first Swap returns nil).
+     */
+    public static Object swapGoValue(AtomicReference<Object> addr, Object value) {
+        GoInterface vi = GoInterface.narrow(value);
+        if (vi.isNil()) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: swap of nil value into Value"));
+        }
+        for (;;) {
+            Object cur = addr.get();
+            if (cur == null) {
+                // First store via Swap; gc returns nil for the old value.
+                if (addr.compareAndSet(null, vi)) {
+                    return null;
+                }
+                continue;
+            }
+            GoInterface curI = (GoInterface) cur;
+            if (curI.descriptor() != vi.descriptor()) {
+                Panic.throwPanic(GoStrings.of("sync/atomic: swap of inconsistently typed value into Value"));
+            }
+            if (addr.compareAndSet(cur, vi)) {
+                return curI;
+            }
+            // Lost the race: retry against the fresh value.
+        }
+    }
+
+    /**
+     * Atomic {@code Value} compare-and-swap with gc's type-consistency
+     * panics and Go interface equality (P3-M10): two {@code any} values
+     * are equal per Go {@code ==} — same dynamic type and equal dynamic
+     * value ({@link GoEquality#equal}) — so separately boxed equal
+     * values compare equal, not just identical wrapper objects.
+     *
+     * <p>Check order (gc-verbatim): nil {@code new} panics first; then
+     * old/new type consistency (plural "values", before cell access);
+     * on a non-empty cell the stored type must match {@code new}'s type
+     * (singular); an empty cell with non-nil {@code old} returns false,
+     * with nil {@code old} performs the first store and returns true.
+     */
+    public static boolean compareAndSwapGoValue(AtomicReference<Object> addr, Object old, Object new_) {
+        GoInterface newI = GoInterface.narrow(new_);
+        if (newI.isNil()) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: compare and swap of nil value into Value"));
+        }
+        GoInterface oldI = GoInterface.narrow(old);
+        if (!oldI.isNil() && oldI.descriptor() != newI.descriptor()) {
+            Panic.throwPanic(GoStrings.of("sync/atomic: compare and swap of inconsistently typed values"));
+        }
+        for (;;) {
+            Object cur = addr.get();
+            if (cur == null) {
+                // Empty cell: gc's rule — non-nil old returns false;
+                // nil old performs the first store and returns true.
+                if (!oldI.isNil()) {
+                    return false;
+                }
+                if (addr.compareAndSet(null, newI)) {
+                    return true;
+                }
+                continue;
+            }
+            GoInterface curI = (GoInterface) cur;
+            if (curI.descriptor() != newI.descriptor()) {
+                Panic.throwPanic(
+                        GoStrings.of("sync/atomic: compare and swap of inconsistently typed value into Value"));
+            }
+            if (!GoEquality.equal(curI, oldI)) {
                 return false;
             }
-            if (addr.compareAndSet(cur, new_)) {
+            if (addr.compareAndSet(cur, newI)) {
                 return true;
             }
             // Lost the race: retry against the fresh value.
