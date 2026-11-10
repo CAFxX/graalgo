@@ -1,6 +1,11 @@
 # build outputs
 out/
 *.class
+# regenerable build artifacts (R2-P1-2): shared objects and Python bytecode
+# are rebuilt from tracked sources, never committed
+__pycache__/
+*.pyc
+*.so
 # regenerable caches, downloads, binaries
 **/dl/
 **/gocache*/
