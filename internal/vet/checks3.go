@@ -367,21 +367,43 @@ func runSlog(pass *Pass) []Diagnostic {
 			if strings.HasSuffix(sel.Sel.Name, "Context") {
 				start = 2 // skip ctx, msg
 			}
+			if sel.Sel.Name == "Log" {
+				// Log(ctx, level, msg, args...): skip ctx, level, msg.
+				start = 3
+			}
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
 			}
-			rest := args[start:]
-			if len(rest)%2 != 0 {
-				out = append(out, Diagnostic{
-					pass.position(call),
-					"slog " + sel.Sel.Name + " call has odd number of key-value arguments",
-				})
+			if start > len(args) {
+				// Too few args to have any pairs; type errors are
+				// not this analyzer's business, and slicing past
+				// the end would panic.
 				return true
 			}
-			for i := 0; i < len(rest); i += 2 {
+			rest := args[start:]
+			// Walk the rest: a slog.Attr consumes exactly one
+			// element (log/slog argsToAttr: "case Attr: return x,
+			// args[1:]"), any other element starts a key-value pair.
+			isAttr := func(e ast.Expr) bool {
+				tv, ok := pass.Info.Types[e]
+				return ok && tv.Type != nil && tv.Type.String() == "log/slog.Attr"
+			}
+			for i := 0; i < len(rest); {
+				if isAttr(rest[i]) {
+					i++
+					continue
+				}
+				if i+1 >= len(rest) {
+					out = append(out, Diagnostic{
+						pass.position(call),
+						"slog " + sel.Sel.Name + " call has odd number of key-value arguments",
+					})
+					return true
+				}
 				// Key should be a string.
 				tv, ok := pass.Info.Types[rest[i]]
 				if !ok || tv.Type == nil {
+					i += 2
 					continue
 				}
 				if b, ok := tv.Type.Underlying().(*types.Basic); !ok || b.Kind() != types.String {
@@ -390,6 +412,7 @@ func runSlog(pass *Pass) []Diagnostic {
 						"slog " + sel.Sel.Name + " key should be a string",
 					})
 				}
+				i += 2
 			}
 			return true
 		})

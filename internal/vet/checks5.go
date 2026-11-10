@@ -1,7 +1,7 @@
 package vet
 
 import (
-	"go/token"
+	"go/build/constraint"
 	"strings"
 )
 
@@ -20,7 +20,12 @@ func init() {
 
 // directive checks that //go: directives are known and well-formed.
 func runDirective(pass *Pass) []Diagnostic {
-	// Known //go: directives.
+	// Known //go: directives. The list is derived from the directives
+	// actually used in the toolchain source (go1.27.1 GOROOT): every
+	// name below occurs in non-testdata .go files there, e.g.
+	// nowritebarrierrec (239 uses in runtime), wasmimport (90),
+	// registerparams, notinheap, nointerface, and "//go:fix inline"
+	// (handled by x/tools' gofixdirective analyzer).
 	known := map[string]bool{
 		"generate": true, "build": true,
 		"noescape": true, "noinline": true, "norace": true, "nosplit": true,
@@ -30,6 +35,15 @@ func runDirective(pass *Pass) []Diagnostic {
 		"dyld":           true, "cgo_import_dynamic": true, "cgo_import_static": true,
 		"cgo_export_dynamic": true, "cgo_export_static": true,
 		"cgo_unsafe_args": true, "cgo_dynamic_linker": true,
+		// Previously missing real directives (V-P1-10).
+		"nowritebarrier": true, "nowritebarrierrec": true,
+		"yeswritebarrierrec": true, "nocheckptr": true,
+		"wasmimport": true, "wasmexport": true,
+		"systemstack": true, "uintptrkeepalive": true,
+		"linknamestd": true, "cgo_ldflag": true,
+		"registerparams": true, "notinheap": true,
+		"nointerface": true, "fix": true,
+		"binary-only-package": true,
 	}
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -102,10 +116,39 @@ func runBuildTag(pass *Pass) []Diagnostic {
 				}
 			}
 		}
-		// Check placement: //go:build should be before package clause.
-		// (The parser already enforces this; we check // +build after package.)
-		if f.Package != token.NoPos {
-			_ = f.Package
+		// Check //go:build lines: syntax via the toolchain's own
+		// constraint parser, and placement before the package clause.
+		for _, cg := range f.Comments {
+			for _, c := range cg.List {
+				text := strings.TrimSpace(c.Text)
+				if text != "//go:build" && !strings.HasPrefix(text, "//go:build ") &&
+					!strings.HasPrefix(text, "//go:build\t") {
+					continue
+				}
+				if _, err := constraint.Parse(text); err != nil {
+					out = append(out, Diagnostic{
+						pass.position(c),
+						"invalid //go:build constraint: " + err.Error(),
+					})
+				} else if c.Pos() > f.Package {
+					out = append(out, Diagnostic{
+						pass.position(c),
+						"//go:build directive after package clause",
+					})
+				}
+			}
+		}
+		// Check // +build placement: after the package clause is too late.
+		for _, cg := range f.Comments {
+			for _, c := range cg.List {
+				text := strings.TrimSpace(c.Text)
+				if strings.HasPrefix(text, "// +build") && c.Pos() > f.Package {
+					out = append(out, Diagnostic{
+						pass.position(c),
+						"// +build directive after package clause",
+					})
+				}
+			}
 		}
 	}
 	return out

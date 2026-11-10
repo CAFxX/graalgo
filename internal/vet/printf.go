@@ -93,11 +93,12 @@ func isTestingT(fn *types.Func) bool {
 }
 
 type printfVerb struct {
-	text      string
-	verb      rune
-	indexed   bool
-	argIndex  int
-	starWidth bool
+	text          string
+	verb          rune
+	indexed       bool
+	argIndex      int
+	starWidth     bool
+	starPrecision bool
 }
 
 // checkPrintfFormat validates args against the format string verbs.
@@ -106,16 +107,32 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 	pos := pass.position(call)
 	verbs := parsePrintfVerbs(format)
 	argIdx := 0
+	indexedSeen := false
 	for _, v := range verbs {
 		if v.verb == '%' {
 			continue
 		}
 		if v.indexed {
+			indexedSeen = true
 			if v.argIndex < 1 || v.argIndex > len(args) {
 				out = append(out, Diagnostic{pos, "invalid argument index %[" +
 					strconv.Itoa(v.argIndex) + "]"})
 			}
 			continue
+		}
+		// Width and precision stars consume arguments of their own,
+		// before the verb argument: "%*.*f" takes three args.
+		// The star arguments are counted, not type-checked here.
+		for _, star := range []bool{v.starWidth, v.starPrecision} {
+			if !star {
+				continue
+			}
+			if argIdx >= len(args) {
+				out = append(out, Diagnostic{pos,
+					"missing argument for " + v.text})
+				continue
+			}
+			argIdx++
 		}
 		if argIdx >= len(args) {
 			out = append(out, Diagnostic{pos,
@@ -127,9 +144,11 @@ func checkPrintfFormat(pass *Pass, call *ast.CallExpr, format string, args []ast
 				v.text + ": " + msg})
 		}
 		argIdx++
-		if v.starWidth {
-			argIdx++
-		}
+	}
+	// Extra arguments: with no indexed verbs the sequential counter
+	// knows exactly how many args were consumed.
+	if !indexedSeen && argIdx < len(args) {
+		out = append(out, Diagnostic{pos, "too many arguments for format string"})
 	}
 	return out
 }
@@ -174,6 +193,7 @@ func parsePrintfVerbs(format string) []printfVerb {
 		if i < len(format) && format[i] == '.' {
 			i++
 			if i < len(format) && format[i] == '*' {
+				v.starPrecision = true
 				i++
 			} else {
 				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
@@ -222,6 +242,9 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		if t.String() == "[]byte" || t.String() == "[]uint8" {
 			break
 		}
+		if implementsStringOrError(t) {
+			break
+		}
 		return "expects string or []byte"
 	case 'v':
 		// %v accepts anything.
@@ -237,6 +260,35 @@ func checkVerbArg(pass *Pass, v printfVerb, arg ast.Expr) string {
 		// Anything goes.
 	}
 	return ""
+}
+
+// implementsStringOrError reports whether t implements fmt.Stringer
+// (String() string) or error (Error() string), via either the value
+// or the pointer method set. The pointer method set is accepted
+// without an addressability check: this analyzer cannot prove the
+// argument addressable, and erring toward no diagnostic avoids false
+// positives on the common variable case.
+func implementsStringOrError(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	for _, typ := range []types.Type{t, types.NewPointer(t)} {
+		ms := types.NewMethodSet(typ)
+		for _, name := range []string{"String", "Error"} {
+			sel := ms.Lookup(nil, name)
+			if sel == nil {
+				continue
+			}
+			sig, ok := sel.Type().(*types.Signature)
+			if !ok || sig.Params().Len() != 0 || sig.Results().Len() != 1 {
+				continue
+			}
+			if b, ok := sig.Results().At(0).Type().Underlying().(*types.Basic); ok && b.Kind() == types.String {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isIntKind(k types.BasicKind) bool {

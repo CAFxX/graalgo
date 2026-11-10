@@ -285,20 +285,28 @@ func g(s Stringer) {
 func TestSlog(t *testing.T) {
 	src := `package main
 
-import "log/slog"
+import (
+	"context"
+	"log/slog"
+)
 
 func f() {
 	slog.Info("hello", "key", "value") // good
 	slog.Info("hello", "key")          // bad: odd args
 	slog.Info("hello", 123, "value")   // bad: non-string key
+	slog.Info("msg", slog.String("k", "v")) // good: lone Attr is a singleton (V-P1-9)
+	slog.Info("msg", "k", "v", slog.Int("n", 1)) // good: pair + trailing Attr
+	logger := slog.Default()
+	logger.Log(context.Background(), slog.LevelInfo, "msg", "k", "v") // good: Log takes ctx, level, msg (V-P1-9)
+	logger.Log(context.Background(), slog.LevelInfo, "msg", "k")      // bad: odd args after msg
 }
 `
 	joined := runVetOnSrc(t, src)
-	if !strings.Contains(joined, "odd number") {
-		t.Errorf("expected slog odd-args diagnostic, got:\n%s", joined)
+	if count := strings.Count(joined, "odd number"); count != 2 {
+		t.Errorf("expected exactly 2 slog odd-args diagnostics, got %d:\n%s", count, joined)
 	}
-	if !strings.Contains(joined, "should be a string") {
-		t.Errorf("expected slog key diagnostic, got:\n%s", joined)
+	if count := strings.Count(joined, "should be a string"); count != 1 {
+		t.Errorf("expected exactly 1 slog key diagnostic, got %d:\n%s", count, joined)
 	}
 }
 
@@ -365,16 +373,131 @@ func f() {
 }
 
 func TestDirective(t *testing.T) {
+	// Every directive in the allowlist must be accepted (V-P1-10); only
+	// the genuinely unknown one is reported.
 	src := `package main
 
 //go:generate echo hello
+//go:nowritebarrier
+//go:nowritebarrierrec
+//go:yeswritebarrierrec
+//go:nocheckptr
+//go:wasmimport
+//go:systemstack
+//go:uintptrkeepalive
+//go:linknamestd
+//go:cgo_ldflag
+//go:wasmexport
+//go:registerparams
+//go:notinheap
+//go:nointerface
+//go:fix inline
+//go:binary-only-package
 //go:unknown_directive
 
 func f() {}
 `
 	joined := runVetOnSrc(t, src)
-	if !strings.Contains(joined, "unknown go: directive") {
-		t.Errorf("expected directive diagnostic, got:\n%s", joined)
+	if count := strings.Count(joined, "unknown go: directive"); count != 1 {
+		t.Errorf("expected exactly 1 unknown-directive diagnostic, got %d:\n%s", count, joined)
+	}
+	if !strings.Contains(joined, "unknown_directive") {
+		t.Errorf("expected the unknown directive to be named, got:\n%s", joined)
+	}
+}
+
+// V-P1-11: //go:build constraints are validated for syntax and
+// placement; // +build lines after the package clause are flagged.
+func TestBuildTag(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string // "" means no build-tag diagnostic at all
+	}{
+		{
+			name: "valid go:build",
+			src: `//go:build linux
+
+package main
+
+func f() {}
+`,
+			want: "",
+		},
+		{
+			name: "empty go:build",
+			src: `//go:build
+
+package main
+
+func f() {}
+`,
+			want: "invalid //go:build",
+		},
+		{
+			name: "bad go:build syntax",
+			src: `//go:build linux &&
+
+package main
+
+func f() {}
+`,
+			want: "invalid //go:build",
+		},
+		{
+			name: "misplaced go:build",
+			src: `package main
+
+//go:build linux
+
+func f() {}
+`,
+			want: "//go:build directive after package clause",
+		},
+		{
+			name: "misplaced +build",
+			src: `package main
+
+// +build linux
+
+func f() {}
+`,
+			want: "// +build directive after package clause",
+		},
+		{
+			name: "empty +build",
+			src: `// +build
+
+package main
+
+func f() {}
+`,
+			want: "// +build line with no build tags",
+		},
+		{
+			name: "malformed +build tag",
+			src: `// +build linux,!foo$
+
+package main
+
+func f() {}
+`,
+			want: "malformed // +build tag",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			joined := runVetOnSrc(t, tc.src)
+			if tc.want == "" {
+				if strings.Contains(joined, "build") {
+					t.Errorf("expected no build-tag diagnostic, got:\n%s", joined)
+				}
+				return
+			}
+			if !strings.Contains(joined, tc.want) {
+				t.Errorf("expected diagnostic containing %q, got:\n%s", tc.want, joined)
+			}
+		})
 	}
 }
 
