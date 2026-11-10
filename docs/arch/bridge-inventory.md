@@ -17,13 +17,26 @@ that retires it, and its phased-removal order. "Needs design" marks entries
 whose retirement mechanism is still open — the entry itself is the
 deliverable until the design lands.
 
+The counts in B-3/B-4 are pinned mechanically by
+[.github/scripts/check_bridge_inventory.py](../../.github/scripts/check_bridge_inventory.py)
+(run by `make check` and CI): the numbers live in `inventory-pins`
+fenced blocks in the sections they pin, and the script fails on any
+mismatch with disk truth. A retirement that changes a count must update
+the pin in the same change — counts are re-established from disk truth
+at each edit, never carried forward.
+
 ## Phased removal order
 
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
+  packages via root-cause fixes: `fmt` (worktree `real-fmt2`),
+  `crypto/x509` (worktree `real-x509`), `net`/`net/http`
   (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
   B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+  Liveness (2026-11-10): the four worktrees are still registered
+  (status active) but none has heartbeated since 2026-10-15 — verify a
+  lane is live before relying on it. `real-fmt-rebase` has no live
+  worktree (its branch survives, unregistered); it is not counted as
+  in flight.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -37,9 +50,10 @@ deliverable until the design lands.
   `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
-  entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
-  byte-addressed value model (or documented trap contract) resolves
-  `unsafe.Add`. Retires B-6, B-7.
+  entirely; real `runtime.Callers` replaces the `rtstack` intrinsics.
+  Retires B-7. (`unsafe.Add` was resolved without a byte-addressed
+  model — by provenance-preserving derivation, not a trap — so B-6
+  retired 2026-11-10; see Retired.)
 
 ## Active bridges
 
@@ -47,7 +61,7 @@ deliverable until the design lands.
 
 - **What:**
   [NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
-  `syncPrimitiveName` (~line 1908): matches `sync.Mutex`/`sync.Map`/
+  `syncPrimitiveName` (~line 1963): matches `sync.Mutex`/`sync.Map`/
   `sync/atomic.*` by package/name and lowers them to Java representations
   instead of compiling the real `sync` sources.
 - **Why:** the real `sync`/`sync/atomic` sources did not compile; the
@@ -63,28 +77,40 @@ deliverable until the design lands.
   `sync/atomic.*` wrappers keep the cell representation (atomicity is
   load-bearing); their real bodies are bridged by cell-transparent `&x.v`
   ([FieldAddrNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FieldAddrNode.java)).
-  `sync.Pool`/`sync.Map` keep their Java objects. Full deletion of the
-  method awaits those.
+  `sync.Pool` keeps its Java object; `sync.Map` no longer does
+  (fix-redmaster-r42 — as a plain `GoStruct` the disk bodies work
+  end-to-end). Full deletion of the method awaits `Pool` and the
+  `sync/atomic.*` cell wrappers.
 - **Phase:** 3 (after the last synthetic package that depends on it retires).
 
 ### B-3. Frontend package-name-keyed special-case machinery
 
 - **What:** in [internal/frontend/](../../internal/frontend/):
-  - `synth_machinery.go`: `syntheticSources` import overlay (~line 59, 133
-    entries), `isMultiResultSynthetic` (~line 2113) /
-    `multiResultSyntheticError` (~line 2207) ~60-path chains,
-    `isTimeIntrinsicFunc` (~line 2069), `isMathIntrinsicFunc` (~line 2074),
-    `isAliasIntrinsicFunc` (~line 2088), `isAbiFuncPCIntrinsicFunc`
-    (~line 1701);
+  - [synth_machinery.go](../../internal/frontend/synth_machinery.go):
+    `syntheticSources` import overlay (~line 70, 130 entries),
+    `isMultiResultSynthetic` (~line 2275, a ~99-package `&&`-chain
+    allowlist) / `multiResultSyntheticError` (~line 2369, 57
+    `||`-separated paths),
+    `isTimeIntrinsicFunc` (~line 2193), `isMathIntrinsicFunc` (~line 2198),
+    `isAliasIntrinsicFunc` (~line 2212), `isAbiFuncPCIntrinsicFunc`
+    (~line 1654);
+
+```inventory-pins
+synthetic_sources_entries = 130
+```
+
   - [synth_reflect.go](../../internal/frontend/synth_reflect.go):
-    `isReflectIntrinsicFunc` (~line 2898);
+    `isReflectIntrinsicFunc` (~line 2908);
   - [diskimport.go](../../internal/frontend/diskimport.go):
     `overlayImporter`/`resolvePkgTree` `"runtime"`/`"fmt"`/`"unsafe"`
-    switches (~line 402) and the linkname package allowlist;
-  - [export.go](../../internal/frontend/export.go): `"syncop"` and
-    `"runtimecaller"` custom wire nodes for stdlib functions, and the
+    switches (~line 403) and the linkname package allowlist;
+  - [export.go](../../internal/frontend/export.go): `"syncop"` custom wire
+    node for stdlib functions (~line 9327; `"runtimecaller"` lives in
+    [mrdesugar_m5.go](../../internal/frontend/mrdesugar_m5.go) ~line 3274,
+    while `export.go` carries the plural `"runtimecallers"` /
+    `"runtimecallersframes"` nodes), and the
     `time.Now` eta-expansion hardcoded by package+symbol name
-    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 211–228).
+    ([mr_disk.go](../../internal/frontend/mr_disk.go) ~lines 229–231).
 - **Why:** each synthetic package needed bespoke import routing,
   multi-result desugaring, and intrinsic hooks; the machinery grew
   package-by-package instead of through a general mechanism.
@@ -113,14 +139,36 @@ deliverable until the design lands.
   mechanical false positive, not a veto; the same judgment covers the
   PKG-038 runtime-view completion.
 
-### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
+### B-4. 140 `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 
-- **What:** 142 generated files in [internal/frontend/](../../internal/frontend/)
-  (`synth_*.go`: ~24 authored, ~110 verbatim vendored from go1.27.1) plus 12
+- **What:** 140 files in [internal/frontend/](../../internal/frontend/)
+  matching `synth_*.go`: 18 generator-produced, 8 test files
+  (`synth_*_test.go`), 114 hand-maintained implementations — plus 12
   `synth_*.go` mirrors under
   [internal/frontend/p3frontend/](../../internal/frontend/p3frontend/) —
   synthetic reimplementations of stdlib packages standing in for the real
-  sources.
+  sources. (Counts reconciled from disk truth 2026-11-10 at master
+  `a0df481b`; the previous text claimed 142 with a "~24 authored,
+  ~110 verbatim vendored" split that summed to ~134 — both wrong.)
+  "Generated" means listed in the `GENERATED_SYNTH` block of the
+  [Makefile](../../Makefile) and in the `GENERATORS` mapping of
+  [run_gen_synth.py](../../internal/frontend/run_gen_synth.py) (the two
+  must agree; `make gen-synth` regenerates them from gc 1.27.1).
+  File headers are NOT the test: only 1 of the 18 carries a
+  "Generated by" header, and 5 hand-maintained files carry
+  "Code generated"/"DO NOT EDIT" inside their embedded upstream source.
+  The 12 mirrors are 11 one-to-one twins by name (`bytes`,
+  `enc_csv_gob`, `errors`, `io`, `json`, `math`, `sort`, `strconv`,
+  `strings`, `time_context`, `xml`) plus `synth_enc_core.go`, a
+  composite mirror of the `encoding/*` primitives.
+
+```inventory-pins
+synth_frontend_total = 140
+synth_frontend_generated = 18
+synth_frontend_test = 8
+synth_frontend_hand = 114
+synth_p3frontend = 12
+```
 - **Why:** the real stdlib sources did not compile under graalgo
   (`go:linkname`, intrinsic surface, `unsafe` patterns); synthetics bought
   coverage fast (his 2026-10-10 dual-track decision).
@@ -129,11 +177,12 @@ deliverable until the design lands.
   ABSOLUTELY MUST be synthetic survive, with a documented, specific,
   verifiable reason), then delete the `synth_*.go`. The `p3frontend`
   mirrors retire with the top-level tree or via an explicit retire-or-keep
-  decision. Retired 2026-11-05 (REVIEW-2026-11-05-11): the p3frontend
+  decision. Retired 2026-11-05 (REVIEW-2026-11-05-11, commit `690d2f27`): the p3frontend
   `fmt`/`sync`/`sync-atomic`/`runtime` mirrors — those packages now
   type-check from GOROOT; the `io`/`time` mirrors were extended to the
   full live-source API in the same change, not deleted. In flight:
-  `real-fmt2`/`real-fmt-rebase` (`fmt`),
+  `real-fmt2` (`fmt`; `real-fmt-rebase` has no live worktree — see
+  Phase 1),
   `real-x509` (`crypto/x509`, "remove synthetic crypto/x509, route via
   general disk mechanism"), `real-nethttp` (`net`/`net/http`),
   `real-reflect2` (`reflect`).
@@ -157,24 +206,12 @@ deliverable until the design lands.
   counterpart).
 - **Phase:** 1.
 
-### B-6. `unsafe.Add` always traps (bridge by omission)
-
-- **What:**
-  [UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
-  `addTrap` (~line 248) throws on `unsafe.Add` — a legal, common gc
-  operation (used by `reflect`, `encoding/binary` internals) — killing the
-  program with an internal error.
-- **Why:** the value model has no byte-addressed pointer arithmetic yet.
-- **Root-cause fix:** needs design — a byte-addressed value model; at
-  minimum, trap with a Go panic carrying the documented message instead of
-  an internal-error crash.
-- **Phase:** 4.
-
 ### B-7. `rtstack` synthetic `runtime` stack intrinsics
 
 - **What:** [rtstack/](../../internal/backend/interop/src/main/java/graalgo/rtstack/)
   (`RuntimeCallerNode`, `RuntimeCallersNode`, `RuntimeCallersFramesNode`,
-  `RuntimeFramesNextNode`, `RtStack`): synthetic implementations of the
+  `RuntimeFramesNextNode`, `RuntimeFuncEntryNode`, `RuntimeFuncFileLineNode`,
+  `RuntimeFuncForPCNode`, `RuntimeFuncNameNode`, `RtStack`): synthetic implementations of the
   `runtime.Callers`/`CallersFrames`/`Func` surface, sound but not the real
   runtime's stack walker.
 - **Why:** the real runtime stack metadata was not available to the
@@ -239,6 +276,20 @@ extend these entries or add new ones without a fresh independent review.
 Entries move here when the bridge is gone (same change that removes the
 code, per [AGENTS.md](../../AGENTS.md) §7).
 
+- **2026-11-10 — B-6 `unsafe.Add` always traps (bridge by omission).**
+  Retired by implementation: `unsafe.Add` is now implemented by the
+  `"unsafeadd"` wire node
+  ([UnsafeAddNode.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeAddNode.java),
+  P3-M8), deriving the result from the live base handle via
+  `UnsafeTable#derive` since fix-redmaster-r39 (commit `383e7faf` —
+  "instead of the former unconditional D5 trap"). No `addTrap` exists
+  in [UnsafeOps.java](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/UnsafeOps.java)
+  (the entry's `addTrap (~line 248)` mechanism is gone). The inventory
+  had carried the stale entry since that commit; REVIEW-2026-11-10-07
+  (P1-4) caught it in the B-4 reconciliation. Residual (not an
+  `unsafe.Add` bridge): a bare `uintptr` with no pointer provenance
+  still traps in `fromUintTrap` (D5, documented divergence in
+  `UnsafeOps.java`).
 - **2026-10-16 — B-1 `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan`
   (Java reimplementations of `fmt`).** The real `fmt` package now compiles
   from GOROOT via the general disk importer (real-fmt2 lane, master
@@ -263,8 +314,12 @@ code, per [AGENTS.md](../../AGENTS.md) §7).
   [internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run)
   (the guarded `[ -x …/frontend/gofrontend ]` fallback resolves to the
   correct path by accident of layout; delete the comment or the dead
-  block), and the dangling `internal/backend/runtime/corpus` symlink
-  (owned by the test-infra lane — delete symlink + comment).
+  block). The dangling `internal/backend/runtime/corpus` symlink is
+  already gone (deleted in `23c60ef7`, "repoint corpus paths deleted
+  in the restructure"); the
+  [runtime/Makefile](../../internal/backend/runtime/Makefile) comment
+  that mentions it now documents the deletion as history, not a live
+  label.
 - **2026-10-15 — banned `fmt.Fprint`→`w.Write` desugar.** Removed before
   this inventory was created (the real-`fmt` lane's template: kill the
   desugaring, make the real package work). Recorded here so the pattern is

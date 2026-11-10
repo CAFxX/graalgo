@@ -139,6 +139,7 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	python3 .github/scripts/check_bridge_inventory.py
 	python3 .github/scripts/check_duplicate_fqn.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1

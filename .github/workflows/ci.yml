@@ -45,11 +45,25 @@ jobs:
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py
 
+      - name: Bridge-inventory check (counts pinned to disk truth)
+        # REVIEW-2026-11-10-07 P1-4: the inventory is the no-bridges
+        # gate's grandfather list, so its B-3/B-4 counts are pinned by
+        # check_bridge_inventory.py (also in `make check`); a stale
+        # count fails here before the build starts.
+        run: python3 .github/scripts/check_bridge_inventory.py
+
       - name: No-bridges gate regression tests (pins the gate fix)
         # The gate's exemptions are pinned by
         # .github/scripts/test_check_no_bridges.py — run it here so a
         # future gate regression fails CI instead of reverting silently.
         run: python3 .github/scripts/test_check_no_bridges.py
+
+      - name: Bridge-inventory gate regression tests (pins the count check)
+        # The inventory-count gate is pinned by
+        # .github/scripts/test_check_bridge_inventory.py — run it here
+        # so a future gate regression fails CI instead of reverting
+        # silently.
+        run: python3 .github/scripts/test_check_bridge_inventory.py
 
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
