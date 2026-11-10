@@ -7,7 +7,11 @@ Fails if the diff introduces new bridges:
 - New package-name conditionals in frontend/backend
 - New panic stubs
 - New wire node kinds for stdlib functions
-- New synthetic function registrations
+- New synthetic function registrations (Rule 5: addFunc /
+  synthetic*Package() / registerSynthetic calls, plus Rule 5b:
+  map-literal entries in the syntheticSources registry
+  (internal/frontend/synth_machinery.go) and the
+  dedicatedSyntheticStubs registry (internal/frontend/export.go))
 
 Existing bridges are grandfathered (they're in the removal queue — see
 docs/arch/bridge-inventory.md). This check only looks at ADDED lines in the diff.
@@ -26,13 +30,33 @@ Both are pinned by .github/scripts/test_check_no_bridges.py (fixtures
 taken from the p3fmt-stub branch diff, 16547f17, which the old script
 failed with 3 false positives).
 
-Diff sources, in order:
+Diff sources — UNIONED, never first-match (2026-11-10, L12-P1-B):
+first-match shadowing let a stale origin/master mask the working tree:
+in a lane worktree origin/master lags HEAD by the commits landed since
+the worktree was claimed, so `origin/master...HEAD` returns those
+already-merged commits' diff, the loop broke, and the working-tree diff
+— the change actually under review — was never inspected. A planted
+`syntheticSources` entry in internal/frontend/synth_machinery.go
+escaped Rule 5b entirely on a live run for exactly this reason. Every
+non-empty source below is therefore concatenated and judged together;
+one added line appearing in two sources is reported once (dedupe in
+check_no_bridges), and the run labels every source that contributed.
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
   3. git diff --cached     (staged changes)
   4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
                            checkout lands exactly on origin/master, so 1-3 are
                            all empty; inspect what the push itself introduced)
+  5. untracked .go/.java files, synthesized as a diff against /dev/null
+     and APPENDED to whichever of 1-4 fired (or returned alone when none
+     did): `git diff` never shows untracked files, so without this a new
+     synthetic package sitting uncommitted in the working tree was
+     invisible to every rule — Rule 1 could never fire on it.
+Note the union judges committed-range lines too: if a stale
+origin/master makes the gate flag already-merged lines, refresh it
+(`git fetch origin` — origin is the self-remote) and re-run; the range
+then empties. That noise is fail-loud by design — a tripwire must never
+silently skip a source again.
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
@@ -79,29 +103,84 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
+def _untracked_source_diff(cwd=None):
+    """Synthesized diff for untracked .go/.java source files.
+
+    `git diff` never shows untracked files, so a new synthetic package
+    (or a new package-name conditional) sitting uncommitted in the
+    working tree was invisible to every rule. Each untracked source
+    file is diffed against /dev/null, which yields the same header
+    shape (`--- /dev/null`, `+++ b/<path>`) the rules already parse —
+    Rule 1 fires on a new untracked synth_*.go file exactly as it does
+    for a committed one. Only non-ignored files appear in
+    `git status --porcelain` (build debris is gitignored), and only
+    .go/.java files are synthesized (the rules' scope). Returns "" when
+    there are no untracked source files.
+    """
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "-z",
+             "--untracked-files=all"],
+            capture_output=True, text=True, timeout=30, cwd=cwd)
+    except Exception:
+        return ""
+    if status.returncode != 0:
+        return ""
+    chunks = []
+    for entry in status.stdout.split("\0"):
+        if not entry.startswith("?? "):
+            continue
+        path = entry[3:]
+        if not (path.endswith(".go") or path.endswith(".java")):
+            continue
+        try:
+            diff = subprocess.run(
+                ["git", "diff", "--no-index", "/dev/null", "--", path],
+                capture_output=True, text=True, timeout=30, cwd=cwd)
+        except Exception:
+            continue
+        # --no-index exits 1 when the files differ (always, here);
+        # its stdout is the synthesized new-file diff.
+        if diff.stdout.strip():
+            chunks.append(diff.stdout)
+    return "".join(chunks)
+
+
+def get_diff(cwd=None):
     """Get the diff of added lines, plus a label naming the diff source.
 
     Returns ("", "") when no diff could be determined — the caller must
     treat that as a loud failure, never a vacuous pass.
     """
-    # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
+    # Union of every diff source (see the module docstring): first-match
+    # shadowing let a stale origin/master mask the working tree entirely
+    # (2026-11-10, L12-P1-B). A shallow checkout (no HEAD~1) yields
+    # nothing from the last source — that is a failure, not a skip.
     candidates = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
         ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
         ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
     ]
+    diffs, sources = [], []
     for name, cmd in candidates:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=30, cwd=cwd)
         except Exception:
             continue
         if result.returncode == 0 and result.stdout.strip():
-            return result.stdout, name
-    return "", ""
+            diffs.append(result.stdout)
+            sources.append(name)
+    # Untracked source files are invisible to every candidate above;
+    # append their synthesized diff so the rules judge them too.
+    untracked = _untracked_source_diff(cwd)
+    if untracked:
+        diffs.append(untracked)
+        sources.append("untracked .go/.java files")
+    if not diffs:
+        return "", ""
+    return "".join(diffs), " + ".join(sources)
 
 def _is_test_file(fname):
     """Test files and test harnesses: never shipped code, so a pattern
@@ -317,7 +396,79 @@ def check_no_bridges(diff):
                     continue
                 errors.append(f"SYNTHETIC REGISTRATION in {fname}: {line.strip()[:80]}")
 
-    return errors
+    # 5b. New synthetic-registry map entries (REVIEW-2026-11-09-12,
+    # N-P1-6). New synthetic packages are registered by adding a
+    # map-literal entry, e.g. `"time": syntheticTimeSource,` in the
+    # `syntheticSources` registry
+    # (internal/frontend/synth_machinery.go) — a line none of Rule 5's
+    # three patterns matches (no addFunc/synthetic*Package(/registerSynthetic,
+    # no `==`/case, and the pure-string-line continuation regex
+    # requires the line to be only quoted strings, which the trailing
+    # source ident disqualifies). Rule 1 only covers NEW synth_*.go
+    # files, so re-activating a RETIRED entry (the commented-out
+    # `"reflect"` lines) or adding an entry backed by a source const
+    # in an existing file escaped entirely. The same hole exists in
+    # the sibling registry `dedicatedSyntheticStubs`
+    # (internal/frontend/export.go: `"runtime": syntheticRuntimePackage,`)
+    # — a bare `synthetic*Package` ident, no call parens, so Rule 5
+    # misses it too. Both registries are covered by one mechanism:
+    # an added map-entry line in either registry file whose value is
+    # the builder for a package. Entry shapes:
+    #   syntheticSources:       `"path": <Ident>Source[, + ...],`
+    #                           (values are source consts, optionally
+    #                           concatenated, e.g. crypto/cipher)
+    #   dedicatedSyntheticStubs: `"path": synthetic<Name>Package,`
+    #                           (bare builder-func ident)
+    # The shapes are unambiguous in their files: the only other
+    # string-keyed map in synth_machinery.go carries quoted string
+    # values, and dedicatedSyntheticStubs is the only
+    # map[string]func() *types.Package literal in export.go. A
+    # commented-out entry (`// "reflect": ...`) is still retired and
+    # does not flag (the pattern anchors at the first `"`).
+    # Narrowing-aware like Rule 2: an added entry whose key was
+    # removed in the SAME hunk is a rewrap/reorder, not a new
+    # registration. Known limitation, by design (same as Rule 2): a
+    # move across hunks still flags — the gate is a heuristic
+    # tripwire backed by human review, not a proof.
+    _registry_entry_res = {
+        "internal/frontend/synth_machinery.go": (
+            "syntheticSources",
+            re.compile(r'^\s*"([^"]+)"\s*:\s*[A-Za-z_][A-Za-z0-9_]*Source\b[^,]*,\s*(//.*)?$')),
+        "internal/frontend/export.go": (
+            "dedicatedSyntheticStubs",
+            re.compile(r'^\s*"([^"]+)"\s*:\s*synthetic[A-Za-z0-9_]*Package\s*,\s*(//.*)?$')),
+    }
+    for fname, ordered in hunks:
+        if fname not in _registry_entry_res:
+            continue
+        registry, entry_re = _registry_entry_res[fname]
+        removed_keys = set()
+        added_entries = []
+        for status, line in ordered:
+            m = entry_re.match(line)
+            if not m:
+                continue
+            if status == "-":
+                removed_keys.add(m.group(1))
+            elif status == "+":
+                added_entries.append((line, m.group(1)))
+        for line, key in added_entries:
+            if key in removed_keys:
+                continue
+            errors.append(
+                f"SYNTHETIC REGISTRATION in {fname}: {registry} entry "
+                f"for {key!r} — {line.strip()[:80]}")
+
+    # Dedupe, order-preserving: get_diff() unions several diff sources,
+    # so one added line can appear twice (e.g. committed on the branch
+    # and touched again unstaged) — report it once, not twice.
+    seen = set()
+    unique = []
+    for e in errors:
+        if e not in seen:
+            seen.add(e)
+            unique.append(e)
+    return unique
 
 def main():
     diff, source = get_diff()

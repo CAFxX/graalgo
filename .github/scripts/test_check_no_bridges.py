@@ -22,7 +22,9 @@ Positive controls are synthetic diffs that MUST still fail: the gate
 is a tripwire, not a rubber stamp.
 """
 
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -277,6 +279,122 @@ index 00000000..11111111 100644
 """
 
 
+# --- Rule 5b (review 2026-11-09-12, N-P1-6): syntheticSources map entries ---
+# A new entry in the registry IS a new synthetic package registration,
+# even though no addFunc/synthetic*Package(/registerSynthetic call exists.
+NEW_SYNTH_ENTRY = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -70,6 +70,7 @@ var syntheticSources = map[string]string{
+ \t"time":    syntheticTimeSource,
+ \t"context": syntheticContextSource,
++\t"foo":     syntheticFooSource,
+ \t"errors":  syntheticErrorsSource,
+"""
+
+# Re-activating a RETIRED entry: the commented-out "reflect" line is
+# removed and the live entry added. The removed line is a comment, so
+# it contributes no key to the removed set — the added entry flags.
+REACTIVATED_RETIRED_ENTRY = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -108,6 +108,6 @@ var syntheticSources = map[string]string{
+ \t"os":    syntheticOsSource,
+ \t"io/fs": syntheticIoFsSource,
+-\t// "reflect": syntheticReflectSource, // RETIRED - uses disk importer
++\t"reflect": syntheticReflectSource,
+ \t"iter":                 syntheticIterSource,
+"""
+
+# A pure rewrap moving "time" within the literal (removed + added with
+# the same key in one hunk) is a reshuffle, not a new registration.
+SYNTH_ENTRY_REWRAP = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -70,6 +70,6 @@ var syntheticSources = map[string]string{
+-\t"time":    syntheticTimeSource,
+ \t"context": syntheticContextSource,
++\t"time":    syntheticTimeSource,
+ \t"errors":  syntheticErrorsSource,
+"""
+
+# Adding a still-commented (retired) entry registers nothing.
+COMMENTED_ENTRY_ADDED = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -70,6 +70,7 @@ var syntheticSources = map[string]string{
+ \t"time":    syntheticTimeSource,
+ \t"context": syntheticContextSource,
++\t// "foo": syntheticFooSource, // RETIRED - not yet real
+ \t"errors":  syntheticErrorsSource,
+"""
+
+# The same entry shape in any other file is not a registration: only
+# the registry files' literals are read by the importer.
+SYNTH_ENTRY_OTHER_FILE = """\
+diff --git a/internal/frontend/p3frontend/loader.go b/internal/frontend/p3frontend/loader.go
+index 11111111..22222222 100644
+--- a/internal/frontend/p3frontend/loader.go
++++ b/internal/frontend/p3frontend/loader.go
+@@ -440,5 +440,6 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
+ \t// Synthetic packages resolve independently of fromDir; keep them out
+ \t// of the anchored cache.
+ \tswitch path {
++\t"foo": syntheticFooSource,
+ \tcase "time", "context", "errors", "sort", "bytes", "math", "strings",
+"""
+
+# Concatenated source value (the real crypto/cipher shape): the value
+# starts with a *Source ident, so it is still one entry.
+CONCAT_VALUE_ENTRY = """\
+diff --git a/internal/frontend/synth_machinery.go b/internal/frontend/synth_machinery.go
+index 11111111..22222222 100644
+--- a/internal/frontend/synth_machinery.go
++++ b/internal/frontend/synth_machinery.go
+@@ -150,6 +150,7 @@ var syntheticSources = map[string]string{
+ \t"crypto/subtle": syntheticSubtleSource,
+ \t"crypto/hmac":   syntheticHmacSource,
++\t"crypto/cipher": syntheticCipherSource + syntheticCipherGcmSource,
+ \t"crypto/aes":    syntheticAesSource,
+"""
+
+# Sibling registry: a new dedicatedSyntheticStubs entry in export.go
+# is the same hole in the other map — a bare synthetic*Package ident,
+# no call parens, so Rule 5 misses it too.
+DEDICATED_STUB_ENTRY = """\
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index 11111111..22222222 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -586,6 +586,7 @@ var dedicatedSyntheticStubs = map[string]func() *types.Package{
+ \t"runtime": syntheticRuntimePackage,
+ \t"unsafe":  syntheticUnsafePackage,
++\t"foo":     syntheticFooPackage,
+ }
+"""
+
+# Same rewrap exemption in the sibling registry.
+DEDICATED_STUB_REWRAP = """\
+diff --git a/internal/frontend/export.go b/internal/frontend/export.go
+index 11111111..22222222 100644
+--- a/internal/frontend/export.go
++++ b/internal/frontend/export.go
+@@ -586,6 +586,6 @@ var dedicatedSyntheticStubs = map[string]func() *types.Package{
+-\t"runtime": syntheticRuntimePackage,
+ \t"unsafe":  syntheticUnsafePackage,
++\t"runtime": syntheticRuntimePackage,
+ }
+"""
+
+
 class TestNoBridgesGate(unittest.TestCase):
     def test_narrowing_loader_case_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(LOADER_NARROWING), [])
@@ -322,6 +440,176 @@ class TestNoBridgesGate(unittest.TestCase):
 
     def test_import_addition_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(IMPORT_ADDITION), [])
+
+    # --- Rule 5b (N-P1-6): syntheticSources map entries ---
+
+    def test_new_synth_entry_flagged(self):
+        errs = cnb.check_no_bridges(NEW_SYNTH_ENTRY)
+        self.assertTrue(any("SYNTHETIC REGISTRATION" in e and "foo" in e
+                            for e in errs), errs)
+
+    def test_reactivated_retired_entry_flagged(self):
+        errs = cnb.check_no_bridges(REACTIVATED_RETIRED_ENTRY)
+        self.assertTrue(any("SYNTHETIC REGISTRATION" in e and "reflect" in e
+                            for e in errs), errs)
+
+    def test_synth_entry_rewrap_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(SYNTH_ENTRY_REWRAP), [])
+
+    def test_commented_entry_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(COMMENTED_ENTRY_ADDED), [])
+
+    def test_synth_entry_other_file_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(SYNTH_ENTRY_OTHER_FILE), [])
+
+    def test_concat_value_entry_flagged(self):
+        errs = cnb.check_no_bridges(CONCAT_VALUE_ENTRY)
+        self.assertTrue(any("SYNTHETIC REGISTRATION" in e
+                            and "crypto/cipher" in e for e in errs), errs)
+
+    def test_dedicated_stub_entry_flagged(self):
+        errs = cnb.check_no_bridges(DEDICATED_STUB_ENTRY)
+        self.assertTrue(any("SYNTHETIC REGISTRATION" in e and "foo" in e
+                            for e in errs), errs)
+
+    def test_dedicated_stub_rewrap_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(DEDICATED_STUB_REWRAP), [])
+
+
+class TestGetDiffUntracked(unittest.TestCase):
+    """get_diff() must see untracked source files (N-P1-6): `git diff`
+    never shows them, so Rule 1 could never fire on a new synthetic
+    file sitting uncommitted in the working tree."""
+
+    def _init_repo(self, tmp):
+        subprocess.run(["git", "init", "-q", "-b", "main", tmp],
+                       check=True)
+        subprocess.run(["git", "-C", tmp, "config", "user.email", "t@t"],
+                       check=True)
+        subprocess.run(["git", "-C", tmp, "config", "user.name", "t"],
+                       check=True)
+        Path(tmp, "README.md").write_text("x\n")
+        subprocess.run(["git", "-C", tmp, "add", "."], check=True)
+        subprocess.run(["git", "-C", tmp, "commit", "-qm", "base"],
+                       check=True)
+
+    def test_untracked_synth_file_visible_to_rule1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._init_repo(tmp)
+            synth = Path(tmp, "internal", "frontend", "synth_foo.go")
+            synth.parent.mkdir(parents=True)
+            synth.write_text("package frontend\n\n// Synthetic foo.\n")
+            diff, source = cnb.get_diff(cwd=tmp)
+            self.assertIn("untracked", source)
+            errs = cnb.check_no_bridges(diff)
+            self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs),
+                            errs)
+
+    def test_untracked_files_appended_to_primary_diff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._init_repo(tmp)
+            # A benign tracked change (primary diff) plus an untracked
+            # synthetic file: the gate must judge both.
+            Path(tmp, "README.md").write_text("x\nchanged\n")
+            synth = Path(tmp, "internal", "frontend", "synth_foo.go")
+            synth.parent.mkdir(parents=True)
+            synth.write_text("package frontend\n\n// Synthetic foo.\n")
+            diff, source = cnb.get_diff(cwd=tmp)
+            self.assertIn("working tree", source)
+            self.assertIn("untracked", source)
+            errs = cnb.check_no_bridges(diff)
+            self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs),
+                            errs)
+
+    def test_untracked_non_source_files_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._init_repo(tmp)
+            Path(tmp, "notes.txt").write_text("scratch\n")
+            diff, source = cnb.get_diff(cwd=tmp)
+            self.assertEqual((diff, source), ("", ""))
+
+
+class TestGetDiffUnion(unittest.TestCase):
+    """get_diff() unions every diff source (2026-11-10, L12-P1-B): the
+    old first-match loop let a stale origin/master mask the working
+    tree — a planted syntheticSources entry escaped Rule 5b live
+    because the stale range diff fired first and the loop broke."""
+
+    def _git(self, tmp, *args):
+        subprocess.run(["git", "-C", tmp, *args], check=True,
+                       capture_output=True, text=True)
+
+    def _init_repo(self, tmp, with_map=True):
+        subprocess.run(["git", "init", "-q", "-b", "main", tmp],
+                       check=True)
+        self._git(tmp, "config", "user.email", "t@t")
+        self._git(tmp, "config", "user.name", "t")
+        Path(tmp, "README.md").write_text("x\n")
+        if with_map:
+            mdir = Path(tmp, "internal", "frontend")
+            mdir.mkdir(parents=True)
+            (mdir / "synth_machinery.go").write_text(
+                "package frontend\n\n"
+                "var syntheticSources = map[string]string{\n"
+                "\t\"time\": syntheticTimeSource,\n"
+                "}\n")
+        subprocess.run(["git", "-C", tmp, "add", "."], check=True)
+        subprocess.run(["git", "-C", tmp, "commit", "-qm", "base"],
+                       check=True)
+
+    def _add_planted_entry(self, tmp):
+        p = Path(tmp, "internal", "frontend", "synth_machinery.go")
+        p.write_text(p.read_text().replace(
+            "\t\"time\": syntheticTimeSource,\n",
+            "\t\"time\": syntheticTimeSource,\n"
+            "\t\"planted\": syntheticPlantedSource,\n"))
+
+    def test_stale_range_does_not_shadow_working_tree(self):
+        # origin/master lags HEAD (two commits landed since the
+        # worktree was claimed): the range diff is non-empty, but the
+        # uncommitted planted entry must still be judged.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._init_repo(tmp)
+            base = subprocess.run(
+                ["git", "-C", tmp, "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True).stdout.strip()
+            Path(tmp, "README.md").write_text("x\nsecond\n")
+            subprocess.run(["git", "-C", tmp, "commit", "-qam", "second"],
+                           check=True)
+            # Stale tracking ref, as in a lane worktree whose
+            # origin/master predates the latest master commits.
+            self._git(tmp, "update-ref", "refs/remotes/origin/master", base)
+            self._add_planted_entry(tmp)
+            diff, source = cnb.get_diff(cwd=tmp)
+            self.assertIn("working tree", source)
+            self.assertIn("origin/master...HEAD", source)
+            errs = cnb.check_no_bridges(diff)
+            self.assertTrue(
+                any("SYNTHETIC REGISTRATION" in e and "planted" in e
+                    for e in errs),
+                errs)
+
+    def test_same_line_in_two_sources_reported_once(self):
+        # A staged line appears in both `git diff HEAD` and
+        # `git diff --cached`: the union contains it twice, but the
+        # gate must report it once.
+        with tempfile.TemporaryDirectory() as tmp:
+            self._init_repo(tmp)
+            head = subprocess.run(
+                ["git", "-C", tmp, "rev-parse", "HEAD"],
+                check=True, capture_output=True, text=True).stdout.strip()
+            self._git(tmp, "update-ref", "refs/remotes/origin/master", head)
+            self._add_planted_entry(tmp)
+            subprocess.run(["git", "-C", tmp, "add", "."],
+                           check=True)
+            diff, source = cnb.get_diff(cwd=tmp)
+            self.assertIn("working tree", source)
+            self.assertIn("staged", source)
+            errs = cnb.check_no_bridges(diff)
+            planted = [e for e in errs
+                       if "SYNTHETIC REGISTRATION" in e
+                       and "planted" in e]
+            self.assertEqual(len(planted), 1, errs)
 
 
 if __name__ == "__main__":
