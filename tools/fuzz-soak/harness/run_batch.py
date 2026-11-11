@@ -6,6 +6,10 @@
 3. Runs diff_one.sh in parallel.
 4. Classifies, dedups, writes results.jsonl + summary.
 
+Exits non-zero when any result is a divergence, a harness error, or any
+other non-PASS/SCOPE verdict (C04-P1-2): the soak is a gate, so its exit
+code must express its finding.
+
 Usage: run_batch.py --seeds START:END --out DIR [--jobs J] [--gmp N]
 """
 import argparse
@@ -19,6 +23,51 @@ from concurrent.futures import ThreadPoolExecutor
 # Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+
+# Result classes that fail a batch (C04-P1-2). The soak is a gate, so its
+# exit code must express its finding: before this fix the ONLY failing
+# signal was GC_BUILD_FAIL, and a batch full of genuine divergences — or
+# of total harness failure — exited 0.
+# DIVERGED: genuine graalgo divergences — the exact signal the soak exists
+# to produce (emitted by harness/diff_one.sh).
+DIVERGED_RESULTS = frozenset({
+    "WRONG_OUTPUT", "EXIT_MISMATCH", "GO_PANIC_MISMATCH", "CRASH", "HANG",
+})
+# Results that pass a batch. Everything else fails it: besides DIVERGED
+# and HARNESS_ERROR this covers GC_BUILD_FAIL (unchanged behaviour) and
+# GC_HANG (gc itself hung — a generator bug, not a graalgo divergence,
+# but the batch tested nothing meaningful for that seed), plus any future
+# result class. A gate must fail loud on a verdict it does not
+# recognise, never pass.
+OK_RESULTS = frozenset({"PASS", "SCOPE"})
+
+
+def decide_exit_code(counts):
+    """Batch exit code for a mapping of result -> count.
+
+    Returns (code, reason): 0 only when every result is PASS or SCOPE;
+    1 otherwise, with the reason naming which class fired so the failure
+    is diagnosable (divergences vs harness errors vs other failures).
+    A batch with zero results (nothing tested) returns 0 here — the
+    zero-program case is the carried R-01 defect's mechanism and is
+    owned by that lane, not by this function.
+    """
+    diverged = sum(counts.get(r, 0) for r in DIVERGED_RESULTS)
+    harness = counts.get("HARNESS_ERROR", 0)
+    other = {k: v for k, v in counts.items()
+             if k not in OK_RESULTS and k not in DIVERGED_RESULTS
+             and k != "HARNESS_ERROR"}
+    if diverged == 0 and harness == 0 and not other:
+        return 0, "all PASS/SCOPE"
+    parts = []
+    if diverged:
+        parts.append(f"{diverged} diverged")
+    if harness:
+        parts.append(f"{harness} harness error(s)")
+    if other:
+        parts.append("other failure(s): " + ", ".join(
+            f"{k}={v}" for k, v in sorted(other.items())))
+    return 1, "; ".join(parts)
 
 
 def sh(cmd, **kw):
@@ -114,7 +163,12 @@ def main():
     if scope_rate > 0.2:
         print("WARNING: scope-hit rate >20% — tune generator before scaling")
 
-    return 0 if counts.get("GC_BUILD_FAIL", 0) == 0 else 1
+    code, reason = decide_exit_code(counts)
+    if code != 0:
+        print(f"\nBATCH FAILED: {reason}")
+    else:
+        print("\nbatch clean: all PASS/SCOPE")
+    return code
 
 
 if __name__ == "__main__":

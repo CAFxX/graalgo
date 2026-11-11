@@ -98,10 +98,14 @@ EOF
 if [ -n "$SEEDS" ]; then
   # Single bounded batch: the continuous-track slot.
   echo "== soak batch: seeds $SEEDS =="
-  run_batch "$SEEDS" "$OUT/batch-0"
-  minimize_findings "$OUT/batch-0"
-  echo "batch done: $OUT/batch-0"
-  exit 0
+  # Capture the batch exit code instead of dying under `set -e`: a
+  # diverged batch must still be minimized (the minimized reproducers
+  # are the soak's product) AND must fail the run (C04-P1-2).
+  rc=0
+  run_batch "$SEEDS" "$OUT/batch-0" || rc=$?
+  minimize_findings "$OUT/batch-0" || true
+  echo "batch done: $OUT/batch-0 (rc=$rc)"
+  exit "$rc"
 fi
 
 [ -n "$HOURS" ] || { echo "need --hours or --seeds" >&2; exit 2; }
@@ -109,10 +113,12 @@ fi
 # Overnight soak: batches of BATCH seeds until the deadline.
 seed=0
 batch=0
+failed_batches=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
   if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
     echo "batch $batch failed; continuing with next batch"
+    failed_batches=$((failed_batches + 1))
   fi
   minimize_findings "$OUT/batch-$batch" || true
   seed=$((seed + BATCH))
@@ -120,17 +126,8 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
 done
 
 echo "== soak complete: $batch batches, $seed programs =="
-python3 - "$OUT" <<'EOF'
-import glob, json, os, sys
-out = sys.argv[1]
-total_div = 0
-for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
-    for line in open(res):
-        r = json.loads(line)
-        if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
-            total_div += 1
-rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
-       "diverged_total": total_div}
-json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
-print(f"soak report: {rep}")
-EOF
+# soak_report.py writes soak-report.json and exits 1 when diverged_total
+# > 0 or any batch failed outright (C04-P1-2: the soak is a gate, so a
+# diverged soak must fail the GHA step that runs it). Under `set -e` its
+# non-zero exit propagates as this script's exit code.
+python3 "$HERE/harness/soak_report.py" --out "$OUT" --failed-batches "$failed_batches"

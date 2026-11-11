@@ -23,6 +23,7 @@ harness/run_batch.py  (parallel driver)
         |       compare stdout bytes, exit codes, panic lines
         +-- classify: PASS | SCOPE | WRONG_OUTPUT | CRASH | HANG
                      | GO_PANIC_MISMATCH | EXIT_MISMATCH | GC_BUILD_FAIL
+                     | GC_HANG | HARNESS_ERROR
         +-- dedup by (category, signature)
         +-- triage.py : minimize reproducers (delta debugging)
 ```
@@ -66,7 +67,11 @@ control flow, and a final deterministic state dump via `fmt.Println`.
 
 `run_batch.py`: builds the Java modules once, generates N programs,
 runs `diff_one.sh` in parallel (`-P 4` default, respects load-shed
-backoff), classifies, dedups, writes `results.jsonl` + summary.
+backoff), classifies, dedups, writes `results.jsonl` + summary. A batch
+exits non-zero on any divergence, harness error, or other non-PASS/SCOPE
+result (C04-P1-2); the overnight soak (`run_soak.sh`) exits non-zero when
+`soak-report.json` shows `diverged_total > 0` or any batch failed — the
+soak is a gate, so its exit code must express its finding.
 
 Classification:
 | Result | Meaning |
@@ -79,6 +84,8 @@ Classification:
 | GO_PANIC_MISMATCH | panic behavior differs between legs |
 | EXIT_MISMATCH | exit codes differ |
 | GC_BUILD_FAIL | generator emitted invalid Go (generator bug) |
+| GC_HANG | gc binary timed out (10s) — generator bug, not a graalgo divergence; fails the batch |
+| HARNESS_ERROR | diff output unparseable (e.g. `diff_one.sh` missing) — total harness failure; fails the batch |
 
 Dedup signature: `(category, first stderr line)` for crashes/scope,
 `(category, sha1(stdout diff))` for wrong output.
@@ -141,6 +148,9 @@ fuzzing/
   gen/generator.py     seeded Go program generator
   harness/diff_one.sh  single-program differential
   harness/run_batch.py batch driver (parallel, classify, dedup)
+  harness/soak_report.py overnight-soak summary + gate exit code
+  harness/test_run_batch.py  tests for the batch exit-code rule
+  harness/test_soak_report.py tests for the soak summary + exit code
   harness/triage.py    delta-debugging minimizer
   gha/Dockerfile       fanout image
   gha/driver/fuzz_driver.py
