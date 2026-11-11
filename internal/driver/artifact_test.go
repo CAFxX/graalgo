@@ -60,6 +60,150 @@ func TestEmitProducesBinary(t *testing.T) {
 	}
 }
 
+// TestEmitRelativeOutputPath verifies that Emit with a relative
+// OutputPath writes the artifact into the caller's working directory
+// (F-P0-1): before the fix, `go build -o <relative>` resolved against
+// the temp build dir (cmd.Dir), so the fresh artifact was deleted with
+// it and the chmod failed on the missing file in the cwd.
+func TestEmitRelativeOutputPath(t *testing.T) {
+	workdir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	if err := Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    []byte(`{"frontend":"v1","functions":[]}`),
+	}); err != nil {
+		t.Fatalf("Emit with relative output path: %v", err)
+	}
+
+	out := filepath.Join(workdir, "prog")
+	fi, err := os.Stat(out)
+	if err != nil {
+		t.Fatalf("artifact not in cwd: %v", err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact %s is not executable (mode %v)", out, fi.Mode())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary")
+	}
+}
+
+// TestEmitRelativeOutputPathReplacesStaleArtifact verifies the silent
+// arm of F-P0-1 for the realistic stale file — a previous artifact
+// binary at the output path. Emit must replace it with a freshly
+// built binary, not chmod the old one and return nil (the pre-fix
+// behavior: `go build -o <relative>` wrote into the temp dir, which
+// was deleted, and the chmod then succeeded on this stale file).
+func TestEmitRelativeOutputPathReplacesStaleArtifact(t *testing.T) {
+	workdir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	// A stale artifact: built via an absolute path (which works even
+	// unfixed), then moved to the relative output name.
+	staleAbs := filepath.Join(workdir, "stale-abs")
+	if err := Emit(Artifact{
+		OutputPath:  staleAbs,
+		GraalgoRoot: "/opt/graalgo-v1",
+		WireJSON:    []byte(`{"frontend":"v1","functions":[]}`),
+	}); err != nil {
+		t.Fatalf("building stale artifact: %v", err)
+	}
+	staleBytes, err := os.ReadFile(staleAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(staleAbs, filepath.Join(workdir, "prog")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebuild over it via a relative path, with different content.
+	if err := Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo-v2",
+		WireJSON:    []byte(`{"frontend":"v1","functions":["new"]}`),
+	}); err != nil {
+		t.Fatalf("Emit with relative output path over stale artifact: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(workdir, "prog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(data, staleBytes) {
+		t.Errorf("artifact is still the stale binary: Emit chmodded the old binary instead of building a new one")
+	}
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary")
+	}
+	// The fresh binary must carry the new build's content, not the old.
+	if !bytes.Contains(data, []byte("/opt/graalgo-v2")) {
+		t.Errorf("artifact does not bake in the new graalgo root")
+	}
+	if bytes.Contains(data, []byte("/opt/graalgo-v1")) {
+		t.Errorf("artifact still bakes in the stale graalgo root")
+	}
+}
+
+// TestEmitRelativeOutputPathStaleNonObjectFailsLoud pins the
+// go-consistent behavior when the stale file is NOT a previous
+// artifact: `go build -o` refuses to clobber a file that is not an
+// object file ("build output ... already exists and is not an object
+// file"), so Emit must fail loudly — never return nil over a stale
+// file — and must leave the user's file untouched.
+func TestEmitRelativeOutputPathStaleNonObjectFailsLoud(t *testing.T) {
+	workdir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workdir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	stale := []byte("STALE-NOT-A-BINARY")
+	if err := os.WriteFile(filepath.Join(workdir, "prog"), stale, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    []byte(`{"frontend":"v1","functions":[]}`),
+	})
+	if err == nil {
+		t.Fatalf("Emit with relative output path over non-object stale file returned nil, want loud failure")
+	}
+	if !strings.Contains(err.Error(), "already exists and is not an object file") {
+		t.Errorf("Emit error = %v, want go build's already-exists refusal", err)
+	}
+	data, err := os.ReadFile(filepath.Join(workdir, "prog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, stale) {
+		t.Errorf("stale non-object file was modified by a failed Emit")
+	}
+}
+
 func TestEmitNoOutput(t *testing.T) {
 	err := Emit(Artifact{GraalgoRoot: "/x", WireJSON: []byte("{}")})
 	if err == nil || !strings.Contains(err.Error(), "output") {

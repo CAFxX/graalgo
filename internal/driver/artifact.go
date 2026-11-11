@@ -48,6 +48,18 @@ func Emit(a Artifact) error {
 	if a.OutputPath == "" {
 		return fmt.Errorf("no output path")
 	}
+	// Resolve the output path against the caller's working directory
+	// BEFORE compiling: `go build -o <relative>` resolves relative to
+	// the child process's cwd (the temp build dir below), so a relative
+	// OutputPath would land the fresh artifact in the temp dir, where
+	// the deferred RemoveAll deletes it — and the chmod below would
+	// then target (or silently succeed on a stale file in) the cwd
+	// (F-P0-1).
+	abs, err := filepath.Abs(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve output path: %v", err)
+	}
+	a.OutputPath = abs
 	if len(a.WireJSON) == 0 {
 		return fmt.Errorf("no frontend output to embed")
 	}
