@@ -1,9 +1,22 @@
 # P3-M9 wave-3 `path/filepath` corpus (tier-2)
 
-Differential corpus for the new synthetic `path/filepath` package
-(`internal/frontend/synth_filepath.go`): a linux-only port of
-go1.27.1 `path/filepath` + the unix `filepathlite` core (windows/Plan9
-out per GG-0023). Conventions are the wave-1 ones (`../wave1/README.md`).
+Differential corpus for `path/filepath` as resolved through the
+disk importer (real go1.27.1 stdlib source). The synthetic
+`path/filepath` (`internal/frontend/synth_filepath.go`) was never
+registered in `syntheticSources` and carried no Appendix-M desugar
+rows, so it was dead code — deleted by the F13-P1-3 remediation
+(REVIEW-2026-11-09-13). These programs pin the live disk-import
+route, which is the load-bearing one. Conventions are the wave-1
+ones (`../wave1/README.md`).
+
+## Status (carried block)
+
+All eight programs currently fail gofrontend export on the disk-import
+route with `variable "lstat" used before declaration` (GOROOT
+`path/filepath/path.go:307` `var lstat = os.Lstat`, used at `:364`) —
+a pre-existing export bug, not caused by the synthetic deletion (the
+synthetic was never wired in). Fix lane: `review-1105-filepath-lstat`.
+Retest trigger: `gofrontend` accepts `00_clean_join.go`.
 
 ## Programs
 
