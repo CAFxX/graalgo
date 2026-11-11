@@ -267,12 +267,27 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
+	// Count TestMain definitions: a package with TestMain is driven
+	// through it (synthesizeTestDriver calls it as the entry point),
+	// so a driver must be synthesized even when -run selects no tests —
+	// TestMain's setup still runs, like `go test`. Multiple TestMain
+	// definitions are a loud error, like `go test`.
+	testMainCount, err := countTestMains(runnableTests)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+		return false
+	}
+	if testMainCount > 1 {
+		fmt.Fprintln(os.Stderr, "graalgo test: multiple definitions of TestMain")
+		return false
+	}
+
 	// The synthesized driver prints go-test-format output itself
 	// (=== RUN / --- PASS/FAIL lines, PASS/FAIL summary); a non-zero
 	// exit means the package failed.
 	t0 := time.Now()
 	ok := true
-	if len(ftList) > 0 {
+	if len(ftList) > 0 || testMainCount == 1 {
 		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)

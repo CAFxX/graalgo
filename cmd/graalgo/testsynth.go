@@ -30,6 +30,12 @@ func discoverTests(path string) ([]string, error) {
 			continue
 		}
 		name := fn.Name.Name
+		if name == "TestMain" {
+			// TestMain is the driver's entry point, not a test:
+			// selecting it would call it as TestMain(tt) with a
+			// *graalgoT (A-P1-1). It is handled separately.
+			continue
+		}
 		if !strings.HasPrefix(name, "Test") {
 			continue
 		}
@@ -41,6 +47,131 @@ func discoverTests(path string) ([]string, error) {
 	}
 	return tests, nil
 }
+
+// isTestMainDecl reports whether decl is a TestMain entry point: a
+// top-level (non-method) function named TestMain.
+func isTestMainDecl(decl ast.Decl) bool {
+	fn, ok := decl.(*ast.FuncDecl)
+	return ok && fn.Recv == nil && fn.Name.Name == "TestMain"
+}
+
+// countTestMains returns the number of TestMain entry-point definitions
+// across the given _test.go files.
+func countTestMains(files []string) (int, error) {
+	count := 0
+	for _, path := range files {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return 0, fmt.Errorf("parse %s: %w", path, err)
+		}
+		for _, decl := range f.Decls {
+			if isTestMainDecl(decl) {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// checkTestMainSig validates the TestMain signature: exactly one
+// parameter of type *testing.M and no results, as `go test` requires.
+// A wrong shape fails loudly here instead of producing a driver that
+// cannot compile.
+func checkTestMainSig(fn *ast.FuncDecl) error {
+	bad := fmt.Errorf("TestMain must have signature func TestMain(m *testing.M)")
+	if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
+		return bad
+	}
+	field := fn.Type.Params.List[0]
+	if len(field.Names) > 1 {
+		return bad
+	}
+	star, ok := field.Type.(*ast.StarExpr)
+	if !ok {
+		return bad
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return bad
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok || id.Name != "testing" || sel.Sel.Name != "M" {
+		return bad
+	}
+	if fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
+		return bad
+	}
+	return nil
+}
+
+// rewriteTestMainParam rewrites *testing.M to *graalgoM everywhere in a
+// TestMain declaration: the parameter list AND any nested function
+// literals. Runs before the TestMain declaration is inlined into the
+// driver, whose testing import is dropped. Mirrors rewriteParam (which
+// handles *testing.T); the two stay separate so a change to one cannot
+// silently alter the other's rewrite.
+func rewriteTestMainParam(fn *ast.FuncDecl) {
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if star, ok := n.(*ast.StarExpr); ok {
+			if sel, ok := star.X.(*ast.SelectorExpr); ok {
+				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "M" {
+					star.X = &ast.Ident{Name: "graalgoM"}
+				}
+			}
+		}
+		return true
+	})
+	// Second pass: bare testing.M in function-type params/results.
+	rewriteBareTestingM(fn.Type)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if fl, ok := n.(*ast.FuncLit); ok {
+			rewriteBareTestingM(fl.Type)
+		}
+		return true
+	})
+}
+
+// rewriteBareTestingM replaces testing.M (non-pointer) with graalgoM in
+// a function type's params and results.
+func rewriteBareTestingM(ft *ast.FuncType) {
+	if ft == nil {
+		return
+	}
+	rewriteMFieldList(ft.Params)
+	rewriteMFieldList(ft.Results)
+}
+
+func rewriteMFieldList(fl *ast.FieldList) {
+	if fl == nil {
+		return
+	}
+	for _, f := range fl.List {
+		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "M" {
+				f.Type = &ast.Ident{Name: "graalgoM"}
+			}
+		}
+	}
+}
+
+// testMainShimSource is the minimal testing.M replacement, inlined into
+// the synthesized driver only when the package defines TestMain. Its
+// Run drives the selected tests through runGraalgoTests — the same
+// runner the generated main uses when there is no TestMain — and
+// returns its exit code, the way `go test`'s m.Run() drives the tests.
+// When TestMain returns without calling Run, exitCode stays 0, matching
+// `go test` (tests run only when TestMain calls m.Run()).
+const testMainShimSource = `
+type graalgoM struct {
+	exitCode int
+}
+
+func (m *graalgoM) Run() int {
+	m.exitCode = runGraalgoTests()
+	return m.exitCode
+}
+`
 
 // testShimTemplate is a minimal testing.T replacement, inlined into every
 // synthesized test driver. Diagnostic calls (Errorf, Fatalf, …) are
@@ -714,6 +845,11 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		items = append(items, bodyItem{g: &gatheredDecl{decl, fset, bindings, quals, ext, declNames(decl)}})
 	}
 
+	// testMainCount is the number of TestMain entry points gathered
+	// from the test files below; checked after gathering (at most one,
+	// like `go test`).
+	testMainCount := 0
+
 	// Phase A: gather the declarations to inline (no printing yet).
 	// Reference recording happens here so phase B can prune and
 	// disambiguate imports, and rename colliding external-test-package
@@ -749,6 +885,20 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		for _, decl := range tu.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
+				if isTestMainDecl(d) {
+					// TestMain is the driver's entry point, not a
+					// test: rewrite its *testing.M parameter to the
+					// *graalgoM shim and inline it for main to call.
+					if err := checkTestMainSig(d); err != nil {
+						return "", err
+					}
+					testMainCount++
+					rewriteTestMainParam(d)
+					rewriteParam(d)
+					rewriteTestCalls(d, tu.fset)
+					gatherDecl(tu.f, tu.fset, d)
+					continue
+				}
 				n := d.Name.Name
 				isTest := tu.tests[n]
 				// Skip other entry points (Test/Benchmark/Fuzz/Example).
@@ -777,6 +927,20 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		for _, decl := range u.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
+				if isTestMainDecl(d) {
+					// TestMain in a file with no selected tests still
+					// drives the package: its setup must run even
+					// when -run selects nothing.
+					if err := checkTestMainSig(d); err != nil {
+						return "", err
+					}
+					testMainCount++
+					rewriteTestMainParam(d)
+					rewriteParam(d)
+					rewriteTestCalls(d, u.fset)
+					gatherDecl(u.f, u.fset, d)
+					continue
+				}
 				if d.Recv == nil {
 					n := d.Name.Name
 					if strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
@@ -794,6 +958,13 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				gatherDecl(u.f, u.fset, d)
 			}
 		}
+	}
+
+	// A package may define TestMain only once (like `go test`): two
+	// definitions — in one file or across files — are a loud error,
+	// not a silently-picked winner.
+	if testMainCount > 1 {
+		return "", fmt.Errorf("multiple definitions of TestMain")
 	}
 
 	// Phase B (imports): prune unreferenced imports and assign
@@ -847,7 +1018,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			driverDeclNames[n] = true
 		}
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "runGraalgoTests", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		driverDeclNames[n] = true
 	}
 	var sb strings.Builder
@@ -956,7 +1127,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	for n := range whiteNames {
 		protected[n] = true
 	}
-	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "graalgoM", "runGraalgoTests", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
 		protected[n] = true
 	}
 	takenNames := make(map[string]bool)
@@ -1403,8 +1574,15 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// Shim + main runner. Per-test output mirrors `go test -v`:
 	// === RUN / --- PASS/FAIL/SKIP with (0.00s) timings, a single
 	// PASS/FAIL summary, and exit code 1 (no panic trace) on failure.
+	// The per-test loop lives in runGraalgoTests so both entry points
+	// share it: the generated main calls it directly, and TestMain (when
+	// the package defines one) drives it through the *graalgoM shim's
+	// Run, the way `go test` does.
 	body.WriteString(testShimSource(verbose))
-	body.WriteString("\nfunc main() {\n")
+	if testMainCount > 0 {
+		body.WriteString(testMainShimSource)
+	}
+	body.WriteString("\nfunc runGraalgoTests() int {\n")
 	body.WriteString("\tfailed := 0\n")
 	for _, tu := range testUnits {
 		for _, t := range tu.ordered {
@@ -1484,10 +1662,20 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	body.WriteString("\tif failed > 0 {\n")
 	body.WriteString("\t\tprintln(\"FAIL\")\n")
-	body.WriteString("\t\tos.Exit(1)\n")
+	body.WriteString("\t\treturn 1\n")
 	body.WriteString("\t}\n")
 	if verbose {
 		body.WriteString("\tprintln(\"PASS\")\n")
+	}
+	body.WriteString("\treturn 0\n")
+	body.WriteString("}\n")
+	body.WriteString("\nfunc main() {\n")
+	if testMainCount > 0 {
+		body.WriteString("\tm := &graalgoM{}\n")
+		body.WriteString("\tTestMain(m)\n")
+		body.WriteString("\tos.Exit(m.exitCode)\n")
+	} else {
+		body.WriteString("\tos.Exit(runGraalgoTests())\n")
 	}
 	body.WriteString("}\n")
 

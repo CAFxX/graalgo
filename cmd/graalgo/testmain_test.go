@@ -35,6 +35,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestHello(t *testing.T) {
+	println("hello ran")
 	if 1+1 != 2 {
 		t.Fatal("bad")
 	}
@@ -45,8 +46,13 @@ func TestHello(t *testing.T) {
 		if code != 0 {
 			t.Errorf("verbose=%v: driver exit = %d, want 0 (TestMain + passing test must pass):\n%s", verbose, code, out)
 		}
-		mustContain(t, out, "--- PASS: TestHello ")
+		// "hello ran" proves the test body executed in both modes: a
+		// non-verbose driver prints no per-test PASS lines by design
+		// (only failures are shown), so the PASS line is asserted
+		// under verbose only.
+		mustContain(t, out, "hello ran")
 		if verbose {
+			mustContain(t, out, "--- PASS: TestHello ")
 			mustContain(t, out, "=== RUN   TestHello")
 		}
 	}
@@ -72,6 +78,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestUsesSetup(t *testing.T) {
+	println("uses-setup ran")
 	if !ready {
 		t.Fatal("setup did not run before the test")
 	}
@@ -83,7 +90,13 @@ func TestUsesSetup(t *testing.T) {
 			t.Errorf("verbose=%v: driver exit = %d, want 0 (setup must run, test must pass):\n%s", verbose, code, out)
 		}
 		mustContain(t, out, "setup ran")
-		mustContain(t, out, "--- PASS: TestUsesSetup ")
+		// "uses-setup ran" proves the test body executed in both modes
+		// (see TestTestMainRunsTests: no per-test PASS lines when
+		// !verbose, by design).
+		mustContain(t, out, "uses-setup ran")
+		if verbose {
+			mustContain(t, out, "--- PASS: TestUsesSetup ")
+		}
 	}
 }
 
