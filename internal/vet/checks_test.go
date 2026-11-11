@@ -455,3 +455,58 @@ func g(url string) {
 		t.Errorf("expected exactly 1 httpresponse diagnostic, got %d:\n%s", count, joined)
 	}
 }
+
+// TestCopyLocks pins the pointer rule: copying a *lock* value is an
+// error, but copying a pointer to a lock (or to a struct containing a
+// lock) copies no lock and must not be flagged. Passing &mu is the
+// idiomatic use of a mutex; flagging it false-positives on ordinary code.
+func TestCopyLocks(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+func useMutex(m sync.Mutex) {}
+func useMutexPtr(m *sync.Mutex) {}
+func useWithLock(s WithLock) {}
+func useWithLockPtr(s *WithLock) {}
+func useWithLockPtrField(s WithLockPtr) {}
+
+type WithLock struct {
+	sync.Mutex
+	X int
+}
+
+type WithLockPtr struct {
+	Mu *sync.Mutex
+	X  int
+}
+
+func good() *sync.Mutex {
+	var mu sync.Mutex
+	return &mu // good: returning a pointer copies no lock
+}
+
+func bad() sync.Mutex {
+	var mu sync.Mutex
+	return mu // bad: return copies lock value
+}
+
+func f() {
+	var mu sync.Mutex
+	useMutex(mu)         // bad: call copies lock value
+	useMutexPtr(&mu)     // good: pointer
+	var s WithLock
+	useWithLock(s)       // bad: struct containing a lock, by value
+	useWithLockPtr(&s)   // good: pointer to struct containing a lock
+	var sp WithLockPtr
+	useWithLockPtrField(sp) // good: struct whose only lock is a *Mutex field
+	p := &mu             // good: taking the address copies no lock
+	_ = p
+}
+`
+	joined := runVetOnSrc(t, src)
+	count := strings.Count(joined, "copies lock value")
+	if count != 3 {
+		t.Errorf("expected exactly 3 copylocks diagnostics (f(mu), f(s), return mu), got %d:\n%s", count, joined)
+	}
+}

@@ -136,9 +136,13 @@ func typeContainsLock(t types.Type, seen map[types.Type]bool) bool {
 		return false
 	}
 	seen[t] = true
-	// Unwrap pointer: *sync.Mutex is fine, sync.Mutex is the lock.
-	if p, ok := t.(*types.Pointer); ok {
-		return typeContainsLock(p.Elem(), seen)
+	// Do NOT unwrap pointers: copying a *T copies only the pointer,
+	// never the lock value it points to. *sync.Mutex is fine;
+	// sync.Mutex is the lock. go vet's copylocks likewise does not
+	// descend through pointers, so neither do we: descending here
+	// false-positives on the idiomatic f(&mu) / return &mu / p := &mu.
+	if _, ok := t.(*types.Pointer); ok {
+		return false
 	}
 	named, ok := t.(*types.Named)
 	if !ok {
