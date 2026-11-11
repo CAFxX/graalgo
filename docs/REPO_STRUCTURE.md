@@ -192,6 +192,8 @@ Related: [Makefile](../Makefile) (root build entry point),
   [torture/](../tools/torture/) (scheduler torture),
   [godebug-diff/](../tools/godebug-diff/),
   [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
+  [shape-coverage/](../tools/shape-coverage/) (scope-panic
+  shape-coverage matrix generator; R2-P1-3),
   [req/](../tools/req/) (requirements CLI), and
   [precommit-check.sh](../tools/precommit-check.sh) (mechanical pre-commit
   guard).
