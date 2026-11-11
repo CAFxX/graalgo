@@ -6,26 +6,47 @@ package graalgo.values;
  *
  * <p>Rules: numeric kinds compare by value within their Java carrier
  * ({@code long} for all int/uint kinds, {@code double} for both float
- * kinds); IEEE semantics apply, so a NaN key never equals anything —
- * including itself — matching Go. {@link GoString} compares byte-wise.
- * Values of different carrier classes are never equal (a Go map has a
- * single static key type, so this only arises from misuse).
+ * kinds); complex64/complex128 compare component-wise with {@code ==}.
+ * IEEE semantics apply, so a NaN (or NaN-component) value never equals
+ * anything — including itself — matching Go. {@link GoString} compares
+ * byte-wise. Values of different carrier classes are never equal (a Go
+ * map has a single static key type, so this only arises from misuse).
  */
 public final class GoEquality {
     private GoEquality() {}
 
     public static boolean equal(Object a, Object b) {
         if (a == b) {
-            // Covers reference-identity and the (null, null) case. Note: for
-            // Doubles this would wrongly equate two identical NaN
-            // references, so NaN is checked below even on this path.
+            // Covers reference-identity and the (null, null) case. A NaN
+            // scalar never equals, even itself (checked below).
+            // Composites (structs, arrays, interfaces) are NOT
+            // short-circuited here: their fields/elements may hold NaN,
+            // so they fall through to the structural comparison — a
+            // same-reference struct with a NaN complex field must
+            // compare false (R22-F-1 probe: `nan == nan`), as must a
+            // same-reference array with a NaN element.
+            if (a == null) {
+                return true;
+            }
             if (a instanceof Double d && d.isNaN()) {
                 return false;
             }
             if (a instanceof Float f && f.isNaN()) {
                 return false;
             }
-            return true;
+            if (a instanceof GoComplex32 c
+                    && (Float.isNaN(c.re()) || Float.isNaN(c.im()))) {
+                return false;
+            }
+            if (a instanceof GoComplex64 c
+                    && (Double.isNaN(c.re()) || Double.isNaN(c.im()))) {
+                return false;
+            }
+            if (a instanceof GoStruct || a instanceof GoInterface || a.getClass().isArray()) {
+                // Fall through to the structural branches below.
+            } else {
+                return true;
+            }
         }
         if (a == null || b == null) {
             return false;
@@ -43,6 +64,17 @@ public final class GoEquality {
         if (a instanceof Float fa && b instanceof Float fb) {
             float x = fa, y = fb;
             return x == y && !Float.isNaN(x);
+        }
+        if (a instanceof GoComplex32 ca && b instanceof GoComplex32 cb) {
+            // R22-F-1: scalar complex64. Compare components with == —
+            // IEEE semantics, so a NaN component never equals anything,
+            // including itself. (The record equals() override agrees,
+            // D-P1-1; == keeps this path independent of it.)
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
+        if (a instanceof GoComplex64 ca && b instanceof GoComplex64 cb) {
+            // R22-F-1: scalar complex128, as above.
+            return ca.re() == cb.re() && ca.im() == cb.im();
         }
         if (a instanceof Boolean ba && b instanceof Boolean bb) {
             return ba.booleanValue() == bb.booleanValue();
@@ -159,7 +191,11 @@ public final class GoEquality {
             }
             return true;
         }
-        return false;
+        // Fall-through identity: no branch matched, so a == b can only
+        // still hold for an uncovered array carrier (e.g. char[], which
+        // no Go array type maps to) that fell through from the identity
+        // path above — it compares equal to itself, false otherwise.
+        return a == b;
     }
 
     /** Hash consistent with {@link #equal}: equal keys hash equal. */
@@ -175,6 +211,16 @@ public final class GoEquality {
         }
         if (key instanceof Float f) {
             return Float.hashCode(f);
+        }
+        if (key instanceof GoComplex32 c) {
+            // D-P1-1: delegate to the record's Go-semantics hashCode,
+            // which canonicalizes -0.0 to +0.0 so equal values hash
+            // equal (raw Float.hashCode distinguishes -0.0/+0.0).
+            return c.hashCode();
+        }
+        if (key instanceof GoComplex64 c) {
+            // D-P1-1: as above, for complex128.
+            return c.hashCode();
         }
         if (key instanceof Boolean b) {
             return Boolean.hashCode(b);
@@ -219,21 +265,22 @@ public final class GoEquality {
         if (key instanceof GoComplex32[] ca) {
             // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
             // with equal above (null elements hash as the zero value).
+            // D-P1-1: per-element record hashCode, so -0.0 components
+            // hash like +0.0 (raw Float.hashCode would not).
             int h = 1;
             for (GoComplex32 c : ca) {
                 GoComplex32 z = c == null ? GoComplex32.ZERO : c;
-                h = 31 * h + Float.hashCode(z.re());
-                h = 31 * h + Float.hashCode(z.im());
+                h = 31 * h + z.hashCode();
             }
             return h;
         }
         if (key instanceof GoComplex64[] ca) {
             // P3-M9 (arrdispatch): [N]complex128 carrier hash.
+            // D-P1-1: as above, for complex128.
             int h = 1;
             for (GoComplex64 c : ca) {
                 GoComplex64 z = c == null ? GoComplex64.ZERO : c;
-                h = 31 * h + Double.hashCode(z.re());
-                h = 31 * h + Double.hashCode(z.im());
+                h = 31 * h + z.hashCode();
             }
             return h;
         }

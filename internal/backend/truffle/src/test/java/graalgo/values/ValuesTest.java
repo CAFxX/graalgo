@@ -163,6 +163,135 @@ public final class ValuesTest {
         assertTrue(z.equals(z.copy()), "struct equals");
     }
 
+    public void testGoEqualityScalarComplex() {
+        // R22-F-1: distinct-but-equal scalar complex values compare equal
+        // (pre-fix they fell through to `return false`).
+        assertTrue(GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(1f, 2f)),
+                "c32 equal");
+        assertTrue(GoEquality.equal(new GoComplex64(1d, 2d), new GoComplex64(1d, 2d)),
+                "c128 equal");
+        assertTrue(!GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(1f, 3f)),
+                "c32 im differs");
+        assertTrue(!GoEquality.equal(new GoComplex64(1d, 2d), new GoComplex64(3d, 2d)),
+                "c128 re differs");
+        // Cross-carrier: complex64 != complex128 even with equal components.
+        assertTrue(!GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex64(1d, 2d)),
+                "c32 vs c128");
+        // IEEE: a NaN component never equals — including the same reference
+        // (the identity fast path must not save it, as for Double/Float).
+        GoComplex64 nan = new GoComplex64(Double.NaN, 0d);
+        assertTrue(!GoEquality.equal(nan, nan), "NaN re, same ref");
+        assertTrue(!GoEquality.equal(new GoComplex32(Float.NaN, 0f),
+                new GoComplex32(Float.NaN, 0f)), "NaN re c32");
+        assertTrue(!GoEquality.equal(new GoComplex64(0d, Double.NaN),
+                new GoComplex64(0d, Double.NaN)), "NaN im c128");
+        // -0.0 == 0.0 component-wise (== semantics).
+        assertTrue(GoEquality.equal(new GoComplex64(-0.0, 0d), new GoComplex64(0d, 0d)),
+                "-0 re == 0 re");
+        // Hash consistency: equal values hash equal (pre-fix scalar complex
+        // hashed by identity, so two equal keys hashed differently).
+        assertEq(GoEquality.hash(new GoComplex32(1f, 2f)),
+                GoEquality.hash(new GoComplex32(1f, 2f)), "c32 hash");
+        assertEq(GoEquality.hash(new GoComplex64(1d, 2d)),
+                GoEquality.hash(new GoComplex64(1d, 2d)), "c128 hash");
+        // Struct with a complex64 field: equal structs compare equal
+        // (pre-fix always false — complex fields are object-carried).
+        GoStructDescriptor d = GoStructDescriptor.layout("S",
+                List.of("c"), List.of(GoKind.COMPLEX64));
+        GoStruct s1 = GoStruct.zero(d);
+        GoStruct s2 = GoStruct.zero(d);
+        s1.setObject(0, new GoComplex32(3f, 4f));
+        s2.setObject(0, new GoComplex32(3f, 4f));
+        assertTrue(GoEquality.equal(s1, s2), "struct complex64 field equal");
+        assertTrue(s1.equals(s2), "GoStruct.equals complex64");
+        assertEq(s1.hashCode(), s2.hashCode(), "struct complex64 hash");
+        s2.setObject(0, new GoComplex32(3f, 5f));
+        assertTrue(!GoEquality.equal(s1, s2), "struct complex64 field differs");
+        // Identity path: composites are NOT short-circuited — a
+        // same-reference struct/array with a NaN element still compares
+        // false (the `nan == nan` probe case; the identity fast path
+        // used to return true here).
+        GoStruct n1 = GoStruct.zero(d);
+        n1.setObject(0, new GoComplex32(Float.NaN, 0f));
+        assertTrue(!GoEquality.equal(n1, n1), "same-ref struct NaN complex field");
+        GoComplex32[] arr = {new GoComplex32(Float.NaN, 0f)};
+        assertTrue(!GoEquality.equal(arr, arr), "same-ref complex array NaN element");
+        // Uncovered array carrier: falls through every branch, so
+        // identity is the only thing that can save it (D-P1-1
+        // fall-through contract: same ref true, distinct refs false).
+        char[] ch = {'a'};
+        assertTrue(GoEquality.equal(ch, ch), "same-ref char[]");
+        assertTrue(!GoEquality.equal(new char[]{'a'}, new char[]{'a'}), "distinct char[]");
+        // Map with a complex struct key round-trips (pre-fix always a miss).
+        GoMap m = new GoMap();
+        GoStruct k1 = GoStruct.zero(d);
+        k1.setObject(0, new GoComplex32(3f, 4f));
+        m.put(k1, 7L);
+        GoStruct k2 = GoStruct.zero(d);
+        k2.setObject(0, new GoComplex32(3f, 4f));
+        assertEq(7L, (Long) m.get(k2), "map complex struct key round-trip");
+    }
+
+    public void testGoComplexRecordGoSemantics() {
+        // D-P1-1: the GoComplex records carry Go ==/hash semantics, not
+        // the Java record defaults (Float/Double.equals: NaN == NaN,
+        // -0.0 != +0.0). Every -0.0/NaN assertion below fails on the
+        // pre-fix generated equals/hashCode.
+        GoComplex64 c64 = new GoComplex64(1d, 2d);
+        assertTrue(c64.equals(new GoComplex64(1d, 2d)), "c128 record equal");
+        assertTrue(!c64.equals(new GoComplex64(1d, 3d)), "c128 record differs");
+        assertTrue(!c64.equals(new GoComplex32(1f, 2f)), "c128 vs c32 record");
+        assertTrue(!c64.equals(null), "record vs null");
+        assertTrue(!c64.equals("1+2i"), "record vs other type");
+        // IEEE: a NaN component never equals — including the same reference
+        // (pre-fix the generated equals returned true here).
+        GoComplex64 nan64 = new GoComplex64(Double.NaN, 0d);
+        assertTrue(!nan64.equals(nan64), "NaN re, same ref, record equals");
+        assertTrue(!new GoComplex64(0d, Double.NaN).equals(new GoComplex64(0d, Double.NaN)),
+                "NaN im, record equals");
+        GoComplex32 nan32 = new GoComplex32(Float.NaN, 0f);
+        assertTrue(!nan32.equals(nan32), "NaN re c32, same ref, record equals");
+        // -0.0 == +0.0 component-wise (pre-fix the generated equals
+        // returned false here).
+        assertTrue(new GoComplex64(-0.0, 0d).equals(new GoComplex64(0d, 0d)),
+                "-0 re == 0 re, record equals");
+        assertTrue(new GoComplex64(0d, -0.0).equals(new GoComplex64(0d, 0d)),
+                "-0 im == 0 im, record equals");
+        assertTrue(new GoComplex32(-0.0f, 0f).equals(new GoComplex32(0f, 0f)),
+                "-0 re c32, record equals");
+        // Hash: equal values hash equal. -0.0 canonicalizes to +0.0
+        // (pre-fix Float/Double.hashCode distinguished them).
+        assertEq(new GoComplex64(-0.0, 0d).hashCode(), new GoComplex64(0d, 0d).hashCode(),
+                "c128 -0 re hash");
+        assertEq(new GoComplex64(0d, -0.0).hashCode(), new GoComplex64(0d, 0d).hashCode(),
+                "c128 -0 im hash");
+        assertEq(new GoComplex32(-0.0f, 0f).hashCode(), new GoComplex32(0f, 0f).hashCode(),
+                "c32 -0 re hash");
+        assertEq(c64.hashCode(), new GoComplex64(1d, 2d).hashCode(), "c128 equal hash");
+        // GoEquality.hash agrees with the record hashCode by construction
+        // (it delegates) and canonicalizes -0.0 the same way.
+        assertEq(GoEquality.hash(new GoComplex64(-0.0, 0d)),
+                GoEquality.hash(new GoComplex64(0d, 0d)), "GoEquality -0 re hash");
+        assertEq(GoEquality.hash(new GoComplex32(-0.0f, 0f)),
+                GoEquality.hash(new GoComplex32(0f, 0f)), "GoEquality -0 re c32 hash");
+        assertEq(GoEquality.hash(c64), c64.hashCode(), "GoEquality == record hash");
+        // Map with a scalar complex key round-trips across -0.0/+0.0
+        // (pre-fix the -0.0 key hashed to a different bucket: a miss).
+        GoMap m = new GoMap();
+        m.put(new GoComplex64(0d, 0d), 7L);
+        assertEq(7L, (Long) m.get(new GoComplex64(-0.0, 0d)), "map -0 re key hit");
+        assertEq(7L, (Long) m.get(new GoComplex64(0d, -0.0)), "map -0 im key hit");
+        m.put(new GoComplex32(0f, 0f), 9L);
+        assertEq(9L, (Long) m.get(new GoComplex32(-0.0f, 0f)), "map -0 re c32 key hit");
+        // Complex array keys: equal arrays (modulo -0.0) hash equal.
+        assertEq(GoEquality.hash(new GoComplex64[]{new GoComplex64(-0.0, 0d)}),
+                GoEquality.hash(new GoComplex64[]{new GoComplex64(0d, 0d)}),
+                "c128 array -0 hash");
+        assertEq(GoEquality.hash(new GoComplex32[]{new GoComplex32(-0.0f, 0f)}),
+                GoEquality.hash(new GoComplex32[]{new GoComplex32(0f, 0f)}),
+                "c32 array -0 hash");
+    }
+
     public void testGoInterface() {
         assertTrue(GoInterface.NIL.isNil(), "nil interface");
         GoInterface v = new GoInterface("desc", 42L, "itab");
