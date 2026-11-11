@@ -1,6 +1,10 @@
 package graalgo.runtime.sync;
 
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -156,5 +160,105 @@ public final class GoPoolTest {
             got.add(x);
         }
         assertEquals(n, got.size(), "spill drain size");
+    }
+
+    /**
+     * Dead-thread locals are reclaimed (A-P1-1): N threads Put/Get through
+     * one pool, die, and are dropped; after a forced GC their Locals must
+     * be collectable and the pool's registered-Local count must return to
+     * zero. Fails on the unpatched pool, where allLocals pins every Local
+     * (plus up to 33 pooled objects each) for the pool's lifetime.
+     * Virtual threads match production, where each goroutine runs on its
+     * own vthread.
+     */
+    public void testDeadThreadLocalsReclaimed() throws Exception {
+        GoPool pool = new GoPool();
+        int n = 200;
+        List<WeakReference<Object>> localRefs =
+                Collections.synchronizedList(new ArrayList<>());
+        List<Thread> threads = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            threads.add(Thread.ofVirtual().start(() -> {
+                pool.put(new Object());
+                pool.get();
+                localRefs.add(new WeakReference<>(pool.currentLocalForTest()));
+            }));
+        }
+        for (Thread t : threads) {
+            t.join(10_000);
+            assertTrue(!t.isAlive(), "worker thread finished");
+        }
+        threads.clear();
+        threads = null;
+        assertEquals(n, localRefs.size(), "one Local handle per worker");
+        // Poll for reclamation: a GC cycle must clear the weak refs and the
+        // pool must deregister the Locals. Bounded wait; the Cleaner runs
+        // asynchronously on its own thread.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        int cleared;
+        do {
+            System.gc();
+            Thread.sleep(100);
+            cleared = 0;
+            for (WeakReference<Object> r : localRefs) {
+                if (r.get() == null) {
+                    cleared++;
+                }
+            }
+        } while (cleared < n && System.nanoTime() < deadline);
+        assertEquals(n, cleared,
+                "dead-thread Locals collectable after GC (cleared " + cleared + " of " + n + ")");
+        assertEquals(0, pool.registeredLocalCount(),
+                "registered Local count after reclaim");
+    }
+
+    /**
+     * Dead-thread items stay retrievable after reclaim (A-P1-1 semantics
+     * pin): a thread Puts K items and dies with its Thread reference
+     * dropped; once the pool has reclaimed its Local, the items must still
+     * come back via the victim generation (gc's poolCleanup
+     * primary-to-victim rotation). The items array keeps them strongly
+     * reachable so the victim's weak refs stay valid. K spans the private
+     * slot, the shared queue, and the global spillover, so the drain must
+     * cover every retention site.
+     */
+    public void testDeadThreadItemsRetrievableAfterReclaim() throws Exception {
+        GoPool pool = new GoPool();
+        int k = 40;
+        Object[] items = new Object[k];
+        for (int i = 0; i < k; i++) {
+            items[i] = new Object();
+        }
+        List<Thread> threads = new ArrayList<>(1);
+        Thread t = Thread.ofVirtual().start(() -> {
+            for (int i = 0; i < k; i++) {
+                pool.put(items[i]);
+            }
+        });
+        threads.add(t);
+        t.join(10_000);
+        assertTrue(!t.isAlive(), "producer thread finished");
+        threads.clear();
+        threads = null;
+        t = null; // the method-local must not keep the Thread reachable:
+        // a live reference delays the phantom (and hence the reclaim)
+        // indefinitely, which is correct lifetime behavior, not a leak
+        // Wait for the reclaim (Local deregistered) before draining, so
+        // the items can only come back via the victim/global paths, not
+        // via a direct steal from a still-registered Local.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (pool.registeredLocalCount() != 0 && System.nanoTime() < deadline) {
+            System.gc();
+            Thread.sleep(100);
+        }
+        assertEquals(0, pool.registeredLocalCount(),
+                "producer Local reclaimed before drain");
+        Set<Object> got = new HashSet<>();
+        for (int i = 0; i < k; i++) {
+            Object x = pool.get();
+            assertTrue(x != null, "retrieved item " + i + " after reclaim");
+            got.add(x);
+        }
+        assertEquals(k, got.size(), "retrieved multiset size after reclaim");
     }
 }
