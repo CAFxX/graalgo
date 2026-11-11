@@ -130,12 +130,16 @@ check: main $(OUT_TEST)/.built
 		python3 $(STDLIB_FORK)/gen-asm-inventory.py --check; \
 	fi
 	@echo "== p3frontend Go build/vet gate (P3-M10 self-attack FINDING-4) =="
+	# The missing-toolchain arm fails loud (T6, REVIEW-2026-11-11-01):
+	# a missing Go toolchain must never silently pass this gate.
 	@GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
 	if [ -x "$$GO_BIN" ]; then \
 		cd $(P3FRONTEND) && GOTOOLCHAIN=local "$$GO_BIN" build ./... && GOTOOLCHAIN=local "$$GO_BIN" vet ./...; \
 	else \
-		echo "WARNING: Go toolchain not found ($$GO_BIN); p3frontend gate skipped"; \
+		echo "p3frontend gate FAILED: Go toolchain not found ($$GO_BIN)"; \
+		exit 1; \
 	fi
+	@echo "p3frontend gate clean"
 
 clean:
 	rm -rf out
