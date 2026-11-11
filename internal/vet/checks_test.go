@@ -285,20 +285,49 @@ func g(s Stringer) {
 func TestSlog(t *testing.T) {
 	src := `package main
 
-import "log/slog"
+import (
+	"context"
+	"log/slog"
+)
 
 func f() {
+	ctx := context.Background()
 	slog.Info("hello", "key", "value") // good
 	slog.Info("hello", "key")          // bad: odd args
 	slog.Info("hello", 123, "value")   // bad: non-string key
+	slog.Log(ctx, slog.InfoLevel, "m", "k")       // bad: odd args
+	slog.Log(ctx, slog.InfoLevel, "m", 123, "v")  // bad: non-string key
 }
 `
 	joined := runVetOnSrc(t, src)
-	if !strings.Contains(joined, "odd number") {
-		t.Errorf("expected slog odd-args diagnostic, got:\n%s", joined)
+	if n := strings.Count(joined, "odd number"); n != 2 {
+		t.Errorf("expected 2 slog odd-args diagnostics, got %d:\n%s", n, joined)
 	}
-	if !strings.Contains(joined, "should be a string") {
-		t.Errorf("expected slog key diagnostic, got:\n%s", joined)
+	if n := strings.Count(joined, "should be a string"); n != 2 {
+		t.Errorf("expected 2 slog key diagnostics, got %d:\n%s", n, joined)
+	}
+}
+
+// TestSlogLog pins that a correct slog.Log (package func and Logger
+// method) produces zero diagnostics: Log takes ctx, level, msg before
+// the key-value pairs, so none of those is a key.
+func TestSlogLog(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"log/slog"
+)
+
+func f() {
+	ctx := context.Background()
+	slog.Log(ctx, slog.InfoLevel, "m", "k", "v")
+	slog.Default().Log(ctx, slog.InfoLevel, "m", "k", "v")
+}
+`
+	joined := runVetOnSrc(t, src)
+	if joined != "" {
+		t.Errorf("expected no diagnostics for correct slog.Log calls, got:\n%s", joined)
 	}
 }
 

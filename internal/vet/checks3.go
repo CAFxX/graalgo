@@ -370,6 +370,12 @@ func runSlog(pass *Pass) []Diagnostic {
 			if sel.Sel.Name == "LogAttrs" {
 				return true // takes attrs, not pairs
 			}
+			if sel.Sel.Name == "Log" {
+				start = 3 // skip ctx, level, msg
+			}
+			if len(args) < start {
+				return true // malformed call; let the compiler report it
+			}
 			rest := args[start:]
 			if len(rest)%2 != 0 {
 				out = append(out, Diagnostic{
