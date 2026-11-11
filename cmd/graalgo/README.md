@@ -51,6 +51,11 @@ export GRAALGO_HOME=/path/to/graalgo
 - **vet**: Run frontend static checks.
 - **fmt**: Format source files with `gofmt`.
 
+`-tags` (space-separated build tags) is accepted by `run`, `build`,
+and `test`: tag-gated files are selected the way `go` selects them,
+and the tags are forwarded to the backend (`GRAALGO_BUILD_TAGS`) so
+imported packages are selected the same way.
+
 ## Architecture
 
 The driver is a thin Go program ([cmd/graalgo/](./)) that:

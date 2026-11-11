@@ -41,8 +41,10 @@ func cmdRun(root string, args []string) int {
 		rest = nil
 	}
 	// Validate build flags (reject unknown ones; -ldflags needs backend).
+	var bf buildFlags
 	if len(flagArgs) > 0 {
-		bf, err := parseBuildFlags(flagArgs)
+		var err error
+		bf, err = parseBuildFlags(flagArgs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 			return 2
@@ -58,6 +60,11 @@ func cmdRun(root string, args []string) int {
 			return 1
 		}
 	}
+	// -tags selects which files compile, both in the backend (imported
+	// packages read GRAALGO_BUILD_TAGS) and in the driver's own file
+	// selection below (filterBuildableFiles).
+	tags := strings.Fields(bf.tags)
+	env := buildTagsEnv(tags)
 
 	if len(rest) == 0 {
 		fmt.Fprintf(os.Stderr, "graalgo run: no Go files listed\n")
@@ -78,12 +85,20 @@ func cmdRun(root string, args []string) int {
 			i++
 		}
 		progArgs = rest[i:]
+		// Apply build constraints (including -tags) to the listed
+		// files, like `go run`: tag-gated alternatives must not both
+		// be compiled.
+		progFiles = filterBuildableFiles(progFiles, tags)
+		if len(progFiles) == 0 {
+			fmt.Fprintf(os.Stderr, "graalgo run: no Go files satisfy the build constraints\n")
+			return 1
+		}
 		// Program args are separated from the launcher's own flags by
 		// "--" (the launcher treats every bare "-..." before "--" as
 		// its own flag).
 		runArgs := append(append([]string{}, progFiles...), "--")
 		runArgs = append(runArgs, progArgs...)
-		return graalgoRunProgram(root, runArgs)
+		return graalgoRunProgramEnv(root, runArgs, env)
 	}
 
 	// Package (directory or import path): find its main package files.
@@ -104,13 +119,20 @@ func cmdRun(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo run: no non-test Go files in %s\n", target)
 		return 1
 	}
+	// Apply build constraints (including -tags) to the package files,
+	// like `go run`: tag-gated alternatives must not both be compiled.
+	pkgFiles = filterBuildableFiles(pkgFiles, tags)
+	if len(pkgFiles) == 0 {
+		fmt.Fprintf(os.Stderr, "graalgo run: no Go files in %s satisfy the build constraints\n", target)
+		return 1
+	}
 	// The backend compiles all package files together as one unit.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	if code := graalgoRunEnv(root, append([]string{"--check"}, pkgFiles...), env); code != 0 {
 		return code
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
-	return graalgoRunProgram(root, runArgs)
+	return graalgoRunProgramEnv(root, runArgs, env)
 }
 
 // buildFlags holds the parsed `go build` flags that the driver recognizes.
@@ -119,7 +141,7 @@ func cmdRun(root string, args []string) int {
 type buildFlags struct {
 	output  string   // -o: output binary path
 	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
-	tags    string   // -tags: build tags (accepted; backend honors via go/build)
+	tags    string   // -tags: build tags, forwarded to the backend via GRAALGO_BUILD_TAGS and applied to the driver's own file selection
 	pkgs    []string // remaining package/file args
 }
 
@@ -213,6 +235,14 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
 		return 1
 	}
+	// Apply build constraints (including -tags) to the package files,
+	// like `go build`: tag-gated alternatives must not both be compiled.
+	tags := strings.Fields(bf.tags)
+	pkgFiles = filterBuildableFiles(pkgFiles, tags)
+	if len(pkgFiles) == 0 {
+		fmt.Fprintf(os.Stderr, "graalgo build: no Go files satisfy the build constraints\n")
+		return 1
+	}
 	// Frontend gate: run the frontend once, capturing its output for the
 	// artifact. This both validates the program and produces the IR that
 	// the artifact embeds, so the artifact never re-runs the frontend.
@@ -225,7 +255,7 @@ func cmdBuild(root string, args []string) int {
 	wireFile.Close()
 	defer os.Remove(wirePath)
 	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
-	if code := graalgoRun(root, emitArgs); code != 0 {
+	if code := graalgoRunEnv(root, emitArgs, buildTagsEnv(tags)); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
 		return 1
 	}

@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 const version = "0.4.0"
@@ -198,9 +199,44 @@ func isGraalgoRoot(dir string) bool {
 // travel as explicit argv flags, never environment variables: env is
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
+// GRAALGO_BUILD_TAGS is the deliberate exception: it confers no
+// privilege (it only selects build tags for the frontend's file
+// selection, see internal/frontend/diskimport.go), and the driver sets
+// it only from this invocation's own -tags flag, never from ambient
+// env (buildTagsEnv returns nil when no -tags was given).
 func graalgoRun(root string, args []string) int {
 	code, _ := graalgoRunCtx(context.Background(), root, args)
 	return code
+}
+
+// withEnv returns env with key set to value: any pre-existing entry
+// for key is removed first, then key=value is appended. Appending
+// alone does not override: Go's Getenv returns the FIRST occurrence
+// of a key, so a duplicate would silently leave the old value in
+// effect (the same shape as the GOFLAGS hermeticity bug in
+// internal/driver/artifact.go).
+func withEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env)+1)
+	for _, e := range env {
+		if !strings.HasPrefix(e, prefix) {
+			out = append(out, e)
+		}
+	}
+	return append(out, key+"="+value)
+}
+
+// buildTagsEnv returns the environment override that forwards build
+// tags to the backend child: the frontend reads GRAALGO_BUILD_TAGS
+// (space-separated) to select tag-gated files in imported packages.
+// It returns nil when no tags were given, leaving the ambient
+// environment (including any user-exported GRAALGO_BUILD_TAGS)
+// untouched.
+func buildTagsEnv(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	return []string{"GRAALGO_BUILD_TAGS=" + strings.Join(tags, " ")}
 }
 
 // graalgoRunCtx invokes the backend like graalgoRun but bound to ctx:
@@ -213,11 +249,27 @@ func graalgoRun(root string, args []string) int {
 // process surfaces as exit code -1, so a -1 together with an expired
 // context is a timeout, never a backend failure.
 func graalgoRunCtx(ctx context.Context, root string, args []string) (code int, timedOut bool) {
+	return graalgoRunCtxEnv(ctx, root, args, nil)
+}
+
+// graalgoRunCtxEnv invokes the backend like graalgoRunCtx, overriding
+// the listed KEY=value pairs in the backend child's environment (each
+// override replaces any pre-existing entry for its key, see withEnv).
+// A nil extraEnv inherits the environment unchanged.
+func graalgoRunCtxEnv(ctx context.Context, root string, args []string, extraEnv []string) (code int, timedOut bool) {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.CommandContext(ctx, runner, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if len(extraEnv) > 0 {
+		env := os.Environ()
+		for _, kv := range extraEnv {
+			key, value, _ := strings.Cut(kv, "=")
+			env = withEnv(env, key, value)
+		}
+		cmd.Env = env
+	}
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode(), ctx.Err() != nil && ee.ExitCode() == -1
@@ -226,6 +278,13 @@ func graalgoRunCtx(ctx context.Context, root string, args []string) (code int, t
 		return 1, ctx.Err() != nil
 	}
 	return 0, false
+}
+
+// graalgoRunEnv invokes the backend like graalgoRun, overriding the
+// listed KEY=value pairs in the backend child's environment.
+func graalgoRunEnv(root string, args []string, extraEnv []string) int {
+	code, _ := graalgoRunCtxEnv(context.Background(), root, args, extraEnv)
+	return code
 }
 
 // graalgoRunProgram invokes the backend for `graalgo run` and emulates
@@ -240,7 +299,14 @@ func graalgoRunCtx(ctx context.Context, root string, args []string) (code int, t
 // prints no such line for its own build failures. Disambiguating needs
 // a backend exit-code convention change.
 func graalgoRunProgram(root string, args []string) int {
-	code := graalgoRun(root, args)
+	return graalgoRunProgramEnv(root, args, nil)
+}
+
+// graalgoRunProgramEnv invokes the backend like graalgoRunProgram,
+// overriding the listed KEY=value pairs in the backend child's
+// environment.
+func graalgoRunProgramEnv(root string, args []string, extraEnv []string) int {
+	code := graalgoRunEnv(root, args, extraEnv)
 	if code != 0 {
 		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
 		return 1

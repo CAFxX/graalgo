@@ -62,7 +62,7 @@ func runSynthDriver(t *testing.T, dir string, verbose bool) (string, int) {
 			nonTest = append(nonTest, f)
 		}
 	}
-	driver, err := synthesizeTestDriver(dir, ftList, nonTest, verbose)
+	driver, err := synthesizeTestDriver(dir, ftList, nonTest, verbose, nil)
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}

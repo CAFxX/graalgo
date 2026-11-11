@@ -447,7 +447,7 @@ func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 // One driver per package (not per file) so the output matches `go test`:
 // a single PASS/FAIL summary and per-test === RUN / --- PASS lines in
 // file order. Verbosity is baked into the driver at synthesis time.
-func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool) (string, error) {
+func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool, tags []string) (string, error) {
 	// Import collection preserves every distinct (name, path) form: a
 	// package can be imported plain in one test file and dot-imported
 	// in another (unicode does exactly this), and collapsing to one
@@ -585,7 +585,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// platform (PKG-037).
 	var sibUnits []srcUnit
 	buildable := make(map[string]bool)
-	for _, f := range buildableGoFiles(dir) {
+	for _, f := range buildableGoFiles(dir, tags) {
 		buildable[f] = true
 	}
 	siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))

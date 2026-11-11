@@ -30,6 +30,7 @@ func cmdTest(root string, args []string) int {
 	var verbose bool
 	var count int = 1
 	var cover bool
+	var tagsStr string
 	// Like `go test`, the default timeout is 10 minutes; 0 disables it.
 	var timeout time.Duration = 10 * time.Minute
 	var pkgs []string
@@ -38,6 +39,11 @@ func cmdTest(root string, args []string) int {
 		switch {
 		case a == "-v":
 			verbose = true
+		case a == "-tags" && i+1 < len(args):
+			i++
+			tagsStr = args[i]
+		case strings.HasPrefix(a, "-tags="):
+			tagsStr = strings.TrimPrefix(a, "-tags=")
 		case a == "-h" || a == "-help" || a == "--help":
 			fmt.Printf(`usage: graalgo test [build/test flags] [packages]
 
@@ -50,6 +56,9 @@ Flags:
 	-count=n		run tests n times (n=1 disables caching; graalgo
 			has no test cache, so every run is fresh)
 	-cover		enable coverage (not yet supported)
+	-tags=tags	space-separated build tags; tag-gated files are
+			selected the way go test selects them, and the
+			tags are forwarded to the backend
 	-timeout d	fail the package if the backend runs longer than d
 			(default 10m, like go test; 0 disables the timeout)
 `)
@@ -121,7 +130,7 @@ Flags:
 		}
 	}
 
-	runner := newTestRunner(root, verbose, runRe, count, timeout)
+	runner := newTestRunner(root, verbose, runRe, count, timeout, strings.Fields(tagsStr))
 	failed := false
 	for _, dir := range dirs {
 		// -count=n: run the package's tests n times, like `go test`.
@@ -197,15 +206,21 @@ type testRunner struct {
 	// per package per -count iteration, like `go test`); <= 0 disables
 	// the deadline.
 	timeout time.Duration
+	// tags are the -tags build tags (space-separated on the command
+	// line): they select which files the driver and the backend
+	// compile, the way `go test` selects them.
+	tags []string
 	// runBackend invokes the backend for one package. It is a field
-	// (default graalgoRunCtx) so tests can substitute a fake backend
-	// without the Truffle runtime; it reports whether the backend was
-	// killed by the context deadline.
+	// (default graalgoRunCtxEnv with the tags forwarded) so tests can
+	// substitute a fake backend without the Truffle runtime; it reports
+	// whether the backend was killed by the context deadline.
 	runBackend func(ctx context.Context, root string, args []string) (code int, timedOut bool)
 }
 
-func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int, timeout time.Duration) *testRunner {
-	return &testRunner{root: root, verbose: verbose, runRe: runRe, count: count, timeout: timeout, runBackend: graalgoRunCtx}
+func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int, timeout time.Duration, tags []string) *testRunner {
+	return &testRunner{root: root, verbose: verbose, runRe: runRe, count: count, timeout: timeout, tags: tags, runBackend: func(ctx context.Context, root string, args []string) (int, bool) {
+		return graalgoRunCtxEnv(ctx, root, args, buildTagsEnv(tags))
+	}}
 }
 
 // runPackage discovers and runs the tests in one directory.
@@ -228,7 +243,7 @@ func (r *testRunner) runPackage(dir string) bool {
 	// //go:build lines) — the same file set `go test` would use. Without
 	// this, build-tag-gated alternatives (e.g. node_js.go vs node_net.go)
 	// are inlined together and redeclare each other's symbols.
-	buildable := buildableGoFiles(dir)
+	buildable := buildableGoFiles(dir, r.tags)
 	var srcFiles []string
 	for _, f := range buildable {
 		if !strings.HasSuffix(f, "_test.go") {
@@ -273,7 +288,7 @@ func (r *testRunner) runPackage(dir string) bool {
 	t0 := time.Now()
 	ok := true
 	if len(ftList) > 0 {
-		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
+		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose, r.tags)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
 			return false
@@ -355,14 +370,31 @@ func parseModulePath(modData []byte) string {
 	return ""
 }
 
+// buildContextWithTags returns a copy of build.Default with the given
+// build tags applied, for constraint-aware file selection under the
+// same rules `go build` uses.
+func buildContextWithTags(tags []string) build.Context {
+	ctxt := build.Default
+	ctxt.BuildTags = append(append([]string{}, build.Default.BuildTags...), tags...)
+	return ctxt
+}
+
 // buildableGoFiles returns the .go files in dir that satisfy the current
 // platform's build constraints, using the same rules as `go build`.
-func buildableGoFiles(dir string) []string {
-	ctxt := build.Default
+// tags are additional build tags (from -tags) applied on top of the
+// defaults.
+func buildableGoFiles(dir string, tags []string) []string {
+	ctxt := buildContextWithTags(tags)
 	pkg, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		// Not importable (no go.mod context, etc.): fall back to all
-		// files and let the backend report real errors.
+		// files and let the backend report real errors — unless tags
+		// were given, in which case an empty selection is the honest
+		// answer: returning all files would re-include exactly the
+		// files the tags excluded.
+		if len(tags) > 0 {
+			return nil
+		}
 		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
 		return all
 	}
@@ -375,6 +407,23 @@ func buildableGoFiles(dir string) []string {
 	}
 	for _, f := range pkg.XTestGoFiles {
 		out = append(out, filepath.Join(dir, f))
+	}
+	return out
+}
+
+// filterBuildableFiles keeps the files in list that satisfy the
+// current platform's build constraints with tags applied (filename
+// suffixes and //go:build lines, per go/build). Files that cannot be
+// read are kept, so the backend reports the real error (e.g. a typo'd
+// name) instead of the driver silently dropping them.
+func filterBuildableFiles(files []string, tags []string) []string {
+	ctxt := buildContextWithTags(tags)
+	var out []string
+	for _, f := range files {
+		match, err := ctxt.MatchFile(filepath.Dir(f), filepath.Base(f))
+		if err != nil || match {
+			out = append(out, f)
+		}
 	}
 	return out
 }
