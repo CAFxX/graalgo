@@ -1,8 +1,12 @@
 package graalgo.runtime;
 
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.frontend.NodeFactory;
+import graalgo.values.GoComplex32;
+import graalgo.values.GoComplex64;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoString;
 import graalgo.values.GoTypeDescriptor;
 
 /**
@@ -89,9 +93,14 @@ public final class Panic {
      * while a panic is in flight: the {@link DeferChain} arms the
      * recover-allowed flag around each deferred call during panic unwinding
      * and clears it for nested calls and deferred builtin calls
-     * (gc-verified). The returned value is boxed as a Go {@code any}
-     * ({@link GoInterface}) when the descriptor is known, so type switches
-     * and assertions on the recovered value behave like gc's.
+     * (gc-verified). The returned value is always boxed as a Go {@code any}
+     * ({@link GoInterface}), so type switches and assertions on the
+     * recovered value behave like gc's. When the panic carried no
+     * descriptor (a deferred {@code panic(x)} whose defer site did not
+     * attach one, or a makeslice / timer / chan / unimplemented throw
+     * site — R22-F-5), the descriptor is synthesized from the Java
+     * carrier type (see {@link #synthesizeDescriptorless}); a null value
+     * stays Java null (Go nil).
      */
     public static Object recover() {
         GoroutineState s = GoroutineState.current();
@@ -103,9 +112,119 @@ public final class Panic {
             return null;
         }
         p.markRecovered();
-        if (p.descriptor() != null) {
-            return new GoInterface(p.descriptor(), p.goValue(), null);
+        Object descriptor = p.descriptor();
+        Object data = p.goValue();
+        if (descriptor == null && data != null) {
+            // R22-F-5: a descriptor-less panic used to return the raw Java
+            // value here; every consumer assumes a GoInterface
+            // (TypeAssertNode narrows blindly, TypeSwitchNode casts), so
+            // `r := recover(); r.(int)` threw ClassCastException.
+            Synthesized synth = synthesizeDescriptorless(data);
+            descriptor = synth.descriptor();
+            data = synth.data();
         }
-        return p.goValue();
+        if (descriptor != null) {
+            if (data instanceof GoErrorValue gev
+                    && descriptor instanceof GoTypeDescriptor gd
+                    && gd.kind() == GoKind.STRING) {
+                // fix-redmaster-r43 (ported from the phase-2 overlay): a
+                // string-kind runtime error's interface data IS its message
+                // string (gc: errorString is `type errorString string`).
+                // The panic carrier is a GoErrorValue wrapper, not the
+                // string: boxing the wrapper as the interface data makes
+                // every kind-STRING consumer read a non-string (fmt's
+                // `append([]byte, s...)` CCEs). Unwrap to the message
+                // GoString here, at the recover boxing site only — the
+                // uncaught path reads the PanicException directly and is
+                // untouched. Struct-kind runtime errors (boundsError) keep
+                // the wrapper as data: their field values are not
+                // recoverable from the carrier, so that path stays loud
+                // rather than fabricated.
+                data = GoString.fromUtf8(gev.errorString());
+            }
+            return new GoInterface(descriptor, data, null);
+        }
+        return null;
+    }
+
+    /** A synthesized descriptor plus the (possibly normalized) panic value. */
+    private record Synthesized(Object descriptor, Object data) {}
+
+    /**
+     * R22-F-5: synthesizes the canonical descriptor for a descriptor-less
+     * panic value, plus the data normalized to its kind's D5 carrier, so
+     * {@link #recover()} can always return a GoInterface.
+     *
+     * <p>The Java-carrier → Go-type mapping mirrors
+     * {@code GoFuncRootNode.wrapInterface} (a D5 {@code Long} is the
+     * 64-bit carrier shared by Go {@code int} and {@code int64}; "int64"
+     * is used — callers that know the exact Go type must box via the type
+     * table instead, which the deferred-panic path does: DeferNode /
+     * DeferredCall carry the exact descriptor from the defer site). All
+     * descriptors come from {@link NodeFactory#basicDescriptorForName},
+     * the single unification point (P3-M7R2): a fresh
+     * {@code new GoTypeDescriptor} would break identity comparisons
+     * ("is int64, not int64"). The GoErrorValue branch is the sole
+     * exception — it mirrors {@link #throwPanic}'s bug-019 inference
+     * verbatim, and {@link #recover()}'s STRING-kind unwrap converts the
+     * data to the message GoString.
+     *
+     * <p>A raw {@code java.lang.String} (a descriptor-less throw site such
+     * as a timer / chan / unimplemented panic) normalizes to a
+     * {@code GoString}: a GoInterface of kind STRING carries a GoString,
+     * never a java.lang.String. Structured values
+     * (GoStruct / GoSlice / GoMap / GoChan / GoFunc / GoPointer, arrays)
+     * carry no recoverable exact dynamic type at this site, so they fall
+     * back to the empty-interface descriptor (the wrapInterface
+     * convention): type switches and assertions then fail with a proper
+     * Go panic instead of a JVM ClassCastException, and recover() keeps
+     * its GoInterface invariant.
+     */
+    private static Synthesized synthesizeDescriptorless(Object v) {
+        if (v instanceof String s) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("string", GoKind.STRING),
+                    GoString.fromUtf8(s));
+        }
+        if (v instanceof GoString) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("string", GoKind.STRING), v);
+        }
+        if (v instanceof GoErrorValue gev) {
+            String typeName = gev.errorString().startsWith("interface conversion: ")
+                    ? "*runtime.TypeAssertionError"
+                    : "runtime.errorString";
+            return new Synthesized(new GoTypeDescriptor(typeName, GoKind.STRING, false), v);
+        }
+        if (v instanceof Long) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("int64", GoKind.INT64), v);
+        }
+        if (v instanceof Integer) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("int32", GoKind.INT32), v);
+        }
+        if (v instanceof Double) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("float64", GoKind.FLOAT64), v);
+        }
+        if (v instanceof Float) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("float32", GoKind.FLOAT32), v);
+        }
+        if (v instanceof Boolean) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("bool", GoKind.BOOL), v);
+        }
+        if (v instanceof GoComplex32) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("complex64", GoKind.COMPLEX64), v);
+        }
+        if (v instanceof GoComplex64) {
+            return new Synthesized(
+                    NodeFactory.basicDescriptorForName("complex128", GoKind.COMPLEX128), v);
+        }
+        return new Synthesized(
+                NodeFactory.basicDescriptorForName("interface", GoKind.INTERFACE), v);
     }
 }

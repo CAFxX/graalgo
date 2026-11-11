@@ -2,6 +2,7 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.runtime.GoErrors;
 import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
@@ -67,8 +68,19 @@ public final class MakeNode extends GoExprNode {
         long len = lenChild.executeLong(frame);
         long cap = capChild != null ? capChild.executeLong(frame) : len;
         if (len < 0 || cap < 0 || len > cap) {
-            // gc: "makeslice: len out of range" panic.
-            Panic.throwPanic("makeslice: len out of range", null, null, this);
+            // gc: "makeslice: len out of range" panic. A runtime.errorString
+            // (GoErrors), not a GoString: gc's recovered value has dynamic
+            // type runtime.errorString, so `r.(string)` must FAIL and
+            // `r.(error)` succeed (verified against stock go 1.27.1) — a
+            // GoString would make `r.(string)` succeed, a silent divergence
+            // vs gc. throwPanic infers the runtime.errorString descriptor
+            // (bug-019), so recover() boxes it as a GoInterface and the
+            // assertion fails with a proper Go panic instead of a JVM
+            // ClassCastException (R22-F-5). PanicRendering only renders
+            // GoString/GoErrorValue panic values faithfully — a raw String
+            // degraded to "panic: (?) 0xADDR", hiding the message
+            // (fix-redmaster-r41).
+            Panic.throwPanic(GoErrors.makesliceLenOutOfRange(), null, null, this);
         }
         return Intrinsics.makeslice(elemKind, elemDesc, (int) len, (int) cap);
     }

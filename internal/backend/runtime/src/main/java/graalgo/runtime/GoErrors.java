@@ -94,6 +94,20 @@ public final class GoErrors {
                 "runtime.errorString", quote(s), s);
     }
 
+    /**
+     * Makeslice with len/cap out of range (negative len/cap or len &gt; cap).
+     * R22-F-5: gc's recovered value is a {@code runtime.errorString}, not a
+     * {@code string} (verified against stock go 1.27.1: {@code r.(string)}
+     * fails, {@code r.(error)} succeeds) — throwing a GoString here made
+     * {@code r.(string)} succeed, a silent divergence the gc-oracle corpus
+     * test pn23 would catch. Follows the integerDivideByZero pattern.
+     */
+    public static GoErrorValue makesliceLenOutOfRange() {
+        String s = "makeslice: len out of range";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
+    }
+
     /** Negative shift amount. */
     public static GoErrorValue negativeShift() {
         String s = "negative shift amount";

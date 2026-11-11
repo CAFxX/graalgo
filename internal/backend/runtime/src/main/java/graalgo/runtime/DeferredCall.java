@@ -66,6 +66,28 @@ public final class DeferredCall {
         this.callSite = site;
     }
 
+    /**
+     * R22-F-5: the exact dynamic-type descriptor and Go-syntax type name
+     * for a deferred {@code panic(x)}, computed by the factory from the
+     * argument's type-table entry (mirroring the non-deferred
+     * {@code PanicBuiltinNode} path) and carried here by DeferNode.
+     * Without it, a deferred panic throws descriptor-less and
+     * {@code recover()} can only synthesize a kind-based descriptor
+     * ("int64" for a D5 {@code Long}) — so {@code r.(int)} after
+     * {@code defer panic(42)} would fail although gc recovers an
+     * {@code int}. Null for a statically-interface argument (the
+     * descriptor is derived from the interface value at throw time, as
+     * in {@code PanicBuiltinNode}) and for non-panic builtins.
+     */
+    private Object panicDesc;
+    private String panicTypeName;
+
+    /** Attaches the deferred-panic descriptor (called by DeferNode at defer time). */
+    public void setPanicInfo(Object descriptor, String typeName) {
+        this.panicDesc = descriptor;
+        this.panicTypeName = typeName;
+    }
+
     /** A deferred function-value call. */
     public static DeferredCall func(GoFunc func, Object[] args) {
         return new DeferredCall(Kind.FUNC, func, args, null, null);
@@ -119,7 +141,7 @@ public final class DeferredCall {
         switch (builtinName) {
             case "println" -> BuiltinPrint.println(toArgs());
             case "print" -> BuiltinPrint.print(toArgs());
-            case "panic" -> Panic.throwPanic(args[0], null, null, callSite);
+            case "panic" -> Panic.throwPanic(args[0], panicDesc, panicTypeName, callSite);
             case "recover" -> Panic.recover(); // result discarded; never stops the panic
             default -> throw new IllegalStateException("cannot defer builtin " + builtinName + " (WS G)");
         }

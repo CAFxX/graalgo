@@ -7,6 +7,7 @@ import graalgo.runtime.GoroutineState;
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
+import graalgo.values.GoTypeDescriptor;
 
 /**
  * A {@code defer} statement (M5, WS F).
@@ -26,6 +27,25 @@ public final class DeferNode extends GoStmtNode {
     /** Builtin name for deferred builtins; null for function values. */
     private final String builtinName;
     private final GoKind[] argKinds;
+    /**
+     * R22-F-5: the exact dynamic-type descriptor and Go-syntax type name
+     * for a deferred {@code panic(x)}, computed by the factory from the
+     * argument's type-table entry. Set by NodeFactory; null for
+     * non-panic builtins and for statically-interface panic arguments
+     * (whose descriptor is derived from the interface value at throw
+     * time). Carried to the DeferredCall so the panic throws with the
+     * exact descriptor — without it, {@code recover()} could only
+     * synthesize a kind-based descriptor.
+     */
+    private GoTypeDescriptor panicDesc;
+    private String panicTypeName;
+
+    /** Sets the deferred-panic descriptor (called by NodeFactory). */
+    public void setPanicInfo(GoTypeDescriptor descriptor, String typeName) {
+        this.panicDesc = descriptor;
+        this.panicTypeName = typeName;
+    }
+
     /**
      * M9 (P1-2): enclosing funcdecl's object id for probe site disambiguation
      * (see FuncValueCallNode). Set by the factory; -1 when unknown.
@@ -74,6 +94,12 @@ public final class DeferNode extends GoStmtNode {
                 // P3-M4 remediation (P1-2): a deferred panic(x) throws at
                 // unwind time; the site is the defer statement (gc's line).
                 dc.setCallSite(this);
+                // R22-F-5: carry the exact panic descriptor so the deferred
+                // panic throws with gc's dynamic type (not a synthesized
+                // kind-based one).
+                if ("panic".equals(builtinName)) {
+                    dc.setPanicInfo(panicDesc, panicTypeName);
+                }
             } else {
                 GoFunc f = (GoFunc) fn.executeObject(frame);
                 if (f == null) {

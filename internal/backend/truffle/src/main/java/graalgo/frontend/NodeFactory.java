@@ -3627,6 +3627,35 @@ public final class NodeFactory {
 
 
     /**
+     * R22-F-5: the dynamic-type descriptor and Go-syntax type name for a
+     * {@code panic(x)} argument, shared by the direct builtin path
+     * ({@link #buildBuiltinCall}) and the deferred path
+     * ({@link #buildDefer}): both must throw with the exact descriptor
+     * from the argument's type-table entry. A statically-interface
+     * argument yields a null descriptor — the dynamic descriptor is
+     * derived from the interface value at runtime (see
+     * {@code PanicBuiltinNode}); untyped constants normalize to their
+     * default type via {@link #typeDescriptorFor}.
+     */
+    private record PanicDesc(graalgo.values.GoTypeDescriptor descriptor, String typeName,
+                             boolean staticIsInterface) {}
+
+    private static PanicDesc panicDescriptorFor(BuildCtx ctx, GoExprNode v, String path) {
+        int typeId = v.typeId();
+        GoKind k = kindOf(ctx, typeId, path);
+        boolean isIface = k == GoKind.INTERFACE;
+        graalgo.values.GoTypeDescriptor desc =
+                isIface ? null : typeDescriptorFor(ctx, typeId, path);
+        String typeName = null;
+        if (!isIface && (GoTypeStrings.isNamedBasic(ctx, typeId)
+                || k == GoKind.SLICE || k == GoKind.MAP || k == GoKind.ARRAY
+                || k == GoKind.STRUCT || k == GoKind.POINTER || k == GoKind.CHAN)) {
+            typeName = GoTypeStrings.of(ctx, typeId);
+        }
+        return new PanicDesc(desc, typeName, isIface);
+    }
+
+    /**
      * Builtin call wiring (M6, WS H — integration of the WS G intrinsic
      * surface): {@code panic}/{@code recover} (M5, WS F), {@code print}/
      * {@code println}, {@code len}, {@code cap}, {@code make}, {@code new},
@@ -3651,19 +3680,9 @@ public final class NodeFactory {
                 if (args.length != 1) {
                     throw new FrontendException(path + ": panic takes exactly one argument");
                 }
-                GoExprNode v = args[0];
-                int typeId = v.typeId();
-                GoKind k = kindOf(ctx, typeId, path);
-                boolean isIface = k == GoKind.INTERFACE;
-                graalgo.values.GoTypeDescriptor desc =
-                        isIface ? null : typeDescriptorFor(ctx, typeId, path);
-                String typeName = null;
-                if (!isIface && (GoTypeStrings.isNamedBasic(ctx, typeId)
-                        || k == GoKind.SLICE || k == GoKind.MAP || k == GoKind.ARRAY
-                        || k == GoKind.STRUCT || k == GoKind.POINTER || k == GoKind.CHAN)) {
-                    typeName = GoTypeStrings.of(ctx, typeId);
-                }
-                yield new PanicBuiltinNode(v, desc, typeName, isIface);
+                PanicDesc pd = panicDescriptorFor(ctx, args[0], path);
+                yield new PanicBuiltinNode(args[0], pd.descriptor(), pd.typeName(),
+                        pd.staticIsInterface());
             }
             case "recover" -> {
                 if (args.length != 0) {
@@ -3966,6 +3985,14 @@ public final class NodeFactory {
                 kinds[i] = args[i].kind();
             }
             DeferNode n = new DeferNode(null, args, builtin, kinds);
+            // R22-F-5: a deferred panic(x) must throw with the exact
+            // dynamic-type descriptor, or recover() can only synthesize a
+            // kind-based one ("int64" for a D5 Long) and `r.(int)` fails
+            // although gc recovers an int.
+            if ("panic".equals(builtin) && args.length == 1) {
+                PanicDesc pd = panicDescriptorFor(ctx, args[0], cpath);
+                n.setPanicInfo(pd.descriptor(), pd.typeName());
+            }
             n.setSourceSection(sectionFor(node, "defer"));
             return n;
         }

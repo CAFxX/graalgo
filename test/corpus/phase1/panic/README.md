@@ -73,6 +73,20 @@ both by stock gc (the oracle) and by `gofrontend` → `NodeFactory`.
   integer divide by zero) render gc's exact `runtime error:` strings.
 - `pn20_panic_slice_value`: a composite panic value round-trips through
   recover (renders as `([]int) 0xADDR`, never a real address).
+- `pn21_defer_panic_int_assert`: a deferred `panic(42)` recovers with
+  dynamic type `int` (the exact descriptor from the defer site), so
+  `r.(int)` succeeds — R22-F-5: before the fix, `recover()` returned the
+  raw value and the assertion threw ClassCastException.
+- `pn22_defer_panic_type_switch`: a deferred `panic("boom")` recovers as
+  a `string` in a type switch (R22-F-5).
+- `pn23_makeslice_recover_string`: a makeslice `len out of range` panic
+  recovers as a `runtime.errorString` (R22-F-5: MakeNode threw a raw Java
+  String, and the first version of this fix threw a GoString — both wrong
+  vs gc, verified against stock go 1.27.1: `r.(string)` must FAIL and
+  `r.(error)` succeed, so `strOk` stays `0`). MakeNode now throws
+  `GoErrors.makesliceLenOutOfRange()`; the regression value is that
+  pre-fix `recover()` returned the raw value and the assertion threw
+  ClassCastException instead of failing cleanly.
 
 ## Comparison scope (fatal programs)
 

@@ -29,8 +29,11 @@ public final class PanicException extends AbstractTruffleException {
      * @param goValue    the panicked Go value (D5 mapping; never null —
      *                   {@link Panic#throwPanic} converts nil).
      * @param descriptor the dynamic-type descriptor (a
-     *                   {@code graalgo.values.GoTypeDescriptor}), or null on
-     *                   the degraded path (recover returns the raw value).
+     *                   {@code graalgo.values.GoTypeDescriptor}), or null
+     *                   when the throw site did not attach one — in that
+     *                   case {@link Panic#recover()} synthesizes the
+     *                   descriptor from the value's Java carrier type
+     *                   (R22-F-5) instead of returning the raw value.
      * @param goTypeName Go-syntax type name for {@code (type) 0xADDR}
      *                   rendering (e.g. {@code []int}); null degrades to the
      *                   descriptor name.
