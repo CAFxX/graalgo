@@ -23,7 +23,12 @@ func main() {
 	_ = s
 	var f func()
 	if f == nil {
+		// Func variable: must NOT be flagged — f is nil here.
 		fmt.Println("nil")
+	}
+	if helper == nil {
+		// Declared function: must be flagged — always false.
+		fmt.Println("helper nil")
 	}
 	x := true
 	if x == true {
@@ -43,6 +48,8 @@ func leaky() {
 func copyLock(m sync.Mutex) {
 	_ = m
 }
+
+func helper() {}
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.go")

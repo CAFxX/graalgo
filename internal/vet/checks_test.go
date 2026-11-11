@@ -455,3 +455,154 @@ func g(url string) {
 		t.Errorf("expected exactly 1 httpresponse diagnostic, got %d:\n%s", count, joined)
 	}
 }
+
+func TestNilFunc(t *testing.T) {
+	// nilfunc must flag only declared functions / method values, never
+	// func variables, func parameters, or func-typed struct fields —
+	// those can all be nil. Each case is a whole program so the
+	// diagnostic (or its absence) pins the distinction, not just the
+	// presence of the message somewhere in a shared fixture.
+	cases := []struct {
+		name string
+		src  string
+		want bool // want a "comparison of function to nil" diagnostic
+	}{
+		{
+			name: "func variable compared to nil is not flagged",
+			src: `package main
+
+func main() {
+	var f func()
+	if f == nil {
+		println("nil")
+	}
+}
+`,
+			want: false,
+		},
+		{
+			name: "func variable compared to nil with != is not flagged",
+			src: `package main
+
+func main() {
+	var f func()
+	if f != nil {
+		f()
+	}
+}
+`,
+			want: false,
+		},
+		{
+			name: "func parameter compared to nil is not flagged",
+			src: `package main
+
+func call(cb func()) {
+	if cb == nil {
+		return
+	}
+	cb()
+}
+
+func main() { call(nil) }
+`,
+			want: false,
+		},
+		{
+			name: "func-typed struct field compared to nil is not flagged",
+			src: `package main
+
+type S struct{ cb func() }
+
+func main() {
+	var s S
+	if s.cb == nil {
+		println("nil")
+	}
+}
+`,
+			want: false,
+		},
+		{
+			name: "parenthesized func variable compared to nil is not flagged",
+			src: `package main
+
+func main() {
+	var f func()
+	if (f) == nil {
+		println("nil")
+	}
+}
+`,
+			want: false,
+		},
+		{
+			name: "declared function compared to nil is flagged",
+			src: `package main
+
+func helper() {}
+
+func main() {
+	if helper == nil {
+		println("nil")
+	}
+}
+`,
+			want: true,
+		},
+		{
+			name: "declared function compared to nil with != is flagged",
+			src: `package main
+
+func helper() {}
+
+func main() {
+	if helper != nil {
+		helper()
+	}
+}
+`,
+			want: true,
+		},
+		{
+			name: "method value compared to nil is flagged",
+			src: `package main
+
+type T struct{}
+
+func (T) M() {}
+
+func main() {
+	var t T
+	if t.M == nil {
+		println("nil")
+	}
+}
+`,
+			want: true,
+		},
+		{
+			name: "imported package function compared to nil is flagged",
+			src: `package main
+
+import "fmt"
+
+func main() {
+	if fmt.Println == nil {
+		println("nil")
+	}
+}
+`,
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			joined := runVetOnSrc(t, tc.src)
+			got := strings.Contains(joined, "comparison of function to nil")
+			if got != tc.want {
+				t.Errorf("nilfunc diagnostic present = %v, want %v; diagnostics:\n%s", got, tc.want, joined)
+			}
+		})
+	}
+}

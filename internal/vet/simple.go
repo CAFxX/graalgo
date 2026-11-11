@@ -67,9 +67,11 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 	return out
 }
 
-// Comparing a func value to nil is always false (except for a nil
-// func variable, which is useless to compare). go vet flags
-// comparisons where one side is a func type and the other is nil.
+// Comparing a declared function to nil is always false: a function
+// declaration can never be nil. A func *variable* can be nil, so
+// comparing one to nil is meaningful and must not be flagged. go vet's
+// nilfunc makes the same distinction; only an expression that resolves
+// to a declared function (or method value) is flagged.
 func runNilFunc(pass *Pass) []Diagnostic {
 	var out []Diagnostic
 	for _, f := range pass.Files {
@@ -78,8 +80,8 @@ func runNilFunc(pass *Pass) []Diagnostic {
 			if !ok || (be.Op != token.EQL && be.Op != token.NEQ) {
 				return true
 			}
-			if isNil(pass, be.X) && isFuncType(pass, be.Y) ||
-				isNil(pass, be.Y) && isFuncType(pass, be.X) {
+			if isNil(pass, be.X) && isDeclaredFunc(pass, be.Y) ||
+				isNil(pass, be.Y) && isDeclaredFunc(pass, be.X) {
 				out = append(out, Diagnostic{
 					pass.position(be),
 					"comparison of function to nil is always " + constBool(be.Op == token.NEQ),
@@ -96,13 +98,51 @@ func isNil(pass *Pass, e ast.Expr) bool {
 	return ok && tv.IsNil()
 }
 
-func isFuncType(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
-	if !ok || tv.Type == nil {
+// isDeclaredFunc reports whether e is a reference to a declared
+// function or a method value, i.e. an expression that can never be nil.
+// A func variable, a struct field of func type, a func parameter, or a
+// func literal resolves to a *types.Var (or to no object at all) and is
+// not a declared function, even though its type is a signature.
+func isDeclaredFunc(pass *Pass, e ast.Expr) bool {
+	// Unwrap parentheses: (f) == nil is the same comparison as f == nil.
+	for {
+		if p, ok := e.(*ast.ParenExpr); ok {
+			e = p.X
+			continue
+		}
+		break
+	}
+	switch x := e.(type) {
+	case *ast.Ident:
+		// Uses for a reference; Defs for a declaration site.
+		if obj := pass.Info.Uses[x]; obj != nil {
+			_, ok := obj.(*types.Func)
+			return ok
+		}
+		if obj := pass.Info.Defs[x]; obj != nil {
+			_, ok := obj.(*types.Func)
+			return ok
+		}
+		return false
+	case *ast.SelectorExpr:
+		// Method value (t.M): the selection's object is the method.
+		// A func-typed field (s.cb) selects a *types.Var instead.
+		if sel := pass.Info.Selections[x]; sel != nil {
+			_, ok := sel.Obj().(*types.Func)
+			return ok
+		}
+		// Package-level function (pkg.Fn).
+		if obj := pass.Info.Uses[x.Sel]; obj != nil {
+			_, ok := obj.(*types.Func)
+			return ok
+		}
+		return false
+	default:
+		// Func literals, calls, dereferences, and anything else the
+		// type info cannot resolve to a declared function: fail closed
+		// and do not flag.
 		return false
 	}
-	_, ok = tv.Type.Underlying().(*types.Signature)
-	return ok
 }
 
 func constBool(b bool) string {
