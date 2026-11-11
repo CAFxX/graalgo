@@ -270,12 +270,20 @@ func cmdVet(root string, args []string) int {
 	if failed {
 		return 1
 	}
-	// Run the analyzers over all files as one package.
-	ds, err := vet.Run(files)
+	// Run the analyzers, grouped by package clause: a package and its
+	// external test package are type-checked separately (see vet.Run).
+	// A type-checking failure is reported loudly: the affected group
+	// was still analyzed, but only with partial type info, so its
+	// diagnostics may miss findings or over-report.
+	res, err := vet.RunDetailed(files)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
+	for _, te := range res.TypeErrors {
+		fmt.Fprintf(os.Stderr, "graalgo vet: warning: type checking package %s failed: %v (analyzers ran with partial type information)\n", te.Package, te.Err)
+	}
+	ds := res.Diagnostics
 	for _, d := range ds {
 		fmt.Printf("%s: %s\n", d.Pos, d.Message)
 	}

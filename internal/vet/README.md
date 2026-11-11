@@ -48,8 +48,18 @@ This package implements `go vet`-style static analyzers that run as part of
 
 - Analyzers are registered via `register()` in `init()` and run in order.
 - `Pass` carries the `token.FileSet`, parsed `[]*ast.File`, and `*types.Info`.
-- Type checking is best-effort: if `types.Config.Check` fails, analyzers
-  still run on the AST with partial type info.
+- Files are grouped by package clause and each group is type-checked
+  separately: a package and its external test package (`package foo`
+  vs `package foo_test`) are different groups, because `go/types`
+  requires one package per `Check` call and a directory with tests
+  always supplies two. Non-test groups are checked first, and an
+  external test package can import the already-checked package under
+  test (its import path is derived from the enclosing `go.mod`).
+- Type checking is best-effort, but no longer silent: if
+  `types.Config.Check` fails for a group, analyzers still run on the
+  AST with whatever partial type info was gathered, and the failure is
+  reported through `RunDetailed` (`Result.TypeErrors`); `graalgo vet`
+  prints it as a warning.
 - `Run(paths)` returns diagnostics sorted by source position.
 - `asmdecl` and `framepointer` discover `.s` files in the directories
   containing the analyzed Go files.
